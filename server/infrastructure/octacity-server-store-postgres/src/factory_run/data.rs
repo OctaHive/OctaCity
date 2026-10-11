@@ -40,7 +40,7 @@ pub(super) async fn append(
             tx,
             run,
             artifact.artifact_id(),
-            octacity_server_store::FactoryArtifactRole::CallContext,
+            octacity_server_store::FactoryArtifactRole::NodeContext,
             artifact.content_digest(),
             at,
           )
@@ -59,6 +59,19 @@ pub(super) async fn append(
       .bind(run.as_uuid()).bind(execution.digest().map_err(invalid)?.as_bytes().as_slice()).bind(execution.node_attempt_id().as_uuid())
       .bind(execution.operation_id().as_bytes().as_slice()).bind(execution.build_id().as_uuid()).bind(execution.attempt_id().as_uuid()).bind(bytes(execution)?)
       .execute(&mut **tx).await.map_err(unavailable)?;
+  }
+  for receipt in &data.stops {
+    sqlx::query(
+      "INSERT INTO factory_node_stops (run_id,node_attempt_id,id,execution_id,document) VALUES ($1,$2,$3,$4,$5)",
+    )
+    .bind(run.as_uuid())
+    .bind(receipt.node_attempt_id().as_uuid())
+    .bind(receipt.digest().map_err(invalid)?.as_bytes().as_slice())
+    .bind(receipt.execution().map(|value| value.as_bytes().to_vec()))
+    .bind(bytes(receipt)?)
+    .execute(&mut **tx)
+    .await
+    .map_err(unavailable)?;
   }
   for record in &data.records {
     sqlx::query("INSERT INTO factory_flow_records (run_id,node_attempt_id,id,input_digest,schema_reference,document) VALUES ($1,$2,$3,$4,$5,$6)")
@@ -178,6 +191,33 @@ pub(super) async fn read(
     }
     data.build_executions.push(execution);
   }
+  let stops = sqlx::query_as::<_, (uuid::Uuid, Vec<u8>, Option<Vec<u8>>, Vec<u8>)>(
+    "SELECT node_attempt_id,id,execution_id,document FROM factory_node_stops WHERE run_id=$1 ORDER BY node_attempt_id",
+  )
+  .bind(run.as_uuid())
+  .fetch_all(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  for (node, id, execution, document) in stops {
+    let attempt = history
+      .attempts
+      .iter()
+      .find(|row| row.id().as_uuid() == node)
+      .ok_or(StoreError::Unavailable)?;
+    let execution = execution
+      .map(|id| {
+        let digest = super::digest(&id)?;
+        data
+          .build_executions
+          .iter()
+          .find(|row| row.digest().ok() == Some(digest))
+          .ok_or(StoreError::Unavailable)
+      })
+      .transpose()?;
+    data
+      .stops
+      .push(FlowNodeStop::restore(&document, attempt, execution, super::digest(&id)?).map_err(invalid)?);
+  }
   let records = sqlx::query_as::<_,(uuid::Uuid,Vec<u8>,Vec<u8>,Json<ImmutableReference>,Vec<u8>)>("SELECT node_attempt_id,id,input_digest,schema_reference,document FROM factory_flow_records WHERE run_id=$1 ORDER BY node_attempt_id")
     .bind(run.as_uuid()).fetch_all(&mut **tx).await.map_err(unavailable)?;
   for (attempt, digest, input_digest, Json(schema), document) in records {
@@ -217,9 +257,7 @@ pub(super) async fn read(
     }
     data.records.push(record);
   }
-  if !admitted.data_schemas().is_empty() || data.record_count() != 0 {
-    data.validate(work, admitted, history).map_err(invalid)?;
-  }
+  data.validate(work, admitted, history).map_err(invalid)?;
   Ok(data)
 }
 fn bytes(value: &impl Serialize) -> Result<Vec<u8>, StoreError> {

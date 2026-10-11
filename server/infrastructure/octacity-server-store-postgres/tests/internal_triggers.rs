@@ -133,7 +133,10 @@ async fn terminal_build_outbox_is_claimed_once_and_restart_safe() {
   assert_eq!(claim.source_build_id, fixture.request.build.id);
   assert_eq!(claim.source_revision, fixture.request.build.immutable_revision);
   assert_eq!(claim.source_target, target);
-  assert_eq!(claim.source_occurrence.id, fixture.request.trigger.id);
+  assert_eq!(
+    claim.source_origin,
+    octacity_server_store::InternalTriggerSourceOrigin::Trigger(Box::new(fixture.request.trigger.clone()))
+  );
   assert_eq!(claim.trigger_ancestry, [fixture.request.trigger.trigger]);
   assert_eq!(claim.matches.len(), 2);
   assert_eq!(

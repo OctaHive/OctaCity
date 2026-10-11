@@ -280,7 +280,7 @@ pub struct BuildRetentionDeadlines {
 }
 
 impl BuildRetentionDeadlines {
-  fn validate(self, accepted_at: Timestamp) -> Result<(), StoreInputError> {
+  pub(crate) fn validate(self, accepted_at: Timestamp) -> Result<(), StoreInputError> {
     if [self.metadata, self.logs, self.artifacts, self.reports]
       .into_iter()
       .any(|deadline| deadline < accepted_at)

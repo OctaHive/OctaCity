@@ -302,7 +302,7 @@ pub struct TriggerCausality {
 }
 
 impl TriggerCausality {
-  /// Constructs lineage for a manual, scheduled, or external root occurrence.
+  /// Constructs lineage for an occurrence with no parent Trigger, including a server Build event.
   #[must_use]
   pub const fn root(occurrence_id: TriggerOccurrenceId) -> Self {
     Self {
@@ -329,9 +329,10 @@ impl TriggerCausality {
   fn validate(&self, occurrence_id: TriggerOccurrenceId, kind: TriggerKind) -> Result<(), TriggerInputError> {
     let valid = match kind {
       TriggerKind::Internal => {
-        self.depth > 0
-          && self.root_occurrence_id != occurrence_id
-          && self.parent_occurrence_id.is_some_and(|parent| parent != occurrence_id)
+        (self.root_occurrence_id == occurrence_id && self.parent_occurrence_id.is_none() && self.depth == 0)
+          || (self.depth > 0
+            && self.root_occurrence_id != occurrence_id
+            && self.parent_occurrence_id.is_some_and(|parent| parent != occurrence_id))
       }
       TriggerKind::Manual | TriggerKind::Scheduled | TriggerKind::External => {
         self.root_occurrence_id == occurrence_id && self.parent_occurrence_id.is_none() && self.depth == 0

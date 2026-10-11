@@ -89,6 +89,26 @@ pub struct FlowNodeInput {
   caller_input_digest: Option<FactoryDigest>,
 }
 impl FlowNodeInput {
+  /// Verifies the exact execution owner before a capability consumes frozen data.
+  pub fn verify_attempt(&self, attempt: &crate::NodeAttempt) -> Result<(), FactoryError> {
+    attempt.validate_execution_window()?;
+    if attempt.factory_run_id() != self.factory_run_id
+      || attempt.flow_run_id() != self.flow_run_id
+      || attempt.workflow_cycle_id() != self.cycle_id
+      || attempt.node_key() != &self.node
+      || attempt.input_digest() != self.digest()?
+    {
+      return Err(invalid());
+    }
+    Ok(())
+  }
+  /// Creates the next execution generation from the same frozen data and Context.
+  /// Retry eligibility and predecessor stop are checked by the owner and journal.
+  pub fn retry(&self) -> Result<Self, FactoryError> {
+    let mut next = self.clone();
+    next.generation = self.generation.checked_add(1).ok_or_else(invalid)?;
+    Ok(next)
+  }
   /// Recomputes operator-owned projection at publication, retaining only the selected context.
   /// Callers provide the current authoritative source history; historical reads
   /// use the source attempts frozen in this input instead of later replacements.

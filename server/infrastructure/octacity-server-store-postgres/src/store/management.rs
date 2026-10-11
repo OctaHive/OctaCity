@@ -138,6 +138,16 @@ impl FactoryRunStore for PostgresStore {
 }
 
 #[async_trait]
+impl FactoryRunControlStore for PostgresStore {
+  async fn apply_factory_run_control(
+    &self,
+    request: ManagementMutation<ApplyFactoryRunControl>,
+  ) -> Result<FactoryRunControlOutcome, StoreError> {
+    crate::factory_run::apply_control(&self.pool, request).await
+  }
+}
+
+#[async_trait]
 impl ProjectStore for PostgresStore {
   async fn create_project(
     &self,

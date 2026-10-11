@@ -24,6 +24,7 @@ octacity-server-api-webhook = { path = "../api/octacity-server-api-webhook" }
 octacity-server-application = { path = "../application" }
 octacity-server-domain = { path = "../core/octacity-server-domain" }
 octacity-server-job = { path = "../core/octacity-server-job" }
+octacity-server-factory = { path = "../core/octacity-server-factory" }
 octacity-server-store = { path = "../core/octacity-server-store" }
 octacity-server-store-postgres = { path = "../infrastructure/octacity-server-store-postgres" }
 octacity-server-webhook = { path = "../infrastructure/octacity-server-webhook" }
@@ -50,7 +51,6 @@ rustix.workspace = true
 
 [dev-dependencies]
 octacity-server-pipeline = { path = "../core/octacity-server-pipeline" }
-octacity-server-factory = { path = "../core/octacity-server-factory" }
 octacity-server-orchestrator = { path = "../core/octacity-server-orchestrator" }
 octacity-server-artifacts = { path = "../core/octacity-server-artifacts" }
 octacity-server-store = { path = "../core/octacity-server-store", features = ["test-support"] }

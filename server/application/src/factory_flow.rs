@@ -19,25 +19,25 @@ pub trait FactoryFlowInputPreparer: Send + Sync {
 }
 /// One graph reconciler shared by supplied templates and operator-authored Flows.
 /// Each pass starts, observes or publishes readiness for at most one node.
-pub struct FactoryFlowRunner<S, E, I> {
+pub struct FactoryFlowRunner<S, E, I: ?Sized> {
   store: Arc<S>,
   nodes: FactoryNodeRunner<S, E>,
   inputs: Arc<I>,
 }
-impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: FactoryFlowInputPreparer>
+impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: FactoryFlowInputPreparer + ?Sized>
   FactoryFlowRunner<S, E, I>
 {
   /// Connects graph persistence, trusted execution capabilities and input preparation.
-  pub fn new(store: Arc<S>, executor: Arc<E>, inputs: Arc<I>) -> Self {
+  pub fn new(store: Arc<S>, executor: Arc<E>, inputs: Arc<I>, clock: Arc<dyn FactoryExecutionClock>) -> Self {
     Self {
-      nodes: FactoryNodeRunner::new(store.clone(), executor),
+      nodes: FactoryNodeRunner::new(store.clone(), executor, clock),
       store,
       inputs,
     }
   }
 }
 #[async_trait]
-impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: FactoryFlowInputPreparer>
+impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: FactoryFlowInputPreparer + ?Sized>
   FactoryFlowCoordinator for FactoryFlowRunner<S, E, I>
 {
   async fn reconcile_flow(
@@ -47,6 +47,17 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
     at: Timestamp,
   ) -> Result<FactoryFlowStep, ApplicationError> {
     let snapshot = self.store.factory_run_snapshot(run).await?;
+    if snapshot.run.state() == FactoryRunState::Cancelled {
+      return Ok(FactoryFlowStep::Cancelled);
+    }
+    if let Some(FactoryLifecycleProgress::FlowResolved { terminal, .. }) = snapshot
+      .lifecycle_checkpoints
+      .iter()
+      .find(|row| row.id == snapshot.current.lifecycle_checkpoint_id)
+      .map(|row| &row.progress)
+    {
+      return Ok(FactoryFlowStep::Resolved(terminal.clone()));
+    }
     let ownership = snapshot
       .current_claim
       .as_ref()
@@ -56,18 +67,27 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
       .claim
       .verify_fence(ownership.claim.fence(), at)
       .map_err(invalid)?;
-    if snapshot.run.state().is_terminal()
-      || snapshot
-        .lifecycle_checkpoints
-        .iter()
-        .find(|row| row.id == snapshot.current.lifecycle_checkpoint_id)
-        .is_none_or(|row| row.cancellation_requested)
-    {
+    if snapshot.run.state().is_terminal() {
       return Err(ApplicationError::invalid());
+    }
+    let checkpoint = snapshot
+      .lifecycle_checkpoints
+      .iter()
+      .find(|row| row.id == snapshot.current.lifecycle_checkpoint_id)
+      .ok_or_else(ApplicationError::invalid)?;
+    if checkpoint.cancellation_requested {
+      return Ok(if self.nodes.cancel(&snapshot, at).await? {
+        FactoryFlowStep::Cancelled
+      } else {
+        FactoryFlowStep::Waiting
+      });
     }
     let target = match next(&snapshot)? {
       Next::Node(target) => target,
-      Next::Terminal(terminal) => return Ok(FactoryFlowStep::Resolved(terminal)),
+      Next::Terminal(terminal) => {
+        self.nodes.resolve(&snapshot, terminal.clone(), at).await?;
+        return Ok(FactoryFlowStep::Resolved(terminal));
+      }
       Next::Waiting => return Ok(FactoryFlowStep::Waiting),
     };
     let definition = snapshot
@@ -78,16 +98,18 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
       .and_then(|flow| snapshot.admitted_flow.closure().definition(flow.definition()))
       .ok_or_else(ApplicationError::invalid)?;
     let node = definition.node(&target.node).ok_or_else(ApplicationError::invalid)?;
-    let pending = snapshot.flow.attempts.iter().any(|attempt| {
-      attempt.flow_run_id() == target.flow_run_id
-        && attempt.workflow_cycle_id() == target.cycle_id
-        && attempt.node_key() == &target.node
-        && !snapshot
-          .flow
-          .completions
-          .iter()
-          .any(|row| row.node_attempt_id() == attempt.id())
-    });
+    let retry_input = crate::factory_node::pending_node_retry(&snapshot, &target)?.map(|(_, input)| input);
+    let pending = retry_input.is_none()
+      && snapshot.flow.attempts.iter().any(|attempt| {
+        attempt.flow_run_id() == target.flow_run_id
+          && attempt.workflow_cycle_id() == target.cycle_id
+          && attempt.node_key() == &target.node
+          && !snapshot
+            .flow
+            .completions
+            .iter()
+            .any(|row| row.node_attempt_id() == attempt.id())
+      });
     let mut input = None;
     if !pending {
       if let Some(pool) = node.phase_pool() {
@@ -111,7 +133,10 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
             && input.generation() == generation
         });
         let Some(frozen) = frozen else {
-          let input = self.inputs.prepare(&snapshot, &target).await?;
+          let input = match retry_input {
+            Some(input) => input,
+            None => self.inputs.prepare(&snapshot, &target).await?,
+          };
           let mut append = FactoryRunHistoryAppend::default();
           append.flow.data.inputs.push(input);
           self.nodes.commit(&snapshot, append, at).await?;
@@ -139,7 +164,10 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
         }
         input = Some(frozen.clone());
       } else if node.kind() != FlowNodeKind::DeterministicGate {
-        input = Some(self.inputs.prepare(&snapshot, &target).await?);
+        input = Some(match retry_input {
+          Some(input) => input,
+          None => self.inputs.prepare(&snapshot, &target).await?,
+        });
       }
     }
     Ok(match self.nodes.run_once(run, claim, target, input, at).await? {
@@ -166,6 +194,7 @@ fn next_in_flow(snapshot: &FactoryRunSnapshot, flow: &FlowRun) -> Result<Next, A
     .max_by_key(|row| row.number())
     .ok_or_else(ApplicationError::invalid)?;
   let history = FlowRuntimeHistory {
+    stops: &snapshot.flow.data.stops,
     flow_runs: &snapshot.flow.runs,
     cycles: &snapshot.flow.cycles,
     attempts: &snapshot.flow.attempts,

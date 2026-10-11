@@ -10,6 +10,14 @@ pub const MAX_FACTORY_RETENTION_WORK_BATCH_SIZE: u16 = 64;
 /// Maximum references or metadata rows cleaned by one retention transaction.
 pub const MAX_FACTORY_RETENTION_CLEANUP_BATCH_SIZE: u16 = 64;
 
+#[cfg(test)]
+mod role_tests {
+  #[test]
+  fn selected_common_node_context_has_a_retention_role() {
+    assert_eq!(super::FactoryArtifactRole::NodeContext.as_str(), "node_context");
+  }
+}
+
 /// Closed semantic role of one Artifact retained by a Factory Run.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FactoryArtifactRole {
@@ -27,12 +35,8 @@ pub enum FactoryArtifactRole {
   ChangeSetManifest,
   /// Exact deterministic evidence item.
   Evidence,
-  /// Exact Artifact referenced by an immutable Stage Handoff.
-  StageHandoff,
   /// Exact Artifact selected into a frozen Context Manifest.
-  CallContext,
-  /// Exact typed result, bounded summary, trace, or provenance of a completed macro call.
-  CallOutput,
+  NodeContext,
 }
 
 impl FactoryArtifactRole {
@@ -47,9 +51,7 @@ impl FactoryArtifactRole {
       Self::ChangeSetBundle => "changeset_bundle",
       Self::ChangeSetManifest => "changeset_manifest",
       Self::Evidence => "evidence",
-      Self::StageHandoff => "stage_handoff",
-      Self::CallContext => "call_context",
-      Self::CallOutput => "call_output",
+      Self::NodeContext => "node_context",
     }
   }
 }

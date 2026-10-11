@@ -32,6 +32,9 @@ const MAX_VCS_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
 
 impl ServerConfig {
   pub(super) fn validate(&self) -> Result<(), ServerConfigError> {
+    if let Some(factory) = self.factory {
+      factory.validate()?;
+    }
     if !self.admission.is_bounded() {
       return Err(ServerConfigError::Invalid(
         "admission limits must be positive, bounded, and expensive management capacity must not exceed the general management capacity"

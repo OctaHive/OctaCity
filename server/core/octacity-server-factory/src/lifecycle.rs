@@ -635,7 +635,7 @@ mod tests {
         admitted_work.configuration.clone(),
         &admitted_work,
         subject(),
-        FactoryRunState::Implementing,
+        FactoryRunState::Running,
         FactoryRunVersion::INITIAL,
       ),
       Err(FactoryError::InconsistentSubject)

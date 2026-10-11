@@ -59,6 +59,14 @@ impl FactoryFlowInputPreparer for Inputs {
 struct FakePending;
 #[async_trait]
 impl FactoryNodeExecutor for FakePending {
+  async fn cancel(
+    &self,
+    _: FactoryNodeExecutionRequest<'_>,
+    _: octacity_server_domain::Timestamp,
+  ) -> Result<crate::FactoryNodeCancellationStep, ApplicationError> {
+    panic!("this fixture has no cancellable external operation")
+  }
+
   async fn observe(&self, _: FactoryNodeExecutionRequest<'_>) -> Result<FactoryNodeExecutionStep, ApplicationError> {
     Ok(FactoryNodeExecutionStep::Waiting { execution: None })
   }
@@ -138,7 +146,21 @@ impl BuildQueryStore for Execution {
   }
 }
 #[async_trait]
+impl crate::OrdinaryBuildCancellationApplication for Execution {
+  async fn cancel_factory_build(&self, _: crate::CancelFactoryBuild) -> Result<(), OrdinaryBuildApplicationError> {
+    panic!("this success-only fixture must not receive cancellation")
+  }
+}
+#[async_trait]
 impl FactoryNodeBuildOutputSource for Execution {
+  async fn terminal_usage(
+    &self,
+    _: octacity_server_domain::BuildId,
+    _: octacity_server_domain::AttemptId,
+  ) -> Result<BudgetUsage, OrdinaryBuildApplicationError> {
+    panic!("terminal consumption must be supplied explicitly by this fixture")
+  }
+
   async fn published_outputs(
     &self,
     build: octacity_server_domain::BuildId,
@@ -147,7 +169,7 @@ impl FactoryNodeBuildOutputSource for Execution {
   ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError> {
     let builds = self.by_build(build);
     let request = builds.requests.lock().unwrap()[0].clone();
-    let causality = request.causality.node().unwrap();
+    let causality = request.causality.as_ref();
     let profile = &causality.profile;
     let wire: serde_json::Value = serde_json::from_slice(&causality.input).unwrap();
     let report = self
@@ -349,6 +371,7 @@ pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>
     limits,
     flow,
     cycle,
+    octacity_server_factory::FactoryWipLimits::new(8, 16).unwrap(),
   )
   .unwrap()
   .with_pool_settings(pools)
@@ -444,6 +467,7 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
     .unwrap();
   let mut ready = None;
   for time in 31..75 {
+    execution.clock.store(time, std::sync::atomic::Ordering::SeqCst);
     let adapter = Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone()));
     let owner = FactoryFlowRunner::new(
       if time % 2 == 0 {
@@ -453,6 +477,7 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
       },
       adapter,
       Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
     );
     match owner
       .reconcile_flow(admission.run.id(), claim.id, at(time))
@@ -471,6 +496,7 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
   assert_eq!(ready.input.node.as_str(), "protected_tests");
   assert_eq!(ready.input.severity, FindingSeverity::High);
   let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  assert_eq!(snapshot.run.state(), FactoryRunState::Running);
   let mut records = snapshot
     .flow
     .data
@@ -517,6 +543,7 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
     &snapshot.admitted_flow,
     &snapshot.flow.data,
     FlowRuntimeHistory {
+      stops: &snapshot.flow.data.stops,
       flow_runs: &snapshot.flow.runs,
       cycles: &snapshot.flow.cycles,
       attempts: &snapshot.flow.attempts,
@@ -566,6 +593,7 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
       },
       Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),
       Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
     );
     match owner
       .reconcile_flow(admission.run.id(), selected_claim.id, at(time))
@@ -582,6 +610,25 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
   }
   assert_eq!(terminal, Some(key("verified_candidate")));
   let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  assert_eq!(
+    snapshot.run.state(),
+    FactoryRunState::Completed,
+    "the configured root terminal must durably finish its Run"
+  );
+  let replay = FactoryFlowRunner::new(
+    store.clone(),
+    Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),
+    Arc::new(Inputs),
+    crate::factory_node_test_support::clock(),
+  );
+  assert_eq!(
+    replay
+      .reconcile_flow(admission.run.id(), selected_claim.id, at(1900))
+      .await
+      .unwrap(),
+    FactoryFlowStep::Resolved(key("verified_candidate"))
+  );
+  assert_eq!(store.factory_run_snapshot(admission.run.id()).await.unwrap(), snapshot);
   let mut records = snapshot
     .flow
     .data
@@ -684,11 +731,13 @@ fn model_small_work_claim_cannot_bypass_independently_verified_large_work() {
       .unwrap();
     let owner = FactoryFlowRunner::new(
       store.clone(),
-      Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution)),
+      Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),
       Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
     );
     let mut terminal = None;
     for time in 31..65 {
+      execution.clock.store(time, std::sync::atomic::Ordering::SeqCst);
       match owner
         .reconcile_flow(admission.run.id(), claim.id, at(time))
         .await
@@ -849,6 +898,7 @@ pub(crate) fn nested_fixture() -> PublishedFactoryAdmission {
     FlowAdmissionLimits::product_defaults(1, budget, FactoryPermissionSet::deny_all()).unwrap(),
     flow,
     cycle,
+    octacity_server_factory::FactoryWipLimits::new(8, 16).unwrap(),
   )
   .unwrap()
   .with_data_schemas(vec![schema])
@@ -906,6 +956,7 @@ pub(crate) async fn verify_nested_owner<S: FactoryRunStore + FactoryPhasePoolSto
       },
       Arc::new(FakePending),
       Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
     );
     match owner.reconcile_flow(run.id(), claim.id, at(time)).await.unwrap() {
       FactoryFlowStep::Advanced => {}
@@ -976,6 +1027,7 @@ pub(crate) async fn verify_nested_owner<S: FactoryRunStore + FactoryPhasePoolSto
         &snapshot.work,
         &snapshot.admitted_flow,
         FlowRuntimeHistory {
+          stops: &snapshot.flow.data.stops,
           flow_runs: &snapshot.flow.runs,
           cycles: &snapshot.flow.cycles,
           attempts: &snapshot.flow.attempts,
@@ -998,6 +1050,7 @@ pub(crate) async fn verify_nested_owner<S: FactoryRunStore + FactoryPhasePoolSto
     &snapshot.admitted_flow,
     &snapshot.flow.data,
     FlowRuntimeHistory {
+      stops: &snapshot.flow.data.stops,
       flow_runs: &snapshot.flow.runs,
       cycles: &snapshot.flow.cycles,
       attempts: &snapshot.flow.attempts,
@@ -1143,6 +1196,7 @@ pub(crate) fn bounded_fixture(project_predecessor: bool, pooled: bool) -> Publis
     FlowAdmissionLimits::product_defaults(1, budget, FactoryPermissionSet::deny_all()).unwrap(),
     flow,
     cycle,
+    octacity_server_factory::FactoryWipLimits::new(8, 16).unwrap(),
   )
   .unwrap()
   .with_data_schemas(vec![schema])
@@ -1251,6 +1305,7 @@ pub(crate) async fn verify_bounded_owner<S: FactoryRunStore + FactoryPhasePoolSt
       },
       Arc::new(FakePending),
       Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
     );
     match owner.reconcile_flow(run.id(), claim.id, at(time)).await.unwrap() {
       FactoryFlowStep::Advanced => {}

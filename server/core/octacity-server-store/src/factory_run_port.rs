@@ -14,7 +14,8 @@ use crate::{
 /// transition, and fenced recovery of durable external side effects.
 #[async_trait]
 pub trait FactoryRunStore: Send + Sync {
-  /// Loads the complete bounded authoritative snapshot for one Run.
+  /// Loads bounded execution state and current ownership for one Run.
+  /// Complete ownership and audit history use paged diagnostics.
   async fn factory_run_snapshot(&self, run_id: FactoryRunId) -> Result<FactoryRunSnapshot, StoreError>;
 
   /// Lists one typed bounded diagnostic collection in stable identity order.

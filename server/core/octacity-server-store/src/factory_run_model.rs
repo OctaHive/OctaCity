@@ -1,18 +1,11 @@
 use std::num::NonZeroU16;
 
-use octacity_server_artifacts::ArtifactIdentity;
-use octacity_server_domain::{AttemptId, AttemptVersion, BuildId, BuildVersion, ImmutableRevision, JobId, Timestamp};
+use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  AdmittedFlow, Assessment, BudgetUsage, BuildConfigurationRef, ChangeSet, ChangeSetId, ContextManifest, Decision,
-  DecisionId, DecisionSignalProgress, DecisionSignalReceipt, DecisionSignalRequest, DeliveryAttempt, Escalation,
-  EvaluationPlan, EvidenceManifest, FactoryClaim, FactoryClaimFence, FactoryConfigurationRef, FactoryDigest,
-  FactoryKey, FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunVersion, FactoryStageKind,
-  FactoryStageTarget, FactoryWipUsage, FlowRun, MacroCall, MacroCallCompletion, NodeAttempt, NodeAttemptCompletion,
-  ReportingAttempt, StageAttempt, StageAttemptCompletion, StageAttemptNumber, StageHandoff, WorkEnvelope,
-  WorkflowCycle,
+  AdmittedFlow, BudgetUsage, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryKey, FactoryLifecycleProgress,
+  FactoryRun, FactoryRunId, FactoryRunVersion, FactoryWipUsage, FlowRun, NodeAttempt, NodeAttemptCompletion,
+  WorkEnvelope, WorkflowCycle,
 };
-use octacity_server_orchestrator::BuildState;
-use serde::{Deserialize, Serialize};
 
 use crate::{AuditActorKind, MutationDisposition, StoreError, StoreInputError, StoreOperation};
 
@@ -115,10 +108,8 @@ pub struct FactoryLifecycleCheckpoint {
   pub run_id: FactoryRunId,
   /// Aggregate version whose current state this checkpoint describes.
   pub run_version: FactoryRunVersion,
-  /// Complete code-owned lifecycle progress.
+  /// Technical root execution progress for the admitted graph.
   pub progress: FactoryLifecycleProgress,
-  /// Current non-authoritative Decision Signal progress.
-  pub signal: DecisionSignalProgress,
   /// Whether durable cancellation intent has been accepted.
   pub cancellation_requested: bool,
   /// Authoritative commit time.
@@ -132,7 +123,6 @@ impl FactoryLifecycleCheckpoint {
     run_id: FactoryRunId,
     run_version: FactoryRunVersion,
     progress: FactoryLifecycleProgress,
-    signal: DecisionSignalProgress,
     cancellation_requested: bool,
     recorded_at: Timestamp,
   ) -> Self {
@@ -147,283 +137,9 @@ impl FactoryLifecycleCheckpoint {
       run_id,
       run_version,
       progress,
-      signal,
       cancellation_requested,
       recorded_at,
     }
-  }
-}
-
-/// Immutable causal link from one Factory Stage Attempt to an ordinary Build.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct FactoryBuildLink {
-  /// Factory Run owning the causal link.
-  pub run_id: FactoryRunId,
-  /// Stage Attempt that created or selected the Build.
-  pub stage_attempt_id: octacity_server_factory::StageAttemptId,
-  /// Ordinary immutable Build identity.
-  pub build_id: BuildId,
-  /// Initial immutable Attempt created by ordinary Build admission.
-  pub attempt_id: AttemptId,
-  /// Complete initial Job DAG identities in stable order.
-  pub job_ids: Vec<JobId>,
-  /// Exact Factory Configuration version admitted for the Run.
-  pub factory_configuration: FactoryConfigurationRef,
-  /// Program-owned stage kind.
-  pub stage_kind: FactoryStageKind,
-  /// Append-only attempt number within the Run.
-  pub stage_attempt_number: StageAttemptNumber,
-  /// Exact program-owned stage or evaluator branch target.
-  pub target: FactoryStageTarget,
-  /// Exact Build Configuration selected by the immutable Factory Configuration.
-  pub build_configuration: BuildConfigurationRef,
-  /// Digest of the immutable Task Envelope input selected for this attempt.
-  pub task_envelope_digest: FactoryDigest,
-  /// Exact source revision supplied to the ordinary Build application.
-  pub exact_revision: ImmutableRevision,
-  /// Exact predecessor that made this stage eligible, when one exists.
-  pub parent: Option<FactoryBuildParent>,
-  /// Digest of the narrowed Factory permission set accepted for the Build.
-  pub effective_policy_digest: FactoryDigest,
-  /// Digest of the complete exact Build creation input.
-  pub input_digest: FactoryDigest,
-}
-
-/// Named immutable inputs for one ordinary-Build causal link.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FactoryBuildLinkInput {
-  /// Ordinary immutable Build identity.
-  pub build_id: BuildId,
-  /// First immutable Attempt created by Build admission.
-  pub attempt_id: AttemptId,
-  /// Complete initial Job DAG identities in stable order.
-  pub job_ids: Vec<JobId>,
-  /// Exact Factory Configuration version admitted for the Run.
-  pub factory_configuration: FactoryConfigurationRef,
-  /// Exact program-owned stage or evaluator branch target.
-  pub target: FactoryStageTarget,
-  /// Exact Build Configuration selected for the stage.
-  pub build_configuration: BuildConfigurationRef,
-  /// Digest of the immutable Task Envelope.
-  pub task_envelope_digest: FactoryDigest,
-  /// Exact source revision supplied to ordinary Build admission.
-  pub exact_revision: ImmutableRevision,
-  /// Exact predecessor that made the stage eligible.
-  pub parent: Option<FactoryBuildParent>,
-  /// Digest of the narrowed Factory permission set.
-  pub effective_policy_digest: FactoryDigest,
-  /// Digest of the complete exact Build creation input.
-  pub input_digest: FactoryDigest,
-}
-
-/// Exact immutable predecessor of a Factory-owned ordinary Build.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub enum FactoryBuildParent {
-  /// Candidate whose exact revision is validated or evaluated.
-  ChangeSet(ChangeSetId),
-  /// Decision whose findings authorize one bounded rework attempt.
-  Decision(DecisionId),
-}
-
-impl FactoryBuildLink {
-  /// Constructs one immutable ordinary-Build link from bounded causality.
-  #[must_use]
-  pub fn new(stage: &StageAttempt, input: FactoryBuildLinkInput) -> Self {
-    Self {
-      run_id: stage.run_id(),
-      stage_attempt_id: stage.id(),
-      build_id: input.build_id,
-      attempt_id: input.attempt_id,
-      job_ids: input.job_ids,
-      factory_configuration: input.factory_configuration,
-      stage_kind: stage.kind(),
-      stage_attempt_number: stage.number(),
-      target: input.target,
-      build_configuration: input.build_configuration,
-      task_envelope_digest: input.task_envelope_digest,
-      exact_revision: input.exact_revision,
-      parent: input.parent,
-      effective_policy_digest: input.effective_policy_digest,
-      input_digest: input.input_digest,
-    }
-  }
-}
-
-/// Immutable terminal observation of one Factory-linked ordinary Build.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct FactoryBuildObservationRecord {
-  /// Content-derived identity of this exact observation.
-  pub id: FactoryDigest,
-  /// Factory Run owning the Stage Attempt.
-  pub run_id: FactoryRunId,
-  /// Stage Attempt whose Build reached a terminal state.
-  pub stage_attempt_id: octacity_server_factory::StageAttemptId,
-  /// Exact program-owned stage or evaluator branch target.
-  pub target: FactoryStageTarget,
-  /// Ordinary immutable Build identity.
-  pub build_id: BuildId,
-  /// Authoritative terminal Build version.
-  pub build_version: BuildVersion,
-  /// Latest immutable Attempt observed for the Build.
-  pub attempt_id: AttemptId,
-  /// Authoritative latest Attempt version.
-  pub attempt_version: AttemptVersion,
-  /// Complete latest Attempt Job identities in stable order.
-  pub job_ids: Vec<JobId>,
-  /// Published logical outputs with exact immutable content provenance.
-  pub outputs: Vec<ArtifactIdentity>,
-  /// Authoritative terminal Build state.
-  pub state: BuildState,
-  /// Whether every failed Job had an infrastructure failure classification.
-  pub infrastructure_retry_eligible: bool,
-  /// Authoritative observation time used by the fenced commit.
-  pub observed_at: Timestamp,
-}
-
-/// Named authoritative inputs for one terminal ordinary-Build observation.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FactoryBuildObservationInput {
-  /// Authoritative terminal Build version.
-  pub build_version: BuildVersion,
-  /// Latest immutable Attempt observed for the Build.
-  pub attempt_id: AttemptId,
-  /// Authoritative latest Attempt version.
-  pub attempt_version: AttemptVersion,
-  /// Complete latest Attempt Job identities.
-  pub job_ids: Vec<JobId>,
-  /// Published logical outputs with exact immutable content provenance.
-  pub outputs: Vec<ArtifactIdentity>,
-  /// Authoritative terminal Build state.
-  pub state: BuildState,
-  /// Whether every failed Job had an infrastructure failure classification.
-  pub infrastructure_retry_eligible: bool,
-  /// Authoritative observation time used by the fenced commit.
-  pub observed_at: Timestamp,
-}
-
-impl FactoryBuildObservationRecord {
-  /// Constructs a canonical terminal observation bound to its causal link.
-  pub fn new(link: &FactoryBuildLink, input: FactoryBuildObservationInput) -> Result<Self, StoreError> {
-    let FactoryBuildObservationInput {
-      build_version,
-      attempt_id,
-      attempt_version,
-      mut job_ids,
-      mut outputs,
-      state,
-      infrastructure_retry_eligible,
-      observed_at,
-    } = input;
-    if !state.is_terminal() || outputs.len() > usize::from(crate::MAX_ARTIFACT_PAGE_SIZE) {
-      return Err(StoreError::InvalidInput {
-        operation: crate::StoreOperation::CommitFactoryRunTransition,
-        source: crate::StoreInputError::InvalidFactoryRunTransition,
-      });
-    }
-    job_ids.sort_unstable();
-    if job_ids.windows(2).any(|pair| pair[0] == pair[1]) {
-      return Err(StoreError::InvalidInput {
-        operation: crate::StoreOperation::CommitFactoryRunTransition,
-        source: crate::StoreInputError::InvalidFactoryRunTransition,
-      });
-    }
-    outputs.sort_unstable_by_key(|output| output.artifact_id);
-    if outputs
-      .windows(2)
-      .any(|pair| pair[0].artifact_id == pair[1].artifact_id)
-      || outputs.iter().any(|output| {
-        output.build_id != link.build_id || output.attempt_id != attempt_id || !job_ids.contains(&output.job_id)
-      })
-    {
-      return Err(StoreError::InvalidInput {
-        operation: crate::StoreOperation::CommitFactoryRunTransition,
-        source: crate::StoreInputError::InvalidFactoryRunTransition,
-      });
-    }
-    let output_digest_bytes = outputs
-      .iter()
-      .map(|output| output_identity_digest(output).as_bytes())
-      .collect::<Vec<_>>();
-    let output_digest_parts = output_digest_bytes.iter().map(<[u8; 32]>::as_slice).collect::<Vec<_>>();
-    let outputs_digest = FactoryDigest::sha256("octacity.factory.build-output-references.v1", &output_digest_parts);
-    let job_id_bytes = job_ids.iter().map(|id| *id.as_uuid().as_bytes()).collect::<Vec<_>>();
-    let job_id_parts = job_id_bytes.iter().map(<[u8; 16]>::as_slice).collect::<Vec<_>>();
-    let jobs_digest = FactoryDigest::sha256("octacity.factory.build-observation-jobs.v1", &job_id_parts);
-    let run_id = link.run_id.as_uuid();
-    let stage_attempt_id = link.stage_attempt_id.as_uuid();
-    let target = link.target.canonical_key();
-    let build_id = link.build_id.as_uuid();
-    let attempt_uuid = attempt_id.as_uuid();
-    let build_version_bytes = build_version.get().to_be_bytes();
-    let attempt_version_bytes = attempt_version.get().to_be_bytes();
-    let observed_at_bytes = observed_at.unix_millis().to_be_bytes();
-    let retry_eligible = [u8::from(infrastructure_retry_eligible)];
-    let id = FactoryDigest::sha256(
-      "octacity.factory.build-observation.v1",
-      &[
-        run_id.as_bytes(),
-        stage_attempt_id.as_bytes(),
-        target.as_bytes(),
-        build_id.as_bytes(),
-        &build_version_bytes,
-        attempt_uuid.as_bytes(),
-        &attempt_version_bytes,
-        &jobs_digest.as_bytes(),
-        &outputs_digest.as_bytes(),
-        build_state_key(state).as_bytes(),
-        &retry_eligible,
-        &observed_at_bytes,
-      ],
-    );
-    Ok(Self {
-      id,
-      run_id: link.run_id,
-      stage_attempt_id: link.stage_attempt_id,
-      target: link.target.clone(),
-      build_id: link.build_id,
-      build_version,
-      attempt_id,
-      attempt_version,
-      job_ids,
-      outputs,
-      state,
-      infrastructure_retry_eligible,
-      observed_at,
-    })
-  }
-}
-
-fn output_identity_digest(output: &ArtifactIdentity) -> FactoryDigest {
-  let output_type = output.artifact_type.as_str();
-  let report_format = output
-    .artifact_type
-    .report_format()
-    .map_or("", |format| format.as_str());
-  FactoryDigest::sha256(
-    "octacity.factory.build-output-reference.v1",
-    &[
-      output.artifact_id.as_uuid().as_bytes(),
-      output.build_id.as_uuid().as_bytes(),
-      output.attempt_id.as_uuid().as_bytes(),
-      output.job_id.as_uuid().as_bytes(),
-      output.lease_id.as_uuid().as_bytes(),
-      output.logical_name.as_str().as_bytes(),
-      output_type.as_bytes(),
-      report_format.as_bytes(),
-      output.media_type.as_str().as_bytes(),
-      &output.size_bytes.to_be_bytes(),
-      &output.digest.as_bytes(),
-    ],
-  )
-}
-
-const fn build_state_key(state: BuildState) -> &'static str {
-  match state {
-    BuildState::Queued => "queued",
-    BuildState::Running => "running",
-    BuildState::Succeeded => "succeeded",
-    BuildState::Failed => "failed",
-    BuildState::Cancelled => "cancelled",
   }
 }
 
@@ -781,7 +497,7 @@ pub struct SettleFactoryOutbox {
   pub settlement: FactoryOutboxSettlement,
 }
 
-/// Bounded immutable rows appended by one code-owned Factory transition.
+/// Common runtime and retained data owned by a configured Flow.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FactoryFlowHistory {
   /// Root and nested Flow Runs in append-only creation order.
@@ -797,52 +513,35 @@ pub struct FactoryFlowHistory {
 }
 
 impl FactoryFlowHistory {
+  /// Borrows all runtime facts, including technical stops, for common interpretation.
+  #[must_use]
+  pub fn runtime(&self) -> octacity_server_factory::FlowRuntimeHistory<'_> {
+    octacity_server_factory::FlowRuntimeHistory {
+      stops: &self.data.stops,
+      flow_runs: &self.runs,
+      cycles: &self.cycles,
+      attempts: &self.attempts,
+      completions: &self.completions,
+    }
+  }
+
   fn record_count(&self) -> usize {
     self.runs.len() + self.cycles.len() + self.attempts.len() + self.completions.len() + self.data.record_count()
   }
 }
 
-/// Bounded immutable rows appended by one code-owned Factory transition.
+/// Bounded immutable rows appended by the configured Flow owner.
+///
+/// Capability data is retained in the common node result rather than a parallel stage journal.
+///
+/// ```compile_fail
+/// use octacity_server_store::FactoryRunHistoryAppend;
+/// let _ = FactoryRunHistoryAppend { stage_attempts: vec![], ..Default::default() };
+/// ```
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FactoryRunHistoryAppend {
   /// Generic Flow runtime rows kept behind one cohesive boundary.
   pub flow: FactoryFlowHistory,
-  /// Newly created Stage Attempts.
-  pub stage_attempts: Vec<StageAttempt>,
-  /// Newly observed terminal Stage Attempt results and consumed budgets.
-  pub stage_attempt_completions: Vec<StageAttemptCompletion>,
-  /// Newly published immutable Stage Handoffs.
-  pub stage_handoffs: Vec<StageHandoff>,
-  /// Newly frozen canonical Context Manifests.
-  pub context_manifests: Vec<ContextManifest>,
-  /// Newly created macro-call DAG nodes.
-  pub macro_calls: Vec<MacroCall>,
-  /// Newly accepted terminal macro-call observations.
-  pub macro_call_completions: Vec<MacroCallCompletion>,
-  /// Newly created non-authoritative Decision Signal requests.
-  pub signal_requests: Vec<DecisionSignalRequest>,
-  /// Newly accepted immutable Decision Signal receipts.
-  pub signal_receipts: Vec<DecisionSignalReceipt>,
-  /// Newly linked ordinary Builds.
-  pub linked_builds: Vec<FactoryBuildLink>,
-  /// Newly accepted terminal ordinary-Build observations.
-  pub build_observations: Vec<FactoryBuildObservationRecord>,
-  /// Newly captured exact candidates.
-  pub candidates: Vec<ChangeSet>,
-  /// Newly constructed deterministic evidence.
-  pub evidence: Vec<EvidenceManifest>,
-  /// Newly frozen evaluation plans.
-  pub evaluation_plans: Vec<EvaluationPlan>,
-  /// Newly accepted evaluator Assessments.
-  pub assessments: Vec<Assessment>,
-  /// Newly computed deterministic Decisions.
-  pub decisions: Vec<Decision>,
-  /// Newly raised escalations.
-  pub escalations: Vec<Escalation>,
-  /// Newly started or observed delivery attempts.
-  pub delivery_attempts: Vec<DeliveryAttempt>,
-  /// Newly started or observed reporter attempts.
-  pub reporting_attempts: Vec<ReportingAttempt>,
 }
 
 impl FactoryRunHistoryAppend {
@@ -850,24 +549,6 @@ impl FactoryRunHistoryAppend {
   #[must_use]
   pub fn record_count(&self) -> usize {
     self.flow.record_count()
-      + self.stage_attempts.len()
-      + self.stage_attempt_completions.len()
-      + self.stage_handoffs.len()
-      + self.context_manifests.len()
-      + self.macro_calls.len()
-      + self.macro_call_completions.len()
-      + self.signal_requests.len()
-      + self.signal_receipts.len()
-      + self.linked_builds.len()
-      + self.build_observations.len()
-      + self.candidates.len()
-      + self.evidence.len()
-      + self.evaluation_plans.len()
-      + self.assessments.len()
-      + self.decisions.len()
-      + self.escalations.len()
-      + self.delivery_attempts.len()
-      + self.reporting_attempts.len()
   }
 }
 
@@ -878,33 +559,10 @@ pub struct FactoryRunCurrentProjection {
   pub budget_id: FactoryDigest,
   /// Current immutable lifecycle checkpoint.
   pub lifecycle_checkpoint_id: FactoryDigest,
-  /// Current Stage Attempt, when a stage is selected.
-  pub stage_attempt_id: Option<octacity_server_factory::StageAttemptId>,
-  /// Current macro call, when one is active or most recently consumed.
-  pub macro_call_id: Option<octacity_server_factory::MacroCallId>,
-  /// Current Decision Signal request.
-  pub signal_request_id: Option<octacity_server_factory::DecisionSignalRequestId>,
-  /// Current Decision Signal receipt.
-  pub signal_receipt_id: Option<octacity_server_factory::DecisionSignalReceiptId>,
-  /// Current ordinary Build linked to the stage.
-  pub build_id: Option<BuildId>,
-  /// Current exact candidate.
-  pub candidate_id: Option<octacity_server_factory::ChangeSetId>,
-  /// Current deterministic evidence.
-  pub evidence_id: Option<octacity_server_factory::EvidenceManifestId>,
-  /// Current immutable evaluation plan.
-  pub evaluation_plan_id: Option<octacity_server_factory::EvaluationPlanId>,
-  /// Latest authoritative deterministic Decision.
-  pub decision_id: Option<octacity_server_factory::DecisionId>,
-  /// Current unresolved or most recent escalation.
-  pub escalation_id: Option<octacity_server_factory::EscalationId>,
-  /// Current delivery attempt.
-  pub delivery_attempt_id: Option<octacity_server_factory::DeliveryAttemptId>,
-  /// Current reporter attempt.
-  pub reporting_attempt_id: Option<octacity_server_factory::ReportingAttemptId>,
 }
 
-/// Complete bounded durable state used by Factory reconciliation and diagnostics.
+/// Bounded working state used by Factory reconciliation.
+/// Ownership and audit history are read through paged diagnostics.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryRunSnapshot {
   /// Immutable admitted Work.
@@ -917,50 +575,10 @@ pub struct FactoryRunSnapshot {
   pub flow: FactoryFlowHistory,
   /// Current claim, when a reconciler owns the Run.
   pub current_claim: Option<FactoryRunClaimRecord>,
-  /// Append-only ownership history.
-  pub claims: Vec<FactoryRunClaimRecord>,
   /// Append-only budget history.
   pub budgets: Vec<FactoryBudgetRecord>,
   /// Append-only code-owned lifecycle checkpoints.
   pub lifecycle_checkpoints: Vec<FactoryLifecycleCheckpoint>,
-  /// Append-only Stage Attempt history.
-  pub stage_attempts: Vec<StageAttempt>,
-  /// Append-only terminal Stage Attempt observations.
-  pub stage_attempt_completions: Vec<StageAttemptCompletion>,
-  /// Append-only immutable Stage Handoffs.
-  pub stage_handoffs: Vec<StageHandoff>,
-  /// Append-only frozen Context Manifests.
-  pub context_manifests: Vec<ContextManifest>,
-  /// Append-only macro-call DAG nodes.
-  pub macro_calls: Vec<MacroCall>,
-  /// Append-only terminal macro-call observations.
-  pub macro_call_completions: Vec<MacroCallCompletion>,
-  /// Append-only Decision Signal requests.
-  pub signal_requests: Vec<DecisionSignalRequest>,
-  /// Append-only Decision Signal receipts.
-  pub signal_receipts: Vec<DecisionSignalReceipt>,
-  /// Append-only ordinary Build links.
-  pub linked_builds: Vec<FactoryBuildLink>,
-  /// Append-only terminal ordinary-Build observations.
-  pub build_observations: Vec<FactoryBuildObservationRecord>,
-  /// Append-only exact candidates.
-  pub candidates: Vec<ChangeSet>,
-  /// Append-only deterministic evidence.
-  pub evidence: Vec<EvidenceManifest>,
-  /// Append-only evaluation plans.
-  pub evaluation_plans: Vec<EvaluationPlan>,
-  /// Append-only evaluator Assessments.
-  pub assessments: Vec<Assessment>,
-  /// Append-only deterministic Decisions.
-  pub decisions: Vec<Decision>,
-  /// Append-only escalations.
-  pub escalations: Vec<Escalation>,
-  /// Append-only delivery attempts.
-  pub delivery_attempts: Vec<DeliveryAttempt>,
-  /// Append-only reporting attempts.
-  pub reporting_attempts: Vec<ReportingAttempt>,
-  /// Append-only secret-safe audit facts.
-  pub audit: Vec<FactoryAuditFact>,
   /// Append-only accepted operator control intents.
   pub controls: Vec<crate::FactoryRunControlRecord>,
   /// Append-only outbox state rows.
@@ -972,110 +590,40 @@ pub struct FactoryRunSnapshot {
 /// One append-only Factory Run diagnostic collection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FactoryRunDiagnosticKind {
-  /// Stage attempts.
-  StageAttempt,
-  /// Terminal stage-attempt completions.
-  StageAttemptCompletion,
-  /// Stage handoffs.
-  StageHandoff,
-  /// Context manifests.
-  ContextManifest,
-  /// Macro-call DAG nodes.
-  MacroCall,
-  /// Terminal macro-call observations.
-  MacroCallCompletion,
-  /// Decision Signal requests.
-  SignalRequest,
-  /// Decision Signal receipts.
-  SignalReceipt,
-  /// Ordinary Build causal links.
-  BuildLink,
-  /// Terminal ordinary-Build observations.
-  BuildObservation,
-  /// Exact ChangeSet candidates.
-  Candidate,
-  /// Evidence manifests.
-  Evidence,
-  /// Evaluation plans.
-  EvaluationPlan,
-  /// Evaluator assessments.
-  Assessment,
-  /// Deterministic decisions.
-  Decision,
-  /// Escalations.
-  Escalation,
-  /// Delivery attempts.
-  DeliveryAttempt,
-  /// Reporting attempts.
-  ReportingAttempt,
+  /// Complete ownership history, independent of the working snapshot ceiling.
+  Claim,
+  /// Complete secret-safe audit history.
+  Audit,
+  /// Executions of arbitrary configured nodes.
+  NodeAttempt,
+  /// Verified completions of arbitrary configured nodes.
+  NodeAttemptCompletion,
 }
 
-/// Typed immutable row returned by a Factory diagnostic collection.
+/// Typed immutable row returned by a common execution diagnostic collection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FactoryRunDiagnosticRecord {
-  /// Stage attempt.
-  StageAttempt(Box<StageAttempt>),
-  /// Terminal stage completion.
-  StageAttemptCompletion(Box<StageAttemptCompletion>),
-  /// Stage handoff.
-  StageHandoff(Box<StageHandoff>),
-  /// Context manifest.
-  ContextManifest(Box<ContextManifest>),
-  /// Macro-call node.
-  MacroCall(Box<MacroCall>),
-  /// Terminal macro-call observation.
-  MacroCallCompletion(Box<MacroCallCompletion>),
-  /// Decision Signal request.
-  SignalRequest(Box<DecisionSignalRequest>),
-  /// Decision Signal receipt.
-  SignalReceipt(Box<DecisionSignalReceipt>),
-  /// Ordinary Build link.
-  BuildLink(Box<FactoryBuildLink>),
-  /// Terminal Build observation.
-  BuildObservation(Box<FactoryBuildObservationRecord>),
-  /// Exact candidate.
-  Candidate(Box<ChangeSet>),
-  /// Evidence manifest.
-  Evidence(Box<EvidenceManifest>),
-  /// Evaluation plan.
-  EvaluationPlan(Box<EvaluationPlan>),
-  /// Evaluator assessment.
-  Assessment(Box<Assessment>),
-  /// Deterministic decision.
-  Decision(Box<Decision>),
-  /// Escalation.
-  Escalation(Box<Escalation>),
-  /// Delivery attempt.
-  DeliveryAttempt(Box<DeliveryAttempt>),
-  /// Reporting attempt.
-  ReportingAttempt(Box<ReportingAttempt>),
+  /// Canonical immutable ownership proof.
+  Claim(Box<FactoryRunClaimRecord>),
+  /// Canonical immutable audit fact.
+  Audit(Box<FactoryAuditFact>),
+  /// Common node execution.
+  NodeAttempt(Box<NodeAttempt>),
+  /// Common node completion.
+  NodeAttemptCompletion(Box<NodeAttemptCompletion>),
 }
 
 impl FactoryRunDiagnosticRecord {
-  /// Returns the stable cursor identity used by deterministic pagination.
+  /// Returns the stable cursor for deterministic pagination.
   #[must_use]
   pub fn cursor(&self) -> FactoryKey {
     let value = match self {
-      Self::StageAttempt(value) => value.id().to_string(),
-      Self::StageAttemptCompletion(value) => value.id().to_string(),
-      Self::StageHandoff(value) => value.id().to_string(),
-      Self::ContextManifest(value) => value.id().to_string(),
-      Self::MacroCall(value) => value.id().to_string(),
-      Self::MacroCallCompletion(value) => value.call_id().to_string(),
-      Self::SignalRequest(value) => value.id().to_string(),
-      Self::SignalReceipt(value) => value.id().to_string(),
-      Self::BuildLink(value) => value.build_id.to_string(),
-      Self::BuildObservation(value) => value.id.to_string(),
-      Self::Candidate(value) => value.id().to_string(),
-      Self::Evidence(value) => value.id().to_string(),
-      Self::EvaluationPlan(value) => value.id().to_string(),
-      Self::Assessment(value) => value.id().to_string(),
-      Self::Decision(value) => value.id().to_string(),
-      Self::Escalation(value) => value.id().to_string(),
-      Self::DeliveryAttempt(value) => value.id().to_string(),
-      Self::ReportingAttempt(value) => value.id().to_string(),
+      Self::Claim(value) => value.id.to_string(),
+      Self::Audit(value) => value.id.to_string(),
+      Self::NodeAttempt(value) => value.id().to_string(),
+      Self::NodeAttemptCompletion(value) => value.id().to_string(),
     };
-    FactoryKey::new(value).expect("Factory diagnostic identities are canonical keys")
+    FactoryKey::new(value).expect("common diagnostic identities are canonical keys")
   }
 }
 

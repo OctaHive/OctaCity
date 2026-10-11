@@ -19,6 +19,7 @@ pub(crate) fn binding(project: octacity_server_domain::ProjectId) -> FlowBuildBi
       FactoryDigest::from_bytes([62; 32]),
     ),
     result_output: key("audit.report"),
+    result_output_kind: EvidenceOutputKind::Report,
     result_outcome: key("observed"),
     evidence: vec![],
   }
@@ -73,10 +74,76 @@ pub(crate) fn execution_fixture_with_pool(
   evidence: Vec<EvidenceRequirement>,
   pool: Option<FactoryKey>,
 ) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_for_work(kind, work(), evidence, pool)
+}
+pub(crate) fn execution_fixture_for_work(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  evidence: Vec<EvidenceRequirement>,
+  pool: Option<FactoryKey>,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_for_work_with_output_kind(kind, work, evidence, pool, EvidenceOutputKind::Report)
+}
+
+#[allow(dead_code)] // This shared fixture variation is exercised by application contracts.
+pub(crate) fn execution_fixture_with_output_kind(
+  kind: FlowNodeKind,
+  output_kind: EvidenceOutputKind,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_for_work_with_output_kind(kind, work(), vec![], None, output_kind)
+}
+
+fn execution_fixture_for_work_with_output_kind(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  evidence: Vec<EvidenceRequirement>,
+  pool: Option<FactoryKey>,
+  output_kind: EvidenceOutputKind,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  let mut selection = binding(work.subject().project_id());
+  selection.evidence = evidence;
+  selection.result_output_kind = output_kind;
+  execution_fixture_for_work_with_binding(kind, work, selection, pool, None)
+}
+
+pub(crate) fn execution_fixture_for_work_with_binding(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  selection: FlowBuildBinding,
+  pool: Option<FactoryKey>,
+  output_schema: Option<FlowDataSchema>,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_with_retry_policy(kind, work, selection, pool, output_schema, 0)
+}
+#[allow(dead_code)] // Shared consumers opt into retry behavior explicitly.
+pub(crate) fn execution_fixture_with_retries(
+  kind: FlowNodeKind,
+  maximum: u16,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  execution_fixture_with_retries_and_pool(kind, maximum, None)
+}
+#[allow(dead_code)] // Shared owner contracts also exercise queued technical retries.
+pub(crate) fn execution_fixture_with_retries_and_pool(
+  kind: FlowNodeKind,
+  maximum: u16,
+  pool: Option<FactoryKey>,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
   let work = work();
+  let selection = binding(work.subject().project_id());
+  execution_fixture_with_retry_policy(kind, work, selection, pool, None, maximum)
+}
+#[allow(dead_code)] // Capability contracts select their own pinned output schema and retry policy.
+pub(crate) fn execution_fixture_with_retry_policy(
+  kind: FlowNodeKind,
+  work: WorkEnvelope,
+  selection: FlowBuildBinding,
+  pool: Option<FactoryKey>,
+  output_schema: Option<FlowDataSchema>,
+  maximum: u16,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
   let limits = FlowAdmissionLimits::product_defaults(
     4,
-    BudgetLimit::new(16, 10000, 1000, 10000, 10000).unwrap(),
+    BudgetLimit::new(16, 10000, 1000, 10000, 10000 * (1 + u64::from(maximum))).unwrap(),
     FactoryPermissionSet::deny_all(),
   )
   .unwrap();
@@ -95,16 +162,15 @@ pub(crate) fn execution_fixture_with_pool(
   )
   .unwrap();
   let budget = BudgetLimit::new(1, 1000, 100, 1000, 10000).unwrap();
-  let mut selection = binding(work.subject().project_id());
-  selection.evidence = evidence;
+  let output_schema = output_schema.unwrap_or_else(|| schema.clone());
   let mut node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
     key: key("accessibility_audit"),
     kind,
     input_schema: Some(schema.reference().clone()),
     outcomes: vec![FlowOutcomeDefinition::new(
-      key("observed"),
+      selection.result_outcome.clone(),
       FlowOutcomeKind::Success,
-      schema.reference().clone(),
+      output_schema.reference().clone(),
     )],
     budget,
     permissions: FactoryPermissionSet::deny_all(),
@@ -114,6 +180,7 @@ pub(crate) fn execution_fixture_with_pool(
   .unwrap()
   .with_build(selection.clone())
   .unwrap();
+  node = node.with_execution_retries(maximum).unwrap();
   if let Some(pool) = pool {
     node = node.with_phase_pool(pool);
   }
@@ -125,10 +192,13 @@ pub(crate) fn execution_fixture_with_pool(
     nodes: vec![node],
     transitions: vec![FlowTransition::new(
       key("accessibility_audit"),
-      key("observed"),
+      selection.result_outcome.clone(),
       FlowTransitionTarget::Terminal(key("done")),
     )],
-    terminals: vec![FlowTerminalDefinition::new(key("done"), schema.reference().clone())],
+    terminals: vec![FlowTerminalDefinition::new(
+      key("done"),
+      output_schema.reference().clone(),
+    )],
     context_projections: vec![],
     data_projections: vec![],
     execution: FlowExecutionPolicy::new(limits.budget(), FactoryPermissionSet::deny_all(), 1).unwrap(),
@@ -142,7 +212,14 @@ pub(crate) fn execution_fixture_with_pool(
     limits,
     flow,
     cycle,
+    FactoryWipLimits::new(8, 16).unwrap(),
   )
+  .unwrap()
+  .with_data_schemas(if output_schema == schema {
+    vec![schema.clone()]
+  } else {
+    vec![schema.clone(), output_schema.clone()]
+  })
   .unwrap();
   let task_subject = FactoryTaskSubject::Exact(work.subject().clone());
   let task = work.artifacts().task().clone();
@@ -184,6 +261,7 @@ pub(crate) fn execution_fixture_with_pool(
     admitted.initial_cycle(),
     admitted.closure().definition(admitted.closure().root()).unwrap(),
     NodeAttemptInput {
+      started_at: at,
       id: NodeAttemptId::generate(),
       node_key: key("accessibility_audit"),
       node_kind: kind,
@@ -204,5 +282,5 @@ pub(crate) fn execution_fixture_with_pool(
     },
   )
   .unwrap();
-  (work, admitted, schema, input, attempt)
+  (work, admitted, output_schema, input, attempt)
 }

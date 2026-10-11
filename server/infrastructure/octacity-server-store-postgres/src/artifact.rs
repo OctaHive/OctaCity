@@ -198,6 +198,17 @@ pub(crate) async fn reserve(pool: &PgPool, request: ReserveArtifact) -> Result<A
     StoreOperation::ReserveArtifact,
   )
   .await?;
+  let template = output_template(&mut transaction, request.identity.job_id).await?;
+  if template.managed_intent().is_some() {
+    enforce_output_limits(
+      &mut transaction,
+      &template,
+      request.identity.job_id,
+      &request.identity.artifact_type,
+      request.identity.size_bytes,
+    )
+    .await?;
+  }
   insert_artifact(&mut transaction, &record, StoreOperation::ReserveArtifact).await?;
   transaction.commit().await.map_err(unavailable)?;
   Ok(record)
@@ -283,8 +294,10 @@ pub(crate) async fn begin_upload(
       disposition: MutationDisposition::Replayed,
     });
   }
+  let template = output_template(&mut transaction, request.job_id).await?;
   enforce_output_limits(
     &mut transaction,
+    &template,
     request.job_id,
     &request.artifact_type,
     request.size_bytes,
@@ -356,18 +369,26 @@ pub(crate) async fn begin_upload(
   })
 }
 
-async fn enforce_output_limits(
+async fn output_template(
   transaction: &mut Transaction<'_, Postgres>,
   job_id: JobId,
-  artifact_type: &ArtifactType,
-  requested_bytes: u64,
-) -> Result<(), StoreError> {
+) -> Result<JobSpecTemplate, StoreError> {
   let Json(template): Json<JobSpecTemplate> = sqlx::query_scalar("SELECT job_spec_template FROM jobs WHERE id = $1")
     .bind(job_id.as_uuid())
     .fetch_one(&mut **transaction)
     .await
     .map_err(unavailable)?;
   template.validate().map_err(|_| StoreError::Unavailable)?;
+  Ok(template)
+}
+
+async fn enforce_output_limits(
+  transaction: &mut Transaction<'_, Postgres>,
+  template: &JobSpecTemplate,
+  job_id: JobId,
+  artifact_type: &ArtifactType,
+  requested_bytes: u64,
+) -> Result<(), StoreError> {
   let limits = template.output_limits();
   let (maximum_count, maximum_bytes) = match artifact_type {
     ArtifactType::Artifact => (u64::from(limits.artifact_count), limits.artifact_bytes),
@@ -375,10 +396,12 @@ async fn enforce_output_limits(
   };
   let (retained_count, retained_bytes): (i64, i64) = sqlx::query_as(
     "SELECT COUNT(*)::BIGINT, COALESCE(SUM(byte_length), 0)::BIGINT FROM artifacts \
-     WHERE job_id = $1 AND artifact_type = $2 AND state <> 'deleted'",
+     WHERE job_id = $1 AND artifact_type = $2 AND ($3 OR state <> 'deleted')",
   )
   .bind(job_id.as_uuid())
   .bind(artifact_type.as_str())
+  // Managed ceilings bound total execution output, not current storage size.
+  .bind(template.managed_intent().is_some())
   .fetch_one(&mut **transaction)
   .await
   .map_err(unavailable)?;

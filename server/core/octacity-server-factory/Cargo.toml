@@ -8,6 +8,9 @@ repository.workspace = true
 publish = false
 description = "Dark Factory domain values and invariants for OctaCity"
 
+[features]
+test-support = []
+
 [dependencies]
 blake3.workspace = true
 octacity-server-domain = { path = "../octacity-server-domain" }

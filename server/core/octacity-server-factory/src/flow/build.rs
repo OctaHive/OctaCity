@@ -21,6 +21,8 @@ pub struct FlowBuildBinding {
   pub build_configuration: crate::BuildConfigurationRef,
   /// Declared logical output containing schema-validated observations.
   pub result_output: FactoryKey,
+  /// Publication category of the exact JSON output selected for this result.
+  pub result_output_kind: crate::EvidenceOutputKind,
   /// Finite observation outcome selected by the operator, never by provider JSON.
   pub result_outcome: FactoryKey,
   /// Additional exact outputs independently checked by their configured tools.
@@ -35,7 +37,6 @@ impl FlowBuildBinding {
       crate::FlowNodeKind::BuildCommand | crate::FlowNodeKind::Reasoning
     ) || node.input_schema().is_none()
       || node.outcome(&self.result_outcome).is_none()
-      || node.stage_projection().is_some()
       || self.evidence.len() >= crate::MAX_FLOW_SCHEMA_ENTRIES
       || self
         .evidence
@@ -77,4 +78,6 @@ pub struct FlowBuildProfile {
   pub build_configuration: crate::BuildConfigurationRef,
   /// Declared logical output containing typed, non-authoritative observations.
   pub result_output: FactoryKey,
+  /// Publication category of the exact JSON output selected for this result.
+  pub result_output_kind: crate::EvidenceOutputKind,
 }

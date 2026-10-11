@@ -6,10 +6,10 @@ use crate::{
   FactoryKey, FactoryPermissionSet, FactoryRunId, FlowAdmissionLimits, FlowContextProjection, FlowDataProjection,
   FlowDefinition, FlowDefinitionId, FlowDefinitionInput, FlowDefinitionRef, FlowDefinitionVersion, FlowDirective,
   FlowDirectiveInputs, FlowExecutionPolicy, FlowInterpreter, FlowNodeDefinition, FlowNodeDefinitionInput, FlowNodeKind,
-  FlowOutcomeDefinition, FlowOutcomeKind, FlowRun, FlowRunId, FlowRunParent, FlowTerminalDefinition, FlowTransition,
-  FlowTransitionTarget, ImmutableReference, NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput,
-  NodeAttemptId, NodeAttemptInput, NodeAttemptNumber, NodeExecutionIdentity, PinnedFlowDefinitionClosure,
-  WorkflowCycle,
+  FlowOutcomeDefinition, FlowOutcomeKind, FlowRun, FlowRunId, FlowRunParent, FlowRuntimeHistory,
+  FlowTerminalDefinition, FlowTransition, FlowTransitionTarget, ImmutableReference, NodeAttempt, NodeAttemptCompletion,
+  NodeAttemptCompletionInput, NodeAttemptId, NodeAttemptInput, NodeAttemptNumber, NodeExecutionIdentity,
+  PinnedFlowDefinitionClosure, WorkflowCycle,
 };
 
 fn key(value: &str) -> FactoryKey {
@@ -135,13 +135,14 @@ fn attempt(
     cycle,
     definition,
     NodeAttemptInput {
+      started_at: (ownership()).claim().claimed_at(),
       id: NodeAttemptId::from_uuid(Uuid::from_u128(id)).unwrap(),
       node_key: node.key().clone(),
       node_kind: node.kind(),
       number: NodeAttemptNumber::new(number).unwrap(),
       input_digest: FactoryDigest::sha256("flow-test-input", &[&id.to_be_bytes()]),
       budget: budget(limit),
-      deadline: Timestamp::from_unix_millis(99).unwrap(),
+      deadline: Timestamp::from_unix_millis(2).unwrap(),
       execution,
       ownership: ownership(),
     },
@@ -332,8 +333,13 @@ fn nested_flow_returns_only_through_the_callers_declared_typed_outcome() {
         &child_cycle,
         &child_attempt,
         &child_completion,
-        std::slice::from_ref(&child_attempt),
-        std::slice::from_ref(&child_completion),
+        FlowRuntimeHistory {
+          stops: &[],
+          flow_runs: std::slice::from_ref(&child_run),
+          cycles: std::slice::from_ref(&child_cycle),
+          attempts: std::slice::from_ref(&child_attempt),
+          completions: std::slice::from_ref(&child_completion),
+        },
       )
       .unwrap(),
     vec![FlowDirective::Complete {
@@ -350,8 +356,13 @@ fn nested_flow_returns_only_through_the_callers_declared_typed_outcome() {
         &root_cycle,
         &call,
         &returned,
-        std::slice::from_ref(&call),
-        std::slice::from_ref(&returned),
+        FlowRuntimeHistory {
+          stops: &[],
+          flow_runs: std::slice::from_ref(&root_run),
+          cycles: std::slice::from_ref(&root_cycle),
+          attempts: std::slice::from_ref(&call),
+          completions: std::slice::from_ref(&returned),
+        },
       )
       .unwrap(),
     vec![FlowDirective::ExecuteNode {
@@ -420,13 +431,14 @@ fn interpreter_uses_only_the_declared_outcome_route_from_authoritative_facts() {
     &cycle,
     &root,
     NodeAttemptInput {
+      started_at: (ownership.clone()).claim().claimed_at(),
       id: NodeAttemptId::from_uuid(Uuid::from_u128(44)).unwrap(),
       node_key: key("gate"),
       node_kind: FlowNodeKind::DeterministicGate,
       number: NodeAttemptNumber::INITIAL,
       input_digest: FactoryDigest::sha256("flow-test-input", &[b"input"]),
       budget: budget(10),
-      deadline: Timestamp::from_unix_millis(99).unwrap(),
+      deadline: Timestamp::from_unix_millis(2).unwrap(),
       execution: NodeExecutionIdentity::BuiltIn,
       ownership: ownership.clone(),
     },
@@ -468,8 +480,13 @@ fn interpreter_uses_only_the_declared_outcome_route_from_authoritative_facts() {
         &cycle,
         &attempt,
         &completion,
-        std::slice::from_ref(&attempt),
-        std::slice::from_ref(&completion),
+        FlowRuntimeHistory {
+          stops: &[],
+          flow_runs: std::slice::from_ref(&flow_run),
+          cycles: std::slice::from_ref(&cycle),
+          attempts: std::slice::from_ref(&attempt),
+          completions: std::slice::from_ref(&completion),
+        },
       )
       .unwrap(),
     vec![FlowDirective::Complete {
@@ -690,8 +707,13 @@ fn interpreter_enforces_aggregate_wip_without_discounting_an_active_sibling() {
         &cycle,
         &split,
         &completed_split,
-        &[split.clone(), active_sibling],
-        std::slice::from_ref(&completed_split),
+        FlowRuntimeHistory {
+          stops: &[],
+          flow_runs: std::slice::from_ref(&flow_run),
+          cycles: std::slice::from_ref(&cycle),
+          attempts: &[split.clone(), active_sibling],
+          completions: std::slice::from_ref(&completed_split),
+        },
       )
       .is_err()
   );
@@ -758,8 +780,13 @@ fn interpreter_carries_only_declared_context_and_data_into_the_successor() {
         &cycle,
         &source_attempt,
         &source_completion,
-        std::slice::from_ref(&source_attempt),
-        std::slice::from_ref(&source_completion),
+        FlowRuntimeHistory {
+          stops: &[],
+          flow_runs: std::slice::from_ref(&flow_run),
+          cycles: std::slice::from_ref(&cycle),
+          attempts: std::slice::from_ref(&source_attempt),
+          completions: std::slice::from_ref(&source_completion),
+        },
       )
       .unwrap(),
     vec![FlowDirective::ExecuteNode {
@@ -827,8 +854,13 @@ fn interpreter_counts_budget_and_repeats_across_workflow_cycles() {
         &second_cycle,
         &second,
         &second_zero,
-        &[first.clone(), second.clone()],
-        &[first_zero, second_zero.clone()],
+        FlowRuntimeHistory {
+          stops: &[],
+          flow_runs: std::slice::from_ref(&flow_run),
+          cycles: std::slice::from_ref(&second_cycle),
+          attempts: &[first.clone(), second.clone()],
+          completions: &[first_zero, second_zero.clone()],
+        },
       )
       .unwrap(),
     vec![FlowDirective::Complete {
@@ -862,8 +894,13 @@ fn interpreter_counts_budget_and_repeats_across_workflow_cycles() {
         &second_cycle,
         &second,
         &second_completion,
-        &[first, second.clone()],
-        &[first_completion, second_completion.clone()],
+        FlowRuntimeHistory {
+          stops: &[],
+          flow_runs: std::slice::from_ref(&flow_run),
+          cycles: std::slice::from_ref(&second_cycle),
+          attempts: &[first, second.clone()],
+          completions: &[first_completion, second_completion.clone()],
+        },
       )
       .is_err()
   );

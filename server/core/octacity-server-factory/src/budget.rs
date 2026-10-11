@@ -172,16 +172,6 @@ impl BudgetUsage {
     }
     Ok(self)
   }
-
-  pub(crate) fn is_exhausted(self, limit: BudgetLimit, resource: BudgetResource) -> bool {
-    match resource {
-      BudgetResource::Attempts => self.attempts >= limit.max_attempts,
-      BudgetResource::ElapsedTime => self.elapsed_millis >= limit.max_elapsed_millis,
-      BudgetResource::Tokens => self.tokens >= limit.max_tokens,
-      BudgetResource::Cost => self.cost_micro_units >= limit.max_cost_micro_units,
-      BudgetResource::OutputBytes => self.output_bytes >= limit.max_output_bytes,
-    }
-  }
 }
 
 fn validate_limit(value: u64, ceiling: u64, resource: BudgetResource) -> Result<(), FactoryError> {

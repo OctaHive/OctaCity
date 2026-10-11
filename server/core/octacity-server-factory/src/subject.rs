@@ -23,6 +23,19 @@ impl ExactSubject {
     }
   }
 
+  /// Canonical domain-separated identity of the exact repository subject.
+  #[must_use]
+  pub fn digest(&self) -> FactoryDigest {
+    FactoryDigest::sha256(
+      "octacity.factory.subject.v1",
+      &[
+        self.project_id.as_uuid().as_bytes(),
+        self.repository_id.as_uuid().as_bytes(),
+        self.base_revision.as_str().as_bytes(),
+      ],
+    )
+  }
+
   /// Returns the owning Project.
   #[must_use]
   pub const fn project_id(&self) -> ProjectId {

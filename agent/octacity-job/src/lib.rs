@@ -484,6 +484,21 @@ impl JobExecutor {
     events: &mpsc::Sender<RunnerStreamItem>,
   ) -> Result<JobCompletion, JobFailure> {
     let spec = ExecutableJobSpec::try_from(request.spec).map_err(JobFailure::from)?;
+    let managed_deadline = spec
+      .execution_deadline
+      .map(|deadline| {
+        let now = std::time::SystemTime::now()
+          .duration_since(std::time::UNIX_EPOCH)
+          .map_err(|_| JobError::Invalid("system clock is before the Unix epoch".to_owned()))?;
+        let remaining = Duration::from_millis(deadline)
+          .checked_sub(now)
+          .filter(|duration| !duration.is_zero())
+          .ok_or(JobError::TimedOut)?;
+        Instant::now()
+          .checked_add(remaining)
+          .ok_or_else(|| JobError::Invalid("execution deadline is out of range".to_owned()))
+      })
+      .transpose()?;
     if spec.cache.is_some() != request.cache_grant.is_some() {
       return Err(
         JobError::Invalid("signed cache policy and fenced cache grant must be present together".to_owned()).into(),
@@ -565,11 +580,14 @@ impl JobExecutor {
     create_private_directory(&job_root)?;
     let staged = match (&managed, &self.protected_input_stager) {
       (Some(_), Some(stager)) => Some(
-        stager
-          .stage(&request.protected_inputs, &job_root, &cancellation)
-          .await
-          .map_err(JobError::ProtectedInputs)
-          .map_err(|error| JobFailure::with_workspace(error, job_root.clone()))?,
+        tokio::time::timeout_at(
+          managed_deadline.expect("managed execution retains its signed deadline"),
+          stager.stage(&request.protected_inputs, &job_root, &cancellation),
+        )
+        .await
+        .map_err(|_| JobFailure::with_workspace(JobError::TimedOut, job_root.clone()))?
+        .map_err(JobError::ProtectedInputs)
+        .map_err(|error| JobFailure::with_workspace(error, job_root.clone()))?,
       ),
       (None, _) => None,
       (Some(_), None) => unreachable!("managed execution checked protected-input policy before workspace creation"),
@@ -586,7 +604,8 @@ impl JobExecutor {
       } else {
         (None, None)
       };
-      let deadline = Instant::now() + Duration::from_secs(spec.runtime.timeout_seconds());
+      let runtime_deadline = Instant::now() + Duration::from_secs(spec.runtime.timeout_seconds());
+      let deadline = managed_deadline.map_or(runtime_deadline, |deadline| deadline.min(runtime_deadline));
       info!(job_id = %spec.job_id, attempt = spec.attempt, runtime = ?spec.runtime.label(), "starting job");
 
       let source = self
@@ -609,16 +628,21 @@ impl JobExecutor {
         .await
         .map_err(|error| JobError::Source(Box::new(error)))?;
 
-      self
-        .materialize_change_set(
+      let materialization_cancellation = cancellation.child_token();
+      deadline_operation(
+        deadline,
+        self.cancellation_grace,
+        &materialization_cancellation,
+        self.materialize_change_set(
           managed.as_ref(),
           staged.as_ref(),
           &source.revision,
           &workspace,
           scratch.as_deref(),
-          &cancellation,
-        )
-        .await?;
+          &materialization_cancellation,
+        ),
+      )
+      .await?;
 
       if cancellation.is_cancelled() {
         return Err(JobError::Cancelled);
@@ -628,10 +652,8 @@ impl JobExecutor {
       let identity = match spec.runtime.workload_identity_profile() {
         Some(profile) => Some(
           self
-            .identity
-            .provision(profile, &job_root, &cancellation)
-            .await
-            .map_err(|error| JobError::WorkloadIdentity(Box::new(error)))?,
+            .provision_identity(profile, &job_root, deadline, &cancellation)
+            .await?,
         ),
         None => None,
       };
@@ -753,16 +775,21 @@ impl JobExecutor {
       let operation = finish_identity(operation, identity).await;
       let runner = finish_cache_session(operation, cache).await?;
 
-      let change_set = self
-        .capture_change_set(
+      let capture_cancellation = cancellation.child_token();
+      let change_set = deadline_operation(
+        deadline,
+        self.cancellation_grace,
+        &capture_cancellation,
+        self.capture_change_set(
           managed.as_ref(),
           &source.revision,
           &runner,
           &workspace,
           &job_root,
-          &cancellation,
-        )
-        .await?;
+          &capture_cancellation,
+        ),
+      )
+      .await?;
 
       info!(job_id = %spec.job_id, attempt = spec.attempt, status = ?runner.status, "finished job");
       Ok((source, runner, workspace, change_set))
@@ -906,6 +933,37 @@ impl JobExecutor {
     Ok(())
   }
 
+  // Provisioning can race cancellation and return a live lease. Always revoke
+  // that lease before reporting a timeout; dropping it is not revocation.
+  async fn provision_identity(
+    &self,
+    profile: &str,
+    job_root: &Path,
+    deadline: Instant,
+    cancellation: &CancellationToken,
+  ) -> Result<WorkloadIdentityLease, JobError> {
+    remaining(deadline)?;
+    let cancellation = cancellation.child_token();
+    let operation = self.identity.provision(profile, job_root, &cancellation);
+    tokio::pin!(operation);
+    tokio::select! {
+      biased;
+      _ = tokio::time::sleep_until(deadline) => {
+        cancellation.cancel();
+        let identity = tokio::time::timeout(self.cancellation_grace, operation).await
+          .ok().and_then(Result::ok);
+        finish_identity(Err(JobError::TimedOut), identity).await
+      }
+      result = &mut operation => {
+        let identity = result.map_err(|error| JobError::WorkloadIdentity(Box::new(error)))?;
+        match remaining(deadline) {
+          Ok(_) => Ok(identity),
+          Err(error) => finish_identity(Err(error), Some(identity)).await,
+        }
+      }
+    }
+  }
+
   async fn materialize_change_set(
     &self,
     managed: Option<&factory_preflight::ManagedFactoryExecution>,
@@ -975,7 +1033,7 @@ impl JobExecutor {
         .as_ref()
         .map_or_else(|| source_revision.to_owned(), |value| value.candidate_revision.clone()),
       bundle_base_revision: source_revision.to_owned(),
-      stage_attempt_id: factory.stage_attempt_id.clone(),
+      node_attempt_id: factory.node_attempt_id.clone(),
       instruction: capture.clone(),
     };
     self
@@ -1072,6 +1130,30 @@ async fn finish_identity<T>(
       operation: Box::new(operation),
       revocation: Box::new(revocation),
     }),
+  }
+}
+
+/// Cancels at the execution ceiling, then lets the installed adapter clean up
+/// within the configured grace period. A late success cannot escape the ceiling.
+async fn deadline_operation<T>(
+  deadline: Instant,
+  grace: Duration,
+  cancellation: &CancellationToken,
+  operation: impl std::future::Future<Output = Result<T, JobError>>,
+) -> Result<T, JobError> {
+  remaining(deadline)?;
+  tokio::pin!(operation);
+  tokio::select! {
+    biased;
+    _ = tokio::time::sleep_until(deadline) => {
+      cancellation.cancel();
+      let _ = tokio::time::timeout(grace, operation).await;
+      Err(JobError::TimedOut)
+    }
+    result = &mut operation => {
+      remaining(deadline)?;
+      result
+    }
   }
 }
 

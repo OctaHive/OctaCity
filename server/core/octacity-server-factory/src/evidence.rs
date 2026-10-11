@@ -7,40 +7,46 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{
   CandidateSubject, ChangeSetId, DeterministicGateOutcome, EvidenceManifestId, FactoryArtifactReference, FactoryDigest,
-  FactoryError, FactoryKey, ImmutableReference, StageAttempt, StageAttemptId,
+  FactoryError, FactoryKey, FlowNodeInput, ImmutableReference, NodeAttempt, NodeAttemptId,
 };
 
 /// Maximum typed evidence items in one manifest.
 pub const MAX_EVIDENCE_ITEMS: usize = 256;
 
-/// Trusted immutable source candidate captured after a writable Stage Attempt.
+/// Trusted immutable source candidate bound to one exact producing node input.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ChangeSet {
   id: ChangeSetId,
-  stage_attempt_id: StageAttemptId,
+  node_attempt_id: NodeAttemptId,
   subject: CandidateSubject,
   bundle_artifact: ArtifactId,
   manifest_artifact: ArtifactId,
 }
 
 impl ChangeSet {
-  /// Constructs a ChangeSet bound to the Stage Attempt's exact base subject.
+  /// Binds verified candidate artifacts to the exact frozen input and node attempt.
+  /// The caller verifies artifact bytes and producing Build provenance before
+  /// construction; logical node names and stage roles carry no authority here.
   pub fn new(
     id: ChangeSetId,
-    stage: &StageAttempt,
+    input: &FlowNodeInput,
+    node: &NodeAttempt,
     subject: CandidateSubject,
     bundle_artifact: ArtifactId,
     manifest_artifact: ArtifactId,
   ) -> Result<Self, FactoryError> {
-    if subject.exact() != stage.subject() {
+    if subject.exact() != input.subject() {
       return Err(FactoryError::InconsistentSubject);
     }
-    if !matches!(
-      stage.kind(),
-      crate::FactoryStageKind::Implementation | crate::FactoryStageKind::Rework
-    ) {
+    if node.factory_run_id() != input.factory_run_id()
+      || node.flow_run_id() != input.flow_run_id()
+      || node.workflow_cycle_id() != input.cycle_id()
+      || node.node_key() != input.node()
+      || node.input_digest() != input.digest()?
+    {
       return Err(FactoryError::InvalidReference {
-        relationship: "changeset producing stage",
+        relationship: "changeset producing node input",
       });
     }
     if bundle_artifact == manifest_artifact {
@@ -50,7 +56,7 @@ impl ChangeSet {
     }
     Ok(Self {
       id,
-      stage_attempt_id: stage.id(),
+      node_attempt_id: node.id(),
       subject,
       bundle_artifact,
       manifest_artifact,
@@ -63,10 +69,10 @@ impl ChangeSet {
     self.id
   }
 
-  /// Returns the producing Stage Attempt.
+  /// Returns the exact producing Node Attempt.
   #[must_use]
-  pub const fn stage_attempt_id(&self) -> StageAttemptId {
-    self.stage_attempt_id
+  pub const fn node_attempt_id(&self) -> NodeAttemptId {
+    self.node_attempt_id
   }
 
   /// Returns the exact candidate subject.

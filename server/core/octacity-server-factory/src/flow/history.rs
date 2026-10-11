@@ -8,6 +8,8 @@ use crate::{
 /// Borrowed authoritative Flow runtime rows validated as one aggregate.
 #[derive(Clone, Copy)]
 pub struct FlowRuntimeHistory<'a> {
+  /// Confirmed technical stops independent of semantic completions.
+  pub stops: &'a [crate::FlowNodeStop],
   /// Root and nested Flow Runs.
   pub flow_runs: &'a [FlowRun],
   /// Initial and subsequent append-only workflow cycles.
@@ -16,6 +18,49 @@ pub struct FlowRuntimeHistory<'a> {
   pub attempts: &'a [NodeAttempt],
   /// At most one terminal observation for each attempt.
   pub completions: &'a [NodeAttemptCompletion],
+}
+
+impl<'a> FlowRuntimeHistory<'a> {
+  /// Counts unfinished executable attempts. Suspended subflow call frames are
+  /// control records; their child attempts own executable WIP.
+  #[must_use]
+  pub fn active_node_count(self) -> usize {
+    self.active_nodes().count()
+  }
+
+  /// Iterates executable attempts that have neither a result nor a confirmed stop.
+  pub fn active_nodes(self) -> impl Iterator<Item = &'a NodeAttempt> {
+    let completed = self
+      .completions
+      .iter()
+      .map(NodeAttemptCompletion::node_attempt_id)
+      .chain(self.stops.iter().map(crate::FlowNodeStop::node_attempt_id))
+      .collect::<BTreeSet<_>>();
+    self
+      .attempts
+      .iter()
+      .filter(move |attempt| attempt.node_kind() != FlowNodeKind::SubflowCall && !completed.contains(&attempt.id()))
+  }
+
+  /// Sums measured consumption once per retained result or technical stop.
+  pub(super) fn observed_usage_by_flow(self) -> Result<BTreeMap<FlowRunId, BudgetUsage>, FactoryError> {
+    let attempts = self
+      .attempts
+      .iter()
+      .map(|row| (row.id(), row.flow_run_id()))
+      .collect::<BTreeMap<_, _>>();
+    let mut usage = BTreeMap::<FlowRunId, BudgetUsage>::new();
+    for completion in self.completions {
+      add_flow_usage(&mut usage, completion.flow_run_id(), completion.usage())?;
+    }
+    for stop in self.stops {
+      let flow = attempts
+        .get(&stop.node_attempt_id())
+        .ok_or_else(|| invalid("Node stop attempt"))?;
+      add_flow_usage(&mut usage, *flow, stop.usage())?;
+    }
+    Ok(usage)
+  }
 }
 
 /// Validates the complete Flow runtime aggregate against one admitted closure.
@@ -81,50 +126,42 @@ pub fn validate_flow_runtime_history(
   }
 
   validate_cycles(admitted, &flow_runs, &cycles)?;
-  validate_attempts(
-    &validated,
-    &flow_runs,
-    &cycles,
-    &attempts,
-    history.attempts,
-    history.completions,
-  )?;
+  validate_attempts(&validated, &flow_runs, &cycles, &attempts, history)?;
   validate_completions(&validated, &flow_runs, &attempts, history.completions)?;
 
-  let completed = history
-    .completions
-    .iter()
-    .map(NodeAttemptCompletion::node_attempt_id)
-    .collect::<BTreeSet<_>>();
-  let active = history
-    .attempts
-    .iter()
-    // A subflow call is a suspended control frame; its child owns executable WIP.
-    .filter(|attempt| {
-      attempt.stage_projection_id().is_none()
-        && attempt.node_kind() != FlowNodeKind::SubflowCall
-        && !completed.contains(&attempt.id())
-    })
-    .count();
+  let mut stopped = BTreeSet::new();
+  for receipt in history.stops {
+    let attempt = attempts
+      .get(&receipt.node_attempt_id())
+      .ok_or_else(|| invalid("Node stop owner"))?;
+    if !stopped.insert(attempt.id())
+      || history
+        .completions
+        .iter()
+        .any(|row| row.node_attempt_id() == attempt.id())
+    {
+      return Err(invalid("unique Node stop"));
+    }
+    attempt.verify_observer(receipt.ownership(), receipt.observed_at())?;
+    receipt.usage().validate(attempt.budget())?;
+  }
+  let active = history.active_node_count();
   if active > usize::from(limits.max_wip()) {
     return Err(invalid("Flow aggregate WIP"));
   }
 
-  let aggregate_usage = sum_usage(history.completions.iter().map(NodeAttemptCompletion::usage))?;
-  aggregate_usage.validate(limits.budget())?;
+  let usage = history.observed_usage_by_flow()?;
+  sum_usage(usage.values().copied())?.validate(limits.budget())?;
   for flow_run in flow_runs.values() {
     let definition = validated
       .closure()
       .definition(flow_run.definition())
       .ok_or_else(|| invalid("Flow Run definition"))?;
-    let usage = sum_usage(
-      history
-        .completions
-        .iter()
-        .filter(|completion| completion.flow_run_id() == flow_run.id())
-        .map(NodeAttemptCompletion::usage),
-    )?;
-    usage.validate(definition.execution().budget())?;
+    usage
+      .get(&flow_run.id())
+      .copied()
+      .unwrap_or_default()
+      .validate(definition.execution().budget())?;
   }
   Ok(())
 }
@@ -175,9 +212,10 @@ fn validate_attempts(
   flow_runs: &BTreeMap<FlowRunId, &FlowRun>,
   cycles: &BTreeMap<WorkflowCycleId, &WorkflowCycle>,
   attempts: &BTreeMap<NodeAttemptId, &NodeAttempt>,
-  ordered_attempts: &[NodeAttempt],
-  completions: &[NodeAttemptCompletion],
+  history: FlowRuntimeHistory<'_>,
 ) -> Result<(), FactoryError> {
+  let ordered_attempts = history.attempts;
+  let completions = history.completions;
   for attempt in attempts.values() {
     let flow_run = flow_runs
       .get(&attempt.flow_run_id())
@@ -199,9 +237,7 @@ fn validate_attempts(
     if !attempt.execution().is_compatible(attempt.node_kind()) {
       return Err(invalid("Node Attempt executor"));
     }
-    if attempt.deadline() <= attempt.claim().claimed_at() || attempt.deadline() > attempt.claim().expires_at() {
-      return Err(invalid("Node Attempt deadline"));
-    }
+    attempt.validate_execution_window()?;
   }
 
   let mut numbers = BTreeMap::<FlowRunId, Vec<u64>>::new();
@@ -233,16 +269,45 @@ fn validate_attempts(
       .collect::<Vec<_>>();
     run_attempts.sort_by_key(|attempt| attempt.number());
     for (index, attempt) in run_attempts.iter().enumerate() {
+      if let Some(previous_id) = attempt.retry_of() {
+        let previous = attempts
+          .get(&previous_id)
+          .ok_or_else(|| invalid("Node retry predecessor"))?;
+        let stopped = history
+          .stops
+          .iter()
+          .find(|row| row.node_attempt_id() == previous_id)
+          .filter(|row| row.reason() == crate::FlowNodeStopReason::ExecutionFailed)
+          .ok_or_else(|| invalid("Node retry confirmed failure"))?;
+        if (**attempt).clone().with_retry_of(previous)? != **attempt
+          || attempt.started_at() < stopped.observed_at()
+          || ordered_attempts
+            .iter()
+            .filter(|row| row.retry_of() == Some(previous_id))
+            .count()
+            != 1
+        {
+          return Err(invalid("Node retry lineage"));
+        }
+        let maximum = definition
+          .node(attempt.node_key())
+          .ok_or_else(|| invalid("Node retry declaration"))?
+          .max_execution_retries();
+        let mut current = *attempt;
+        let mut count = 0_u16;
+        while let Some(parent) = current.retry_of() {
+          count = count.checked_add(1).ok_or_else(|| invalid("Node retry bound"))?;
+          if count > maximum {
+            return Err(invalid("Node retry bound"));
+          }
+          current = attempts.get(&parent).ok_or_else(|| invalid("Node retry predecessor"))?;
+        }
+        continue;
+      }
       if index == 0 {
         if attempt.node_key() != definition.entry() {
           return Err(invalid("Flow entry attempt"));
         }
-        continue;
-      }
-      // Fixed-stage attempts are a lossless compatibility projection. Their
-      // readiness and WIP are validated by the existing lifecycle aggregate;
-      // that model did not persist a generic typed outcome for every stage.
-      if attempt.stage_projection_id().is_some() {
         continue;
       }
       let declared = run_attempts[..index].iter().any(|predecessor| {
@@ -315,7 +380,7 @@ fn unique_by<'a, T, K: Ord + Copy>(
   Ok(values)
 }
 
-fn sum_usage(mut usage: impl Iterator<Item = BudgetUsage>) -> Result<BudgetUsage, FactoryError> {
+pub(super) fn sum_usage(mut usage: impl Iterator<Item = BudgetUsage>) -> Result<BudgetUsage, FactoryError> {
   usage.try_fold(BudgetUsage::default(), |left, right| {
     left.checked_add(right).ok_or_else(|| invalid("Flow budget usage"))
   })
@@ -323,4 +388,16 @@ fn sum_usage(mut usage: impl Iterator<Item = BudgetUsage>) -> Result<BudgetUsage
 
 fn invalid(field: &'static str) -> FactoryError {
   FactoryError::InvalidConfiguration { field }
+}
+
+fn add_flow_usage(
+  usage: &mut BTreeMap<FlowRunId, BudgetUsage>,
+  flow: FlowRunId,
+  observed: BudgetUsage,
+) -> Result<(), FactoryError> {
+  let total = usage.entry(flow).or_default();
+  *total = total
+    .checked_add(observed)
+    .ok_or_else(|| invalid("Flow budget usage"))?;
+  Ok(())
 }

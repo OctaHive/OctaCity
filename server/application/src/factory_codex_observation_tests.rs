@@ -5,9 +5,9 @@ use octacity_server_artifacts::{
 };
 use octacity_server_domain::{ArtifactId, ArtifactName, AttemptId, BuildId, JobId, LeaseId, Timestamp};
 use octacity_server_factory::{
-  AssessmentId, AssessmentOutcome, BoundedSummary, BudgetLimit, ContextManifestId, EvaluationPlan, EvaluationPlanId,
-  EvidenceManifest, EvidenceManifestId, FactoryDigest, FactoryKey, FactoryRunId, FactorySafeText, FactoryTaskMode,
-  ImmutableReference, ImplementationOutcome, MacroCall, MacroCallId, MacroCallTerminal, StageHandoffId,
+  AssessmentId, AssessmentOutcome, BoundedSummary, BudgetLimit, EvaluationPlan, EvaluationPlanId, EvidenceManifest,
+  EvidenceManifestId, FactoryDigest, FactoryKey, FactorySafeText, FactoryTaskMode, ImmutableReference,
+  ImplementationOutcome,
 };
 use octacity_server_orchestrator::BuildState;
 use serde_json::{Value, json};
@@ -288,25 +288,9 @@ fn independent_evaluation_build_projects_only_a_schema_valid_assessment() {
   assert_eq!(assessment.outcome(), AssessmentOutcome::Violated);
   assert_eq!(assessment.findings().len(), 1);
 
-  let call: MacroCall = serde_json::from_value(json!({
-    "id": MacroCallId::generate(),
-    "stage_attempt_id": fixture.envelope.stage_attempt_id(),
-    "run_id": FactoryRunId::generate(),
-    "subject": fixture.envelope.subject(),
-    "kind": "evaluate",
-    "context_manifest_id": fixture.envelope.context_manifest_id(),
-    "context_digest": fixture.envelope.context_manifest_digest(),
-    "budget": fixture.envelope.budget(),
-    "parent_id": null,
-    "stage_dependencies": [],
-    "call_dependencies": [],
-    "depth": 1
-  }))
-  .unwrap();
   let compiled = crate::compile_codex_reviewer(
     &review.plan,
     &review.evaluator,
-    &call,
     &fixture.envelope,
     "Review the exact candidate against the selected criteria and return only the assessment.",
     &credential_profiles(),
@@ -318,19 +302,15 @@ fn independent_evaluation_build_projects_only_a_schema_valid_assessment() {
     crate::compile_codex_reviewer(
       &review.plan,
       &reference("review-code", 99),
-      &call,
       &fixture.envelope,
       "Review the exact candidate against the selected criteria and return only the assessment.",
       &credential_profiles(),
     ),
     Err(crate::CodexCompilationError::ReviewerBindings)
   );
-  let append = observation
-    .history_append(&call, &fixture.envelope, Timestamp::from_unix_millis(1_100).unwrap())
-    .unwrap();
-  assert_eq!(append.macro_call_completions.len(), 1);
-  assert_eq!(append.assessments.len(), 1);
-  assert_eq!(&append.assessments[0], assessment);
+  assert!(observation.result_artifact().is_some());
+  assert!(observation.trace().is_some());
+  assert!(observation.provenance().is_some());
 }
 
 #[test]
@@ -408,7 +388,6 @@ fn factory_implementation_build_captures_typed_result_usage_trace_and_provenance
   assert_eq!(compiled.task_name(), "implement");
   let observation = observe_codex_implementation(
     &fixture.envelope,
-    StageHandoffId::generate(),
     &fixture.build,
     10,
     &fixture.runner_events,
@@ -422,37 +401,12 @@ fn factory_implementation_build_captures_typed_result_usage_trace_and_provenance
   assert!(observation.result().is_some());
   assert!(observation.trace().is_some());
   assert!(observation.provenance().is_some());
-  assert!(observation.handoff().is_some());
+  assert!(observation.summary().is_some());
   let report = observation.report().unwrap();
   assert_eq!(report.harness_outcome(), CodexHarnessOutcome::Completed);
   assert_eq!(report.outcome(), ImplementationOutcome::Succeeded);
   assert_eq!(report.summary().as_str(), "Implemented the bounded change");
   assert_eq!(report.changed_components()[0].as_str(), "server/application");
-
-  let call: MacroCall = serde_json::from_value(json!({
-    "id": MacroCallId::generate(),
-    "stage_attempt_id": fixture.envelope.stage_attempt_id(),
-    "run_id": FactoryRunId::generate(),
-    "subject": fixture.envelope.subject(),
-    "kind": "implement",
-    "context_manifest_id": ContextManifestId::generate(),
-    "context_digest": FactoryDigest::content_sha256(&[20]),
-    "budget": fixture.envelope.budget(),
-    "parent_id": null,
-    "stage_dependencies": [],
-    "call_dependencies": [],
-    "depth": 1
-  }))
-  .unwrap();
-  let append = observation
-    .history_append(&call, &fixture.envelope, Timestamp::from_unix_millis(1_100).unwrap())
-    .unwrap();
-  assert_eq!(append.macro_call_completions.len(), 1);
-  assert_eq!(
-    append.macro_call_completions[0].terminal(),
-    MacroCallTerminal::Succeeded
-  );
-  assert_eq!(append.stage_handoffs.len(), 1);
 }
 
 #[test]
@@ -481,14 +435,7 @@ fn execution_terminal_states_remain_distinct_without_partial_typed_output() {
     let mut fixture = Fixture::successful();
     fixture.build.set_state(state);
     fixture.build.set_terminal_cause(timed_out, infrastructure);
-    let observation = observe_codex_implementation(
-      &fixture.envelope,
-      StageHandoffId::generate(),
-      &fixture.build,
-      50,
-      &[],
-      &[],
-    );
+    let observation = observe_codex_implementation(&fixture.envelope, &fixture.build, 50, &[], &[]);
     assert_eq!(observation.status(), expected);
     assert!(observation.report().is_none());
     assert!(observation.trace().is_none());
@@ -508,15 +455,7 @@ fn provider_outage_requires_one_well_formed_failed_runner_sequence() {
     ),
   ];
   assert_eq!(
-    observe_codex_implementation(
-      &fixture.envelope,
-      StageHandoffId::generate(),
-      &fixture.build,
-      50,
-      &events,
-      &[],
-    )
-    .status(),
+    observe_codex_implementation(&fixture.envelope, &fixture.build, 50, &events, &[],).status(),
     FactoryCodexObservationStatus::ProviderUnavailable
   );
 }
@@ -541,7 +480,6 @@ fn invalid_json_schema_and_missing_deliverables_are_not_collapsed() {
   assert_eq!(
     observe_codex_implementation(
       &invalid_json.envelope,
-      StageHandoffId::generate(),
       &invalid_json.build,
       1,
       &invalid_json.runner_events,
@@ -565,7 +503,6 @@ fn invalid_json_schema_and_missing_deliverables_are_not_collapsed() {
   assert_eq!(
     observe_codex_implementation(
       &invalid_schema.envelope,
-      StageHandoffId::generate(),
       &invalid_schema.build,
       1,
       &invalid_schema.runner_events,
@@ -583,7 +520,6 @@ fn invalid_json_schema_and_missing_deliverables_are_not_collapsed() {
   assert_eq!(
     observe_codex_implementation(
       &missing.envelope,
-      StageHandoffId::generate(),
       &missing.build,
       1,
       &missing.runner_events,
@@ -601,7 +537,6 @@ fn output_identity_and_trace_structure_are_revalidated_before_acceptance() {
   assert_eq!(
     observe_codex_implementation(
       &tampered.envelope,
-      StageHandoffId::generate(),
       &tampered.build,
       1,
       &tampered.runner_events,
@@ -629,7 +564,6 @@ fn output_identity_and_trace_structure_are_revalidated_before_acceptance() {
   assert_eq!(
     observe_codex_implementation(
       &invalid_trace.envelope,
-      StageHandoffId::generate(),
       &invalid_trace.build,
       1,
       &invalid_trace.runner_events,
@@ -659,7 +593,6 @@ fn output_identity_and_trace_structure_are_revalidated_before_acceptance() {
   assert_eq!(
     observe_codex_implementation(
       &sensitive_trace.envelope,
-      StageHandoffId::generate(),
       &sensitive_trace.build,
       1,
       &sensitive_trace.runner_events,
@@ -678,7 +611,6 @@ fn overflowing_output_accounting_is_terminal_without_parsing_documents() {
   assert_eq!(
     observe_codex_implementation(
       &fixture.envelope,
-      StageHandoffId::generate(),
       &fixture.build,
       1,
       &fixture.runner_events,
@@ -831,4 +763,25 @@ fn terminal(fixture: &Fixture) -> FactoryCodexTerminalObservation<'_> {
     runner_events: &fixture.runner_events,
     documents: &fixture.documents,
   }
+}
+
+#[test]
+fn a_trusted_capability_observation_returns_bounded_data_without_creating_a_stage_or_call() {
+  let fixture = Fixture::successful();
+  let observed = observe_codex_implementation(
+    &fixture.envelope,
+    &fixture.build,
+    10,
+    &fixture.runner_events,
+    &fixture.documents,
+  );
+  assert_eq!(observed.status(), FactoryCodexObservationStatus::Succeeded);
+  let summary = observed.summary().expect("verified successor data");
+  assert_eq!(summary.content().as_str(), "Implemented the bounded change");
+  assert_eq!(summary.subject(), fixture.envelope.subject());
+  assert_eq!(
+    observed.report().unwrap().decisions()[0].as_str(),
+    "Keep the existing execution boundary"
+  );
+  assert_eq!(observed.deliverables().len(), 2);
 }

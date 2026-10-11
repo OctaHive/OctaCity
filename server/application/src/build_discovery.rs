@@ -192,7 +192,10 @@ pub struct BuildSummaryProjection {
   /// Exact immutable Build Configuration version.
   pub configuration_version: BuildConfigurationVersion,
   /// Provider-neutral cause that initiated the Build.
-  pub cause: TriggerCauseProjection,
+  pub cause: Option<TriggerCauseProjection>,
+  /// Exact common node operation for a Factory Build.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub factory_origin: Option<octacity_server_store::FactoryBuildOrigin>,
   /// Current aggregate Build state.
   pub state: BuildState,
   /// Authoritative Build creation time.
@@ -218,13 +221,17 @@ pub struct BuildPageProjection {
 
 impl From<octacity_server_store::ProjectBuildSummary> for BuildSummaryProjection {
   fn from(summary: octacity_server_store::ProjectBuildSummary) -> Self {
-    let cause = (&summary.cause).into();
+    let (cause, factory_origin) = match summary.origin {
+      octacity_server_store::BuildSummaryOrigin::Trigger(cause) => (Some((&cause).into()), None),
+      octacity_server_store::BuildSummaryOrigin::Factory(origin) => (None, Some(origin)),
+    };
     Self {
       id: summary.id,
       project_id: summary.project_id,
       configuration_id: summary.configuration_id,
       configuration_version: summary.configuration_version,
       cause,
+      factory_origin,
       state: summary.state,
       created_at: summary.created_at,
       current_attempt_id: summary.current_attempt_id,

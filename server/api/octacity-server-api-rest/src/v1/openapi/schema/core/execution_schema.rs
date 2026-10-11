@@ -2,6 +2,18 @@ use super::*;
 
 pub(super) fn insert_execution_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert(
+    "FactoryBuildOrigin".to_owned(),
+    object(
+      [
+        ("operation_id", json!({"type": "string", "pattern": "^[0-9a-f]{64}$"})),
+        ("run_id", json!({"type": "string", "format": "uuid"})),
+        ("node_attempt_id", json!({"type": "string", "format": "uuid"})),
+        ("input_digest", json!({"type": "string", "pattern": "^[0-9a-f]{64}$"})),
+      ],
+      &["operation_id", "run_id", "node_attempt_id", "input_digest"],
+    ),
+  );
+  schemas.insert(
     "BuildState".to_owned(),
     string_enum(&["queued", "running", "succeeded", "failed", "cancelled"]),
   );
@@ -17,7 +29,8 @@ pub(super) fn insert_execution_schemas(schemas: &mut Map<String, Value>) {
         ("project_id", non_empty_string()),
         ("configuration_id", non_empty_string()),
         ("configuration_version", positive_integer()),
-        ("cause", schema_ref("TriggerCause")),
+        ("cause", nullable(schema_ref("TriggerCause"))),
+        ("factory_origin", schema_ref("FactoryBuildOrigin")),
         ("state", schema_ref("BuildState")),
         ("created_at_unix_ms", integer()),
         ("current_attempt_id", non_empty_string()),
@@ -101,7 +114,8 @@ pub(super) fn insert_execution_schemas(schemas: &mut Map<String, Value>) {
         ("priority", integer()),
         ("state", schema_ref("BuildState")),
         ("version", positive_integer()),
-        ("trigger", schema_ref("TriggerHistory")),
+        ("trigger", nullable(schema_ref("TriggerHistory"))),
+        ("factory_origin", schema_ref("FactoryBuildOrigin")),
         ("created_at_unix_ms", integer()),
         ("updated_at_unix_ms", integer()),
         ("current_attempt", schema_ref("AttemptSummaryResource")),

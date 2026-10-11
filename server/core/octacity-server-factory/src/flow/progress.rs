@@ -34,10 +34,11 @@ impl FlowInterpreter<'_> {
     if let Some(pending) = attempts
       .iter()
       .filter(|attempt| {
-        !history
-          .completions
-          .iter()
-          .any(|row| row.node_attempt_id() == attempt.id())
+        !attempts.iter().any(|next| next.retry_of() == Some(attempt.id()))
+          && !history
+            .completions
+            .iter()
+            .any(|row| row.node_attempt_id() == attempt.id())
       })
       .min_by_key(|row| row.number())
     {
@@ -59,7 +60,7 @@ impl FlowInterpreter<'_> {
       else {
         continue;
       };
-      for directive in self.advance(flow, cycle, attempt, completion, history.attempts, history.completions)? {
+      for directive in self.advance(flow, cycle, attempt, completion, history)? {
         match directive {
           FlowDirective::ExecuteNode { node, .. } | FlowDirective::EnterSubflow { node, .. } => {
             if !attempts

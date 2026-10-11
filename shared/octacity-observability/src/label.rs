@@ -373,6 +373,8 @@ label_enum! {
 label_enum! {
   /// Durable server worker kinds.
   WorkerKind, Worker {
+    /// Configurable Factory Flow reconciliation.
+    Factory => "factory",
     /// Lease-expiry recovery.
     LeaseExpiry => "lease_expiry",
     /// Schedule evaluation.

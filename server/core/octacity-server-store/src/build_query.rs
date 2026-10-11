@@ -3,9 +3,8 @@ use octacity_server_domain::{
 };
 use octacity_server_job::{JobFailureClass, JobState};
 use octacity_server_orchestrator::{AttemptState, BuildState};
-use octacity_server_trigger::{NormalizedTriggerOccurrence, TriggerOccurrenceState};
 
-use crate::{ImmutableBuildInput, MaterializedJob};
+use crate::{BuildOrigin, ImmutableBuildInput, MaterializedJob};
 
 /// Authoritative Build facts used to construct a safe application projection.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -16,14 +15,8 @@ pub struct BuildRecord {
   pub state: BuildState,
   /// Current optimistic version.
   pub version: BuildVersion,
-  /// Normalized Trigger occurrence that created the Build.
-  pub trigger: NormalizedTriggerOccurrence,
-  /// Current durable Trigger occurrence state.
-  pub trigger_state: TriggerOccurrenceState,
-  /// Authoritative Trigger occurrence creation time.
-  pub trigger_created_at: Timestamp,
-  /// Time of the latest accepted Trigger occurrence transition.
-  pub trigger_updated_at: Timestamp,
+  /// Exact initiating occurrence or common node operation.
+  pub origin: BuildOrigin,
   /// Authoritative creation time.
   pub created_at: Timestamp,
   /// Time of the latest accepted state transition.

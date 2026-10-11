@@ -4,7 +4,6 @@ use octacity_server_domain::{
   AttemptId, AttemptNumber, BuildConfigurationId, BuildConfigurationVersion, BuildId, ProjectId, Timestamp,
 };
 use octacity_server_orchestrator::{AttemptState, BuildState};
-use octacity_server_trigger::TriggerCause;
 
 use crate::{BuildListVisibility, StoreError, StoreInputError, StoreOperation};
 
@@ -106,7 +105,7 @@ pub struct ProjectBuildSummary {
   /// Exact immutable Build Configuration version.
   pub configuration_version: BuildConfigurationVersion,
   /// Provider-neutral cause that initiated the Build.
-  pub cause: TriggerCause,
+  pub origin: crate::BuildSummaryOrigin,
   /// Current aggregate Build state.
   pub state: BuildState,
   /// Authoritative Build creation time.

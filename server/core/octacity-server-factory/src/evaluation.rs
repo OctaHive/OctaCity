@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
   Assessment, AssessmentId, CandidateSubject, DecisionId, DecisionOutcome, DecisionSignalReceipt,
-  DecisionSignalReceiptId, EvaluationPlan, EvaluationPlanId, FactoryDigest, FactoryError, FactoryKey,
-  FactoryStageTarget, FindingSeverity, MAX_CRITERION_PACKS, MAX_DECISION_SIGNAL_RECEIPTS, MAX_EVALUATORS, StageAttempt,
+  DecisionSignalReceiptId, EvaluationPlan, EvaluationPlanId, EvaluationProgress, FactoryDigest, FactoryError,
+  FactoryKey, FindingSeverity, MAX_CRITERION_PACKS, MAX_DECISION_SIGNAL_RECEIPTS, MAX_EVALUATORS,
 };
 
 /// Maximum Assessments consumed by one Decision.
@@ -190,15 +190,14 @@ impl Decision {
   /// Persistence adapters deliberately delegate these domain bindings to the
   /// Factory core so restored state and newly appended state follow identical
   /// rules.
-  pub fn validate_bindings<'a, S, A, R>(
+  pub fn validate_bindings<'a, A, R>(
     &self,
     plan: &EvaluationPlan,
-    stages: S,
+    progress: &EvaluationProgress,
     assessments: A,
     signal_receipts: R,
   ) -> Result<(), FactoryError>
   where
-    S: IntoIterator<Item = &'a StageAttempt>,
     A: IntoIterator<Item = &'a Assessment>,
     R: IntoIterator<Item = &'a DecisionSignalReceipt>,
   {
@@ -217,10 +216,12 @@ impl Decision {
       .into_iter()
       .map(|receipt| (receipt.id(), receipt))
       .collect::<std::collections::HashMap<_, _>>();
-    let stages = stages
-      .into_iter()
-      .map(|stage| (stage.id(), stage))
-      .collect::<std::collections::HashMap<_, _>>();
+    let (accepted_assessments, accepted_nodes) = progress.decision_bindings(plan)?;
+    if accepted_assessments.iter().copied().collect::<HashSet<_>>() != self.assessment_ids.iter().copied().collect() {
+      return Err(FactoryError::InvalidReference {
+        relationship: "decision completed join",
+      });
+    }
     let assessments_valid = self.assessment_ids.iter().all(|id| {
       assessments.get(id).is_some_and(|assessment| {
         assessment.plan_id() == self.plan_id
@@ -234,15 +235,15 @@ impl Decision {
     let receipts_valid = self.signal_receipt_ids.iter().all(|id| {
       receipts.get(id).is_some_and(|receipt| {
         let request = receipt.request().request();
-        let stage_matches = stages.get(&request.stage_attempt_id()).is_some_and(|stage| {
-          stage.run_id() == receipt.run_id()
-            && stage.subject() == receipt.subject()
-            && matches!(stage.target(), FactoryStageTarget::Evaluation(key) if plan.branches().iter().any(|branch| branch.key() == key))
-        });
+        let node_matches = accepted_nodes.contains(&(
+          request.run_id(),
+          request.node_attempt_id(),
+          request.frozen_input_digest(),
+        ));
         receipt.subject() == self.subject.exact()
           && receipt.request().request().purpose() == crate::DecisionSignalPurpose::Routing
           && receipt.validate_integrity().is_ok()
-          && stage_matches
+          && node_matches
       })
     });
     if assessment_ids_are_unique && receipt_ids_are_unique && assessments_valid && receipts_valid {

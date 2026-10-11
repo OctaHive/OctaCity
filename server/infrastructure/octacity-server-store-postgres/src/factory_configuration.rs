@@ -1,7 +1,5 @@
 use octacity_server_domain::{EntityKind, ProjectId, Timestamp};
-use octacity_server_factory::{
-  FactoryConfiguration, FactoryConfigurationId, FactoryConfigurationVersion, PinnedFlowDefinitionClosure,
-};
+use octacity_server_factory::{FactoryConfiguration, FactoryConfigurationId, FactoryConfigurationVersion};
 use octacity_server_store::{
   CreateFactoryConfiguration, FactoryConfigurationMutationIntent, FactoryConfigurationMutationOutcome,
   ManagementMutation, MutationAuditContext, MutationDisposition, PublishedFactoryConfiguration,
@@ -277,10 +275,7 @@ async fn insert_version(
   .execute(&mut **transaction)
   .await
   .map_err(|error| classify(error, EntityKind::FactoryConfiguration))?;
-  let closure = match configuration.flow() {
-    Some(flow) => flow.closure.clone(),
-    None => PinnedFlowDefinitionClosure::from_stage_projection(configuration).map_err(|_| StoreError::Unavailable)?,
-  };
+  let closure = configuration.flow().closure.clone();
   for (ordinal, definition) in closure.definitions().iter().enumerate() {
     let reference = definition.reference();
     sqlx::query(

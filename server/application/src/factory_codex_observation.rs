@@ -7,14 +7,10 @@
 
 use octacity_protocol::RunnerEventPayload;
 use octacity_server_artifacts::ArtifactIdentity;
-use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  BoundedSummary, BudgetUsage, FactoryArtifactReference, FactoryError, FactoryProducedDeliverable,
-  FactoryRepositoryPath, FactorySafeText, FactoryTaskEnvelope, FactoryTaskMode, ImplementationOutcome, MacroCall,
-  MacroCallCompletion, MacroCallCompletionOutputs, MacroCallTerminal, StageHandoff, StageHandoffContent,
-  StageHandoffDeclaration, StageHandoffId, StageHandoffOutcome, StageHandoffReferences,
+  BoundedSummary, BudgetUsage, FactoryArtifactReference, FactoryProducedDeliverable, FactoryRepositoryPath,
+  FactorySafeText, FactoryTaskEnvelope, FactoryTaskMode, ImplementationOutcome,
 };
-use octacity_server_store::FactoryRunHistoryAppend;
 
 use crate::{FactoryBuildObservation, factory_codex_contract::CODEX_STAGE_SUMMARY};
 
@@ -24,8 +20,8 @@ mod records;
 mod validation;
 
 pub use evaluation::{
-  FactoryCodexEvaluationCompletion, FactoryCodexEvaluationObservation, FactoryCodexReviewerBinding,
-  FactoryCodexTerminalObservation, observe_codex_evaluation,
+  FactoryCodexEvaluationObservation, FactoryCodexReviewerBinding, FactoryCodexTerminalObservation,
+  observe_codex_evaluation,
 };
 
 use evidence::artifact_reference;
@@ -148,7 +144,7 @@ impl FactoryImplementationReport {
   }
 }
 
-/// One normalized terminal observation for an implementation macro call.
+/// Verified capability data from one ordinary Build; the common node owner retains its result.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryCodexImplementationObservation {
   status: FactoryCodexObservationStatus,
@@ -158,7 +154,7 @@ pub struct FactoryCodexImplementationObservation {
   trace: Option<FactoryArtifactReference>,
   provenance: Option<FactoryArtifactReference>,
   deliverables: Vec<FactoryProducedDeliverable>,
-  handoff: Option<StageHandoff>,
+  summary: Option<BoundedSummary>,
 }
 
 impl FactoryCodexImplementationObservation {
@@ -204,72 +200,10 @@ impl FactoryCodexImplementationObservation {
     &self.deliverables
   }
 
-  /// Returns the durable typed handoff ready for the existing append-only store.
+  /// Returns verified bounded successor data without creating a lifecycle record.
   #[must_use]
-  pub const fn handoff(&self) -> Option<&StageHandoff> {
-    self.handoff.as_ref()
-  }
-
-  /// Binds this trusted observation to its durable call node and Task Envelope.
-  pub fn completion(
-    &self,
-    call: &MacroCall,
-    envelope: &FactoryTaskEnvelope,
-    completed_at: Timestamp,
-  ) -> Result<MacroCallCompletion, FactoryError> {
-    let summary = self.handoff.as_ref().map(|handoff| handoff.summary().clone());
-    let summary_artifact = self
-      .deliverables
-      .iter()
-      .find(|deliverable| deliverable.declaration().kind().as_str() == CODEX_STAGE_SUMMARY)
-      .map(|deliverable| deliverable.artifact().clone());
-    MacroCallCompletion::new(
-      call,
-      envelope,
-      self.status.into(),
-      self.usage,
-      MacroCallCompletionOutputs {
-        result: self.result.clone(),
-        summary,
-        summary_artifact,
-        trace: self.trace.clone(),
-        provenance: self.provenance.clone(),
-      },
-      completed_at,
-    )
-  }
-
-  /// Produces the single append-only history batch for this terminal call.
-  pub fn history_append(
-    &self,
-    call: &MacroCall,
-    envelope: &FactoryTaskEnvelope,
-    completed_at: Timestamp,
-  ) -> Result<FactoryRunHistoryAppend, FactoryError> {
-    Ok(FactoryRunHistoryAppend {
-      macro_call_completions: vec![self.completion(call, envelope, completed_at)?],
-      stage_handoffs: self.handoff.iter().cloned().collect(),
-      ..FactoryRunHistoryAppend::default()
-    })
-  }
-}
-
-impl From<FactoryCodexObservationStatus> for MacroCallTerminal {
-  fn from(value: FactoryCodexObservationStatus) -> Self {
-    match value {
-      FactoryCodexObservationStatus::Succeeded => Self::Succeeded,
-      FactoryCodexObservationStatus::TimedOut => Self::TimedOut,
-      FactoryCodexObservationStatus::Cancelled => Self::Cancelled,
-      FactoryCodexObservationStatus::ProviderUnavailable => Self::ProviderUnavailable,
-      FactoryCodexObservationStatus::ExecutionFailed => Self::ExecutionFailed,
-      FactoryCodexObservationStatus::InfrastructureFailed => Self::InfrastructureFailed,
-      FactoryCodexObservationStatus::OutputOverflow => Self::OutputOverflow,
-      FactoryCodexObservationStatus::MissingDeliverable => Self::MissingDeliverable,
-      FactoryCodexObservationStatus::InvalidJson => Self::InvalidJson,
-      FactoryCodexObservationStatus::InvalidSchema => Self::InvalidSchema,
-      FactoryCodexObservationStatus::IntegrityFailure => Self::IntegrityFailure,
-      FactoryCodexObservationStatus::BudgetExceeded => Self::BudgetExceeded,
-    }
+  pub const fn summary(&self) -> Option<&BoundedSummary> {
+    self.summary.as_ref()
   }
 }
 
@@ -281,7 +215,6 @@ impl From<FactoryCodexObservationStatus> for MacroCallTerminal {
 #[must_use]
 pub fn observe_codex_implementation(
   envelope: &FactoryTaskEnvelope,
-  handoff_id: StageHandoffId,
   build: &FactoryBuildObservation,
   elapsed_millis: u64,
   runner_events: &[RunnerEventPayload],
@@ -335,46 +268,6 @@ pub fn observe_codex_implementation(
   {
     return failed(FactoryCodexObservationStatus::IntegrityFailure, usage);
   }
-  let handoff = StageHandoff::new(
-    StageHandoffDeclaration {
-      id: handoff_id,
-      stage_attempt_id: envelope.stage_attempt_id(),
-      subject: envelope.subject().clone(),
-      outcome: match report.outcome {
-        ImplementationOutcome::Succeeded => StageHandoffOutcome::Succeeded,
-        ImplementationOutcome::Failed => StageHandoffOutcome::Failed,
-        ImplementationOutcome::Indeterminate => StageHandoffOutcome::Indeterminate,
-      },
-    },
-    StageHandoffContent {
-      summary,
-      decisions: report.decisions.clone(),
-      assumptions: report.assumptions.clone(),
-      unresolved_items: report.unresolved_items.clone(),
-      changed_components: report.changed_components.clone(),
-      validation_observations: report.validation_observations.clone(),
-      prior_findings: envelope.prior_findings().to_vec(),
-    },
-    StageHandoffReferences {
-      artifacts: deliverables
-        .iter()
-        .map(|item| item.artifact().clone())
-        .chain([
-          result_reference.clone(),
-          trace_reference.clone(),
-          provenance_reference.clone(),
-        ])
-        .collect(),
-      changeset_id: None,
-      evidence_manifest_id: None,
-      result_digest: result_reference.content_digest(),
-      policy_digest: envelope.digests().policy,
-      provenance_digest,
-    },
-  );
-  let Ok(handoff) = handoff else {
-    return failed(FactoryCodexObservationStatus::InvalidSchema, usage);
-  };
   FactoryCodexImplementationObservation {
     status: FactoryCodexObservationStatus::Succeeded,
     usage,
@@ -383,7 +276,7 @@ pub fn observe_codex_implementation(
     trace: Some(trace_reference),
     provenance: Some(provenance_reference),
     deliverables,
-    handoff: Some(handoff),
+    summary: Some(summary),
   }
 }
 
@@ -396,6 +289,6 @@ fn failed(status: FactoryCodexObservationStatus, usage: BudgetUsage) -> FactoryC
     trace: None,
     provenance: None,
     deliverables: Vec::new(),
-    handoff: None,
+    summary: None,
   }
 }

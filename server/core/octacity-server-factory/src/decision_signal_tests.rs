@@ -11,9 +11,9 @@ use crate::{
   DecisionSignalRequest, DecisionSignalRequestId, DecisionSignalRouteSet, DecisionSignalScoreDomain,
   DecisionSignalState, DecisionSignalThreshold, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference,
   FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest, FactoryError,
-  FactoryKey, FactoryMetadata, FactoryRun, FactoryRunId, FactoryText, ImmutableReference, MAX_DECISION_SIGNAL_CHOICES,
-  RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber, ToolRiskChoiceMapping, WorkArtifacts,
-  WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority, consume_routing_signal, consume_tool_risk_signal,
+  FactoryKey, FactoryMetadata, FactoryText, FlowNodeInput, ImmutableReference, MAX_DECISION_SIGNAL_CHOICES,
+  NodeAttempt, RiskClass, ToolRiskChoiceMapping, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId,
+  WorkPriority, consume_routing_signal, consume_tool_risk_signal,
 };
 
 fn key(value: &str) -> FactoryKey {
@@ -36,7 +36,7 @@ fn budget() -> BudgetLimit {
   BudgetLimit::new(1, 1_000, 1_000, 1_000, 1_000).expect("fixture budget")
 }
 
-fn stage() -> StageAttempt {
+fn node_fixture() -> (FlowNodeInput, NodeAttempt) {
   let subject = ExactSubject::new(
     ProjectId::generate(),
     RepositoryId::generate(),
@@ -61,26 +61,8 @@ fn stage() -> StageAttempt {
     ),
   )
   .expect("fixture work");
-  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
-  StageAttempt::new(
-    StageAttemptId::generate(),
-    &run,
-    StageAttemptNumber::INITIAL,
-    crate::FactoryStageTarget::Implementation,
-    budget(),
-    digest(2),
-    crate::FactoryClaimOwnership::new(
-      key("worker"),
-      crate::FactoryClaim::new(
-        crate::FactoryClaimFence::new(digest(9)),
-        Timestamp::from_unix_millis(1).expect("fixture claim start"),
-        Timestamp::from_unix_millis(2).expect("fixture claim deadline"),
-      )
-      .expect("fixture claim"),
-    ),
-  )
+  crate::testing::capability_node_fixture(&work, None)
 }
-
 fn choices(values: &[&str]) -> DecisionSignalChoices {
   DecisionSignalChoices::try_new(values.iter().map(|value| key(value)).collect()).expect("fixture choices")
 }
@@ -159,9 +141,9 @@ fn provider_request(
   minimum_probability: u32,
   minimum_margin: u32,
 ) -> DecisionSignalProviderRequest {
-  let stage = stage();
-  provider_request_for_stage(
-    &stage,
+  let node = node_fixture();
+  provider_request_for_node(
+    &node,
     purpose,
     mode,
     fallback,
@@ -176,8 +158,8 @@ fn provider_request(
   clippy::too_many_arguments,
   reason = "test fixture exposes every signal-policy dimension"
 )]
-pub(crate) fn provider_request_for_stage(
-  stage: &StageAttempt,
+pub(crate) fn provider_request_for_node(
+  node: &(FlowNodeInput, NodeAttempt),
   purpose: DecisionSignalPurpose,
   mode: DecisionSignalMode,
   fallback: DecisionSignalFallback,
@@ -204,11 +186,13 @@ pub(crate) fn provider_request_for_stage(
   .expect("fixture capability");
   let request = DecisionSignalRequest::new(
     DecisionSignalRequestId::generate(),
-    stage,
+    &node.0,
+    &node.1,
     purpose,
     DecisionSignalDigests::new(input.digest(), profile.policy().digest()),
     profile.budget(),
-  );
+  )
+  .expect("fixture signal request");
   DecisionSignalProviderRequest::new(
     request,
     &profile,
@@ -318,7 +302,7 @@ fn canonical_json_and_versioned_question_domains_are_bound_to_the_input_digest()
 
 #[test]
 fn request_rejects_asserted_input_policy_and_route_drift() {
-  let stage = stage();
+  let node = node_fixture();
   let profile = profile(
     DecisionSignalPurpose::Routing,
     DecisionSignalMode::Shadow,
@@ -342,11 +326,13 @@ fn request_rejects_asserted_input_policy_and_route_drift() {
   .expect("capability");
   let request = DecisionSignalRequest::new(
     DecisionSignalRequestId::generate(),
-    &stage,
+    &node.0,
+    &node.1,
     DecisionSignalPurpose::Routing,
     DecisionSignalDigests::new(digest(42), profile.policy().digest()),
     budget(),
-  );
+  )
+  .expect("fixture signal request");
   assert!(
     DecisionSignalProviderRequest::new(
       request,
@@ -405,14 +391,16 @@ fn capability_rejects_duplicate_declarations_and_request_limit_drift() {
     budget(),
   )
   .expect("capability");
-  let stage = stage();
+  let node = node_fixture();
   let request = DecisionSignalRequest::new(
     DecisionSignalRequestId::generate(),
-    &stage,
+    &node.0,
+    &node.1,
     DecisionSignalPurpose::Routing,
     DecisionSignalDigests::new(digest(29), profile.policy().digest()),
     budget(),
-  );
+  )
+  .expect("fixture signal request");
   assert!(
     DecisionSignalProviderRequest::new(
       request,
@@ -435,7 +423,7 @@ fn capability_rejects_duplicate_declarations_and_request_limit_drift() {
 
 #[test]
 fn request_requires_exact_provider_model_semantics_and_purpose() {
-  let stage = stage();
+  let node = node_fixture();
   let profile = profile(
     DecisionSignalPurpose::Routing,
     DecisionSignalMode::Shadow,
@@ -458,11 +446,13 @@ fn request_requires_exact_provider_model_semantics_and_purpose() {
   .expect("capability shape is valid");
   let request = DecisionSignalRequest::new(
     DecisionSignalRequestId::generate(),
-    &stage,
+    &node.0,
+    &node.1,
     DecisionSignalPurpose::Routing,
     DecisionSignalDigests::new(digest(13), profile.policy().digest()),
     budget(),
-  );
+  )
+  .expect("fixture signal request");
   let threshold = DecisionSignalThreshold::new(
     DecisionSignalPurpose::Routing,
     semantics,
@@ -487,7 +477,7 @@ fn request_requires_exact_provider_model_semantics_and_purpose() {
 
 #[test]
 fn provider_result_answers_every_typed_question_and_rejects_an_out_of_domain_score() {
-  let stage = stage();
+  let node = node_fixture();
   let profile = profile(
     DecisionSignalPurpose::ToolRisk,
     DecisionSignalMode::BoundedControl,
@@ -532,11 +522,13 @@ fn provider_result_answers_every_typed_question_and_rejects_an_out_of_domain_sco
   .expect("provider input");
   let request = DecisionSignalRequest::new(
     DecisionSignalRequestId::generate(),
-    &stage,
+    &node.0,
+    &node.1,
     DecisionSignalPurpose::ToolRisk,
     DecisionSignalDigests::new(input.digest(), profile.policy().digest()),
     budget(),
-  );
+  )
+  .expect("fixture signal request");
   let semantics = exact("semantics", "v1", 45);
   let capability = DecisionSignalProviderCapability::new(
     profile.provider().clone(),
@@ -667,7 +659,7 @@ fn calibrated_threshold_is_purpose_specific_and_checks_probability_and_margin() 
     DecisionSignalFallback::Deny,
     &["allow", "deny"],
   );
-  let stage = stage();
+  let node = node_fixture();
   let semantics = routing.probability_semantics().clone();
   let capability = DecisionSignalProviderCapability::new(
     tool_profile.provider().clone(),
@@ -684,11 +676,13 @@ fn calibrated_threshold_is_purpose_specific_and_checks_probability_and_margin() 
   .expect("capability");
   let request = DecisionSignalRequest::new(
     DecisionSignalRequestId::generate(),
-    &stage,
+    &node.0,
+    &node.1,
     DecisionSignalPurpose::ToolRisk,
     DecisionSignalDigests::new(digest(17), tool_profile.policy().digest()),
     budget(),
-  );
+  )
+  .expect("fixture signal request");
   assert!(matches!(
     DecisionSignalProviderRequest::new(
       request,

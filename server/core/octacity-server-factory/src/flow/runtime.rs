@@ -4,8 +4,8 @@ use serde::{Deserialize, Serialize};
 use crate::{
   BudgetLimit, BudgetUsage, FactoryClaimOwnership, FactoryConfiguration, FactoryDigest, FactoryError, FactoryKey,
   FactoryRun, FactoryRunId, FlowAdmissionLimits, FlowDefinition, FlowDefinitionRef, FlowNodeKind, FlowRunId,
-  ImmutableReference, NodeAttemptId, NodeAttemptNumber, PinnedFlowDefinitionClosure, StageAttempt,
-  StageAttemptCompletion, StageAttemptId, StageAttemptOutcome, WorkflowCycleId, WorkflowCycleNumber,
+  ImmutableReference, NodeAttemptId, NodeAttemptNumber, PinnedFlowDefinitionClosure, WorkflowCycleId,
+  WorkflowCycleNumber,
 };
 
 /// Immutable Flow Definition closure and initial execution records pinned at admission.
@@ -14,6 +14,7 @@ use crate::{
 pub struct AdmittedFlow {
   closure: PinnedFlowDefinitionClosure,
   limits: FlowAdmissionLimits,
+  wip_limits: crate::FactoryWipLimits,
   root_run: FlowRun,
   initial_cycle: WorkflowCycle,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -29,7 +30,9 @@ impl AdmittedFlow {
     limits: FlowAdmissionLimits,
     root_run: FlowRun,
     initial_cycle: WorkflowCycle,
+    wip_limits: crate::FactoryWipLimits,
   ) -> Result<Self, FactoryError> {
+    validate_wip_limits(&limits, wip_limits)?;
     closure.clone().validate(limits.clone())?;
     if root_run.definition() != closure.root()
       || root_run.parent().is_some()
@@ -44,6 +47,7 @@ impl AdmittedFlow {
     Ok(Self {
       closure,
       limits,
+      wip_limits,
       root_run,
       initial_cycle,
       data_schemas: vec![],
@@ -51,37 +55,12 @@ impl AdmittedFlow {
     })
   }
 
-  /// Projects a fixed-stage configuration into the initial generic Flow records.
-  pub fn from_stage_projection(configuration: &FactoryConfiguration, run: &FactoryRun) -> Result<Self, FactoryError> {
-    if configuration.reference() != run.configuration() {
-      return Err(FactoryError::InvalidReference {
-        relationship: "Flow admission configuration",
-      });
-    }
-    let closure = PinnedFlowDefinitionClosure::from_stage_projection(configuration)?;
-    let root_definition = closure
-      .definition(closure.root())
-      .ok_or(FactoryError::InvalidReference {
-        relationship: "admitted Flow root definition",
-      })?;
-    let limits = FlowAdmissionLimits::product_defaults(
-      root_definition.execution().max_active_nodes(),
-      root_definition.execution().budget(),
-      root_definition.execution().permissions().clone(),
-    )?;
-    let root_run = FlowRun::root(run, closure.root())?;
-    let initial_cycle = WorkflowCycle::initial(&root_run)?;
-    Self::new(closure, limits, root_run, initial_cycle)
-  }
-
   /// Admits the exact journey selected by the immutable configuration.
   pub fn from_configuration(configuration: &FactoryConfiguration, run: &FactoryRun) -> Result<Self, FactoryError> {
     if configuration.reference() != run.configuration() {
       return Err(FactoryError::InconsistentSubject);
     }
-    let Some(flow) = configuration.flow() else {
-      return Self::from_stage_projection(configuration, run);
-    };
+    let flow = configuration.flow();
     flow.validate(
       configuration.reference(),
       configuration.hard_budget(),
@@ -89,7 +68,13 @@ impl AdmittedFlow {
     )?;
     let root = FlowRun::root(run, flow.closure.root())?;
     let cycle = WorkflowCycle::initial(&root)?;
-    let mut admitted = Self::new(flow.closure.clone(), flow.limits.clone(), root, cycle)?;
+    let mut admitted = Self::new(
+      flow.closure.clone(),
+      flow.limits.clone(),
+      root,
+      cycle,
+      configuration.wip_limits(),
+    )?;
     if !flow.pools.is_empty() {
       admitted = admitted.with_pool_settings(flow.pools.clone())?;
     }
@@ -111,12 +96,17 @@ impl AdmittedFlow {
     &self.limits
   }
 
+  /// Returns the configuration-wide capacity ceilings pinned at admission.
+  #[must_use]
+  pub const fn wip_limits(&self) -> crate::FactoryWipLimits {
+    self.wip_limits
+  }
+
   /// Revalidates the persisted closure against its original admission limits.
   pub fn validated(&self) -> Result<crate::ValidatedFlowDefinitionClosure, FactoryError> {
-    if !self.data_schemas.is_empty() {
-      self.validate_data_schemas()?;
-      crate::phase_pool::validate_pool_settings(&self.closure, &self.limits, &self.pools)?;
-    }
+    validate_wip_limits(&self.limits, self.wip_limits)?;
+    self.validate_data_schemas()?;
+    crate::phase_pool::validate_pool_settings(&self.closure, &self.limits, &self.pools)?;
     self.closure.clone().validate(self.limits.clone())
   }
 
@@ -165,34 +155,6 @@ impl AdmittedFlow {
   #[must_use]
   pub const fn initial_cycle(&self) -> &WorkflowCycle {
     &self.initial_cycle
-  }
-
-  /// Projects one fixed-stage attempt into the pinned root Flow and cycle.
-  pub fn project_stage(&self, stage: StageAttempt) -> Result<NodeAttempt, FactoryError> {
-    let definition = self
-      .closure
-      .definitions()
-      .iter()
-      .find(|definition| definition.reference() == self.root_run.definition())
-      .ok_or(FactoryError::InvalidReference {
-        relationship: "root Flow Definition",
-      })?;
-    let node = definition
-      .nodes()
-      .iter()
-      .find(|node| node.stage_projection() == Some(stage.kind()))
-      .ok_or(FactoryError::InvalidReference {
-        relationship: "stage projection node",
-      })?;
-    NodeAttempt::from_stage(stage, &self.root_run, &self.initial_cycle, node.key().clone())
-  }
-
-  /// Verifies the complete lossless generic projection of one fixed-stage attempt.
-  #[must_use]
-  pub fn matches_stage_projection(&self, stage: &StageAttempt, node: &NodeAttempt) -> bool {
-    self
-      .project_stage(stage.clone())
-      .is_ok_and(|expected| expected == *node)
   }
 }
 
@@ -364,10 +326,12 @@ pub struct NodeAttempt {
   number: NodeAttemptNumber,
   input_digest: FactoryDigest,
   budget: BudgetLimit,
+  started_at: Timestamp,
   deadline: Timestamp,
   execution: NodeExecutionIdentity,
   ownership: FactoryClaimOwnership,
-  stage_projection_id: Option<StageAttemptId>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  retry_of: Option<NodeAttemptId>,
 }
 
 /// Exact executor selected before one Node Attempt is dispatched.
@@ -378,14 +342,12 @@ pub enum NodeExecutionIdentity {
   BuiltIn,
   /// Exact immutable Build, reasoning, signal, or trusted-action provider identity.
   External(ImmutableReference),
-  /// Lossless fixed-stage projection whose ordinary Build is linked separately.
-  StageProjection(StageAttemptId),
 }
 
 impl NodeExecutionIdentity {
   pub(super) fn is_compatible(&self, kind: FlowNodeKind) -> bool {
     match kind {
-      FlowNodeKind::BuildCommand => matches!(self, Self::External(_) | Self::StageProjection(_)),
+      FlowNodeKind::BuildCommand => matches!(self, Self::External(_)),
       FlowNodeKind::Reasoning | FlowNodeKind::DecisionSignal | FlowNodeKind::TrustedAction => {
         matches!(self, Self::External(_))
       }
@@ -413,6 +375,8 @@ pub struct NodeAttemptInput {
   pub input_digest: FactoryDigest,
   /// Hard budget inherited from the immutable node declaration.
   pub budget: BudgetLimit,
+  /// Original start time, fenced at creation and independent of later worker leases.
+  pub started_at: Timestamp,
   /// Authoritative deadline after which execution must stop.
   pub deadline: Timestamp,
   /// Exact code-owned or external executor selected before dispatch.
@@ -434,15 +398,13 @@ impl NodeAttempt {
       || definition
         .node(&input.node_key)
         .is_none_or(|node| node.kind() != input.node_kind || input.budget != node.budget())
-      || input.deadline <= input.ownership.claim().claimed_at()
-      || input.deadline > input.ownership.claim().expires_at()
       || !input.execution.is_compatible(input.node_kind)
     {
       return Err(FactoryError::InvalidReference {
         relationship: "Node Attempt definition",
       });
     }
-    Ok(Self {
+    let attempt = Self {
       id: input.id,
       factory_run_id: flow_run.factory_run_id(),
       flow_run_id: flow_run.id(),
@@ -452,48 +414,65 @@ impl NodeAttempt {
       number: input.number,
       input_digest: input.input_digest,
       budget: input.budget,
+      started_at: input.started_at,
       deadline: input.deadline,
       execution: input.execution,
       ownership: input.ownership,
-      stage_projection_id: None,
-    })
+      retry_of: None,
+    };
+    attempt.validate_execution_window()?;
+    Ok(attempt)
   }
 
-  /// Projects one Stage Attempt without changing its UUID, order, or payload.
-  pub fn from_stage(
-    stage: StageAttempt,
-    flow_run: &FlowRun,
-    cycle: &WorkflowCycle,
-    node_key: FactoryKey,
-  ) -> Result<Self, FactoryError> {
-    if stage.run_id() != flow_run.factory_run_id() || cycle.flow_run_id() != flow_run.id() {
+  /// Binds a new technical execution to the exact failed predecessor.
+  /// Stop, policy and operator-intent checks belong to the complete journal transaction.
+  pub fn with_retry_of(mut self, previous: &Self) -> Result<Self, FactoryError> {
+    if self.factory_run_id != previous.factory_run_id
+      || self.flow_run_id != previous.flow_run_id
+      || self.workflow_cycle_id != previous.workflow_cycle_id
+      || self.node_key != previous.node_key
+      || self.node_kind != previous.node_kind
+      || self.execution != previous.execution
+      || self.budget != previous.budget
+      || self.number <= previous.number
+      || self.started_at < previous.started_at
+    {
       return Err(FactoryError::InvalidReference {
-        relationship: "Node Attempt flow",
+        relationship: "Node execution retry predecessor",
       });
     }
-    Ok(Self {
-      id: NodeAttemptId::from_uuid(stage.id().as_uuid())?,
-      factory_run_id: stage.run_id(),
-      flow_run_id: flow_run.id(),
-      workflow_cycle_id: cycle.id(),
-      node_key,
-      node_kind: FlowNodeKind::BuildCommand,
-      number: NodeAttemptNumber::new(stage.number().get())?,
-      input_digest: stage.input_digest(),
-      budget: stage.budget(),
-      deadline: stage.claim().expires_at(),
-      execution: NodeExecutionIdentity::StageProjection(stage.id()),
-      ownership: FactoryClaimOwnership::new(stage.owner().clone(), stage.claim()),
-      stage_projection_id: Some(stage.id()),
-    })
+    self.retry_of = Some(previous.id);
+    Ok(self)
+  }
+  /// Failed execution retried by this attempt, independently of logical graph repeats.
+  #[must_use]
+  pub const fn retry_of(&self) -> Option<NodeAttemptId> {
+    self.retry_of
+  }
+
+  pub(crate) fn validate_execution_window(&self) -> Result<(), FactoryError> {
+    self.claim().verify_fence(self.claim().fence(), self.started_at)?;
+    if self.deadline <= self.started_at
+      || self
+        .deadline
+        .unix_millis()
+        .checked_sub(self.started_at.unix_millis())
+        .and_then(|elapsed| u64::try_from(elapsed).ok())
+        .is_none_or(|elapsed| elapsed > self.budget.max_elapsed_millis())
+    {
+      return Err(FactoryError::InvalidReference {
+        relationship: "Node Attempt execution window",
+      });
+    }
+    Ok(())
   }
 
   pub(super) fn accepts_completion_owner(&self, owner: &FactoryClaimOwnership) -> bool {
-    (owner.owner() == self.owner() && owner.claim() == self.claim())
-      || (self.stage_projection_id().is_none() && owner.claim().claimed_at() >= self.claim().expires_at())
+    (owner.owner() == self.owner() && owner.claim().claimed_at() >= self.claim().claimed_at())
+      || owner.claim().claimed_at() >= self.claim().expires_at()
   }
 
-  /// Verifies a live original owner or a claim acquired after the old lease expired.
+  /// Verifies a replacement fence for the same worker, or a successor after lease expiry.
   ///
   /// The durable Flow owner must also compare this claim with the current stored
   /// claim. This check prevents an unrelated overlapping lease from dispatching
@@ -561,6 +540,12 @@ impl NodeAttempt {
     self.budget
   }
 
+  /// Original execution start, retained unchanged across successor observations.
+  #[must_use]
+  pub const fn started_at(&self) -> Timestamp {
+    self.started_at
+  }
+
   /// Returns the immutable authoritative execution deadline.
   #[must_use]
   pub const fn deadline(&self) -> Timestamp {
@@ -583,12 +568,6 @@ impl NodeAttempt {
   #[must_use]
   pub const fn claim(&self) -> crate::FactoryClaim {
     self.ownership.claim()
-  }
-
-  /// Returns the exact fixed-stage identity projected by this node, when any.
-  #[must_use]
-  pub const fn stage_projection_id(&self) -> Option<StageAttemptId> {
-    self.stage_projection_id
   }
 }
 
@@ -690,43 +669,6 @@ impl NodeAttemptCompletion {
     })
   }
 
-  /// Projects one fixed-stage completion into its generic Node Attempt result.
-  pub fn from_stage(
-    attempt: &NodeAttempt,
-    definition: &FlowDefinition,
-    completion: &StageAttemptCompletion,
-  ) -> Result<Self, FactoryError> {
-    if attempt.stage_projection_id() != Some(completion.stage_attempt_id()) {
-      return Err(FactoryError::InvalidReference {
-        relationship: "Stage completion projection",
-      });
-    }
-    let outcome = match completion.outcome() {
-      StageAttemptOutcome::Succeeded => FactoryKey::new("succeeded")?,
-      StageAttemptOutcome::Failed => FactoryKey::new("failed")?,
-      StageAttemptOutcome::Cancelled => FactoryKey::new("cancelled")?,
-    };
-    let schema = definition
-      .node(attempt.node_key())
-      .and_then(|node| node.outcome(&outcome))
-      .map(|outcome| outcome.schema().clone())
-      .ok_or(FactoryError::InvalidReference {
-        relationship: "Stage completion outcome",
-      })?;
-    Self::new(
-      attempt,
-      definition,
-      NodeAttemptCompletionInput {
-        outcome,
-        output_schema: schema,
-        output_digest: completion.id(),
-        ownership: FactoryClaimOwnership::new(completion.owner().clone(), completion.claim()),
-        usage: completion.usage(),
-        observed_at: completion.observed_at(),
-      },
-    )
-  }
-
   /// Returns the content-derived observation identity.
   #[must_use]
   pub const fn id(&self) -> FactoryDigest {
@@ -820,6 +762,16 @@ pub(crate) fn validate_data_catalogue(
         return Err(invalid());
       }
     }
+  }
+  Ok(())
+}
+
+fn validate_wip_limits(limits: &FlowAdmissionLimits, wip: crate::FactoryWipLimits) -> Result<(), FactoryError> {
+  crate::FactoryWipLimits::new(wip.max_active_runs(), wip.max_active_nodes())?;
+  if u32::from(limits.max_wip()) > wip.max_active_nodes() {
+    return Err(FactoryError::InvalidConfiguration {
+      field: "admitted Flow configuration WIP",
+    });
   }
   Ok(())
 }

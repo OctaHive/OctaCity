@@ -102,8 +102,8 @@ pub struct CapturedChangeSetManifestV1 {
   pub base_revision: String,
   /// Canonical candidate commit created by trusted capture.
   pub candidate_revision: String,
-  /// Immutable Factory Stage Attempt identity.
-  pub stage_attempt_id: String,
+  /// Exact producing Node Attempt identity, independent of a stage role.
+  pub node_attempt_id: String,
   /// Verified local capture-tool identity.
   pub capture_tool: FactoryImmutableReferenceV3,
   /// Canonically ordered changed paths and modes.
@@ -140,7 +140,7 @@ impl CapturedChangeSetManifestV1 {
     }
     validate_bounded_identity("base revision", &self.base_revision)?;
     validate_bounded_identity("candidate revision", &self.candidate_revision)?;
-    validate_bounded_identity("stage attempt identity", &self.stage_attempt_id)?;
+    validate_bounded_identity("node attempt identity", &self.node_attempt_id)?;
     self.capture_tool.validate_identity()?;
     self.bundle.validate(CHANGE_SET_BUNDLE_OUTPUT, None)?;
     if let Some(patch) = &self.patch {
@@ -204,42 +204,6 @@ fn validate_bounded_identity(name: &str, value: &str) -> Result<(), String> {
   Ok(())
 }
 
-/// Program-owned Factory stage represented as causal metadata only.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FactoryStageKindV3 {
-  /// Candidate implementation.
-  Implementation,
-  /// Deterministic candidate validation.
-  Validation,
-  /// Independent candidate evaluation.
-  Evaluation,
-  /// Bounded candidate rework.
-  Rework,
-}
-
-/// Type of immutable record that caused a Factory stage.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum FactoryCausalRecordKindV3 {
-  /// An earlier candidate ChangeSet.
-  ChangeSet,
-  /// A deterministic candidate Decision.
-  Decision,
-}
-
-/// Optional immutable predecessor of one Factory stage.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct FactoryCausalReferenceV3 {
-  /// Stable record kind.
-  pub kind: FactoryCausalRecordKindV3,
-  /// Logical record identity.
-  pub id: String,
-  /// SHA-256 digest of the immutable record.
-  pub digest: String,
-}
-
 /// Logical Factory provenance attached to an otherwise ordinary Build Job.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -250,23 +214,22 @@ pub struct FactoryCausalityV3 {
   pub factory_configuration_id: String,
   /// Positive immutable Factory Configuration version.
   pub factory_configuration_version: u64,
-  /// Append-only Stage Attempt identity.
-  pub stage_attempt_id: String,
-  /// Program-owned stage kind.
-  pub stage_kind: FactoryStageKindV3,
-  /// Digest of the immutable Task Envelope.
-  pub task_envelope_digest: String,
+  /// Exact owning Flow execution.
+  pub flow_run_id: String,
+  /// Exact workflow cycle.
+  pub workflow_cycle_id: String,
+  /// Append-only Node Attempt identity, independent of its logical name.
+  pub node_attempt_id: String,
+  /// Digest of the complete frozen node input and selected context.
+  pub input_digest: String,
   /// Digest of the exact subject revision and repository identity.
   pub subject_digest: String,
-  /// Trusted capture instruction for a writable implementation or rework.
+  /// Explicit trusted capture instruction for a node granted source write access.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub change_set_capture: Option<ChangeSetCaptureV3>,
-  /// Exact accepted candidate reconstructed before a later stage starts.
+  /// Explicit accepted candidate reconstructed before this configured operation starts.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub change_set_materialization: Option<ChangeSetMaterializationV3>,
-  /// Optional causal predecessor.
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  pub parent: Option<FactoryCausalReferenceV3>,
 }
 
 impl FactoryCausalityV3 {
@@ -277,42 +240,22 @@ impl FactoryCausalityV3 {
         "factory.factory_configuration_id",
         self.factory_configuration_id.as_str(),
       ),
-      ("factory.stage_attempt_id", self.stage_attempt_id.as_str()),
+      ("factory.flow_run_id", self.flow_run_id.as_str()),
+      ("factory.workflow_cycle_id", self.workflow_cycle_id.as_str()),
+      ("factory.node_attempt_id", self.node_attempt_id.as_str()),
     ] {
       bounded_identity(name, value)?;
     }
     if self.factory_configuration_version == 0 {
       return Err("factory configuration version must be greater than zero".to_owned());
     }
-    digest("factory.task_envelope_digest", &self.task_envelope_digest)?;
+    digest("factory.input_digest", &self.input_digest)?;
     digest("factory.subject_digest", &self.subject_digest)?;
     if let Some(capture) = &self.change_set_capture {
       capture.validate()?;
-      if !matches!(
-        self.stage_kind,
-        FactoryStageKindV3::Implementation | FactoryStageKindV3::Rework
-      ) {
-        return Err("ChangeSet capture is valid only for writable Factory stages".to_owned());
-      }
     }
-    match (&self.change_set_materialization, self.stage_kind) {
-      (None, FactoryStageKindV3::Implementation) => {}
-      (
-        Some(materialization),
-        FactoryStageKindV3::Validation | FactoryStageKindV3::Evaluation | FactoryStageKindV3::Rework,
-      ) => {
-        materialization.validate(inputs)?;
-      }
-      (Some(_), FactoryStageKindV3::Implementation) => {
-        return Err("ChangeSet materialization is valid only for later Factory stages".to_owned());
-      }
-      (None, FactoryStageKindV3::Validation | FactoryStageKindV3::Evaluation | FactoryStageKindV3::Rework) => {
-        return Err("later Factory stages require exact ChangeSet materialization".to_owned());
-      }
-    }
-    if let Some(parent) = &self.parent {
-      bounded_identity("factory.parent.id", &parent.id)?;
-      digest("factory.parent.digest", &parent.digest)?;
+    if let Some(materialization) = &self.change_set_materialization {
+      materialization.validate(inputs)?;
     }
     Ok(())
   }
@@ -377,7 +320,7 @@ pub struct ChangeSetCaptureV3 {
   pub author_name: String,
   /// Canonical author and committer email address.
   pub author_email: String,
-  /// Unix second derived from the immutable Stage Attempt creation claim.
+  /// Unix second derived from the immutable Node Attempt creation claim.
   pub committed_at: u64,
   /// Optional bounded textual patch. The bundle and manifest are always required.
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -615,7 +558,7 @@ pub struct ManagedOctaExecutionV3 {
   pub octafile_input: String,
   /// Exact non-empty Octa task names, in execution order.
   pub tasks: Vec<String>,
-  /// Single logical secret profile selected for a credentialed trusted stage.
+  /// Single logical secret profile selected for a credentialed configured node.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub credential_profile: Option<String>,
   /// Optional protected tool-control contract for tasks that may invoke tools.
@@ -1018,11 +961,16 @@ pub(crate) fn validate_factory_execution(
   if required != FactoryEnforcementCapabilityV3::ALL {
     return Err("JobSpec v3 requires the complete ordered enforcement vocabulary".to_owned());
   }
-  let source_mode = if factory.is_some_and(|factory| factory.stage_kind == FactoryStageKindV3::Evaluation) {
-    FactoryMountModeV3::ReadOnly
-  } else {
-    FactoryMountModeV3::ReadWrite
-  };
+  let source_mode = permissions
+    .mounts
+    .iter()
+    .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    .ok_or_else(|| "Factory source mount authority is absent".to_owned())?
+    .mode;
+  if factory.is_some_and(|factory| factory.change_set_capture.is_some()) && source_mode != FactoryMountModeV3::ReadWrite
+  {
+    return Err("ChangeSet capture requires explicit source write authority".to_owned());
+  }
   let required_mounts = [
     FactoryMountPermissionV3 {
       root: PROTECTED_INPUT_ROOT.to_owned(),
@@ -1073,7 +1021,7 @@ pub(crate) fn validate_factory_execution(
     Some(profile) if permissions.secret_profiles.as_slice() == [profile.as_str()] => {}
     None if permissions.secret_profiles.is_empty() => {}
     Some(_) | None => {
-      return Err("managed execution must select exactly its stage-scoped Factory credential profile".to_owned());
+      return Err("managed execution must select exactly its node-scoped Factory credential profile".to_owned());
     }
   }
   let permitted = &permissions.outputs;

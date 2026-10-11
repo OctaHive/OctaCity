@@ -1,12 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  BudgetLimit, FactoryConfiguration, FactoryDigest, FactoryError, FactoryFlowEdge, FactoryKey, FactoryPermissionSet,
-  FactoryStageKind, FlowAdmissionLimits, FlowContextProjection, FlowDataProjection, FlowDefinitionId,
-  FlowDefinitionVersion, FlowExecutionPolicy, FlowNodeKind, FlowOutcomeDefinition, FlowOutcomeKind,
-  FlowTerminalDefinition, FlowTransition, FlowTransitionTarget, ImmutableReference, analyze_factory_flow_graph,
+  BudgetLimit, FactoryDigest, FactoryError, FactoryFlowEdge, FactoryKey, FactoryPermissionSet, FlowAdmissionLimits,
+  FlowContextProjection, FlowDataProjection, FlowDefinitionId, FlowDefinitionVersion, FlowExecutionPolicy,
+  FlowNodeKind, FlowOutcomeDefinition, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget,
+  ImmutableReference, analyze_factory_flow_graph,
 };
 
 /// Maximum nodes stored in one immutable Flow Definition.
@@ -82,7 +82,6 @@ pub struct FlowNodeDefinition {
   permissions: FactoryPermissionSet,
   required: bool,
   subflow: Option<FlowDefinitionRef>,
-  stage_projection: Option<FactoryStageKind>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   action: Option<crate::FlowActionBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -95,6 +94,8 @@ pub struct FlowNodeDefinition {
   build: Option<crate::FlowBuildBinding>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   accepted_work_outcomes: Vec<FactoryKey>,
+  #[serde(default)]
+  max_execution_retries: u16,
 }
 
 impl FlowNodeDefinition {
@@ -120,14 +121,44 @@ impl FlowNodeDefinition {
       permissions: input.permissions,
       required: input.required,
       subflow: input.subflow,
-      stage_projection: None,
       action: None,
       phase_pool: None,
       gate: None,
       input_binding: None,
       build: None,
       accepted_work_outcomes: vec![],
+      max_execution_retries: 0,
     })
+  }
+
+  /// Permits bounded, explicitly confirmed retries after technical failure.
+  /// Each retry owns a new attempt; observing an existing operation is not a retry.
+  pub fn with_execution_retries(mut self, maximum: u16) -> Result<Self, FactoryError> {
+    self.max_execution_retries = maximum;
+    self.validate_execution_retries()?;
+    Ok(self)
+  }
+  /// Additional executions permitted after an independently retained failure.
+  #[must_use]
+  pub const fn max_execution_retries(&self) -> u16 {
+    self.max_execution_retries
+  }
+  fn validate_execution_retries(&self) -> Result<(), FactoryError> {
+    if u32::from(self.max_execution_retries) >= crate::MAX_FACTORY_ATTEMPTS
+      || (self.max_execution_retries != 0
+        && !matches!(
+          self.kind,
+          FlowNodeKind::BuildCommand
+            | FlowNodeKind::Reasoning
+            | FlowNodeKind::DecisionSignal
+            | FlowNodeKind::TrustedAction
+        ))
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Node execution retry bound",
+      });
+    }
+    Ok(())
   }
 
   /// Declares finite deterministic outcomes that freeze the admitted Work contract.
@@ -284,36 +315,6 @@ impl FlowNodeDefinition {
   pub const fn subflow_definition(&self) -> Option<FlowDefinitionRef> {
     self.subflow
   }
-  /// Returns the fixed-stage kind retained by a pre-graph definition projection.
-  #[must_use]
-  pub const fn stage_projection(&self) -> Option<FactoryStageKind> {
-    self.stage_projection
-  }
-
-  fn projected_stage(
-    key: FactoryKey,
-    kind: FactoryStageKind,
-    budget: BudgetLimit,
-    outcomes: Vec<FlowOutcomeDefinition>,
-  ) -> Self {
-    Self {
-      key,
-      kind: FlowNodeKind::BuildCommand,
-      input_schema: None,
-      outcomes,
-      budget,
-      permissions: FactoryPermissionSet::deny_all(),
-      required: true,
-      subflow: None,
-      stage_projection: Some(kind),
-      action: None,
-      phase_pool: None,
-      gate: None,
-      input_binding: None,
-      build: None,
-      accepted_work_outcomes: vec![],
-    }
-  }
 }
 
 /// Caller-owned complete immutable Flow Definition content.
@@ -437,145 +438,6 @@ impl FlowDefinition {
     })
   }
 
-  /// Projects the fixed-stage configuration into one fully typed root definition.
-  pub fn from_stage_projection(configuration: &FactoryConfiguration) -> Result<Self, FactoryError> {
-    let reference = configuration.reference();
-    let id = FlowDefinitionId::from_uuid(reference.id().as_uuid())?;
-    let version = FlowDefinitionVersion::new(reference.version().get())?;
-    let result_schema = super::contract::internal_schema("factory.stage-result")?;
-    let outcome = |name: &str, kind| {
-      Ok(FlowOutcomeDefinition::new(
-        FactoryKey::new(name)?,
-        kind,
-        result_schema.clone(),
-      ))
-    };
-    let mut keys = BTreeMap::new();
-    let nodes = configuration
-      .stages()
-      .iter()
-      .map(|stage| {
-        keys.insert(stage.kind(), stage.key().clone());
-        Ok(FlowNodeDefinition::projected_stage(
-          stage.key().clone(),
-          stage.kind(),
-          stage.budget(),
-          vec![
-            outcome("succeeded", FlowOutcomeKind::Success)?,
-            outcome("failed", FlowOutcomeKind::Failure)?,
-            outcome("cancelled", FlowOutcomeKind::Failure)?,
-          ],
-        ))
-      })
-      .collect::<Result<Vec<_>, FactoryError>>()?;
-    let entry = keys
-      .get(&FactoryStageKind::Implementation)
-      .cloned()
-      .ok_or(FactoryError::InvalidReference {
-        relationship: "implementation stage",
-      })?;
-    let succeeded = FactoryKey::new("succeeded")?;
-    let failed = FactoryKey::new("failed")?;
-    let cancelled = FactoryKey::new("cancelled")?;
-    let mut transitions = Vec::new();
-    connect(
-      &keys,
-      FactoryStageKind::Implementation,
-      &succeeded,
-      FactoryStageKind::Validation,
-      &mut transitions,
-    );
-    connect(
-      &keys,
-      FactoryStageKind::Validation,
-      &succeeded,
-      FactoryStageKind::Evaluation,
-      &mut transitions,
-    );
-    connect(
-      &keys,
-      FactoryStageKind::Validation,
-      &failed,
-      FactoryStageKind::Rework,
-      &mut transitions,
-    );
-    connect(
-      &keys,
-      FactoryStageKind::Evaluation,
-      &failed,
-      FactoryStageKind::Rework,
-      &mut transitions,
-    );
-    if let (Some(rework), Some(validation)) = (
-      keys.get(&FactoryStageKind::Rework),
-      keys.get(&FactoryStageKind::Validation),
-    ) {
-      let max_cycles = configuration.rework().max_cycles();
-      if max_cycles == 0 {
-        return Err(FactoryError::InvalidConfiguration {
-          field: "rework stage without cycles",
-        });
-      }
-      transitions.push(FlowTransition::repeated(
-        rework.clone(),
-        succeeded.clone(),
-        FlowTransitionTarget::Node(validation.clone()),
-        max_cycles,
-        failed.clone(),
-      )?);
-    }
-    let terminal = |predecessor: &FactoryKey, outcome: &FactoryKey, target: &str| -> Result<_, FactoryError> {
-      Ok(FlowTransition::new(
-        predecessor.clone(),
-        outcome.clone(),
-        FlowTransitionTarget::Terminal(FactoryKey::new(target)?),
-      ))
-    };
-    for node in &nodes {
-      let has_route = |key: &FactoryKey| {
-        transitions
-          .iter()
-          .any(|transition| transition.predecessor() == node.key() && transition.outcome() == key)
-      };
-      if !has_route(&failed) {
-        transitions.push(terminal(node.key(), &failed, "failed")?);
-      }
-      transitions.push(terminal(node.key(), &cancelled, "cancelled")?);
-    }
-    if let Some(evaluation) = keys.get(&FactoryStageKind::Evaluation) {
-      transitions.push(terminal(evaluation, &succeeded, "succeeded")?);
-    }
-    let max_active_nodes = u16::try_from(configuration.wip_limits().max_active_stages()).map_err(|_| {
-      FactoryError::InvalidConfiguration {
-        field: "Flow WIP bound",
-      }
-    })?;
-    Self::new(FlowDefinitionInput {
-      id,
-      version,
-      input_schema: None,
-      entry,
-      nodes,
-      transitions,
-      terminals: ["cancelled", "failed", "succeeded"]
-        .into_iter()
-        .map(|name| {
-          Ok(FlowTerminalDefinition::new(
-            FactoryKey::new(name)?,
-            result_schema.clone(),
-          ))
-        })
-        .collect::<Result<_, FactoryError>>()?,
-      context_projections: Vec::new(),
-      data_projections: Vec::new(),
-      execution: FlowExecutionPolicy::new(
-        configuration.hard_budget(),
-        FactoryPermissionSet::deny_all(),
-        max_active_nodes,
-      )?,
-    })
-  }
-
   /// Returns the exact immutable reference.
   #[must_use]
   pub const fn reference(&self) -> FlowDefinitionRef {
@@ -695,6 +557,7 @@ fn validate_bindings(nodes: &[FlowNodeDefinition]) -> Result<(), FactoryError> {
       binding.validate_sources(nodes)?;
     }
     super::predicate::validate_binding(node)?;
+    node.validate_execution_retries()?;
     node.validate_work_acceptance()?;
   }
   if nodes
@@ -729,22 +592,6 @@ fn validate_size(nodes: usize, transitions: usize) -> Result<(), FactoryError> {
     });
   }
   Ok(())
-}
-
-fn connect(
-  keys: &BTreeMap<FactoryStageKind, FactoryKey>,
-  predecessor: FactoryStageKind,
-  outcome: &FactoryKey,
-  successor: FactoryStageKind,
-  transitions: &mut Vec<FlowTransition>,
-) {
-  if let (Some(predecessor), Some(successor)) = (keys.get(&predecessor), keys.get(&successor)) {
-    transitions.push(FlowTransition::new(
-      predecessor.clone(),
-      outcome.clone(),
-      FlowTransitionTarget::Node(successor.clone()),
-    ));
-  }
 }
 
 /// Exact reachable immutable Flow Definition closure pinned at admission.
@@ -797,16 +644,12 @@ impl PinnedFlowDefinitionClosure {
     Ok(Self { root, definitions })
   }
 
-  /// Creates the one-definition closure for the fixed-stage runtime.
-  pub fn from_stage_projection(configuration: &FactoryConfiguration) -> Result<Self, FactoryError> {
-    let definition = FlowDefinition::from_stage_projection(configuration)?;
-    Self::new(definition.reference(), vec![definition])
-  }
   /// Returns the exact root definition.
   #[must_use]
   pub const fn root(&self) -> FlowDefinitionRef {
     self.root
   }
+
   /// Returns every reachable exact definition in canonical order.
   #[must_use]
   pub fn definitions(&self) -> &[FlowDefinition] {

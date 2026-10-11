@@ -68,14 +68,8 @@ factory_enum!(
   "Durable high-level state of one Factory Run.",
   {
     Admitted => "admitted",
-    Implementing => "implementing",
-    Validating => "validating",
-    Evaluating => "evaluating",
-    Reworking => "reworking",
-    ReadyForDelivery => "ready_for_delivery",
-    Delivering => "delivering",
-    Escalated => "escalated",
-    Rejected => "rejected",
+    Running => "running",
+    Waiting => "waiting",
     Cancelled => "cancelled",
     Completed => "completed",
   }
@@ -85,7 +79,7 @@ impl FactoryRunState {
   /// Returns whether the run can no longer consume Factory WIP or be reconciled.
   #[must_use]
   pub const fn is_terminal(self) -> bool {
-    matches!(self, Self::Rejected | Self::Cancelled | Self::Completed)
+    matches!(self, Self::Cancelled | Self::Completed)
   }
 
   /// Returns whether the run still consumes Factory WIP and may be reconciled.
@@ -149,17 +143,6 @@ impl PermissionCategory {
   ];
 }
 factory_enum!(
-  FactoryStageKind,
-  FactoryEnumKind::Stage,
-  "Program-owned kind of Factory Stage Attempt.",
-  {
-    Implementation => "implementation",
-    Validation => "validation",
-    Evaluation => "evaluation",
-    Rework => "rework",
-  }
-);
-factory_enum!(
   FlowNodeKind,
   FactoryEnumKind::FlowNode,
   "Closed provider-neutral kind of one immutable Factory Flow node.",
@@ -173,16 +156,6 @@ factory_enum!(
     HumanGate => "human_gate",
     TrustedAction => "trusted_action",
     SubflowCall => "subflow_call",
-  }
-);
-factory_enum!(
-  MacroCallKind,
-  FactoryEnumKind::Call,
-  "Purpose of one bounded reasoning call within a Stage Attempt.",
-  {
-    Implement => "implement",
-    Evaluate => "evaluate",
-    Summarize => "summarize",
   }
 );
 factory_enum!(
@@ -318,9 +291,7 @@ mod tests {
   fn every_open_enum_rejects_unknown_values() {
     let errors = [
       "future".parse::<FactoryRunState>().expect_err("unknown run state"),
-      "future".parse::<FactoryStageKind>().expect_err("unknown stage"),
       "future".parse::<FlowNodeKind>().expect_err("unknown Flow node"),
-      "future".parse::<MacroCallKind>().expect_err("unknown call"),
       "future".parse::<RiskClass>().expect_err("unknown risk"),
       "future"
         .parse::<DecisionSignalPurpose>()
@@ -360,10 +331,29 @@ mod tests {
 
   #[test]
   fn run_terminality_has_one_canonical_definition() {
-    assert!(FactoryRunState::Rejected.is_terminal());
     assert!(FactoryRunState::Cancelled.is_terminal());
     assert!(FactoryRunState::Completed.is_terminal());
     assert!(FactoryRunState::Admitted.is_active());
-    assert!(FactoryRunState::Escalated.is_active());
+    assert!(FactoryRunState::Waiting.is_active());
+  }
+
+  #[test]
+  fn run_state_describes_execution_and_cannot_encode_a_business_stage_or_outcome() {
+    for name in [
+      "implementing",
+      "validating",
+      "evaluating",
+      "reworking",
+      "ready_for_delivery",
+      "delivering",
+      "escalated",
+      "rejected",
+      "accessibility_audit",
+    ] {
+      assert!(
+        name.parse::<FactoryRunState>().is_err(),
+        "logical stage {name} is not a Run state"
+      );
+    }
   }
 }

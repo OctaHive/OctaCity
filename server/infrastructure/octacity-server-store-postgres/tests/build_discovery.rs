@@ -313,7 +313,10 @@ async fn seed_build(pool: &sqlx::PgPool, summary: &ProjectBuildSummary) {
   .bind(summary.configuration_id.as_uuid())
   .bind(i64::try_from(summary.configuration_version.get()).unwrap())
   .bind(format!("build:{}", summary.id))
-  .bind(Json(summary.cause.clone()))
+  .bind(Json(match &summary.origin {
+    octacity_server_store::BuildSummaryOrigin::Trigger(cause) => cause.clone(),
+    _ => panic!("ordinary fixture requires a Trigger"),
+  }))
   .bind(Json(TriggerCausality::root(occurrence_id)))
   .bind(Json(TriggerMetadata::default()))
   .bind(created_at)
@@ -436,7 +439,7 @@ fn build(
     project_id,
     configuration_id,
     configuration_version: BuildConfigurationVersion::INITIAL,
-    cause: TriggerCause::Manual {},
+    origin: octacity_server_store::BuildSummaryOrigin::Trigger(TriggerCause::Manual {}),
     state,
     created_at: time(created_at),
     current_attempt_id: id(value + 10_000),

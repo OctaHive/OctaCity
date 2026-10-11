@@ -6,16 +6,18 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{
   Assessment, AssessmentId, ContextManifestId, DecisionOutcome, EvaluationPlan, FactoryDigest, FactoryError,
-  FactoryKey, FactoryRunState, FactoryStageTarget, ImmutableReference, MAX_EVALUATORS, MacroCall, MacroCallId,
-  MacroCallKind, ReviewBranch, StageAttempt, StageAttemptId,
+  FactoryKey, FactoryRunState, FlowNodeInput, ImmutableReference, MAX_EVALUATORS, NodeAttempt, NodeAttemptId,
+  ReviewBranch,
 };
+
+pub(crate) type EvaluationNodeBinding = (crate::FactoryRunId, NodeAttemptId, FactoryDigest);
 
 /// Persisted progress for one evaluator branch.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub enum EvaluationBranchState {
-  /// The expected branch has no Stage Attempt yet.
+  /// The expected branch has no Node Attempt yet.
   Pending,
-  /// The branch Stage Attempt exists but has no linked Build.
+  /// The branch Node Attempt exists but has no linked Build.
   AttemptCreated,
   /// The linked evaluation Build is non-terminal.
   BuildActive,
@@ -47,21 +49,26 @@ pub struct EvaluationBranchResult {
   branch: FactoryKey,
   evaluator: ImmutableReference,
   assessment_id: AssessmentId,
-  stage_attempt_id: StageAttemptId,
-  call_id: MacroCallId,
+  node_attempt_id: NodeAttemptId,
+  factory_run_id: crate::FactoryRunId,
+  input_digest: FactoryDigest,
   context_manifest_id: ContextManifestId,
   context_digest: FactoryDigest,
   substituted: bool,
 }
 
 impl EvaluationBranchResult {
-  /// Binds a validated Assessment to its exact plan branch and scoped call context.
+  /// Binds a validated Assessment to its exact plan branch and frozen node context.
   pub fn new(
     plan: &EvaluationPlan,
-    stage: &StageAttempt,
-    call: &MacroCall,
+    input: &FlowNodeInput,
+    node: &NodeAttempt,
     assessment: &Assessment,
   ) -> Result<Self, FactoryError> {
+    input.verify_attempt(node)?;
+    let context = input.context().ok_or(FactoryError::InvalidReference {
+      relationship: "evaluation node Context",
+    })?;
     let branch = plan
       .branches()
       .iter()
@@ -71,11 +78,8 @@ impl EvaluationBranchResult {
       })?;
     if assessment.plan_id() != plan.id()
       || assessment.subject() != plan.subject()
-      || call.kind() != MacroCallKind::Evaluate
-      || call.subject().candidate() != Some(plan.subject())
-      || call.stage_attempt_id() != stage.id()
-      || stage.subject() != plan.subject().exact()
-      || stage.target() != &FactoryStageTarget::Evaluation(branch.key().clone())
+      || context.subject().candidate() != Some(plan.subject())
+      || input.subject() != plan.subject().exact()
     {
       return Err(FactoryError::InvalidReference {
         relationship: "evaluation branch result bindings",
@@ -85,10 +89,11 @@ impl EvaluationBranchResult {
       branch: branch.key().clone(),
       evaluator: assessment.evaluator_reference().clone(),
       assessment_id: assessment.id(),
-      stage_attempt_id: call.stage_attempt_id(),
-      call_id: call.id(),
-      context_manifest_id: call.context_manifest_id(),
-      context_digest: call.context_digest(),
+      node_attempt_id: node.id(),
+      factory_run_id: input.factory_run_id(),
+      input_digest: input.digest()?,
+      context_manifest_id: context.id(),
+      context_digest: context.digest()?,
       substituted: assessment.evaluator_reference() != branch.evaluator(),
     })
   }
@@ -111,16 +116,16 @@ impl EvaluationBranchResult {
     self.assessment_id
   }
 
-  /// Returns the Stage Attempt that owned the evaluator call.
+  /// Returns the exact common node that produced this assessment.
   #[must_use]
-  pub const fn stage_attempt_id(&self) -> StageAttemptId {
-    self.stage_attempt_id
+  pub const fn node_attempt_id(&self) -> NodeAttemptId {
+    self.node_attempt_id
   }
 
-  /// Returns the durable evaluator call identity.
+  /// Returns the complete frozen node input identity.
   #[must_use]
-  pub const fn call_id(&self) -> MacroCallId {
-    self.call_id
+  pub const fn input_digest(&self) -> FactoryDigest {
+    self.input_digest
   }
 
   /// Returns the exact scoped Context Manifest identity.
@@ -148,8 +153,7 @@ pub struct EvaluationBranch {
   key: FactoryKey,
   required: bool,
   state: EvaluationBranchState,
-  #[serde(skip_serializing_if = "Option::is_none")]
-  evaluator: Option<ImmutableReference>,
+  evaluator: ImmutableReference,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   substitutes: Vec<ImmutableReference>,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -162,8 +166,7 @@ struct EvaluationBranchWire {
   key: FactoryKey,
   required: bool,
   state: EvaluationBranchState,
-  #[serde(default)]
-  evaluator: Option<ImmutableReference>,
+  evaluator: ImmutableReference,
   #[serde(default)]
   substitutes: Vec<ImmutableReference>,
   #[serde(default)]
@@ -171,28 +174,12 @@ struct EvaluationBranchWire {
 }
 
 impl EvaluationBranch {
-  /// Constructs one legacy-compatible branch projection without exact evaluator bindings.
-  ///
-  /// New plans should use [`EvaluationProgress::from_plan`] so accepted results remain bound to
-  /// the evaluator and substitute set frozen by the immutable Evaluation Plan.
-  #[must_use]
-  pub const fn new(key: FactoryKey, required: bool, state: EvaluationBranchState) -> Self {
-    Self {
-      key,
-      required,
-      state,
-      evaluator: None,
-      substitutes: Vec::new(),
-      result: None,
-    }
-  }
-
   fn from_review_branch(branch: &ReviewBranch) -> Self {
     Self {
       key: branch.key().clone(),
       required: branch.is_required(),
       state: EvaluationBranchState::Pending,
-      evaluator: Some(branch.evaluator().clone()),
+      evaluator: branch.evaluator().clone(),
       substitutes: branch.substitutes().to_vec(),
       result: None,
     }
@@ -200,12 +187,7 @@ impl EvaluationBranch {
 
   fn from_wire(mut wire: EvaluationBranchWire) -> Result<Self, FactoryError> {
     wire.substitutes.sort();
-    if wire.substitutes.windows(2).any(|pair| pair[0] == pair[1])
-      || wire
-        .evaluator
-        .as_ref()
-        .is_some_and(|evaluator| wire.substitutes.contains(evaluator))
-    {
+    if wire.substitutes.windows(2).any(|pair| pair[0] == pair[1]) || wire.substitutes.contains(&wire.evaluator) {
       return Err(invalid_lifecycle());
     }
     let result_state = match wire.state {
@@ -217,17 +199,12 @@ impl EvaluationBranch {
       (Some(substituted), Some(result))
         if result.branch == wire.key
           && result.substituted == substituted
-          && wire.evaluator.as_ref().is_some_and(|primary| {
-            if substituted {
-              &result.evaluator != primary && wire.substitutes.contains(&result.evaluator)
-            } else {
-              &result.evaluator == primary
-            }
-          }) => {}
+          && if substituted {
+            result.evaluator != wire.evaluator && wire.substitutes.contains(&result.evaluator)
+          } else {
+            result.evaluator == wire.evaluator
+          } => {}
       (None, None) => {}
-      // Old snapshots did not retain evaluator/result bindings. They remain
-      // readable, but only plan-bound branches can accept new typed results.
-      (Some(_), None) if wire.evaluator.is_none() => {}
       _ => return Err(invalid_lifecycle()),
     }
     Ok(Self {
@@ -264,12 +241,6 @@ impl EvaluationBranch {
     self.result.as_ref()
   }
 
-  /// Reports whether the branch carries exact evaluator policy from a plan.
-  #[must_use]
-  pub const fn is_plan_bound(&self) -> bool {
-    self.evaluator.is_some()
-  }
-
   fn with_state(&self, state: EvaluationBranchState) -> Self {
     Self {
       key: self.key.clone(),
@@ -282,9 +253,7 @@ impl EvaluationBranch {
   }
 
   fn with_result(&self, result: EvaluationBranchResult) -> Result<Self, FactoryError> {
-    let Some(primary) = &self.evaluator else {
-      return Err(invalid_lifecycle());
-    };
+    let primary = &self.evaluator;
     if result.branch != self.key || self.result.is_some() {
       return Err(invalid_lifecycle());
     }
@@ -364,12 +333,10 @@ impl EvaluationProgress {
     let Some(current) = self.branches.iter().find(|branch| &branch.key == key) else {
       return Err(invalid_lifecycle());
     };
-    if (current.is_plan_bound()
-      && matches!(
-        next_state,
-        EvaluationBranchState::Completed | EvaluationBranchState::Substituted
-      ))
-      || !valid_evaluation_branch_transition(current.state, next_state)
+    if matches!(
+      next_state,
+      EvaluationBranchState::Completed | EvaluationBranchState::Substituted
+    ) || !valid_evaluation_branch_transition(current.state, next_state)
     {
       return Err(invalid_lifecycle());
     }
@@ -419,12 +386,6 @@ impl EvaluationProgress {
     self.required_quorum
   }
 
-  /// Reports whether every branch was created from an exact immutable plan.
-  #[must_use]
-  pub fn is_plan_bound(&self) -> bool {
-    self.branches.iter().all(EvaluationBranch::is_plan_bound)
-  }
-
   /// Returns the exact Assessment identities accepted by a completed deterministic join.
   pub fn decision_assessment_ids(&self, plan: &EvaluationPlan) -> Result<Vec<AssessmentId>, FactoryError> {
     self.decision_bindings(plan).map(|(assessments, _)| assessments)
@@ -433,7 +394,7 @@ impl EvaluationProgress {
   pub(crate) fn decision_bindings(
     &self,
     plan: &EvaluationPlan,
-  ) -> Result<(Vec<AssessmentId>, HashSet<StageAttemptId>), FactoryError> {
+  ) -> Result<(Vec<AssessmentId>, HashSet<EvaluationNodeBinding>), FactoryError> {
     self.validate_plan_binding(plan, false)?;
     if self.branches.iter().any(|branch| {
       matches!(
@@ -464,45 +425,50 @@ impl EvaluationProgress {
     {
       return Err(invalid_lifecycle());
     }
-    let stage_attempt_ids = self
+    let node_attempt_ids = self
       .branches
       .iter()
-      .filter_map(|branch| branch.result.as_ref().map(|result| result.stage_attempt_id))
+      .filter_map(|branch| {
+        branch
+          .result
+          .as_ref()
+          .map(|result| (result.factory_run_id, result.node_attempt_id, result.input_digest))
+      })
       .collect::<HashSet<_>>();
-    Ok((assessment_ids, stage_attempt_ids))
+    Ok((assessment_ids, node_attempt_ids))
   }
 
-  /// Verifies restored plan, call-context, and Assessment bindings.
-  pub fn validate_bindings<'a, S, C, A>(
+  /// Revalidates exact common input, attempt, context and Assessment bindings.
+  pub fn validate_bindings<'a, I, N, A>(
     &self,
     plan: &EvaluationPlan,
-    stages: S,
-    calls: C,
+    inputs: I,
+    nodes: N,
     assessments: A,
   ) -> Result<(), FactoryError>
   where
-    S: Clone + IntoIterator<Item = &'a StageAttempt>,
-    C: Clone + IntoIterator<Item = &'a MacroCall>,
+    I: Clone + IntoIterator<Item = &'a FlowNodeInput>,
+    N: Clone + IntoIterator<Item = &'a NodeAttempt>,
     A: Clone + IntoIterator<Item = &'a Assessment>,
   {
     self.validate_plan_binding(plan, true)?;
     for result in self.branches.iter().filter_map(EvaluationBranch::result) {
-      let call = calls
+      let input = inputs
         .clone()
         .into_iter()
-        .find(|call| call.id() == result.call_id)
+        .find(|input| input.digest().ok() == Some(result.input_digest))
         .ok_or_else(invalid_lifecycle)?;
-      let stage = stages
+      let node = nodes
         .clone()
         .into_iter()
-        .find(|stage| stage.id() == result.stage_attempt_id)
+        .find(|node| node.id() == result.node_attempt_id)
         .ok_or_else(invalid_lifecycle)?;
       let assessment = assessments
         .clone()
         .into_iter()
         .find(|assessment| assessment.id() == result.assessment_id)
         .ok_or_else(invalid_lifecycle)?;
-      if &EvaluationBranchResult::new(plan, stage, call, assessment)? != result {
+      if &EvaluationBranchResult::new(plan, input, node, assessment)? != result {
         return Err(invalid_lifecycle());
       }
     }
@@ -526,34 +492,6 @@ impl EvaluationProgress {
             && actual.result.is_none())
       });
     if invalid { Err(invalid_lifecycle()) } else { Ok(()) }
-  }
-
-  pub(crate) fn is_immediate_successor(&self, next: &Self) -> bool {
-    if self.required_quorum != next.required_quorum || self.branches.len() != next.branches.len() {
-      return false;
-    }
-    let mut changed = 0_u8;
-    self.branches.iter().zip(&next.branches).all(|(previous, next)| {
-      if previous.key != next.key
-        || previous.required != next.required
-        || previous.evaluator != next.evaluator
-        || previous.substitutes != next.substitutes
-      {
-        return false;
-      }
-      if previous == next {
-        return true;
-      }
-      changed = changed.saturating_add(1);
-      changed == 1
-        && valid_evaluation_branch_transition(previous.state, next.state)
-        && match next.state {
-          EvaluationBranchState::Completed | EvaluationBranchState::Substituted if next.is_plan_bound() => {
-            previous.result.is_none() && next.result.is_some()
-          }
-          _ => previous.result == next.result,
-        }
-    }) && changed == 1
   }
 }
 
@@ -615,6 +553,6 @@ pub enum EvaluationState {
 
 fn invalid_lifecycle() -> FactoryError {
   FactoryError::InvalidLifecycle {
-    state: FactoryRunState::Evaluating,
+    state: FactoryRunState::Running,
   }
 }

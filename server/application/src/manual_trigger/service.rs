@@ -135,6 +135,20 @@ impl ManualTriggerService {
     event_kind: TriggerEventKind,
     causality: TriggerCausality,
   ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
+    self
+      .accept_internal_event(command, accepted_at, source_build_id, event_kind, Some(causality))
+      .await
+  }
+
+  /// Starts or continues an internal lineage from the actual retained Build origin.
+  pub(crate) async fn accept_internal_event(
+    &self,
+    command: ManualTriggerCommand,
+    accepted_at: Timestamp,
+    source_build_id: BuildId,
+    event_kind: TriggerEventKind,
+    causality: Option<TriggerCausality>,
+  ) -> Result<ManualTriggerOutcome, ManualTriggerError> {
     observe_trigger(TelemetryTriggerKind::Internal, async {
       let occurrence_id = ManualBuildIdentities::occurrence_id_for("internal", &command);
       let trigger = octacity_server_store::NormalizedTriggerOccurrence::derived(
@@ -146,7 +160,7 @@ impl ManualTriggerService {
           source_build_id,
           event_kind,
         },
-        causality,
+        causality.unwrap_or_else(|| TriggerCausality::root(occurrence_id)),
         command.observed_at,
       )
       .map_err(|_| ManualTriggerError::Invalid(super::model::ManualTriggerInputError::ContextMismatch))?;

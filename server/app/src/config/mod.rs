@@ -5,6 +5,8 @@ use serde::Deserialize;
 mod accessors;
 mod admission;
 mod defaults;
+mod factory;
+pub use factory::FactoryRuntimeConfig;
 mod infrastructure;
 mod integrations;
 mod loading;
@@ -24,6 +26,8 @@ pub(crate) use workers::{RetentionWorkerPolicy, RetryingWorkerPolicy, WebhookWor
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
+  #[serde(default)]
+  factory: Option<FactoryRuntimeConfig>,
   #[serde(default)]
   admission: AdmissionConfig,
   #[serde(default = "default_management_bind")]

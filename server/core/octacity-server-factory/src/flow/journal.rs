@@ -11,6 +11,8 @@ use std::collections::BTreeMap;
 /// complete content digest is the one committed by its completion.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FlowDataHistory {
+  /// Confirmed technical stops, without semantic node completions.
+  pub stops: Vec<crate::FlowNodeStop>,
   /// Immutable externally supplied data; at most one envelope per Factory Run.
   pub incoming: Vec<FlowIncomingData>,
   /// Frozen projected inputs, deduplicated by their full content identity.
@@ -70,6 +72,10 @@ impl FlowDataHistory {
     admitted: &AdmittedFlow,
     history: FlowRuntimeHistory<'_>,
   ) -> Result<(), FactoryError> {
+    let history = FlowRuntimeHistory {
+      stops: &self.stops,
+      ..history
+    };
     validate_flow_runtime_history(admitted, history)?;
     if self.incoming.len() > 1 {
       return Err(invalid());
@@ -219,6 +225,43 @@ impl FlowDataHistory {
         return Err(invalid());
       }
     }
+    let mut stopped = std::collections::BTreeSet::new();
+    for receipt in &self.stops {
+      let attempt = history
+        .attempts
+        .iter()
+        .find(|row| row.id() == receipt.node_attempt_id())
+        .ok_or_else(invalid)?;
+      let execution = receipt
+        .execution()
+        .map(|digest| {
+          self
+            .build_executions
+            .iter()
+            .find(|row| row.digest().ok() == Some(digest))
+            .ok_or_else(invalid)
+        })
+        .transpose()?;
+      if !stopped.insert(attempt.id())
+        || history
+          .completions
+          .iter()
+          .any(|row| row.node_attempt_id() == attempt.id())
+        || (execution.is_none()
+          && self
+            .build_executions
+            .iter()
+            .any(|row| row.node_attempt_id() == attempt.id()))
+        || crate::FlowNodeStop::restore(
+          &serde_json::to_vec(receipt).map_err(|_| invalid())?,
+          attempt,
+          execution,
+          receipt.digest()?,
+        )? != *receipt
+      {
+        return Err(invalid());
+      }
+    }
     let mut records = BTreeMap::new();
     for record in &self.records {
       if records.insert(record.node_attempt_id(), record).is_some() {
@@ -276,12 +319,19 @@ impl FlowDataHistory {
         return Err(invalid());
       }
     }
-    for attempt in history
-      .attempts
-      .iter()
-      .filter(|attempt| attempt.stage_projection_id().is_none())
-    {
+    for attempt in history.attempts {
       let input = inputs.get(&attempt.input_digest()).ok_or_else(invalid)?;
+      if let Some(previous_id) = attempt.retry_of() {
+        let previous = history
+          .attempts
+          .iter()
+          .find(|row| row.id() == previous_id)
+          .ok_or_else(invalid)?;
+        let original_input = inputs.get(&previous.input_digest()).ok_or_else(invalid)?;
+        if original_input.retry()? != **input {
+          return Err(invalid());
+        }
+      }
       if input.flow_run_id() != attempt.flow_run_id()
         || input.cycle_id() != attempt.workflow_cycle_id()
         || input.node() != attempt.node_key()
@@ -307,12 +357,7 @@ impl FlowDataHistory {
         return Err(invalid());
       }
     }
-    for completion in history.completions.iter().filter(|completion| {
-      history
-        .attempts
-        .iter()
-        .any(|attempt| attempt.id() == completion.node_attempt_id() && attempt.stage_projection_id().is_none())
-    }) {
+    for completion in history.completions {
       if !records.contains_key(&completion.node_attempt_id()) {
         return Err(invalid());
       }
@@ -348,7 +393,8 @@ impl FlowDataHistory {
   /// Counts immutable rows for transition and snapshot ceilings.
   #[must_use]
   pub fn record_count(&self) -> usize {
-    self.incoming.len()
+    self.stops.len()
+      + self.incoming.len()
       + self.inputs.len()
       + self.records.len()
       + self.build_intents.len()

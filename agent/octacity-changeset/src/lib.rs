@@ -1,7 +1,7 @@
 //! Captures runner-owned workspaces as immutable, reproducible evidence.
 //!
 //! The coding harness never supplies candidate identity. After a successful
-//! writable Factory stage, the first adapter uses Git plumbing with a private
+//! configured writable Factory node, the first adapter uses Git plumbing with a private
 //! index and disabled hooks. The lifecycle-facing port remains provider-neutral.
 
 #![warn(missing_docs)]
@@ -52,8 +52,8 @@ pub struct CaptureRequest {
   pub base_revision: String,
   /// Original exact source revision used as the self-contained bundle prerequisite.
   pub bundle_base_revision: String,
-  /// Immutable Stage Attempt identity.
-  pub stage_attempt_id: String,
+  /// Exact producing Node Attempt identity.
+  pub node_attempt_id: String,
   /// Server-selected deterministic commit instruction.
   pub instruction: ChangeSetCaptureV3,
 }
@@ -302,7 +302,7 @@ impl GitChangeSetCapturer {
       &cancellation,
     )
     .await?;
-    let message = format!("OctaCity Factory Stage {}\n", request.stage_attempt_id);
+    let message = format!("OctaCity Factory Node {}\n", request.node_attempt_id);
     let candidate = git_text(
       &self.tool.executable,
       &environment,
@@ -348,7 +348,7 @@ impl GitChangeSetCapturer {
     )
     .await?;
 
-    let capture_ref = format!("refs/octacity/capture/{}", request.stage_attempt_id);
+    let capture_ref = format!("refs/octacity/capture/{}", request.node_attempt_id);
     git_text(
       &self.tool.executable,
       &environment,
@@ -444,7 +444,7 @@ impl GitChangeSetCapturer {
       format_version: 1,
       base_revision: request.base_revision,
       candidate_revision: candidate,
-      stage_attempt_id: request.stage_attempt_id,
+      node_attempt_id: request.node_attempt_id,
       capture_tool: self.tool.identity.clone(),
       changed_paths,
       bundle,

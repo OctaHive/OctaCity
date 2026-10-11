@@ -58,9 +58,17 @@ pub struct FactoryNodeBuildExecutionFacts {
 /// Reads bounded retained bytes and actual execution facts from ordinary Builds.
 #[async_trait]
 pub trait FactoryNodeBuildOutputSource: Send + Sync {
-  /// Enforces the byte ceiling before reading and returns no provider-selected routing authority.
-  /// Schema references must come from trusted schema-specific verification of these exact bytes,
-  /// not from provider JSON or from the requested evidence requirement.
+  /// Reads total measured consumption of the operation through its terminal Attempt,
+  /// including resources spent by earlier retries. Availability is required before
+  /// the owner can retain a stop receipt; an absent measurement is not zero usage.
+  async fn terminal_usage(
+    &self,
+    build: BuildId,
+    attempt: AttemptId,
+  ) -> Result<BudgetUsage, OrdinaryBuildApplicationError>;
+  /// Enforces the byte ceiling before reading and returns no routing authority.
+  /// Schema references come from trusted verification of these exact bytes,
+  /// rather than provider JSON or the requested evidence requirement.
   async fn published_outputs(
     &self,
     build: BuildId,
@@ -69,7 +77,19 @@ pub trait FactoryNodeBuildOutputSource: Send + Sync {
   ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError>;
 }
 
-const MAX_BUILD_JOBS: usize = 64;
+use crate::factory_build::MAX_FACTORY_BUILD_JOBS as MAX_BUILD_JOBS;
+
+/// Technical cancellation observation, independent of configured business outcomes.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FactoryNodeBuildCancellation {
+  /// Cancellation intent is accepted; owned Jobs may still be stopping.
+  Waiting(Box<FlowBuildExecution>),
+  /// The operation is absent or its ordinary execution and all owned Jobs have stopped.
+  Stopped {
+    /// Exact retained execution when the operation was previously dispatched.
+    execution: Option<Box<FlowBuildExecution>>,
+  },
+}
 
 /// Result of observing one persisted command or reasoning operation.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -108,6 +128,11 @@ pub struct FactoryNodeBuildCompletion {
 ///
 /// The Flow owner persists intents and owns readiness, retries and atomic
 /// completion. Ordinary Builds retain their existing execution state machine.
+/// The shared Build boundary accepts only common Node Attempt causality:
+///
+/// ```compile_fail
+/// use octacity_server_application::{FactoryBuildBridge, FactoryStageBuildCausality};
+/// ```
 pub struct FactoryNodeBuildAdapter<B, O> {
   builds: Arc<B>,
   outputs: Arc<O>,
@@ -153,29 +178,7 @@ where
     {
       return Err(ApplicationError::invalid());
     }
-    let input = intent.input();
-    let request = CreateFactoryBuild {
-      operation_id: intent.operation_id().map_err(invalid)?,
-      project_id: input.subject().project_id(),
-      repository_id: input.subject().repository_id(),
-      build_configuration: intent.profile().build_configuration.clone(),
-      immutable_revision: input.subject().base_revision().clone(),
-      priority: intent.priority(),
-      effective_permissions: intent.permissions().clone(),
-      budget: intent.budget(),
-      deadline: intent.node().deadline(),
-      causality: crate::FactoryBuildCausality::Node(Box::new(crate::FactoryNodeBuildCausality {
-        run_id: input.factory_run_id(),
-        flow_run_id: input.flow_run_id(),
-        cycle_id: input.cycle_id(),
-        node_attempt_id: intent.node().id(),
-        profile: intent.profile().clone(),
-        input_schema: input.payload().schema().clone(),
-        input: serde_json::to_vec(input).map_err(|_| ApplicationError::invalid())?,
-        input_digest: input.digest().map_err(invalid)?,
-        context: input.context().ok_or_else(ApplicationError::invalid)?.clone(),
-      })),
-    };
+    let request = factory_build_request(intent, ownership.clone())?;
     match observe_build(self.builds.as_ref(), request, intent.node(), ownership.clone(), at).await? {
       BuildObservation::Waiting(observed) => Ok(FactoryNodeBuildStep::Waiting(Box::new(
         FlowBuildExecution::new(intent, observed.build_id, observed.attempt_id, observed.jobs).map_err(invalid)?,
@@ -208,6 +211,175 @@ where
   }
 }
 
+impl<B, O> FactoryNodeBuildAdapter<B, O>
+where
+  B: crate::OrdinaryBuildCancellationApplication + BuildQueryStore,
+  O: FactoryNodeBuildOutputSource,
+{
+  /// Cancels only an existing operation and observes its ordinary terminal facts.
+  /// The original cancellation time and idempotency identity remain frozen through
+  /// restart. Observation may continue after the execution deadline, without dispatch.
+  pub async fn cancel(
+    &self,
+    intent: &FlowBuildIntent,
+    admitted: &AdmittedFlow,
+    ownership: FactoryClaimOwnership,
+    requested_at: Timestamp,
+    at: Timestamp,
+  ) -> Result<FactoryNodeBuildCancellation, ApplicationError> {
+    if requested_at > at
+      || FlowBuildIntent::new(
+        intent.input().clone(),
+        admitted,
+        intent.node().clone(),
+        intent.usage_before(),
+        intent.priority(),
+      )
+      .map_err(invalid)?
+        != *intent
+    {
+      return Err(ApplicationError::invalid());
+    }
+    intent.node().verify_observer(&ownership, at).map_err(invalid)?;
+    let request = factory_build_request(intent, ownership.clone())?;
+    let Some(accepted) = self
+      .builds
+      .factory_build_for_operation(request.operation_id)
+      .await
+      .map_err(build_error)?
+    else {
+      return Ok(FactoryNodeBuildCancellation::Stopped { execution: None });
+    };
+    match observe_accepted_build(self.builds.as_ref(), &request, accepted.clone(), at).await? {
+      BuildObservation::Waiting(observed) => {
+        let execution =
+          FlowBuildExecution::new(intent, observed.build_id, observed.attempt_id, observed.jobs).map_err(invalid)?;
+        self
+          .builds
+          .cancel_factory_build(crate::CancelFactoryBuild {
+            ownership: ownership.clone(),
+            operation_id: FactoryDigest::sha256(
+              "octacity.factory.build-cancellation.v1",
+              &[request.operation_id.as_bytes().as_slice()],
+            ),
+            build_operation_id: request.operation_id,
+            build_id: observed.build_id,
+            requested_at,
+          })
+          .await
+          .map_err(build_error)?;
+        Ok(FactoryNodeBuildCancellation::Waiting(Box::new(execution)))
+      }
+      terminal => {
+        let observed = match terminal {
+          BuildObservation::Succeeded(observed) => observed,
+          BuildObservation::ExecutionStopped {
+            build_id,
+            attempt_id,
+            jobs,
+            ..
+          } => ObservedBuild {
+            build_id,
+            attempt_id,
+            jobs,
+          },
+          BuildObservation::Waiting(_) => unreachable!("waiting execution handled above"),
+        };
+        let stopped = owned_execution_has_stopped(self.builds.as_ref(), &accepted, &observed, at).await?;
+        let execution = Box::new(
+          FlowBuildExecution::new(intent, observed.build_id, observed.attempt_id, observed.jobs).map_err(invalid)?,
+        );
+        if stopped {
+          Ok(FactoryNodeBuildCancellation::Stopped {
+            execution: Some(execution),
+          })
+        } else {
+          // A terminal aggregate can precede acknowledgements from still-stopping Jobs.
+          Ok(FactoryNodeBuildCancellation::Waiting(execution))
+        }
+      }
+    }
+  }
+}
+
+/// Walks the bounded ordinary retry lineage, retaining no routing authority from it.
+/// An earlier failed Attempt may still have Jobs acknowledging cancellation.
+async fn owned_execution_has_stopped<B: BuildQueryStore>(
+  builds: &B,
+  accepted: &FactoryBuildAcceptance,
+  observed: &ObservedBuild,
+  at: Timestamp,
+) -> Result<bool, ApplicationError> {
+  let mut attempt = builds.attempt(observed.attempt_id).await?;
+  if attempt.id != observed.attempt_id {
+    return Err(ApplicationError::invalid());
+  }
+  let mut stopped = true;
+  // This is the absolute execution-history bound, independent of logical node names.
+  for _ in 0..MAX_FACTORY_ATTEMPTS {
+    let jobs: std::collections::BTreeSet<_> = attempt.jobs.iter().map(|job| job.id()).collect();
+    if attempt.build_id != accepted.build_id
+      || attempt.updated_at > at
+      || jobs.is_empty()
+      || jobs.len() > MAX_BUILD_JOBS
+      || jobs.len() != attempt.jobs.len()
+      || attempt
+        .jobs
+        .iter()
+        .any(|job| job.attempt_id != attempt.id || job.updated_at > at)
+    {
+      return Err(ApplicationError::invalid());
+    }
+    stopped &= attempt.state.is_terminal() && attempt.jobs.iter().all(|job| job.state.is_terminal());
+    if attempt.id == accepted.attempt_id {
+      if attempt.number != octacity_server_domain::AttemptNumber::FIRST
+        || attempt.retry_of_attempt_id.is_some()
+        || jobs != accepted.job_ids.iter().copied().collect()
+      {
+        return Err(ApplicationError::invalid());
+      }
+      return Ok(stopped);
+    }
+    let predecessor_id = attempt.retry_of_attempt_id.ok_or_else(ApplicationError::invalid)?;
+    let predecessor = builds.attempt(predecessor_id).await?;
+    if predecessor.id != predecessor_id || predecessor.number.next().ok() != Some(attempt.number) {
+      return Err(ApplicationError::invalid());
+    }
+    attempt = predecessor;
+  }
+  Err(ApplicationError::invalid())
+}
+
+pub(crate) fn factory_build_request(
+  intent: &FlowBuildIntent,
+  ownership: FactoryClaimOwnership,
+) -> Result<CreateFactoryBuild, ApplicationError> {
+  let input = intent.input();
+  Ok(CreateFactoryBuild {
+    ownership,
+    operation_id: intent.operation_id().map_err(invalid)?,
+    project_id: input.subject().project_id(),
+    repository_id: input.subject().repository_id(),
+    build_configuration: intent.profile().build_configuration.clone(),
+    immutable_revision: input.subject().base_revision().clone(),
+    priority: intent.priority(),
+    effective_permissions: intent.permissions().clone(),
+    budget: intent.budget(),
+    deadline: intent.node().deadline(),
+    causality: Box::new(crate::FactoryNodeBuildCausality {
+      run_id: input.factory_run_id(),
+      flow_run_id: input.flow_run_id(),
+      cycle_id: input.cycle_id(),
+      node_attempt_id: intent.node().id(),
+      profile: intent.profile().clone(),
+      input_schema: input.payload().schema().clone(),
+      input: serde_json::to_vec(input).map_err(|_| ApplicationError::invalid())?,
+      input_digest: input.digest().map_err(invalid)?,
+      context: input.context().ok_or_else(ApplicationError::invalid)?.clone(),
+    }),
+  })
+}
+
 fn complete_node(
   intent: &FlowBuildIntent,
   admitted: &AdmittedFlow,
@@ -217,14 +389,7 @@ fn complete_node(
   ownership: FactoryClaimOwnership,
   at: Timestamp,
 ) -> Result<FactoryNodeBuildCompletion, ApplicationError> {
-  if outputs.execution.profile != *intent.profile()
-    || outputs.execution.input_digest != intent.input().digest().map_err(invalid)?
-    || outputs.execution.permissions != *intent.permissions()
-    || outputs.execution.budget != intent.budget()
-    || outputs.execution.deadline != intent.node().deadline()
-  {
-    return Err(ApplicationError::invalid());
-  }
+  validate_execution_facts(intent, &outputs)?;
   validate_outputs(&outputs, intent.budget(), intent.node(), observed, at)?;
   let definition = admitted
     .closure()
@@ -242,7 +407,7 @@ fn complete_node(
   let document = selected_document(
     &outputs.documents,
     &intent.profile().result_output,
-    EvidenceOutputKind::Report,
+    intent.profile().result_output_kind,
     schema.reference(),
     &intent.profile().tool,
     &intent.profile().plugin,
@@ -254,7 +419,7 @@ fn complete_node(
   .map_err(invalid)?;
   let mut verified = vec![FlowVerifiedBuildOutput {
     name: intent.profile().result_output.clone(),
-    output_kind: EvidenceOutputKind::Report,
+    output_kind: intent.profile().result_output_kind,
     schema: document.schema.clone(),
     artifact: artifact_reference(document)?,
     producer: document_producer(document),
@@ -335,6 +500,21 @@ fn complete_node(
     completion,
     usage,
   })
+}
+
+pub(super) fn validate_execution_facts(
+  intent: &FlowBuildIntent,
+  outputs: &FactoryNodeBuildOutputs,
+) -> Result<(), ApplicationError> {
+  if outputs.execution.profile != *intent.profile()
+    || outputs.execution.input_digest != intent.input().digest().map_err(invalid)?
+    || outputs.execution.permissions != *intent.permissions()
+    || outputs.execution.budget != intent.budget()
+    || outputs.execution.deadline != intent.node().deadline()
+  {
+    return Err(ApplicationError::invalid());
+  }
+  Ok(())
 }
 
 pub(super) fn validate_outputs(
@@ -458,21 +638,36 @@ pub(super) async fn observe_build<B: OrdinaryBuildApplication + BuildQueryStore>
   at: Timestamp,
 ) -> Result<BuildObservation, ApplicationError> {
   node.verify_observer(&ownership, at).map_err(invalid)?;
-  let accepted = if at >= node.deadline() {
-    builds
-      .factory_build_for_operation(request.operation_id)
-      .await
-      .map_err(build_error)?
-      .ok_or_else(ApplicationError::invalid)?
-  } else {
-    builds
+  let accepted = match builds
+    .factory_build_for_operation(request.operation_id)
+    .await
+    .map_err(build_error)?
+  {
+    Some(accepted) => accepted,
+    None if at >= node.deadline() => return Err(ApplicationError::invalid()),
+    None => builds
       .create_factory_build(request.clone())
       .await
-      .map_err(build_error)?
+      .map_err(build_error)?,
   };
+  observe_accepted_build(builds, &request, accepted, at).await
+}
+async fn observe_accepted_build<B: BuildQueryStore>(
+  builds: &B,
+  request: &CreateFactoryBuild,
+  accepted: FactoryBuildAcceptance,
+  at: Timestamp,
+) -> Result<BuildObservation, ApplicationError> {
   validate_acceptance(&accepted, request.effective_permissions.digest())?;
   let build = builds.build(accepted.build_id).await?;
-  if build.build.id != accepted.build_id
+  let expected_origin = octacity_server_store::BuildOrigin::Factory(octacity_server_store::FactoryBuildOrigin {
+    operation_id: request.operation_id,
+    run_id: request.causality.run_id,
+    node_attempt_id: request.causality.node_attempt_id,
+    input_digest: request.causality.input_digest,
+  });
+  if build.origin != expected_origin
+    || build.build.id != accepted.build_id
     || build.build.project_id != request.project_id
     || build.build.repository_id != request.repository_id
     || build.build.immutable_revision != request.immutable_revision
@@ -547,9 +742,47 @@ fn invalid(_: FactoryError) -> ApplicationError {
 #[async_trait]
 impl<B, O> crate::FactoryNodeExecutor for FactoryNodeBuildAdapter<B, O>
 where
-  B: OrdinaryBuildApplication + BuildQueryStore,
+  B: crate::OrdinaryBuildCancellationApplication + BuildQueryStore,
   O: FactoryNodeBuildOutputSource,
 {
+  async fn cancel(
+    &self,
+    request: crate::FactoryNodeExecutionRequest<'_>,
+    requested_at: Timestamp,
+  ) -> Result<crate::FactoryNodeCancellationStep, ApplicationError> {
+    let intent = request.build.ok_or_else(ApplicationError::invalid)?;
+    if intent.node() != request.attempt || intent.input() != request.input {
+      return Err(ApplicationError::invalid());
+    }
+    match FactoryNodeBuildAdapter::cancel(
+      self,
+      intent,
+      request.admitted,
+      request.ownership,
+      requested_at,
+      request.observed_at,
+    )
+    .await?
+    {
+      FactoryNodeBuildCancellation::Waiting(execution) => Ok(crate::FactoryNodeCancellationStep::Waiting {
+        execution: Some(execution),
+      }),
+      FactoryNodeBuildCancellation::Stopped { execution } => {
+        let usage = match &execution {
+          Some(row) => self
+            .outputs
+            .terminal_usage(row.build_id(), row.attempt_id())
+            .await
+            .map_err(build_error)?,
+          None => BudgetUsage::default(), // No operation was ever accepted; no execution resources were consumed.
+        };
+        if usage.attempts != 0 {
+          return Err(ApplicationError::invalid());
+        }
+        Ok(crate::FactoryNodeCancellationStep::Stopped { execution, usage })
+      }
+    }
+  }
   async fn observe(
     &self,
     request: crate::FactoryNodeExecutionRequest<'_>,
@@ -559,30 +792,49 @@ where
       return Err(ApplicationError::invalid());
     }
     let schema = request
-      .snapshot
-      .admitted_flow
+      .admitted
       .closure()
       .definition(request.input.definition())
       .and_then(|definition| definition.node(request.input.node()))
       .and_then(|node| node.outcome(intent.result_outcome()))
-      .and_then(|outcome| request.snapshot.admitted_flow.data_schema(outcome.schema()))
+      .and_then(|outcome| request.admitted.data_schema(outcome.schema()))
       .ok_or_else(ApplicationError::invalid)?;
     match self
-      .observe_or_dispatch(
-        intent,
-        &request.snapshot.admitted_flow,
-        schema,
-        request.ownership,
-        request.observed_at,
-      )
+      .observe_or_dispatch(intent, request.admitted, schema, request.ownership, request.observed_at)
       .await?
     {
       FactoryNodeBuildStep::Waiting(execution) => Ok(crate::FactoryNodeExecutionStep::Waiting {
         execution: Some(execution),
       }),
       FactoryNodeBuildStep::ExecutionStopped { execution, .. } => {
+        let accepted = self
+          .builds
+          .factory_build_for_operation(intent.operation_id().map_err(invalid)?)
+          .await
+          .map_err(build_error)?
+          .ok_or_else(ApplicationError::invalid)?;
+        validate_acceptance(&accepted, intent.permissions().digest())?;
+        if accepted.build_id != execution.build_id() {
+          return Err(ApplicationError::invalid());
+        }
+        let observed = ObservedBuild {
+          build_id: execution.build_id(),
+          attempt_id: execution.attempt_id(),
+          jobs: execution.jobs().to_vec(),
+        };
+        if !owned_execution_has_stopped(self.builds.as_ref(), &accepted, &observed, request.observed_at).await? {
+          return Ok(crate::FactoryNodeExecutionStep::Waiting {
+            execution: Some(execution),
+          });
+        }
+        let usage = self
+          .outputs
+          .terminal_usage(execution.build_id(), execution.attempt_id())
+          .await
+          .map_err(build_error)?;
         Ok(crate::FactoryNodeExecutionStep::ExecutionStopped {
           execution: Some(execution),
+          usage,
         })
       }
       FactoryNodeBuildStep::Completed(done) => Ok(crate::FactoryNodeExecutionStep::Completed {

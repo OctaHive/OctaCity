@@ -73,6 +73,7 @@ pub(super) struct SelectedBackend {
 }
 
 pub(super) struct ExecutableJobSpec {
+  pub(super) execution_deadline: Option<u64>,
   pub(super) job_id: String,
   pub(super) attempt: u32,
   pub(super) source: SourceSpec,
@@ -119,6 +120,7 @@ impl TryFrom<VerifiedJobSpec> for ExecutableJobSpec {
 impl From<JobSpecV1> for ExecutableJobSpec {
   fn from(spec: JobSpecV1) -> Self {
     Self {
+      execution_deadline: None,
       job_id: spec.job_id,
       attempt: spec.attempt,
       source: spec.source,
@@ -134,6 +136,7 @@ impl From<JobSpecV1> for ExecutableJobSpec {
 impl From<JobSpecV2> for ExecutableJobSpec {
   fn from(spec: JobSpecV2) -> Self {
     Self {
+      execution_deadline: None,
       job_id: spec.job_id,
       attempt: spec.attempt,
       source: spec.source,
@@ -149,6 +152,7 @@ impl From<JobSpecV2> for ExecutableJobSpec {
 impl From<JobSpecV3> for ExecutableJobSpec {
   fn from(spec: JobSpecV3) -> Self {
     Self {
+      execution_deadline: Some(spec.execution_deadline_unix_ms),
       job_id: spec.job_id,
       attempt: spec.attempt,
       source: spec.source,

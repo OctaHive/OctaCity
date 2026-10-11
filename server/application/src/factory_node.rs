@@ -6,6 +6,25 @@ use octacity_server_factory::*;
 use octacity_server_store::*;
 use std::sync::Arc;
 
+/// Trusted owner time, read again after asynchronous capability calls.
+/// Provider result timestamps never extend execution or observer ownership.
+pub trait FactoryExecutionClock: Send + Sync {
+  /// Reads authoritative wall time, failing closed if the clock is unavailable.
+  fn now(&self) -> Result<Timestamp, ApplicationError>;
+}
+/// Production wall clock shared by configured Flow and node owners.
+pub struct SystemFactoryExecutionClock;
+impl FactoryExecutionClock for SystemFactoryExecutionClock {
+  fn now(&self) -> Result<Timestamp, ApplicationError> {
+    let millis = std::time::SystemTime::now()
+      .duration_since(std::time::UNIX_EPOCH)
+      .ok()
+      .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+      .ok_or_else(ApplicationError::unavailable)?;
+    Timestamp::from_unix_millis(millis).map_err(|_| ApplicationError::unavailable())
+  }
+}
+
 /// Exact owning Flow and cycle; node names carry no runtime semantics.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryNodeTarget {
@@ -18,8 +37,12 @@ pub struct FactoryNodeTarget {
 }
 /// Frozen request supplied only after its input and attempt have been committed.
 pub struct FactoryNodeExecutionRequest<'a> {
-  /// Authoritative snapshot and exact admitted configuration.
-  pub snapshot: &'a FactoryRunSnapshot,
+  /// Exact owning Run, independent of capability lifecycle records.
+  pub run_id: FactoryRunId,
+  /// Immutable admitted graph and its selected contracts.
+  pub admitted: &'a AdmittedFlow,
+  /// Immutable source identity and subject, with no capability execution history.
+  pub work: &'a WorkEnvelope,
   /// Frozen input, including selected context and source provenance.
   pub input: &'a FlowNodeInput,
   /// Persisted attempt owning this operation.
@@ -52,11 +75,36 @@ pub enum FactoryNodeExecutionStep {
   ExecutionStopped {
     /// Exact stopped ordinary execution, when present.
     execution: Option<Box<FlowBuildExecution>>,
+    /// Measured resources across the failed operation; unavailable usage cannot become zero.
+    usage: BudgetUsage,
+  },
+}
+/// Technical observation from an exact adapter, with no semantic outcome.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum FactoryNodeCancellationStep {
+  /// An accepted cancellation is still awaiting authoritative terminal facts.
+  Waiting {
+    /// Ordinary execution identities, when dispatched.
+    execution: Option<Box<FlowBuildExecution>>,
+  },
+  /// The operation is absent or all its owned effects have stopped.
+  Stopped {
+    /// Actual ordinary execution, when dispatched.
+    execution: Option<Box<FlowBuildExecution>>,
+    /// Measured consumption across the operation's retries.
+    usage: BudgetUsage,
   },
 }
 /// Installed execution capabilities for closed primitive kinds, independent of phase names.
 #[async_trait]
 pub trait FactoryNodeExecutor: Send + Sync {
+  /// Stops or observes the existing operation without creating or replaying effects.
+  /// The original accepted cancellation time is retained across owner replacement.
+  async fn cancel(
+    &self,
+    request: FactoryNodeExecutionRequest<'_>,
+    requested_at: Timestamp,
+  ) -> Result<FactoryNodeCancellationStep, ApplicationError>;
   /// Observes the exact persisted operation; adapters must use stable identities before side effects.
   async fn observe(
     &self,
@@ -79,11 +127,15 @@ pub enum FactoryNodeStep {
 pub struct FactoryNodeRunner<S, E> {
   store: Arc<S>,
   executor: Arc<E>,
+  clock: Arc<dyn FactoryExecutionClock>,
 }
 impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
   /// Connects persistence and installed execution adapters.
-  pub fn new(store: Arc<S>, executor: Arc<E>) -> Self {
-    Self { store, executor }
+  pub fn new(store: Arc<S>, executor: Arc<E>, clock: Arc<dyn FactoryExecutionClock>) -> Self {
+    Self { store, executor, clock }
+  }
+  fn current_time(&self, at: Timestamp) -> Result<Timestamp, ApplicationError> {
+    Ok(at.max(self.clock.now()?))
   }
   /// Prepares input only from immutable incoming data, Work or retained predecessor results.
   pub fn prepare_input(
@@ -139,6 +191,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     at: Timestamp,
   ) -> Result<FactoryNodeStep, ApplicationError> {
     let snapshot = self.store.factory_run_snapshot(run).await?;
+    let mut at = self.current_time(at)?;
     let claim = snapshot
       .current_claim
       .as_ref()
@@ -180,7 +233,10 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         row.flow_run_id() == flow.id() && row.workflow_cycle_id() == cycle.id() && row.node_key() == &target.node
       })
       .max_by_key(|row| row.number());
+    let retry_input = pending_node_retry(&snapshot, &target)?;
+    let retry = retry_input.as_ref().map(|(attempt, _)| *attempt);
     let attempt = match attempt {
+      Some(_) if retry.is_some() => None,
       Some(attempt) if ready_again(&snapshot, &target, attempt)? => None,
       other => other,
     };
@@ -204,6 +260,18 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       {
         return Ok(FactoryNodeStep::Completed(Box::new(record.clone())));
       }
+      if let Some(receipt) = snapshot
+        .flow
+        .data
+        .stops
+        .iter()
+        .find(|row| row.node_attempt_id() == attempt.id())
+      {
+        return match receipt.reason() {
+          FlowNodeStopReason::ExecutionFailed => Ok(FactoryNodeStep::ExecutionStopped),
+          FlowNodeStopReason::Cancelled { .. } => Err(ApplicationError::invalid()),
+        };
+      }
       attempt.verify_observer(&ownership, at).map_err(invalid)?;
       let mut append = FactoryRunHistoryAppend::default();
       let (record, usage) = if node.kind() == FlowNodeKind::DeterministicGate {
@@ -218,6 +286,34 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
             program
               .record(frozen, attempt, definition, schema, at)
               .map_err(invalid)?,
+          ),
+          BudgetUsage::default(),
+        )
+      } else if node.kind() == FlowNodeKind::HumanGate {
+        let Some((response, outcome, payload)) = snapshot.controls.iter().find_map(|row| match &row.intent {
+          FactoryRunControlIntent::ResolveNode {
+            node_attempt_id,
+            outcome,
+            payload,
+          } if *node_attempt_id == attempt.id() => Some((row, outcome, payload)),
+          _ => None,
+        }) else {
+          return Ok(FactoryNodeStep::Waiting);
+        };
+        (
+          Box::new(
+            FlowNodeRecord::new(
+              frozen,
+              attempt,
+              definition,
+              FlowRecordObservation {
+                outcome: outcome.clone(),
+                payload: payload.clone(),
+                producer: attempt.execution().clone(),
+                observed_at: response.recorded_at,
+              },
+            )
+            .map_err(invalid)?,
           ),
           BudgetUsage::default(),
         )
@@ -237,7 +333,9 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         let step = self
           .executor
           .observe(FactoryNodeExecutionRequest {
-            snapshot: &snapshot,
+            run_id: snapshot.run.id(),
+            admitted: &snapshot.admitted_flow,
+            work: &snapshot.work,
             input: frozen,
             attempt,
             build: snapshot
@@ -250,19 +348,31 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
             observed_at: at,
           })
           .await?;
-        let waiting = matches!(&step, FactoryNodeExecutionStep::Waiting { .. });
+        at = self.current_time(at)?;
+        attempt.verify_observer(&ownership, at).map_err(invalid)?;
         match step {
-          FactoryNodeExecutionStep::Waiting { execution }
-          | FactoryNodeExecutionStep::ExecutionStopped { execution } => {
+          FactoryNodeExecutionStep::Waiting { execution } => {
             retain_execution(&snapshot, &mut append, execution);
             if append.record_count() != 0 {
               self.commit(&snapshot, append, at).await?;
             }
-            return Ok(if waiting {
-              FactoryNodeStep::Waiting
-            } else {
-              FactoryNodeStep::ExecutionStopped
-            });
+            return Ok(FactoryNodeStep::Waiting);
+          }
+          FactoryNodeExecutionStep::ExecutionStopped { execution, usage } => {
+            append.flow.data.stops.push(
+              FlowNodeStop::new(
+                attempt,
+                ownership,
+                FlowNodeStopReason::ExecutionFailed,
+                at,
+                usage,
+                execution.as_deref(),
+              )
+              .map_err(invalid)?,
+            );
+            retain_execution(&snapshot, &mut append, execution);
+            self.commit(&snapshot, append, at).await?;
+            return Ok(FactoryNodeStep::ExecutionStopped);
           }
           FactoryNodeExecutionStep::Completed {
             record,
@@ -282,9 +392,16 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       self.commit(&snapshot, append, at).await?;
       return Ok(FactoryNodeStep::Completed(record));
     }
-    let input = input
-      .map(Ok)
-      .unwrap_or_else(|| Self::prepare_input(&snapshot, &target))?;
+    let input = if let Some((_, expected)) = retry_input {
+      if input.as_ref().is_some_and(|row| row != &expected) {
+        return Err(ApplicationError::invalid());
+      }
+      expected
+    } else {
+      input
+        .map(Ok)
+        .unwrap_or_else(|| Self::prepare_input(&snapshot, &target))?
+    };
     if input.flow_run_id() != flow.id() || input.cycle_id() != cycle.id() || input.node() != &target.node {
       return Err(ApplicationError::invalid());
     }
@@ -303,8 +420,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         .checked_add(i64::try_from(node.budget().max_elapsed_millis()).map_err(|_| ApplicationError::invalid())?)
         .ok_or_else(ApplicationError::invalid)?,
     )
-    .map_err(|_| ApplicationError::invalid())?
-    .min(claim.claim.expires_at());
+    .map_err(|_| ApplicationError::invalid())?;
     let execution = if let Some(build) = node.build() {
       NodeExecutionIdentity::External(build.tool.clone())
     } else if let Some(action) = node.action() {
@@ -312,7 +428,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     } else {
       NodeExecutionIdentity::BuiltIn
     };
-    let attempt = NodeAttempt::new(
+    let mut attempt = NodeAttempt::new(
       flow,
       cycle,
       definition,
@@ -323,12 +439,16 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         number: NodeAttemptNumber::new(number).map_err(invalid)?,
         input_digest: input.digest().map_err(invalid)?,
         budget: node.budget(),
+        started_at: at,
         deadline,
         execution,
         ownership,
       },
     )
     .map_err(invalid)?;
+    if let Some(previous) = retry {
+      attempt = attempt.with_retry_of(previous).map_err(invalid)?;
+    }
     let mut append = FactoryRunHistoryAppend::default();
     if let Some(child_definition) = node.subflow_definition() {
       let child = FlowRun::nested(
@@ -368,7 +488,133 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     append: FactoryRunHistoryAppend,
     at: Timestamp,
   ) -> Result<(), ApplicationError> {
+    self
+      .commit_progress(snapshot, append, at, GraphDisposition::Running)
+      .await
+  }
+  /// Completes only the root Flow; the store independently verifies its terminal proof.
+  pub(crate) async fn resolve(
+    &self,
+    snapshot: &FactoryRunSnapshot,
+    terminal: FactoryKey,
+    at: Timestamp,
+  ) -> Result<(), ApplicationError> {
+    self
+      .commit_progress(
+        snapshot,
+        FactoryRunHistoryAppend::default(),
+        at,
+        GraphDisposition::Resolved(terminal),
+      )
+      .await
+  }
+  /// Reconciles at most one effectful stop receipt before finalizing the root.
+  /// Returns true only after every pending operation is independently stopped.
+  pub(crate) async fn cancel(&self, snapshot: &FactoryRunSnapshot, at: Timestamp) -> Result<bool, ApplicationError> {
+    let mut at = self.current_time(at)?;
     let claim = snapshot.current_claim.as_ref().ok_or_else(ApplicationError::invalid)?;
+    claim.claim.verify_fence(claim.claim.fence(), at).map_err(invalid)?;
+    let requested_at = snapshot
+      .controls
+      .iter()
+      .filter(|row| row.intent == FactoryRunControlIntent::Cancel)
+      .map(|row| row.recorded_at)
+      .min()
+      .ok_or_else(ApplicationError::invalid)?;
+    let pending = snapshot.flow.attempts.iter().find(|attempt| {
+      !matches!(
+        attempt.node_kind(),
+        FlowNodeKind::HumanGate | FlowNodeKind::SubflowCall | FlowNodeKind::DeterministicGate
+      ) && !snapshot
+        .flow
+        .completions
+        .iter()
+        .any(|row| row.node_attempt_id() == attempt.id())
+        && !snapshot
+          .flow
+          .data
+          .stops
+          .iter()
+          .any(|row| row.node_attempt_id() == attempt.id())
+    });
+    if let Some(attempt) = pending {
+      let input = snapshot
+        .flow
+        .data
+        .inputs
+        .iter()
+        .find(|row| row.digest().ok() == Some(attempt.input_digest()))
+        .ok_or_else(ApplicationError::invalid)?;
+      let ownership = FactoryClaimOwnership::new(claim.owner.clone(), claim.claim);
+      attempt.verify_observer(&ownership, at).map_err(invalid)?;
+      let step = self
+        .executor
+        .cancel(
+          FactoryNodeExecutionRequest {
+            run_id: snapshot.run.id(),
+            admitted: &snapshot.admitted_flow,
+            work: &snapshot.work,
+            input,
+            attempt,
+            build: snapshot
+              .flow
+              .data
+              .build_intents
+              .iter()
+              .find(|row| row.node().id() == attempt.id()),
+            ownership: ownership.clone(),
+            observed_at: at,
+          },
+          requested_at,
+        )
+        .await?;
+      at = self.current_time(at)?;
+      attempt.verify_observer(&ownership, at).map_err(invalid)?;
+      let mut append = FactoryRunHistoryAppend::default();
+      match step {
+        FactoryNodeCancellationStep::Waiting { execution } => retain_execution(snapshot, &mut append, execution),
+        FactoryNodeCancellationStep::Stopped { execution, usage } => {
+          append.flow.data.stops.push(
+            FlowNodeStop::new(
+              attempt,
+              ownership,
+              FlowNodeStopReason::Cancelled { requested_at },
+              at,
+              usage,
+              execution.as_deref(),
+            )
+            .map_err(invalid)?,
+          );
+          retain_execution(snapshot, &mut append, execution);
+        }
+      }
+      if append.record_count() != 0 {
+        self.commit(snapshot, append, at).await?;
+      }
+      return Ok(false);
+    }
+    self
+      .commit_progress(
+        snapshot,
+        FactoryRunHistoryAppend::default(),
+        at,
+        GraphDisposition::Cancelled,
+      )
+      .await?;
+    Ok(true)
+  }
+  async fn commit_progress(
+    &self,
+    snapshot: &FactoryRunSnapshot,
+    append: FactoryRunHistoryAppend,
+    at: Timestamp,
+    disposition: GraphDisposition,
+  ) -> Result<(), ApplicationError> {
+    let claim = snapshot.current_claim.as_ref().ok_or_else(ApplicationError::invalid)?;
+    claim
+      .claim
+      .verify_fence(claim.claim.fence(), self.current_time(at)?)
+      .map_err(invalid)?;
     let version = FactoryRunVersion::new(
       snapshot
         .run
@@ -388,6 +634,11 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         .checked_add(completion.usage())
         .ok_or_else(ApplicationError::invalid)?;
     }
+    for receipt in &append.flow.data.stops {
+      usage = usage
+        .checked_add(receipt.usage())
+        .ok_or_else(ApplicationError::invalid)?;
+    }
     let budget = FactoryBudgetRecord::new(snapshot.run.id(), version, usage, at);
     let previous = snapshot
       .lifecycle_checkpoints
@@ -397,8 +648,18 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     let checkpoint = FactoryLifecycleCheckpoint::new(
       snapshot.run.id(),
       version,
-      previous.progress.clone(),
-      previous.signal,
+      match &disposition {
+        GraphDisposition::Running => FactoryLifecycleProgress::FlowRunning {
+          root: snapshot.admitted_flow.root_run().id(),
+        },
+        GraphDisposition::Resolved(terminal) => FactoryLifecycleProgress::FlowResolved {
+          root: snapshot.admitted_flow.root_run().id(),
+          terminal: terminal.clone(),
+        },
+        GraphDisposition::Cancelled => FactoryLifecycleProgress::FlowCancelled {
+          root: snapshot.admitted_flow.root_run().id(),
+        },
+      },
       previous.cancellation_requested,
       at,
     );
@@ -431,7 +692,11 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
           snapshot.run.configuration().clone(),
           &snapshot.work,
           snapshot.run.subject().clone(),
-          snapshot.run.state(),
+          match disposition {
+            GraphDisposition::Resolved(_) => FactoryRunState::Completed,
+            GraphDisposition::Running => FactoryRunState::Running,
+            GraphDisposition::Cancelled => FactoryRunState::Cancelled,
+          },
           version,
         )
         .map_err(invalid)?,
@@ -456,6 +721,7 @@ fn current_usage(snapshot: &FactoryRunSnapshot) -> Result<BudgetUsage, Applicati
 }
 fn runtime(snapshot: &FactoryRunSnapshot) -> FlowRuntimeHistory<'_> {
   FlowRuntimeHistory {
+    stops: &snapshot.flow.data.stops,
     flow_runs: &snapshot.flow.runs,
     cycles: &snapshot.flow.cycles,
     attempts: &snapshot.flow.attempts,
@@ -464,6 +730,12 @@ fn runtime(snapshot: &FactoryRunSnapshot) -> FlowRuntimeHistory<'_> {
 }
 fn invalid(_: FactoryError) -> ApplicationError {
   ApplicationError::invalid()
+}
+
+enum GraphDisposition {
+  Running,
+  Resolved(FactoryKey),
+  Cancelled,
 }
 
 fn retain_execution(
@@ -489,6 +761,8 @@ pub enum FactoryFlowStep {
   Ready(Box<PhasePoolEntry>),
   /// A finite configured terminal was reached.
   Resolved(FactoryKey),
+  /// Technical execution was cancelled without selecting a logical terminal.
+  Cancelled,
 }
 /// Composition boundary for configured graph execution, independent of business phases.
 #[async_trait]
@@ -538,7 +812,44 @@ fn ready_again(
       && attempt.number() >= previous.number()
   }) {
     if let Some(completion)=snapshot.flow.completions.iter().find(|row|row.node_attempt_id()==predecessor.id())
-      && interpreter.advance(flow,cycle,predecessor,completion,&snapshot.flow.attempts,&snapshot.flow.completions).map_err(invalid)?.iter().any(|directive|matches!(directive,FlowDirective::ExecuteNode { node,.. }|FlowDirective::EnterSubflow { node,.. } if node==&target.node)) { return Ok(true); }
+      && interpreter.advance(flow,cycle,predecessor,completion,snapshot.flow.runtime()).map_err(invalid)?.iter().any(|directive|matches!(directive,FlowDirective::ExecuteNode { node,.. }|FlowDirective::EnterSubflow { node,.. } if node==&target.node)) { return Ok(true); }
   }
   Ok(false)
+}
+
+fn retry_requested(snapshot: &FactoryRunSnapshot, attempt: &NodeAttempt) -> bool {
+  snapshot.flow.data.stops.iter().any(|row| row.node_attempt_id() == attempt.id() && row.reason() == FlowNodeStopReason::ExecutionFailed)
+    && snapshot.controls.iter().any(|row| matches!(row.intent, FactoryRunControlIntent::RetryNode { node_attempt_id } if node_attempt_id == attempt.id()))
+}
+
+/// Returns the exact next execution input only for the latest accepted technical retry.
+pub(crate) fn pending_node_retry<'a>(
+  snapshot: &'a FactoryRunSnapshot,
+  target: &FactoryNodeTarget,
+) -> Result<Option<(&'a NodeAttempt, FlowNodeInput)>, ApplicationError> {
+  let previous = snapshot
+    .flow
+    .attempts
+    .iter()
+    .filter(|row| {
+      row.flow_run_id() == target.flow_run_id
+        && row.workflow_cycle_id() == target.cycle_id
+        && row.node_key() == &target.node
+    })
+    .max_by_key(|row| row.number())
+    .filter(|row| retry_requested(snapshot, row));
+  previous
+    .map(|attempt| {
+      let input = snapshot
+        .flow
+        .data
+        .inputs
+        .iter()
+        .find(|row| row.digest().ok() == Some(attempt.input_digest()))
+        .ok_or_else(ApplicationError::invalid)?
+        .retry()
+        .map_err(invalid)?;
+      Ok((attempt, input))
+    })
+    .transpose()
 }

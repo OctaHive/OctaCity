@@ -55,7 +55,7 @@ def package_fixture(
 
 class ArchitecturePolicyTests(unittest.TestCase):
     def test_configured_factory_runtime_rejects_phase_contracts_and_name_dispatch(self):
-        for source in ["use crate::TriagePolicy;", "match node.as_str() { \"research\" => run_research(), _ => wait() }"]:
+        for source in ["pub fn from_stage_projection() {}", "pub fn decide_next_action() {}", "fn allowed_state_successor() {}", "use crate::TriagePolicy;", "match node.as_str() { \"research\" => run_research(), _ => wait() }"]:
             with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:
                 workspace=Path(directory)
                 path=workspace/"server/application/src/factory_node.rs"

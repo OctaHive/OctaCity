@@ -1,5 +1,3 @@
-use std::collections::BTreeSet;
-
 use octacity_server_domain::{AttemptId, BuildId, EntityKind, JobId, TriggerOccurrenceId};
 use octacity_server_job::JobSpecSigner;
 use octacity_server_store::{
@@ -320,30 +318,7 @@ async fn require_references(
     });
   }
 
-  let allowed_pools: BTreeSet<_> = request
-    .jobs
-    .iter()
-    .flat_map(|job| job.allowed_pools.iter().map(|pool| pool.as_uuid()))
-    .collect();
-  let pool_ids: Vec<_> = allowed_pools.iter().copied().collect();
-  for pool_id in &allowed_pools {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext($1))")
-      .bind(format!("octacity.agent-pool.{pool_id}"))
-      .execute(&mut **transaction)
-      .await
-      .map_err(unavailable)?;
-  }
-  let pool_count: i64 = sqlx::query_scalar("SELECT COUNT(DISTINCT id) FROM pools WHERE id = ANY($1)")
-    .bind(&pool_ids)
-    .fetch_one(&mut **transaction)
-    .await
-    .map_err(unavailable)?;
-  if usize::try_from(pool_count).ok() != Some(allowed_pools.len()) {
-    return Err(StoreError::NotFound {
-      entity: EntityKind::Pool,
-    });
-  }
-  Ok(())
+  crate::build_materialization::require_pools(transaction, &request.jobs).await
 }
 
 async fn insert_occurrence(
@@ -470,43 +445,16 @@ async fn insert_build(
   pipeline_version: i64,
   repository_version: i64,
 ) -> Result<(), StoreError> {
-  sqlx::query(
-    "INSERT INTO builds \
-       (id, project_id, build_configuration_id, build_configuration_version, pipeline_id, pipeline_version, \
-        repository_id, repository_version, trigger_occurrence_id, immutable_revision, input_snapshot, \
-        effective_policy_snapshot, metadata_retention_until, log_retention_until, artifact_retention_until, \
-        report_retention_until, project_job_concurrency_limit, priority, state, version, created_at, updated_at) \
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, \
-             to_timestamp($13::double precision / 1000.0), to_timestamp($14::double precision / 1000.0), \
-             to_timestamp($15::double precision / 1000.0), to_timestamp($16::double precision / 1000.0), \
-             $17, $18, 'running', 1, to_timestamp($19::double precision / 1000.0), \
-             to_timestamp($19::double precision / 1000.0))",
+  crate::build_materialization::insert_build(
+    transaction,
+    &request.build,
+    crate::build_materialization::BuildInsertionOrigin::Trigger(request.trigger.id),
+    request.accepted_at,
+    configuration_version,
+    pipeline_version,
+    repository_version,
   )
-  .bind(request.build.id.as_uuid())
-  .bind(request.build.project_id.as_uuid())
-  .bind(request.build.configuration_id.as_uuid())
-  .bind(configuration_version)
-  .bind(request.build.pipeline_id.as_uuid())
-  .bind(pipeline_version)
-  .bind(request.build.repository_id.as_uuid())
-  .bind(repository_version)
-  .bind(request.trigger.id.as_uuid())
-  .bind(request.build.immutable_revision.as_str())
-  .bind(Json(request.build.input_snapshot.clone()))
-  .bind(Json(request.build.effective_policy_snapshot.clone()))
-  .bind(request.build.retention.metadata.unix_millis())
-  .bind(request.build.retention.logs.unix_millis())
-  .bind(request.build.retention.artifacts.unix_millis())
-  .bind(request.build.retention.reports.unix_millis())
-  .bind(i64::from(request.build.project_job_concurrency_limit))
-  .bind(request.build.priority)
-  .bind(request.accepted_at.unix_millis())
-  .execute(&mut **transaction)
-  .await
-  .map_err(|error| classify(error, EntityKind::Build))?;
-
-  insert_retention_work(transaction, request).await?;
-
+  .await?;
   sqlx::query(
     "UPDATE trigger_occurrences SET build_id = $1, \
        updated_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3",
@@ -517,40 +465,6 @@ async fn insert_build(
   .execute(&mut **transaction)
   .await
   .map_err(|error| classify(error, EntityKind::Trigger))?;
-  Ok(())
-}
-
-async fn insert_retention_work(
-  transaction: &mut Transaction<'_, Postgres>,
-  request: &AcceptTrigger,
-) -> Result<(), StoreError> {
-  const RETENTION_NAMESPACE: Uuid = Uuid::from_u128(0x55c2_366a_1b77_53bf_b710_4e58_3245_5147);
-  for (component, deadline) in [
-    ("metadata", request.build.retention.metadata),
-    ("logs", request.build.retention.logs),
-    ("artifacts", request.build.retention.artifacts),
-    ("reports", request.build.retention.reports),
-  ] {
-    let identity = Uuid::new_v5(
-      &RETENTION_NAMESPACE,
-      format!("{}:{component}", request.build.id).as_bytes(),
-    );
-    sqlx::query(
-      "INSERT INTO retention_work \
-         (id, resource_kind, resource_identity, phase, available_at, deadline_at, attempt_count, project_id, build_id) \
-       VALUES ($1, $2, $3, 'pending', to_timestamp($4::double precision / 1000.0), \
-         to_timestamp($4::double precision / 1000.0), 0, $5, $6)",
-    )
-    .bind(identity)
-    .bind(component)
-    .bind(request.build.id.to_string())
-    .bind(deadline.unix_millis())
-    .bind(request.build.project_id.as_uuid())
-    .bind(request.build.id.as_uuid())
-    .execute(&mut **transaction)
-    .await
-    .map_err(|error| classify(error, EntityKind::RetentionWork))?;
-  }
   Ok(())
 }
 

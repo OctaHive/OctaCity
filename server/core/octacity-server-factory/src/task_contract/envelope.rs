@@ -2,7 +2,7 @@ use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
 use crate::{
   BudgetLimit, CommandArgumentPattern, ContextManifestId, FactoryDigest, FactoryError, FactoryKey,
-  FactoryPermissionSet, FactorySafeText, ImmutableReference, StageAttemptId, TaskEnvelopeId,
+  FactoryPermissionSet, FactorySafeText, ImmutableReference, NodeAttemptId, TaskEnvelopeId,
 };
 
 use super::{common::*, context::ContextManifest};
@@ -86,11 +86,11 @@ pub struct FactoryTaskDigests {
 pub struct FactoryTaskDeclaration {
   /// Stable Task Envelope identity.
   pub id: TaskEnvelopeId,
-  /// Owning Stage Attempt.
-  pub stage_attempt_id: StageAttemptId,
+  /// Owning common Node Attempt.
+  pub node_attempt_id: NodeAttemptId,
   /// Exact immutable task subject.
   pub subject: FactoryTaskSubject,
-  /// Program-owned task mode.
+  /// Selected capability mode.
   pub mode: FactoryTaskMode,
 }
 
@@ -142,7 +142,7 @@ pub struct FactoryTaskControlDigests {
 pub struct FactoryTaskEnvelope {
   schema_version: u16,
   id: TaskEnvelopeId,
-  stage_attempt_id: StageAttemptId,
+  node_attempt_id: NodeAttemptId,
   subject: FactoryTaskSubject,
   mode: FactoryTaskMode,
   task: FactoryArtifactReference,
@@ -210,7 +210,7 @@ impl FactoryTaskEnvelope {
     Ok(Self {
       schema_version: FACTORY_TASK_CONTRACT_VERSION,
       id: declaration.id,
-      stage_attempt_id: declaration.stage_attempt_id,
+      node_attempt_id: declaration.node_attempt_id,
       subject: declaration.subject,
       mode: declaration.mode,
       task: definition.task,
@@ -238,16 +238,42 @@ impl FactoryTaskEnvelope {
     })
   }
 
+  /// Verifies capability authority against the persisted common Build intent.
+  ///
+  /// Task preparation cannot substitute another node, Context, toolchain, or
+  /// subject, and may only narrow the node's permission and budget ceilings.
+  pub fn verify_build_intent(&self, intent: &crate::FlowBuildIntent) -> Result<(), FactoryError> {
+    let context = intent.input().context().ok_or_else(|| invalid("task node Context"))?;
+    if self.node_attempt_id != intent.node().id()
+      || self.subject.exact() != intent.input().subject()
+      || context.subject() != &self.subject
+      || self.context_manifest_id != context.id()
+      || self.context_manifest_digest != context.digest()?
+      || !context.entries().iter().any(|entry| {
+        entry.source_kind() == ContextSourceKind::Task
+          && matches!(entry.source(), FactoryContextReference::Artifact(reference) if reference == &self.task)
+      })
+      || !self.budget.fits_within(intent.budget())
+      || !self.permissions.is_no_broader_than(intent.permissions())
+      || self.plugin != intent.profile().plugin
+      || self.executable != intent.profile().tool
+      || self.model != intent.profile().model_or_tool
+    {
+      return Err(invalid("task node Build intent"));
+    }
+    Ok(())
+  }
+
   /// Returns the immutable envelope identity.
   #[must_use]
   pub const fn id(&self) -> TaskEnvelopeId {
     self.id
   }
 
-  /// Returns the owning Stage Attempt.
+  /// Returns the owning common Node Attempt.
   #[must_use]
-  pub const fn stage_attempt_id(&self) -> StageAttemptId {
-    self.stage_attempt_id
+  pub const fn node_attempt_id(&self) -> NodeAttemptId {
+    self.node_attempt_id
   }
 
   /// Returns the exact task subject.
@@ -256,7 +282,7 @@ impl FactoryTaskEnvelope {
     &self.subject
   }
 
-  /// Returns the program-owned task mode.
+  /// Returns the selected capability mode.
   #[must_use]
   pub const fn mode(&self) -> FactoryTaskMode {
     self.mode
@@ -356,7 +382,7 @@ impl FactoryTaskEnvelope {
 struct FactoryTaskEnvelopeWire {
   schema_version: u16,
   id: TaskEnvelopeId,
-  stage_attempt_id: StageAttemptId,
+  node_attempt_id: NodeAttemptId,
   subject: FactoryTaskSubject,
   mode: FactoryTaskMode,
   task: FactoryArtifactReference,
@@ -386,7 +412,7 @@ impl<'de> Deserialize<'de> for FactoryTaskEnvelope {
     Ok(Self {
       schema_version: FACTORY_TASK_CONTRACT_VERSION,
       id: wire.id,
-      stage_attempt_id: wire.stage_attempt_id,
+      node_attempt_id: wire.node_attempt_id,
       subject: wire.subject,
       mode: wire.mode,
       task: wire.task,

@@ -2,6 +2,7 @@ use crate::*;
 use factory::*;
 use octacity_server_factory as factory;
 
+#[allow(dead_code)] // Shared fixture consumers select different configured output contracts.
 #[path = "../../octacity-server-factory/src/flow_test_support.rs"]
 mod fixtures;
 use fixtures::*;
@@ -23,7 +24,12 @@ pub struct FactoryNodeJournalContractFixture {
 /// Constructs an unknown named node without a dedicated phase type.
 #[must_use]
 pub fn factory_node_journal_contract_fixture() -> FactoryNodeJournalContractFixture {
-  let (work, admitted, schema, input, attempt) = execution_fixture(FlowNodeKind::Reasoning);
+  factory_node_journal_contract_fixture_with_retries(0)
+}
+/// Constructs a generic node with an explicit operator-controlled retry allowance.
+#[must_use]
+pub fn factory_node_journal_contract_fixture_with_retries(maximum: u16) -> FactoryNodeJournalContractFixture {
+  let (work, admitted, schema, input, attempt) = execution_fixture_with_retries(FlowNodeKind::Reasoning, maximum);
   let admitted = admitted.with_data_schemas(vec![schema.clone()]).unwrap();
   let run = FactoryRun::admitted(admitted.root_run().factory_run_id(), &work);
   FactoryNodeJournalContractFixture {
@@ -74,7 +80,31 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
     .await
     .unwrap();
   let snapshot = store.factory_run_snapshot(run.id()).await.unwrap();
-  let mut start = transition(&snapshot, &claim, 11);
+  // A worker cannot manufacture completion before a configured root result exists.
+  let mut forged_terminal = factory_flow_contract_transition(&snapshot, &claim, 11);
+  forged_terminal.next_run = FactoryRun::restore(
+    run.id(),
+    run.configuration().clone(),
+    &snapshot.work,
+    run.subject().clone(),
+    FactoryRunState::Completed,
+    forged_terminal.next_run.version(),
+  )
+  .unwrap();
+  forged_terminal.lifecycle_checkpoint = FactoryLifecycleCheckpoint::new(
+    run.id(),
+    forged_terminal.next_run.version(),
+    FactoryLifecycleProgress::FlowResolved {
+      root: admitted.root_run().id(),
+      terminal: key("done"),
+    },
+    false,
+    time(11),
+  );
+  forged_terminal.current.lifecycle_checkpoint_id = forged_terminal.lifecycle_checkpoint.id;
+  assert!(store.commit_factory_run_transition(forged_terminal).await.is_err());
+  assert_eq!(store.factory_run_snapshot(run.id()).await.unwrap(), snapshot);
+  let mut start = factory_flow_contract_transition(&snapshot, &claim, 11);
   start.append.flow.attempts.push(attempt.clone());
   start.append.flow.data.inputs.push(input.clone());
   let intent = FlowBuildIntent::new(
@@ -121,7 +151,7 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
   );
   assert!(snapshot.flow.data.records.is_empty());
   assert!(snapshot.flow.data.build_executions.is_empty());
-  let mut observed = transition(&snapshot, &claim, 12);
+  let mut observed = factory_flow_contract_transition(&snapshot, &claim, 12);
   observed
     .append
     .flow
@@ -191,7 +221,7 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
       time(21),
     )
     .unwrap();
-  let mut finish = transition(&snapshot, &claim, 21);
+  let mut finish = factory_flow_contract_transition(&snapshot, &claim, 21);
   finish.append.flow.completions.push(completion.clone());
   assert!(store.commit_factory_run_transition(finish.clone()).await.is_err());
   assert!(
@@ -208,6 +238,29 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
   let restored = restarted.factory_run_snapshot(run.id()).await.unwrap();
   assert_eq!(restored.flow.data.records, vec![record]);
   assert_eq!(restored.flow.completions, vec![completion]);
+  for (kind, expected) in [
+    (
+      FactoryRunDiagnosticKind::NodeAttempt,
+      FactoryRunDiagnosticRecord::NodeAttempt(Box::new(attempt.clone())),
+    ),
+    (
+      FactoryRunDiagnosticKind::NodeAttemptCompletion,
+      FactoryRunDiagnosticRecord::NodeAttemptCompletion(Box::new(restored.flow.completions[0].clone())),
+    ),
+  ] {
+    let page = restarted
+      .list_factory_run_diagnostics(ListFactoryRunDiagnostics::new(run.id(), kind, None, 1).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(page.items, vec![expected.clone()]);
+    assert!(page.next.is_none());
+    let next = restarted
+      .list_factory_run_diagnostics(ListFactoryRunDiagnostics::new(run.id(), kind, Some(expected.cursor()), 1).unwrap())
+      .await
+      .unwrap();
+    assert!(next.items.is_empty());
+    assert!(next.next.is_none());
+  }
 }
 
 #[cfg(test)]
@@ -287,7 +340,7 @@ fn arbitrary_configured_pools_reconstruct_frozen_inputs_and_reject_caller_suppli
         .await
         .unwrap();
       let snapshot = store.factory_run_snapshot(run.id()).await.unwrap();
-      let mut prepare = transition(&snapshot, &claim, 11);
+      let mut prepare = factory_flow_contract_transition(&snapshot, &claim, 11);
       prepare.append.flow.data.inputs.push(input.clone());
       store.commit_factory_run_transition(prepare).await.unwrap();
       let snapshot = store.factory_run_snapshot(run.id()).await.unwrap();
@@ -318,7 +371,7 @@ fn arbitrary_configured_pools_reconstruct_frozen_inputs_and_reject_caller_suppli
         ..Default::default()
       };
       assert!(store.publish_phase_ready(policy.clone(), under_reserved).await.is_err());
-      let mut unselected = transition(&snapshot, &claim, 12);
+      let mut unselected = factory_flow_contract_transition(&snapshot, &claim, 12);
       unselected.append.flow.attempts.push(attempt.clone());
       unselected.append.flow.data.build_intents.push(
         FlowBuildIntent::new(
@@ -401,7 +454,12 @@ fn fact(run: FactoryRunId, operation: &str, at: i64) -> FactoryAuditFact {
     time(at),
   )
 }
-fn transition(snapshot: &FactoryRunSnapshot, claim: &FactoryRunClaimRecord, at: i64) -> CommitFactoryRunTransition {
+/// Builds one fenced neutral Flow transition for adapter contract fixtures.
+pub fn factory_flow_contract_transition(
+  snapshot: &FactoryRunSnapshot,
+  claim: &FactoryRunClaimRecord,
+  at: i64,
+) -> CommitFactoryRunTransition {
   let version = FactoryRunVersion::new(snapshot.run.version().get() + 1).unwrap();
   let usage = snapshot
     .budgets
@@ -413,8 +471,9 @@ fn transition(snapshot: &FactoryRunSnapshot, claim: &FactoryRunClaimRecord, at: 
   let lifecycle = FactoryLifecycleCheckpoint::new(
     snapshot.run.id(),
     version,
-    FactoryLifecycleProgress::Admitted,
-    DecisionSignalProgress::Disabled,
+    FactoryLifecycleProgress::FlowRunning {
+      root: snapshot.admitted_flow.root_run().id(),
+    },
     false,
     time(at),
   );
@@ -433,7 +492,7 @@ fn transition(snapshot: &FactoryRunSnapshot, claim: &FactoryRunClaimRecord, at: 
       snapshot.run.configuration().clone(),
       &snapshot.work,
       snapshot.run.subject().clone(),
-      FactoryRunState::Admitted,
+      FactoryRunState::Running,
       version,
     )
     .unwrap(),

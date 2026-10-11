@@ -54,7 +54,56 @@ CREATE TABLE factory_flow_build_executions (
   FOREIGN KEY (run_id,operation_id) REFERENCES factory_flow_build_intents(run_id,operation_id),
   UNIQUE (node_attempt_id,attempt_id)
 );
--- Retention sees both ordinary compatibility projections and configured nodes.
+-- Technical cancellation is distinct from a configured outcome and its completion.
+-- A receipt retains measured consumption after every owned operation has stopped.
+CREATE TABLE factory_node_stops (
+  run_id UUID NOT NULL REFERENCES factory_runs(id),
+  node_attempt_id UUID PRIMARY KEY,
+  id BYTEA NOT NULL UNIQUE CHECK (octet_length(id) = 32),
+  execution_id BYTEA REFERENCES factory_flow_build_executions(id),
+  document BYTEA NOT NULL CHECK (octet_length(document) BETWEEN 2 AND 16384),
+  FOREIGN KEY (node_attempt_id, run_id) REFERENCES factory_node_attempts(id, run_id)
+);
+CREATE INDEX factory_node_stops_run_idx ON factory_node_stops (run_id, node_attempt_id);
+
+-- A common node operation can initiate ordinary execution without a Trigger.
+-- The immutable origin remains readable after Factory metadata retention.
+ALTER TABLE builds
+  ALTER COLUMN trigger_occurrence_id DROP NOT NULL,
+  ADD COLUMN factory_origin JSONB,
+  ADD COLUMN factory_materialization_digest BYTEA,
+  ADD COLUMN factory_permission_digest BYTEA,
+  ADD CONSTRAINT builds_factory_acceptance_bound CHECK (
+    (factory_origin IS NULL AND factory_materialization_digest IS NULL AND factory_permission_digest IS NULL)
+    OR (factory_origin IS NOT NULL AND factory_materialization_digest IS NOT NULL
+        AND factory_permission_digest IS NOT NULL AND octet_length(factory_materialization_digest) = 32
+        AND octet_length(factory_permission_digest) = 32)
+  ),
+  ADD CONSTRAINT builds_exactly_one_origin CHECK (
+    (trigger_occurrence_id IS NOT NULL) <> (factory_origin IS NOT NULL)
+  ),
+  ADD CONSTRAINT builds_factory_origin_bounded CHECK (
+    factory_origin IS NULL OR (
+      jsonb_typeof(factory_origin) = 'object'
+      AND pg_column_size(factory_origin) <= 1024
+      AND factory_origin ?& ARRAY['operation_id', 'run_id', 'node_attempt_id', 'input_digest']
+      AND factory_origin - ARRAY['operation_id', 'run_id', 'node_attempt_id', 'input_digest'] = '{}'::jsonb
+      AND jsonb_typeof(factory_origin->'operation_id') = 'string'
+      AND jsonb_typeof(factory_origin->'run_id') = 'string'
+      AND jsonb_typeof(factory_origin->'node_attempt_id') = 'string'
+      AND jsonb_typeof(factory_origin->'input_digest') = 'string'
+      AND factory_origin->>'operation_id' ~ '^[0-9a-f]{64}$'
+      AND factory_origin->>'input_digest' ~ '^[0-9a-f]{64}$'
+      AND factory_origin->>'run_id' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+      AND factory_origin->>'node_attempt_id' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+    )
+  );
+
+-- Retain ownership even when creation succeeded before its response was journaled.
+CREATE UNIQUE INDEX builds_factory_operation_idx ON builds ((factory_origin->>'operation_id'))
+  WHERE factory_origin IS NOT NULL;
 CREATE VIEW factory_run_builds AS
-  SELECT run_id,build_id FROM factory_build_links
-  UNION SELECT run_id,build_id FROM factory_flow_build_executions;
+  SELECT DISTINCT run_id, build_id FROM factory_flow_build_executions
+  UNION
+  SELECT (factory_origin->>'run_id')::uuid AS run_id, id AS build_id
+  FROM builds WHERE factory_origin IS NOT NULL;

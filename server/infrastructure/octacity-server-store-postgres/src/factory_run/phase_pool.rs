@@ -155,11 +155,12 @@ pub(crate) async fn select_phase_ready(
   let selections: Vec<Json<PhasePoolSelection>> = sqlx::query_scalar(
     "SELECT selected.selection FROM factory_phase_pool_selections selected \
      JOIN factory_runs run ON run.id = selected.run_id \
-     WHERE selected.policy_id = $1 AND run.visible AND run.state NOT IN ('rejected','cancelled','completed') \
+     WHERE selected.policy_id = $1 AND run.visible AND run.state NOT IN ('cancelled','completed') \
        AND ((NOT EXISTS (SELECT 1 FROM factory_node_attempts node LEFT JOIN factory_flow_inputs frozen ON frozen.run_id = node.run_id AND frozen.id = node.input_digest WHERE node.run_id = selected.run_id AND node.workflow_cycle_id = selected.cycle_id AND node.node_key = selected.node_key AND (frozen.generation = selected.generation OR frozen.id IS NULL)) AND selected.cycle_id = (SELECT id FROM factory_workflow_cycles WHERE flow_run_id = selected.flow_run_id ORDER BY cycle_number DESC LIMIT 1)) OR EXISTS ( \
          SELECT 1 FROM factory_node_attempts node LEFT JOIN factory_flow_inputs frozen ON frozen.run_id = node.run_id AND frozen.id = node.input_digest WHERE node.run_id = selected.run_id \
            AND node.workflow_cycle_id = selected.cycle_id AND node.node_key = selected.node_key AND (frozen.generation = selected.generation OR frozen.id IS NULL) \
-           AND NOT EXISTS (SELECT 1 FROM factory_node_attempt_completions result WHERE result.node_attempt_id = node.id))) \
+           AND NOT EXISTS (SELECT 1 FROM factory_node_attempt_completions result WHERE result.node_attempt_id = node.id) \
+           AND NOT EXISTS (SELECT 1 FROM factory_node_stops stop WHERE stop.node_attempt_id = node.id))) \
      ORDER BY selected.entry_id LIMIT $2")
     .bind(policy.digest().as_bytes().as_slice()).bind(i64::from(MAX_PHASE_POOL_WIP) + 1).fetch_all(&mut *transaction).await.map_err(unavailable)?;
   if selections.len() > usize::from(MAX_PHASE_POOL_WIP) {
@@ -351,7 +352,7 @@ async fn ordered_entries(
     "SELECT entry.entry FROM factory_phase_pool_entries entry JOIN factory_runs run ON run.id = entry.run_id \
      LEFT JOIN factory_phase_pool_entries cursor ON cursor.id = $2 \
      WHERE entry.policy_id = $1 AND run.visible AND run.version = entry.run_version \
-       AND run.state NOT IN ('rejected','cancelled','completed') \
+       AND run.state NOT IN ('cancelled','completed') \
        AND NOT EXISTS (SELECT 1 FROM factory_phase_pool_selections selected WHERE selected.run_id = entry.run_id \
          AND selected.flow_run_id = entry.flow_run_id AND selected.cycle_id = entry.cycle_id AND selected.node_key = entry.node_key AND selected.generation = entry.generation) \
        AND entry.generation = (SELECT count(*) FROM factory_node_attempts node WHERE node.run_id = entry.run_id \

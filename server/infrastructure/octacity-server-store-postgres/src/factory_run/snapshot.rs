@@ -1,20 +1,14 @@
-use std::collections::{HashMap, HashSet};
-
 use octacity_server_factory::{
-  AdmittedFlow, BudgetUsage, EvaluationState, FactoryConfiguration, FactoryLifecycleProgress, FactoryRunId,
-  FactoryRunVersion, FlowDefinition, FlowDefinitionId, FlowDefinitionVersion, FlowRun, FlowRunId, FlowRunParent,
-  MacroCall, NodeAttemptId, PinnedFlowDefinitionClosure, WorkflowCycle, WorkflowCycleId, WorkflowCycleNumber,
+  AdmittedFlow, BudgetUsage, FactoryConfiguration, FactoryRunId, FactoryRunVersion, FlowDefinition, FlowDefinitionId,
+  FlowDefinitionVersion, FlowRun, FlowRunId, FlowRunParent, NodeAttemptId, PinnedFlowDefinitionClosure, WorkflowCycle,
+  WorkflowCycleId, WorkflowCycleNumber,
 };
 use octacity_server_store::{
-  FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryRunHistoryAppend, FactoryRunSnapshot,
-  MAX_FACTORY_RUN_SNAPSHOT_RECORDS, StoreError,
+  FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryRunSnapshot, MAX_FACTORY_RUN_SNAPSHOT_RECORDS, StoreError,
 };
 use sqlx::{PgPool, types::Json};
 
-use super::{
-  FactoryAuditRow, LifecycleDocument, OutboxRow, decode_audit_row, decode_claim, decode_outbox, digest, history_rows,
-  lock_run,
-};
+use super::{LifecycleDocument, OutboxRow, decode_outbox, digest, history_rows, lock_run, read_claim};
 use crate::{
   database::unavailable,
   discovery::{positive, timestamp},
@@ -35,22 +29,10 @@ pub(super) async fn read_snapshot_in_transaction(
   let admitted_flow = read_admitted_flow(transaction, &locked).await?;
   let flow_runs = read_flow_runs(transaction, run_id, &admitted_flow).await?;
   let workflow_cycles = read_workflow_cycles(transaction, run_id, &flow_runs).await?;
-  let (record_count, control_count) = snapshot_record_counts(transaction, run_id).await?;
-  if record_count > MAX_FACTORY_RUN_SNAPSHOT_RECORDS || control_count != 0 {
+  let (record_count, _) = snapshot_record_counts(transaction, run_id).await?;
+  if record_count > MAX_FACTORY_RUN_SNAPSHOT_RECORDS {
     return Err(StoreError::Unavailable);
   }
-  let claims = sqlx::query_as::<_, (uuid::Uuid, String, Vec<u8>, i64, i64)>(
-    "SELECT run_id, owner, fence, FLOOR(EXTRACT(EPOCH FROM claimed_at) * 1000)::BIGINT, \
-            FLOOR(EXTRACT(EPOCH FROM expires_at) * 1000)::BIGINT \
-     FROM factory_run_claims WHERE run_id = $1 ORDER BY id",
-  )
-  .bind(run_id.as_uuid())
-  .fetch_all(&mut **transaction)
-  .await
-  .map_err(unavailable)?
-  .into_iter()
-  .map(decode_claim)
-  .collect::<Result<Vec<_>, _>>()?;
   let budgets = sqlx::query_as::<_, (Vec<u8>, i64, Json<BudgetUsage>, i64)>(
     "SELECT id, run_version, usage, FLOOR(EXTRACT(EPOCH FROM recorded_at) * 1000)::BIGINT \
      FROM factory_run_budgets WHERE run_id = $1 ORDER BY id",
@@ -85,35 +67,24 @@ pub(super) async fn read_snapshot_in_transaction(
       run_id,
       run_version: FactoryRunVersion::new(positive(version)?).map_err(|_| StoreError::Unavailable)?,
       progress: document.progress,
-      signal: document.signal,
       cancellation_requested,
       recorded_at: timestamp(recorded_at)?,
     })
   })
   .collect::<Result<Vec<_>, StoreError>>()?;
-  let audit = sqlx::query_as::<_, FactoryAuditRow>(
-    "SELECT id, run_id, actor_kind, actor_identity_digest, operation, request_identity_digest, outcome, \
-            FLOOR(EXTRACT(EPOCH FROM recorded_at) * 1000)::BIGINT AS recorded_at_millis \
-     FROM factory_audit_links WHERE run_id = $1 ORDER BY id",
-  )
-  .bind(run_id.as_uuid())
-  .fetch_all(&mut **transaction)
-  .await
-  .map_err(unavailable)?
-  .into_iter()
-  .map(decode_audit_row)
-  .collect::<Result<Vec<_>, _>>()?;
   let outbox = outbox_rows(transaction, run_id).await?;
-  let current_claim = locked
-    .claim_id
-    .map(|id| {
-      claims
-        .iter()
-        .find(|record| record.id == id)
-        .cloned()
-        .ok_or(StoreError::Unavailable)
-    })
-    .transpose()?;
+  let current_claim = match locked.claim_id {
+    Some(id) => {
+      let record = read_claim(transaction, id).await?.ok_or(StoreError::Unavailable)?;
+      if record.id != id
+        || record != octacity_server_store::FactoryRunClaimRecord::new(run_id, record.owner.clone(), record.claim)
+      {
+        return Err(StoreError::Unavailable);
+      }
+      Some(record)
+    }
+    None => None,
+  };
   let history = history_rows(
     transaction,
     run_id,
@@ -123,9 +94,7 @@ pub(super) async fn read_snapshot_in_transaction(
     &locked.work,
   )
   .await?;
-  validate_history(run_id, &admitted_flow, &history)?;
-  validate_evaluation_progress(&locked.lifecycle, &locked.current, &history)?;
-  Ok(FactoryRunSnapshot {
+  let mut snapshot = FactoryRunSnapshot {
     work: locked.work,
     run: locked.run,
     flow: octacity_server_store::FactoryFlowHistory {
@@ -137,32 +106,16 @@ pub(super) async fn read_snapshot_in_transaction(
     },
     admitted_flow,
     current_claim,
-    claims,
     budgets,
     lifecycle_checkpoints,
-    stage_attempts: history.stage_attempts,
-    stage_attempt_completions: history.stage_attempt_completions,
-    stage_handoffs: history.stage_handoffs,
-    context_manifests: history.context_manifests,
-    macro_calls: history.macro_calls,
-    macro_call_completions: history.macro_call_completions,
-    signal_requests: history.signal_requests,
-    signal_receipts: history.signal_receipts,
-    linked_builds: history.linked_builds,
-    build_observations: history.build_observations,
-    candidates: history.candidates,
-    evidence: history.evidence,
-    evaluation_plans: history.evaluation_plans,
-    assessments: history.assessments,
-    decisions: history.decisions,
-    escalations: history.escalations,
-    delivery_attempts: history.delivery_attempts,
-    reporting_attempts: history.reporting_attempts,
-    audit,
     controls: Vec::new(),
     outbox,
     current: locked.current,
-  })
+  };
+  snapshot.controls = super::control::read_controls(transaction, &snapshot).await?;
+  octacity_server_store::validate_factory_node_control_history(&snapshot)?;
+
+  Ok(snapshot)
 }
 
 pub(super) async fn read_admitted_flow(
@@ -204,10 +157,7 @@ pub(super) async fn read_admitted_flow(
     rows.into_iter().map(|(Json(definition), _)| definition).collect(),
   )
   .map_err(|_| StoreError::Unavailable)?;
-  let expected = match configuration.flow() {
-    Some(flow) => flow.closure.clone(),
-    None => PinnedFlowDefinitionClosure::from_stage_projection(&configuration).map_err(|_| StoreError::Unavailable)?,
-  };
+  let expected = configuration.flow().closure.clone();
   if closure != expected {
     return Err(StoreError::Unavailable);
   }
@@ -366,69 +316,27 @@ pub(super) async fn read_workflow_cycles(
   Ok(cycles)
 }
 
-fn validate_evaluation_progress(
-  lifecycle: &FactoryLifecycleCheckpoint,
-  current: &octacity_server_store::FactoryRunCurrentProjection,
-  history: &FactoryRunHistoryAppend,
-) -> Result<(), StoreError> {
-  let FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(progress)) = &lifecycle.progress else {
-    return Ok(());
-  };
-  if !progress.is_plan_bound() {
-    return Ok(());
-  }
-  let plan = current
-    .evaluation_plan_id
-    .and_then(|id| history.evaluation_plans.iter().find(|plan| plan.id() == id))
-    .ok_or(StoreError::Unavailable)?;
-  progress
-    .validate_bindings(
-      plan,
-      history.stage_attempts.iter(),
-      history.macro_calls.iter(),
-      history.assessments.iter(),
-    )
-    .map_err(|_| StoreError::Unavailable)
-}
-
 pub(super) async fn snapshot_record_counts(
   transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
   run_id: FactoryRunId,
 ) -> Result<(usize, usize), StoreError> {
   let (record_count, control_count): (i64, i64) = sqlx::query_as(
     "SELECT \
-       (SELECT COUNT(*) FROM factory_run_claims WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_run_current WHERE run_id = $1 AND claim_id IS NOT NULL) + \
        (SELECT COUNT(*) FROM factory_run_budgets WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_lifecycle_checkpoints WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_runs WHERE factory_run_id = $1) + \
        (SELECT COUNT(*) FROM factory_workflow_cycles WHERE factory_run_id = $1) + \
        (SELECT COUNT(*) FROM factory_node_attempts WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_node_stops WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_build_executions WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_build_intents WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_incoming WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_inputs WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_records WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_node_attempt_completions WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_stage_attempts WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_stage_attempt_completions WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_stage_handoffs WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_context_manifests WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_call_nodes WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_call_completions WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_decision_signal_requests WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_decision_signal_receipts WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_build_links WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_build_observations WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_changesets WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_evidence_manifests WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_evaluation_plans WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_assessments WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_decisions WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_escalations WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_delivery_attempts WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_reporting_attempts WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_audit_links WHERE run_id = $1) + \
-       (SELECT COUNT(*) FROM factory_outbox_records WHERE run_id = $1), \
+       (SELECT COUNT(*) FROM factory_outbox_records WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_run_controls WHERE run_id = $1), \
        (SELECT COUNT(*) FROM factory_run_controls WHERE run_id = $1)",
   )
   .bind(run_id.as_uuid())
@@ -439,217 +347,6 @@ pub(super) async fn snapshot_record_counts(
     usize::try_from(record_count).map_err(|_| StoreError::Unavailable)?,
     usize::try_from(control_count).map_err(|_| StoreError::Unavailable)?,
   ))
-}
-
-fn validate_history(
-  run_id: FactoryRunId,
-  admitted_flow: &AdmittedFlow,
-  history: &octacity_server_store::FactoryRunHistoryAppend,
-) -> Result<(), StoreError> {
-  let stages = history
-    .stage_attempts
-    .iter()
-    .map(|record| record.id())
-    .collect::<HashSet<_>>();
-  let nodes = history
-    .flow
-    .attempts
-    .iter()
-    .map(|record| (record.id(), record))
-    .collect::<HashMap<_, _>>();
-  let calls = history
-    .macro_calls
-    .iter()
-    .map(|record| record.id())
-    .collect::<HashSet<_>>();
-  let call_records = history
-    .macro_calls
-    .iter()
-    .map(|record| (record.id(), record))
-    .collect::<HashMap<_, _>>();
-  let handoffs = history
-    .stage_handoffs
-    .iter()
-    .map(|record| (record.stage_attempt_id(), record))
-    .collect::<HashMap<_, _>>();
-  let manifests = history
-    .context_manifests
-    .iter()
-    .map(|record| (record.id(), record))
-    .collect::<HashMap<_, _>>();
-  let requests = history
-    .signal_requests
-    .iter()
-    .map(|record| record.id())
-    .collect::<HashSet<_>>();
-  let receipts = history
-    .signal_receipts
-    .iter()
-    .map(|record| (record.id(), record))
-    .collect::<HashMap<_, _>>();
-  let builds = history
-    .linked_builds
-    .iter()
-    .map(|record| (record.build_id, record))
-    .collect::<HashMap<_, _>>();
-  let candidates = history
-    .candidates
-    .iter()
-    .map(|record| record.id())
-    .collect::<HashSet<_>>();
-  let evidence = history
-    .evidence
-    .iter()
-    .map(|record| (record.id(), record))
-    .collect::<HashMap<_, _>>();
-  let plans = history
-    .evaluation_plans
-    .iter()
-    .map(|record| (record.id(), record))
-    .collect::<HashMap<_, _>>();
-  let assessments = history
-    .assessments
-    .iter()
-    .map(|record| (record.id(), record))
-    .collect::<HashMap<_, _>>();
-  let decisions = history
-    .decisions
-    .iter()
-    .map(|record| record.id())
-    .collect::<HashSet<_>>();
-  let invalid = history.stage_attempts.iter().any(|record| {
-    record.run_id() != run_id
-      || nodes
-        .values()
-        .all(|node| !admitted_flow.matches_stage_projection(record, node))
-  }) || history.flow.attempts.iter().any(|node| {
-    node.stage_projection_id().is_some_and(|stage_id| {
-      history
-        .stage_attempts
-        .iter()
-        .find(|stage| stage.id() == stage_id)
-        .is_none_or(|stage| !admitted_flow.matches_stage_projection(stage, node))
-    })
-  }) || history.flow.completions.iter().any(|completion| {
-    nodes.get(&completion.node_attempt_id()).is_none_or(|node| {
-      node.factory_run_id() != run_id
-        || node.flow_run_id() != completion.flow_run_id()
-        || node.workflow_cycle_id() != completion.workflow_cycle_id()
-        || node.node_key() != completion.node_key()
-        || node
-          .verify_observer(
-            &octacity_server_factory::FactoryClaimOwnership::new(completion.owner().clone(), completion.claim()),
-            completion.observed_at(),
-          )
-          .is_err()
-        || completion.usage().validate(node.budget()).is_err()
-    })
-  }) || history
-    .stage_attempt_completions
-    .iter()
-    .any(|record| record.run_id() != run_id || !stages.contains(&record.stage_attempt_id()))
-    || history.stage_handoffs.iter().any(|record| {
-      history
-        .stage_attempts
-        .iter()
-        .find(|stage| stage.id() == record.stage_attempt_id())
-        .is_none_or(|stage| record.subject().exact() != stage.subject())
-    })
-    || history.macro_calls.iter().any(|record| {
-      record.run_id() != run_id
-        || !stages.contains(&record.stage_attempt_id())
-        || record.parent_id().is_some_and(|id| !calls.contains(&id))
-        || record.stage_dependencies().iter().any(|id| !handoffs.contains_key(id))
-        || record.call_dependencies().iter().any(|id| !calls.contains(id))
-        || record.depth()
-          != record
-            .call_dependencies()
-            .iter()
-            .filter_map(|id| history.macro_calls.iter().find(|call| call.id() == *id))
-            .map(MacroCall::depth)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1)
-        || manifests.get(&record.context_manifest_id()).is_none_or(|manifest| {
-          manifest.subject() != record.subject() || manifest.digest().ok() != Some(record.context_digest())
-        })
-    })
-    || history.macro_call_completions.iter().any(|completion| {
-      call_records.get(&completion.call_id()).is_none_or(|call| {
-        completion.subject() != call.subject()
-          || !history
-            .stage_attempts
-            .iter()
-            .find(|stage| stage.id() == call.stage_attempt_id())
-            .is_some_and(|stage| completion.task_envelope_digest() == stage.input_digest())
-          || !completion.usage_is_valid_for(call.budget())
-      })
-    })
-    || history
-      .signal_requests
-      .iter()
-      .any(|record| record.run_id() != run_id || !stages.contains(&record.stage_attempt_id()))
-    || history
-      .signal_receipts
-      .iter()
-      .any(|record| record.run_id() != run_id || !requests.contains(&record.request_id()))
-    || history
-      .linked_builds
-      .iter()
-      .any(|record| record.run_id != run_id || !stages.contains(&record.stage_attempt_id))
-    || history.build_observations.iter().any(|record| {
-      record.run_id != run_id
-        || builds
-          .get(&record.build_id)
-          .is_none_or(|link| link.stage_attempt_id != record.stage_attempt_id || link.target != record.target)
-    })
-    || history
-      .candidates
-      .iter()
-      .any(|record| !stages.contains(&record.stage_attempt_id()))
-    || history
-      .evidence
-      .iter()
-      .any(|record| !candidates.contains(&record.changeset_id()))
-    || history
-      .evaluation_plans
-      .iter()
-      .any(|record| !evidence.contains_key(&record.evidence_id()))
-    || history.assessments.iter().any(|record| {
-      plans.get(&record.plan_id()).is_none_or(|plan| {
-        evidence
-          .get(&plan.evidence_id())
-          .is_none_or(|manifest| record.validate_bindings(plan, manifest).is_err())
-      })
-    })
-    || history.decisions.iter().any(|record| {
-      plans.get(&record.plan_id()).is_none_or(|plan| {
-        record
-          .validate_bindings(
-            plan,
-            history.stage_attempts.iter(),
-            assessments.values().copied(),
-            receipts.values().copied(),
-          )
-          .is_err()
-      })
-    })
-    || history
-      .escalations
-      .iter()
-      .any(|record| record.run_id() != run_id || record.decision_id().is_some_and(|id| !decisions.contains(&id)))
-    || history
-      .delivery_attempts
-      .iter()
-      .any(|record| !decisions.contains(&record.decision_id()))
-    || history
-      .reporting_attempts
-      .iter()
-      .any(|record| record.run_id() != run_id);
-  if invalid {
-    return Err(StoreError::Unavailable);
-  }
-  Ok(())
 }
 
 async fn outbox_rows(

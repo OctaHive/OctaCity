@@ -11,12 +11,11 @@ use octacity_server_domain::{
   RepositoryLocator, RepositoryName, RepositoryVersion, SourceReference, Timestamp,
 };
 use octacity_server_factory::{
-  BudgetLimit, BuildConfigurationRef, DecisionOutcome, DeliveryPolicyDraft, EvaluationPolicyDraft,
-  ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind, FactoryConfiguration,
-  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
-  FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryMetadata,
-  FactoryReferenceChoice, FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft,
-  RiskClass, WorkArtifacts, WorkClassification, WorkPriority,
+  BudgetLimit, BuildConfigurationRef, ExternalWorkIdentity, FactoryArtifactReference, FactoryChoiceKind,
+  FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft,
+  FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryMetadata,
+  FactoryReferenceChoice, FactoryStageKind, FactoryWipLimits, ImmutableReference, RiskClass, WorkArtifacts,
+  WorkClassification, WorkPriority,
 };
 use octacity_server_store::{
   FactoryRunStore, IdempotencyKey, PublishedFactoryConfiguration, PublishedRepository, RepositoryDefinition,
@@ -105,7 +104,7 @@ pub(super) fn configuration_with_flow(
     |configuration| configuration.limits.budget(),
   );
   let budget = || limit;
-  let stage = |name, kind| FactoryStageDraft {
+  let stage = |name, kind| octacity_server_factory::testing::FactoryStageDraft {
     key: key(name),
     kind,
     build_configuration: key("build"),
@@ -116,47 +115,23 @@ pub(super) fn configuration_with_flow(
     FactoryConfigurationVersion::INITIAL,
     project_id,
     digest(20),
-    FactoryConfigurationDraft {
-      flow,
-      admission_policy: key("admission"),
-      stages: vec![
+    octacity_server_factory::testing::with_contract_flow(
+      FactoryConfigurationDraft {
+        flow,
+        admission_policy: key("admission"),
+        wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
+        hard_budget: budget(),
+        permission_ceiling: key("permissions"),
+        enabled: true,
+      },
+      vec![
         stage("implement", FactoryStageKind::Implementation),
         stage("validate", FactoryStageKind::Validation),
         stage("evaluate", FactoryStageKind::Evaluation),
       ],
-      wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
-      hard_budget: budget(),
-      permission_ceiling: key("permissions"),
-      credential_profiles: credential_profiles(),
-      decision_signals: Vec::new(),
-      evaluation: EvaluationPolicyDraft {
-        criterion_packs: vec![key("criteria")],
-        evaluators: vec![key("evaluator")],
-        required_quorum: 1,
-        budget: budget(),
-      },
-      rework: ReworkPolicyDraft {
-        max_cycles: 0,
-        stage: None,
-        exhausted_outcome: DecisionOutcome::Escalate,
-      },
-      delivery: DeliveryPolicyDraft {
-        adapter: key("delivery-adapter"),
-        policy: key("delivery-policy"),
-      },
-      enabled: true,
-    },
+      &choices,
+    ),
     &choices,
-  )
-  .unwrap()
-}
-
-fn credential_profiles() -> FactoryCredentialProfiles {
-  FactoryCredentialProfiles::new(
-    key("model-coding"),
-    key("model-evaluation"),
-    key("source-read"),
-    key("delivery-write"),
   )
   .unwrap()
 }
@@ -308,7 +283,19 @@ fn exact_scoped_replay_returns_one_run_before_resolving_mutable_state_again() {
     assert_eq!(snapshot.work.id(), applied.work_envelope_id);
     assert_eq!(snapshot.run.id(), applied.factory_run_id);
     assert_eq!(snapshot.budgets.len(), 1);
-    assert_eq!(snapshot.audit.len(), 1);
+    let audit = store
+      .list_factory_run_diagnostics(
+        octacity_server_store::ListFactoryRunDiagnostics::new(
+          snapshot.run.id(),
+          octacity_server_store::FactoryRunDiagnosticKind::Audit,
+          None,
+          100,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(audit.items.len(), 1);
     assert_eq!(snapshot.outbox.len(), 1);
 
     let mismatch = admit(

@@ -1,4 +1,6 @@
 //! Shared black-box server-test helpers.
+#[allow(dead_code)]
+pub mod runtime;
 
 use reqwest::Client;
 use serde_json::{Value, json};

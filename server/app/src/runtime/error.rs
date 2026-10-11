@@ -30,6 +30,12 @@ pub enum DurableWorkerError {
 /// Failure to start, serve, or gracefully stop the server process.
 #[derive(Debug, Error)]
 pub enum ServerRuntimeError {
+  /// Enabling Factory requires exact adapters supplied by the deployment.
+  #[error("Factory runtime requires explicit installed capabilities")]
+  MissingFactoryInstallation,
+  /// Explicit capability installation failed validation or its bounded deadline.
+  #[error("Factory runtime installation failed")]
+  InvalidFactoryInstallation,
   /// Static runtime resources could not be assembled safely.
   #[error("failed to assemble runtime resources: {0}")]
   Assembly(crate::RuntimeAssemblyError),

@@ -248,7 +248,13 @@ function BuildTable({
                   <strong>{configuration?.name ?? build.configuration_id}</strong>
                   <span>{t('builds.version', { version: build.configuration_version })}</span>
                 </td>
-                <td>{formatEnumLabel(build.cause.kind, t)}</td>
+                <td>
+                  {build.factory_origin
+                    ? t('builds.factoryOrigin')
+                    : build.cause
+                      ? formatEnumLabel(build.cause.kind, t)
+                      : null}
+                </td>
                 <td>
                   <strong>
                     {t('builds.attemptNumber', { number: build.current_attempt_number })}

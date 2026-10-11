@@ -5,6 +5,41 @@ use octacity_server_store::*;
 use super::{PostgresAuthoritativeStore, PostgresStore};
 
 #[async_trait]
+impl FactoryBuildAcceptanceStore for PostgresAuthoritativeStore {
+  async fn factory_build_for_operation(
+    &self,
+    operation: octacity_server_factory::FactoryDigest,
+  ) -> Result<Option<AcceptedFactoryBuild>, StoreError> {
+    crate::telemetry::observe(
+      Operation::Verify,
+      crate::accept_factory_build::read(&self.store.pool, operation),
+    )
+    .await
+  }
+  async fn accept_factory_build(&self, request: AcceptFactoryBuild) -> Result<AcceptedFactoryBuild, StoreError> {
+    crate::telemetry::observe(
+      Operation::Accept,
+      crate::accept_factory_build::accept(&self.store.pool, &self.job_spec_signer, request),
+    )
+    .await
+  }
+}
+
+#[async_trait]
+impl FactoryBuildCancellationStore for PostgresAuthoritativeStore {
+  async fn cancel_factory_build_execution(
+    &self,
+    request: CancelFactoryBuildExecution,
+  ) -> Result<CancellationDisposition, StoreError> {
+    crate::telemetry::observe(
+      Operation::Cancel,
+      crate::cancel_build::execute_factory(&self.store.pool, request),
+    )
+    .await
+  }
+}
+
+#[async_trait]
 impl TriggerAcceptanceStore for PostgresAuthoritativeStore {
   async fn replay_trigger_acceptance(
     &self,

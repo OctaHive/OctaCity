@@ -1,6 +1,7 @@
 //! Atomic PostgreSQL persistence for fenced Factory reconciliation.
 
 mod claim;
+mod control;
 mod data;
 mod diagnostics;
 mod history;
@@ -14,8 +15,8 @@ use std::str::FromStr;
 
 use octacity_server_domain::{ArtifactId, EntityKind, Timestamp};
 use octacity_server_factory::{
-  BudgetUsage, DecisionSignalProgress, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryKey,
-  FactoryLifecycleProgress, FactoryRun, FactoryRunId, FactoryRunState, FactoryRunVersion, WorkEnvelope,
+  BudgetUsage, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryKey, FactoryLifecycleProgress, FactoryRun,
+  FactoryRunId, FactoryRunState, FactoryRunVersion, WorkEnvelope,
 };
 use octacity_server_store::{
   AuditActorKind, FactoryArtifactRole, FactoryAuditFact, FactoryBudgetRecord, FactoryLifecycleCheckpoint,
@@ -32,6 +33,7 @@ use crate::{
 };
 
 pub(crate) use claim::{claim, claim_batch};
+pub(crate) use control::apply_control;
 pub(crate) use diagnostics::list_diagnostics;
 pub(crate) use history::{append_history, history_rows};
 pub(crate) use outbox::{claim_outbox, settle_outbox};
@@ -40,10 +42,69 @@ pub(crate) use recovery::recover_restored_ownership;
 pub(crate) use snapshot::read_snapshot;
 pub(crate) use transition::commit_transition;
 
+pub(crate) async fn verify_cancellation_owner(
+  transaction: &mut Transaction<'_, Postgres>,
+  run: FactoryRunId,
+  request: &octacity_server_store::CancelFactoryBuildExecution,
+) -> Result<(), StoreError> {
+  let locked = lock_run(transaction, run).await?;
+  let claim = read_claim(transaction, locked.claim_id.ok_or_else(conflict)?)
+    .await?
+    .ok_or(StoreError::Unavailable)?;
+  if claim.owner != *request.ownership.owner()
+    || claim.claim != request.ownership.claim()
+    || request.observed_at < claim.claim.claimed_at()
+    || request.observed_at >= claim.claim.expires_at()
+  {
+    return Err(conflict());
+  }
+  Ok(())
+}
+
+pub(crate) async fn verify_build_dispatch(
+  transaction: &mut Transaction<'_, Postgres>,
+  request: &octacity_server_store::AcceptFactoryBuild,
+) -> Result<(), StoreError> {
+  let run_id = request.intent.input().factory_run_id();
+  let locked = lock_run(transaction, run_id).await?;
+  let claim_id = locked.claim_id.ok_or_else(conflict)?;
+  let claim = read_claim(transaction, claim_id)
+    .await?
+    .ok_or(StoreError::Unavailable)?;
+  if locked.lifecycle.cancellation_requested
+    || locked.run.state().is_terminal()
+    || claim.owner != *request.ownership.owner()
+    || claim.claim != request.ownership.claim()
+    || request.accepted_at < claim.claim.claimed_at()
+    || request.accepted_at >= claim.claim.expires_at()
+    || request.accepted_at >= request.intent.node().deadline()
+    || request
+      .intent
+      .node()
+      .verify_observer(&request.ownership, request.accepted_at)
+      .is_err()
+  {
+    return Err(conflict());
+  }
+  let document: Option<Vec<u8>> = sqlx::query_scalar(
+    "SELECT intent.document FROM factory_flow_build_intents intent \
+     WHERE intent.run_id=$1 AND intent.node_attempt_id=$2 AND intent.operation_id=$3 \
+       AND NOT EXISTS (SELECT 1 FROM factory_node_stops stop WHERE stop.node_attempt_id=intent.node_attempt_id) \
+       AND NOT EXISTS (SELECT 1 FROM factory_node_attempt_completions completion WHERE completion.node_attempt_id=intent.node_attempt_id)",
+  ).bind(run_id.as_uuid()).bind(request.intent.node().id().as_uuid())
+    .bind(request.intent.operation_id().map_err(|_| conflict())?.as_bytes().as_slice())
+    .fetch_optional(&mut **transaction).await.map_err(unavailable)?;
+  let expected = serde_json::to_vec(&request.intent).map_err(|_| conflict())?;
+  if document.as_ref() != Some(&expected) {
+    return Err(conflict());
+  }
+  Ok(())
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 struct LifecycleDocument {
   progress: FactoryLifecycleProgress,
-  signal: DecisionSignalProgress,
 }
 
 #[derive(FromRow)]
@@ -55,18 +116,6 @@ struct LockedRunRow {
   claim_id: Option<Vec<u8>>,
   budget_id: Vec<u8>,
   lifecycle_checkpoint_id: Vec<u8>,
-  stage_attempt_id: Option<uuid::Uuid>,
-  call_node_id: Option<uuid::Uuid>,
-  signal_request_id: Option<uuid::Uuid>,
-  signal_receipt_id: Option<uuid::Uuid>,
-  build_id: Option<uuid::Uuid>,
-  changeset_id: Option<uuid::Uuid>,
-  evidence_manifest_id: Option<uuid::Uuid>,
-  evaluation_plan_id: Option<uuid::Uuid>,
-  decision_id: Option<uuid::Uuid>,
-  escalation_id: Option<uuid::Uuid>,
-  delivery_attempt_id: Option<uuid::Uuid>,
-  reporting_attempt_id: Option<uuid::Uuid>,
   usage: Json<BudgetUsage>,
   budget_recorded_at_millis: i64,
   lifecycle: Json<LifecycleDocument>,
@@ -118,10 +167,6 @@ async fn lock_run(transaction: &mut Transaction<'_, Postgres>, run_id: FactoryRu
     "SELECT work.envelope, run.state, run.version, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis, \
             current.claim_id, current.budget_id, current.lifecycle_checkpoint_id, \
-            current.stage_attempt_id, current.call_node_id, current.signal_request_id, \
-            current.signal_receipt_id, current.build_id, current.changeset_id, \
-            current.evidence_manifest_id, current.evaluation_plan_id, current.decision_id, \
-            current.escalation_id, current.delivery_attempt_id, current.reporting_attempt_id, \
             budget.usage, FLOOR(EXTRACT(EPOCH FROM budget.recorded_at) * 1000)::BIGINT \
               AS budget_recorded_at_millis, \
             lifecycle.lifecycle, lifecycle.cancellation_requested, \
@@ -162,20 +207,8 @@ fn decode_locked_run(run_id: FactoryRunId, row: LockedRunRow) -> Result<LockedRu
   let current = FactoryRunCurrentProjection {
     budget_id,
     lifecycle_checkpoint_id,
-    stage_attempt_id: optional_id(row.stage_attempt_id)?,
-    macro_call_id: optional_id(row.call_node_id)?,
-    signal_request_id: optional_id(row.signal_request_id)?,
-    signal_receipt_id: optional_id(row.signal_receipt_id)?,
-    build_id: optional_domain_id(row.build_id)?,
-    candidate_id: optional_id(row.changeset_id)?,
-    evidence_id: optional_id(row.evidence_manifest_id)?,
-    evaluation_plan_id: optional_id(row.evaluation_plan_id)?,
-    decision_id: optional_id(row.decision_id)?,
-    escalation_id: optional_id(row.escalation_id)?,
-    delivery_attempt_id: optional_id(row.delivery_attempt_id)?,
-    reporting_attempt_id: optional_id(row.reporting_attempt_id)?,
   };
-  let LifecycleDocument { progress, signal } = row.lifecycle.0;
+  let LifecycleDocument { progress } = row.lifecycle.0;
   Ok(LockedRun {
     work,
     run,
@@ -193,7 +226,6 @@ fn decode_locked_run(run_id: FactoryRunId, row: LockedRunRow) -> Result<LockedRu
       run_id,
       run_version: version,
       progress,
-      signal,
       cancellation_requested: row.cancellation_requested,
       recorded_at: timestamp(row.lifecycle_recorded_at_millis)?,
     },
@@ -411,22 +443,6 @@ fn uuid_from_digest(value: FactoryDigest) -> uuid::Uuid {
   bytes[6] = (bytes[6] & 0x0f) | 0x50;
   bytes[8] = (bytes[8] & 0x3f) | 0x80;
   uuid::Uuid::from_bytes(bytes)
-}
-
-fn optional_id<T>(value: Option<uuid::Uuid>) -> Result<Option<T>, StoreError>
-where
-  T: FromStr,
-{
-  value
-    .map(|value| T::from_str(&value.hyphenated().to_string()).map_err(|_| StoreError::Unavailable))
-    .transpose()
-}
-
-fn optional_domain_id<T>(value: Option<uuid::Uuid>) -> Result<Option<T>, StoreError>
-where
-  T: FromStr,
-{
-  optional_id(value)
 }
 
 fn outbox_state(state: FactoryOutboxState) -> &'static str {

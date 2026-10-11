@@ -37,14 +37,22 @@ pub(crate) async fn execute(
     MutationStart::Replay(outcome) => return replay(outcome),
   };
 
-  let current_build_state: String = sqlx::query_scalar("SELECT state FROM builds WHERE id = $1 FOR UPDATE")
-    .bind(request.build_id.as_uuid())
-    .fetch_optional(&mut *transaction)
-    .await
-    .map_err(unavailable)?
-    .ok_or(StoreError::NotFound {
+  let (current_build_state, factory_owned): (String, bool) =
+    sqlx::query_as("SELECT state, factory_origin IS NOT NULL FROM builds WHERE id = $1 FOR UPDATE")
+      .bind(request.build_id.as_uuid())
+      .fetch_optional(&mut *transaction)
+      .await
+      .map_err(unavailable)?
+      .ok_or(StoreError::NotFound {
+        entity: EntityKind::Build,
+      })?;
+  // Management Build Retry has no Factory claim or Node budget authority.
+  // A Factory retry must go through the exact RetryNode control and owner.
+  if factory_owned {
+    return Err(StoreError::Conflict {
       entity: EntityKind::Build,
-    })?;
+    });
+  }
   let source: SourceAttempt = sqlx::query_as(
     "SELECT id, attempt_number, state FROM attempts \
      WHERE build_id = $1 ORDER BY attempt_number DESC LIMIT 1 FOR UPDATE",

@@ -62,7 +62,7 @@ fn build_handlers_map_store_pages_and_authorization_visibility() {
     assert_eq!(summary.id, visible_id);
     assert_eq!(summary.project_id, project_id);
     assert_eq!(summary.configuration_id, configuration_id);
-    assert_eq!(summary.cause, TriggerCauseProjection::Manual);
+    assert_eq!(summary.cause, Some(TriggerCauseProjection::Manual));
     assert_eq!(summary.current_attempt_state, AttemptState::Running);
     assert_eq!(summary.terminal_at, None);
     assert_eq!(page.next_cursor, None);
@@ -110,7 +110,7 @@ fn build(
     project_id,
     configuration_id,
     configuration_version: BuildConfigurationVersion::INITIAL,
-    cause: TriggerCause::Manual {},
+    origin: octacity_server_store::BuildSummaryOrigin::Trigger(TriggerCause::Manual {}),
     state,
     created_at: Timestamp::from_unix_millis(created_at).unwrap(),
     current_attempt_id: id(build_id.as_uuid().as_u128() + 1_000),

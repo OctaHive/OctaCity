@@ -1,3 +1,5 @@
+mod stop;
+pub use stop::{FlowNodeStop, FlowNodeStopReason};
 mod action;
 mod template;
 pub use template::{

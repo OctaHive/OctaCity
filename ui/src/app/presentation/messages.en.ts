@@ -121,6 +121,7 @@ export const enMessages = {
   'builds.attemptNumber': 'Attempt {number}',
   'builds.build': 'Build',
   'builds.caption': 'Recent Builds in server-provided newest-first order',
+  'builds.factoryOrigin': 'Dark Factory',
   'builds.cause': 'Cause',
   'builds.configuration': 'Build Configuration',
   'builds.configurationShort': 'Configuration',

@@ -159,14 +159,13 @@ impl FlowNodeRecord {
       || attempt.node_kind() != declared.kind()
       || attempt.input_digest() != self.input.digest()?
       || &self.producer != attempt.execution()
-      || attempt.stage_projection_id().is_some()
       || declared
         .build()
         .is_some_and(|binding| binding.result_outcome != self.outcome)
       || declared
         .outcome(&self.outcome)
         .is_none_or(|outcome| outcome.schema() != self.payload.schema())
-      || self.observed_at < attempt.claim().claimed_at()
+      || self.observed_at < attempt.started_at()
       || self.observed_at > attempt.deadline()
     {
       return Err(invalid());

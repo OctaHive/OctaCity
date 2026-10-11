@@ -19,11 +19,10 @@ use octacity_protocol::{
   ChangeSetCapturePolicyV3, ChangeSetCaptureV3, ChangeSetSecretPatternV3, EXECUTION_CONTRACT_V2, EXECUTION_CONTRACT_V3,
   ExecutionCapabilityV2, ExecutionEnvironmentId, ExecutionMode, ExecutionProviderId, ExecutionSpec, ExecutionTargetV2,
   FactoryCausalityV3, FactoryEnforcementCapabilityV3, FactoryImmutableReferenceV3, FactoryMountModeV3,
-  FactoryMountPermissionV3, FactoryOutputPermissionsV3, FactoryPermissionSetV3, FactoryResourceLimitsV3,
-  FactoryStageKindV3, JobBinding, JobSpecV1, JobSpecV2, JobSpecV3, ManagedOctaExecutionV3, NetworkPolicy,
-  OciIsolation as ProtocolOciIsolation, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec,
-  ProtectedInputManifestV3, ProtectedInputTransferV3, ProtectedInputV3, RuntimeSpec, RuntimeSpecV2, RuntimeTarget,
-  SourceSpec, guarantees_for,
+  FactoryMountPermissionV3, FactoryOutputPermissionsV3, FactoryPermissionSetV3, FactoryResourceLimitsV3, JobBinding,
+  JobSpecV1, JobSpecV2, JobSpecV3, ManagedOctaExecutionV3, NetworkPolicy, OciIsolation as ProtocolOciIsolation,
+  OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs, PlatformSpec, ProtectedInputManifestV3,
+  ProtectedInputTransferV3, ProtectedInputV3, RuntimeSpec, RuntimeSpecV2, RuntimeTarget, SourceSpec, guarantees_for,
 };
 use octacity_runner::{RunStatus, RunnerCapabilities};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
@@ -537,6 +536,93 @@ async fn provisions_identity_for_execution_and_revokes_it_before_completion() {
   assert_eq!(event.data["message"], "[redacted]");
   assert_eq!(completion.runner().results[0]["identity"], "[redacted]");
   completion.cleanup().await.unwrap();
+}
+
+struct SlowIdentityProvider {
+  inner: FileWorkloadIdentityProvider,
+  cancelled: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl WorkloadIdentityProvider for SlowIdentityProvider {
+  fn supports(&self, profile: &str) -> bool {
+    self.inner.supports(profile)
+  }
+
+  async fn provision(
+    &self,
+    profile: &str,
+    root: &Path,
+    cancellation: &CancellationToken,
+  ) -> Result<WorkloadIdentityLease, WorkloadIdentityError> {
+    let lease = self.inner.provision(profile, root, cancellation).await?;
+    tokio::select! {
+      () = tokio::time::sleep(Duration::from_secs(2)) => {},
+      () = cancellation.cancelled() => { self.cancelled.store(true, Ordering::SeqCst); }
+    }
+    // A provider may finish issuing a lease concurrently with cancellation.
+    Ok(lease)
+  }
+}
+
+#[tokio::test]
+async fn preparation_timeout_drains_and_revokes_a_late_identity_lease() {
+  let root = tempfile::tempdir().unwrap();
+  let token = tempfile::NamedTempFile::new().unwrap();
+  fs::write(token.path(), "signed-jwt").unwrap();
+  let cancelled = Arc::new(AtomicBool::new(false));
+  let starts = Arc::new(AtomicUsize::new(0));
+  let executor = executor_with_identity(
+    root.path(),
+    Arc::new(FakeSource {
+      calls: Arc::new(AtomicUsize::new(0)),
+      fail: false,
+    }),
+    Arc::new(SlowIdentityProvider {
+      inner: FileWorkloadIdentityProvider::new(BTreeMap::from([("ci".to_owned(), token.path().to_owned())])),
+      cancelled: cancelled.clone(),
+    }),
+    Some(Arc::new(FakeBackend {
+      starts: starts.clone(),
+      destroyed: Arc::new(AtomicBool::new(false)),
+    })),
+  );
+  let mut spec = specification(RuntimeMode::Native);
+  spec.runtime.timeout_seconds = 1;
+  spec.runtime.workload_identity_profile = Some("ci".to_owned());
+  let (events, _receiver) = mpsc::channel(8);
+  let started = Instant::now();
+  let failure = executor
+    .execute(
+      ExecuteJobRequest {
+        spec: spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: Vec::new(),
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+  assert!(matches!(failure.error(), JobError::TimedOut));
+  assert!(
+    cancelled.load(Ordering::SeqCst),
+    "provisioning must observe deadline cancellation"
+  );
+  assert!(
+    started.elapsed() < Duration::from_millis(1500),
+    "preparation must obey the execution ceiling"
+  );
+  assert_eq!(starts.load(Ordering::SeqCst), 0);
+  assert!(
+    !root
+      .path()
+      .join(execution_id(&specification(RuntimeMode::Native).job_id, 1))
+      .join("identity")
+      .exists()
+  );
+  failure.cleanup().await.unwrap();
 }
 
 #[tokio::test]

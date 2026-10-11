@@ -38,10 +38,9 @@ mod external_trigger;
 mod factory_admission;
 #[cfg(test)]
 mod factory_admission_tests;
-mod factory_build_bridge;
-#[cfg(test)]
-mod factory_build_bridge_tests;
-mod factory_changeset;
+mod factory_build;
+mod factory_build_service;
+pub use factory_build_service::{FactoryBuildMaterializer, FactoryOrdinaryBuildService};
 mod factory_codex;
 mod factory_codex_contract;
 mod factory_codex_observation;
@@ -52,9 +51,6 @@ mod factory_codex_tests;
 mod factory_configuration_cqrs;
 #[cfg(test)]
 mod factory_configuration_cqrs_tests;
-mod factory_context;
-#[cfg(test)]
-mod factory_context_tests;
 mod factory_control;
 #[cfg(test)]
 mod factory_control_tests;
@@ -69,6 +65,10 @@ mod factory_evidence;
 mod factory_flow_action;
 #[cfg(test)]
 mod factory_flow_action_tests;
+mod factory_node_capture;
+mod factory_node_capture_build;
+#[cfg(test)]
+mod factory_node_capture_tests;
 pub use factory_flow::{FactoryFlowInputPreparer, FactoryFlowRunner};
 pub use factory_flow_action::{
   FactoryFlowActionAdapter, FactoryFlowActionObservation, FactoryFlowActionPlugin, FactoryFlowActionRequest,
@@ -79,10 +79,19 @@ mod factory_job_spec;
 mod factory_job_spec_tests;
 mod factory_node;
 mod factory_node_build;
+mod factory_node_registry;
 pub use factory_node::{
-  FactoryFlowCoordinator, FactoryFlowStep, FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor,
-  FactoryNodeRunner, FactoryNodeStep, FactoryNodeTarget,
+  FactoryExecutionClock, FactoryFlowCoordinator, FactoryFlowStep, FactoryNodeCancellationStep,
+  FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor, FactoryNodeRunner, FactoryNodeStep,
+  FactoryNodeTarget, SystemFactoryExecutionClock,
 };
+pub use factory_node_registry::{
+  FactoryNodeExecutorBinding, FactoryNodeExecutorRegistry, MAX_FACTORY_EXECUTOR_BINDINGS,
+};
+#[cfg(test)]
+mod factory_node_cancellation_tests;
+#[cfg(test)]
+mod factory_node_failure_tests;
 #[cfg(test)]
 mod factory_node_test_support;
 #[cfg(test)]
@@ -91,16 +100,14 @@ mod factory_reconciliation;
 #[cfg(test)]
 mod factory_reconciliation_tests;
 pub use factory_node_build::{
-  FactoryNodeBuildAdapter, FactoryNodeBuildCompletion, FactoryNodeBuildExecutionFacts, FactoryNodeBuildOutputDocument,
-  FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs, FactoryNodeBuildStep,
+  FactoryNodeBuildAdapter, FactoryNodeBuildCancellation, FactoryNodeBuildCompletion, FactoryNodeBuildExecutionFacts,
+  FactoryNodeBuildOutputDocument, FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs, FactoryNodeBuildStep,
 };
 #[cfg(test)]
 mod factory_node_build_tests;
 mod factory_tool_action;
 #[cfg(test)]
 mod factory_tool_action_tests;
-#[cfg(test)]
-mod factory_vertical_slice_tests;
 mod internal_trigger;
 mod internal_trigger_management;
 mod job_event_cqrs;
@@ -226,37 +233,29 @@ pub use external_trigger::{
   WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
 };
 pub use factory_admission::{AdmitManualFactoryWorkCommand, FactoryAdmissionHandlers, FactoryAdmissionOutcome};
-pub use factory_build_bridge::{
-  CreateFactoryBuild, FactoryBuildAcceptance, FactoryBuildBridge, FactoryBuildBridgeError, FactoryBuildCausality,
-  FactoryBuildDispatchOutcome, FactoryBuildObservation, FactoryBuildOutputSource, FactoryBuildPolicyLayers,
-  FactoryBuildPolicyRequest, FactoryBuildPolicySource, FactoryBuildPolicySourceError, FactoryCandidateMaterialization,
-  FactoryNodeBuildCausality, FactoryStageBuildCausality, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
-};
-pub use factory_changeset::{
-  FactoryChangeSetAcceptance, FactoryChangeSetError, VerifiedFactoryArtifact, accept_factory_change_set,
+pub use factory_build::{
+  CancelFactoryBuild, CreateFactoryBuild, FactoryBuildAcceptance, FactoryBuildObservation, FactoryBuildPolicyLayers,
+  FactoryCandidateMaterialization, FactoryNodeBuildCausality, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
+  OrdinaryBuildCancellationApplication,
 };
 pub use factory_codex::{
   CodexCompilationError, CompiledCodexTask, FactoryProtectedDocument, FactoryProtectedDocumentKind,
-  codex_prompt_digest, codex_prompt_provenance_digest, compile_codex_reviewer, compile_codex_task,
+  codex_prompt_digest, codex_prompt_provenance_digest, compile_codex_node_task, compile_codex_reviewer,
+  compile_codex_task,
 };
 pub use factory_codex_observation::{
-  CodexHarnessOutcome, FactoryCodexEvaluationCompletion, FactoryCodexEvaluationObservation,
-  FactoryCodexImplementationObservation, FactoryCodexObservationStatus, FactoryCodexOutputDocument,
-  FactoryCodexReviewerBinding, FactoryCodexTerminalObservation, FactoryImplementationReport, observe_codex_evaluation,
-  observe_codex_implementation,
+  CodexHarnessOutcome, FactoryCodexEvaluationObservation, FactoryCodexImplementationObservation,
+  FactoryCodexObservationStatus, FactoryCodexOutputDocument, FactoryCodexReviewerBinding,
+  FactoryCodexTerminalObservation, FactoryImplementationReport, observe_codex_evaluation, observe_codex_implementation,
 };
 pub use factory_configuration_cqrs::{
   CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,
   FactoryConfigurationProjection, FactoryConfigurationValidation, GetCurrentFactoryConfigurationQuery,
   GetFactoryConfigurationQuery, ReplaceFactoryConfigurationCommand, ValidateFactoryConfigurationQuery,
 };
-pub use factory_context::{
-  FactoryContextError, FactoryContextSelection, PrepareFactoryCallContext, PreparedFactoryCallContext,
-  prepare_factory_call_context,
-};
 pub use factory_control::{
-  CancelFactoryRunCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome, RequestFactoryDeliveryCommand,
-  ResolveFactoryEscalationCommand, RetryFactoryStageCommand,
+  CancelFactoryRunCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome, ResolveFactoryNodeCommand,
+  RetryFactoryNodeCommand,
 };
 pub use factory_credentials::{FactoryCredentialResolutionError, ScopedFactoryCredential, resolve_factory_credential};
 pub use factory_decision_signal::{
@@ -270,6 +269,11 @@ pub use factory_evidence::{
 pub use factory_job_spec::{
   FactoryManagedJobSpecInput, FactoryManagedJobSpecTemplateError, derive_factory_managed_job_spec_template,
 };
+pub use factory_node_capture::{
+  FactoryChangeSetError, VerifiedFactoryArtifact, factory_node_candidate_materialization, factory_node_change_set,
+  verify_factory_node_change_set,
+};
+pub use factory_node_capture_build::FactoryNodeCaptureBuildAdapter;
 pub use factory_reconciliation::{
   FactoryReconciler, FactoryReconciliationBatchOutcome, FactoryReconciliationError, FactoryReconciliationShutdown,
 };
@@ -362,16 +366,16 @@ pub use project_policy::{
 };
 pub use projections::{
   AgentRequirementsProjection, ArtifactPolicyProjection, AttemptProjection, BuildConfigurationProjection,
-  BuildProjection, ConfigurationCacheProjection, ConfigurationRuntimeProjection, DagCausalityProjection,
-  DagEdgeProjection, DagNodeProjection, DependencyPolicyProjection, ExecutionGuaranteeProjection,
-  JobAssignmentProjection, JobExecutionProjection, JobFailureClassification, JobOutputKind, JobOutputReference,
-  JobPlacementProjection, JobProjection, JobProjectionFacts, JobQueueProjection, JobTerminalOutcomeProjection,
-  NetworkPolicyProjection, ParameterDefinitionProjection, ParameterSchemaProjection, ParameterTypeProjection,
-  ParameterValueProjection, PipelineEdgeProjection, PipelineNodeProjection, PipelineProjection,
-  PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection, ProjectNavigationProjection,
-  ProjectProjection, ProjectSummaryProjection, ProjectionError, RepositoryProjection, RepositorySelectionProjection,
-  RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection, Sha256DigestProjection, TriggerCauseProjection,
-  TriggerHistoryProjection, TriggerKindProjection,
+  BuildOriginProjection, BuildProjection, ConfigurationCacheProjection, ConfigurationRuntimeProjection,
+  DagCausalityProjection, DagEdgeProjection, DagNodeProjection, DependencyPolicyProjection,
+  ExecutionGuaranteeProjection, JobAssignmentProjection, JobExecutionProjection, JobFailureClassification,
+  JobOutputKind, JobOutputReference, JobPlacementProjection, JobProjection, JobProjectionFacts, JobQueueProjection,
+  JobTerminalOutcomeProjection, NetworkPolicyProjection, ParameterDefinitionProjection, ParameterSchemaProjection,
+  ParameterTypeProjection, ParameterValueProjection, PipelineEdgeProjection, PipelineNodeProjection,
+  PipelineProjection, PlatformArchitectureProjection, PlatformOsProjection, PlatformProjection,
+  ProjectNavigationProjection, ProjectProjection, ProjectSummaryProjection, ProjectionError, RepositoryProjection,
+  RepositorySelectionProjection, RetryClassProjection, RetryPolicyProjection, RuntimeClassProjection,
+  Sha256DigestProjection, TriggerCauseProjection, TriggerHistoryProjection, TriggerKindProjection,
 };
 pub use resource_search::{
   MAX_RESOURCE_SEARCH_CURSOR_BYTES, MAX_RESOURCE_SEARCH_RESULT_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_RESULT_LABEL_BYTES,
@@ -434,6 +438,11 @@ pub const MAX_WEBHOOK_HEADER_NAME_BYTES: usize = octacity_server_store::MAX_WEBH
 pub const MAX_WEBHOOK_HEADER_VALUE_BYTES: usize = octacity_server_store::MAX_WEBHOOK_HEADER_VALUE_BYTES;
 
 #[cfg(test)]
+mod factory_flow_control_tests;
+#[cfg(test)]
 mod factory_flow_tests;
 
 mod factory_flow;
+
+#[cfg(test)]
+mod factory_job_test_support;

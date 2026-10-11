@@ -1042,15 +1042,16 @@ def check_factory_configurable_sources(workspace: Path) -> list[Violation]:
     roots = [workspace / "server/core/octacity-server-factory/src", workspace / "server/core/octacity-server-store/src", workspace / "server/application/src", workspace / "server/infrastructure/octacity-server-store-postgres/src"]
     phase_contract = re.compile(r"\b(?:FactoryTriage\w*|TriagePolicy|TriageJournalRecord|TriageRoute|ResearchBuildIntent|ResearchPolicy|ResearchResult|RequirementsPolicy)\b")
     phase_dispatch = re.compile(r'(?:as_str\(\)|node_key\(\))\s*\{[^}]*"(?:triage|research|requirements|eligibility|classification)"', re.DOTALL)
+    fixed_lifecycle = re.compile(r"\bfn\s+(?:from_stage_projection|decide_next_action|allowed_state_successor)\s*\(")
     violations=[]
     for root in roots:
         if not root.exists():
             continue
         for path in sorted(root.rglob("*.rs")):
-            if "tests" in path.stem or "tests" in path.parts or "test_support" in path.stem:
+            if "tests" in path.stem or "tests" in path.parts or "testing" in path.parts or path.stem == "testing" or "test_support" in path.stem:
                 continue
             source=path.read_text(encoding="utf-8")
-            if phase_contract.search(source) or phase_dispatch.search(source):
+            if phase_contract.search(source) or phase_dispatch.search(source) or fixed_lifecycle.search(source):
                 violations.append(Violation("ARCH021_FACTORY_PHASE_DISPATCH", f"configured Factory execution must use common node contracts: {path.relative_to(workspace)}"))
     return violations
 

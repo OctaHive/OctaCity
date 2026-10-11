@@ -20,9 +20,8 @@ use octacity_server_factory::{
   DecisionSignalQuestion, DecisionSignalQuestionCriteria, DecisionSignalQuestionDomain, DecisionSignalQuestionKind,
   DecisionSignalReceipt, DecisionSignalReceiptId, DecisionSignalRequest, DecisionSignalRequestId,
   DecisionSignalRouteSet, DecisionSignalState, DecisionSignalThreshold, ExactSubject, ExternalWorkIdentity,
-  FactoryArtifactReference, FactoryClaim, FactoryClaimFence, FactoryClaimOwnership, FactoryConfigurationId,
-  FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryMetadata, FactoryRun,
-  FactoryRunId, FactoryText, ImmutableReference, RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber,
+  FactoryArtifactReference, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion,
+  FactoryDigest, FactoryKey, FactoryMetadata, FactoryText, FlowNodeInput, ImmutableReference, NodeAttempt, RiskClass,
   ToolRiskChoiceMapping, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId, WorkPriority,
 };
 
@@ -297,7 +296,7 @@ impl DecisionSignalReceiptPublication for MemoryReceipts {
 }
 
 fn provider_request(purpose: DecisionSignalPurpose, mode: DecisionSignalMode) -> DecisionSignalProviderRequest {
-  let stage = stage();
+  let node = node_fixture();
   let choices = DecisionSignalChoices::try_new(vec![key("left"), key("right")]).unwrap();
   let routes = (purpose == DecisionSignalPurpose::Routing)
     .then(|| DecisionSignalRouteSet::new(key("current-state"), choices.clone()));
@@ -342,11 +341,13 @@ fn provider_request(purpose: DecisionSignalPurpose, mode: DecisionSignalMode) ->
   let capability = capability_for_profile(&profile);
   let request = DecisionSignalRequest::new(
     DecisionSignalRequestId::generate(),
-    &stage,
+    &node.0,
+    &node.1,
     purpose,
     DecisionSignalDigests::new(input.digest(), profile.policy().digest()),
     budget(),
-  );
+  )
+  .expect("fixture signal request");
   DecisionSignalProviderRequest::new(
     request,
     &profile,
@@ -423,7 +424,7 @@ fn result(request: &DecisionSignalProviderRequest, selected: &str) -> DecisionSi
   .unwrap()
 }
 
-fn stage() -> StageAttempt {
+fn node_fixture() -> (FlowNodeInput, NodeAttempt) {
   let subject = ExactSubject::new(
     ProjectId::generate(),
     RepositoryId::generate(),
@@ -448,26 +449,8 @@ fn stage() -> StageAttempt {
     ),
   )
   .unwrap();
-  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
-  StageAttempt::new(
-    StageAttemptId::generate(),
-    &run,
-    StageAttemptNumber::INITIAL,
-    octacity_server_factory::FactoryStageTarget::Implementation,
-    budget(),
-    digest(2),
-    FactoryClaimOwnership::new(
-      key("worker"),
-      FactoryClaim::new(
-        FactoryClaimFence::new(digest(12)),
-        Timestamp::from_unix_millis(1).unwrap(),
-        Timestamp::from_unix_millis(2).unwrap(),
-      )
-      .unwrap(),
-    ),
-  )
+  octacity_server_factory::testing::capability_node_fixture(&work, None)
 }
-
 fn budget() -> BudgetLimit {
   BudgetLimit::new(2, 10_000, 10_000, 2_000_000, 10_000).unwrap()
 }

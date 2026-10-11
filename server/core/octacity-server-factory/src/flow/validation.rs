@@ -367,7 +367,13 @@ fn expanded_measurements(
       total.checked_mul(u32::from(transition.max_repeats()) + 1)
     })
     .ok_or_else(|| invalid("Flow repeat expansion"))?;
-  let mut nodes = u32::try_from(definition.nodes().len()).map_err(|_| invalid("Flow node count"))?;
+  let mut nodes = definition
+    .nodes()
+    .iter()
+    .try_fold(0_u32, |total, node| {
+      total.checked_add(1 + u32::from(node.max_execution_retries()))
+    })
+    .ok_or_else(|| invalid("Flow node retry expansion"))?;
   let mut depth = 1_u16;
   for child in definition.nodes().iter().filter_map(|node| node.subflow_definition()) {
     let (child_nodes, child_depth) = expanded_measurements(child, definitions, memo)?;

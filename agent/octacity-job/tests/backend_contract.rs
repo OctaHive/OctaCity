@@ -884,6 +884,7 @@ fn oci_v3_specification(ordinary: &JobSpecV2, runner: &RunnerInstallation, octaf
     attempt: ordinary.attempt,
     issued_at: ordinary.issued_at,
     expires_at: ordinary.expires_at,
+    execution_deadline_unix_ms: ordinary.expires_at * 1_000,
     source: ordinary.source.clone(),
     octa: ordinary.octa.clone(),
     execution: ManagedOctaExecutionV3 {

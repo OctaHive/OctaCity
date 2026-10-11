@@ -1,15 +1,8 @@
 use octacity_server_domain::{EntityKind, Timestamp};
-use octacity_server_factory::{
-  BudgetUsage, DeliveryIntent, Escalation, EscalationId, EvaluationBranchState, EvaluationState, FactoryClaimOwnership,
-  FactoryDecisionGuard, FactoryDecisionResources, FactoryDigest, FactoryError, FactoryKey, FactoryLifecycleProgress,
-  FactoryLifecycleSnapshot, FactoryNextAction, FactoryReworkStatus, FactoryRun, FactoryRunState, FactoryRunVersion,
-  FactoryStageProgress, FactoryStageTarget, FactoryText, ReportingProgress, StageAttempt, StageAttemptId,
-  StageAttemptNumber, StageAttemptOutcome, decide_next_action,
-};
+use octacity_server_factory::{FactoryError, FactoryKey};
 use octacity_server_store::{
-  AuditActorKind, ClaimFactoryRuns, ClaimedFactoryRun, CommitFactoryRunTransition, FactoryAuditFact,
-  FactoryBudgetRecord, FactoryConfigurationStore, FactoryFlowHistory, FactoryLifecycleCheckpoint, FactoryOutboxRecord,
-  FactoryRunHistoryAppend, FactoryRunSnapshot, FactoryRunStore, MAX_FACTORY_RECONCILIATION_BATCH_SIZE, StoreError,
+  ClaimFactoryRuns, ClaimedFactoryRun, FactoryRunSnapshot, FactoryRunStore, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
+  StoreError,
 };
 use std::{
   future::{Future, poll_fn},
@@ -20,7 +13,6 @@ use std::{
     atomic::{AtomicBool, Ordering},
   },
   task::Poll,
-  time::{SystemTime, UNIX_EPOCH},
 };
 use thiserror::Error;
 
@@ -75,9 +67,6 @@ pub enum FactoryReconciliationError {
   /// Persisted state cannot form the complete decision snapshot it claims to represent.
   #[error("Factory reconciliation snapshot is invalid")]
   InvalidSnapshot,
-  /// The authoritative wall clock could not be represented by the domain timestamp.
-  #[error("Factory reconciliation clock is unavailable")]
-  ClockUnavailable,
   /// A configured flow executor or validation port failed without changing ordinary CI/CD.
   #[error("Factory flow failed")]
   Flow(#[from] crate::ApplicationError),
@@ -89,26 +78,27 @@ pub enum FactoryReconciliationError {
   Store(#[from] StoreError),
 }
 
-/// Restart-safe worker that records at most one pure next action per claimed Run.
+/// Restart-safe bounded worker that delegates every Run to its configured graph owner.
 pub struct FactoryReconciler<S> {
   store: Arc<S>,
   owner: FactoryKey,
   batch_size: NonZeroU16,
   concurrency: NonZeroU16,
-  clock: Arc<dyn FactoryReconciliationClock>,
-  flow: Option<Arc<dyn crate::FactoryFlowCoordinator>>,
+  clock: Arc<dyn crate::FactoryExecutionClock>,
+  flow: Arc<dyn crate::FactoryFlowCoordinator>,
 }
 
 impl<S> FactoryReconciler<S>
 where
-  S: FactoryRunStore + FactoryConfigurationStore + 'static,
+  S: FactoryRunStore + 'static,
 {
-  /// Creates a worker with explicit bounded claim and processing limits.
+  /// Creates a worker with explicit bounds and a required configured graph owner.
   pub fn new(
     store: Arc<S>,
     owner: FactoryKey,
     batch_size: u16,
     concurrency: u16,
+    flow: Arc<dyn crate::FactoryFlowCoordinator>,
   ) -> Result<Self, FactoryReconciliationError> {
     let batch_size = NonZeroU16::new(batch_size)
       .filter(|value| value.get() <= MAX_FACTORY_RECONCILIATION_BATCH_SIZE)
@@ -121,16 +111,9 @@ where
       owner,
       batch_size,
       concurrency,
-      clock: Arc::new(SystemFactoryReconciliationClock),
-      flow: None,
+      clock: Arc::new(crate::SystemFactoryExecutionClock),
+      flow,
     })
-  }
-
-  /// Connects configured graph execution for immutable admitted Flows.
-  #[must_use]
-  pub fn with_flow(mut self, flow: Arc<dyn crate::FactoryFlowCoordinator>) -> Self {
-    self.flow = Some(flow);
-    self
   }
 
   #[cfg(test)]
@@ -139,9 +122,10 @@ where
     owner: FactoryKey,
     batch_size: u16,
     concurrency: u16,
-    clock: Arc<dyn FactoryReconciliationClock>,
+    clock: Arc<dyn crate::FactoryExecutionClock>,
+    flow: Arc<dyn crate::FactoryFlowCoordinator>,
   ) -> Result<Self, FactoryReconciliationError> {
-    let mut reconciler = Self::new(store, owner, batch_size, concurrency)?;
+    let mut reconciler = Self::new(store, owner, batch_size, concurrency, flow)?;
     reconciler.clock = clock;
     Ok(reconciler)
   }
@@ -213,21 +197,21 @@ struct ReconciliationQueue<S> {
   store: Arc<S>,
   pending: std::vec::IntoIter<ClaimedFactoryRun>,
   in_flight: Vec<ReconciliationFuture>,
-  clock: Arc<dyn FactoryReconciliationClock>,
+  clock: Arc<dyn crate::FactoryExecutionClock>,
   concurrency: usize,
-  flow: Option<Arc<dyn crate::FactoryFlowCoordinator>>,
+  flow: Arc<dyn crate::FactoryFlowCoordinator>,
 }
 
 impl<S> ReconciliationQueue<S>
 where
-  S: FactoryRunStore + FactoryConfigurationStore + 'static,
+  S: FactoryRunStore + 'static,
 {
   fn new(
     store: Arc<S>,
     claims: Vec<ClaimedFactoryRun>,
-    clock: Arc<dyn FactoryReconciliationClock>,
+    clock: Arc<dyn crate::FactoryExecutionClock>,
     concurrency: NonZeroU16,
-    flow: Option<Arc<dyn crate::FactoryFlowCoordinator>>,
+    flow: Arc<dyn crate::FactoryFlowCoordinator>,
   ) -> Self {
     Self {
       store,
@@ -251,7 +235,7 @@ where
       let clock = Arc::clone(&self.clock);
       let flow = self.flow.clone();
       self.in_flight.push(Box::pin(async move {
-        reconcile_one(store.as_ref(), claim, clock.as_ref(), flow.as_deref()).await
+        reconcile_one(store.as_ref(), claim, clock.as_ref(), flow.as_ref()).await
       }));
     }
     if shutdown.is_requested() {
@@ -282,454 +266,31 @@ where
 async fn reconcile_one<S>(
   store: &S,
   claimed: ClaimedFactoryRun,
-  clock: &dyn FactoryReconciliationClock,
-  flow: Option<&dyn crate::FactoryFlowCoordinator>,
+  clock: &dyn crate::FactoryExecutionClock,
+  flow: &dyn crate::FactoryFlowCoordinator,
 ) -> Result<ReconcileOne, FactoryReconciliationError>
 where
-  S: FactoryRunStore + FactoryConfigurationStore,
+  S: FactoryRunStore,
 {
   let snapshot = store.factory_run_snapshot(claimed.run_id).await?;
   validate_claimed_snapshot(&snapshot, &claimed)?;
-  let configuration = store
-    .factory_configuration_version(
-      snapshot.run.configuration().id(),
-      snapshot.run.configuration().version(),
-    )
-    .await?;
-  if configuration.configuration.reference() != snapshot.run.configuration() {
-    return Err(FactoryReconciliationError::InvalidSnapshot);
-  }
-  if !snapshot.admitted_flow.data_schemas().is_empty() {
-    let Some(flow) = flow else {
-      return Ok(ReconcileOne::Waiting);
-    };
-    return match flow
-      .reconcile_flow(snapshot.run.id(), claimed.record.id, clock.now()?)
-      .await?
-    {
-      crate::FactoryFlowStep::Advanced => Ok(ReconcileOne::Committed),
-      crate::FactoryFlowStep::Resolved(_) => {
-        let after = store.factory_run_snapshot(snapshot.run.id()).await?;
-        Ok(if after.run.version() > snapshot.run.version() {
-          ReconcileOne::Committed
-        } else {
-          ReconcileOne::Replayed
-        })
-      }
-      crate::FactoryFlowStep::Waiting | crate::FactoryFlowStep::Ready(_) => Ok(ReconcileOne::Waiting),
-    };
-  }
-  let checkpoint = snapshot
-    .lifecycle_checkpoints
-    .iter()
-    .find(|checkpoint| checkpoint.id == snapshot.current.lifecycle_checkpoint_id)
-    .ok_or(FactoryReconciliationError::InvalidSnapshot)?;
-  let budget = snapshot
-    .budgets
-    .iter()
-    .find(|budget| budget.id == snapshot.current.budget_id)
-    .ok_or(FactoryReconciliationError::InvalidSnapshot)?;
-  let decision_at = clock.now()?;
-  let guard = FactoryDecisionGuard::new(
-    claimed.record.claim,
-    claimed.record.claim.fence(),
-    decision_at,
-    FactoryDecisionResources::new(
-      configuration.configuration.hard_budget(),
-      budget.usage,
-      configuration.configuration.wip_limits(),
-      claimed.wip_usage,
-    ),
-    rework_status(&snapshot, &configuration.configuration)?,
-  );
-  let decision = decide_next_action(&FactoryLifecycleSnapshot::new(
-    snapshot.run.state(),
-    checkpoint.progress.clone(),
-    checkpoint.signal,
-    guard,
-    checkpoint.cancellation_requested,
-  ))?;
-  if matches!(decision, FactoryNextAction::Wait(_)) {
-    return Ok(ReconcileOne::Waiting);
-  }
-
-  let action_material = decision.canonical_key();
-  let projection_material = projection_material(&snapshot);
-  let configuration_digest = snapshot.run.configuration().definition_digest().as_bytes();
-  let input_digest = FactoryDigest::sha256(
-    "octacity.factory.next-action-input.v1",
-    &[
-      snapshot.run.id().as_uuid().as_bytes(),
-      &configuration_digest,
-      action_material.as_bytes(),
-      projection_material.as_bytes(),
-    ],
-  );
-  let operation_id = FactoryDigest::sha256(
-    "octacity.factory.next-action-operation.v1",
-    &[snapshot.run.id().as_uuid().as_bytes(), &input_digest.as_bytes()],
-  );
-  let outbox_kind = outbox_kind(&decision)?;
-  if let Some(kind) = &outbox_kind
-    && let Some(existing) = snapshot
-      .outbox
-      .iter()
-      .find(|record| record.operation_id == operation_id)
+  match flow
+    .reconcile_flow(snapshot.run.id(), claimed.record.id, clock.now()?)
+    .await?
   {
-    if existing.run_id != snapshot.run.id() || &existing.kind != kind || existing.input_digest != input_digest {
-      return Err(FactoryReconciliationError::InvalidSnapshot);
-    }
-    return Ok(ReconcileOne::Replayed);
-  }
-
-  let next_version = snapshot
-    .run
-    .version()
-    .get()
-    .checked_add(1)
-    .and_then(|value| FactoryRunVersion::new(value).ok())
-    .ok_or(FactoryReconciliationError::InvalidSnapshot)?;
-  let (next_state, next_progress, next_usage, append, next_stage_id) = transition_for_action(
-    &snapshot,
-    &configuration.configuration,
-    &claimed,
-    &decision,
-    input_digest,
-    budget.usage,
-  )?;
-  let committed_at = clock.now()?;
-  let next_run = FactoryRun::restore(
-    snapshot.run.id(),
-    snapshot.run.configuration().clone(),
-    &snapshot.work,
-    snapshot.run.subject().clone(),
-    next_state,
-    next_version,
-  )?;
-  let next_budget = FactoryBudgetRecord::new(snapshot.run.id(), next_version, next_usage, committed_at);
-  let next_checkpoint = FactoryLifecycleCheckpoint::new(
-    snapshot.run.id(),
-    next_version,
-    next_progress,
-    checkpoint.signal,
-    checkpoint.cancellation_requested,
-    committed_at,
-  );
-  let mut current = snapshot.current;
-  current.budget_id = next_budget.id;
-  current.lifecycle_checkpoint_id = next_checkpoint.id;
-  if let Some(stage_id) = next_stage_id {
-    current.stage_attempt_id = Some(stage_id);
-    current.build_id = None;
-  }
-  if let Some(escalation) = append.escalations.first() {
-    current.escalation_id = Some(escalation.id());
-  }
-  let owner_digest = FactoryDigest::sha256(
-    "octacity.factory.audit-worker.v1",
-    &[claimed.record.owner.as_str().as_bytes()],
-  );
-  store
-    .commit_factory_run_transition(CommitFactoryRunTransition {
-      run_id: next_run.id(),
-      expected_version: claimed.expected_version,
-      claim_id: claimed.record.id,
-      owner: claimed.record.owner,
-      fence: claimed.record.claim.fence(),
-      committed_at,
-      next_run,
-      budget: next_budget,
-      lifecycle_checkpoint: next_checkpoint,
-      append,
-      current,
-      audit: FactoryAuditFact::new(
-        snapshot.run.id(),
-        AuditActorKind::Worker,
-        Some(owner_digest),
-        key("factory.next-action.recorded")?,
-        operation_id,
-        key("accepted")?,
-        committed_at,
-      ),
-      outbox: outbox_kind
-        .map(|kind| {
-          FactoryOutboxRecord::pending(
-            operation_id,
-            snapshot.run.id(),
-            kind,
-            input_digest,
-            committed_at,
-            committed_at,
-          )
-        })
-        .into_iter()
-        .collect(),
-    })
-    .await?;
-  Ok(ReconcileOne::Committed)
-}
-
-fn rework_status(
-  snapshot: &FactoryRunSnapshot,
-  configuration: &octacity_server_factory::FactoryConfiguration,
-) -> Result<FactoryReworkStatus, FactoryReconciliationError> {
-  let completed = snapshot
-    .stage_attempt_completions
-    .iter()
-    .filter(|completion| completion.outcome() == StageAttemptOutcome::Succeeded)
-    .filter(|completion| {
-      snapshot.stage_attempts.iter().any(|stage| {
-        stage.id() == completion.stage_attempt_id() && matches!(stage.target(), FactoryStageTarget::Rework)
-      })
-    })
-    .count();
-  let completed = u16::try_from(completed).map_err(|_| FactoryReconciliationError::InvalidSnapshot)?;
-  FactoryReworkStatus::new(
-    completed,
-    configuration.rework().max_cycles(),
-    configuration.rework().exhausted_outcome(),
-  )
-  .map_err(FactoryReconciliationError::Decision)
-}
-
-pub(super) fn transition_for_action(
-  snapshot: &FactoryRunSnapshot,
-  configuration: &octacity_server_factory::FactoryConfiguration,
-  claimed: &ClaimedFactoryRun,
-  action: &FactoryNextAction,
-  input_digest: FactoryDigest,
-  usage: BudgetUsage,
-) -> Result<
-  (
-    FactoryRunState,
-    FactoryLifecycleProgress,
-    BudgetUsage,
-    FactoryRunHistoryAppend,
-    Option<StageAttemptId>,
-  ),
-  FactoryReconciliationError,
-> {
-  let checkpoint = snapshot
-    .lifecycle_checkpoints
-    .iter()
-    .find(|checkpoint| checkpoint.id == snapshot.current.lifecycle_checkpoint_id)
-    .ok_or(FactoryReconciliationError::InvalidSnapshot)?;
-  let target = match action {
-    FactoryNextAction::CreateStageAttempt(target) | FactoryNextAction::RetryStage(target) => target,
-    FactoryNextAction::RequestRework => {
-      if !configuration
-        .stages()
-        .iter()
-        .any(|stage| stage.kind() == octacity_server_factory::FactoryStageKind::Rework)
-      {
-        return Err(FactoryReconciliationError::InvalidSnapshot);
-      }
-      return Ok((
-        FactoryRunState::Reworking,
-        FactoryLifecycleProgress::Stage {
-          target: FactoryStageTarget::Rework,
-          progress: FactoryStageProgress::Ready,
-        },
-        usage,
-        FactoryRunHistoryAppend::default(),
-        None,
-      ));
-    }
-    FactoryNextAction::Escalate(reason) => {
-      let decision = if matches!(reason, octacity_server_factory::FactoryEscalationReason::Decision) {
-        let id = snapshot
-          .current
-          .decision_id
-          .ok_or(FactoryReconciliationError::InvalidSnapshot)?;
-        Some(
-          snapshot
-            .decisions
-            .iter()
-            .find(|decision| decision.id() == id)
-            .ok_or(FactoryReconciliationError::InvalidSnapshot)?,
-        )
+    crate::FactoryFlowStep::Advanced | crate::FactoryFlowStep::Resolved(_) | crate::FactoryFlowStep::Cancelled => {
+      let after = store.factory_run_snapshot(snapshot.run.id()).await?;
+      Ok(if after.run.version() > snapshot.run.version() {
+        ReconcileOne::Committed
       } else {
-        None
-      };
-      let escalation = Escalation::new(
-        EscalationId::generate(),
-        &snapshot.run,
-        decision,
-        FactoryText::new(action.canonical_key())?,
-      )?;
-      return Ok((
-        FactoryRunState::Escalated,
-        FactoryLifecycleProgress::Escalated(ReportingProgress::Ready),
-        usage,
-        FactoryRunHistoryAppend {
-          escalations: vec![escalation],
-          ..FactoryRunHistoryAppend::default()
-        },
-        None,
-      ));
+        ReconcileOne::Replayed
+      })
     }
-    FactoryNextAction::Reject => {
-      return Ok((
-        FactoryRunState::Rejected,
-        FactoryLifecycleProgress::Rejected(ReportingProgress::Ready),
-        usage,
-        FactoryRunHistoryAppend::default(),
-        None,
-      ));
-    }
-    FactoryNextAction::Cancel => {
-      return Ok((
-        FactoryRunState::Cancelled,
-        FactoryLifecycleProgress::Cancelled(ReportingProgress::Ready),
-        usage,
-        FactoryRunHistoryAppend::default(),
-        None,
-      ));
-    }
-    FactoryNextAction::PrepareDelivery => {
-      return Ok((
-        FactoryRunState::ReadyForDelivery,
-        FactoryLifecycleProgress::ReadyForDelivery(DeliveryIntent::AwaitingApproval),
-        usage,
-        FactoryRunHistoryAppend::default(),
-        None,
-      ));
-    }
-    FactoryNextAction::Complete => {
-      return Ok((
-        FactoryRunState::Completed,
-        FactoryLifecycleProgress::Completed,
-        usage,
-        FactoryRunHistoryAppend::default(),
-        None,
-      ));
-    }
-    FactoryNextAction::Wait(_) => return Err(FactoryReconciliationError::InvalidSnapshot),
-    FactoryNextAction::RequestDecisionSignal(_)
-    | FactoryNextAction::ConsumeDecisionSignal
-    | FactoryNextAction::CreateBuild(_)
-    | FactoryNextAction::CaptureCandidate
-    | FactoryNextAction::ConstructEvidence
-    | FactoryNextAction::PlanEvaluations
-    | FactoryNextAction::CollectEvaluationResult(_)
-    | FactoryNextAction::Decide
-    | FactoryNextAction::RequestDelivery
-    | FactoryNextAction::Report => {
-      return Ok((
-        snapshot.run.state(),
-        checkpoint.progress.clone(),
-        usage,
-        FactoryRunHistoryAppend::default(),
-        None,
-      ));
-    }
-  };
-  let stage_definition = configuration
-    .stages()
-    .iter()
-    .find(|stage| stage.kind() == target.kind())
-    .ok_or(FactoryReconciliationError::InvalidSnapshot)?;
-  let number = snapshot
-    .stage_attempts
-    .iter()
-    .map(StageAttempt::number)
-    .map(StageAttemptNumber::get)
-    .max()
-    .unwrap_or(0)
-    .checked_add(1)
-    .and_then(|value| StageAttemptNumber::new(value).ok())
-    .ok_or(FactoryReconciliationError::InvalidSnapshot)?;
-  let attempts = usage
-    .attempts
-    .checked_add(1)
-    .ok_or(FactoryReconciliationError::InvalidSnapshot)?;
-  let next_usage = BudgetUsage { attempts, ..usage };
-  next_usage.validate(configuration.hard_budget())?;
-  let stage = StageAttempt::new(
-    StageAttemptId::generate(),
-    &snapshot.run,
-    number,
-    target.clone(),
-    stage_definition.budget(),
-    input_digest,
-    FactoryClaimOwnership::new(claimed.record.owner.clone(), claimed.record.claim),
-  );
-  let node = snapshot
-    .admitted_flow
-    .project_stage(stage.clone())
-    .map_err(FactoryReconciliationError::Decision)?;
-  let (state, progress) = match target {
-    FactoryStageTarget::Implementation => (
-      FactoryRunState::Implementing,
-      FactoryLifecycleProgress::Stage {
-        target: target.clone(),
-        progress: FactoryStageProgress::AttemptCreated,
-      },
-    ),
-    FactoryStageTarget::Validation => (
-      FactoryRunState::Validating,
-      FactoryLifecycleProgress::Stage {
-        target: target.clone(),
-        progress: FactoryStageProgress::AttemptCreated,
-      },
-    ),
-    FactoryStageTarget::Rework => (
-      FactoryRunState::Reworking,
-      FactoryLifecycleProgress::Stage {
-        target: target.clone(),
-        progress: FactoryStageProgress::AttemptCreated,
-      },
-    ),
-    FactoryStageTarget::Evaluation(key) => {
-      let FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(branches)) = &checkpoint.progress else {
-        return Err(FactoryReconciliationError::InvalidSnapshot);
-      };
-      let branches = branches.advance_branch(key, EvaluationBranchState::AttemptCreated)?;
-      (
-        FactoryRunState::Evaluating,
-        FactoryLifecycleProgress::Evaluating(EvaluationState::Branches(branches)),
-      )
-    }
-  };
-  let stage_id = stage.id();
-  Ok((
-    state,
-    progress,
-    next_usage,
-    FactoryRunHistoryAppend {
-      flow: FactoryFlowHistory {
-        attempts: vec![node],
-        ..FactoryFlowHistory::default()
-      },
-      stage_attempts: vec![stage],
-      ..FactoryRunHistoryAppend::default()
-    },
-    Some(stage_id),
-  ))
-}
-
-fn outbox_kind(action: &FactoryNextAction) -> Result<Option<FactoryKey>, FactoryReconciliationError> {
-  action.dispatch_key().map(key).transpose()
-}
-
-pub(super) trait FactoryReconciliationClock: Send + Sync {
-  fn now(&self) -> Result<Timestamp, FactoryReconciliationError>;
-}
-
-struct SystemFactoryReconciliationClock;
-
-impl FactoryReconciliationClock for SystemFactoryReconciliationClock {
-  fn now(&self) -> Result<Timestamp, FactoryReconciliationError> {
-    let milliseconds = SystemTime::now()
-      .duration_since(UNIX_EPOCH)
-      .ok()
-      .and_then(|duration| i64::try_from(duration.as_millis()).ok())
-      .ok_or(FactoryReconciliationError::ClockUnavailable)?;
-    Timestamp::from_unix_millis(milliseconds).map_err(|_| FactoryReconciliationError::ClockUnavailable)
+    crate::FactoryFlowStep::Waiting | crate::FactoryFlowStep::Ready(_) => Ok(ReconcileOne::Waiting),
   }
 }
 
-fn validate_claimed_snapshot(
+pub(super) fn validate_claimed_snapshot(
   snapshot: &FactoryRunSnapshot,
   claimed: &ClaimedFactoryRun,
 ) -> Result<(), FactoryReconciliationError> {
@@ -742,33 +303,4 @@ fn validate_claimed_snapshot(
     }));
   }
   Ok(())
-}
-
-fn projection_material(snapshot: &FactoryRunSnapshot) -> String {
-  let current = &snapshot.current;
-  let mut value = format!("{}|", snapshot.run.state().as_str());
-  for identity in [
-    current.stage_attempt_id.map(|id| id.as_uuid()),
-    current.macro_call_id.map(|id| id.as_uuid()),
-    current.signal_request_id.map(|id| id.as_uuid()),
-    current.signal_receipt_id.map(|id| id.as_uuid()),
-    current.build_id.map(|id| id.as_uuid()),
-    current.candidate_id.map(|id| id.as_uuid()),
-    current.evidence_id.map(|id| id.as_uuid()),
-    current.evaluation_plan_id.map(|id| id.as_uuid()),
-    current.decision_id.map(|id| id.as_uuid()),
-    current.escalation_id.map(|id| id.as_uuid()),
-    current.delivery_attempt_id.map(|id| id.as_uuid()),
-    current.reporting_attempt_id.map(|id| id.as_uuid()),
-  ] {
-    match identity {
-      Some(identity) => value.push_str(&format!("{identity}|")),
-      None => value.push_str("-|"),
-    }
-  }
-  value
-}
-
-fn key(value: &str) -> Result<FactoryKey, FactoryReconciliationError> {
-  FactoryKey::new(value).map_err(|_| FactoryReconciliationError::InvalidSnapshot)
 }

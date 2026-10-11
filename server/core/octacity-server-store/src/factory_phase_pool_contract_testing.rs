@@ -2,8 +2,8 @@ use std::collections::BTreeSet;
 
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  BudgetLimit, BudgetUsage, FactoryDigest, FactoryKey, FactoryRunId, FindingSeverity, ImmutableReference,
-  PhasePoolOrder, PhasePoolPolicy,
+  BudgetLimit, FactoryDigest, FactoryKey, FactoryRunId, FindingSeverity, ImmutableReference, PhasePoolOrder,
+  PhasePoolPolicy,
 };
 
 use crate::{
@@ -21,43 +21,191 @@ fn time(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
 
-/// Constructs a bounded fixture for the currently ready entry of a fresh admitted Flow.
-#[must_use]
-pub fn phase_pool_contract_input(snapshot: &FactoryRunSnapshot, severity: FindingSeverity) -> PhasePoolInput {
-  PhasePoolInput {
-    generation: 0,
-    run_id: snapshot.run.id(),
-    run_version: snapshot.run.version(),
-    flow_run_id: snapshot.admitted_flow.root_run().id(),
-    cycle_id: snapshot.admitted_flow.initial_cycle().id(),
-    node: snapshot
-      .admitted_flow
-      .closure()
-      .definition(snapshot.admitted_flow.closure().root())
-      .unwrap()
-      .entry()
-      .clone(),
-    severity,
-    project_priority: 10,
-    phase_input_digest: digest(1),
-    capabilities: BTreeSet::new(),
-    dependencies: Vec::new(),
-    reservation: BudgetUsage {
-      attempts: 1,
-      tokens: 1,
-      ..BudgetUsage::default()
-    },
+/// Queue scenarios shared by adapter contract fixtures; these names never reach runtime dispatch.
+#[derive(Clone, Copy)]
+pub enum FactoryPhasePoolContractScenario {
+  /// Ordering, capability/dependency gates, reservations and replay across five Runs.
+  Contract,
+  /// Progress after one hundred blocked entries across store restart.
+  Progress,
+  /// Reconsideration of a blocked prefix after capability or lease changes.
+  ScanInvalidation {
+    /// Whether ordinary leases, rather than missing capabilities, block the prefix.
+    lease_blocked: bool,
+  },
+}
+impl FactoryPhasePoolContractScenario {
+  /// Publishes the exact policy before any Work is admitted.
+  pub fn policy(self) -> PhasePoolPolicy {
+    PhasePoolPolicy {
+      phase: key(match self {
+        Self::Contract => "research.v1",
+        Self::Progress => "research.progress",
+        Self::ScanInvalidation { .. } => "research.invalidation",
+      }),
+      order: vec![
+        PhasePoolOrder::Severity,
+        PhasePoolOrder::ProjectPriority,
+        PhasePoolOrder::Age,
+      ],
+      max_wip: if matches!(self, Self::Contract) { 2 } else { 1 },
+      max_project_wip: if matches!(self, Self::Contract) { 2 } else { 1 },
+      budget: BudgetLimit::new(10, 1000, 10, 1000, 1000).unwrap(),
+    }
+  }
+  /// Freezes one fixture's selection and reservation, including forward Work dependencies.
+  pub fn settings(
+    self,
+    index: usize,
+    dependency: Option<&PhasePoolDependency>,
+  ) -> (octacity_server_factory::FlowPoolSettings, BudgetLimit) {
+    let mut capabilities = BTreeSet::new();
+    let mut dependencies = vec![];
+    let severity = match self {
+      Self::Contract => match index {
+        0 | 1 => FindingSeverity::Critical,
+        2 | 3 => FindingSeverity::High,
+        _ => FindingSeverity::Low,
+      },
+      _ => {
+        if index < 100 {
+          FindingSeverity::Critical
+        } else {
+          FindingSeverity::Low
+        }
+      }
+    };
+    match self {
+      Self::Contract if index == 0 => dependencies.push(dependency.unwrap().clone()),
+      Self::Contract if index == 1 => {
+        capabilities.insert(ImmutableReference::new(key("research.tool"), key("v1"), digest(2)));
+      }
+      Self::Progress if index < 100 && index.is_multiple_of(2) => {
+        capabilities.insert(ImmutableReference::new(key("unavailable.tool"), key("v1"), digest(90)));
+      }
+      Self::Progress if index < 100 => dependencies.push(dependency.unwrap().clone()),
+      Self::ScanInvalidation { lease_blocked: false } if index < 100 => {
+        capabilities.insert(ImmutableReference::new(key("research.tool"), key("v1"), digest(94)));
+      }
+      _ => (),
+    }
+    let tokens = match (self, index) {
+      (Self::Contract, 2) => 9,
+      (Self::Contract, 3) => 5,
+      _ => 1,
+    };
+    let settings = octacity_server_factory::FlowPoolSettings {
+      policy: self.policy(),
+      project_priority: 10,
+      capabilities,
+      selection: octacity_server_factory::FlowDataMapping::new(octacity_server_factory::FlowValueMapping::Constant {
+        value: serde_json::json!({"severity": severity, "dependencies": dependencies}),
+      })
+      .unwrap(),
+    };
+    (settings, BudgetLimit::new(1, 1, tokens, 1, 1).unwrap())
   }
 }
 
-async fn retire_selected_work<S: FactoryRunStore>(store: &S, selection: &crate::PhasePoolSelection) {
-  use crate::{
-    AuditActorKind, ClaimFactoryRun, CommitFactoryRunTransition, FactoryAuditFact, FactoryBudgetRecord,
-    FactoryLifecycleCheckpoint, FactoryRunClaimRecord, FactoryRunHistoryAppend,
+/// Constructs a bounded fixture for the currently ready entry of a fresh admitted Flow.
+#[must_use]
+pub fn phase_pool_contract_input(snapshot: &FactoryRunSnapshot, severity: FindingSeverity) -> PhasePoolInput {
+  let input = crate::configured_phase_pool_input(
+    snapshot,
+    snapshot
+      .flow
+      .data
+      .inputs
+      .last()
+      .expect("queue input is frozen before publication"),
+  )
+  .unwrap();
+  assert_eq!(input.severity, severity, "fixture carries its declared severity");
+  input
+}
+
+/// Freezes the configured input through the ordinary fenced journal before queue publication.
+pub async fn freeze_phase_pool_contract_input<S: FactoryRunStore>(store: &S, run: FactoryRunId) -> FactoryRunSnapshot {
+  use crate::*;
+  use octacity_server_factory::*;
+  let snapshot = store.factory_run_snapshot(run).await.unwrap();
+  if !snapshot.flow.data.inputs.is_empty() {
+    return snapshot;
+  }
+  let claim = FactoryRunClaimRecord::new(
+    run,
+    key("pool.input-owner"),
+    FactoryClaim::new(FactoryClaimFence::new(digest(200)), time(2), time(3)).unwrap(),
+  );
+  let audit = |operation| {
+    FactoryAuditFact::new(
+      run,
+      AuditActorKind::Worker,
+      None,
+      key(operation),
+      claim.id,
+      key("accepted"),
+      time(2),
+    )
   };
+  store
+    .claim_factory_run(ClaimFactoryRun {
+      run_id: run,
+      expected_version: snapshot.run.version(),
+      record: claim.clone(),
+      audit: audit("factory.claimed"),
+    })
+    .await
+    .unwrap();
+  let node = snapshot
+    .admitted_flow
+    .closure()
+    .definition(snapshot.admitted_flow.closure().root())
+    .unwrap()
+    .entry()
+    .clone();
+  let declared = snapshot
+    .admitted_flow
+    .closure()
+    .definition(snapshot.admitted_flow.closure().root())
+    .unwrap()
+    .node(&node)
+    .unwrap();
+  let input = FlowNodeInput::prepare(FlowInputPreparation {
+    work: &snapshot.work,
+    admitted: &snapshot.admitted_flow,
+    flow: snapshot.admitted_flow.root_run(),
+    cycle: snapshot.admitted_flow.initial_cycle(),
+    node,
+    schema: snapshot
+      .admitted_flow
+      .data_schema(declared.input_schema().unwrap())
+      .unwrap(),
+    history: FlowRuntimeHistory {
+      stops: &snapshot.flow.data.stops,
+      flow_runs: &snapshot.flow.runs,
+      cycles: &snapshot.flow.cycles,
+      attempts: &snapshot.flow.attempts,
+      completions: &snapshot.flow.completions,
+    },
+    records: &snapshot.flow.data.records,
+    inputs: &snapshot.flow.data.inputs,
+    incoming: None,
+  })
+  .unwrap();
+  let mut transition = crate::testing::factory_flow_contract_transition(&snapshot, &claim, 2);
+  transition.append.flow.data.inputs.push(input);
+  store.commit_factory_run_transition(transition).await.unwrap();
+  store.factory_run_snapshot(run).await.unwrap()
+}
+
+async fn retire_selected_work<S: FactoryRunStore + crate::FactoryRunControlStore>(
+  store: &S,
+  selection: &crate::PhasePoolSelection,
+) {
+  use crate::{AuditActorKind, ClaimFactoryRun, FactoryAuditFact, FactoryLifecycleCheckpoint, FactoryRunClaimRecord};
   use octacity_server_factory::{
-    DecisionSignalProgress, FactoryClaim, FactoryClaimFence, FactoryLifecycleProgress, FactoryRun, FactoryRunState,
-    FactoryRunVersion, ReportingProgress,
+    FactoryClaim, FactoryClaimFence, FactoryLifecycleProgress, FactoryRun, FactoryRunState,
   };
   let snapshot = store.factory_run_snapshot(selection.entry.input.run_id).await.unwrap();
   let claim = FactoryRunClaimRecord::new(
@@ -85,58 +233,65 @@ async fn retire_selected_work<S: FactoryRunStore>(store: &S, selection: &crate::
     })
     .await
     .unwrap();
-  let version = FactoryRunVersion::new(snapshot.run.version().get() + 1).unwrap();
-  let usage = snapshot
-    .budgets
-    .iter()
-    .find(|row| row.id == snapshot.current.budget_id)
-    .unwrap()
-    .usage;
-  let budget = FactoryBudgetRecord::new(snapshot.run.id(), version, usage, time(202));
-  let checkpoint = FactoryLifecycleCheckpoint::new(
+  let snapshot = store.factory_run_snapshot(snapshot.run.id()).await.unwrap();
+  store
+    .apply_factory_run_control(crate::testing::management_mutation_with_request(
+      crate::ApplyFactoryRunControl {
+        run_id: snapshot.run.id(),
+        expected_version: snapshot.run.version(),
+        idempotency_key: crate::IdempotencyKey::new(format!("retire-pool-work-{}", snapshot.run.id())).unwrap(),
+        intent: crate::FactoryRunControlIntent::Cancel,
+        requested_at: time(202),
+      },
+      "retire-pool-work",
+    ))
+    .await
+    .unwrap();
+  let snapshot = store.factory_run_snapshot(snapshot.run.id()).await.unwrap();
+  let successor = FactoryRunClaimRecord::new(
     snapshot.run.id(),
-    version,
-    FactoryLifecycleProgress::Cancelled(ReportingProgress::Ready),
-    DecisionSignalProgress::Disabled,
-    true,
-    time(202),
+    claim.owner,
+    FactoryClaim::new(FactoryClaimFence::new(digest(202)), time(203), time(303)).unwrap(),
   );
-  let mut current = snapshot.current.clone();
-  current.budget_id = budget.id;
-  current.lifecycle_checkpoint_id = checkpoint.id;
-  let next_run = FactoryRun::restore(
+  store
+    .claim_factory_run(ClaimFactoryRun {
+      run_id: snapshot.run.id(),
+      expected_version: snapshot.run.version(),
+      record: successor.clone(),
+      audit: audit("factory.claimed", 203),
+    })
+    .await
+    .unwrap();
+  let snapshot = store.factory_run_snapshot(snapshot.run.id()).await.unwrap();
+  let mut finish = crate::testing::factory_flow_contract_transition(&snapshot, &successor, 204);
+  finish.next_run = FactoryRun::restore(
     snapshot.run.id(),
     snapshot.run.configuration().clone(),
     &snapshot.work,
     snapshot.run.subject().clone(),
     FactoryRunState::Cancelled,
-    version,
+    finish.next_run.version(),
   )
   .unwrap();
-  store
-    .commit_factory_run_transition(CommitFactoryRunTransition {
-      run_id: snapshot.run.id(),
-      expected_version: snapshot.run.version(),
-      claim_id: claim.id,
-      owner: claim.owner,
-      fence: claim.claim.fence(),
-      committed_at: time(202),
-      next_run,
-      budget,
-      lifecycle_checkpoint: checkpoint,
-      append: FactoryRunHistoryAppend::default(),
-      current,
-      audit: audit("factory.cancelled", 202),
-      outbox: Vec::new(),
-    })
-    .await
-    .unwrap();
+  finish.lifecycle_checkpoint = FactoryLifecycleCheckpoint::new(
+    snapshot.run.id(),
+    finish.next_run.version(),
+    FactoryLifecycleProgress::FlowCancelled {
+      root: snapshot.admitted_flow.root_run().id(),
+    },
+    true,
+    time(204),
+  );
+  finish.current.lifecycle_checkpoint_id = finish.lifecycle_checkpoint.id;
+  store.commit_factory_run_transition(finish).await.unwrap();
 }
 
 /// Verifies deterministic ordering, exact capability and dependency gates, atomic
 /// capacity/budget reservation, frozen replay, expiry, and no repeated selection.
 /// The adapter must contain five fresh Runs in the same Project and no prior pool history.
-pub async fn verify_factory_phase_pool_contract<S: FactoryPhasePoolStore + FactoryRunStore>(
+pub async fn verify_factory_phase_pool_contract<
+  S: FactoryPhasePoolStore + FactoryRunStore + crate::FactoryRunControlStore,
+>(
   store: &S,
   runs: &[FactoryRunId],
 ) {
@@ -155,29 +310,25 @@ pub async fn verify_factory_phase_pool_contract<S: FactoryPhasePoolStore + Facto
   let capability = ImmutableReference::new(key("research.tool"), key("v1"), digest(2));
   let mut entries = Vec::new();
   for (index, run) in runs.iter().enumerate() {
-    let snapshot = store.factory_run_snapshot(*run).await.unwrap();
+    let snapshot = freeze_phase_pool_contract_input(store, *run).await;
     let severity = match index {
       0 | 1 => FindingSeverity::Critical,
       2 | 3 => FindingSeverity::High,
       _ => FindingSeverity::Low,
     };
-    let mut input = phase_pool_contract_input(&snapshot, severity);
+    let input = phase_pool_contract_input(&snapshot, severity);
     if index == 0 {
-      input.dependencies.push(PhasePoolDependency {
-        run_id: runs[4],
-        work_id: store.factory_run_snapshot(runs[4]).await.unwrap().work.id(),
-        work_digest: crate::phase_pool_work_digest(&store.factory_run_snapshot(runs[4]).await.unwrap()),
-        terminal: key("accepted"),
-      });
+      assert_eq!(input.dependencies.len(), 1);
+      assert_eq!(input.dependencies[0].run_id, runs[4]);
     }
     if index == 1 {
-      input.capabilities.insert(capability.clone());
+      assert_eq!(input.capabilities, BTreeSet::from([capability.clone()]));
     }
     if index == 2 {
-      input.reservation.tokens = 9;
+      assert_eq!(input.reservation.tokens, 9);
     }
     if index == 3 {
-      input.reservation.tokens = 5;
+      assert_eq!(input.reservation.tokens, 5);
     }
     let entry = store.publish_phase_ready(policy.clone(), input.clone()).await.unwrap();
     assert_eq!(store.publish_phase_ready(policy.clone(), input).await.unwrap(), entry);
@@ -220,9 +371,20 @@ pub async fn verify_factory_phase_pool_contract<S: FactoryPhasePoolStore + Facto
     assert_eq!(row.entry.policy_digest, policy.digest());
     let snapshot = store.factory_run_snapshot(row.entry.input.run_id).await.unwrap();
     assert_eq!(snapshot.current_claim, Some(row.run_claim()));
-    assert!(snapshot.audit.iter().any(
-      |fact| fact.operation.as_str() == "factory.phase_selected" && fact.request_identity_digest == row.input_digest
-    ));
+    let audits = store
+      .list_factory_run_diagnostics(
+        crate::ListFactoryRunDiagnostics::new(snapshot.run.id(), crate::FactoryRunDiagnosticKind::Audit, None, 100)
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert!(
+      audits
+        .items
+        .iter()
+        .any(|record| matches!(record, crate::FactoryRunDiagnosticRecord::Audit(fact)
+      if fact.operation.as_str() == "factory.phase_selected" && fact.request_identity_digest == row.input_digest))
+    );
   }
   assert_eq!(store.select_phase_ready(request.clone()).await.unwrap(), selected);
   let mut altered = request.clone();
@@ -291,10 +453,10 @@ pub async fn verify_factory_phase_pool_progress<S: FactoryPhasePoolStore + Facto
     max_project_wip: 1,
     budget: BudgetLimit::new(10, 1000, 10, 1000, 1000).unwrap(),
   };
-  let ready = store.factory_run_snapshot(runs[100]).await.unwrap();
+  let ready = freeze_phase_pool_contract_input(store, runs[100]).await;
   for (index, run) in runs.iter().enumerate() {
-    let snapshot = store.factory_run_snapshot(*run).await.unwrap();
-    let mut input = phase_pool_contract_input(
+    let snapshot = freeze_phase_pool_contract_input(store, *run).await;
+    let input = phase_pool_contract_input(
       &snapshot,
       if index < 100 {
         FindingSeverity::Critical
@@ -304,16 +466,14 @@ pub async fn verify_factory_phase_pool_progress<S: FactoryPhasePoolStore + Facto
     );
     if index < 100 {
       if index % 2 == 0 {
-        input
-          .capabilities
-          .insert(ImmutableReference::new(key("unavailable.tool"), key("v1"), digest(90)));
+        assert!(
+          input
+            .capabilities
+            .contains(&ImmutableReference::new(key("unavailable.tool"), key("v1"), digest(90)))
+        );
       } else {
-        input.dependencies.push(PhasePoolDependency {
-          run_id: ready.run.id(),
-          work_id: ready.work.id(),
-          work_digest: crate::phase_pool_work_digest(&ready),
-          terminal: key("accepted"),
-        });
+        assert_eq!(input.dependencies.len(), 1);
+        assert_eq!(input.dependencies[0].run_id, ready.run.id());
       }
     }
     if index < 100 {
@@ -370,8 +530,8 @@ pub async fn verify_factory_phase_pool_scan_invalidation<S: FactoryPhasePoolStor
   };
   let capability = ImmutableReference::new(key("research.tool"), key("v1"), digest(94));
   for (index, run) in runs.iter().enumerate() {
-    let snapshot = store.factory_run_snapshot(*run).await.unwrap();
-    let mut input = phase_pool_contract_input(
+    let snapshot = freeze_phase_pool_contract_input(store, *run).await;
+    let input = phase_pool_contract_input(
       &snapshot,
       if index < 100 {
         FindingSeverity::Critical
@@ -404,7 +564,7 @@ pub async fn verify_factory_phase_pool_scan_invalidation<S: FactoryPhasePoolStor
           .await
           .unwrap();
       } else {
-        input.capabilities.insert(capability.clone());
+        assert!(input.capabilities.contains(&capability));
       }
     }
     store.publish_phase_ready(policy.clone(), input).await.unwrap();

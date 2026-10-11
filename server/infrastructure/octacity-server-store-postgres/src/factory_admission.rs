@@ -2,8 +2,8 @@ use std::str::FromStr as _;
 
 use octacity_server_domain::{EntityKind, RepositoryVersion, Timestamp};
 use octacity_server_factory::{
-  AdmittedFlow, BudgetUsage, DecisionSignalProgress, FactoryConfiguration, FactoryDigest, FactoryKey,
-  FactoryLifecycleProgress, FactoryRun, FactoryRunState, FactoryRunVersion, WorkEnvelope,
+  AdmittedFlow, BudgetUsage, FactoryConfiguration, FactoryDigest, FactoryKey, FactoryLifecycleProgress, FactoryRun,
+  FactoryRunState, FactoryRunVersion, WorkEnvelope,
 };
 use octacity_server_store::{
   AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionMutationOutcome, FactoryAdmissionProbe, FactoryAuditFact,
@@ -132,7 +132,7 @@ pub(crate) async fn admit(
     "SELECT COUNT(*) FROM factory_runs \
      WHERE factory_configuration_id = $1 AND factory_configuration_version = $2 \
        AND visible \
-       AND state NOT IN ('rejected', 'cancelled', 'completed')",
+       AND state NOT IN ('cancelled', 'completed')",
   )
   .bind(request.work.configuration().id().as_uuid())
   .bind(version_number(request.work.configuration().version().get())?)
@@ -235,7 +235,6 @@ pub(crate) async fn admit(
     request.run.id(),
     FactoryRunVersion::INITIAL,
     FactoryLifecycleProgress::Admitted,
-    DecisionSignalProgress::Disabled,
     false,
     request.admitted_at,
   );
@@ -435,9 +434,7 @@ async fn insert_initial_projection(
   .bind(lifecycle.id.as_bytes().as_slice())
   .bind(request.run.id().as_uuid())
   .bind(version_number(lifecycle.run_version.get())?)
-  .bind(Json(
-    json!({"progress": lifecycle.progress, "signal": lifecycle.signal}),
-  ))
+  .bind(Json(json!({"progress": lifecycle.progress})))
   .bind(lifecycle.cancellation_requested)
   .bind(lifecycle.recorded_at.unix_millis())
   .execute(&mut **transaction)
@@ -581,14 +578,7 @@ fn security_scope_digest(probe: &FactoryAdmissionProbe) -> FactoryDigest {
 }
 
 fn subject_digest(work: &WorkEnvelope) -> FactoryDigest {
-  FactoryDigest::sha256(
-    "octacity.factory.subject.v1",
-    &[
-      work.subject().project_id().as_uuid().as_bytes(),
-      work.subject().repository_id().as_uuid().as_bytes(),
-      work.subject().base_revision().as_str().as_bytes(),
-    ],
-  )
+  work.subject().digest()
 }
 
 fn version_number(value: u64) -> Result<i64, StoreError> {

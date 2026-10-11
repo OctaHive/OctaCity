@@ -17,29 +17,11 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 48] = [
-  "factory_assessments",
+const FACTORY_TABLES: [&str; 27] = [
   "factory_audit_links",
-  "factory_build_link_jobs",
-  "factory_build_links",
-  "factory_build_observations",
-  "factory_call_dependencies",
-  "factory_call_completions",
-  "factory_call_nodes",
-  "factory_call_stage_dependencies",
-  "factory_changesets",
   "factory_configuration_versions",
   "factory_configuration_flow_definitions",
   "factory_configurations",
-  "factory_context_manifests",
-  "factory_decision_signal_receipts",
-  "factory_decision_signal_requests",
-  "factory_decision_assessments",
-  "factory_decisions",
-  "factory_delivery_attempts",
-  "factory_escalations",
-  "factory_evaluation_plans",
-  "factory_evidence_manifests",
   "factory_flow_definition_versions",
   "factory_flow_runs",
   "factory_flow_incoming",
@@ -50,20 +32,17 @@ const FACTORY_TABLES: [&str; 48] = [
   "factory_lifecycle_checkpoints",
   "factory_node_attempts",
   "factory_node_attempt_completions",
+  "factory_node_stops",
   "factory_outbox_records",
   "factory_phase_pool_policies",
   "factory_phase_pool_entries",
   "factory_phase_pool_passes",
   "factory_phase_pool_selections",
-  "factory_reporting_attempts",
   "factory_run_budgets",
   "factory_run_claims",
   "factory_run_controls",
   "factory_run_current",
   "factory_runs",
-  "factory_stage_attempt_completions",
-  "factory_stage_attempts",
-  "factory_stage_handoffs",
   "factory_work_envelopes",
   "factory_workflow_cycles",
 ];
@@ -411,29 +390,11 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "builds",
     "build_result_retention_holds",
     "cache_sessions",
-    "factory_assessments",
     "factory_artifact_references",
     "factory_audit_links",
-    "factory_build_link_jobs",
-    "factory_build_links",
-    "factory_build_observations",
-    "factory_call_dependencies",
-    "factory_call_completions",
-    "factory_call_nodes",
-    "factory_call_stage_dependencies",
-    "factory_changesets",
     "factory_configuration_versions",
     "factory_configuration_flow_definitions",
     "factory_configurations",
-    "factory_context_manifests",
-    "factory_decision_signal_receipts",
-    "factory_decision_signal_requests",
-    "factory_decision_assessments",
-    "factory_decisions",
-    "factory_delivery_attempts",
-    "factory_escalations",
-    "factory_evaluation_plans",
-    "factory_evidence_manifests",
     "factory_flow_definition_versions",
     "factory_flow_runs",
     "factory_flow_incoming",
@@ -444,21 +405,18 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "factory_lifecycle_checkpoints",
     "factory_node_attempts",
     "factory_node_attempt_completions",
+    "factory_node_stops",
     "factory_outbox_records",
     "factory_phase_pool_policies",
     "factory_phase_pool_entries",
     "factory_phase_pool_passes",
     "factory_phase_pool_selections",
-    "factory_reporting_attempts",
     "factory_retention_work",
     "factory_run_budgets",
     "factory_run_claims",
     "factory_run_controls",
     "factory_run_current",
     "factory_runs",
-    "factory_stage_attempt_completions",
-    "factory_stage_attempts",
-    "factory_stage_handoffs",
     "factory_work_envelopes",
     "factory_workflow_cycles",
     "cache_actions",
@@ -786,7 +744,7 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
   .bind(
     [
       "factory_configurations_discovery_idx",
-      "factory_context_manifests_diagnostics_idx",
+      "factory_node_attempts_diagnostics_idx",
       "factory_outbox_due_idx",
       "factory_outbox_operation_history_idx",
       "factory_run_claims_history_idx",
@@ -794,7 +752,7 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
       "factory_runs_project_discovery_idx",
       "factory_runs_reconciliation_idx",
       "factory_runs_state_discovery_idx",
-      "factory_stage_handoffs_diagnostics_idx",
+      "factory_node_attempt_completions_diagnostics_idx",
       "factory_work_envelopes_source_discovery_idx",
     ]
     .as_slice(),
@@ -1033,4 +991,29 @@ async fn idempotency_shape_can_be_restored_without_merging(pool: &sqlx::PgPool) 
   )
   .fetch_one(pool)
   .await
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn unreleased_factory_schema_contains_only_the_common_execution_journal() {
+  let database = TestDatabase::migrated().await;
+  let obsolete: Vec<String> = sqlx::query_scalar(
+    "SELECT table_name::text FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY($1) ORDER BY table_name",
+  )
+  .bind(vec![
+    "factory_stage_attempts", "factory_stage_attempt_completions", "factory_stage_handoffs",
+    "factory_context_manifests", "factory_call_nodes", "factory_call_dependencies",
+    "factory_call_stage_dependencies", "factory_call_completions", "factory_build_links",
+    "factory_build_link_jobs", "factory_build_observations", "factory_changesets",
+    "factory_evidence_manifests", "factory_evaluation_plans", "factory_assessments",
+    "factory_decision_assessments", "factory_decisions", "factory_escalations",
+    "factory_delivery_attempts", "factory_reporting_attempts",
+    "factory_decision_signal_requests", "factory_decision_signal_receipts",
+  ])
+  .fetch_all(&database.pool).await.unwrap();
+  database.cleanup().await;
+  assert!(
+    obsolete.is_empty(),
+    "capability data belongs in configured node results: {obsolete:?}"
+  );
 }

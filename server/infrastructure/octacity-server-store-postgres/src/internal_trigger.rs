@@ -104,10 +104,29 @@ async fn load_claim(
   event: ClaimedEventRow,
 ) -> Result<InternalTriggerEventClaim, StoreError> {
   let build = source_build(pool, &event).await?;
-  let source_occurrence = source_occurrence(pool, build.id).await?;
-  let trigger_ancestry = ancestry(pool, source_occurrence.id).await?;
-  octacity_server_store::validate_internal_ancestry(&source_occurrence, &trigger_ancestry)
-    .map_err(|_| StoreError::Unavailable)?;
+  let (occurrence_id, factory): (Option<Uuid>, Option<Json<octacity_server_store::FactoryBuildOrigin>>) =
+    sqlx::query_as("SELECT trigger_occurrence_id,factory_origin FROM builds WHERE id=$1")
+      .bind(build.id.as_uuid())
+      .fetch_one(pool)
+      .await
+      .map_err(unavailable)?;
+  let (source_origin, trigger_ancestry) = match (occurrence_id, factory) {
+    (Some(_), None) => {
+      let occurrence = source_occurrence(pool, build.id).await?;
+      let ancestors = ancestry(pool, occurrence.id).await?;
+      octacity_server_store::validate_internal_ancestry(&occurrence, &ancestors)
+        .map_err(|_| StoreError::Unavailable)?;
+      (
+        octacity_server_store::InternalTriggerSourceOrigin::Trigger(Box::new(occurrence)),
+        ancestors,
+      )
+    }
+    (None, Some(factory)) => (
+      octacity_server_store::InternalTriggerSourceOrigin::Factory(factory.0),
+      vec![],
+    ),
+    _ => return Err(StoreError::Unavailable),
+  };
   let event_kind = event_kind(pool, build.id).await?;
   let matches = matching_triggers(pool, build.target, &event_kind, event.occurred_at_millis).await?;
   Ok(InternalTriggerEventClaim {
@@ -115,7 +134,7 @@ async fn load_claim(
     source_build_id: build.id,
     source_revision: build.revision,
     source_target: build.target,
-    source_occurrence,
+    source_origin,
     trigger_ancestry,
     event_kind,
     occurred_at: timestamp(event.occurred_at_millis)?,

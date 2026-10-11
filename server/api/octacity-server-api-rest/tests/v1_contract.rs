@@ -2,17 +2,94 @@ use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
   AcceptManualTriggerRequest, AgentPoolAdmissionPolicy, AgentPoolResource, AgentResource, ArtifactDownload,
   ArtifactOutputType, ArtifactResource, AttemptStateResource, BuildConfigurationSummaryPage, BuildLogSearchPage,
-  BuildStateResource, BuildSummaryPage, CacheSessionResource, CacheSessionState, CapabilityStatus, ContractValueError,
-  CreateAgentPoolRequest, CreateBuildConfigurationRequest, CreateManagedWebhookRequest, CreatePipelineRequest,
-  CreateProjectRequest, CreateScheduledTriggerDefinitionRequest, Cursor, CursorPage, DrainAgentRequest, ErrorCode,
-  ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest, IssueAgentEnrollmentRequest,
-  IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES, OperationalMetadata,
-  OperatorAttentionCursor, OperatorAttentionPage, PipelineSummaryPage, PlaceBuildResultHoldRequest,
-  ProjectSummaryResource, RepositorySummaryPage, ResourceSearchCursor, ResourceSearchPage,
+  BuildStateResource, BuildSummaryPage, BuildSummaryResource, CacheSessionResource, CacheSessionState,
+  CapabilityStatus, ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
+  CreateManagedWebhookRequest, CreatePipelineRequest, CreateProjectRequest, CreateScheduledTriggerDefinitionRequest,
+  Cursor, CursorPage, DrainAgentRequest, ErrorCode, ErrorResponse, IdempotencyKey, InternalTriggerDefinitionRequest,
+  IssueAgentEnrollmentRequest, IssueAgentEnrollmentResponse, MAX_CURSOR_BYTES, MAX_IDEMPOTENCY_KEY_BYTES,
+  OperationalMetadata, OperatorAttentionCursor, OperatorAttentionPage, PipelineSummaryPage,
+  PlaceBuildResultHoldRequest, ProjectSummaryResource, RepositorySummaryPage, ResourceSearchCursor, ResourceSearchPage,
   TriggerDefinitionSummaryPage, VersionPrecondition,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+
+#[test]
+fn factory_build_summary_preserves_its_operation_without_a_trigger_cause() {
+  let document = json!({
+    "id":"build-1", "project_id":"project-1", "configuration_id":"configuration-1",
+    "configuration_version":1, "cause":null,
+    "factory_origin": {
+      "operation_id":"11".repeat(32), "run_id":"00000000-0000-0000-0000-000000000001",
+      "node_attempt_id":"00000000-0000-0000-0000-000000000002", "input_digest":"22".repeat(32)
+    },
+    "state":"running", "created_at_unix_ms":100, "current_attempt_id":"attempt-1",
+    "current_attempt_number":1, "current_attempt_state":"running", "terminal_at_unix_ms":null
+  });
+  let decoded: BuildSummaryResource = serde_json::from_value(document.clone()).unwrap();
+  assert_eq!(serde_json::to_value(decoded).unwrap(), document);
+  let mut ordinary = document;
+  ordinary.as_object_mut().unwrap().remove("factory_origin");
+  ordinary["cause"] = json!({"kind":"manual"});
+  let decoded: BuildSummaryResource = serde_json::from_value(ordinary.clone()).unwrap();
+  assert_eq!(serde_json::to_value(decoded).unwrap(), ordinary);
+}
+
+#[test]
+fn build_resource_retains_a_factory_operation_without_fabricating_a_trigger() {
+  let value = json!({
+    "id": "00000000-0000-0000-0000-000000000001",
+    "project_id": "00000000-0000-0000-0000-000000000002",
+    "configuration_id": "00000000-0000-0000-0000-000000000003", "configuration_version": 1,
+    "pipeline_id": "00000000-0000-0000-0000-000000000004", "pipeline_version": 1,
+    "repository_id": "00000000-0000-0000-0000-000000000005", "repository_version": 1,
+    "immutable_revision": "base", "parameters": {}, "source": {}, "effective_policy": {},
+    "priority": 7, "state": "running", "version": 1, "trigger": null,
+    "factory_origin": {
+      "operation_id": "a".repeat(64), "run_id": "00000000-0000-0000-0000-000000000006",
+      "node_attempt_id": "00000000-0000-0000-0000-000000000007", "input_digest": "b".repeat(64)
+    },
+    "created_at_unix_ms": 10, "updated_at_unix_ms": 20,
+    "current_attempt": {
+      "id": "00000000-0000-0000-0000-000000000008", "build_id": "00000000-0000-0000-0000-000000000001",
+      "number": 1, "retry_of_attempt_id": null, "state": "running", "version": 1,
+      "created_at_unix_ms": 10, "updated_at_unix_ms": 20
+    }
+  });
+  let decoded: octacity_server_api_rest::v1::BuildResource = serde_json::from_value(value.clone()).unwrap();
+  assert_eq!(serde_json::to_value(decoded).unwrap(), value);
+  let mut ordinary = value;
+  ordinary.as_object_mut().unwrap().remove("factory_origin");
+  ordinary["trigger"] = json!({"kind": "manual"});
+  let decoded: octacity_server_api_rest::v1::BuildResource = serde_json::from_value(ordinary.clone()).unwrap();
+  assert_eq!(serde_json::to_value(decoded).unwrap(), ordinary);
+}
+
+#[test]
+fn openapi_describes_an_optional_factory_build_origin_and_an_absent_trigger() {
+  let schemas = &octacity_server_api_rest::v1::openapi_document()["components"]["schemas"];
+  let build = &schemas["BuildResource"];
+  assert_eq!(
+    build["properties"]["factory_origin"]["$ref"],
+    "#/components/schemas/FactoryBuildOrigin"
+  );
+  assert!(build["properties"]["trigger"].to_string().contains("\"null\""));
+  assert!(!build["required"].as_array().unwrap().contains(&json!("factory_origin")));
+  assert_eq!(
+    schemas["FactoryBuildOrigin"]["required"],
+    json!(["operation_id", "run_id", "node_attempt_id", "input_digest"])
+  );
+  assert_eq!(schemas["FactoryBuildOrigin"]["additionalProperties"], false);
+  assert_eq!(
+    schemas["BuildSummaryResource"]["properties"]["factory_origin"]["$ref"],
+    "#/components/schemas/FactoryBuildOrigin"
+  );
+  assert!(
+    schemas["BuildSummaryResource"]["properties"]["cause"]
+      .to_string()
+      .contains("\"null\"")
+  );
+}
 
 const CREATE_PROJECT: &str = include_str!("../fixtures/v1/create-project-request.json");
 const PROJECT_PAGE: &str = include_str!("../fixtures/v1/project-page.json");

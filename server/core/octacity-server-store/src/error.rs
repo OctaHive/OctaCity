@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Atomically create ordinary execution for a persisted common node intent.
+  AcceptFactoryBuild,
   /// Create one Project below an optional parent.
   CreateProject,
   /// Rename one Project using an optimistic version precondition.
@@ -376,6 +378,9 @@ pub enum StoreInputError {
   /// A Factory transition is malformed or references absent immutable history.
   #[error("a Factory Run transition is invalid")]
   InvalidFactoryRunTransition,
+  /// Ordinary Build materialization differs from its persisted common node intent.
+  #[error("invalid Factory Build")]
+  InvalidFactoryBuild,
   /// A Factory control intent is ineligible or does not match current history.
   #[error("a Factory Run control intent is invalid")]
   InvalidFactoryRunControl,

@@ -21,6 +21,14 @@ struct Reporter {
 }
 #[async_trait]
 impl FactoryWorkStatusProjector for Reporter {
+  async fn cancel_status(
+    &self,
+    _: FactoryWorkStatusRequest,
+    _: octacity_server_domain::Timestamp,
+  ) -> Result<Option<BudgetUsage>, ApplicationError> {
+    panic!("this fixture exercises only completed synchronous projection")
+  }
+
   async fn set_status(
     &self,
     request: FactoryWorkStatusRequest,
@@ -110,6 +118,7 @@ fn harness(binding: FlowActionBinding, permissions: FactoryPermissionSet) -> Har
     FlowAdmissionLimits::product_defaults(1, budget, permissions).unwrap(),
     flow,
     cycle,
+    octacity_server_factory::FactoryWipLimits::new(8, 16).unwrap(),
   )
   .unwrap()
   .with_data_schemas(vec![input_schema.clone(), schema])
@@ -213,7 +222,11 @@ fn actions_commit_common_typed_results_and_arbitrary_status_once_across_owner_re
       reporter.clone(),
       h.outcome.clone(),
     ))));
-    let runner = FactoryNodeRunner::new(h.store.clone(), adapter.clone());
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      adapter.clone(),
+      crate::factory_node_test_support::clock(),
+    );
     assert_eq!(
       runner
         .run_once(h.run, h.claim, h.target.clone(), Some(h.input.clone()), at(11))
@@ -237,7 +250,7 @@ fn actions_commit_common_typed_results_and_arbitrary_status_once_across_owner_re
       h.store.factory_run_snapshot(h.run).await.unwrap().flow.data.records,
       vec![*record.clone()]
     );
-    let restarted = FactoryNodeRunner::new(h.store.clone(), adapter);
+    let restarted = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
     assert_eq!(
       restarted
         .run_once(h.run, h.claim, h.target, None, at(13))
@@ -277,6 +290,7 @@ fn invalid_plugin_parameters_claim_deadline_or_authority_cannot_reach_a_connecto
           reporter.clone(),
           h.outcome,
         )))),
+        crate::factory_node_test_support::clock(),
       );
       runner
         .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
@@ -307,6 +321,127 @@ fn invalid_plugin_parameters_claim_deadline_or_authority_cannot_reach_a_connecto
     });
   }
 }
+
+#[test]
+fn an_unknown_action_node_selects_only_its_exact_installed_executor_binding() {
+  crate::factory_admission_tests::run_ready(async {
+    let h = harness(
+      binding("reporter", "set_status", serde_json::json!({"status":"needs_context"})),
+      permissions("reporter"),
+    );
+    let selected = reporter();
+    let unrelated = reporter();
+    let adapter = |identity, reporter| {
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
+        reference(identity),
+        reporter,
+        h.outcome.clone(),
+      )))) as Arc<dyn FactoryNodeExecutor>
+    };
+    let registry = FactoryNodeExecutorRegistry::new(vec![
+      (
+        FlowNodeKind::TrustedAction,
+        NodeExecutionIdentity::External(reference("unrelated")),
+        adapter("unrelated", unrelated.clone()),
+      ),
+      (
+        FlowNodeKind::TrustedAction,
+        NodeExecutionIdentity::External(reference("reporter")),
+        adapter("reporter", selected.clone()),
+      ),
+    ])
+    .unwrap();
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(registry),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(matches!(
+      runner.run_once(h.run, h.claim, h.target, None, at(12)).await.unwrap(),
+      FactoryNodeStep::Completed(_)
+    ));
+    assert_eq!(selected.requests.lock().unwrap()[0].status.as_str(), "needs_context");
+    assert!(unrelated.requests.lock().unwrap().is_empty());
+  });
+}
+#[test]
+fn installing_the_exact_executor_resumes_the_same_durable_action_without_a_fallback() {
+  crate::factory_admission_tests::run_ready(async {
+    let h = harness(
+      binding("reporter", "set_status", serde_json::json!({"status":"investigated"})),
+      permissions("reporter"),
+    );
+    let wrong_version = ImmutableReference::new(key("reporter"), key("v2"), FactoryDigest::from_bytes([2; 32]));
+    let rejected_reporter = reporter();
+    let wrong_adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
+      wrong_version.clone(),
+      rejected_reporter.clone(),
+      h.outcome.clone(),
+    ))));
+    let registry = FactoryNodeExecutorRegistry::new(vec![(
+      FlowNodeKind::TrustedAction,
+      NodeExecutionIdentity::External(wrong_version),
+      wrong_adapter,
+    )])
+    .unwrap();
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(registry),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    let pending = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert!(
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), None, at(12))
+        .await
+        .is_err()
+    );
+    assert!(rejected_reporter.requests.lock().unwrap().is_empty());
+    assert_eq!(h.store.factory_run_snapshot(h.run).await.unwrap(), pending);
+
+    let accepted_reporter = reporter();
+    let registry = FactoryNodeExecutorRegistry::new(vec![(
+      FlowNodeKind::TrustedAction,
+      NodeExecutionIdentity::External(reference("reporter")),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
+        reference("reporter"),
+        accepted_reporter.clone(),
+        h.outcome,
+      )))),
+    )])
+    .unwrap();
+    let restarted = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(registry),
+      crate::factory_node_test_support::clock(),
+    );
+    assert!(matches!(
+      restarted
+        .run_once(h.run, h.claim, h.target, None, at(13))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Completed(_)
+    ));
+    let completed = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert_eq!(completed.flow.attempts, pending.flow.attempts);
+    assert_eq!(completed.flow.data.inputs, pending.flow.data.inputs);
+    assert_eq!(completed.flow.data.records.len(), 1);
+    assert_eq!(accepted_reporter.requests.lock().unwrap().len(), 1);
+    assert_eq!(
+      accepted_reporter.requests.lock().unwrap()[0].status.as_str(),
+      "investigated"
+    );
+  });
+}
+
 #[test]
 fn connector_receives_frozen_authority_and_failure_never_commits_a_result() {
   for missing in [Some("host"), Some("secret"), Some("service"), None] {
@@ -346,6 +481,7 @@ fn connector_receives_frozen_authority_and_failure_never_commits_a_result() {
           reporter.clone(),
           h.outcome,
         )))),
+        crate::factory_node_test_support::clock(),
       );
       runner
         .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
@@ -375,6 +511,14 @@ fn connector_receives_frozen_authority_and_failure_never_commits_a_result() {
 struct Notification;
 #[async_trait]
 impl FactoryFlowActionPlugin for Notification {
+  async fn cancel(
+    &self,
+    _: FactoryFlowActionRequest<'_>,
+    _: octacity_server_domain::Timestamp,
+  ) -> Result<Option<BudgetUsage>, ApplicationError> {
+    panic!("this notification fixture has no pending operations")
+  }
+
   fn identity(&self) -> ImmutableReference {
     reference("notification")
   }
@@ -408,7 +552,11 @@ fn another_action_plugin_receives_the_common_projected_input_without_a_runtime_c
     permissions("notification"),
   );
   crate::factory_admission_tests::run_ready(async {
-    let runner = FactoryNodeRunner::new(h.store, Arc::new(FactoryFlowActionAdapter::new(Arc::new(Notification))));
+    let runner = FactoryNodeRunner::new(
+      h.store,
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(Notification))),
+      crate::factory_node_test_support::clock(),
+    );
     runner
       .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
       .await
@@ -420,6 +568,113 @@ fn another_action_plugin_receives_the_common_projected_input_without_a_runtime_c
     assert_eq!(
       record.payload().value()["receipt"],
       serde_json::json!(FactoryDigest::from_bytes([8; 32]))
+    );
+  });
+}
+
+struct AmbiguousAction {
+  operation: Mutex<Option<FactoryDigest>>,
+}
+#[async_trait]
+impl FactoryFlowActionPlugin for AmbiguousAction {
+  fn identity(&self) -> ImmutableReference {
+    reference("notification")
+  }
+  fn validate(&self, binding: &FlowActionBinding, _: &[FlowOutcomeDefinition]) -> Result<(), ApplicationError> {
+    if binding.action() != &key("notify") {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
+  async fn execute(
+    &self,
+    request: FactoryFlowActionRequest<'_>,
+  ) -> Result<FactoryFlowActionObservation, ApplicationError> {
+    assert!(self.operation.lock().unwrap().replace(request.operation_id).is_none());
+    Err(ApplicationError::unavailable()) // The remote effect may have started despite the lost response.
+  }
+  async fn cancel(
+    &self,
+    request: FactoryFlowActionRequest<'_>,
+    requested_at: octacity_server_domain::Timestamp,
+  ) -> Result<Option<BudgetUsage>, ApplicationError> {
+    assert_eq!(Some(request.operation_id), *self.operation.lock().unwrap());
+    assert_eq!(requested_at, at(13));
+    assert_eq!(request.deadline, at(511));
+    Ok(Some(BudgetUsage {
+      tokens: 3,
+      ..Default::default()
+    }))
+  }
+}
+#[test]
+fn an_action_with_an_unknown_response_is_stopped_through_its_original_identity_after_the_deadline() {
+  let h = harness(
+    binding("notification", "notify", serde_json::json!({"channel":"audit"})),
+    permissions("notification"),
+  );
+  crate::factory_admission_tests::run_ready(async {
+    let plugin = Arc::new(AmbiguousAction {
+      operation: Mutex::new(None),
+    });
+    let adapter = Arc::new(FactoryFlowActionAdapter::new(plugin.clone()));
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      adapter.clone(),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(runner.run_once(h.run, h.claim, h.target, None, at(12)).await.is_err());
+    let snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert!(snapshot.flow.data.records.is_empty());
+    let successor = FactoryClaimOwnership::new(
+      key("worker"),
+      FactoryClaim::new(
+        FactoryClaimFence::new(FactoryDigest::from_bytes([91; 32])),
+        at(512),
+        at(612),
+      )
+      .unwrap(),
+    );
+    let registry = FactoryNodeExecutorRegistry::new(vec![(
+      FlowNodeKind::TrustedAction,
+      NodeExecutionIdentity::External(reference("notification")),
+      adapter,
+    )])
+    .unwrap();
+    let result = registry
+      .cancel(
+        FactoryNodeExecutionRequest {
+          run_id: h.run,
+          work: &snapshot.work,
+          admitted: &snapshot.admitted_flow,
+          input: &snapshot.flow.data.inputs[0],
+          attempt: &snapshot.flow.attempts[0],
+          build: None,
+          ownership: successor,
+          observed_at: at(513),
+        },
+        at(13),
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      result,
+      FactoryNodeCancellationStep::Stopped {
+        execution: None,
+        usage: BudgetUsage {
+          tokens: 3,
+          ..Default::default()
+        }
+      }
+    );
+    assert_eq!(
+      h.store.factory_run_snapshot(h.run).await.unwrap(),
+      snapshot,
+      "the adapter itself cannot select a graph transition"
     );
   });
 }

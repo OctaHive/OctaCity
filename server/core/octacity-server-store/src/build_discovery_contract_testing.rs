@@ -163,7 +163,7 @@ fn build(
     project_id,
     configuration_id,
     configuration_version: BuildConfigurationVersion::INITIAL,
-    cause: TriggerCause::Manual {},
+    origin: crate::BuildSummaryOrigin::Trigger(TriggerCause::Manual {}),
     state,
     created_at: time(created_at),
     current_attempt_id: id(value + 1_000),

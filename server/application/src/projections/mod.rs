@@ -8,7 +8,7 @@ mod trigger;
 
 use thiserror::Error;
 
-pub use build::{AttemptProjection, BuildProjection, ParameterValueProjection};
+pub use build::{AttemptProjection, BuildOriginProjection, BuildProjection, ParameterValueProjection};
 pub(crate) use configuration::validate_configuration_projection;
 pub use configuration::{
   AgentRequirementsProjection, ArtifactPolicyProjection, BuildConfigurationProjection, ConfigurationCacheProjection,

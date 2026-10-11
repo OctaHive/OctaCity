@@ -46,9 +46,10 @@ mod flow_gate_tests;
 mod flow_journal_tests;
 #[cfg(test)]
 mod flow_template_tests;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
+#[cfg_attr(not(test), allow(dead_code))]
 mod flow_test_support;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 use crate as factory;
 mod flow_graph;
 #[cfg(test)]
@@ -88,12 +89,10 @@ pub use budget::{
   MAX_FACTORY_ELAPSED_MILLIS, MAX_FACTORY_OUTPUT_BYTES, MAX_FACTORY_TOKENS,
 };
 pub use configuration::{
-  BuildConfigurationRef, DecisionSignalProfile, DecisionSignalProfileDefinition, DecisionSignalProfileDraft,
-  DeliveryPolicy, DeliveryPolicyDraft, EvaluationPolicy, EvaluationPolicyDraft, FactoryConfiguration,
-  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryReferenceChoice,
-  FactoryStageDefinition, FactoryStageDraft, FactoryWipLimits, ImmutableReference, MAX_CONFIGURATION_CHOICES_PER_KIND,
-  MAX_FACTORY_ACTIVE_RUNS, MAX_FACTORY_ACTIVE_STAGES, MAX_FACTORY_REWORK_CYCLES, MAX_FACTORY_STAGES, ReworkPolicy,
-  ReworkPolicyDraft,
+  BuildConfigurationRef, DecisionSignalProfile, DecisionSignalProfileDefinition, EvaluationPolicy,
+  FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft,
+  FactoryReferenceChoice, FactoryWipLimits, ImmutableReference, MAX_CONFIGURATION_CHOICES_PER_KIND,
+  MAX_FACTORY_ACTIVE_NODES, MAX_FACTORY_ACTIVE_RUNS,
 };
 pub use credential::{
   AuthorizedFactoryCredentialProfile, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryCredentialPurpose,
@@ -112,8 +111,8 @@ pub use decision_signal::{
 };
 pub use enum_value::{
   AssessmentOutcome, DecisionOutcome, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose,
-  DecisionSignalState, DeliveryState, DeterministicGateOutcome, FactoryRunState, FactoryStageKind, FindingSeverity,
-  FlowNodeKind, IndeterminatePolicy, MacroCallKind, MountMode, PermissionCategory, ReportingState, RiskClass,
+  DecisionSignalState, DeliveryState, DeterministicGateOutcome, FactoryRunState, FindingSeverity, FlowNodeKind,
+  IndeterminatePolicy, MountMode, PermissionCategory, ReportingState, RiskClass,
 };
 pub use error::{FactoryChoiceKind, FactoryEntityKind, FactoryEnumKind, FactoryError, FactoryTextKind, TextRejection};
 pub use evaluation::{Decision, DecisionReason, MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS};
@@ -124,26 +123,23 @@ pub use evidence::{
   ChangeSet, EvidenceItem, EvidenceItemInput, EvidenceManifest, EvidenceOutputKind, EvidenceProducer,
   EvidenceRequirement, MAX_EVIDENCE_ITEMS,
 };
-pub use execution::{
-  DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOwnership, MAX_MACRO_CALL_DEPENDENCIES,
-  MAX_MACRO_CALL_DEPTH, MacroCall, MacroCallDeclaration, StageAttempt, StageAttemptCompletion, StageAttemptOutcome,
-};
+pub use execution::{DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOwnership};
 pub use flow::{
   AdmittedFlow, FlowActionBinding, FlowAdmissionLimits, FlowBuildBinding, FlowBuildExecution, FlowBuildIntent,
   FlowBuildProfile, FlowBuildProvenance, FlowComparison, FlowContextProjection, FlowDataHistory, FlowDataMapping,
   FlowDataProjection, FlowDataSchema, FlowDefinition, FlowDefinitionInput, FlowDefinitionRef, FlowDefinitionTemplate,
   FlowDirective, FlowDirectiveInputs, FlowExecutionPolicy, FlowFieldSchema, FlowGateBinding, FlowGateProgram,
   FlowGateRule, FlowIncomingData, FlowInputBinding, FlowInputPreparation, FlowInputSource, FlowInterpreter,
-  FlowNodeDefinition, FlowNodeDefinitionInput, FlowNodeInput, FlowNodeRecord, FlowOperand, FlowOutcomeDefinition,
-  FlowOutcomeKind, FlowPayload, FlowPredicate, FlowProgress, FlowQuantifier, FlowRecordObservation,
-  FlowRecordReference, FlowRecordView, FlowRun, FlowRunParent, FlowRuntimeHistory, FlowTemplateNode,
-  FlowTemplateOutcome, FlowTemplateSchema, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget,
-  FlowValueMapping, FlowValueSchema, FlowVerifiedBuildData, FlowVerifiedBuildOutput, MAX_FLOW_ACTION_PARAMETER_BYTES,
-  MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES,
-  MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT, MAX_FLOW_GATE_PARAMETER_BYTES,
-  MAX_FLOW_INPUT_BINDING_BYTES, MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_REPEAT_COUNT,
-  MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS, NodeAttempt,
-  NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity,
+  FlowNodeDefinition, FlowNodeDefinitionInput, FlowNodeInput, FlowNodeRecord, FlowNodeStop, FlowNodeStopReason,
+  FlowOperand, FlowOutcomeDefinition, FlowOutcomeKind, FlowPayload, FlowPredicate, FlowProgress, FlowQuantifier,
+  FlowRecordObservation, FlowRecordReference, FlowRecordView, FlowRun, FlowRunParent, FlowRuntimeHistory,
+  FlowTemplateNode, FlowTemplateOutcome, FlowTemplateSchema, FlowTerminalDefinition, FlowTransition,
+  FlowTransitionTarget, FlowValueMapping, FlowValueSchema, FlowVerifiedBuildData, FlowVerifiedBuildOutput,
+  MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE,
+  MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT,
+  MAX_FLOW_GATE_PARAMETER_BYTES, MAX_FLOW_INPUT_BINDING_BYTES, MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH,
+  MAX_FLOW_REPEAT_COUNT, MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS,
+  NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity,
   PinnedFlowDefinitionClosure, PublishedFlowTemplate, ValidatedFlowDefinitionClosure, WorkflowCycle,
   validate_flow_runtime_history,
 };
@@ -151,8 +147,8 @@ pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{
   AssessmentId, ChangeSetId, ContextManifestId, DecisionId, DecisionSignalReceiptId, DecisionSignalRequestId,
   DeliveryAttemptId, EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRunId,
-  FlowDefinitionId, FlowRunId, MacroCallId, NodeAttemptId, ReportingAttemptId, RetrievalReceiptId, StageAttemptId,
-  StageHandoffId, TaskEnvelopeId, WorkEnvelopeId, WorkflowCycleId,
+  FlowDefinitionId, FlowRunId, NodeAttemptId, ReportingAttemptId, RetrievalReceiptId, TaskEnvelopeId, WorkEnvelopeId,
+  WorkflowCycleId,
 };
 pub use journey::FactoryFlowConfiguration;
 pub use lifecycle::{
@@ -160,10 +156,7 @@ pub use lifecycle::{
   ReportingAttempt, WorkArtifacts, WorkClassification, WorkEnvelope,
 };
 pub use lifecycle_decision::{
-  DecisionSignalProgress, DeliveryIntent, DeliveryProgress, FactoryClaim, FactoryClaimFence, FactoryDecisionGuard,
-  FactoryDecisionResources, FactoryEscalationDisposition, FactoryEscalationReason, FactoryLifecycleProgress,
-  FactoryLifecycleSnapshot, FactoryNextAction, FactoryReworkStatus, FactoryStageProgress, FactoryStageTarget,
-  FactoryWaitReason, FactoryWipUsage, ReportingProgress, decide_next_action, validate_lifecycle_progress,
+  FactoryClaim, FactoryClaimFence, FactoryLifecycleProgress, FactoryWipUsage, validate_lifecycle_progress,
   validate_lifecycle_transition,
 };
 pub use permission::{
@@ -188,18 +181,17 @@ pub use task_contract::{
   FactoryTaskDeclaration, FactoryTaskDefinition, FactoryTaskDeliverable, FactoryTaskDigests, FactoryTaskEnvelope,
   FactoryTaskMode, FactoryTaskResultSchema, FactoryTaskSubject, FactoryTaskToolchain, ImplementationOutcome,
   ImplementationResult, MAX_CONTEXT_ENTRY_BYTES, MAX_CONTEXT_MANIFEST_BYTES, MAX_CONTEXT_MANIFEST_ENTRIES,
-  MAX_FACTORY_REPOSITORY_PATH_BYTES, MAX_RETRIEVAL_FRAGMENTS, MAX_STAGE_HANDOFF_ITEMS, MAX_TASK_ARTIFACTS,
-  MAX_TASK_DELIVERABLES, MAX_TASK_EVALUATION_FINDINGS, MAX_TASK_PRIOR_FINDINGS, MacroCallCompletion,
-  MacroCallCompletionOutputs, MacroCallTerminal, RETRIEVAL_RECEIPT_VERSION, RepositoryFragment, RetrievalReceipt,
-  StageHandoff, StageHandoffContent, StageHandoffDeclaration, StageHandoffOutcome, StageHandoffReferences,
+  MAX_FACTORY_REPOSITORY_PATH_BYTES, MAX_RETRIEVAL_FRAGMENTS, MAX_TASK_ARTIFACTS, MAX_TASK_DELIVERABLES,
+  MAX_TASK_EVALUATION_FINDINGS, MAX_TASK_PRIOR_FINDINGS, RETRIEVAL_RECEIPT_VERSION, RepositoryFragment,
+  RetrievalReceipt,
 };
 pub use value::{
   DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,
   FactoryKey, FactoryMetadata, FactoryRunVersion, FactorySafeText, FactoryText, FlowDefinitionVersion,
   MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES,
   MAX_FACTORY_METADATA_KEY_BYTES, MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES,
-  MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY, NodeAttemptNumber, ReportingAttemptNumber, StageAttemptNumber,
-  WorkPriority, WorkflowCycleNumber,
+  MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY, NodeAttemptNumber, ReportingAttemptNumber, WorkPriority,
+  WorkflowCycleNumber,
 };
 
 #[cfg(test)]
@@ -207,3 +199,10 @@ mod accepted_work_tests;
 
 mod accepted_work;
 pub use accepted_work::AcceptedWorkContract;
+
+/// Explicit test fixtures for isolated capability and persistence contracts.
+#[cfg(any(test, feature = "test-support"))]
+pub mod testing;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use testing::FactoryStageKind;

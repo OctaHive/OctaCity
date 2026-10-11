@@ -443,7 +443,8 @@ fn routing_input_matches_profile(
 
 fn digest_provider_request(request: &DecisionSignalProviderRequest) -> FactoryDigest {
   let request_id = request.id().as_uuid();
-  let stage_id = request.request().stage_attempt_id().as_uuid();
+  let node_id = request.request().node_attempt_id().as_uuid();
+  let frozen_input = request.request().frozen_input_digest();
   let run_id = request.request().run_id().as_uuid();
   let input_digest = request.input().digest().as_bytes();
   let policy_digest = request.request().policy_digest().as_bytes();
@@ -463,10 +464,11 @@ fn digest_provider_request(request: &DecisionSignalProviderRequest) -> FactoryDi
   );
   let deadline = request.deadline().unix_millis().to_be_bytes();
   FactoryDigest::sha256(
-    "octacity.decision-signal.request.v1",
+    "octacity.decision-signal.request.v2",
     &[
       request_id.as_bytes(),
-      stage_id.as_bytes(),
+      node_id.as_bytes(),
+      &frozen_input.as_bytes(),
       run_id.as_bytes(),
       request.request().purpose().as_str().as_bytes(),
       input_digest.as_slice(),

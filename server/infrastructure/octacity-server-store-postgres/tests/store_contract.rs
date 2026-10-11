@@ -32,6 +32,84 @@ use serde_json::json;
 use sqlx::PgPool;
 use support::TestDatabase;
 
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn build_queries_restore_an_exact_factory_origin_without_a_trigger_after_restart() {
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let store = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  store.accept_trigger(fixture.request.clone()).await.unwrap();
+  let build_id = fixture.request.build.id;
+  assert!(matches!(
+    store.build(build_id).await.unwrap().origin,
+    octacity_server_store::BuildOrigin::Trigger(_)
+  ));
+  let origin = octacity_server_store::FactoryBuildOrigin {
+    operation_id: octacity_server_factory::FactoryDigest::from_bytes([41; 32]),
+    run_id: octacity_server_factory::FactoryRunId::generate(),
+    node_attempt_id: octacity_server_factory::NodeAttemptId::generate(),
+    input_digest: octacity_server_factory::FactoryDigest::from_bytes([42; 32]),
+  };
+  // Restore a durable operation-owned Build directly; no Trigger exists for this origin.
+  assert!(
+    sqlx::query("UPDATE builds SET trigger_occurrence_id=NULL, factory_origin=$1 WHERE id=$2")
+      .bind(sqlx::types::Json(&origin))
+      .bind(build_id.as_uuid())
+      .execute(&database.pool)
+      .await
+      .is_err(),
+    "a Factory origin requires its complete retained acceptance receipt"
+  );
+  sqlx::query("UPDATE builds SET trigger_occurrence_id=NULL, factory_origin=$1, factory_materialization_digest=decode(repeat('41',32),'hex'), factory_permission_digest=decode(repeat('42',32),'hex') WHERE id=$2")
+    .bind(sqlx::types::Json(&origin))
+    .bind(build_id.as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  sqlx::query("DELETE FROM trigger_occurrences WHERE id=$1")
+    .bind(fixture.request.trigger.id.as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  let restarted = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  let restored = restarted.build(build_id).await.unwrap();
+  assert_eq!(
+    restored.origin,
+    octacity_server_store::BuildOrigin::Factory(origin.clone())
+  );
+  assert_eq!(restored.build, fixture.request.build);
+  assert_eq!(
+    restarted.latest_attempt(build_id).await.unwrap().jobs.len(),
+    fixture.request.jobs.len()
+  );
+  let page = octacity_server_store::BuildDiscoveryStore::list_project_builds(
+    &PostgresStore::new(database.pool.clone()),
+    octacity_server_store::ListProjectBuilds::new(
+      fixture.request.build.project_id,
+      Default::default(),
+      None,
+      10,
+      octacity_server_store::BuildListVisibility::all(),
+    )
+    .unwrap(),
+  )
+  .await
+  .unwrap();
+  assert_eq!(
+    page.items.len(),
+    1,
+    "Factory Builds remain visible in ordinary Project discovery"
+  );
+  assert_eq!(
+    page.items[0].origin,
+    octacity_server_store::BuildSummaryOrigin::Factory(origin)
+  );
+  database.cleanup().await;
+}
+
 struct PostgresEvidenceProbe(PgPool);
 
 #[async_trait]

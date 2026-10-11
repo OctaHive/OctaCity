@@ -8,24 +8,35 @@ use crate::{
 use async_trait::async_trait;
 use octacity_server_domain::{
   AttemptId, AttemptNumber, AttemptVersion, BuildId, BuildVersion, PipelineId, PipelineVersion, RepositoryVersion,
-  TriggerId, TriggerIdentity, TriggerOccurrenceId, TriggerVersion,
 };
 use octacity_server_factory as factory;
 use octacity_server_factory::*;
 use octacity_server_orchestrator::{AttemptState, BuildState};
 use octacity_server_store::{
-  AttemptRecord, BuildQueryStore, BuildRecord, BuildRetentionDeadlines, ImmutableBuildInput,
-  NormalizedTriggerOccurrence, StoreError, TriggerCause, TriggerDefinitionRef, TriggerMetadata, TriggerOccurrenceState,
-  TriggerTarget,
+  AttemptRecord, BuildQueryStore, BuildRecord, BuildRetentionDeadlines, ImmutableBuildInput, StoreError,
 };
 use std::sync::Mutex;
 
+/// The caller advances deterministic fixture time through the public owner call.
+/// Tests for time elapsing inside a capability supply their own moving clock.
+pub(crate) fn clock() -> std::sync::Arc<dyn crate::FactoryExecutionClock> {
+  struct FixtureClock;
+  impl crate::FactoryExecutionClock for FixtureClock {
+    fn now(&self) -> Result<octacity_server_domain::Timestamp, crate::ApplicationError> {
+      Ok(time(0))
+    }
+  }
+  std::sync::Arc::new(FixtureClock)
+}
+
 pub(crate) struct Builds {
+  pub(crate) origin_override: Mutex<Option<octacity_server_store::BuildOrigin>>,
   pub(crate) created_at: octacity_server_domain::Timestamp,
   pub(crate) requests: Mutex<Vec<CreateFactoryBuild>>,
   pub(crate) acceptance: FactoryBuildAcceptance,
   pub(crate) state: Mutex<BuildState>,
   pub(crate) latest: Mutex<Option<AttemptRecord>>,
+  pub(crate) previous: Mutex<Vec<AttemptRecord>>,
   pub(crate) lose_response: std::sync::atomic::AtomicBool,
 }
 impl Builds {
@@ -34,6 +45,7 @@ impl Builds {
   }
   pub(crate) fn new_at(created_at: octacity_server_domain::Timestamp) -> Self {
     Self {
+      origin_override: Mutex::new(None),
       created_at,
       requests: Mutex::new(vec![]),
       acceptance: FactoryBuildAcceptance {
@@ -44,6 +56,7 @@ impl Builds {
       },
       state: Mutex::new(BuildState::Queued),
       latest: Mutex::new(None),
+      previous: Mutex::new(vec![]),
       lose_response: std::sync::atomic::AtomicBool::new(false),
     }
   }
@@ -77,6 +90,21 @@ impl OrdinaryBuildApplication for Builds {
 }
 
 #[async_trait]
+impl crate::OrdinaryBuildCancellationApplication for Builds {
+  async fn cancel_factory_build(
+    &self,
+    request: crate::CancelFactoryBuild,
+  ) -> Result<(), OrdinaryBuildApplicationError> {
+    let accepted = self.factory_build_for_operation(request.build_operation_id).await?;
+    if accepted.is_none_or(|accepted| accepted.build_id != request.build_id) {
+      return Err(OrdinaryBuildApplicationError::Invalid);
+    }
+    *self.state.lock().unwrap() = BuildState::Cancelled;
+    Ok(())
+  }
+}
+
+#[async_trait]
 impl BuildQueryStore for Builds {
   async fn build(&self, build_id: BuildId) -> Result<BuildRecord, StoreError> {
     let request = self.requests.lock().unwrap()[0].clone();
@@ -85,22 +113,14 @@ impl BuildQueryStore for Builds {
       return Err(StoreError::Unavailable);
     }
     let state = *self.state.lock().unwrap();
-    let trigger = NormalizedTriggerOccurrence::root(
-      TriggerOccurrenceId::generate(),
-      TriggerDefinitionRef {
-        id: TriggerId::generate(),
-        version: TriggerVersion::INITIAL,
-      },
-      TriggerTarget {
-        configuration_id: configuration.id(),
-        configuration_version: configuration.version(),
-      },
-      TriggerIdentity::new("factory-build-fixture").unwrap(),
-      TriggerCause::Manual {},
-      TriggerMetadata::default(),
-      self.created_at,
-    )
-    .unwrap();
+    let origin = self.origin_override.lock().unwrap().clone().unwrap_or_else(|| {
+      octacity_server_store::BuildOrigin::Factory(octacity_server_store::FactoryBuildOrigin {
+        operation_id: request.operation_id,
+        run_id: request.causality.run_id,
+        node_attempt_id: request.causality.node_attempt_id,
+        input_digest: request.causality.input_digest,
+      })
+    });
     Ok(BuildRecord {
       build: ImmutableBuildInput {
         id: build_id,
@@ -125,21 +145,50 @@ impl BuildQueryStore for Builds {
       },
       state,
       version: BuildVersion::INITIAL,
-      trigger,
-      trigger_state: TriggerOccurrenceState::Accepted,
-      trigger_created_at: self.created_at,
-      trigger_updated_at: self.created_at,
+      origin,
       created_at: self.created_at,
       updated_at: self.created_at,
     })
   }
 
-  async fn attempt(&self, _attempt_id: AttemptId) -> Result<AttemptRecord, StoreError> {
-    self.latest_attempt(self.acceptance.build_id).await
+  async fn attempt(&self, attempt_id: AttemptId) -> Result<AttemptRecord, StoreError> {
+    if let Some(attempt) = self.previous.lock().unwrap().iter().find(|row| row.id == attempt_id) {
+      return Ok(attempt.clone());
+    }
+    let latest = self.latest_attempt(self.acceptance.build_id).await?;
+    if latest.id != attempt_id {
+      return Err(StoreError::Unavailable);
+    }
+    Ok(latest)
   }
 
-  async fn job(&self, _job_id: octacity_server_domain::JobId) -> Result<octacity_server_store::JobRecord, StoreError> {
-    Err(StoreError::Unavailable)
+  async fn job(&self, job_id: octacity_server_domain::JobId) -> Result<octacity_server_store::JobRecord, StoreError> {
+    if let Some(attempt) = self.latest.lock().unwrap().as_ref()
+      && let Some(job) = attempt.jobs.iter().find(|job| job.id() == job_id)
+    {
+      return Ok(job.clone());
+    }
+    if let Some(job) = self
+      .previous
+      .lock()
+      .unwrap()
+      .iter()
+      .flat_map(|attempt| &attempt.jobs)
+      .find(|job| job.id() == job_id)
+    {
+      return Ok(job.clone());
+    }
+    if !self.acceptance.job_ids.contains(&job_id) {
+      return Err(StoreError::Unavailable);
+    }
+    let state = match *self.state.lock().unwrap() {
+      BuildState::Queued => octacity_server_job::JobState::Ready,
+      BuildState::Running => octacity_server_job::JobState::Running,
+      BuildState::Succeeded => octacity_server_job::JobState::Succeeded,
+      BuildState::Failed => octacity_server_job::JobState::Failed,
+      BuildState::Cancelled => octacity_server_job::JobState::Cancelled,
+    };
+    Ok(job_record(self, self.acceptance.attempt_id, job_id, state))
   }
 
   async fn latest_attempt(&self, build_id: BuildId) -> Result<AttemptRecord, StoreError> {
@@ -165,7 +214,25 @@ impl BuildQueryStore for Builds {
       version: AttemptVersion::INITIAL,
       created_at: self.created_at,
       updated_at: self.created_at,
-      jobs: Vec::new(),
+      jobs: self
+        .acceptance
+        .job_ids
+        .iter()
+        .map(|id| {
+          job_record(
+            self,
+            self.acceptance.attempt_id,
+            *id,
+            match state {
+              AttemptState::Created => octacity_server_job::JobState::Ready,
+              AttemptState::Running => octacity_server_job::JobState::Running,
+              AttemptState::Succeeded => octacity_server_job::JobState::Succeeded,
+              AttemptState::Failed => octacity_server_job::JobState::Failed,
+              AttemptState::Cancelled => octacity_server_job::JobState::Cancelled,
+            },
+          )
+        })
+        .collect(),
     })
   }
 }
@@ -173,6 +240,14 @@ impl BuildQueryStore for Builds {
 pub(crate) struct Outputs(pub(crate) Option<FactoryNodeBuildOutputs>);
 #[async_trait]
 impl FactoryNodeBuildOutputSource for Outputs {
+  async fn terminal_usage(
+    &self,
+    _: octacity_server_domain::BuildId,
+    _: octacity_server_domain::AttemptId,
+  ) -> Result<BudgetUsage, OrdinaryBuildApplicationError> {
+    panic!("terminal consumption must be supplied explicitly by this fixture")
+  }
+
   async fn published_outputs(
     &self,
     build: octacity_server_domain::BuildId,
@@ -269,6 +344,54 @@ fn reference(value: &str) -> ImmutableReference {
 pub(crate) fn complete_ordinary_retry(builds: &Builds) -> (AttemptId, octacity_server_domain::JobId) {
   let attempt_id = AttemptId::generate();
   let job_id = octacity_server_domain::JobId::generate();
+  builds.previous.lock().unwrap().push(AttemptRecord {
+    id: builds.acceptance.attempt_id,
+    build_id: builds.acceptance.build_id,
+    number: AttemptNumber::FIRST,
+    retry_of_attempt_id: None,
+    state: AttemptState::Failed,
+    version: AttemptVersion::INITIAL,
+    created_at: builds.created_at,
+    updated_at: builds.created_at,
+    jobs: builds
+      .acceptance
+      .job_ids
+      .iter()
+      .map(|id| {
+        job_record(
+          builds,
+          builds.acceptance.attempt_id,
+          *id,
+          octacity_server_job::JobState::Failed,
+        )
+      })
+      .collect(),
+  });
+  *builds.latest.lock().unwrap() = Some(AttemptRecord {
+    id: attempt_id,
+    build_id: builds.acceptance.build_id,
+    number: AttemptNumber::new(2).unwrap(),
+    retry_of_attempt_id: Some(builds.acceptance.attempt_id),
+    state: AttemptState::Succeeded,
+    version: AttemptVersion::INITIAL,
+    created_at: builds.created_at,
+    updated_at: builds.created_at,
+    jobs: vec![job_record(
+      builds,
+      attempt_id,
+      job_id,
+      octacity_server_job::JobState::Succeeded,
+    )],
+  });
+  (attempt_id, job_id)
+}
+
+fn job_record(
+  builds: &Builds,
+  attempt_id: AttemptId,
+  job_id: octacity_server_domain::JobId,
+  state: octacity_server_job::JobState,
+) -> octacity_server_store::JobRecord {
   let job = octacity_server_store::MaterializedJob::new(
     job_id,
     octacity_server_domain::PipelineNodeId::new("configured_node").unwrap(),
@@ -293,27 +416,66 @@ pub(crate) fn complete_ordinary_retry(builds: &Builds) -> (AttemptId, octacity_s
     .unwrap(),
   )
   .unwrap();
-  *builds.latest.lock().unwrap() = Some(AttemptRecord {
-    id: attempt_id,
-    build_id: builds.acceptance.build_id,
-    number: AttemptNumber::new(2).unwrap(),
-    retry_of_attempt_id: Some(builds.acceptance.attempt_id),
-    state: AttemptState::Succeeded,
-    version: AttemptVersion::INITIAL,
+  octacity_server_store::JobRecord {
+    attempt_id,
+    job,
+    state,
+    version: octacity_server_domain::JobVersion::INITIAL,
     created_at: builds.created_at,
     updated_at: builds.created_at,
-    jobs: vec![octacity_server_store::JobRecord {
-      attempt_id,
-      job,
-      state: octacity_server_job::JobState::Succeeded,
-      version: octacity_server_domain::JobVersion::INITIAL,
-      created_at: builds.created_at,
-      updated_at: builds.created_at,
-      queue: None,
-      assignment: None,
-      terminal: None,
-      event_cursor: 0,
-    }],
-  });
-  (attempt_id, job_id)
+    queue: None,
+    assignment: None,
+    terminal: None,
+    event_cursor: 0,
+  }
+}
+
+/// Prepares explicitly selected candidate context without any logical stage role.
+pub(crate) fn input_with_candidate_context(
+  admitted: &AdmittedFlow,
+  input: FlowNodeInput,
+  node: &NodeAttempt,
+  candidate: CandidateSubject,
+) -> (FlowNodeInput, NodeAttempt) {
+  let previous = input.context().unwrap();
+  let subject = FactoryTaskSubject::Candidate(candidate);
+  let entries = previous
+    .entries()
+    .iter()
+    .map(|entry| {
+      ContextManifestEntry::new(
+        entry.source_kind(),
+        entry.logical_identity().clone(),
+        subject.clone(),
+        entry.source().clone(),
+        entry.content_digest(),
+        entry.encoded_size(),
+        entry.inclusion_reason().clone(),
+        entry.provenance_digest(),
+      )
+      .unwrap()
+    })
+    .collect();
+  let context = ContextManifest::new(previous.id(), subject, previous.construction_policy_digest(), entries).unwrap();
+  let input = input.with_context(context, vec![]).unwrap();
+  let definition = admitted.closure().definition(input.definition()).unwrap();
+  let updated = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    definition,
+    NodeAttemptInput {
+      started_at: node.started_at(),
+      id: node.id(),
+      node_key: node.node_key().clone(),
+      node_kind: node.node_kind(),
+      number: node.number(),
+      input_digest: input.digest().unwrap(),
+      budget: node.budget(),
+      deadline: node.deadline(),
+      execution: node.execution().clone(),
+      ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
+    },
+  )
+  .unwrap();
+  (input, updated)
 }

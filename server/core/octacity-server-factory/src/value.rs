@@ -182,7 +182,6 @@ sequence!(FactoryRunVersion, "Positive optimistic Factory Run version.");
 sequence!(FlowDefinitionVersion, "Positive immutable Flow Definition version.");
 sequence!(NodeAttemptNumber, "Positive append-only Node Attempt number.");
 sequence!(WorkflowCycleNumber, "Positive append-only Workflow Cycle number.");
-sequence!(StageAttemptNumber, "Positive append-only Stage Attempt number.");
 sequence!(DeliveryAttemptNumber, "Positive append-only delivery attempt number.");
 sequence!(
   ReportingAttemptNumber,
@@ -572,7 +571,6 @@ mod tests {
   #[test]
   fn positive_sequences_reject_zero() {
     assert_eq!(FactoryConfigurationVersion::new(0), Err(FactoryError::InvalidSequence));
-    assert_eq!(StageAttemptNumber::new(1).expect("one is valid").get(), 1);
   }
 
   #[test]

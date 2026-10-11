@@ -465,6 +465,7 @@ fn declared_outcomes_can_share_one_bounded_output_mapping_with_explicit_override
       admitted.initial_cycle(),
       definition,
       NodeAttemptInput {
+        started_at: (owner).claim().claimed_at(),
         id: NodeAttemptId::generate(),
         node_key: input.node().clone(),
         node_kind: FlowNodeKind::DeterministicGate,

@@ -1,68 +1,54 @@
 use octacity_server_domain::{ArtifactId, ImmutableRevision, ProjectId, RepositoryId};
 
-use crate::{
-  BudgetLimit, CandidateSubject, ChangeSet, ChangeSetId, ExactSubject, FactoryArtifactReference, FactoryClaim,
-  FactoryClaimFence, FactoryClaimOwnership, FactoryConfigurationId, FactoryConfigurationRef,
-  FactoryConfigurationVersion, FactoryDigest, FactoryError, FactoryKey, FactoryMetadata, FactoryRun, FactoryRunId,
-  FactoryStageTarget, RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber, WorkArtifacts, WorkClassification,
-  WorkEnvelope, WorkEnvelopeId, WorkPriority,
-};
+use crate::{CandidateSubject, ChangeSet, ChangeSetId, ExactSubject, FactoryDigest, FactoryError};
 
 fn digest(byte: u8) -> FactoryDigest {
   FactoryDigest::from_bytes([byte; 32])
 }
 
-fn artifact(byte: u8) -> FactoryArtifactReference {
-  FactoryArtifactReference::new(ArtifactId::generate(), digest(byte), 1).expect("fixture artifact")
-}
-
-fn stage() -> StageAttempt {
-  let subject = ExactSubject::new(
-    ProjectId::generate(),
-    RepositoryId::generate(),
-    ImmutableRevision::new("base").expect("fixture revision"),
+#[test]
+fn a_candidate_binds_to_a_frozen_arbitrary_node_without_a_stage_role() {
+  let (work, _, _, input, node) = crate::flow_test_support::execution_fixture(crate::FlowNodeKind::BuildCommand);
+  let subject = CandidateSubject::new(
+    work.subject().clone(),
+    ImmutableRevision::new("candidate").unwrap(),
+    digest(3),
   );
-  let configuration = FactoryConfigurationRef::new(
-    FactoryConfigurationId::generate(),
-    FactoryConfigurationVersion::INITIAL,
-    subject.project_id(),
-    digest(1),
+  let candidate = ChangeSet::new(
+    ChangeSetId::generate(),
+    &input,
+    &node,
+    subject.clone(),
+    ArtifactId::generate(),
+    ArtifactId::generate(),
+  )
+  .unwrap();
+  assert_eq!(candidate.node_attempt_id(), node.id());
+  assert_eq!(candidate.subject(), &subject);
+  let mut legacy = serde_json::to_value(&candidate).unwrap();
+  legacy["stage_attempt_id"] = serde_json::json!("00000000-0000-0000-0000-000000000123");
+  assert!(
+    serde_json::from_value::<ChangeSet>(legacy).is_err(),
+    "the removed stage identity is not an accepted candidate field"
   );
-  let work = WorkEnvelope::new(
-    WorkEnvelopeId::generate(),
-    configuration,
-    crate::ExternalWorkIdentity::new("source/1").expect("fixture identity"),
-    subject,
-    WorkArtifacts::new(artifact(90), artifact(91), vec![]).expect("fixture artifacts"),
-    WorkClassification::new(
-      WorkPriority::new(1).expect("fixture priority"),
-      RiskClass::Low,
-      FactoryMetadata::default(),
-    ),
-  )
-  .expect("fixture work");
-  StageAttempt::new(
-    StageAttemptId::generate(),
-    &FactoryRun::admitted(FactoryRunId::generate(), &work),
-    StageAttemptNumber::INITIAL,
-    FactoryStageTarget::Implementation,
-    BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture budget"),
-    digest(2),
-    FactoryClaimOwnership::new(
-      FactoryKey::new("worker").expect("fixture owner"),
-      FactoryClaim::new(
-        FactoryClaimFence::new(digest(9)),
-        octacity_server_domain::Timestamp::from_unix_millis(1).expect("fixture claim start"),
-        octacity_server_domain::Timestamp::from_unix_millis(2).expect("fixture claim deadline"),
-      )
-      .expect("fixture claim"),
-    ),
-  )
+  let (_, _, _, unrelated, _) = crate::flow_test_support::execution_fixture(crate::FlowNodeKind::BuildCommand);
+  assert!(
+    ChangeSet::new(
+      ChangeSetId::generate(),
+      &unrelated,
+      &node,
+      subject,
+      ArtifactId::generate(),
+      ArtifactId::generate()
+    )
+    .is_err(),
+    "a candidate cannot replace its exact frozen producing input"
+  );
 }
 
 #[test]
 fn changeset_rejects_a_candidate_for_another_exact_subject() {
-  let stage = stage();
+  let (_, _, _, input, node) = crate::flow_test_support::execution_fixture(crate::FlowNodeKind::BuildCommand);
   let other = ExactSubject::new(
     ProjectId::generate(),
     RepositoryId::generate(),
@@ -71,7 +57,8 @@ fn changeset_rejects_a_candidate_for_another_exact_subject() {
   assert_eq!(
     ChangeSet::new(
       ChangeSetId::generate(),
-      &stage,
+      &input,
+      &node,
       CandidateSubject::new(
         other,
         ImmutableRevision::new("candidate").expect("fixture revision"),

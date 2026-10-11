@@ -40,6 +40,7 @@ fn accepted_work_is_frozen_by_a_configured_deterministic_outcome_with_exact_work
     admitted.limits().clone(),
     flow,
     cycle,
+    crate::FactoryWipLimits::new(8, 16).unwrap(),
   )
   .unwrap()
   .with_data_schemas(vec![schema.clone()])
@@ -64,6 +65,7 @@ fn accepted_work_is_frozen_by_a_configured_deterministic_outcome_with_exact_work
     admitted.initial_cycle(),
     &definition,
     NodeAttemptInput {
+      started_at: (owner.clone()).claim().claimed_at(),
       id: NodeAttemptId::generate(),
       node_key: input.node().clone(),
       node_kind: FlowNodeKind::DeterministicGate,
@@ -83,6 +85,7 @@ fn accepted_work_is_frozen_by_a_configured_deterministic_outcome_with_exact_work
   let attempts = [attempt.clone()];
   let completions = [completion];
   let runtime = FlowRuntimeHistory {
+    stops: &[],
     flow_runs: std::slice::from_ref(admitted.root_run()),
     cycles: std::slice::from_ref(admitted.initial_cycle()),
     attempts: &attempts,
@@ -206,6 +209,7 @@ fn accepting_gate_cannot_commit_an_oversized_accepted_work_projection() {
     FlowAdmissionLimits::product_defaults(1, budget, FactoryPermissionSet::deny_all()).unwrap(),
     flow,
     cycle,
+    crate::FactoryWipLimits::new(8, 16).unwrap(),
   )
   .unwrap()
   .with_data_schemas(vec![schema.clone()])
@@ -231,6 +235,7 @@ fn accepting_gate_cannot_commit_an_oversized_accepted_work_projection() {
       admitted.initial_cycle(),
       &definition,
       NodeAttemptInput {
+        started_at: (owner.clone()).claim().claimed_at(),
         id: NodeAttemptId::generate(),
         node_key: key("accept"),
         node_kind: FlowNodeKind::DeterministicGate,
@@ -259,6 +264,7 @@ fn accepting_gate_cannot_commit_an_oversized_accepted_work_projection() {
     ..Default::default()
   };
   let runtime = FlowRuntimeHistory {
+    stops: &[],
     flow_runs: std::slice::from_ref(admitted.root_run()),
     cycles: std::slice::from_ref(admitted.initial_cycle()),
     attempts: std::slice::from_ref(&attempt),

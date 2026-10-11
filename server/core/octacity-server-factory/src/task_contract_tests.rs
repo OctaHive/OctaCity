@@ -10,8 +10,7 @@ use crate::{
   FactoryTaskDeliverable, FactoryTaskEnvelope, FactoryTaskMode, FactoryTaskResultSchema, FactoryTaskSubject,
   FactoryTaskToolchain, FactoryText, FindingSeverity, ImmutableReference, ImplementationOutcome, ImplementationResult,
   MAX_CONTEXT_ENTRY_BYTES, MAX_CONTEXT_MANIFEST_ENTRIES, RepositoryFragment, RetrievalReceipt, RetrievalReceiptId,
-  StageAttemptId, StageHandoff, StageHandoffContent, StageHandoffDeclaration, StageHandoffId, StageHandoffOutcome,
-  StageHandoffReferences, TaskEnvelopeId,
+  TaskEnvelopeId,
 };
 
 fn digest(byte: u8) -> FactoryDigest {
@@ -122,7 +121,7 @@ fn envelope_with_deliverables(
   FactoryTaskEnvelope::new(
     FactoryTaskDeclaration {
       id: TaskEnvelopeId::generate(),
-      stage_attempt_id: StageAttemptId::generate(),
+      node_attempt_id: crate::NodeAttemptId::generate(),
       subject,
       mode,
     },
@@ -409,43 +408,6 @@ fn implementation_and_evaluation_results_enforce_subject_and_outcome_contracts()
 }
 
 #[test]
-fn handoffs_are_bounded_secret_free_and_round_trip_canonically() {
-  let exact = exact_subject();
-  let candidate = candidate_subject(&exact);
-  let subject = FactoryTaskSubject::Candidate(candidate);
-  let handoff = StageHandoff::new(
-    StageHandoffDeclaration {
-      id: StageHandoffId::generate(),
-      stage_attempt_id: StageAttemptId::generate(),
-      subject: subject.clone(),
-      outcome: StageHandoffOutcome::Succeeded,
-    },
-    StageHandoffContent {
-      summary: BoundedSummary::new(subject, text("Implementation completed"), digest(40)),
-      decisions: vec![text("Keep the existing public contract")],
-      assumptions: vec![text("The migration runs before workers")],
-      unresolved_items: vec![text("Review deployment capacity")],
-      changed_components: vec![FactoryRepositoryPath::new("server/core/src/lib.rs").unwrap()],
-      validation_observations: vec![text("Unit tests passed")],
-      prior_findings: vec![digest(41)],
-    },
-    StageHandoffReferences {
-      artifacts: vec![artifact(42)],
-      changeset_id: Some(crate::ChangeSetId::generate()),
-      evidence_manifest_id: None,
-      result_digest: digest(43),
-      policy_digest: digest(44),
-      provenance_digest: digest(45),
-    },
-  )
-  .expect("handoff");
-
-  let decoded: StageHandoff = serde_json::from_slice(&handoff.canonical_bytes().unwrap()).unwrap();
-  assert_eq!(decoded, handoff);
-  assert_eq!(decoded.digest().unwrap(), handoff.digest().unwrap());
-}
-
-#[test]
 fn retrieval_receipts_freeze_exact_ranked_fragments_for_context() {
   let subject = exact_subject();
   let revision = subject.exact().base_revision().clone();
@@ -682,4 +644,85 @@ fn retrieval_fragment(
     FactoryArtifactReference::new(ArtifactId::generate(), digest(digest_byte), encoded_size).unwrap(),
   )
   .unwrap()
+}
+
+#[test]
+fn a_task_envelope_binds_the_common_node_attempt_and_rejects_a_stage_owner() {
+  let original = envelope(exact_subject(), FactoryTaskMode::Implement);
+  let mut wire = serde_json::to_value(&original).unwrap();
+  let node = crate::NodeAttemptId::generate();
+  wire.as_object_mut().unwrap().remove("stage_attempt_id");
+  wire["node_attempt_id"] = serde_json::to_value(node).unwrap();
+  let restored: FactoryTaskEnvelope = serde_json::from_value(wire.clone()).unwrap();
+  assert_eq!(restored.node_attempt_id(), node);
+  assert_eq!(restored.subject(), original.subject());
+  wire["stage_attempt_id"] = serde_json::json!("00000000-0000-0000-0000-000000000123");
+  assert!(serde_json::from_value::<FactoryTaskEnvelope>(wire).is_err());
+}
+
+#[test]
+fn task_authority_is_verified_against_the_common_build_intent_and_frozen_context() {
+  let (_, admitted, _, input, attempt) = crate::flow_test_support::execution_fixture(crate::FlowNodeKind::Reasoning);
+  let intent = crate::FlowBuildIntent::new(input, &admitted, attempt, crate::BudgetUsage::default(), 0).unwrap();
+  let context = intent.input().context().unwrap();
+  let make = |selected| {
+    FactoryTaskEnvelope::new(
+      FactoryTaskDeclaration {
+        id: TaskEnvelopeId::generate(),
+        node_attempt_id: intent.node().id(),
+        subject: FactoryTaskSubject::Exact(intent.input().subject().clone()),
+        mode: FactoryTaskMode::Implement,
+      },
+      FactoryTaskDefinition {
+        task: selected,
+        specifications: vec![],
+        prior_findings: vec![],
+        permissions: FactoryPermissionSet::deny_all(),
+        budget: intent.budget(),
+        result_schema: FactoryTaskResultSchema::ImplementationV1,
+        deliverables: vec![FactoryTaskDeliverable::new(
+          key("result"),
+          FactoryRepositoryPath::new("result.json").unwrap(),
+          true,
+        )],
+      },
+      context,
+      FactoryTaskToolchain {
+        plugin: intent.profile().plugin.clone(),
+        executable: intent.profile().tool.clone(),
+        model: intent.profile().model_or_tool.clone(),
+      },
+      FactoryTaskControlDigests {
+        policy: digest(1),
+        prompt: digest(2),
+        prompt_provenance: digest(3),
+        provenance: digest(4),
+      },
+    )
+    .unwrap()
+  };
+  let selected = context
+    .entries()
+    .iter()
+    .find_map(|entry| match entry.source() {
+      FactoryContextReference::Artifact(reference) if entry.source_kind() == ContextSourceKind::Task => {
+        Some(reference.clone())
+      }
+      _ => None,
+    })
+    .unwrap();
+  let task = make(selected);
+  task.verify_build_intent(&intent).unwrap();
+  assert!(
+    make(artifact(99)).verify_build_intent(&intent).is_err(),
+    "a task body not selected in frozen Context cannot replace the admitted instruction"
+  );
+  let mut foreign = serde_json::to_value(&task).unwrap();
+  foreign["node_attempt_id"] = serde_json::to_value(crate::NodeAttemptId::generate()).unwrap();
+  let foreign: FactoryTaskEnvelope = serde_json::from_value(foreign).unwrap();
+  assert!(foreign.verify_build_intent(&intent).is_err());
+  let mut foreign = serde_json::to_value(&task).unwrap();
+  foreign["model"] = serde_json::to_value(reference("unselected.model", 88)).unwrap();
+  let foreign: FactoryTaskEnvelope = serde_json::from_value(foreign).unwrap();
+  assert!(foreign.verify_build_intent(&intent).is_err());
 }

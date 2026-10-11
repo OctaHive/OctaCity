@@ -1,8 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  BudgetLimit, FactoryDigest, FactoryError, FactoryKey, FactoryPermissionSet, ImmutableReference,
-  MAX_FACTORY_ACTIVE_STAGES,
+  BudgetLimit, FactoryError, FactoryKey, FactoryPermissionSet, ImmutableReference, MAX_FACTORY_ACTIVE_NODES,
 };
 
 /// Maximum permitted nesting depth of one admitted Flow Definition closure.
@@ -318,7 +317,7 @@ impl FlowExecutionPolicy {
     permissions: FactoryPermissionSet,
     max_active_nodes: u16,
   ) -> Result<Self, FactoryError> {
-    if max_active_nodes == 0 || u32::from(max_active_nodes) > MAX_FACTORY_ACTIVE_STAGES {
+    if max_active_nodes == 0 || u32::from(max_active_nodes) > MAX_FACTORY_ACTIVE_NODES {
       return Err(FactoryError::InvalidConfiguration {
         field: "Flow WIP bound",
       });
@@ -382,7 +381,7 @@ impl FlowAdmissionLimits {
       || max_fan_out == 0
       || max_fan_out > MAX_FLOW_FAN_OUT
       || max_wip == 0
-      || u32::from(max_wip) > MAX_FACTORY_ACTIVE_STAGES
+      || u32::from(max_wip) > MAX_FACTORY_ACTIVE_NODES
     {
       return Err(FactoryError::InvalidConfiguration {
         field: "Flow admission limits",
@@ -457,11 +456,4 @@ impl FlowAdmissionLimits {
   pub const fn permissions(&self) -> &FactoryPermissionSet {
     &self.permissions
   }
-}
-
-pub(crate) fn internal_schema(identity: &str) -> Result<ImmutableReference, FactoryError> {
-  let identity = FactoryKey::new(identity)?;
-  let version = FactoryKey::new("v1")?;
-  let digest = FactoryDigest::sha256("octacity.factory.flow-schema.v1", &[identity.as_str().as_bytes()]);
-  Ok(ImmutableReference::new(identity, version, digest))
 }

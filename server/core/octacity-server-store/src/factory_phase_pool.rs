@@ -211,55 +211,52 @@ pub fn derive_phase_pool_entry(
   snapshot: &FactoryRunSnapshot,
 ) -> Result<PhasePoolEntry, StoreError> {
   policy.validate().map_err(|_| pool_invalid())?;
-  if !snapshot.admitted_flow.data_schemas().is_empty() {
-    let settings = snapshot
-      .admitted_flow
-      .pool_settings()
-      .get(&policy.phase)
-      .ok_or_else(pool_invalid)?;
-    let frozen = snapshot
-      .flow
-      .data
-      .inputs
-      .iter()
-      .find(|frozen| {
-        frozen.flow_run_id() == input.flow_run_id
-          && frozen.cycle_id() == input.cycle_id
-          && frozen.node() == &input.node
-          && frozen.digest().ok() == Some(input.phase_input_digest)
-      })
-      .ok_or_else(pool_invalid)?;
-    let selection = settings
-      .selection
-      .project(frozen.payload(), &pool_selection_schema()?)
-      .map_err(|_| pool_invalid())?;
-    let mut facts: PoolSelectionFacts =
-      serde_json::from_value(selection.value().clone()).map_err(|_| pool_invalid())?;
-    facts.dependencies.sort_by_key(|dependency| dependency.run_id);
-    let budget = snapshot
-      .admitted_flow
-      .closure()
-      .definition(frozen.definition())
-      .and_then(|definition| definition.node(frozen.node()))
-      .ok_or_else(pool_invalid)?
-      .budget();
-    let reservation = BudgetUsage {
-      attempts: budget.max_attempts(),
-      elapsed_millis: budget.max_elapsed_millis(),
-      tokens: budget.max_tokens(),
-      cost_micro_units: budget.max_cost_micro_units(),
-      output_bytes: budget.max_output_bytes(),
-    };
-    if &settings.policy != policy
-      || input.project_priority != settings.project_priority
-      || input.capabilities != settings.capabilities
-      || input.severity != facts.severity
-      || input.dependencies != facts.dependencies
-      || input.reservation != reservation
-      || input.generation != frozen.generation()
-    {
-      return Err(pool_invalid());
-    }
+  let settings = snapshot
+    .admitted_flow
+    .pool_settings()
+    .get(&policy.phase)
+    .ok_or_else(pool_invalid)?;
+  let frozen = snapshot
+    .flow
+    .data
+    .inputs
+    .iter()
+    .find(|frozen| {
+      frozen.flow_run_id() == input.flow_run_id
+        && frozen.cycle_id() == input.cycle_id
+        && frozen.node() == &input.node
+        && frozen.digest().ok() == Some(input.phase_input_digest)
+    })
+    .ok_or_else(pool_invalid)?;
+  let selection = settings
+    .selection
+    .project(frozen.payload(), &pool_selection_schema()?)
+    .map_err(|_| pool_invalid())?;
+  let mut facts: PoolSelectionFacts = serde_json::from_value(selection.value().clone()).map_err(|_| pool_invalid())?;
+  facts.dependencies.sort_by_key(|dependency| dependency.run_id);
+  let budget = snapshot
+    .admitted_flow
+    .closure()
+    .definition(frozen.definition())
+    .and_then(|definition| definition.node(frozen.node()))
+    .ok_or_else(pool_invalid)?
+    .budget();
+  let reservation = BudgetUsage {
+    attempts: budget.max_attempts(),
+    elapsed_millis: budget.max_elapsed_millis(),
+    tokens: budget.max_tokens(),
+    cost_micro_units: budget.max_cost_micro_units(),
+    output_bytes: budget.max_output_bytes(),
+  };
+  if &settings.policy != policy
+    || input.project_priority != settings.project_priority
+    || input.capabilities != settings.capabilities
+    || input.severity != facts.severity
+    || input.dependencies != facts.dependencies
+    || input.reservation != reservation
+    || input.generation != frozen.generation()
+  {
+    return Err(pool_invalid());
   }
   let checkpoint = snapshot
     .lifecycle_checkpoints
@@ -314,9 +311,7 @@ pub fn derive_phase_pool_entry(
     .definition(flow.definition())
     .ok_or_else(pool_invalid)?;
   let node = definition.node(&input.node).ok_or_else(pool_invalid)?;
-  if node.phase_pool().is_some_and(|phase| phase != &policy.phase)
-    || !snapshot.admitted_flow.data_schemas().is_empty() && node.phase_pool() != Some(&policy.phase)
-  {
+  if node.phase_pool() != Some(&policy.phase) {
     return Err(pool_invalid());
   }
   input.reservation.validate(node.budget()).map_err(|_| pool_invalid())?;
@@ -342,14 +337,7 @@ pub fn derive_phase_pool_entry(
         .find(|attempt| attempt.id() == completion.node_attempt_id())
         .ok_or_else(pool_invalid)?;
       let directives = interpreter
-        .advance(
-          flow,
-          cycle,
-          attempt,
-          completion,
-          &snapshot.flow.attempts,
-          &snapshot.flow.completions,
-        )
+        .advance(flow, cycle, attempt, completion, snapshot.flow.runtime())
         .map_err(|_| pool_invalid())?;
       ready |= directives.iter().any(|directive| {
         if !matches(directive) {
@@ -379,7 +367,6 @@ pub fn derive_phase_pool_entry(
       &snapshot.flow.cycles,
       &snapshot.flow.attempts,
       &snapshot.flow.completions,
-      snapshot.current.candidate_id,
     ),
   );
   let mut entry = PhasePoolEntry {
@@ -505,7 +492,7 @@ pub fn phase_pool_dependency_ready(
   };
   snapshot.flow.completions.iter().filter(|row| row.workflow_cycle_id() == cycle.id()).any(|completion| {
     snapshot.flow.attempts.iter().find(|attempt| attempt.id() == completion.node_attempt_id()).is_some_and(|attempt| {
-      FlowInterpreter::new(&validated).advance(root, cycle, attempt, completion, &snapshot.flow.attempts, &snapshot.flow.completions)
+      FlowInterpreter::new(&validated).advance(root, cycle, attempt, completion, snapshot.flow.runtime())
         .is_ok_and(|directives| directives.iter().any(|directive| matches!(directive, FlowDirective::Complete { terminal, .. } if terminal == &dependency.terminal)))
     })
   })
@@ -649,18 +636,7 @@ pub fn observe_phase_pool_candidate(
 }
 
 fn phase_pool_run_wip_ready(entry: &PhasePoolEntry, snapshot: &FactoryRunSnapshot) -> bool {
-  let active = snapshot
-    .flow
-    .attempts
-    .iter()
-    .filter(|attempt| {
-      !snapshot
-        .flow
-        .completions
-        .iter()
-        .any(|row| row.node_attempt_id() == attempt.id())
-    })
-    .collect::<Vec<_>>();
+  let active = snapshot.flow.runtime().active_nodes().collect::<Vec<_>>();
   let Some(flow) = snapshot
     .flow
     .runs
@@ -691,13 +667,9 @@ pub fn phase_pool_selection_active(
   snapshot: &FactoryRunSnapshot,
   _at: Timestamp,
 ) -> bool {
-  if snapshot.run.state().is_terminal()
-    || snapshot
-      .lifecycle_checkpoints
-      .iter()
-      .find(|row| row.id == snapshot.current.lifecycle_checkpoint_id)
-      .is_none_or(|row| row.cancellation_requested)
-  {
+  // A stop request fences new dispatch, but existing effects keep their
+  // reservation until the executor's receipt confirms that they have stopped.
+  if snapshot.run.state().is_terminal() {
     return false;
   }
   let targets = snapshot
@@ -707,11 +679,9 @@ pub fn phase_pool_selection_active(
     .filter(|attempt| {
       attempt.workflow_cycle_id() == selection.entry.input.cycle_id
         && attempt.node_key() == &selection.entry.input.node
-        && (snapshot.admitted_flow.data_schemas().is_empty()
-          || snapshot.flow.data.inputs.iter().any(|input| {
-            input.digest().ok() == Some(attempt.input_digest())
-              && input.generation() == selection.entry.input.generation
-          }))
+        && snapshot.flow.data.inputs.iter().any(|input| {
+          input.digest().ok() == Some(attempt.input_digest()) && input.generation() == selection.entry.input.generation
+        })
     })
     .collect::<Vec<_>>();
   if targets.is_empty() {
@@ -729,6 +699,12 @@ pub fn phase_pool_selection_active(
       .completions
       .iter()
       .any(|completion| completion.node_attempt_id() == attempt.id())
+      && !snapshot
+        .flow
+        .data
+        .stops
+        .iter()
+        .any(|receipt| receipt.node_attempt_id() == attempt.id())
   })
 }
 

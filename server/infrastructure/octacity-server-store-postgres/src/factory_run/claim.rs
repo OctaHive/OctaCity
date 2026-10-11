@@ -45,7 +45,7 @@ pub(crate) async fn claim_batch(
     "SELECT run.id FROM factory_runs AS run \
      JOIN factory_run_current AS current ON current.run_id = run.id \
      LEFT JOIN factory_run_claims AS claim ON claim.id = current.claim_id \
-     WHERE run.visible AND run.state NOT IN ('rejected', 'cancelled', 'completed') \
+     WHERE run.visible AND run.state NOT IN ('cancelled', 'completed') \
        AND (current.claim_id IS NULL OR claim.expires_at <= to_timestamp($1::double precision / 1000.0) \
          OR (claim.owner = $2 \
            AND claim.claimed_at = to_timestamp($1::double precision / 1000.0) \
@@ -209,27 +209,26 @@ fn batch_claim_audit(run_id: FactoryRunId, request: &ClaimFactoryRuns, claim_id:
   )
 }
 
-async fn wip_usage(
+pub(super) async fn wip_usage(
   transaction: &mut Transaction<'_, Postgres>,
   locked: &super::LockedRun,
 ) -> Result<FactoryWipUsage, StoreError> {
-  let rows = sqlx::query_as::<_, (serde_json::Value,)>(
-    "SELECT checkpoint.lifecycle FROM factory_runs AS run \
-     JOIN factory_run_current AS current ON current.run_id = run.id \
-     JOIN factory_lifecycle_checkpoints AS checkpoint ON checkpoint.id = current.lifecycle_checkpoint_id \
+  let (active_runs, active_nodes): (i64, i64) = sqlx::query_as(
+    "SELECT COUNT(*), COALESCE(SUM((SELECT COUNT(*) FROM factory_node_attempts AS node \
+       WHERE node.run_id = run.id AND node.node_kind <> 'subflow_call' \
+         AND NOT EXISTS (SELECT 1 FROM factory_node_attempt_completions AS completion WHERE completion.node_attempt_id = node.id) \
+         AND NOT EXISTS (SELECT 1 FROM factory_node_stops stop WHERE stop.node_attempt_id = node.id))), 0)::BIGINT \
+     FROM factory_runs AS run \
      WHERE run.factory_configuration_id = $1 AND run.factory_configuration_version = $2 \
-       AND run.visible AND run.state NOT IN ('rejected', 'cancelled', 'completed')",
+       AND run.visible AND run.state NOT IN ('cancelled', 'completed')",
   )
   .bind(locked.run.configuration().id().as_uuid())
   .bind(i64::try_from(locked.run.configuration().version().get()).map_err(|_| StoreError::Unavailable)?)
-  .fetch_all(&mut **transaction)
+  .fetch_one(&mut **transaction)
   .await
   .map_err(unavailable)?;
-  let active_runs = u32::try_from(rows.len()).map_err(|_| StoreError::Unavailable)?;
-  let mut active_stages = 0_u32;
-  for (document,) in rows {
-    let document: super::LifecycleDocument = serde_json::from_value(document).map_err(|_| StoreError::Unavailable)?;
-    active_stages = active_stages.saturating_add(document.progress.active_stage_count());
-  }
-  Ok(FactoryWipUsage::new(active_runs, active_stages))
+  Ok(FactoryWipUsage::new(
+    u32::try_from(active_runs).map_err(|_| StoreError::Unavailable)?,
+    u32::try_from(active_nodes).map_err(|_| StoreError::Unavailable)?,
+  ))
 }

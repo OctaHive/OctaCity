@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use octacity_server_factory::{FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryKey, StageAttemptId};
+use octacity_server_factory::{FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryKey, NodeAttemptId};
 use octacity_server_secrets::DelegatedGrantCredential;
 
 use crate::{FactoryCredentialResolutionError, resolve_factory_credential};
@@ -26,8 +26,8 @@ fn coding_cannot_materialize_delivery_identity() {
   let invoked = AtomicBool::new(false);
   let result = resolve_factory_credential(
     &profiles(),
-    StageAttemptId::generate(),
-    FactoryCredentialConsumer::CodingStage,
+    NodeAttemptId::generate(),
+    FactoryCredentialConsumer::CodingNode,
     &key("delivery-write"),
     |_| {
       invoked.store(true, Ordering::SeqCst);
@@ -42,13 +42,13 @@ fn coding_cannot_materialize_delivery_identity() {
 #[test]
 fn authorized_material_is_transient_and_redacted_from_diagnostics() {
   for (consumer, profile) in [
-    (FactoryCredentialConsumer::CodingStage, "model-coding"),
-    (FactoryCredentialConsumer::EvaluationStage, "model-evaluation"),
+    (FactoryCredentialConsumer::CodingNode, "model-coding"),
+    (FactoryCredentialConsumer::ReadOnlyReview, "model-evaluation"),
     (FactoryCredentialConsumer::SourceResolver, "source-read"),
     (FactoryCredentialConsumer::DeliveryAdapter, "delivery-write"),
   ] {
     let credential =
-      resolve_factory_credential(&profiles(), StageAttemptId::generate(), consumer, &key(profile), |_| {
+      resolve_factory_credential(&profiles(), NodeAttemptId::generate(), consumer, &key(profile), |_| {
         DelegatedGrantCredential::new(MATERIAL.to_vec())
       })
       .unwrap();

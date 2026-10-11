@@ -39,6 +39,9 @@ pub struct FlowTemplateNode {
   pub outcomes: Vec<FlowTemplateOutcome>,
   /// Hard per-attempt ceiling.
   pub budget: BudgetLimit,
+  /// Additional technical executions requiring an exact accepted retry intent.
+  #[serde(default)]
+  pub max_execution_retries: u16,
   /// Authority narrowed at admission.
   #[serde(default)]
   pub permissions: FactoryPermissionSet,
@@ -153,7 +156,8 @@ impl FlowDefinitionTemplate {
           required: choice.required,
           subflow: choice.subflow,
         })?
-        .with_input_binding(choice.input_binding.clone())?;
+        .with_input_binding(choice.input_binding.clone())?
+        .with_execution_retries(choice.max_execution_retries)?;
         if let Some(profile) = &choice.build_profile {
           node = node.with_build(profiles.get(profile).ok_or_else(invalid)?.clone())?;
         }

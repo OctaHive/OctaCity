@@ -7,8 +7,8 @@ use std::{
 
 use async_trait::async_trait;
 use octacity_server_factory::{
-  ChangeSetId, DecisionId, EscalationId, FactoryEscalationDisposition, FactoryRunId, FactoryRunState,
-  FactoryRunVersion, FactoryText, StageAttemptId,
+  FactoryKey, FactoryRunId, FactoryRunState, FactoryRunVersion, FlowDataSchema, FlowPayload, FlowValueSchema,
+  NodeAttemptId,
 };
 use octacity_server_store::{
   ApplyFactoryRunControl, FactoryRunControlIntent, FactoryRunControlOutcome, FactoryRunControlStore, IdempotencyKey,
@@ -19,8 +19,7 @@ use uuid::Uuid;
 use crate::{
   CancelFactoryRunCommand, FactoryControlHandlers, ManagementAction, ManagementAuthorizationGrant,
   ManagementAuthorizationTarget, ManagementCommandUseCase, ManagementRequestContext, ManagementRequestId,
-  ManagementVisibility, MutationDisposition, RequestFactoryDeliveryCommand, ResolveFactoryEscalationCommand,
-  RetryFactoryStageCommand,
+  ManagementVisibility, MutationDisposition, ResolveFactoryNodeCommand, RetryFactoryNodeCommand,
 };
 
 #[derive(Default)]
@@ -36,27 +35,13 @@ impl FactoryRunControlStore for CapturingStore {
   ) -> Result<FactoryRunControlOutcome, StoreError> {
     let (request, _) = request.into_parts();
     let version = FactoryRunVersion::new(request.expected_version.get() + 1).unwrap();
-    let state = match &request.intent {
-      FactoryRunControlIntent::ResolveEscalation {
-        disposition: FactoryEscalationDisposition::Acknowledge,
-        ..
-      } => FactoryRunState::Completed,
-      _ => FactoryRunState::Implementing,
-    };
     self.requests.lock().unwrap().push(request.clone());
     Ok(FactoryRunControlOutcome {
       disposition: StoreMutationDisposition::Applied,
       run_id: request.run_id,
       version,
-      state,
-      cancellation_requested: matches!(
-        &request.intent,
-        FactoryRunControlIntent::Cancel
-          | FactoryRunControlIntent::ResolveEscalation {
-            disposition: FactoryEscalationDisposition::Cancel,
-            ..
-          }
-      ),
+      state: FactoryRunState::Running,
+      cancellation_requested: request.intent == FactoryRunControlIntent::Cancel,
     })
   }
 }
@@ -82,15 +67,11 @@ fn commands_have_target_specific_authorization_and_only_closed_inputs() {
     ManagementAction::Cancel
   );
   assert_eq!(
-    RetryFactoryStageCommand::AUTHORIZATION.action(),
-    ManagementAction::Retry
+    RetryFactoryNodeCommand::AUTHORIZATION.action(),
+    ManagementAction::Execute
   );
   assert_eq!(
-    ResolveFactoryEscalationCommand::AUTHORIZATION.action(),
-    ManagementAction::Administer
-  );
-  assert_eq!(
-    RequestFactoryDeliveryCommand::AUTHORIZATION.action(),
+    ResolveFactoryNodeCommand::AUTHORIZATION.action(),
     ManagementAction::Execute
   );
 }
@@ -120,13 +101,23 @@ fn handlers_translate_only_typed_control_intents() {
     assert_eq!(cancelled.disposition, MutationDisposition::Applied);
     assert!(cancelled.cancellation_requested);
 
+    let retry = NodeAttemptId::generate();
+    let human = NodeAttemptId::generate();
+    let schema = FlowDataSchema::new(
+      FactoryKey::new("operator.response").unwrap(),
+      FactoryKey::new("v1").unwrap(),
+      FlowValueSchema::Boolean,
+    )
+    .unwrap();
+    let payload = FlowPayload::new(&schema, serde_json::json!(true)).unwrap();
+    let outcome = FactoryKey::new("approved").unwrap();
     handlers
       .execute_management_command(
         &context(),
         &grant(),
-        RetryFactoryStageCommand {
+        RetryFactoryNodeCommand {
           run_id,
-          stage_attempt_id: StageAttemptId::generate(),
+          node_attempt_id: retry,
           expected_version: version,
           idempotency_key: key("retry"),
           requested_at,
@@ -138,28 +129,13 @@ fn handlers_translate_only_typed_control_intents() {
       .execute_management_command(
         &context(),
         &grant(),
-        ResolveFactoryEscalationCommand {
+        ResolveFactoryNodeCommand {
           run_id,
-          escalation_id: EscalationId::generate(),
-          disposition: FactoryEscalationDisposition::Acknowledge,
-          reason: FactoryText::new("reviewed").unwrap(),
+          node_attempt_id: human,
+          outcome: outcome.clone(),
+          payload: payload.clone(),
           expected_version: version,
           idempotency_key: key("resolve"),
-          requested_at,
-        },
-      )
-      .await
-      .unwrap();
-    handlers
-      .execute_management_command(
-        &context(),
-        &grant(),
-        RequestFactoryDeliveryCommand {
-          run_id,
-          candidate_id: ChangeSetId::generate(),
-          decision_id: DecisionId::generate(),
-          expected_version: version,
-          idempotency_key: key("delivery"),
           requested_at,
         },
       )
@@ -168,18 +144,19 @@ fn handlers_translate_only_typed_control_intents() {
 
     let requests = store.requests.lock().unwrap();
     assert!(matches!(requests[0].intent, FactoryRunControlIntent::Cancel));
-    assert!(matches!(
+    assert_eq!(requests.len(), 3);
+    assert_eq!(
       requests[1].intent,
-      FactoryRunControlIntent::RetryInfrastructure { .. }
-    ));
-    assert!(matches!(
+      FactoryRunControlIntent::RetryNode { node_attempt_id: retry }
+    );
+    assert_eq!(
       requests[2].intent,
-      FactoryRunControlIntent::ResolveEscalation { .. }
-    ));
-    assert!(matches!(
-      requests[3].intent,
-      FactoryRunControlIntent::RequestDelivery { .. }
-    ));
+      FactoryRunControlIntent::ResolveNode {
+        node_attempt_id: human,
+        outcome,
+        payload
+      }
+    );
   });
 }
 

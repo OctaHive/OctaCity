@@ -21,8 +21,6 @@ pub const MAX_CONTEXT_ENTRY_BYTES: u64 = 16 * 1024 * 1024;
 pub const MAX_CONTEXT_MANIFEST_BYTES: u64 = 64 * 1024 * 1024;
 /// Maximum bytes in a normalized repository-relative path.
 pub const MAX_FACTORY_REPOSITORY_PATH_BYTES: usize = 1024;
-/// Maximum entries in any one Stage Handoff narrative collection.
-pub const MAX_STAGE_HANDOFF_ITEMS: usize = 128;
 
 /// Program-owned purpose of one immutable Factory Task Envelope.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -58,20 +56,6 @@ pub enum ImplementationOutcome {
   Indeterminate,
 }
 
-/// Terminal classification recorded in a Stage Handoff.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StageHandoffOutcome {
-  /// The stage completed its declared responsibility.
-  Succeeded,
-  /// The stage terminated with a typed failure.
-  Failed,
-  /// The stage could not determine a safe result.
-  Indeterminate,
-  /// The stage was cancelled before completion.
-  Cancelled,
-}
-
 /// Declared origin of one immutable Context Manifest entry.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -80,8 +64,6 @@ pub enum ContextSourceKind {
   Task,
   /// Exact specification input.
   Specification,
-  /// Typed output from a declared predecessor stage.
-  StageHandoff,
   /// Typed result from a declared parent or child call.
   TypedResult,
   /// Bounded summary selected instead of a full result.

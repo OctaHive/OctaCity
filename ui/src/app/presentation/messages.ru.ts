@@ -123,6 +123,7 @@ export const ruMessages = {
   'builds.attemptNumber': 'Попытка {number}',
   'builds.build': 'Сборка',
   'builds.caption': 'Недавние сборки в порядке от новых к старым, заданном сервером',
+  'builds.factoryOrigin': 'Dark Factory',
   'builds.cause': 'Причина',
   'builds.configuration': 'Конфигурация сборки',
   'builds.configurationShort': 'Конфигурация',

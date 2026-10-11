@@ -16,7 +16,7 @@ pub(super) async fn cancel(
       });
     }
     let mut outcome = state
-      .cancellations
+      .stops
       .get(build_id)
       .ok_or(StoreError::Unavailable)?
       .outcome
@@ -24,7 +24,7 @@ pub(super) async fn cancel(
     outcome.disposition = MutationDisposition::Replayed;
     return Ok(outcome);
   }
-  if let Some(existing) = state.cancellations.get(&request.build_id) {
+  if let Some(existing) = state.stops.get(&request.build_id) {
     let mut outcome = existing.outcome.clone();
     outcome.disposition = MutationDisposition::Replayed;
     let evidence_identity = management_evidence_identity("cancel-build", &idempotency);
@@ -110,7 +110,7 @@ pub(super) async fn cancel(
     .state = decision.attempt_state();
   *state.builds.get_mut(&request.build_id).ok_or(StoreError::Unavailable)? = decision.build_state();
   state.cancellation_keys.insert(idempotency, request.build_id);
-  state.cancellations.insert(
+  state.stops.insert(
     request.build_id,
     CancellationRecord {
       outcome: outcome.clone(),

@@ -44,6 +44,22 @@ impl TryFrom<Value> for ParameterValueProjection {
   }
 }
 
+/// Safe initiation projection; ordinary execution uses the same state machine for both origins.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case", tag = "kind", content = "value")]
+pub enum BuildOriginProjection {
+  /// Actual normalized Trigger occurrence.
+  Trigger(Box<TriggerHistoryProjection>),
+  /// Exact common Factory node operation.
+  Factory(octacity_server_store::FactoryBuildOrigin),
+}
+
+impl From<TriggerHistoryProjection> for BuildOriginProjection {
+  fn from(trigger: TriggerHistoryProjection) -> Self {
+    Self::Trigger(Box::new(trigger))
+  }
+}
+
 /// Safe application projection of one immutable Build and its current aggregate state.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct BuildProjection {
@@ -77,8 +93,8 @@ pub struct BuildProjection {
   pub state: BuildState,
   /// Current optimistic state version.
   pub version: BuildVersion,
-  /// Trigger occurrence and causal lineage that initiated the Build.
-  pub trigger: TriggerHistoryProjection,
+  /// Exact initiating occurrence or common node operation.
+  pub origin: BuildOriginProjection,
   /// Authoritative creation time.
   pub created_at: Timestamp,
   /// Time of the latest accepted state transition.
@@ -91,13 +107,15 @@ impl BuildProjection {
     build: &ImmutableBuildInput,
     state: BuildState,
     version: BuildVersion,
-    trigger: TriggerHistoryProjection,
+    origin: impl Into<BuildOriginProjection>,
     created_at: Timestamp,
     updated_at: Timestamp,
   ) -> Result<Self, ProjectionError> {
-    if trigger.build_id != Some(build.id)
-      || trigger.target.configuration_id != build.configuration_id
-      || trigger.target.configuration_version != build.configuration_version
+    let origin = origin.into();
+    if let BuildOriginProjection::Trigger(trigger) = &origin
+      && (trigger.build_id != Some(build.id)
+        || trigger.target.configuration_id != build.configuration_id
+        || trigger.target.configuration_version != build.configuration_version)
     {
       return Err(ProjectionError::InvalidBuildSnapshot);
     }
@@ -126,7 +144,7 @@ impl BuildProjection {
       priority: build.priority,
       state,
       version,
-      trigger,
+      origin,
       created_at,
       updated_at,
     })

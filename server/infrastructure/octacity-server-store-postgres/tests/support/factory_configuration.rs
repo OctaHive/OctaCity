@@ -41,7 +41,7 @@ pub fn fixture(project_id: ProjectId) -> Fixture {
   })
   .unwrap();
   let budget = || BudgetLimit::new(20, 10_000, 1_000, 10_000, 10_000).unwrap();
-  let stage = |name, kind| FactoryStageDraft {
+  let stage = |name, kind| octacity_server_factory::testing::FactoryStageDraft {
     key: key(name),
     kind,
     build_configuration: key("build"),
@@ -50,42 +50,19 @@ pub fn fixture(project_id: ProjectId) -> Fixture {
   let draft = FactoryConfigurationDraft {
     flow: None,
     admission_policy: key("admission"),
-    stages: vec![
+    wip_limits: FactoryWipLimits::new(20, 20).unwrap(),
+    hard_budget: budget(),
+    permission_ceiling: key("permissions"),
+    enabled: true,
+  };
+  let draft = octacity_server_factory::testing::with_contract_flow(
+    draft,
+    vec![
       stage("implement", FactoryStageKind::Implementation),
       stage("validate", FactoryStageKind::Validation),
       stage("evaluate", FactoryStageKind::Evaluation),
     ],
-    wip_limits: FactoryWipLimits::new(20, 20).unwrap(),
-    hard_budget: budget(),
-    permission_ceiling: key("permissions"),
-    credential_profiles: credential_profiles(),
-    decision_signals: Vec::new(),
-    evaluation: EvaluationPolicyDraft {
-      criterion_packs: vec![key("criteria")],
-      evaluators: vec![key("evaluator")],
-      required_quorum: 1,
-      budget: budget(),
-    },
-    rework: ReworkPolicyDraft {
-      max_cycles: 0,
-      stage: None,
-      exhausted_outcome: DecisionOutcome::Escalate,
-    },
-    delivery: DeliveryPolicyDraft {
-      adapter: key("delivery-adapter"),
-      policy: key("delivery-policy"),
-    },
-    enabled: true,
-  };
+    &choices,
+  );
   Fixture { choices, draft }
-}
-
-fn credential_profiles() -> FactoryCredentialProfiles {
-  FactoryCredentialProfiles::new(
-    key("model-coding"),
-    key("model-evaluation"),
-    key("source-read"),
-    key("delivery-write"),
-  )
-  .unwrap()
 }

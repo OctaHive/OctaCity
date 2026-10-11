@@ -109,3 +109,68 @@ Negative coverage rejects a parent result without its child record, and invalid
 terminal proof on both defect and feature routes. Queue coverage checks distinct
 execution generations, active new capacity and released previous capacity.
 Documentation-only corrections do not require a behavioral Red test.
+
+## Explicit Flow and lifecycle cleanup (9.18–9.20)
+
+Publication now requires an explicit Flow, and the published domain type cannot
+restore without it. Admission and PostgreSQL publication/restoration retain that
+exact closure; all fixed-stage closure builders and fallback calls were removed.
+An explicit custom Flow may publish without implementation, validation or
+evaluation roles. Role metadata remains only for existing capability projections.
+
+Production reconciliation requires a Flow coordinator. The old global next-action
+policy and state-successor matrix are absent from production exports and dispatch.
+Historical drivers are isolated in `test-support`/`cfg(test)` fixtures to preserve
+candidate/evidence/evaluation/delivery contract coverage. They are not installed by
+production composition. Local capability transitions cannot choose another phase;
+the store checks starts against the pinned graph and accepted operation facts.
+
+A configured root terminal commits `FlowResolved` with the exact root identity and
+arbitrary terminal key, plus technical Run completion. Both stores independently
+reconstruct the terminal from retained graph history. Negative coverage rejects
+fabricated completion atomically; terminal replay after lease expiry preserves the
+snapshot. Same-worker replacement fences and expired-lease successors use the
+common observer protocol; current-store fencing remains mandatory.
+
+Commands below used `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0`.
+Each listed Red was observed before its implementation correction:
+
+| Public test filter | Observed Red | Green |
+| --- | --- | --- |
+| `publication_requires_an_explicit_flow` | Publication accepted omitted Flow | Publication rejects it |
+| `an_explicit_custom_flow_needs_no_fixed_stage_roles` | Empty roles rejected as `configuration stages` | Explicit custom Flow publishes |
+| `configured_intake_research_unknown_step_and_pool_share_one_owner_interface_across_restart` | Root terminal left Run Admitted | Exact terminal durably completes Run |
+| `invalid_worker_bounds_fail_before_claiming` | Required coordinator argument absent from constructor API | Coordinator is mandatory; bounds still fail before claims |
+| `capability_facts_cannot_choose_a_business_successor_without_the_graph` | Local facts permitted implementation → validation | Cross-node authority requires graph validation |
+| `projected_attempts_use_the_common_observer_protocol_after_fence_replacement` | Replacement observer rejected | Replacement/successor works; unrelated overlapping worker fails |
+| `a_published_configuration_cannot_restore_without_its_explicit_flow` | Missing Flow deserialized successfully | Published type requires Flow |
+| Architecture guard test | Fixed closure/decision/successor functions went undetected | All three are rejected outside test support |
+
+Targeted command forms were `cargo test -p octacity-server-factory <filter> --lib`,
+`cargo test -p octacity-server-application <filter> --lib`, and
+`python3 -m unittest tools.tests.test_check_architecture.ArchitecturePolicyTests.test_configured_factory_runtime_rejects_phase_contracts_and_name_dispatch`.
+
+Final validation: 396 library tests, 23 PostgreSQL contracts and 24 architecture
+tests passed. Clippy passed for all five packages with warnings denied; architecture,
+OpenSpec, formatting and diff checks passed. The disposable database was removed.
+
+- `cargo test -p octacity-server-factory -p octacity-server-store -p octacity-server-application --lib`.
+- With an explicitly disposable PostgreSQL 18 service:
+  `cargo test -p octacity-server-store-postgres --test factory_discovery --test factory_retention --test migrations -- --ignored`.
+- With the same service:
+  `cargo test -p octacity-server --test factory_configured_flow -- --ignored`.
+- `cargo clippy -p octacity-server-factory -p octacity-server-store -p octacity-server-application -p octacity-server-store-postgres -p octacity-server --all-targets --all-features -- -D warnings`.
+- `python3 -m unittest tools.tests.test_check_architecture`,
+  `python3 tools/check_architecture.py`, `openspec validate add-dark-factory-mode --strict`,
+  `cargo fmt --all -- --check`, and `git diff --check`.
+
+Documentation changes have no executable behavior. No commit, staging or push was requested or performed.
+
+
+## Common-engine follow-up
+
+Tasks 9.21–9.26 subsequently removed the remaining fixed-role projections,
+Stage/MacroCall authority, legacy lifecycle and Build origin exceptions, and
+installed the optional supervised common owner. Current verification and scope
+boundaries are recorded in [verification-generic-engine.md](verification-generic-engine.md).
+The earlier counts above remain the historical checks for their increments.

@@ -31,7 +31,7 @@ async fn factory_retention_preserves_live_runs_and_retries_bounded_cleanup() {
   assert_eq!(
     claims.iter().map(|claim| claim.run_id).collect::<Vec<_>>(),
     vec![run_id(3)],
-    "active and escalated Runs retain their exact state even if malformed work is present"
+    "running and waiting Runs retain their exact state even if malformed work is present"
   );
 
   let first = store
@@ -146,6 +146,52 @@ async fn active_build_hold_preserves_the_terminal_factory_run() {
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn build_origin_preserves_a_held_run_before_execution_receipt_is_recorded() {
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer())
+    .accept_trigger(fixture.request.clone())
+    .await
+    .unwrap();
+  seed_factory_runs(&database.pool).await;
+  // Creation committed, but its response was lost before the owner journaled
+  // the execution receipt. The ordinary immutable origin still owns the Build.
+  sqlx::query("UPDATE builds SET trigger_occurrence_id = NULL, factory_origin = $2, factory_materialization_digest=decode(repeat('41',32),'hex'), factory_permission_digest=decode(repeat('42',32),'hex') WHERE id = $1")
+    .bind(fixture.request.build.id.as_uuid())
+    .bind(Json(serde_json::json!({
+      "operation_id": "33".repeat(32),
+      "run_id": run_id(3),
+      "node_attempt_id": uuid(3_000).to_string(),
+      "input_digest": "32".repeat(32)
+    })))
+    .execute(&database.pool).await.unwrap();
+  let mut transaction = database.pool.begin().await.unwrap();
+  insert_build_hold(&mut transaction, &fixture).await;
+  transaction.commit().await.unwrap();
+  let claims = PostgresStore::new(database.pool.clone())
+    .claim_factory_retention_work(
+      ClaimFactoryRetentionWork::new(
+        WorkerOwner::new("factory-retention:lost-response").unwrap(),
+        time(20),
+        time(30),
+        8,
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert!(
+    claims.is_empty(),
+    "a lost creation response must not sever the Build hold from its owning Run"
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn a_concurrent_build_hold_wins_before_factory_retention_hides_the_run() {
   let database = TestDatabase::migrated().await;
   let fixture = authoritative_store_contract_fixture();
@@ -241,47 +287,24 @@ async fn link_factory_build_and_hold(
 }
 
 async fn link_factory_build(pool: &sqlx::PgPool, fixture: &octacity_server_store::testing::StoreContractFixture) {
-  let stage_id = uuid(3_000);
+  let node_id = uuid(3_000);
   sqlx::query(
     "INSERT INTO factory_node_attempts \
        (id, run_id, flow_run_id, workflow_cycle_id, node_key, attempt_number, node_kind, input_digest, node_attempt, created_at) \
-     VALUES ($1, $2, $2, $2, 'implementation', 1, 'build_command', \
+     VALUES ($1, $2, $2, $2, 'configured.command', 1, 'build_command', \
        decode(repeat('32', 32), 'hex'), '{}', to_timestamp(0))",
   )
-  .bind(stage_id)
+  .bind(node_id)
   .bind(run_id(3).as_uuid())
   .execute(pool)
   .await
   .unwrap();
-  sqlx::query(
-    "INSERT INTO factory_stage_attempts \
-       (id, run_id, stage_kind, target_digest, stage_attempt) \
-     VALUES ($1, $2, 'implementation', decode(repeat('31', 32), 'hex'), '{}')",
-  )
-  .bind(stage_id)
-  .bind(run_id(3).as_uuid())
-  .execute(pool)
-  .await
-  .unwrap();
-  sqlx::query(
-    "INSERT INTO factory_build_links \
-       (build_id, run_id, stage_attempt_id, attempt_id, factory_configuration_id, \
-        factory_configuration_version, build_configuration_id, build_configuration_version, \
-        task_envelope_digest, effective_policy_digest, input_digest, exact_revision, link, linked_at) \
-     VALUES ($1, $2, $3, $4, '00000000-0000-0000-0000-000000000104', 1, $5, $6, \
-       decode(repeat('33', 32), 'hex'), decode(repeat('34', 32), 'hex'), \
-       decode(repeat('35', 32), 'hex'), $7, '{}', to_timestamp(0))",
-  )
-  .bind(fixture.request.build.id.as_uuid())
-  .bind(run_id(3).as_uuid())
-  .bind(stage_id)
-  .bind(fixture.request.attempt_id.as_uuid())
-  .bind(fixture.request.build.configuration_id.as_uuid())
-  .bind(i64::try_from(fixture.request.build.configuration_version.get()).unwrap())
-  .bind(fixture.request.build.immutable_revision.as_str())
-  .execute(pool)
-  .await
-  .unwrap();
+  sqlx::query("INSERT INTO factory_flow_inputs (run_id,id,flow_run_id,cycle_id,generation,schema_reference,document) VALUES ($1,decode(repeat('32',32),'hex'),$1,$1,0,'{}',decode('7b7d','hex'))")
+    .bind(run_id(3).as_uuid()).execute(pool).await.unwrap();
+  sqlx::query("INSERT INTO factory_flow_build_intents (run_id,node_attempt_id,operation_id,input_digest,document) VALUES ($1,$2,decode(repeat('33',32),'hex'),decode(repeat('32',32),'hex'),decode('7b7d','hex'))")
+    .bind(run_id(3).as_uuid()).bind(node_id).execute(pool).await.unwrap();
+  sqlx::query("INSERT INTO factory_flow_build_executions (run_id,id,node_attempt_id,operation_id,build_id,attempt_id,document) VALUES ($1,decode(repeat('34',32),'hex'),$2,decode(repeat('33',32),'hex'),$3,$4,decode('7b7d','hex'))")
+    .bind(run_id(3).as_uuid()).bind(node_id).bind(fixture.request.build.id.as_uuid()).bind(fixture.request.attempt_id.as_uuid()).execute(pool).await.unwrap();
 }
 
 async fn insert_build_hold(
@@ -345,7 +368,7 @@ async fn seed_factory_runs(pool: &sqlx::PgPool) {
     .await
     .unwrap();
 
-  for (ordinal, state) in [(1_u8, "implementing"), (2, "escalated"), (3, "completed")] {
+  for (ordinal, state) in [(1_u8, "running"), (2, "waiting"), (3, "completed")] {
     let work_id = uuid(200 + u128::from(ordinal));
     let run_id = uuid(u128::from(ordinal));
     let external_identity = format!("work-{ordinal}");

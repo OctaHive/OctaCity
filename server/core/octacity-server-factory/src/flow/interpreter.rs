@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use crate::{
-  BudgetUsage, FactoryError, FactoryKey, FlowContextProjection, FlowDataProjection, FlowDefinition, FlowDefinitionRef,
-  FlowNodeKind, FlowRun, NodeAttempt, NodeAttemptCompletion, ValidatedFlowDefinitionClosure, WorkflowCycle,
+  FactoryError, FactoryKey, FlowContextProjection, FlowDataProjection, FlowDefinition, FlowDefinitionRef, FlowNodeKind,
+  FlowRun, FlowRuntimeHistory, NodeAttempt, NodeAttemptCompletion, ValidatedFlowDefinitionClosure, WorkflowCycle,
 };
 
 /// Explicit context and typed-data declarations selected for one successor.
@@ -75,9 +75,9 @@ impl<'a> FlowInterpreter<'a> {
     cycle: &WorkflowCycle,
     attempt: &NodeAttempt,
     completion: &NodeAttemptCompletion,
-    attempts: &[NodeAttempt],
-    completions: &[NodeAttemptCompletion],
+    history: FlowRuntimeHistory<'_>,
   ) -> Result<Vec<FlowDirective>, FactoryError> {
+    let completions = history.completions;
     let definition = self.definition(flow_run)?;
     if cycle.flow_run_id() != flow_run.id()
       || attempt.flow_run_id() != flow_run.id()
@@ -96,7 +96,7 @@ impl<'a> FlowInterpreter<'a> {
       .outcome(completion.outcome())
       .filter(|outcome| outcome.schema() == completion.output_schema())
       .ok_or_else(|| invalid("Flow interpretation outcome"))?;
-    validate_runtime_limits(self.validated, definition, flow_run, completion, attempts, completions)?;
+    validate_runtime_limits(self.validated, definition, flow_run, completion, history)?;
     let transitions = definition
       .transitions()
       .iter()
@@ -155,14 +155,7 @@ impl<'a> FlowInterpreter<'a> {
       .iter()
       .filter(|directive| !matches!(directive, FlowDirective::Complete { .. }))
       .count();
-    let completed = completions
-      .iter()
-      .map(NodeAttemptCompletion::node_attempt_id)
-      .collect::<BTreeSet<_>>();
-    let active = attempts
-      .iter()
-      .filter(|record| !completed.contains(&record.id()))
-      .count();
+    let active = history.active_node_count();
     let max_wip = definition
       .execution()
       .max_active_nodes()
@@ -259,15 +252,16 @@ fn validate_runtime_limits(
   definition: &FlowDefinition,
   flow_run: &FlowRun,
   completion: &NodeAttemptCompletion,
-  attempts: &[NodeAttempt],
-  completions: &[NodeAttemptCompletion],
+  history: FlowRuntimeHistory<'_>,
 ) -> Result<(), FactoryError> {
-  if attempts
+  if history
+    .attempts
     .iter()
     .filter(|record| record.id() == completion.node_attempt_id())
     .count()
     != 1
-    || completions
+    || history
+      .completions
       .iter()
       .filter(|record| record.node_attempt_id() == completion.node_attempt_id())
       .count()
@@ -275,20 +269,15 @@ fn validate_runtime_limits(
   {
     return Err(invalid("Flow append-only attempt history"));
   }
-  let usage = completions
-    .iter()
-    .filter(|record| record.flow_run_id() == flow_run.id())
-    .try_fold(BudgetUsage::default(), |total, record| add_usage(total, record.usage()))?;
-  usage.validate(definition.execution().budget())?;
-  let aggregate = completions
-    .iter()
-    .try_fold(BudgetUsage::default(), |total, record| add_usage(total, record.usage()))?;
+  let usage = history.observed_usage_by_flow()?;
+  usage
+    .get(&flow_run.id())
+    .copied()
+    .unwrap_or_default()
+    .validate(definition.execution().budget())?;
+  let aggregate = super::history::sum_usage(usage.values().copied())?;
   aggregate.validate(validated.limits().budget())?;
   Ok(())
-}
-
-fn add_usage(left: BudgetUsage, right: BudgetUsage) -> Result<BudgetUsage, FactoryError> {
-  left.checked_add(right).ok_or_else(|| invalid("Flow budget usage"))
 }
 
 fn invalid(field: &'static str) -> FactoryError {

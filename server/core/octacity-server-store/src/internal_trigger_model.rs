@@ -178,6 +178,15 @@ pub struct InternalTriggerMatch {
   pub definition: serde_json::Value,
 }
 
+/// Actual immutable origin of a terminal Build, without synthesizing an occurrence.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum InternalTriggerSourceOrigin {
+  /// Existing Trigger lineage continues with cycle and depth protection.
+  Trigger(Box<NormalizedTriggerOccurrence>),
+  /// Factory operation starts a real internal Trigger lineage when one is matched.
+  Factory(crate::FactoryBuildOrigin),
+}
+
 /// One terminal Build event exclusively owned until its claim deadline.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct InternalTriggerEventClaim {
@@ -189,8 +198,8 @@ pub struct InternalTriggerEventClaim {
   pub source_revision: ImmutableRevision,
   /// Exact upstream Build Configuration version used for definition matching.
   pub source_target: TriggerTarget,
-  /// Persisted occurrence that created the source Build.
-  pub source_occurrence: NormalizedTriggerOccurrence,
+  /// Actual persisted origin that created the source Build.
+  pub source_origin: InternalTriggerSourceOrigin,
   /// Root-to-parent immutable Trigger lineage used for cycle detection.
   pub trigger_ancestry: Vec<TriggerDefinitionRef>,
   /// Documented server-owned terminal event classification.

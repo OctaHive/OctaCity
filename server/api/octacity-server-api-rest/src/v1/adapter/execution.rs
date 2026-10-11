@@ -148,7 +148,14 @@ fn build_resource(projection: BuildDetailsProjection, request_id: &RequestId) ->
     priority: build.priority,
     state: build_state_resource(build.state),
     version: build.version.get(),
-    trigger: encode(build.trigger, request_id)?,
+    trigger: match &build.origin {
+      octacity_server_application::BuildOriginProjection::Trigger(trigger) => encode(trigger, request_id)?,
+      octacity_server_application::BuildOriginProjection::Factory(_) => serde_json::Value::Null,
+    },
+    factory_origin: match build.origin {
+      octacity_server_application::BuildOriginProjection::Factory(origin) => Some(encode(origin, request_id)?),
+      octacity_server_application::BuildOriginProjection::Trigger(_) => None,
+    },
     created_at_unix_ms: build.created_at.unix_millis(),
     updated_at_unix_ms: build.updated_at.unix_millis(),
     current_attempt: attempt_summary(projection.current_attempt),
@@ -181,7 +188,14 @@ fn build_summary(
     project_id: projection.project_id.to_string(),
     configuration_id: projection.configuration_id.to_string(),
     configuration_version: projection.configuration_version.get(),
-    cause: trigger_cause_resource(projection.cause, request_id)?,
+    cause: projection
+      .cause
+      .map(|cause| trigger_cause_resource(cause, request_id))
+      .transpose()?,
+    factory_origin: projection
+      .factory_origin
+      .map(|origin| encode(origin, request_id))
+      .transpose()?,
     state: build_state_resource(projection.state),
     created_at_unix_ms: projection.created_at.unix_millis(),
     current_attempt_id: projection.current_attempt_id.to_string(),

@@ -14,6 +14,8 @@ mod audit_port;
 mod build_control;
 mod build_discovery_model;
 mod build_discovery_port;
+mod build_origin;
+pub use build_origin::{BuildOrigin, BuildSummaryOrigin, FactoryBuildOrigin, TriggerBuildOrigin};
 mod build_query;
 mod build_query_port;
 mod cache_model;
@@ -31,6 +33,11 @@ mod external_trigger_model;
 mod external_trigger_port;
 mod factory_admission_model;
 mod factory_admission_port;
+mod factory_build_acceptance;
+pub use factory_build_acceptance::{
+  AcceptFactoryBuild, AcceptedFactoryBuild, CancelFactoryBuildExecution, FactoryBuildAcceptanceStore,
+  FactoryBuildCancellationStore, MAX_FACTORY_BUILD_JOBS,
+};
 mod factory_configuration_model;
 mod factory_configuration_port;
 mod factory_discovery_model;
@@ -276,17 +283,18 @@ pub use factory_retention_model::{
 };
 pub use factory_retention_port::FactoryRetentionStore;
 pub use factory_run_control::{
-  ApplyFactoryRunControl, FactoryRunControlIntent, FactoryRunControlOutcome, FactoryRunControlRecord,
+  ApplyFactoryRunControl, FactoryRunControlChange, FactoryRunControlIntent, FactoryRunControlOutcome,
+  FactoryRunControlRecord, prepare_factory_run_control, validate_factory_node_control_history,
+  validate_factory_node_response,
 };
 pub use factory_run_control_port::FactoryRunControlStore;
 pub use factory_run_model::{
   ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns, ClaimedFactoryOutbox,
   ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome, FactoryAuditFact,
-  FactoryBudgetRecord, FactoryBuildLink, FactoryBuildLinkInput, FactoryBuildObservationInput,
-  FactoryBuildObservationRecord, FactoryBuildParent, FactoryFlowHistory, FactoryLifecycleCheckpoint,
-  FactoryOutboxRecord, FactoryOutboxSettlement, FactoryOutboxState, FactoryRunClaimRecord, FactoryRunCurrentProjection,
-  FactoryRunDiagnosticKind, FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord, FactoryRunHistoryAppend,
-  FactoryRunSnapshot, ListFactoryRunDiagnostics, MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
+  FactoryBudgetRecord, FactoryFlowHistory, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement,
+  FactoryOutboxState, FactoryRunClaimRecord, FactoryRunCurrentProjection, FactoryRunDiagnosticKind,
+  FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord, FactoryRunHistoryAppend, FactoryRunSnapshot,
+  ListFactoryRunDiagnostics, MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
   MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE, MAX_FACTORY_RUN_SNAPSHOT_RECORDS, MAX_FACTORY_TRANSITION_OUTBOX_RECORDS,
   MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
 };
@@ -299,8 +307,8 @@ pub use idempotency::{
 pub use internal_trigger_model::{
   ClaimInternalTriggerEvents, CompleteInternalTriggerEvent, CreateInternalTriggerDefinition,
   InternalTriggerDefinitionPage, InternalTriggerDefinitionRecord, InternalTriggerEventClaim, InternalTriggerMatch,
-  ListInternalTriggerDefinitions, MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE, MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT,
-  MAX_INTERNAL_TRIGGER_PAGE_SIZE, PublishInternalTriggerVersion,
+  InternalTriggerSourceOrigin, ListInternalTriggerDefinitions, MAX_INTERNAL_TRIGGER_EVENT_BATCH_SIZE,
+  MAX_INTERNAL_TRIGGER_MATCHES_PER_EVENT, MAX_INTERNAL_TRIGGER_PAGE_SIZE, PublishInternalTriggerVersion,
 };
 pub use internal_trigger_port::{InternalTriggerDefinitionStore, InternalTriggerEventStore};
 pub use job_model::{
@@ -718,3 +726,6 @@ mod tests {
 
 #[cfg(any(test, feature = "test-support"))]
 mod factory_node_journal_testing;
+
+mod factory_job_policy;
+pub use factory_job_policy::factory_job_permissions;

@@ -27,30 +27,32 @@ pub(crate) async fn list_diagnostics(
   }
   let limit = i64::from(request.limit.get()) + 1;
   let records = match request.kind {
-    FactoryRunDiagnosticKind::StageAttempt => uuid_rows(
-      pool,
-      "SELECT stage_attempt FROM factory_stage_attempts WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3",
-      &request,
-      limit,
-      |value| FactoryRunDiagnosticRecord::StageAttempt(Box::new(value)),
-    ).await?,
-    FactoryRunDiagnosticKind::StageAttemptCompletion => digest_rows(pool, "SELECT completion FROM factory_stage_attempt_completions WHERE run_id = $1 AND ($2::BYTEA IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::StageAttemptCompletion(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::StageHandoff => uuid_rows(pool, "SELECT handoff FROM factory_stage_handoffs WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::StageHandoff(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::ContextManifest => uuid_rows(pool, "SELECT manifest FROM factory_context_manifests WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::ContextManifest(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::MacroCall => uuid_rows(pool, "SELECT call_node FROM factory_call_nodes WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::MacroCall(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::MacroCallCompletion => uuid_rows(pool, "SELECT completion FROM factory_call_completions WHERE run_id = $1 AND ($2::UUID IS NULL OR call_id > $2) ORDER BY call_id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::MacroCallCompletion(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::SignalRequest => uuid_rows(pool, "SELECT request FROM factory_decision_signal_requests WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::SignalRequest(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::SignalReceipt => uuid_rows(pool, "SELECT receipt FROM factory_decision_signal_receipts WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::SignalReceipt(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::BuildLink => uuid_rows(pool, "SELECT link FROM factory_build_links WHERE run_id = $1 AND ($2::UUID IS NULL OR build_id > $2) ORDER BY build_id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::BuildLink(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::BuildObservation => digest_rows(pool, "SELECT observation FROM factory_build_observations WHERE run_id = $1 AND ($2::BYTEA IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::BuildObservation(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::Candidate => uuid_rows(pool, "SELECT changeset FROM factory_changesets WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::Candidate(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::Evidence => uuid_rows(pool, "SELECT manifest FROM factory_evidence_manifests WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::Evidence(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::EvaluationPlan => uuid_rows(pool, "SELECT plan FROM factory_evaluation_plans WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::EvaluationPlan(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::Assessment => uuid_rows(pool, "SELECT assessment FROM factory_assessments WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::Assessment(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::Decision => uuid_rows(pool, "SELECT decision FROM factory_decisions WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::Decision(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::Escalation => uuid_rows(pool, "SELECT escalation FROM factory_escalations WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::Escalation(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::DeliveryAttempt => uuid_rows(pool, "SELECT attempt FROM factory_delivery_attempts WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::DeliveryAttempt(Box::new(value))).await?,
-    FactoryRunDiagnosticKind::ReportingAttempt => uuid_rows(pool, "SELECT attempt FROM factory_reporting_attempts WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::ReportingAttempt(Box::new(value))).await?,
+    FactoryRunDiagnosticKind::Claim => {
+      let after = digest_cursor(&request)?;
+      sqlx::query_as::<_, (Vec<u8>, uuid::Uuid, String, Vec<u8>, i64, i64)>(
+        "SELECT id, run_id, owner, fence, FLOOR(EXTRACT(EPOCH FROM claimed_at)*1000)::BIGINT, \
+          FLOOR(EXTRACT(EPOCH FROM expires_at)*1000)::BIGINT FROM factory_run_claims \
+          WHERE run_id=$1 AND ($2::BYTEA IS NULL OR id>$2) ORDER BY id LIMIT $3"
+      ).bind(request.run_id.as_uuid()).bind(after).bind(limit).fetch_all(pool).await.map_err(unavailable)?
+        .into_iter().map(|(id, run, owner, fence, claimed, expires)| {
+          let claim = super::decode_claim((run, owner, fence, claimed, expires))?;
+          if claim.id.as_bytes().as_slice() != id { return Err(StoreError::Unavailable); }
+          Ok(FactoryRunDiagnosticRecord::Claim(Box::new(claim)))
+        }).collect::<Result<Vec<_>, _>>()?
+    }
+    FactoryRunDiagnosticKind::Audit => {
+      let after = digest_cursor(&request)?;
+      sqlx::query_as::<_, super::FactoryAuditRow>(
+        "SELECT id,run_id,actor_kind,actor_identity_digest,operation,request_identity_digest,outcome, \
+          FLOOR(EXTRACT(EPOCH FROM recorded_at)*1000)::BIGINT AS recorded_at_millis FROM factory_audit_links \
+          WHERE run_id=$1 AND ($2::BYTEA IS NULL OR id>$2) ORDER BY id LIMIT $3"
+      ).bind(request.run_id.as_uuid()).bind(after).bind(limit).fetch_all(pool).await.map_err(unavailable)?
+        .into_iter().map(|row| super::decode_audit_row(row).map(|row| FactoryRunDiagnosticRecord::Audit(Box::new(row))))
+        .collect::<Result<Vec<_>, _>>()?
+    }
+    FactoryRunDiagnosticKind::NodeAttempt => uuid_rows(pool, "SELECT node_attempt FROM factory_node_attempts WHERE run_id = $1 AND ($2::UUID IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::NodeAttempt(Box::new(value))).await?,
+    FactoryRunDiagnosticKind::NodeAttemptCompletion => digest_rows(pool, "SELECT completion FROM factory_node_attempt_completions WHERE run_id = $1 AND ($2::BYTEA IS NULL OR id > $2) ORDER BY id LIMIT $3", &request, limit, |value| FactoryRunDiagnosticRecord::NodeAttemptCompletion(Box::new(value))).await?,
+
   };
   page(records, usize::from(request.limit.get()))
 }
@@ -91,20 +93,27 @@ async fn digest_rows<T>(
 where
   T: DeserializeOwned + Send + Unpin + 'static,
 {
-  let after = request
-    .after
-    .as_ref()
-    .map(|value| FactoryDigest::from_lower_hex(value.as_str()).map(FactoryDigest::as_bytes))
-    .transpose()
-    .map_err(|_| invalid_cursor())?;
+  let after = digest_cursor(request)?;
   sqlx::query_scalar::<_, Json<T>>(query)
     .bind(request.run_id.as_uuid())
-    .bind(after.as_ref().map(<[u8; 32]>::as_slice))
+    .bind(after)
     .bind(limit)
     .fetch_all(pool)
     .await
     .map_err(unavailable)
     .map(|rows| rows.into_iter().map(|row| wrap(row.0)).collect())
+}
+
+fn digest_cursor(request: &ListFactoryRunDiagnostics) -> Result<Option<Vec<u8>>, StoreError> {
+  request
+    .after
+    .as_ref()
+    .map(|value| {
+      FactoryDigest::from_lower_hex(value.as_str())
+        .map(|digest| digest.as_bytes().to_vec())
+        .map_err(|_| invalid_cursor())
+    })
+    .transpose()
 }
 
 fn page(mut records: Vec<FactoryRunDiagnosticRecord>, limit: usize) -> Result<FactoryRunDiagnosticPage, StoreError> {

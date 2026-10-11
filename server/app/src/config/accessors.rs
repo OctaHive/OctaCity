@@ -7,6 +7,11 @@ use super::{
 };
 
 impl ServerConfig {
+  /// Explicit optional Flow owner bounds; absent means Factory is disabled.
+  pub const fn factory(&self) -> Option<super::FactoryRuntimeConfig> {
+    self.factory
+  }
+
   /// Rebase absolute runtime-file paths below an offline validation root.
   ///
   /// This is intended for image and deployment validation where container

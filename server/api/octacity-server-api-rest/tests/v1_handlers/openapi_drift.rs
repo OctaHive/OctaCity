@@ -711,6 +711,7 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
       "created_at_unix_ms",
       "current_attempt",
       "effective_policy",
+      "factory_origin",
       "id",
       "immutable_revision",
       "parameters",
@@ -726,7 +727,14 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
       "updated_at_unix_ms",
       "version",
     ]),
-    "the Build collection must not alter the existing Build detail contract"
+    "Build details retain ordinary fields and declare optional Factory origin"
+  );
+
+  assert!(
+    !document["components"]["schemas"]["BuildResource"]["required"]
+      .as_array()
+      .unwrap()
+      .contains(&serde_json::json!("factory_origin"))
   );
 
   for (path, operation_id, response_schema) in [

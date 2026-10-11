@@ -4,22 +4,17 @@ use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, Pr
 use serde::{Deserialize, Serialize};
 
 use crate::{
-  BudgetLimit, DecisionOutcome, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose,
-  DecisionSignalRouteSet, FactoryChoiceKind, FactoryConfigurationId, FactoryConfigurationRef,
-  FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryError, FactoryKey, FactoryStageKind,
-  MAX_CRITERION_PACKS, MAX_EVALUATORS,
+  BudgetLimit, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose, DecisionSignalRouteSet,
+  FactoryChoiceKind, FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryDigest,
+  FactoryError, FactoryKey, MAX_CRITERION_PACKS, MAX_EVALUATORS,
 };
 
 /// Maximum number of aliases accepted in one configuration choice category.
 pub const MAX_CONFIGURATION_CHOICES_PER_KIND: usize = 256;
-/// Maximum stage definitions in one immutable Factory Configuration.
-pub const MAX_FACTORY_STAGES: usize = 32;
 /// Maximum concurrently admitted runs under one Factory Configuration.
 pub const MAX_FACTORY_ACTIVE_RUNS: u32 = 10_000;
-/// Maximum concurrently active stage attempts under one Factory Configuration.
-pub const MAX_FACTORY_ACTIVE_STAGES: u32 = 1_000;
-/// Maximum rework cycles permitted by one immutable configuration.
-pub const MAX_FACTORY_REWORK_CYCLES: u16 = 32;
+/// Maximum concurrently active node attempts under one Factory Configuration.
+pub const MAX_FACTORY_ACTIVE_NODES: u32 = 1_000;
 
 /// Exact immutable identity selected from a configuration choice catalog.
 #[derive(Clone, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -148,7 +143,8 @@ impl FactoryConfigurationChoices {
     })
   }
 
-  fn resolve_build_configuration(&self, alias: &FactoryKey) -> Result<BuildConfigurationRef, FactoryError> {
+  /// Resolves one explicitly selected immutable Build configuration alias.
+  pub fn resolve_build_configuration(&self, alias: &FactoryKey) -> Result<BuildConfigurationRef, FactoryError> {
     resolve_choice(&self.build_configurations, alias, FactoryChoiceKind::BuildConfiguration)
   }
 
@@ -171,25 +167,25 @@ impl FactoryConfigurationChoices {
 #[serde(deny_unknown_fields)]
 pub struct FactoryWipLimits {
   max_active_runs: u32,
-  max_active_stages: u32,
+  max_active_nodes: u32,
 }
 
 impl FactoryWipLimits {
   /// Constructs positive WIP limits within product safety ceilings.
-  pub const fn new(max_active_runs: u32, max_active_stages: u32) -> Result<Self, FactoryError> {
+  pub const fn new(max_active_runs: u32, max_active_nodes: u32) -> Result<Self, FactoryError> {
     if max_active_runs == 0 || max_active_runs > MAX_FACTORY_ACTIVE_RUNS {
       return Err(FactoryError::InvalidConfiguration {
         field: "max_active_runs",
       });
     }
-    if max_active_stages == 0 || max_active_stages > MAX_FACTORY_ACTIVE_STAGES {
+    if max_active_nodes == 0 || max_active_nodes > MAX_FACTORY_ACTIVE_NODES {
       return Err(FactoryError::InvalidConfiguration {
-        field: "max_active_stages",
+        field: "max_active_nodes",
       });
     }
     Ok(Self {
       max_active_runs,
-      max_active_stages,
+      max_active_nodes,
     })
   }
 
@@ -199,87 +195,11 @@ impl FactoryWipLimits {
     self.max_active_runs
   }
 
-  /// Returns the maximum concurrently active stage attempts.
+  /// Returns the maximum concurrently active node attempts.
   #[must_use]
-  pub const fn max_active_stages(self) -> u32 {
-    self.max_active_stages
+  pub const fn max_active_nodes(self) -> u32 {
+    self.max_active_nodes
   }
-}
-
-/// Unresolved stage selection supplied for configuration publication.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct FactoryStageDraft {
-  /// Stable stage identity within the configuration version.
-  pub key: FactoryKey,
-  /// Program-owned stage kind.
-  pub kind: FactoryStageKind,
-  /// Alias of the selected exact Build Configuration.
-  pub build_configuration: FactoryKey,
-  /// Hard budget for one attempt of this stage.
-  pub budget: BudgetLimit,
-}
-
-/// Immutable validated stage definition.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct FactoryStageDefinition {
-  key: FactoryKey,
-  kind: FactoryStageKind,
-  build_configuration: BuildConfigurationRef,
-  budget: BudgetLimit,
-}
-
-impl FactoryStageDefinition {
-  /// Returns the stable stage key.
-  #[must_use]
-  pub const fn key(&self) -> &FactoryKey {
-    &self.key
-  }
-
-  /// Returns the program-owned stage kind.
-  #[must_use]
-  pub const fn kind(&self) -> FactoryStageKind {
-    self.kind
-  }
-
-  /// Returns the exact Build Configuration selected at publication.
-  #[must_use]
-  pub const fn build_configuration(&self) -> &BuildConfigurationRef {
-    &self.build_configuration
-  }
-
-  /// Returns the immutable per-attempt budget.
-  #[must_use]
-  pub const fn budget(&self) -> BudgetLimit {
-    self.budget
-  }
-}
-
-/// Optional unresolved Decision Signal profile selected for one purpose.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DecisionSignalProfileDraft {
-  /// Purpose governed by this profile.
-  pub purpose: DecisionSignalPurpose,
-  /// Provider adapter alias.
-  pub provider: FactoryKey,
-  /// Exact protocol adapter alias.
-  pub adapter: FactoryKey,
-  /// Exact-model alias.
-  pub model: FactoryKey,
-  /// Versioned question-set alias.
-  pub question_set: FactoryKey,
-  /// Deterministic consumption-policy alias.
-  pub policy: FactoryKey,
-  /// Configured rollout authority.
-  pub mode: DecisionSignalMode,
-  /// Fail-closed fallback for an unavailable or unusable signal.
-  pub fallback: DecisionSignalFallback,
-  /// Hard budget for one signal request.
-  pub budget: BudgetLimit,
-  /// Finite outgoing routes for the immutable state governed by a routing profile.
-  pub routes: Option<DecisionSignalRouteSet>,
 }
 
 /// Immutable purpose-specific Decision Signal selection.
@@ -411,20 +331,6 @@ impl DecisionSignalProfile {
   }
 }
 
-/// Unresolved criterion and evaluator selection supplied at publication.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct EvaluationPolicyDraft {
-  /// Selected criterion-pack aliases.
-  pub criterion_packs: Vec<FactoryKey>,
-  /// Selected evaluator aliases.
-  pub evaluators: Vec<FactoryKey>,
-  /// Number of schema-valid evaluator branches required by deterministic policy.
-  pub required_quorum: u16,
-  /// Hard budget enclosing evaluation work.
-  pub budget: BudgetLimit,
-}
-
 /// Exact immutable evaluation selection for one configuration version.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -487,106 +393,21 @@ impl EvaluationPolicy {
   }
 }
 
-/// Unresolved bounded rework selection supplied at publication.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReworkPolicyDraft {
-  /// Maximum number of rework cycles; zero disables rework.
-  pub max_cycles: u16,
-  /// Stage key used for rework when cycles are enabled.
-  pub stage: Option<FactoryKey>,
-  /// Terminal code-owned disposition when another cycle is forbidden.
-  pub exhausted_outcome: DecisionOutcome,
-}
-
-/// Immutable bounded rework policy.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct ReworkPolicy {
-  max_cycles: u16,
-  stage: Option<FactoryKey>,
-  exhausted_outcome: DecisionOutcome,
-}
-
-impl ReworkPolicy {
-  /// Returns the maximum number of rework cycles.
-  #[must_use]
-  pub const fn max_cycles(&self) -> u16 {
-    self.max_cycles
-  }
-
-  /// Returns the configured rework stage when rework is enabled.
-  #[must_use]
-  pub const fn stage(&self) -> Option<&FactoryKey> {
-    self.stage.as_ref()
-  }
-
-  /// Returns the terminal disposition applied without another model call.
-  #[must_use]
-  pub const fn exhausted_outcome(&self) -> DecisionOutcome {
-    self.exhausted_outcome
-  }
-}
-
-/// Unresolved delivery-for-review selection supplied at publication.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeliveryPolicyDraft {
-  /// Delivery adapter alias.
-  pub adapter: FactoryKey,
-  /// Immutable delivery target-policy alias.
-  pub policy: FactoryKey,
-}
-
-/// Exact delivery-for-human-review policy.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
-pub struct DeliveryPolicy {
-  adapter: ImmutableReference,
-  policy: ImmutableReference,
-}
-
-impl DeliveryPolicy {
-  /// Returns the exact delivery adapter identity.
-  #[must_use]
-  pub const fn adapter(&self) -> &ImmutableReference {
-    &self.adapter
-  }
-
-  /// Returns the exact immutable target policy.
-  #[must_use]
-  pub const fn policy(&self) -> &ImmutableReference {
-    &self.policy
-  }
-}
-
 /// Complete unresolved definition submitted for immutable publication.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryConfigurationDraft {
   /// Alias of the immutable admission policy governing later Work selection.
   pub admission_policy: FactoryKey,
-  /// Optional pinned nested Flow journey; absent retains the fixed-stage journey.
+  /// Explicit pinned Flow journey; publication rejects an absent definition.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub flow: Option<crate::FactoryFlowConfiguration>,
-  /// Stage definitions and Build Configuration aliases.
-  pub stages: Vec<FactoryStageDraft>,
   /// Per-configuration work-in-progress limits.
   pub wip_limits: FactoryWipLimits,
-  /// Hard budget enclosing every stage, evaluation, signal, and rework cycle.
+  /// Hard budget enclosing every configured node and nested Flow execution.
   pub hard_budget: BudgetLimit,
   /// Alias of the deny-by-default permission ceiling selected for later intersection.
   pub permission_ceiling: FactoryKey,
-  /// Distinct logical credentials scoped to trusted Factory consumers.
-  pub credential_profiles: FactoryCredentialProfiles,
-  /// Optional purpose-specific Decision Signal profiles.
-  pub decision_signals: Vec<DecisionSignalProfileDraft>,
-  /// Criterion packs, evaluators, quorum, and evaluation budget.
-  pub evaluation: EvaluationPolicyDraft,
-  /// Bounded rework selection.
-  pub rework: ReworkPolicyDraft,
-  /// Delivery-for-human-review selection.
-  pub delivery: DeliveryPolicyDraft,
   /// Whether later Work admission may select this version.
   pub enabled: bool,
 }
@@ -597,17 +418,10 @@ pub struct FactoryConfigurationDraft {
 pub struct FactoryConfiguration {
   reference: FactoryConfigurationRef,
   admission_policy: ImmutableReference,
-  #[serde(default, skip_serializing_if = "Option::is_none")]
-  flow: Option<crate::FactoryFlowConfiguration>,
-  stages: Vec<FactoryStageDefinition>,
+  flow: crate::FactoryFlowConfiguration,
   wip_limits: FactoryWipLimits,
   hard_budget: BudgetLimit,
   permission_ceiling: ImmutableReference,
-  credential_profiles: FactoryCredentialProfiles,
-  decision_signals: Vec<DecisionSignalProfile>,
-  evaluation: EvaluationPolicy,
-  rework: ReworkPolicy,
-  delivery: DeliveryPolicy,
   enabled: bool,
 }
 
@@ -622,37 +436,24 @@ impl FactoryConfiguration {
     choices: &FactoryConfigurationChoices,
   ) -> Result<Self, FactoryError> {
     let admission_policy = choices.resolve_reference(FactoryChoiceKind::AdmissionPolicy, &draft.admission_policy)?;
-    let stages = resolve_stages(project_id, &draft, choices)?;
-    let decision_signals = resolve_decision_signals(&draft, choices)?;
-    let evaluation = resolve_evaluation(&draft, choices)?;
-    let rework = resolve_rework(&draft.rework, &stages)?;
-    let delivery = DeliveryPolicy {
-      adapter: choices.resolve_reference(FactoryChoiceKind::DeliveryAdapter, &draft.delivery.adapter)?,
-      policy: choices.resolve_reference(FactoryChoiceKind::DeliveryPolicy, &draft.delivery.policy)?,
-    };
     let permission_ceiling =
       choices.resolve_reference(FactoryChoiceKind::PermissionCeiling, &draft.permission_ceiling)?;
 
-    if let Some(flow) = &draft.flow {
-      flow.validate(
-        &FactoryConfigurationRef::new(id, version, project_id, definition_digest),
-        draft.hard_budget,
-        draft.wip_limits,
-      )?;
-    }
+    let flow = draft
+      .flow
+      .ok_or(FactoryError::InvalidConfiguration { field: "required Flow" })?;
+    flow.validate(
+      &FactoryConfigurationRef::new(id, version, project_id, definition_digest),
+      draft.hard_budget,
+      draft.wip_limits,
+    )?;
     Ok(Self {
       reference: FactoryConfigurationRef::new(id, version, project_id, definition_digest),
       admission_policy,
-      flow: draft.flow,
-      stages,
+      flow,
       wip_limits: draft.wip_limits,
       hard_budget: draft.hard_budget,
       permission_ceiling,
-      credential_profiles: draft.credential_profiles,
-      decision_signals,
-      evaluation,
-      rework,
-      delivery,
       enabled: draft.enabled,
     })
   }
@@ -692,16 +493,10 @@ impl FactoryConfiguration {
     &self.admission_policy
   }
 
-  /// Returns the optional immutable nested Flow journey.
+  /// Returns the required exact immutable Flow journey.
   #[must_use]
-  pub const fn flow(&self) -> Option<&crate::FactoryFlowConfiguration> {
-    self.flow.as_ref()
-  }
-
-  /// Returns the immutable stage definitions.
-  #[must_use]
-  pub fn stages(&self) -> &[FactoryStageDefinition] {
-    &self.stages
+  pub const fn flow(&self) -> &crate::FactoryFlowConfiguration {
+    &self.flow
   }
 
   /// Returns the work-in-progress limits.
@@ -722,203 +517,10 @@ impl FactoryConfiguration {
     &self.permission_ceiling
   }
 
-  /// Returns the immutable stage-scoped logical credential profiles.
-  #[must_use]
-  pub const fn credential_profiles(&self) -> &FactoryCredentialProfiles {
-    &self.credential_profiles
-  }
-
-  /// Returns all configured Decision Signal profiles.
-  #[must_use]
-  pub fn decision_signals(&self) -> &[DecisionSignalProfile] {
-    &self.decision_signals
-  }
-
-  /// Returns a configured Decision Signal profile by purpose.
-  #[must_use]
-  pub fn decision_signal(&self, purpose: DecisionSignalPurpose) -> Option<&DecisionSignalProfile> {
-    self.decision_signals.iter().find(|profile| profile.purpose == purpose)
-  }
-
-  /// Returns the immutable evaluation policy.
-  #[must_use]
-  pub const fn evaluation(&self) -> &EvaluationPolicy {
-    &self.evaluation
-  }
-
-  /// Returns the immutable rework policy.
-  #[must_use]
-  pub const fn rework(&self) -> &ReworkPolicy {
-    &self.rework
-  }
-
-  /// Returns the immutable delivery-for-human-review policy.
-  #[must_use]
-  pub const fn delivery(&self) -> &DeliveryPolicy {
-    &self.delivery
-  }
-
   /// Reports whether later Work admission may select this configuration version.
   #[must_use]
   pub const fn is_enabled(&self) -> bool {
     self.enabled
-  }
-}
-
-fn resolve_stages(
-  project_id: ProjectId,
-  draft: &FactoryConfigurationDraft,
-  choices: &FactoryConfigurationChoices,
-) -> Result<Vec<FactoryStageDefinition>, FactoryError> {
-  validate_count(&draft.stages, 1, MAX_FACTORY_STAGES, "configuration stages")?;
-  let mut keys = HashSet::with_capacity(draft.stages.len());
-  let mut kinds = HashSet::with_capacity(4);
-  let mut stages = Vec::with_capacity(draft.stages.len());
-  for stage in &draft.stages {
-    if !keys.insert(stage.key.clone()) {
-      return Err(FactoryError::InvalidConfiguration {
-        field: "duplicate stage key",
-      });
-    }
-    let build_configuration = choices.resolve_build_configuration(&stage.build_configuration)?;
-    if build_configuration.project_id != project_id {
-      return Err(FactoryError::InvalidConfiguration {
-        field: "stage Build Configuration Project",
-      });
-    }
-    if !stage.budget.fits_within(draft.hard_budget) {
-      return Err(FactoryError::InvalidConfiguration { field: "stage budget" });
-    }
-    if !kinds.insert(stage.kind) {
-      return Err(FactoryError::InvalidConfiguration {
-        field: "duplicate stage kind",
-      });
-    }
-    stages.push(FactoryStageDefinition {
-      key: stage.key.clone(),
-      kind: stage.kind,
-      build_configuration,
-      budget: stage.budget,
-    });
-  }
-  if ![
-    FactoryStageKind::Implementation,
-    FactoryStageKind::Validation,
-    FactoryStageKind::Evaluation,
-  ]
-  .into_iter()
-  .all(|kind| kinds.contains(&kind))
-  {
-    return Err(FactoryError::InvalidConfiguration {
-      field: "required stages",
-    });
-  }
-  Ok(stages)
-}
-
-fn resolve_decision_signals(
-  draft: &FactoryConfigurationDraft,
-  choices: &FactoryConfigurationChoices,
-) -> Result<Vec<DecisionSignalProfile>, FactoryError> {
-  validate_count(&draft.decision_signals, 0, 2, "decision signal profiles")?;
-  let mut purposes = HashSet::with_capacity(draft.decision_signals.len());
-  let mut profiles = Vec::with_capacity(draft.decision_signals.len());
-  for profile in &draft.decision_signals {
-    if !purposes.insert(profile.purpose) {
-      return Err(FactoryError::InvalidConfiguration {
-        field: "duplicate Decision Signal purpose",
-      });
-    }
-    if !profile.budget.fits_within(draft.hard_budget) {
-      return Err(FactoryError::InvalidConfiguration {
-        field: "Decision Signal budget",
-      });
-    }
-    if matches!(profile.purpose, DecisionSignalPurpose::Routing) != profile.routes.is_some() {
-      return Err(FactoryError::InvalidConfiguration {
-        field: "Decision Signal routing routes",
-      });
-    }
-    profiles.push(DecisionSignalProfile::from_resolved(DecisionSignalProfileDefinition {
-      purpose: profile.purpose,
-      provider: choices.resolve_reference(FactoryChoiceKind::DecisionSignalProvider, &profile.provider)?,
-      adapter: choices.resolve_reference(FactoryChoiceKind::DecisionSignalAdapter, &profile.adapter)?,
-      model: choices.resolve_reference(FactoryChoiceKind::DecisionSignalModel, &profile.model)?,
-      question_set: choices.resolve_reference(FactoryChoiceKind::DecisionSignalQuestionSet, &profile.question_set)?,
-      policy: choices.resolve_reference(FactoryChoiceKind::DecisionSignalPolicy, &profile.policy)?,
-      mode: profile.mode,
-      fallback: profile.fallback,
-      budget: profile.budget,
-      routes: profile.routes.clone(),
-    }));
-  }
-  Ok(profiles)
-}
-
-fn resolve_evaluation(
-  draft: &FactoryConfigurationDraft,
-  choices: &FactoryConfigurationChoices,
-) -> Result<EvaluationPolicy, FactoryError> {
-  validate_unique_aliases(
-    &draft.evaluation.criterion_packs,
-    MAX_CRITERION_PACKS,
-    "criterion packs",
-  )?;
-  validate_unique_aliases(&draft.evaluation.evaluators, MAX_EVALUATORS, "evaluators")?;
-  if draft.evaluation.required_quorum == 0
-    || usize::from(draft.evaluation.required_quorum) > draft.evaluation.evaluators.len()
-  {
-    return Err(FactoryError::InvalidConfiguration {
-      field: "evaluator quorum",
-    });
-  }
-  if !draft.evaluation.budget.fits_within(draft.hard_budget) {
-    return Err(FactoryError::InvalidConfiguration {
-      field: "evaluation budget",
-    });
-  }
-  EvaluationPolicy::try_new(
-    resolve_references(
-      choices,
-      FactoryChoiceKind::CriterionPack,
-      &draft.evaluation.criterion_packs,
-    )?,
-    resolve_references(choices, FactoryChoiceKind::Evaluator, &draft.evaluation.evaluators)?,
-    draft.evaluation.required_quorum,
-    draft.evaluation.budget,
-  )
-}
-
-fn resolve_rework(draft: &ReworkPolicyDraft, stages: &[FactoryStageDefinition]) -> Result<ReworkPolicy, FactoryError> {
-  if draft.max_cycles > MAX_FACTORY_REWORK_CYCLES {
-    return Err(FactoryError::InvalidConfiguration { field: "rework cycles" });
-  }
-  if !matches!(
-    draft.exhausted_outcome,
-    DecisionOutcome::Escalate | DecisionOutcome::Reject
-  ) {
-    return Err(FactoryError::InvalidConfiguration {
-      field: "rework exhausted outcome",
-    });
-  }
-  match (draft.max_cycles, draft.stage.as_ref()) {
-    (0, None) => Ok(ReworkPolicy {
-      max_cycles: 0,
-      stage: None,
-      exhausted_outcome: draft.exhausted_outcome,
-    }),
-    (1.., Some(stage_key))
-      if stages
-        .iter()
-        .any(|stage| stage.key == *stage_key && stage.kind == FactoryStageKind::Rework) =>
-    {
-      Ok(ReworkPolicy {
-        max_cycles: draft.max_cycles,
-        stage: Some(stage_key.clone()),
-        exhausted_outcome: draft.exhausted_outcome,
-      })
-    }
-    _ => Err(FactoryError::InvalidConfiguration { field: "rework stage" }),
   }
 }
 
@@ -974,29 +576,6 @@ fn resolve_choice<T: Clone>(
     .get(alias)
     .cloned()
     .ok_or(FactoryError::UnknownChoiceAlias { kind })
-}
-
-fn resolve_references(
-  choices: &FactoryConfigurationChoices,
-  kind: FactoryChoiceKind,
-  aliases: &[FactoryKey],
-) -> Result<Vec<ImmutableReference>, FactoryError> {
-  aliases
-    .iter()
-    .map(|alias| choices.resolve_reference(kind, alias))
-    .collect()
-}
-
-fn validate_unique_aliases(
-  aliases: &[FactoryKey],
-  maximum: usize,
-  collection: &'static str,
-) -> Result<(), FactoryError> {
-  validate_count(aliases, 1, maximum, collection)?;
-  if aliases.iter().collect::<HashSet<_>>().len() != aliases.len() {
-    return Err(FactoryError::InvalidConfiguration { field: collection });
-  }
-  Ok(())
 }
 
 fn validate_unique_references(

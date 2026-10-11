@@ -47,6 +47,13 @@ pub trait FactoryFlowActionPlugin: Send + Sync {
   fn identity(&self) -> ImmutableReference;
   /// Validates action parameters and every possible result before external effects.
   fn validate(&self, binding: &FlowActionBinding, outcomes: &[FlowOutcomeDefinition]) -> Result<(), ApplicationError>;
+  /// Stops or observes only the original operation; never dispatches an absent one.
+  /// None means stopping is pending; Some contains the final measured consumption.
+  async fn cancel(
+    &self,
+    request: FactoryFlowActionRequest<'_>,
+    requested_at: Timestamp,
+  ) -> Result<Option<BudgetUsage>, ApplicationError>;
   /// Executes idempotently within the supplied permissions, budget and deadline.
   async fn execute(
     &self,
@@ -64,17 +71,13 @@ impl FactoryFlowActionAdapter {
   pub fn new(plugin: Arc<dyn FactoryFlowActionPlugin>) -> Self {
     Self { plugin }
   }
-}
-
-#[async_trait]
-impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
-  async fn observe(
+  fn scoped_request<'a>(
     &self,
-    request: crate::FactoryNodeExecutionRequest<'_>,
-  ) -> Result<crate::FactoryNodeExecutionStep, ApplicationError> {
+    request: &crate::FactoryNodeExecutionRequest<'a>,
+    executing: bool,
+  ) -> Result<FactoryFlowActionRequest<'a>, ApplicationError> {
     let definition = request
-      .snapshot
-      .admitted_flow
+      .admitted
       .closure()
       .definition(request.input.definition())
       .ok_or_else(ApplicationError::invalid)?;
@@ -82,13 +85,13 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
       .node(request.attempt.node_key())
       .ok_or_else(ApplicationError::invalid)?;
     let binding = node.action().ok_or_else(ApplicationError::invalid)?;
-    if request.input.factory_run_id() != request.snapshot.run.id()
+    if request.input.factory_run_id() != request.run_id
       || request.input.node() != request.attempt.node_key()
       || request.input.digest().map_err(|_| ApplicationError::invalid())? != request.attempt.input_digest()
       || node.kind() != FlowNodeKind::TrustedAction
       || request.attempt.node_kind() != node.kind()
       || request.attempt.budget() != node.budget()
-      || request.observed_at >= request.attempt.deadline()
+      || executing && request.observed_at >= request.attempt.deadline()
       || binding.plugin() != &self.plugin.identity()
       || !node.permissions().plugins().any(|allowed| allowed == binding.plugin())
       || request.attempt.execution() != &NodeExecutionIdentity::External(binding.plugin().clone())
@@ -101,9 +104,9 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
       .map_err(|_| ApplicationError::invalid())?;
     self.plugin.validate(binding, node.outcomes())?;
     let bytes = serde_json::to_vec(&(
-      request.snapshot.work.id(),
-      request.snapshot.work.external_identity(),
-      request.snapshot.work.subject(),
+      request.work.id(),
+      request.work.external_identity(),
+      request.work.subject(),
       binding,
       definition.reference(),
       request.attempt.input_digest(),
@@ -113,27 +116,55 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
       "octacity.factory.flow-action.v1",
       &[request.attempt.id().as_uuid().as_bytes(), &bytes],
     );
-    let result = self
-      .plugin
-      .execute(FactoryFlowActionRequest {
-        operation_id,
-        work_id: request.snapshot.work.id(),
-        external_identity: request.snapshot.work.external_identity(),
-        subject: request.snapshot.work.subject(),
-        binding,
-        input: request.input,
-        schemas: request.snapshot.admitted_flow.data_schemas(),
-        permissions: node.permissions(),
-        budget: node.budget(),
-        deadline: request.attempt.deadline(),
-      })
-      .await?;
+    Ok(FactoryFlowActionRequest {
+      operation_id,
+      work_id: request.work.id(),
+      external_identity: request.work.external_identity(),
+      subject: request.work.subject(),
+      binding,
+      input: request.input,
+      schemas: request.admitted.data_schemas(),
+      permissions: node.permissions(),
+      budget: node.budget(),
+      deadline: request.attempt.deadline(),
+    })
+  }
+}
+
+#[async_trait]
+impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
+  async fn cancel(
+    &self,
+    request: crate::FactoryNodeExecutionRequest<'_>,
+    requested_at: Timestamp,
+  ) -> Result<crate::FactoryNodeCancellationStep, ApplicationError> {
+    if requested_at > request.observed_at {
+      return Err(ApplicationError::invalid());
+    }
+    let scoped = self.scoped_request(&request, false)?;
+    match self.plugin.cancel(scoped, requested_at).await? {
+      None => Ok(crate::FactoryNodeCancellationStep::Waiting { execution: None }),
+      Some(usage) if usage.attempts == 0 => Ok(crate::FactoryNodeCancellationStep::Stopped { execution: None, usage }),
+      Some(_) => Err(ApplicationError::invalid()),
+    }
+  }
+
+  async fn observe(
+    &self,
+    request: crate::FactoryNodeExecutionRequest<'_>,
+  ) -> Result<crate::FactoryNodeExecutionStep, ApplicationError> {
+    let scoped = self.scoped_request(&request, true)?;
+    let definition = request
+      .admitted
+      .closure()
+      .definition(request.input.definition())
+      .ok_or_else(ApplicationError::invalid)?;
+    let result = self.plugin.execute(scoped).await?;
     if result.usage.attempts != 0 {
       return Err(ApplicationError::invalid());
     }
     let schema = request
-      .snapshot
-      .admitted_flow
+      .admitted
       .data_schema(result.payload.schema())
       .ok_or_else(ApplicationError::invalid)?;
     FlowPayload::restore(
@@ -191,6 +222,13 @@ pub struct FactoryWorkStatusRequest {
 /// Projection failure cannot undo an accepted node result or grant authority.
 #[async_trait]
 pub trait FactoryWorkStatusProjector: Send + Sync {
+  /// Observes/stops the existing projection without replaying writes or creating it.
+  /// A terminal observation returns measured usage; None requires another observation.
+  async fn cancel_status(
+    &self,
+    request: FactoryWorkStatusRequest,
+    requested_at: Timestamp,
+  ) -> Result<Option<BudgetUsage>, ApplicationError>;
   /// Projects the arbitrary configured value using trusted connector credentials.
   async fn set_status(
     &self,
@@ -232,6 +270,30 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
     serde_json::from_value::<StatusParameters>(binding.parameters().clone())
       .map_err(|_| ApplicationError::invalid())?;
     Ok(())
+  }
+  async fn cancel(
+    &self,
+    request: FactoryFlowActionRequest<'_>,
+    requested_at: Timestamp,
+  ) -> Result<Option<BudgetUsage>, ApplicationError> {
+    let parameters: StatusParameters =
+      serde_json::from_value(request.binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
+    self
+      .projector
+      .cancel_status(
+        FactoryWorkStatusRequest {
+          operation_id: request.operation_id,
+          work_id: request.work_id,
+          external_identity: request.external_identity.clone(),
+          subject: request.subject.clone(),
+          status: parameters.status,
+          permissions: request.permissions.clone(),
+          budget: request.budget,
+          deadline: request.deadline,
+        },
+        requested_at,
+      )
+      .await
   }
   async fn execute(
     &self,

@@ -134,6 +134,7 @@ fn v3_spec() -> JobSpecV3 {
     attempt: current.attempt,
     issued_at: current.issued_at,
     expires_at: current.expires_at,
+    execution_deadline_unix_ms: current.expires_at * 1_000,
     source: current.source,
     octa: current.octa,
     execution: ManagedOctaExecutionV3 {
@@ -154,13 +155,13 @@ fn v3_spec() -> JobSpecV3 {
       factory_run_id: "00000000-0000-0000-0000-000000000001".to_owned(),
       factory_configuration_id: "00000000-0000-0000-0000-000000000002".to_owned(),
       factory_configuration_version: 1,
-      stage_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
-      stage_kind: FactoryStageKindV3::Implementation,
-      task_envelope_digest: DIGEST.to_owned(),
+      flow_run_id: "00000000-0000-0000-0000-000000000004".to_owned(),
+      workflow_cycle_id: "00000000-0000-0000-0000-000000000005".to_owned(),
+      node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
+      input_digest: DIGEST.to_owned(),
       subject_digest: DIGEST.to_owned(),
       change_set_capture: None,
       change_set_materialization: None,
-      parent: None,
     }),
     protected_inputs: ProtectedInputManifestV3 {
       inputs: vec![
@@ -236,7 +237,7 @@ fn v3_spec() -> JobSpecV3 {
 }
 
 #[test]
-fn v3_change_set_capture_is_bounded_and_limited_to_writable_stages() {
+fn v3_change_set_capture_is_bounded_and_requires_explicit_source_write_authority() {
   let mut value = v3_spec();
   value.factory.as_mut().unwrap().change_set_capture = Some(ChangeSetCaptureV3 {
     author_name: "OctaCity Factory".to_owned(),
@@ -256,9 +257,21 @@ fn v3_change_set_capture_is_bounded_and_limited_to_writable_stages() {
   });
   value.validate(&v3_binding(&value)).unwrap();
 
-  value.factory.as_mut().unwrap().stage_kind = FactoryStageKindV3::Evaluation;
+  value
+    .permissions
+    .mounts
+    .iter_mut()
+    .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    .unwrap()
+    .mode = FactoryMountModeV3::ReadOnly;
   assert!(value.validate(&v3_binding(&value)).is_err());
-  value.factory.as_mut().unwrap().stage_kind = FactoryStageKindV3::Implementation;
+  value
+    .permissions
+    .mounts
+    .iter_mut()
+    .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    .unwrap()
+    .mode = FactoryMountModeV3::ReadWrite;
   value
     .factory
     .as_mut()
@@ -289,12 +302,43 @@ fn v3_change_set_capture_is_bounded_and_limited_to_writable_stages() {
 }
 
 #[test]
+fn signed_factory_provenance_addresses_an_arbitrary_node_without_a_stage_role() {
+  let mut document = serde_json::to_value(v3_spec()).unwrap();
+  let factory = document["factory"].as_object_mut().unwrap();
+  factory.remove("stage_attempt_id");
+  factory.remove("stage_kind");
+  factory.remove("task_envelope_digest");
+  factory.remove("parent");
+  factory.insert(
+    "flow_run_id".to_owned(),
+    serde_json::json!("00000000-0000-0000-0000-000000000004"),
+  );
+  factory.insert(
+    "workflow_cycle_id".to_owned(),
+    serde_json::json!("00000000-0000-0000-0000-000000000005"),
+  );
+  factory.insert(
+    "node_attempt_id".to_owned(),
+    serde_json::json!("00000000-0000-0000-0000-000000000003"),
+  );
+  factory.insert("input_digest".to_owned(), serde_json::json!(DIGEST));
+  let node_job: JobSpecV3 = serde_json::from_value(document).expect("an exact node has no fixed stage role");
+  node_job.validate(&v3_binding(&node_job)).unwrap();
+  let encoded = serde_json::to_value(&node_job).unwrap();
+  assert_eq!(
+    encoded["factory"]["node_attempt_id"],
+    serde_json::json!("00000000-0000-0000-0000-000000000003")
+  );
+  assert!(encoded["factory"].get("stage_kind").is_none());
+}
+
+#[test]
 fn captured_change_set_manifest_is_bounded_canonical_and_portable() {
   let manifest = CapturedChangeSetManifestV1 {
     format_version: 1,
     base_revision: "base-revision".to_owned(),
     candidate_revision: "candidate-revision".to_owned(),
-    stage_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
+    node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
     capture_tool: FactoryImmutableReferenceV3 {
       identity: "git".to_owned(),
       version: "2.0.0".to_owned(),
@@ -313,6 +357,12 @@ fn captured_change_set_manifest_is_bounded_canonical_and_portable() {
     },
     patch: None,
   };
+  let mut node_manifest = serde_json::to_value(&manifest).unwrap();
+  node_manifest.as_object_mut().unwrap().remove("stage_attempt_id");
+  node_manifest["node_attempt_id"] = serde_json::json!("00000000-0000-0000-0000-000000000003");
+  let node_manifest: CapturedChangeSetManifestV1 = serde_json::from_value(node_manifest)
+    .expect("capture provenance addresses the producing node without a stage identity");
+  node_manifest.validate().unwrap();
   let mut bytes = serde_json::to_vec(&manifest).unwrap();
   bytes.push(b'\n');
   assert_eq!(CapturedChangeSetManifestV1::decode_canonical(&bytes).unwrap(), manifest);
@@ -562,8 +612,6 @@ fn v3_rejects_unsafe_inputs_incomplete_enforcement_and_host_fallback() {
   assert!(value.validate(&binding(&spec())).is_err());
 
   let mut value = v3_spec();
-  value.factory.as_mut().unwrap().stage_kind = FactoryStageKindV3::Evaluation;
-  assert!(value.validate(&binding(&spec())).is_err());
   enable_change_set_materialization(&mut value);
   value
     .permissions
@@ -905,4 +953,33 @@ fn platform_keys_round_trip_and_map_to_octa_cache_dimensions() {
     assert_eq!(CacheArchitecture::from(parsed.architecture), cache_architecture);
   }
   assert!("linux-x86_64".parse::<PlatformSpec>().is_err());
+}
+
+#[test]
+fn managed_execution_requires_a_future_absolute_deadline_independent_of_validity() {
+  let mut spec = v3_spec();
+  spec.expires_at = 200;
+  for deadline in [0, 100_000, 149_999, 150_000] {
+    spec.execution_deadline_unix_ms = deadline;
+    assert!(
+      spec
+        .validate(&JobBinding {
+          job_id: &spec.job_id,
+          attempt: spec.attempt,
+          now: 150
+        })
+        .is_err(),
+      "expired execution must fail before any effect even while signature validity remains"
+    );
+  }
+  spec.execution_deadline_unix_ms = 600_999;
+  assert!(
+    spec
+      .validate(&JobBinding {
+        job_id: &spec.job_id,
+        attempt: spec.attempt,
+        now: 150
+      })
+      .is_ok()
+  );
 }

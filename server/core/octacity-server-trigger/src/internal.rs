@@ -79,6 +79,23 @@ mod tests {
   use crate::{TriggerCause, TriggerEventKind, TriggerMetadata, TriggerTarget};
 
   #[test]
+  fn a_terminal_build_without_a_parent_trigger_can_start_an_internal_lineage() {
+    let mut occurrence = root_occurrence(definition(1));
+    occurrence.cause = TriggerCause::Internal {
+      source_build_id: octacity_server_domain::BuildId::generate(),
+      event_kind: crate::TriggerEventKind::new("cancelled").unwrap(),
+    };
+    occurrence.validate().unwrap();
+    assert_eq!(occurrence.causality.depth, 0);
+    assert_eq!(
+      derive_internal_causality(&occurrence, definition(2), &[definition(1)])
+        .unwrap()
+        .depth,
+      1
+    );
+  }
+
+  #[test]
   fn rejects_a_repeated_trigger_before_deriving_an_occurrence() {
     let parent = root_occurrence(definition(1));
     assert_eq!(

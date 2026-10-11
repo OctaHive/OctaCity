@@ -13,7 +13,7 @@ use octacity_server_application::{
   ManagementOperationalMetadataProjection, RevisionResolver, ScheduleWorker, WebhookDeliveryWorker,
 };
 use octacity_server_store::WorkerOwner;
-use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
+use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex};
 use octacity_server_vcs::VcsAdapterRegistry;
 use octacity_server_webhook::WebhookAdapterRegistry;
 use tokio_util::sync::CancellationToken;
@@ -36,6 +36,24 @@ use crate::{ServerConfig, readiness::WorkerHealth};
 impl ServerRuntime {
   /// Binds the listener and starts supervised work from validated configuration.
   pub async fn start(config: ServerConfig) -> Result<Self, ServerRuntimeError> {
+    Self::start_configured(config, None).await
+  }
+
+  /// Starts the optional common Flow owner using explicitly installed capability bindings.
+  pub async fn start_with_factory(
+    config: ServerConfig,
+    installer: Arc<dyn super::FactoryRuntimeInstaller>,
+  ) -> Result<Self, ServerRuntimeError> {
+    Self::start_configured(config, Some(installer)).await
+  }
+
+  async fn start_configured(
+    config: ServerConfig,
+    installer: Option<Arc<dyn super::FactoryRuntimeInstaller>>,
+  ) -> Result<Self, ServerRuntimeError> {
+    if config.factory().is_some() && installer.is_none() {
+      return Err(ServerRuntimeError::MissingFactoryInstallation);
+    }
     let metrics = install_server_metrics();
     let cancellation = CancellationToken::new();
     let lease_expiry_policy = config.lease_expiry_worker();
@@ -49,7 +67,12 @@ impl ServerRuntime {
     let mut resources = RuntimeResources::from_config(&config)
       .await
       .map_err(ServerRuntimeError::Assembly)?;
-    let registration_store = Arc::new(PostgresStore::new(resources.postgres.clone()));
+    let placement_store = Arc::new(PostgresAuthoritativeStore::new(
+      resources.postgres.clone(),
+      resources.job_spec_signer.clone(),
+    ));
+    let (registration_store, factory) =
+      super::factory::assemble(&config, &mut resources, placement_store.clone(), installer).await?;
     let log_search_index = Arc::new(PostgresLogSearchIndex::new(resources.postgres.clone()));
     let notification_pool = resources.postgres.clone();
     let registration_service = Arc::new(
@@ -84,10 +107,6 @@ impl ServerRuntime {
       )
       .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
     );
-    let placement_store = Arc::new(PostgresAuthoritativeStore::new(
-      resources.postgres,
-      resources.job_spec_signer,
-    ));
     let webhook_configuration = match (config.webhook_adapter_registry(), config.webhook_callback_origin()) {
       (Some(registry), Some(callback_origin)) => Some((
         Arc::new(WebhookAdapterRegistry::discover(registry).map_err(ServerRuntimeError::WebhookRegistry)?),
@@ -331,6 +350,7 @@ impl ServerRuntime {
         management_application: Some(management_application),
         webhook_router,
         workers: Some(DurableWorkers {
+          factory,
           expiry: expiry_worker,
           expiry_health: worker_health,
           schedules: ScheduleWorker::new(registration_store.clone(), trigger_service.clone()),

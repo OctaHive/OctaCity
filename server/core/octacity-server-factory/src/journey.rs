@@ -48,7 +48,7 @@ impl FactoryFlowConfiguration {
     budget: BudgetLimit,
     wip: FactoryWipLimits,
   ) -> Result<(), FactoryError> {
-    if !self.limits.budget().fits_within(budget) || u32::from(self.limits.max_wip()) > wip.max_active_stages() {
+    if !self.limits.budget().fits_within(budget) || u32::from(self.limits.max_wip()) > wip.max_active_nodes() {
       return Err(FactoryError::InvalidConfiguration {
         field: "configured Flow bounds",
       });

@@ -41,7 +41,7 @@ pub(crate) async fn build(pool: &PgPool, build_id: BuildId) -> Result<BuildRecor
   let row: BuildRow = sqlx::query_as(
     "SELECT build.id, build.project_id, build.build_configuration_id, build.build_configuration_version, \
             build.pipeline_id, build.pipeline_version, build.repository_id, build.repository_version, \
-            build.immutable_revision, build.input_snapshot, build.effective_policy_snapshot, \
+            build.immutable_revision, build.input_snapshot, build.effective_policy_snapshot, build.factory_origin, \
             FLOOR(EXTRACT(EPOCH FROM build.metadata_retention_until) * 1000)::BIGINT AS metadata_retention_millis, \
             FLOOR(EXTRACT(EPOCH FROM build.log_retention_until) * 1000)::BIGINT AS log_retention_millis, \
             FLOOR(EXTRACT(EPOCH FROM build.artifact_retention_until) * 1000)::BIGINT AS artifact_retention_millis, \
@@ -60,7 +60,7 @@ pub(crate) async fn build(pool: &PgPool, build_id: BuildId) -> Result<BuildRecor
             FLOOR(EXTRACT(EPOCH FROM occurrence.created_at) * 1000)::BIGINT AS trigger_created_at_millis, \
             FLOOR(EXTRACT(EPOCH FROM occurrence.updated_at) * 1000)::BIGINT AS trigger_updated_at_millis \
      FROM builds AS build \
-     JOIN trigger_occurrences AS occurrence ON occurrence.id = build.trigger_occurrence_id \
+     LEFT JOIN trigger_occurrences AS occurrence ON occurrence.id = build.trigger_occurrence_id \
      WHERE build.id = $1 AND build.metadata_visible",
   )
   .bind(build_id.as_uuid())
@@ -222,43 +222,63 @@ struct BuildRow {
   version: i64,
   created_at_millis: i64,
   updated_at_millis: i64,
-  occurrence_id: Uuid,
-  trigger_id: Uuid,
-  trigger_version: i64,
-  trigger_configuration_id: Uuid,
-  trigger_configuration_version: i64,
-  deduplication_identity: String,
-  cause: Json<TriggerCause>,
-  causality: Json<TriggerCausality>,
-  provider_metadata: Json<TriggerMetadata>,
-  source_time_millis: i64,
-  trigger_state: String,
-  trigger_created_at_millis: i64,
-  trigger_updated_at_millis: i64,
+  factory_origin: Option<Json<octacity_server_store::FactoryBuildOrigin>>,
+  occurrence_id: Option<Uuid>,
+  trigger_id: Option<Uuid>,
+  trigger_version: Option<i64>,
+  trigger_configuration_id: Option<Uuid>,
+  trigger_configuration_version: Option<i64>,
+  deduplication_identity: Option<String>,
+  cause: Option<Json<TriggerCause>>,
+  causality: Option<Json<TriggerCausality>>,
+  provider_metadata: Option<Json<TriggerMetadata>>,
+  source_time_millis: Option<i64>,
+  trigger_state: Option<String>,
+  trigger_created_at_millis: Option<i64>,
+  trigger_updated_at_millis: Option<i64>,
 }
 
 impl TryFrom<BuildRow> for BuildRecord {
   type Error = StoreError;
 
   fn try_from(row: BuildRow) -> Result<Self, Self::Error> {
-    let occurrence_id = id!(TriggerOccurrenceId, row.occurrence_id)?;
-    let trigger = NormalizedTriggerOccurrence {
-      id: occurrence_id,
-      trigger: TriggerDefinitionRef {
-        id: id!(TriggerId, row.trigger_id)?,
-        version: positive!(TriggerVersion, row.trigger_version)?,
-      },
-      target: TriggerTarget {
-        configuration_id: id!(BuildConfigurationId, row.trigger_configuration_id)?,
-        configuration_version: positive!(BuildConfigurationVersion, row.trigger_configuration_version)?,
-      },
-      deduplication_identity: TriggerIdentity::new(row.deduplication_identity).map_err(|_| StoreError::Unavailable)?,
-      cause: row.cause.0,
-      causality: row.causality.0,
-      provider_metadata: row.provider_metadata.0,
-      source_time: timestamp(row.source_time_millis)?,
+    let origin = match (row.factory_origin, row.occurrence_id) {
+      (Some(Json(origin)), None) => octacity_server_store::BuildOrigin::Factory(origin),
+      (None, Some(_)) => {
+        let occurrence_id = id!(TriggerOccurrenceId, row.occurrence_id.ok_or(StoreError::Unavailable)?)?;
+        let trigger = NormalizedTriggerOccurrence {
+          id: occurrence_id,
+          trigger: TriggerDefinitionRef {
+            id: id!(TriggerId, row.trigger_id.ok_or(StoreError::Unavailable)?)?,
+            version: positive!(TriggerVersion, row.trigger_version.ok_or(StoreError::Unavailable)?)?,
+          },
+          target: TriggerTarget {
+            configuration_id: id!(
+              BuildConfigurationId,
+              row.trigger_configuration_id.ok_or(StoreError::Unavailable)?
+            )?,
+            configuration_version: positive!(
+              BuildConfigurationVersion,
+              row.trigger_configuration_version.ok_or(StoreError::Unavailable)?
+            )?,
+          },
+          deduplication_identity: TriggerIdentity::new(row.deduplication_identity.ok_or(StoreError::Unavailable)?)
+            .map_err(|_| StoreError::Unavailable)?,
+          cause: row.cause.ok_or(StoreError::Unavailable)?.0,
+          causality: row.causality.ok_or(StoreError::Unavailable)?.0,
+          provider_metadata: row.provider_metadata.ok_or(StoreError::Unavailable)?.0,
+          source_time: timestamp(row.source_time_millis.ok_or(StoreError::Unavailable)?)?,
+        };
+        trigger.validate().map_err(|_| StoreError::Unavailable)?;
+        octacity_server_store::BuildOrigin::Trigger(Box::new(octacity_server_store::TriggerBuildOrigin {
+          occurrence: trigger,
+          state: trigger_state(&row.trigger_state.ok_or(StoreError::Unavailable)?)?,
+          created_at: timestamp(row.trigger_created_at_millis.ok_or(StoreError::Unavailable)?)?,
+          updated_at: timestamp(row.trigger_updated_at_millis.ok_or(StoreError::Unavailable)?)?,
+        }))
+      }
+      _ => return Err(StoreError::Unavailable),
     };
-    trigger.validate().map_err(|_| StoreError::Unavailable)?;
     Ok(Self {
       build: ImmutableBuildInput {
         id: id!(BuildId, row.id)?,
@@ -284,10 +304,7 @@ impl TryFrom<BuildRow> for BuildRecord {
       },
       state: parse_build_state(&row.state)?,
       version: positive!(BuildVersion, row.version)?,
-      trigger,
-      trigger_state: trigger_state(&row.trigger_state)?,
-      trigger_created_at: timestamp(row.trigger_created_at_millis)?,
-      trigger_updated_at: timestamp(row.trigger_updated_at_millis)?,
+      origin,
       created_at: timestamp(row.created_at_millis)?,
       updated_at: timestamp(row.updated_at_millis)?,
     })

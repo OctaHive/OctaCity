@@ -29,6 +29,7 @@ impl FlowBuildIntent {
     priority: i64,
   ) -> Result<Self, FactoryError> {
     input.verify_admission(admitted)?;
+    node.validate_execution_window()?;
     let definition = admitted.closure().definition(input.definition()).ok_or_else(invalid)?;
     let declared = definition.node(input.node()).ok_or_else(invalid)?;
     let binding = declared.build().ok_or_else(invalid)?;
@@ -40,9 +41,6 @@ impl FlowBuildIntent {
       || node.input_digest() != input.digest()?
       || node.budget() != declared.budget()
       || node.execution() != &NodeExecutionIdentity::External(binding.tool.clone())
-      || node.stage_projection_id().is_some()
-      || node.deadline() <= node.claim().claimed_at()
-      || node.deadline() > node.claim().expires_at()
       || input.context().is_none()
       || binding.build_configuration.project_id() != input.subject().project_id()
     {
@@ -68,6 +66,7 @@ impl FlowBuildIntent {
       task_digest: binding.task_digest,
       build_configuration: binding.build_configuration.clone(),
       result_output: binding.result_output.clone(),
+      result_output_kind: binding.result_output_kind,
     };
     let intent = Self {
       input,

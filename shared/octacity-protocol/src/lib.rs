@@ -148,6 +148,8 @@ pub struct JobSpecV3 {
   pub issued_at: u64,
   /// First Unix second in which this specification is no longer valid.
   pub expires_at: u64,
+  /// Exclusive execution ceiling in Unix milliseconds, independent of signature validity.
+  pub execution_deadline_unix_ms: u64,
   /// Exact source provider and immutable revision to materialize.
   pub source: SourceSpec,
   /// Exact Octa release and plugin set authorized to run.
@@ -717,6 +719,10 @@ impl JobSpecV3 {
       self.expires_at,
       binding,
     )?;
+    let now_millis = binding.now.checked_mul(1_000).ok_or("current time is out of range")?;
+    if self.execution_deadline_unix_ms <= now_millis {
+      return Err("managed execution deadline has expired".to_owned());
+    }
     self.runtime.validate()?;
     validate_job_payload(&self.source, &self.octa, self.cache.as_ref(), &self.outputs)?;
     self.protected_inputs.validate()?;

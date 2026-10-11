@@ -214,13 +214,18 @@ where
         &build.build,
         build.state,
         build.version,
-        TriggerHistoryProjection::from_occurrence(
-          &build.trigger,
-          build.trigger_state,
-          Some(build.build.id),
-          build.trigger_created_at,
-          build.trigger_updated_at,
-        ),
+        match &build.origin {
+          octacity_server_store::BuildOrigin::Trigger(trigger) => {
+            crate::BuildOriginProjection::from(TriggerHistoryProjection::from_occurrence(
+              &trigger.occurrence,
+              trigger.state,
+              Some(build.build.id),
+              trigger.created_at,
+              trigger.updated_at,
+            ))
+          }
+          octacity_server_store::BuildOrigin::Factory(origin) => crate::BuildOriginProjection::Factory(origin.clone()),
+        },
         build.created_at,
         build.updated_at,
       )?,

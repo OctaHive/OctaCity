@@ -2,7 +2,7 @@ use std::fmt;
 
 use octacity_server_factory::{
   AuthorizedFactoryCredentialProfile, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryError, FactoryKey,
-  StageAttemptId,
+  NodeAttemptId,
 };
 use octacity_server_secrets::{DelegatedGrantCredential, GrantError};
 use thiserror::Error;
@@ -18,7 +18,7 @@ pub enum FactoryCredentialResolutionError {
   Provider(#[source] GrantError),
 }
 
-/// One transient credential bound to public Stage authorization.
+/// One transient credential bound to public Node authorization.
 ///
 /// Debug output is deliberately redacted by the enclosed zeroizing credential;
 /// this type implements neither serialization nor display.
@@ -58,7 +58,7 @@ impl fmt::Debug for ScopedFactoryCredential {
 /// not persist it in Factory state, logs, traces, or Artifact metadata.
 pub fn resolve_factory_credential<F>(
   profiles: &FactoryCredentialProfiles,
-  stage_attempt_id: StageAttemptId,
+  node_attempt_id: NodeAttemptId,
   consumer: FactoryCredentialConsumer,
   requested_profile: &FactoryKey,
   resolver: F,
@@ -67,7 +67,7 @@ where
   F: FnOnce(&AuthorizedFactoryCredentialProfile) -> Result<DelegatedGrantCredential, GrantError>,
 {
   let authorization = profiles
-    .authorize(stage_attempt_id, consumer, requested_profile)
+    .authorize(node_attempt_id, consumer, requested_profile)
     .map_err(FactoryCredentialResolutionError::Scope)?;
   let material = resolver(&authorization).map_err(FactoryCredentialResolutionError::Provider)?;
   Ok(ScopedFactoryCredential {

@@ -6,6 +6,7 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod accept_factory_build;
 mod accept_trigger;
 mod agent_credential_auth;
 mod agent_credential_revocation;
@@ -19,6 +20,7 @@ mod attempt_materialization;
 mod audit_query;
 mod build_configuration_mutation;
 mod build_discovery;
+mod build_materialization;
 mod build_query;
 mod cache;
 mod cancel_build;

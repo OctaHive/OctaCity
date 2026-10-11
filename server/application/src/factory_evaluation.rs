@@ -1,16 +1,15 @@
-//! Pure application projection from a completed evaluation join to durable state.
+//! Pure evaluation result; graph progress remains owned by the configured Flow.
 
 use octacity_server_factory::{
   Assessment, Decision, DecisionEngineInput, DecisionId, DecisionPolicy, DecisionSignalReceipt, EvaluationPlan,
-  EvaluationProgress, EvaluationState, EvidenceManifest, FactoryError, FactoryLifecycleProgress, evaluate_decision,
+  EvaluationProgress, EvaluationState, EvidenceManifest, FactoryError, evaluate_decision,
 };
-use octacity_server_store::FactoryRunHistoryAppend;
 
-/// Decision and lifecycle records produced from one completed immutable join.
+/// Decision and operation-local progress produced from one completed immutable join.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryEvaluationDecision {
   decision: Decision,
-  progress: FactoryLifecycleProgress,
+  progress: EvaluationState,
 }
 
 impl FactoryEvaluationDecision {
@@ -28,10 +27,10 @@ impl FactoryEvaluationDecision {
       id,
       DecisionEngineInput::from_completed_evaluation(evidence, plan, policy, progress, assessments, signal_receipts)?,
     )?;
-    let progress = FactoryLifecycleProgress::Evaluating(EvaluationState::DecisionRecorded {
+    let progress = EvaluationState::DecisionRecorded {
       decision_id: decision.id(),
       outcome: decision.outcome(),
-    });
+    };
     Ok(Self { decision, progress })
   }
 
@@ -41,21 +40,15 @@ impl FactoryEvaluationDecision {
     &self.decision
   }
 
-  /// Returns the corresponding code-owned lifecycle checkpoint.
+  /// Returns local evaluation progress without prescribing a graph transition.
   #[must_use]
-  pub const fn progress(&self) -> &FactoryLifecycleProgress {
+  pub const fn progress(&self) -> &EvaluationState {
     &self.progress
   }
 
-  /// Produces the append-only records and checkpoint for one fenced transition.
+  /// Returns operation-local progress and its verified Decision as capability data.
   #[must_use]
-  pub fn into_parts(self) -> (FactoryLifecycleProgress, FactoryRunHistoryAppend) {
-    (
-      self.progress,
-      FactoryRunHistoryAppend {
-        decisions: vec![self.decision],
-        ..FactoryRunHistoryAppend::default()
-      },
-    )
+  pub fn into_parts(self) -> (EvaluationState, Decision) {
+    (self.progress, self.decision)
   }
 }

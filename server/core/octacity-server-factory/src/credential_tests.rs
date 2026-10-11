@@ -1,4 +1,4 @@
-use crate::{FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryError, FactoryKey, StageAttemptId};
+use crate::{FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryError, FactoryKey, NodeAttemptId};
 
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
@@ -34,17 +34,17 @@ fn credential_profiles_are_distinct_and_serialize_without_material() {
 }
 
 #[test]
-fn credential_authority_is_bound_to_stage_and_trusted_consumer() {
-  let stage = StageAttemptId::generate();
+fn credential_authority_is_bound_to_a_common_node_and_trusted_consumer() {
+  let stage = NodeAttemptId::generate();
   let authorized = profiles()
-    .authorize(stage, FactoryCredentialConsumer::CodingStage, &key("model-coding"))
+    .authorize(stage, FactoryCredentialConsumer::CodingNode, &key("model-coding"))
     .unwrap();
-  assert_eq!(authorized.stage_attempt_id(), stage);
-  assert_eq!(authorized.consumer(), FactoryCredentialConsumer::CodingStage);
+  assert_eq!(authorized.node_attempt_id(), stage);
+  assert_eq!(authorized.consumer(), FactoryCredentialConsumer::CodingNode);
   assert_eq!(authorized.profile(), &key("model-coding"));
 
   assert!(matches!(
-    profiles().authorize(stage, FactoryCredentialConsumer::CodingStage, &key("delivery-write")),
+    profiles().authorize(stage, FactoryCredentialConsumer::CodingNode, &key("delivery-write")),
     Err(FactoryError::InvalidReference {
       relationship: "credential profile consumer scope"
     })

@@ -107,24 +107,9 @@ factory_id!(
   "Opaque identity of one append-only workflow cycle."
 );
 factory_id!(
-  StageAttemptId,
-  FactoryEntityKind::StageAttempt,
-  "Opaque identity of one append-only Factory Stage Attempt."
-);
-factory_id!(
-  MacroCallId,
-  FactoryEntityKind::MacroCall,
-  "Opaque identity of one bounded macro reasoning call."
-);
-factory_id!(
   TaskEnvelopeId,
   FactoryEntityKind::TaskEnvelope,
   "Opaque identity of one immutable versioned Factory Task Envelope."
-);
-factory_id!(
-  StageHandoffId,
-  FactoryEntityKind::StageHandoff,
-  "Opaque identity of one immutable completed-stage handoff."
 );
 factory_id!(
   ContextManifestId,

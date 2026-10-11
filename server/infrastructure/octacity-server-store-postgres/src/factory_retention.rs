@@ -81,7 +81,7 @@ async fn claim(
        JOIN factory_runs AS run ON run.id = work.run_id \
        WHERE work.completed_at IS NULL AND work.phase <> 'dead_letter' \
          AND (run.visible OR work.phase IN ('hidden', 'metadata')) \
-         AND run.state IN ('rejected', 'cancelled', 'completed') \
+         AND run.state IN ('cancelled', 'completed') \
          AND work.available_at <= to_timestamp($1::double precision / 1000.0) \
          AND (work.claim_owner IS NULL \
               OR work.claim_expires_at <= to_timestamp($1::double precision / 1000.0)) \
@@ -244,6 +244,7 @@ async fn delete_metadata_page(
   limit: u16,
 ) -> Result<u16, StoreError> {
   const DELETE_STEPS: &[&str] = &[
+    "WITH selected AS (SELECT ctid FROM factory_node_stops WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_node_stops WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_flow_build_executions WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_build_executions WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_flow_build_intents WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_build_intents WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_flow_records WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_records WHERE ctid IN (SELECT ctid FROM selected)",
@@ -253,55 +254,6 @@ async fn delete_metadata_page(
     "WITH selected AS (SELECT ctid FROM factory_phase_pool_entries WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_phase_pool_entries WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_run_current WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_run_current WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT relation.ctid FROM factory_decision_assessments AS relation \
-       JOIN factory_decisions AS parent ON parent.id = relation.decision_id \
-       WHERE parent.run_id = $1 ORDER BY relation.ctid LIMIT $2) \
-     DELETE FROM factory_decision_assessments AS relation USING selected WHERE relation.ctid = selected.ctid",
-    "WITH selected AS (SELECT relation.ctid FROM factory_build_link_jobs AS relation \
-       JOIN factory_build_links AS parent ON parent.build_id = relation.build_id \
-       WHERE parent.run_id = $1 ORDER BY relation.ctid LIMIT $2) \
-     DELETE FROM factory_build_link_jobs AS relation USING selected WHERE relation.ctid = selected.ctid",
-    "WITH selected AS (SELECT ctid FROM factory_stage_attempt_completions WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_stage_attempt_completions WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_decision_signal_receipts WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_decision_signal_receipts WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_build_observations WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_build_observations WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_delivery_attempts WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_delivery_attempts WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_escalations WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_escalations WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_decisions WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_decisions WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_assessments WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_assessments WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_evaluation_plans WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_evaluation_plans WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_evidence_manifests WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_evidence_manifests WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_changesets WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_changesets WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_decision_signal_requests WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_decision_signal_requests WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_call_completions WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_call_completions WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT relation.ctid FROM factory_call_dependencies AS relation \
-       JOIN factory_call_nodes AS parent ON parent.id = relation.call_id \
-       WHERE parent.run_id = $1 ORDER BY relation.ctid LIMIT $2) \
-     DELETE FROM factory_call_dependencies AS relation USING selected WHERE relation.ctid = selected.ctid",
-    "WITH selected AS (SELECT relation.ctid FROM factory_call_stage_dependencies AS relation \
-       JOIN factory_call_nodes AS parent ON parent.id = relation.call_id \
-       WHERE parent.run_id = $1 ORDER BY relation.ctid LIMIT $2) \
-     DELETE FROM factory_call_stage_dependencies AS relation USING selected WHERE relation.ctid = selected.ctid",
-    "WITH selected AS (SELECT node.ctid FROM factory_call_nodes AS node \
-       WHERE node.run_id = $1 AND NOT EXISTS (SELECT 1 FROM factory_call_nodes AS child WHERE child.parent_call_id = node.id) \
-       ORDER BY node.ctid LIMIT $2) DELETE FROM factory_call_nodes AS node USING selected WHERE node.ctid = selected.ctid",
-    "WITH selected AS (SELECT ctid FROM factory_context_manifests WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_context_manifests WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_stage_handoffs WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_stage_handoffs WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_reporting_attempts WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_reporting_attempts WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_outbox_records WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_outbox_records WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_audit_links WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
@@ -310,15 +262,10 @@ async fn delete_metadata_page(
      DELETE FROM factory_run_controls WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_artifact_references WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_artifact_references WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_build_links WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_build_links WHERE ctid IN (SELECT ctid FROM selected)",
-    "WITH selected AS (SELECT ctid FROM factory_stage_attempts WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
-     DELETE FROM factory_stage_attempts WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_node_attempt_completions WHERE run_id = $1 ORDER BY ctid LIMIT $2) \
      DELETE FROM factory_node_attempt_completions WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT node.ctid FROM factory_node_attempts AS node \
        WHERE node.run_id = $1 \
-         AND NOT EXISTS (SELECT 1 FROM factory_stage_attempts AS stage WHERE stage.id = node.id) \
          AND NOT EXISTS (SELECT 1 FROM factory_flow_runs AS child WHERE child.parent_node_attempt_id = node.id) \
        ORDER BY node.ctid LIMIT $2) \
      DELETE FROM factory_node_attempts AS node USING selected WHERE node.ctid = selected.ctid",
@@ -361,7 +308,7 @@ async fn lock_eligible_work(
   request: &AdvanceFactoryRetentionWork,
 ) -> Result<(), StoreError> {
   let eligible: Option<bool> = sqlx::query_scalar(
-    "SELECT run.state IN ('rejected', 'cancelled', 'completed') AND NOT EXISTS (\
+    "SELECT run.state IN ('cancelled', 'completed') AND NOT EXISTS (\
        SELECT 1 FROM factory_run_builds AS link \
        JOIN LATERAL (\
          SELECT released_at, expired_at, expires_at FROM build_result_retention_holds \

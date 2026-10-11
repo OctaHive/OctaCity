@@ -12,6 +12,93 @@ fn time(value: i64) -> octacity_server_domain::Timestamp {
 }
 
 #[test]
+fn dispatch_retains_the_current_observer_claim_separately_from_the_frozen_intent() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let current = FactoryClaimOwnership::new(
+      intent.node().owner().clone(),
+      FactoryClaim::new(
+        FactoryClaimFence::new(FactoryDigest::from_bytes([55; 32])),
+        time(31),
+        time(100),
+      )
+      .unwrap(),
+    );
+    let builds = Arc::new(Builds::new());
+    FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)))
+      .observe_or_dispatch(&intent, &admitted, &schema, current.clone(), time(32))
+      .await
+      .unwrap();
+    let requests = builds.requests.lock().unwrap();
+    assert_eq!(requests[0].ownership, current);
+    assert_eq!(requests[0].operation_id, intent.operation_id().unwrap());
+  });
+}
+
+#[test]
+fn cancelling_a_configured_build_never_dispatches_a_missing_operation_or_selects_an_outcome() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    assert_eq!(
+      adapter
+        .cancel(&intent, &admitted, ownership(&intent), time(31), time(31))
+        .await
+        .unwrap(),
+      FactoryNodeBuildCancellation::Stopped { execution: None }
+    );
+    assert!(builds.requests.lock().unwrap().is_empty());
+    adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    let unrelated = FactoryClaimOwnership::new(
+      key("unrelated.owner"),
+      FactoryClaim::new(
+        FactoryClaimFence::new(FactoryDigest::from_bytes([88; 32])),
+        time(30),
+        time(90),
+      )
+      .unwrap(),
+    );
+    assert!(
+      adapter
+        .cancel(&intent, &admitted, unrelated, time(32), time(32))
+        .await
+        .is_err()
+    );
+    assert_eq!(
+      *builds.state.lock().unwrap(),
+      octacity_server_orchestrator::BuildState::Queued
+    );
+    assert!(matches!(
+      adapter
+        .cancel(&intent, &admitted, ownership(&intent), time(32), time(32))
+        .await
+        .unwrap(),
+      FactoryNodeBuildCancellation::Waiting(_)
+    ));
+    let restarted = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    let FactoryNodeBuildCancellation::Stopped {
+      execution: Some(execution),
+    } = restarted
+      .cancel(&intent, &admitted, ownership(&intent), time(32), time(33))
+      .await
+      .unwrap()
+    else {
+      panic!("authoritative cancellation must retain the exact ordinary execution");
+    };
+    assert_eq!(execution.node_attempt_id(), intent.node().id());
+    assert_eq!(execution.build_id(), builds.acceptance.build_id);
+    assert_eq!(execution.operation_id(), intent.operation_id().unwrap());
+    assert_eq!(builds.requests.lock().unwrap().len(), 1);
+  });
+}
+
+#[test]
 fn configured_node_accepts_only_retained_results_bound_to_its_actual_build_and_schema() {
   crate::factory_admission_tests::run_ready(async {
     for kind in [FlowNodeKind::BuildCommand, FlowNodeKind::Reasoning] {
@@ -269,15 +356,48 @@ fn configured_node_dispatch_and_restart_use_the_same_ordinary_build_without_a_st
       assert_eq!(link.node_attempt_id(), node.id());
       assert_eq!(link.jobs().len(), 1);
       let requests = builds.requests.lock().unwrap();
-      assert_eq!(requests.len(), 2);
-      assert_eq!(requests[0], requests[1]);
+      assert_eq!(
+        requests.len(),
+        1,
+        "lost-response recovery observes the already accepted operation before creation"
+      );
+      assert_eq!(link.build_id(), builds.acceptance.build_id);
+      assert_eq!(link.attempt_id(), builds.acceptance.attempt_id);
       assert_eq!(requests[0].operation_id, intent.operation_id().unwrap());
-      let causality = requests[0].causality.node().unwrap();
+      let causality = requests[0].causality.as_ref();
       assert_eq!(causality.node_attempt_id, node.id());
       assert_eq!(causality.input_schema, *schema.reference());
       assert_eq!(causality.input, serde_json::to_vec(&input).unwrap());
       assert_eq!(causality.profile.node.as_str(), "accessibility_audit");
     }
+  });
+}
+
+#[test]
+fn a_factory_build_cannot_be_observed_under_another_node_operation_origin() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    let mut foreign = octacity_server_store::FactoryBuildOrigin::from_intent(&intent).unwrap();
+    foreign.operation_id = FactoryDigest::from_bytes([99; 32]);
+    *builds.origin_override.lock().unwrap() = Some(octacity_server_store::BuildOrigin::Factory(foreign));
+    assert!(
+      adapter
+        .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(32))
+        .await
+        .is_err()
+    );
+    assert_eq!(
+      builds.requests.lock().unwrap().len(),
+      1,
+      "observation cannot redispatch"
+    );
   });
 }
 
@@ -447,5 +567,374 @@ fn ownership_and_frozen_deadlines_are_checked_before_any_ordinary_dispatch() {
       "owner takeover cannot extend the frozen execution deadline"
     );
     assert!(builds.requests.lock().unwrap().is_empty());
+  });
+}
+
+struct TerminalConsumption {
+  build: octacity_server_domain::BuildId,
+  attempt: octacity_server_domain::AttemptId,
+  available: bool,
+}
+#[test]
+fn failed_build_executor_requires_measured_consumption_without_provider_results() {
+  crate::factory_admission_tests::run_ready(async {
+    let (work, admitted, _, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Failed;
+    for available in [false, true] {
+      let adapter = FactoryNodeBuildAdapter::new(
+        builds.clone(),
+        Arc::new(TerminalConsumption {
+          build: builds.acceptance.build_id,
+          attempt: builds.acceptance.attempt_id,
+          available,
+        }),
+      );
+      let observed = adapter
+        .observe(FactoryNodeExecutionRequest {
+          run_id: intent.input().factory_run_id(),
+          admitted: &admitted,
+          work: &work,
+          input: intent.input(),
+          attempt: intent.node(),
+          build: Some(&intent),
+          ownership: ownership(&intent),
+          observed_at: time(31),
+        })
+        .await;
+      if available {
+        assert!(
+          matches!(observed.unwrap(), FactoryNodeExecutionStep::ExecutionStopped { usage, .. } if usage.tokens == 23 && usage.elapsed_millis == 2)
+        );
+      } else {
+        assert_eq!(
+          observed.unwrap_err().classification(),
+          ApplicationFailure::Unavailable,
+          "missing failure usage must remain unavailable, never zero"
+        );
+      }
+    }
+    assert_eq!(builds.requests.lock().unwrap().len(), 1);
+  });
+}
+#[test]
+fn a_failed_build_keeps_its_execution_slot_until_actual_jobs_have_stopped() {
+  use octacity_server_store::BuildQueryStore;
+  crate::factory_admission_tests::run_ready(async {
+    let (work, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(
+      builds.clone(),
+      Arc::new(TerminalConsumption {
+        build: builds.acceptance.build_id,
+        attempt: builds.acceptance.attempt_id,
+        available: true,
+      }),
+    );
+    adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Failed;
+    let mut terminal = builds.latest_attempt(builds.acceptance.build_id).await.unwrap();
+    terminal.jobs[0].state = octacity_server_job::JobState::Running;
+    *builds.latest.lock().unwrap() = Some(terminal);
+    let request = |at| FactoryNodeExecutionRequest {
+      run_id: intent.input().factory_run_id(),
+      work: &work,
+      admitted: &admitted,
+      input: intent.input(),
+      attempt: intent.node(),
+      build: Some(&intent),
+      ownership: ownership(&intent),
+      observed_at: time(at),
+    };
+    assert!(matches!(
+      adapter.observe(request(32)).await.unwrap(),
+      FactoryNodeExecutionStep::Waiting { execution: Some(_) }
+    ));
+    builds.latest.lock().unwrap().as_mut().unwrap().jobs[0].state = octacity_server_job::JobState::Failed;
+    assert!(
+      matches!(adapter.observe(request(33)).await.unwrap(), FactoryNodeExecutionStep::ExecutionStopped { usage, .. } if usage.tokens == 23)
+    );
+    assert_eq!(builds.requests.lock().unwrap().len(), 1);
+  });
+}
+#[async_trait::async_trait]
+impl FactoryNodeBuildOutputSource for TerminalConsumption {
+  async fn terminal_usage(
+    &self,
+    build: octacity_server_domain::BuildId,
+    attempt: octacity_server_domain::AttemptId,
+  ) -> Result<BudgetUsage, OrdinaryBuildApplicationError> {
+    assert_eq!((build, attempt), (self.build, self.attempt));
+    if !self.available {
+      return Err(OrdinaryBuildApplicationError::Unavailable);
+    }
+    Ok(BudgetUsage {
+      tokens: 23,
+      elapsed_millis: 2,
+      ..Default::default()
+    })
+  }
+  async fn published_outputs(
+    &self,
+    _: octacity_server_domain::BuildId,
+    _: octacity_server_domain::AttemptId,
+    _: u64,
+  ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError> {
+    panic!("technical cancellation cannot parse provider results")
+  }
+}
+#[test]
+fn node_build_executor_cancellation_requires_actual_terminal_consumption_without_parsing_results() {
+  crate::factory_admission_tests::run_ready(async {
+    let (work, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(
+      builds.clone(),
+      Arc::new(TerminalConsumption {
+        build: builds.acceptance.build_id,
+        attempt: builds.acceptance.attempt_id,
+        available: true,
+      }),
+    );
+    let request = |at| FactoryNodeExecutionRequest {
+      run_id: intent.input().factory_run_id(),
+      work: &work,
+      admitted: &admitted,
+      input: intent.input(),
+      attempt: intent.node(),
+      build: Some(&intent),
+      ownership: ownership(&intent),
+      observed_at: time(at),
+    };
+    assert_eq!(
+      FactoryNodeExecutor::cancel(&adapter, request(31), time(31))
+        .await
+        .unwrap(),
+      FactoryNodeCancellationStep::Stopped {
+        execution: None,
+        usage: BudgetUsage::default()
+      }
+    );
+    adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    assert!(matches!(
+      FactoryNodeExecutor::cancel(&adapter, request(32), time(32))
+        .await
+        .unwrap(),
+      FactoryNodeCancellationStep::Waiting { .. }
+    ));
+    let unavailable = FactoryNodeBuildAdapter::new(
+      builds.clone(),
+      Arc::new(TerminalConsumption {
+        build: builds.acceptance.build_id,
+        attempt: builds.acceptance.attempt_id,
+        available: false,
+      }),
+    );
+    assert!(
+      FactoryNodeExecutor::cancel(&unavailable, request(33), time(32))
+        .await
+        .is_err(),
+      "missing measurement cannot produce a stop receipt with invented zero consumption"
+    );
+    let FactoryNodeCancellationStep::Stopped {
+      execution: Some(execution),
+      usage,
+    } = FactoryNodeExecutor::cancel(&adapter, request(33), time(32))
+      .await
+      .unwrap()
+    else {
+      panic!("actual terminal execution required")
+    };
+    assert_eq!(usage.tokens, 23);
+    assert_eq!(execution.build_id(), builds.acceptance.build_id);
+    assert_eq!(builds.requests.lock().unwrap().len(), 1);
+  });
+}
+
+#[test]
+fn cancellation_waits_until_the_actual_jobs_stop_even_when_the_build_and_attempt_are_terminal() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    crate::factory_node_test_support::complete_ordinary_retry(&builds);
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Cancelled;
+    {
+      let mut latest = builds.latest.lock().unwrap();
+      let attempt = latest.as_mut().unwrap();
+      attempt.state = octacity_server_orchestrator::AttemptState::Cancelled;
+      attempt.jobs[0].state = octacity_server_job::JobState::Cancelling;
+    }
+    assert!(
+      matches!(
+        adapter
+          .cancel(&intent, &admitted, ownership(&intent), time(32), time(32))
+          .await
+          .unwrap(),
+        FactoryNodeBuildCancellation::Waiting(_)
+      ),
+      "terminal aggregate state cannot stand in for stopped processes"
+    );
+    builds.latest.lock().unwrap().as_mut().unwrap().jobs[0].state = octacity_server_job::JobState::Cancelled;
+    assert!(matches!(
+      adapter
+        .cancel(&intent, &admitted, ownership(&intent), time(32), time(33))
+        .await
+        .unwrap(),
+      FactoryNodeBuildCancellation::Stopped { execution: Some(_) }
+    ));
+  });
+}
+
+#[test]
+fn cancellation_also_waits_for_still_stopping_jobs_in_previous_ordinary_attempts() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    crate::factory_node_test_support::complete_ordinary_retry(&builds);
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Cancelled;
+    {
+      let mut latest = builds.latest.lock().unwrap();
+      let attempt = latest.as_mut().unwrap();
+      attempt.state = octacity_server_orchestrator::AttemptState::Cancelled;
+      attempt.jobs[0].state = octacity_server_job::JobState::Cancelled;
+    }
+    builds.previous.lock().unwrap()[0].jobs[0].state = octacity_server_job::JobState::Cancelling;
+    assert!(
+      matches!(
+        adapter
+          .cancel(&intent, &admitted, ownership(&intent), time(32), time(32))
+          .await
+          .unwrap(),
+        FactoryNodeBuildCancellation::Waiting(_)
+      ),
+      "a retry does not prove that earlier processes stopped"
+    );
+    builds.previous.lock().unwrap()[0].jobs[0].state = octacity_server_job::JobState::Cancelled;
+    assert!(matches!(
+      adapter
+        .cancel(&intent, &admitted, ownership(&intent), time(32), time(33))
+        .await
+        .unwrap(),
+      FactoryNodeBuildCancellation::Stopped { execution: Some(_) }
+    ));
+  });
+}
+
+#[test]
+fn a_configured_json_artifact_can_supply_the_node_result_without_becoming_a_report() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) =
+      execution_fixture_with_output_kind(FlowNodeKind::BuildCommand, EvidenceOutputKind::Artifact);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+    let mut document = crate::factory_node_test_support::document_kind(
+      &builds,
+      &intent.profile().result_output,
+      schema.reference(),
+      br#"{"count":9}"#.to_vec(),
+      intent.profile().tool.clone(),
+      EvidenceOutputKind::Artifact,
+    );
+    document.plugin = intent.profile().plugin.clone();
+    let artifact = document.record.identity().artifact_id;
+    let outputs = FactoryNodeBuildOutputs {
+      execution: FactoryNodeBuildExecutionFacts {
+        profile: intent.profile().clone(),
+        input_digest: intent.input().digest().unwrap(),
+        permissions: intent.permissions().clone(),
+        budget: intent.budget(),
+        deadline: intent.node().deadline(),
+      },
+      documents: vec![document],
+      usage: BudgetUsage {
+        attempts: 1,
+        output_bytes: 11,
+        ..Default::default()
+      },
+      verified_at: time(30),
+      fresh_until: time(1000),
+    };
+    let adapter = FactoryNodeBuildAdapter::new(builds, Arc::new(Outputs(Some(outputs))));
+    let FactoryNodeBuildStep::Completed(done) = adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap()
+    else {
+      panic!("the declared JSON artifact must complete the node");
+    };
+    assert_eq!(done.record.payload().value(), &serde_json::json!({"count":9}));
+    let source = &done.record.build_provenance().unwrap().outputs()[0];
+    assert_eq!(source.artifact.artifact_id(), artifact);
+    assert_eq!(source.output_kind, EvidenceOutputKind::Artifact);
+  });
+}
+
+#[test]
+fn capability_observation_is_bound_to_actual_common_execution_without_a_stage_projection() {
+  use octacity_server_store::BuildQueryStore;
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    let FactoryNodeBuildStep::Waiting(execution) = adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap()
+    else {
+      panic!("a newly accepted queued Build must retain its common operation identity");
+    };
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+    let build = builds.build(execution.build_id()).await.unwrap();
+    let attempt = builds.attempt(execution.attempt_id()).await.unwrap();
+    let document = crate::factory_node_test_support::document(
+      &builds,
+      &intent.profile().result_output,
+      schema.reference(),
+      br#"{"count":9}"#.to_vec(),
+      intent.profile().tool.clone(),
+    );
+    let outputs = vec![document.record.identity().clone()];
+    let observation =
+      FactoryBuildObservation::from_execution(&execution, &build, &attempt, outputs.clone(), time(32)).unwrap();
+    assert_eq!(observation.build_id(), execution.build_id());
+    assert_eq!(observation.attempt_id(), execution.attempt_id());
+    assert_eq!(observation.job_ids(), execution.jobs());
+    assert_eq!(observation.state(), octacity_server_orchestrator::BuildState::Succeeded);
+    assert_eq!(observation.outputs(), outputs);
+    let mut foreign = attempt.clone();
+    foreign.build_id = octacity_server_domain::BuildId::generate();
+    assert!(FactoryBuildObservation::from_execution(&execution, &build, &foreign, outputs.clone(), time(32)).is_err());
+    let mut stopping = attempt.clone();
+    stopping.jobs[0].state = octacity_server_job::JobState::Running;
+    assert!(FactoryBuildObservation::from_execution(&execution, &build, &stopping, outputs.clone(), time(32)).is_err());
+    let mut foreign_output = outputs[0].clone();
+    foreign_output.job_id = octacity_server_domain::JobId::generate();
+    assert!(
+      FactoryBuildObservation::from_execution(&execution, &build, &attempt, vec![foreign_output], time(32)).is_err()
+    );
+    assert!(FactoryBuildObservation::from_execution(&execution, &build, &attempt, outputs, time(29)).is_err());
   });
 }

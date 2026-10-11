@@ -10,6 +10,7 @@ fn history<'a>(
   completions: &'a [NodeAttemptCompletion],
 ) -> FlowRuntimeHistory<'a> {
   FlowRuntimeHistory {
+    stops: &[],
     flow_runs: std::slice::from_ref(admitted.root_run()),
     cycles: std::slice::from_ref(admitted.initial_cycle()),
     attempts,
@@ -193,7 +194,10 @@ pub(crate) fn node_fixture_with_bindings(
     limits,
     root,
     cycle,
+    crate::FactoryWipLimits::new(8, 16).unwrap(),
   )
+  .unwrap()
+  .with_data_schemas(vec![schema.clone()])
   .unwrap();
   (work, admitted, schema)
 }
@@ -307,6 +311,7 @@ fn generic_node_input_freezes_work_schema_and_execution_identity() {
     changed_limits,
     admitted.root_run().clone(),
     admitted.initial_cycle().clone(),
+    admitted.wip_limits(),
   )
   .unwrap();
   assert!(
@@ -352,6 +357,7 @@ fn generic_node_record_rejects_substituted_attempts_schemas_and_retained_bytes()
       admitted.initial_cycle(),
       definition,
       NodeAttemptInput {
+        started_at: (owner.clone()).claim().claimed_at(),
         id: NodeAttemptId::generate(),
         node_key: key("accessibility_audit"),
         node_kind: FlowNodeKind::DeterministicGate,
@@ -476,6 +482,7 @@ fn configured_gate_executes_to_a_fenced_generic_record_with_the_frozen_output_ma
     admitted.initial_cycle(),
     definition,
     NodeAttemptInput {
+      started_at: (owner.clone()).claim().claimed_at(),
       id: NodeAttemptId::generate(),
       node_key: key("accessibility_audit"),
       node_kind: FlowNodeKind::DeterministicGate,
@@ -1011,7 +1018,10 @@ fn verify_record_source(source: FlowInputSource, expected: i64) {
     prior.limits().clone(),
     root,
     cycle,
+    crate::FactoryWipLimits::new(8, 16).unwrap(),
   )
+  .unwrap()
+  .with_data_schemas(vec![schema.clone()])
   .unwrap();
   let source_input = FlowNodeInput::new(
     &work,
@@ -1037,6 +1047,7 @@ fn verify_record_source(source: FlowInputSource, expected: i64) {
     admitted.initial_cycle(),
     &definition,
     NodeAttemptInput {
+      started_at: (owner.clone()).claim().claimed_at(),
       id: NodeAttemptId::generate(),
       node_key: source_node.key().clone(),
       node_kind: source_node.kind(),
@@ -1144,4 +1155,43 @@ fn configured_record_source_must_name_a_declared_node_and_outcome() {
       .is_err()
     );
   }
+}
+#[test]
+fn a_capability_checks_the_exact_attempt_owning_its_frozen_input() {
+  let (_, _, _, input, attempt) = crate::flow_test_support::execution_fixture(FlowNodeKind::Reasoning);
+  input.verify_attempt(&attempt).unwrap();
+  input
+    .retry()
+    .unwrap()
+    .verify_attempt(&attempt)
+    .expect_err("different frozen generation");
+  let (_, _, _, _, foreign) = crate::flow_test_support::execution_fixture(FlowNodeKind::Reasoning);
+  input.verify_attempt(&foreign).expect_err("foreign attempt");
+}
+
+#[test]
+fn a_decision_signal_binds_its_common_node_and_frozen_input() {
+  let (_, _, _, input, attempt) = crate::flow_test_support::execution_fixture(FlowNodeKind::Reasoning);
+  let request = DecisionSignalRequest::new(
+    DecisionSignalRequestId::generate(),
+    &input,
+    &attempt,
+    DecisionSignalPurpose::Routing,
+    DecisionSignalDigests::new(FactoryDigest::from_bytes([7; 32]), FactoryDigest::from_bytes([8; 32])),
+    attempt.budget(),
+  )
+  .unwrap();
+  assert_eq!(request.node_attempt_id(), attempt.id());
+  assert_eq!(request.frozen_input_digest(), input.digest().unwrap());
+  assert!(
+    DecisionSignalRequest::new(
+      DecisionSignalRequestId::generate(),
+      &input.retry().unwrap(),
+      &attempt,
+      DecisionSignalPurpose::Routing,
+      DecisionSignalDigests::new(FactoryDigest::from_bytes([7; 32]), FactoryDigest::from_bytes([8; 32])),
+      attempt.budget(),
+    )
+    .is_err()
+  );
 }

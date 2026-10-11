@@ -33,7 +33,7 @@ pub(crate) struct MemoryState {
   pub(super) event_appends: BTreeMap<(LeaseId, EventSequence, EventSequence), EventAppendRecord>,
   pub(super) log_chunks: BTreeMap<LogChunkId, LogChunkManifest>,
   pub(super) completions: BTreeMap<JobId, CompletionRecord>,
-  pub(super) cancellations: BTreeMap<BuildId, CancellationRecord>,
+  pub(super) stops: BTreeMap<BuildId, CancellationRecord>,
   pub(super) cancellation_keys: BTreeMap<ManagementIdempotencyKey, BuildId>,
   pub(super) retries: BTreeMap<ManagementIdempotencyKey, RetryRecord>,
   pub(super) idempotency_outcomes: BTreeSet<String>,

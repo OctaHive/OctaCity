@@ -68,6 +68,12 @@ pub fn sign_ready_job_spec(
   signer: &JobSpecSigner,
 ) -> Result<DerivedJobSpec, JobSpecDerivationError> {
   template.validate()?;
+  if template
+    .execution_deadline()
+    .is_some_and(|deadline| issued_at >= deadline)
+  {
+    return Err(JobSpecDerivationError::InvalidIssueTime);
+  }
   let attempt = u32::try_from(attempt_number.get()).map_err(|_| JobSpecDerivationError::AttemptOutOfRange)?;
   let issued_at =
     u64::try_from(issued_at.unix_millis().div_euclid(1_000)).map_err(|_| JobSpecDerivationError::InvalidIssueTime)?;
@@ -104,6 +110,14 @@ fn wire_job_spec(
   let expires_at = issued_at
     .checked_add(template.policy().validity.get())
     .ok_or(JobSpecDerivationError::ValidityOverflow)?;
+  let expires_at = match template.execution_deadline() {
+    Some(deadline) => expires_at.min(
+      u64::try_from(deadline.unix_millis())
+        .map_err(|_| JobSpecDerivationError::InvalidPolicy)?
+        .div_ceil(1_000),
+    ),
+    None => expires_at,
+  };
   let mut source_parameters = BTreeMap::new();
   source_parameters.insert(
     template.policy().source.repository_parameter.clone(),
@@ -157,6 +171,13 @@ fn wire_job_spec(
         attempt,
         issued_at,
         expires_at,
+        execution_deadline_unix_ms: match template.execution_deadline() {
+          Some(deadline) => u64::try_from(deadline.unix_millis()).map_err(|_| JobSpecDerivationError::InvalidPolicy)?,
+          None => issued_at
+            .checked_mul(1_000)
+            .and_then(|issued| issued.checked_add(intent.permissions.resources.elapsed_millis))
+            .ok_or(JobSpecDerivationError::ValidityOverflow)?,
+        },
         source,
         octa: template.policy().octa.clone(),
         execution: intent.execution.clone(),

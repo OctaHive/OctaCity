@@ -1,6 +1,47 @@
 use super::*;
+use std::time::SystemTime;
 
 const FACTORY_RUNNER_BYTES: &[u8] = b"factory runner fixture";
+
+#[tokio::test]
+async fn expired_managed_execution_stops_before_protected_inputs_or_source_materialization() {
+  let root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let starts = Arc::new(AtomicUsize::new(0));
+  let mut spec = factory_spec();
+  spec.issued_at = 100;
+  spec.expires_at = 200;
+  spec.execution_deadline_unix_ms = 200_000;
+  let executor = factory_executor(
+    root.path(),
+    source_calls.clone(),
+    starts.clone(),
+    &spec,
+    FactoryEnforcementCapabilityV3::ALL,
+  );
+  let inputs = transfers(&spec.protected_inputs);
+  let (events, _) = mpsc::channel(8);
+  let failure = executor
+    .execute(
+      ExecuteJobRequest {
+        spec: spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+  assert!(
+    matches!(failure.error(), JobError::TimedOut),
+    "the signed absolute ceiling must stop expired execution"
+  );
+  assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(starts.load(Ordering::SeqCst), 0);
+  assert!(fs::read_dir(root.path()).unwrap().next().is_none());
+}
 
 #[tokio::test]
 async fn reports_an_unqualified_mode_without_falling_back_to_a_legacy_backend() {
@@ -265,6 +306,77 @@ async fn rejects_an_incomplete_factory_backend_before_source_or_spawn() {
 
 #[tokio::test]
 async fn stages_and_projects_an_admitted_factory_job() {
+  let (completion, cancelled, _work_root) = captured_factory_job(None, false).await;
+  let completion = completion.unwrap();
+  assert!(!cancelled.load(Ordering::SeqCst));
+  assert_eq!(
+    completion.change_set().unwrap().manifest.node_attempt_id,
+    "00000000-0000-0000-0000-000000000003"
+  );
+  assert!(!completion.workspace().parent().unwrap().join("protected").exists());
+  completion.cleanup().await.unwrap();
+}
+
+#[tokio::test]
+async fn an_admitted_managed_execution_outlives_its_signature_validity() {
+  let (completion, cancelled, _root) = captured_factory_job(Some(Duration::from_secs(3)), false).await;
+  assert!(!cancelled.load(Ordering::SeqCst));
+  completion
+    .expect("admitted execution retains its own deadline")
+    .cleanup()
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn managed_capture_obeys_the_absolute_deadline_and_drains_cancellation() {
+  let (completion, cancelled, _work_root) = captured_factory_job(Some(Duration::from_millis(500)), false).await;
+  let failure = completion.expect_err("capture cannot turn an expired execution into success");
+  assert!(matches!(failure.error(), JobError::TimedOut));
+  assert!(
+    cancelled.load(Ordering::SeqCst),
+    "the installed capturer must observe cancellation before return"
+  );
+  failure.cleanup().await.unwrap();
+}
+
+#[tokio::test]
+async fn managed_materialization_obeys_the_deadline_before_starting_the_runner() {
+  let (completion, cancelled, _root) = captured_factory_job(Some(Duration::from_millis(500)), true).await;
+  let failure = completion.expect_err("expired preparation cannot execute the runner");
+  assert!(matches!(failure.error(), JobError::TimedOut));
+  assert!(
+    cancelled.load(Ordering::SeqCst),
+    "the installed materializer must observe deadline cancellation"
+  );
+  failure.cleanup().await.unwrap();
+}
+
+struct SlowChangeSetMaterializer {
+  cancelled: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl ChangeSetMaterializer for SlowChangeSetMaterializer {
+  async fn materialize(
+    &self,
+    _request: MaterializationRequest,
+    cancellation: CancellationToken,
+  ) -> Result<octacity_changeset::MaterializedChangeSet, MaterializationError> {
+    tokio::select! {
+      () = tokio::time::sleep(Duration::from_secs(2)) => Err(MaterializationError::Cancelled),
+      () = cancellation.cancelled() => {
+        self.cancelled.store(true, Ordering::SeqCst);
+        Err(MaterializationError::Cancelled)
+      }
+    }
+  }
+}
+
+async fn captured_factory_job(
+  deadline: Option<Duration>,
+  materialization: bool,
+) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
   use sha2::Digest as _;
   use std::time::SystemTime;
   use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -273,18 +385,28 @@ async fn stages_and_projects_an_admitted_factory_job() {
   let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
   let address = listener.local_addr().unwrap();
   let server = tokio::spawn(async move {
-    let (mut socket, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
-      .await
-      .unwrap()
-      .unwrap();
-    let mut request = [0_u8; 4096];
-    let _ = socket.read(&mut request).await.unwrap();
-    let response = format!(
-      "HTTP/1.1 200 OK\r\nContent-Type: application/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-      octafile.len()
-    );
-    socket.write_all(response.as_bytes()).await.unwrap();
-    socket.write_all(octafile).await.unwrap();
+    for _ in 0..if materialization { 3 } else { 1 } {
+      let (mut socket, _) = tokio::time::timeout(Duration::from_secs(5), listener.accept())
+        .await
+        .unwrap()
+        .unwrap();
+      let mut request = [0_u8; 4096];
+      let count = socket.read(&mut request).await.unwrap();
+      let request = std::str::from_utf8(&request[..count]).unwrap();
+      let media_type = if request.contains("accepted-change-set-bundle") {
+        octacity_protocol::CHANGE_SET_BUNDLE_MEDIA_TYPE
+      } else if request.contains("accepted-change-set-manifest") {
+        octacity_protocol::CHANGE_SET_MANIFEST_MEDIA_TYPE
+      } else {
+        "application/yaml"
+      };
+      let response = format!(
+        "HTTP/1.1 200 OK\r\nContent-Type: {media_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        octafile.len()
+      );
+      socket.write_all(response.as_bytes()).await.unwrap();
+      socket.write_all(octafile).await.unwrap();
+    }
   });
   let origin = format!("http://{address}");
   let work_root = tempfile::tempdir().unwrap();
@@ -296,6 +418,53 @@ async fn stages_and_projects_an_admitted_factory_job() {
   spec.protected_inputs.inputs[0].media_type = "application/yaml".to_owned();
   spec.octa.runner_sha256 = hex::encode(sha2::Sha256::digest(FACTORY_RUNNER_BYTES));
   spec.factory = Some(capture_causality());
+  spec.expires_at = SystemTime::now()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .unwrap()
+    .as_secs()
+    + 1;
+  if materialization {
+    for (id, destination, media_type) in [
+      (
+        "accepted-change-set-bundle",
+        octacity_protocol::CHANGE_SET_BUNDLE_INPUT,
+        octacity_protocol::CHANGE_SET_BUNDLE_MEDIA_TYPE,
+      ),
+      (
+        "accepted-change-set-manifest",
+        octacity_protocol::CHANGE_SET_MANIFEST_INPUT,
+        octacity_protocol::CHANGE_SET_MANIFEST_MEDIA_TYPE,
+      ),
+    ] {
+      spec.protected_inputs.inputs.push(ProtectedInputV3 {
+        artifact_id: id.to_owned(),
+        destination: destination.to_owned(),
+        media_type: media_type.to_owned(),
+        size_bytes: octafile.len() as u64,
+        sha256: hex::encode(sha2::Sha256::digest(octafile)),
+      });
+    }
+    spec
+      .protected_inputs
+      .inputs
+      .sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+    spec
+      .permissions
+      .mounts
+      .iter_mut()
+      .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+      .unwrap()
+      .mode = FactoryMountModeV3::ReadOnly;
+    spec.factory.as_mut().unwrap().change_set_materialization = Some(octacity_protocol::ChangeSetMaterializationV3 {
+      bundle_input: "accepted-change-set-bundle".to_owned(),
+      manifest_input: "accepted-change-set-manifest".to_owned(),
+      candidate_revision: "abcdef0123456789abcdef0123456789abcdef01".to_owned(),
+    });
+  }
+  if let Some(duration) = deadline {
+    spec.execution_deadline_unix_ms =
+      (SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap() + duration).as_millis() as u64;
+  }
   let mut executor = factory_executor(
     work_root.path(),
     source_calls.clone(),
@@ -311,19 +480,31 @@ async fn stages_and_projects_an_admitted_factory_job() {
   })
   .unwrap();
   let captured = Arc::new(AtomicBool::new(false));
+  let cancelled = Arc::new(AtomicBool::new(false));
   let executor = executor
     .with_protected_input_stager(stager)
     .with_change_set_capturer(Arc::new(FakeChangeSetCapturer {
       called: captured.clone(),
       starts: starts.clone(),
+      delay: deadline.map(|_| Duration::from_secs(2)),
+      cancelled: cancelled.clone(),
     }));
+  let executor = if materialization {
+    executor.with_change_set_materializer(Arc::new(SlowChangeSetMaterializer {
+      cancelled: cancelled.clone(),
+    }))
+  } else {
+    executor
+  };
   let mut protected_inputs = transfers(&spec.protected_inputs);
-  protected_inputs[0].capability.url = format!("{origin}/managed-octafile");
-  protected_inputs[0].capability.expires_at_unix_ms = SystemTime::now()
-    .duration_since(SystemTime::UNIX_EPOCH)
-    .unwrap()
-    .as_millis()
-    .saturating_add(60_000) as u64;
+  for input in &mut protected_inputs {
+    input.capability.url = format!("{origin}/{}", input.input.artifact_id);
+    input.capability.expires_at_unix_ms = SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .unwrap()
+      .as_millis()
+      .saturating_add(60_000) as u64;
+  }
   let (events, _receiver) = mpsc::channel(8);
 
   let completion = executor
@@ -337,19 +518,27 @@ async fn stages_and_projects_an_admitted_factory_job() {
       CancellationToken::new(),
       &events,
     )
-    .await
-    .unwrap();
+    .await;
+  if let Err(failure) = &completion {
+    assert!(
+      !matches!(
+        failure.error(),
+        JobError::FactoryPreflight(_) | JobError::ProtectedInputs(_)
+      ),
+      "fixture admission failed: {failure:?}"
+    );
+  }
   server.await.unwrap();
 
   assert_eq!(source_calls.load(Ordering::SeqCst), 1);
-  assert_eq!(starts.load(Ordering::SeqCst), 1);
-  assert!(captured.load(Ordering::SeqCst));
-  assert_eq!(
-    completion.change_set().unwrap().manifest.stage_attempt_id,
-    "00000000-0000-0000-0000-000000000003"
-  );
-  assert!(!completion.workspace().parent().unwrap().join("protected").exists());
-  completion.cleanup().await.unwrap();
+  if !materialization {
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+    assert!(captured.load(Ordering::SeqCst));
+  } else {
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+    assert!(!captured.load(Ordering::SeqCst));
+  }
+  (completion, cancelled, work_root)
 }
 
 #[tokio::test]
@@ -427,7 +616,6 @@ async fn rejects_requested_change_set_materialization_before_source_when_unconfi
     .unwrap()
     .mode = FactoryMountModeV3::ReadOnly;
   let mut causality = capture_causality();
-  causality.stage_kind = FactoryStageKindV3::Evaluation;
   causality.change_set_capture = None;
   causality.change_set_materialization = Some(octacity_protocol::ChangeSetMaterializationV3 {
     bundle_input,
@@ -477,6 +665,8 @@ async fn rejects_requested_change_set_materialization_before_source_when_unconfi
 struct FakeChangeSetCapturer {
   called: Arc<AtomicBool>,
   starts: Arc<AtomicUsize>,
+  delay: Option<Duration>,
+  cancelled: Arc<AtomicBool>,
 }
 
 #[async_trait]
@@ -484,7 +674,7 @@ impl ChangeSetCapturer for FakeChangeSetCapturer {
   async fn capture(
     &self,
     request: CaptureRequest,
-    _cancellation: CancellationToken,
+    cancellation: CancellationToken,
   ) -> Result<CapturedChangeSet, CaptureError> {
     assert_eq!(
       self.starts.load(Ordering::SeqCst),
@@ -495,6 +685,15 @@ impl ChangeSetCapturer for FakeChangeSetCapturer {
     assert!(request.destination.is_dir());
     fs::write(request.destination.join("change-set.bundle"), b"bundle").unwrap();
     self.called.store(true, Ordering::SeqCst);
+    if let Some(delay) = self.delay {
+      tokio::select! {
+        () = tokio::time::sleep(delay) => {},
+        () = cancellation.cancelled() => {
+          self.cancelled.store(true, Ordering::SeqCst);
+          return Err(CaptureError::Cancelled);
+        }
+      }
+    }
     let bundle = CapturedFile {
       name: "change-set.bundle".to_owned(),
       size_bytes: 6,
@@ -506,7 +705,7 @@ impl ChangeSetCapturer for FakeChangeSetCapturer {
         format_version: 1,
         base_revision: request.base_revision,
         candidate_revision: DIGEST.to_owned(),
-        stage_attempt_id: request.stage_attempt_id,
+        node_attempt_id: request.node_attempt_id,
         capture_tool: FactoryImmutableReferenceV3 {
           identity: "git".to_owned(),
           version: "2.0.0".to_owned(),
@@ -704,6 +903,11 @@ fn isolation_spec() -> JobSpecV2 {
 
 fn factory_spec() -> JobSpecV3 {
   let mut current = isolation_spec();
+  current.issued_at = SystemTime::now()
+    .duration_since(SystemTime::UNIX_EPOCH)
+    .unwrap()
+    .as_secs();
+  current.expires_at = current.issued_at + current.runtime.timeout_seconds;
   current.job_id = "managed-factory-job".to_owned();
   current.runtime.target.mode = ExecutionMode::Virtualization;
   current.runtime.target.required_guarantees = guarantees_for(ExecutionMode::Virtualization);
@@ -767,6 +971,7 @@ fn factory_spec() -> JobSpecV3 {
     attempt: current.attempt,
     issued_at: current.issued_at,
     expires_at: current.expires_at,
+    execution_deadline_unix_ms: current.expires_at * 1_000,
     source: current.source,
     octa: current.octa,
     execution: ManagedOctaExecutionV3 {
@@ -798,9 +1003,10 @@ fn capture_causality() -> FactoryCausalityV3 {
     factory_run_id: "00000000-0000-0000-0000-000000000001".to_owned(),
     factory_configuration_id: "00000000-0000-0000-0000-000000000002".to_owned(),
     factory_configuration_version: 1,
-    stage_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
-    stage_kind: FactoryStageKindV3::Implementation,
-    task_envelope_digest: DIGEST.to_owned(),
+    flow_run_id: "00000000-0000-0000-0000-000000000004".to_owned(),
+    workflow_cycle_id: "00000000-0000-0000-0000-000000000005".to_owned(),
+    node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
+    input_digest: DIGEST.to_owned(),
     subject_digest: DIGEST.to_owned(),
     change_set_capture: Some(ChangeSetCaptureV3 {
       author_name: "OctaCity Factory".to_owned(),
@@ -819,7 +1025,6 @@ fn capture_causality() -> FactoryCausalityV3 {
       },
     }),
     change_set_materialization: None,
-    parent: None,
   }
 }
 

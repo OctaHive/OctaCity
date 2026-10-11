@@ -6,7 +6,7 @@ use octacity_protocol::{
   OutputLimits, ProtectedInputManifestV3, RuntimeSpec, RuntimeSpecV2, SignedEnvelope,
 };
 use octacity_server_domain::{
-  BuildId, ImmutableRevision, MAX_TIMESTAMP_MILLIS, PipelineNodeId, RepositoryLocator, SourceReference,
+  BuildId, ImmutableRevision, MAX_TIMESTAMP_MILLIS, PipelineNodeId, RepositoryLocator, SourceReference, Timestamp,
 };
 use octacity_server_secrets::SecretProfileName;
 use serde::{Deserialize, Deserializer, Serialize, Serializer, de::Error as _};
@@ -244,6 +244,8 @@ pub struct JobSpecTemplate {
   parameters: BTreeMap<String, Value>,
   execution: JobExecutionIntent,
   policy: JobSpecPolicySnapshot,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  execution_deadline: Option<Timestamp>,
 }
 
 /// Server-owned protected execution facts embedded in a stable v3 template.
@@ -262,6 +264,16 @@ pub struct ManagedJobSpecIntent {
 }
 
 impl ManagedJobSpecIntent {
+  /// Borrows the immutable common node causality signed with the Job.
+  #[must_use]
+  pub const fn factory(&self) -> &FactoryCausalityV3 {
+    &self.factory
+  }
+  /// Borrows the exact authority supplied to protected execution.
+  #[must_use]
+  pub const fn permissions(&self) -> &FactoryPermissionSetV3 {
+    &self.permissions
+  }
   /// Captures exact generated tasks, immutable input metadata, narrowed
   /// permissions, and the semantic enforcement requirements for JobSpec v3.
   #[must_use]
@@ -333,6 +345,7 @@ impl JobSpecTemplate {
       parameters: build.parameters.clone(),
       execution: JobExecutionIntent::Ordinary(execution),
       policy: policy.clone(),
+      execution_deadline: None,
     };
     value.validate()?;
     Ok(value)
@@ -353,6 +366,7 @@ impl JobSpecTemplate {
       parameters: build.parameters.clone(),
       execution: JobExecutionIntent::Managed(Box::new(execution)),
       policy: policy.clone(),
+      execution_deadline: None,
     };
     value.validate()?;
     Ok(value)
@@ -370,8 +384,45 @@ impl JobSpecTemplate {
     &self.pipeline_node_id
   }
 
+  /// Retains an absolute managed execution ceiling across blocked Jobs and retries.
+  /// Ordinary released templates preserve their existing signing behavior.
+  pub fn with_execution_deadline(mut self, deadline: Timestamp) -> Result<Self, JobSpecDerivationError> {
+    if !matches!(self.execution, JobExecutionIntent::Managed(_)) || deadline.unix_millis() < 1_000 {
+      return Err(JobSpecDerivationError::InvalidPolicy);
+    }
+    self.execution_deadline = Some(deadline);
+    self.validate()?;
+    Ok(self)
+  }
+
+  /// Returns the immutable absolute stop ceiling when a managed node supplied one.
+  #[must_use]
+  pub const fn execution_deadline(&self) -> Option<Timestamp> {
+    self.execution_deadline
+  }
+
+  /// Borrows protected execution intent, when this template signs as JobSpec v3.
+  #[must_use]
+  pub fn managed_intent(&self) -> Option<&ManagedJobSpecIntent> {
+    match &self.execution {
+      JobExecutionIntent::Managed(value) => Some(value),
+      JobExecutionIntent::Ordinary(_) => None,
+    }
+  }
+
+  /// Returns the exact source revision frozen into every signed Attempt.
+  #[must_use]
+  pub fn source_revision(&self) -> &ImmutableRevision {
+    &self.immutable_revision
+  }
+
   /// Revalidates a template decoded at a persistence or API boundary.
   pub fn validate(&self) -> Result<(), JobSpecDerivationError> {
+    if self.execution_deadline.is_some_and(|deadline| {
+      deadline.unix_millis() < 1_000 || !matches!(self.execution, JobExecutionIntent::Managed(_))
+    }) {
+      return Err(JobSpecDerivationError::InvalidPolicy);
+    }
     if self.policy.source.validate().is_err()
       || self.policy.runtime.validate().is_err()
       || self.policy.outputs.validate().is_err()

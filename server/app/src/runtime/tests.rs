@@ -41,9 +41,8 @@ fn healthy_checks() -> ReadinessChecks {
   ReadinessChecks::new(check(), check(), check(), check(), std::iter::empty())
 }
 
-fn test_config() -> ServerConfig {
-  ServerConfig::parse_toml(
-    r#"
+fn test_config_source() -> &'static str {
+  r#"
 management_bind = "127.0.0.1:0"
 agent_bind = "127.0.0.1:0"
 shutdown_grace_milliseconds = 1000
@@ -75,9 +74,30 @@ session_lifetime_milliseconds = 300000
 
 [job_spec]
 policy_file = "job-spec-policy.json"
-"#,
-  )
-  .unwrap()
+"#
+}
+fn test_config() -> ServerConfig {
+  ServerConfig::parse_toml(test_config_source()).unwrap()
+}
+
+#[tokio::test]
+async fn factory_requires_explicit_installation_before_loading_resources_or_binding() {
+  let source = format!(
+    "{}\n[factory]\npoll_interval_milliseconds = 10\nclaim_lifetime_milliseconds = 1000\nbatch_size = 4\nconcurrency = 2\n",
+    test_config_source()
+  );
+  let config = ServerConfig::parse_toml(&source).unwrap();
+  let error = match ServerRuntime::start(config).await {
+    Ok(runtime) => {
+      runtime.shutdown().await.unwrap();
+      panic!("enabled Factory must require exact installed capabilities");
+    }
+    Err(error) => error,
+  };
+  assert_eq!(
+    error.to_string(),
+    "Factory runtime requires explicit installed capabilities"
+  );
 }
 
 #[tokio::test]

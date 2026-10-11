@@ -4,7 +4,7 @@ use octacity_protocol::{FACTORY_OUTPUT_ROOT, FACTORY_SCRATCH_ROOT, FACTORY_SOURC
 use octacity_server_factory::{
   EvaluationPlan, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryTaskEnvelope,
   FactoryTaskMode, FactoryTaskResultSchema, ImmutableReference, MAX_ASSESSMENT_EVIDENCE_REFERENCES,
-  MAX_ASSESSMENT_FINDINGS, MacroCall, MacroCallKind, MountMode,
+  MAX_ASSESSMENT_FINDINGS, MountMode,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -157,6 +157,9 @@ impl CompiledCodexTask {
 /// Stable secret-safe failures from the trusted Codex compilation boundary.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum CodexCompilationError {
+  /// Task authority differs from the persisted common node operation.
+  #[error("Factory Codex task does not match its node Build intent")]
+  NodeBindings,
   /// The rendered prompt is empty, oversized, or contains a NUL byte.
   #[error("Factory Codex prompt is invalid")]
   InvalidPrompt,
@@ -199,6 +202,21 @@ pub fn codex_prompt_digest(prompt: &str) -> FactoryDigest {
 #[must_use]
 pub fn codex_prompt_provenance_digest(prompt: &str) -> FactoryDigest {
   FactoryDigest::content_blake3(prompt.as_bytes())
+}
+
+/// Compiles a capability invocation only after verifying its persisted common node authority.
+/// Installed Factory compilers use this boundary before publishing protected inputs.
+/// The lower-level document compiler grants no Build admission or graph authority.
+pub fn compile_codex_node_task(
+  intent: &octacity_server_factory::FlowBuildIntent,
+  envelope: &FactoryTaskEnvelope,
+  rendered_prompt: &str,
+  profiles: &FactoryCredentialProfiles,
+) -> Result<CompiledCodexTask, CodexCompilationError> {
+  envelope
+    .verify_build_intent(intent)
+    .map_err(|_| CodexCompilationError::NodeBindings)?;
+  compile_codex_task(envelope, rendered_prompt, profiles)
 }
 
 /// Compiles one immutable Task Envelope into exactly one protected Codex task.
@@ -299,26 +317,19 @@ pub fn compile_codex_task(
 /// Compiles one plan-selected independent reviewer through the ordinary Codex task path.
 ///
 /// This preflight binds the immutable review plan and evaluator branch to one
-/// durable call node and its distinct evaluation Task Envelope before protected
+/// common Node Attempt through its immutable evaluation Task Envelope before protected
 /// inputs or the evaluation credential can reach an ordinary Factory Build.
 pub fn compile_codex_reviewer(
   plan: &EvaluationPlan,
   evaluator: &ImmutableReference,
-  call: &MacroCall,
   envelope: &FactoryTaskEnvelope,
   rendered_prompt: &str,
   credential_profiles: &FactoryCredentialProfiles,
 ) -> Result<CompiledCodexTask, CodexCompilationError> {
-  let subject_matches = envelope.subject().candidate() == Some(plan.subject()) && call.subject() == envelope.subject();
-  let call_matches = call.kind() == MacroCallKind::Evaluate
-    && call.stage_attempt_id() == envelope.stage_attempt_id()
-    && call.context_manifest_id() == envelope.context_manifest_id()
-    && call.context_digest() == envelope.context_manifest_digest()
-    && call.budget() == envelope.budget();
+  let subject_matches = envelope.subject().candidate() == Some(plan.subject());
   if envelope.mode() != FactoryTaskMode::Evaluate
     || !plan.has_evaluator(evaluator)
     || !subject_matches
-    || !call_matches
     || !envelope.budget().fits_within(plan.budget())
   {
     return Err(CodexCompilationError::ReviewerBindings);
@@ -362,11 +373,11 @@ fn validate_authority(
     return Err(CodexCompilationError::CredentialProfile);
   }
   let consumer = match envelope.mode() {
-    FactoryTaskMode::Implement | FactoryTaskMode::Rework => FactoryCredentialConsumer::CodingStage,
-    FactoryTaskMode::Evaluate => FactoryCredentialConsumer::EvaluationStage,
+    FactoryTaskMode::Implement | FactoryTaskMode::Rework => FactoryCredentialConsumer::CodingNode,
+    FactoryTaskMode::Evaluate => FactoryCredentialConsumer::ReadOnlyReview,
   };
   credential_profiles
-    .authorize(envelope.stage_attempt_id(), consumer, selected_profile)
+    .authorize(envelope.node_attempt_id(), consumer, selected_profile)
     .map_err(|_| CodexCompilationError::CredentialProfile)?;
   validate_source_mount(envelope)?;
   if envelope.mode() == FactoryTaskMode::Evaluate && envelope.permissions().tools().next().is_some() {

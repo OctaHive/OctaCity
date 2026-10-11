@@ -22,6 +22,32 @@ import {
 afterEach(cleanup);
 
 describe('Project Builds', () => {
+  it('shows an ordinary Factory Build without inventing a Trigger cause', async () => {
+    const api = fakeProjectsApi();
+    api.getProject.mockResolvedValue({ ancestors: [], project: project('delivery', 'Delivery') });
+    api.listBuilds.mockResolvedValue(
+      definitionPage(
+        [
+          {
+            ...build(BUILD_A, CONFIGURATION_A, 'running', 1_700_000_000_123),
+            cause: null,
+            factory_origin: {
+              operation_id: '1'.repeat(64),
+              run_id: '00000000-0000-0000-0000-000000000001',
+              node_attempt_id: '00000000-0000-0000-0000-000000000002',
+              input_digest: '2'.repeat(64),
+            },
+          },
+        ],
+        null,
+      ),
+    );
+    renderProjects('/projects/delivery', api);
+    const builds = await screen.findByRole('region', { name: 'Recent Builds' });
+    expect(await within(builds).findByRole('link', { name: BUILD_A })).toBeTruthy();
+    expect(within(builds).getByText('Dark Factory')).toBeTruthy();
+  });
+
   it('round-trips Build filters through the URL and omits cleared filters', async () => {
     const api = fakeProjectsApi();
     api.getProject.mockResolvedValue({ ancestors: [], project: project('delivery', 'Delivery') });

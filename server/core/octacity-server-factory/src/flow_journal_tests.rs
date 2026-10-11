@@ -30,6 +30,7 @@ fn common_history_requires_frozen_inputs_and_exact_records_for_every_completed_n
     admitted.initial_cycle(),
     definition,
     NodeAttemptInput {
+      started_at: (ownership.clone()).claim().claimed_at(),
       id: NodeAttemptId::generate(),
       node_key: key("accessibility_audit"),
       node_kind: FlowNodeKind::DeterministicGate,
@@ -44,6 +45,7 @@ fn common_history_requires_frozen_inputs_and_exact_records_for_every_completed_n
   .unwrap();
   let attempts = [attempt.clone()];
   let history = |completions| FlowRuntimeHistory {
+    stops: &[],
     flow_runs: std::slice::from_ref(admitted.root_run()),
     cycles: std::slice::from_ref(admitted.initial_cycle()),
     attempts: &attempts,
@@ -114,6 +116,7 @@ fn the_journal_recomputes_configured_gate_results_instead_of_accepting_supplied_
     admitted.initial_cycle(),
     definition,
     NodeAttemptInput {
+      started_at: (ownership.clone()).claim().claimed_at(),
       id: NodeAttemptId::generate(),
       node_key: key("accessibility_audit"),
       node_kind: FlowNodeKind::DeterministicGate,
@@ -152,6 +155,7 @@ fn the_journal_recomputes_configured_gate_results_instead_of_accepting_supplied_
       &work,
       &admitted,
       FlowRuntimeHistory {
+        stops: &[],
         flow_runs: std::slice::from_ref(admitted.root_run()),
         cycles: std::slice::from_ref(admitted.initial_cycle()),
         attempts: std::slice::from_ref(&attempt),
@@ -189,6 +193,7 @@ fn configured_input_mapping_cannot_be_replaced_with_arbitrary_schema_valid_data(
     .unwrap()
   };
   let history = FlowRuntimeHistory {
+    stops: &[],
     flow_runs: std::slice::from_ref(admitted.root_run()),
     cycles: std::slice::from_ref(admitted.initial_cycle()),
     attempts: &[],

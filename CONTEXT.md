@@ -23,7 +23,7 @@ An immutable published snapshot of a Pipeline DAG.
 _Avoid_: Current Pipeline
 
 **Build**:
-One immutable accepted execution request, including its resolved source, configuration, policy, parameters, and initiating Trigger; it owns the history of all its Attempts.
+One immutable accepted execution request, including its resolved source, configuration, policy, parameters, and immutable origin (a Trigger Occurrence or an exact Factory node operation); it owns the history of all its Attempts.
 _Avoid_: Run, Attempt
 
 **Attempt**:

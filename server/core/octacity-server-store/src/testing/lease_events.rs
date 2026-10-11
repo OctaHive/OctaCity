@@ -344,7 +344,7 @@ pub(super) async fn complete(
     .collect::<Result<Vec<_>, _>>()
     .map_err(|_| StoreError::Unavailable)?;
   let build_id = state.attempts.get(&attempt_id).ok_or(StoreError::Unavailable)?.build_id;
-  let decision = if state.cancellations.contains_key(&build_id) {
+  let decision = if state.stops.contains_key(&build_id) {
     reconcile_cancelled_job_graph(graph)
   } else {
     reconcile_job_graph(graph)

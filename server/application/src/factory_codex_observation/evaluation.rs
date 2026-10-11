@@ -1,14 +1,11 @@
 //! Projection of one independent read-only Codex review into Factory records.
 
 use octacity_protocol::RunnerEventPayload;
-use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
-  Assessment, AssessmentFinding, AssessmentId, AssessmentInput, BoundedSummary, BudgetUsage, EvaluationBranchResult,
-  EvaluationPlan, EvaluationProgress, EvaluationResult, EvidenceManifest, FactoryArtifactReference, FactoryError,
-  FactoryTaskEnvelope, FactoryTaskMode, ImmutableReference, MacroCall, MacroCallCompletion, MacroCallCompletionOutputs,
-  MacroCallKind, StageAttempt,
+  Assessment, AssessmentFinding, AssessmentId, AssessmentInput, BoundedSummary, BudgetUsage, EvaluationPlan,
+  EvaluationResult, EvidenceManifest, FactoryArtifactReference, FactoryError, FactoryTaskEnvelope, FactoryTaskMode,
+  ImmutableReference,
 };
-use octacity_server_store::FactoryRunHistoryAppend;
 
 use super::{
   CodexHarnessOutcome, FactoryCodexObservationStatus, FactoryCodexOutputDocument, records::evaluation_report,
@@ -18,6 +15,12 @@ use crate::FactoryBuildObservation;
 
 /// Trusted terminal projection of one independent read-only evaluation Build.
 #[derive(Clone, Debug, Eq, PartialEq)]
+///
+/// Capability validation does not create a parallel Stage/MacroCall completion:
+///
+/// ```compile_fail
+/// use octacity_server_application::FactoryCodexEvaluationCompletion;
+/// ```
 pub struct FactoryCodexEvaluationObservation {
   status: FactoryCodexObservationStatus,
   usage: BudgetUsage,
@@ -26,33 +29,6 @@ pub struct FactoryCodexEvaluationObservation {
   result_artifact: Option<FactoryArtifactReference>,
   trace: Option<FactoryArtifactReference>,
   provenance: Option<FactoryArtifactReference>,
-}
-
-/// Authoritative records and joined progress produced by one evaluator result.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FactoryCodexEvaluationCompletion {
-  progress: EvaluationProgress,
-  history: FactoryRunHistoryAppend,
-}
-
-impl FactoryCodexEvaluationCompletion {
-  /// Returns progress with the exact immutable branch result recorded.
-  #[must_use]
-  pub const fn progress(&self) -> &EvaluationProgress {
-    &self.progress
-  }
-
-  /// Returns the append-only call completion and Assessment records.
-  #[must_use]
-  pub const fn history(&self) -> &FactoryRunHistoryAppend {
-    &self.history
-  }
-
-  /// Splits the completion into values ready for one fenced store transition.
-  #[must_use]
-  pub fn into_parts(self) -> (EvaluationProgress, FactoryRunHistoryAppend) {
-    (self.progress, self.history)
-  }
 }
 
 /// Immutable cross-record bindings for one independent evaluator invocation.
@@ -144,66 +120,10 @@ impl FactoryCodexEvaluationObservation {
     self.provenance.as_ref()
   }
 
-  /// Binds this observation to its distinct durable evaluator call node.
-  pub fn completion(
-    &self,
-    call: &MacroCall,
-    envelope: &FactoryTaskEnvelope,
-    completed_at: Timestamp,
-  ) -> Result<MacroCallCompletion, FactoryError> {
-    if call.kind() != MacroCallKind::Evaluate {
-      return Err(FactoryError::InvalidReference {
-        relationship: "evaluation macro call",
-      });
-    }
-    MacroCallCompletion::new(
-      call,
-      envelope,
-      self.status.into(),
-      self.usage,
-      MacroCallCompletionOutputs {
-        result: self.result_artifact.clone(),
-        summary: self.result.as_ref().map(|result| result.summary().clone()),
-        summary_artifact: None,
-        trace: self.trace.clone(),
-        provenance: self.provenance.clone(),
-      },
-      completed_at,
-    )
-  }
-
-  /// Produces the append-only completion and Assessment batch for this call.
-  pub fn history_append(
-    &self,
-    call: &MacroCall,
-    envelope: &FactoryTaskEnvelope,
-    completed_at: Timestamp,
-  ) -> Result<FactoryRunHistoryAppend, FactoryError> {
-    Ok(FactoryRunHistoryAppend {
-      macro_call_completions: vec![self.completion(call, envelope, completed_at)?],
-      assessments: self.assessment.iter().cloned().collect(),
-      ..FactoryRunHistoryAppend::default()
-    })
-  }
-
-  /// Records the exact branch result and its immutable rows as one transition input.
-  pub fn complete_branch(
-    &self,
-    progress: &EvaluationProgress,
-    plan: &EvaluationPlan,
-    stage: &StageAttempt,
-    call: &MacroCall,
-    envelope: &FactoryTaskEnvelope,
-    completed_at: Timestamp,
-  ) -> Result<FactoryCodexEvaluationCompletion, FactoryError> {
-    let assessment = self.assessment.as_ref().ok_or(FactoryError::InvalidReference {
-      relationship: "successful evaluation assessment",
-    })?;
-    let result = EvaluationBranchResult::new(plan, stage, call, assessment)?;
-    Ok(FactoryCodexEvaluationCompletion {
-      progress: progress.record_result(result)?,
-      history: self.history_append(call, envelope, completed_at)?,
-    })
+  /// Returns the exact validated structured-result Artifact for the common result journal.
+  #[must_use]
+  pub const fn result_artifact(&self) -> Option<&FactoryArtifactReference> {
+    self.result_artifact.as_ref()
   }
 }
 

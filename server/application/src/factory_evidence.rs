@@ -1,14 +1,13 @@
 //! Trusted construction of immutable Factory evidence from ordinary Build outputs.
 
+use crate::FactoryNodeBuildCompletion;
 use octacity_server_artifacts::{ArtifactRecord, ArtifactState, ArtifactType};
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
   CandidateSubject, ChangeSet, DeterministicGateOutcome, EvidenceItem, EvidenceItemInput, EvidenceManifest,
   EvidenceManifestId, EvidenceOutputKind, EvidenceProducer, EvidenceRequirement, FactoryArtifactReference,
-  FactoryDigest, FactoryError, FactoryKey, FactoryStageTarget, ImmutableReference,
+  FactoryDigest, FactoryError, FactoryKey, ImmutableReference,
 };
-use octacity_server_orchestrator::BuildState;
-use octacity_server_store::{FactoryBuildLink, FactoryBuildObservationRecord, FactoryBuildParent};
 use thiserror::Error;
 
 /// Schema-validated provenance and outcome for one retained validation output.
@@ -101,25 +100,46 @@ pub enum FactoryEvidenceError {
   Manifest(#[from] FactoryError),
 }
 
-/// Constructs one complete immutable manifest from exact successful Validation Build outputs.
+/// Constructs evidence from a verified generic node result and its exact ordinary execution.
+/// The frozen context must select this candidate. Logical node names and phase
+/// roles carry no authority; every output must match the retained Build provenance.
 pub fn construct_factory_evidence_manifest(
   id: EvidenceManifestId,
   change_set: &ChangeSet,
-  link: &FactoryBuildLink,
-  observation: &FactoryBuildObservationRecord,
+  completed: &FactoryNodeBuildCompletion,
   requirements: Vec<EvidenceRequirement>,
   outputs: Vec<VerifiedFactoryEvidence>,
   constructed_at: Timestamp,
 ) -> Result<EvidenceManifest, FactoryEvidenceError> {
-  validate_build(change_set, link, observation, constructed_at)?;
+  validate_build(change_set, completed, constructed_at)?;
+  let provenance = completed
+    .record
+    .build_provenance()
+    .ok_or(FactoryEvidenceError::InvalidEvidence)?;
   let mut items = Vec::with_capacity(outputs.len());
   for output in outputs {
     let identity = output.record.identity();
     let published_at = output.record.published_at().ok_or(FactoryEvidenceError::NotRetained)?;
-    if !observation.outputs.contains(identity)
-      || identity.build_id != link.build_id
-      || identity.attempt_id != observation.attempt_id
-      || !observation.job_ids.contains(&identity.job_id)
+    let verified = provenance
+      .outputs()
+      .iter()
+      .find(|row| row.artifact.artifact_id() == identity.artifact_id)
+      .ok_or(FactoryEvidenceError::InvalidEvidence)?;
+    if identity.build_id != completed.execution.build_id()
+      || identity.attempt_id != completed.execution.attempt_id()
+      || !completed.execution.jobs().contains(&identity.job_id)
+      || verified.artifact.content_digest().as_bytes() != identity.digest.as_bytes()
+      || verified.artifact.encoded_size() != identity.size_bytes
+      || verified.producer.build_id() != identity.build_id
+      || verified.producer.attempt_id() != identity.attempt_id
+      || verified.producer.job_id() != identity.job_id
+      || verified.name != output.attestation.kind
+      || verified.name.as_str() != identity.logical_name.as_str()
+      || verified.schema != output.attestation.schema
+      || verified.producer.tool() != &output.attestation.tool
+      || verified.producer.plugin() != &output.attestation.plugin
+      || published_at > verified.verified_at
+      || output.attestation.fresh_until > verified.fresh_until
       || identity
         .retention
         .delete_after()
@@ -167,20 +187,29 @@ pub fn construct_factory_evidence_manifest(
 
 fn validate_build(
   change_set: &ChangeSet,
-  link: &FactoryBuildLink,
-  observation: &FactoryBuildObservationRecord,
+  completed: &FactoryNodeBuildCompletion,
   constructed_at: Timestamp,
 ) -> Result<(), FactoryEvidenceError> {
-  if link.target != FactoryStageTarget::Validation
-    || link.parent != Some(FactoryBuildParent::ChangeSet(change_set.id()))
-    || link.exact_revision != *change_set.subject().candidate_revision()
-    || observation.run_id != link.run_id
-    || observation.stage_attempt_id != link.stage_attempt_id
-    || observation.target != FactoryStageTarget::Validation
-    || observation.build_id != link.build_id
-    || observation.attempt_id != link.attempt_id
-    || observation.state != BuildState::Succeeded
-    || observation.observed_at > constructed_at
+  let record = &completed.record;
+  if record.input().subject() != change_set.subject().exact()
+    || record
+      .input()
+      .context()
+      .and_then(|context| context.subject().candidate())
+      != Some(change_set.subject())
+    || record.node_attempt_id() != completed.execution.node_attempt_id()
+    || completed.completion.node_attempt_id() != record.node_attempt_id()
+    || record.digest().map_err(FactoryEvidenceError::Manifest)? != completed.completion.output_digest()
+    || record.observed_at() > constructed_at
+    || completed.completion.observed_at() > constructed_at
+    || record.build_provenance().is_none_or(|proof| {
+      proof.outputs().iter().any(|output| {
+        output.producer.build_id() != completed.execution.build_id()
+          || output.producer.attempt_id() != completed.execution.attempt_id()
+          || !completed.execution.jobs().contains(&output.producer.job_id())
+          || output.verified_at > constructed_at
+      })
+    })
   {
     return Err(FactoryEvidenceError::InvalidEvidence);
   }
@@ -189,197 +218,120 @@ fn validate_build(
 
 #[cfg(test)]
 mod tests {
-  use octacity_server_artifacts::{
-    ArtifactContentDigest, ArtifactEvent, ArtifactMediaType, ArtifactReportFormat, ArtifactRetentionPolicy,
-  };
-  use octacity_server_domain::{
-    ArtifactId, ArtifactName, AttemptId, AttemptVersion, BuildConfigurationId, BuildConfigurationVersion, BuildId,
-    BuildVersion, ImmutableRevision, JobId, LeaseId, ProjectId, RepositoryId,
-  };
-  use octacity_server_factory::{
-    BudgetLimit, BuildConfigurationRef, ExactSubject, FactoryClaim, FactoryClaimFence, FactoryClaimOwnership,
-    FactoryConfigurationId, FactoryConfigurationRef, FactoryConfigurationVersion, FactoryMetadata, FactoryRun,
-    FactoryRunId, RiskClass, StageAttempt, StageAttemptId, StageAttemptNumber, WorkArtifacts, WorkClassification,
-    WorkEnvelope, WorkEnvelopeId, WorkPriority,
-  };
-  use octacity_server_store::{FactoryBuildLinkInput, FactoryBuildObservationInput};
-
   use super::*;
+  use crate::factory_node_test_support::{Builds, Outputs, fixtures::*};
+  use crate::{
+    FactoryNodeBuildAdapter, FactoryNodeBuildCompletion, FactoryNodeBuildExecutionFacts, FactoryNodeBuildOutputs,
+    FactoryNodeBuildStep,
+  };
+  use octacity_server_domain::{ArtifactId, ImmutableRevision};
+  use octacity_server_factory::{BudgetUsage, FactoryClaimOwnership, FlowBuildIntent, FlowNodeKind};
+  use octacity_server_orchestrator::BuildState;
+  use std::sync::Arc;
 
   struct Fixture {
     change_set: ChangeSet,
-    link: FactoryBuildLink,
-    observation: FactoryBuildObservationRecord,
+    completed: FactoryNodeBuildCompletion,
     record: ArtifactRecord,
     bytes: Vec<u8>,
     requirement: EvidenceRequirement,
     attestation: FactoryEvidenceAttestation,
   }
-
   fn time(value: i64) -> Timestamp {
-    Timestamp::from_unix_millis(value).expect("fixture timestamp")
+    Timestamp::from_unix_millis(value).unwrap()
   }
-
   fn digest(byte: u8) -> FactoryDigest {
     FactoryDigest::from_bytes([byte; 32])
   }
 
-  fn key(value: &str) -> FactoryKey {
-    FactoryKey::new(value).expect("fixture key")
-  }
-
-  fn reference(identity: &str, byte: u8) -> ImmutableReference {
-    ImmutableReference::new(key(identity), key("v1"), digest(byte))
-  }
-
-  fn artifact(byte: u8) -> FactoryArtifactReference {
-    FactoryArtifactReference::new(ArtifactId::generate(), digest(byte), 1).expect("fixture artifact")
-  }
-
-  fn stage(run: &FactoryRun, number: u64, target: FactoryStageTarget) -> StageAttempt {
-    StageAttempt::new(
-      StageAttemptId::generate(),
-      run,
-      StageAttemptNumber::new(number).expect("fixture stage number"),
-      target,
-      BudgetLimit::new(1, 1, 1, 1, 1).expect("fixture budget"),
-      digest(u8::try_from(number).expect("bounded fixture number")),
-      FactoryClaimOwnership::new(
-        key("worker"),
-        FactoryClaim::new(FactoryClaimFence::new(digest(9)), time(1), time(30)).expect("fixture claim"),
-      ),
-    )
-  }
-
   fn fixture() -> Fixture {
-    let exact = ExactSubject::new(
-      ProjectId::generate(),
-      RepositoryId::generate(),
-      ImmutableRevision::new("base").expect("fixture base revision"),
-    );
-    let configuration = FactoryConfigurationRef::new(
-      FactoryConfigurationId::generate(),
-      FactoryConfigurationVersion::INITIAL,
-      exact.project_id(),
-      digest(1),
-    );
-    let work = WorkEnvelope::new(
-      WorkEnvelopeId::generate(),
-      configuration.clone(),
-      octacity_server_factory::ExternalWorkIdentity::new("source/work").expect("fixture work identity"),
-      exact,
-      WorkArtifacts::new(artifact(30), artifact(31), vec![]).expect("fixture work artifacts"),
-      WorkClassification::new(
-        WorkPriority::new(1).expect("fixture priority"),
-        RiskClass::Low,
-        FactoryMetadata::default(),
-      ),
-    )
-    .expect("fixture work");
-    let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
-    let implementation = stage(&run, 1, FactoryStageTarget::Implementation);
-    let subject = CandidateSubject::new(
-      run.subject().clone(),
-      ImmutableRevision::new("candidate").expect("fixture candidate revision"),
-      digest(2),
-    );
-    let change_set = ChangeSet::new(
-      octacity_server_factory::ChangeSetId::generate(),
-      &implementation,
-      subject.clone(),
-      ArtifactId::generate(),
-      ArtifactId::generate(),
-    )
-    .expect("fixture ChangeSet");
-    let validation = stage(&run, 2, FactoryStageTarget::Validation);
-    let build_id = BuildId::generate();
-    let attempt_id = AttemptId::generate();
-    let job_id = JobId::generate();
-    let link = FactoryBuildLink::new(
-      &validation,
-      FactoryBuildLinkInput {
-        build_id,
-        attempt_id,
-        job_ids: vec![job_id],
-        factory_configuration: configuration,
-        target: FactoryStageTarget::Validation,
-        build_configuration: BuildConfigurationRef::new(
-          BuildConfigurationId::generate(),
-          BuildConfigurationVersion::INITIAL,
-          run.subject().project_id(),
-          digest(3),
-        ),
-        task_envelope_digest: digest(4),
-        exact_revision: subject.candidate_revision().clone(),
-        parent: Some(FactoryBuildParent::ChangeSet(change_set.id())),
-        effective_policy_digest: digest(5),
-        input_digest: digest(6),
-      },
-    );
-    let bytes = br#"{"tests":1,"failed":0}"#.to_vec();
-    let content_digest = FactoryDigest::content_sha256(&bytes);
-    let identity = octacity_server_artifacts::ArtifactIdentity {
-      artifact_id: ArtifactId::generate(),
-      build_id,
-      attempt_id,
-      job_id,
-      lease_id: LeaseId::generate(),
-      logical_name: ArtifactName::new("tests.json").expect("fixture artifact name"),
-      artifact_type: ArtifactType::Report(ArtifactReportFormat::new("junit-v1").expect("fixture report format")),
-      media_type: ArtifactMediaType::new("application/json").expect("fixture media type"),
-      size_bytes: bytes.len() as u64,
-      digest: ArtifactContentDigest::from_bytes(content_digest.as_bytes()),
-      retention: ArtifactRetentionPolicy::Keep,
-    };
-    let pending = ArtifactRecord::pending(identity.clone(), time(9)).expect("fixture pending Artifact");
-    let verifying = pending
-      .transition(&identity, pending.version(), ArtifactEvent::BeginVerification, time(10))
-      .expect("fixture verifying Artifact");
-    let record = verifying
-      .transition(&identity, verifying.version(), ArtifactEvent::Publish, time(11))
-      .expect("fixture published Artifact");
-    let observation = FactoryBuildObservationRecord::new(
-      &link,
-      FactoryBuildObservationInput {
-        build_version: BuildVersion::INITIAL,
-        attempt_id,
-        attempt_version: AttemptVersion::INITIAL,
-        job_ids: vec![job_id],
-        outputs: vec![identity],
-        state: BuildState::Succeeded,
-        infrastructure_retry_eligible: false,
-        observed_at: time(12),
-      },
-    )
-    .expect("fixture observation");
-    let schema = reference("junit-v1", 7);
-    let tool = reference("test-runner", 8);
-    let plugin = reference("octa-test", 9);
-    let requirement = EvidenceRequirement::new(
-      key("tests"),
-      EvidenceOutputKind::Report,
-      schema.clone(),
-      tool.clone(),
-      plugin.clone(),
-    );
-    let attestation = FactoryEvidenceAttestation::new(
-      subject,
-      key("tests"),
-      schema,
-      tool,
-      plugin,
-      DeterministicGateOutcome::Passed,
-      time(20),
-    );
-    Fixture {
-      change_set,
-      link,
-      observation,
-      record,
-      bytes,
-      requirement,
-      attestation,
-    }
+    crate::factory_admission_tests::run_ready(async {
+      let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+      let subject = CandidateSubject::new(
+        input.subject().clone(),
+        ImmutableRevision::new("candidate").unwrap(),
+        digest(2),
+      );
+      let change_set = ChangeSet::new(
+        octacity_server_factory::ChangeSetId::generate(),
+        &input,
+        &node,
+        subject.clone(),
+        ArtifactId::generate(),
+        ArtifactId::generate(),
+      )
+      .unwrap();
+      let (input, node) =
+        crate::factory_node_test_support::input_with_candidate_context(&admitted, input, &node, subject.clone());
+      let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+      let builds = Arc::new(Builds::new());
+      *builds.state.lock().unwrap() = BuildState::Succeeded;
+      let bytes = br#"{"count":9}"#.to_vec();
+      let mut document = crate::factory_node_test_support::document(
+        &builds,
+        &intent.profile().result_output,
+        schema.reference(),
+        bytes.clone(),
+        intent.profile().tool.clone(),
+      );
+      document.plugin = intent.profile().plugin.clone();
+      let record = document.record.clone();
+      let outputs = FactoryNodeBuildOutputs {
+        execution: FactoryNodeBuildExecutionFacts {
+          profile: intent.profile().clone(),
+          input_digest: intent.input().digest().unwrap(),
+          permissions: intent.permissions().clone(),
+          budget: intent.budget(),
+          deadline: intent.node().deadline(),
+        },
+        documents: vec![document],
+        usage: BudgetUsage {
+          attempts: 1,
+          output_bytes: bytes.len() as u64,
+          ..Default::default()
+        },
+        verified_at: time(30),
+        fresh_until: time(1000),
+      };
+      let requirement = EvidenceRequirement::new(
+        intent.profile().result_output.clone(),
+        EvidenceOutputKind::Report,
+        schema.reference().clone(),
+        intent.profile().tool.clone(),
+        intent.profile().plugin.clone(),
+      );
+      let attestation = FactoryEvidenceAttestation::new(
+        subject,
+        requirement.kind().clone(),
+        schema.reference().clone(),
+        intent.profile().tool.clone(),
+        intent.profile().plugin.clone(),
+        DeterministicGateOutcome::Passed,
+        time(40),
+      );
+      let adapter = FactoryNodeBuildAdapter::new(builds, Arc::new(Outputs(Some(outputs))));
+      let FactoryNodeBuildStep::Completed(completed) = adapter
+        .observe_or_dispatch(
+          &intent,
+          &admitted,
+          &schema,
+          FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
+          time(31),
+        )
+        .await
+        .unwrap()
+      else {
+        panic!("verified Build must complete");
+      };
+      Fixture {
+        change_set,
+        completed: *completed,
+        record,
+        bytes,
+        requirement,
+        attestation,
+      }
+    })
   }
 
   #[test]
@@ -391,17 +343,19 @@ mod tests {
     let manifest = construct_factory_evidence_manifest(
       EvidenceManifestId::generate(),
       &fixture.change_set,
-      &fixture.link,
-      &fixture.observation,
+      &fixture.completed,
       vec![fixture.requirement],
       vec![output],
-      time(13),
+      time(33),
     )
     .expect("fixture manifest is valid");
 
     assert_eq!(manifest.subject(), fixture.change_set.subject());
     assert_eq!(manifest.items().len(), 1);
-    assert_eq!(manifest.items()[0].producer().build_id(), fixture.link.build_id);
+    assert_eq!(
+      manifest.items()[0].producer().build_id(),
+      fixture.completed.execution.build_id()
+    );
     assert_eq!(manifest.items()[0].outcome(), DeterministicGateOutcome::Passed);
   }
 
@@ -428,11 +382,10 @@ mod tests {
       construct_factory_evidence_manifest(
         EvidenceManifestId::generate(),
         &fixture.change_set,
-        &fixture.link,
-        &fixture.observation,
+        &fixture.completed,
         vec![fixture.requirement.clone()],
         vec![output],
-        time(13),
+        time(33),
       ),
       Err(FactoryEvidenceError::Manifest(FactoryError::InconsistentSubject))
     ));
@@ -440,11 +393,10 @@ mod tests {
       construct_factory_evidence_manifest(
         EvidenceManifestId::generate(),
         &fixture.change_set,
-        &fixture.link,
-        &fixture.observation,
+        &fixture.completed,
         vec![fixture.requirement],
         vec![],
-        time(13),
+        time(33),
       ),
       Err(FactoryEvidenceError::Manifest(FactoryError::InvalidReference {
         relationship: "evidence completeness"
@@ -455,18 +407,17 @@ mod tests {
   #[test]
   fn rejects_stale_or_unretained_output() {
     let mut fixture = fixture();
-    fixture.attestation.fresh_until = time(13);
+    fixture.attestation.fresh_until = time(33);
     let output = VerifiedFactoryEvidence::new(fixture.record, &fixture.bytes, fixture.attestation)
       .expect("output integrity remains valid");
     assert!(matches!(
       construct_factory_evidence_manifest(
         EvidenceManifestId::generate(),
         &fixture.change_set,
-        &fixture.link,
-        &fixture.observation,
+        &fixture.completed,
         vec![fixture.requirement],
         vec![output],
-        time(13),
+        time(33),
       ),
       Err(FactoryEvidenceError::Manifest(FactoryError::InvalidReference {
         relationship: "evidence freshness"

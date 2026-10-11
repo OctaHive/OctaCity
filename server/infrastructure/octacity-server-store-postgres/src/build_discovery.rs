@@ -19,7 +19,8 @@ struct ProjectBuildSummaryRow {
   project_id: uuid::Uuid,
   configuration_id: uuid::Uuid,
   configuration_version: i64,
-  cause: Json<TriggerCause>,
+  cause: Option<Json<TriggerCause>>,
+  factory_origin: Option<Json<octacity_server_store::FactoryBuildOrigin>>,
   state: String,
   created_at_millis: i64,
   updated_at_millis: i64,
@@ -45,14 +46,14 @@ pub(crate) async fn list(pool: &PgPool, request: ListProjectBuilds) -> Result<Pr
   let after = request.after();
   let rows = sqlx::query_as::<_, ProjectBuildSummaryRow>(
     "SELECT build.id, build.project_id, build.build_configuration_id AS configuration_id, \
-            build.build_configuration_version AS configuration_version, occurrence.cause, build.state, \
+            build.build_configuration_version AS configuration_version, occurrence.cause, build.factory_origin, build.state, \
             FLOOR(EXTRACT(EPOCH FROM build.created_at) * 1000)::BIGINT AS created_at_millis, \
             FLOOR(EXTRACT(EPOCH FROM build.updated_at) * 1000)::BIGINT AS updated_at_millis, \
             current_attempt.id AS current_attempt_id, \
             current_attempt.attempt_number AS current_attempt_number, \
             current_attempt.state AS current_attempt_state \
      FROM builds AS build \
-     JOIN trigger_occurrences AS occurrence ON occurrence.id = build.trigger_occurrence_id \
+     LEFT JOIN trigger_occurrences AS occurrence ON occurrence.id = build.trigger_occurrence_id \
      JOIN LATERAL (\
        SELECT attempt.id, attempt.attempt_number, attempt.state \
        FROM attempts AS attempt \
@@ -92,7 +93,11 @@ fn decode(row: ProjectBuildSummaryRow) -> Result<ProjectBuildSummary, StoreError
     configuration_id: BuildConfigurationId::from_uuid(row.configuration_id).map_err(|_| StoreError::Unavailable)?,
     configuration_version: BuildConfigurationVersion::new(positive(row.configuration_version)?)
       .map_err(|_| StoreError::Unavailable)?,
-    cause: row.cause.0,
+    origin: match (row.cause, row.factory_origin) {
+      (Some(Json(cause)), None) => octacity_server_store::BuildSummaryOrigin::Trigger(cause),
+      (None, Some(Json(origin))) => octacity_server_store::BuildSummaryOrigin::Factory(origin),
+      _ => return Err(StoreError::Unavailable),
+    },
     state,
     created_at: timestamp(row.created_at_millis)?,
     current_attempt_id: AttemptId::from_uuid(row.current_attempt_id).map_err(|_| StoreError::Unavailable)?,

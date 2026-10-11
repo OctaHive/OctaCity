@@ -16,8 +16,10 @@ mod config;
 mod readiness;
 mod runtime;
 
-pub use config::{ServerConfig, ServerConfigError};
+pub use config::{FactoryRuntimeConfig, ServerConfig, ServerConfigError};
 pub use runtime::{
-  DurableWorkerError, LogSearchMaintenanceError, RestoreMaintenanceError, RestoredStateSummary, RuntimeAssemblyError,
-  ServerRuntime, ServerRuntimeError, rebuild_log_search, reconcile_restored_state, validate_runtime_files,
+  DurableWorkerError, FactoryRuntimeInstallation, FactoryRuntimeInstallationError, FactoryRuntimeInstaller,
+  FactoryRuntimeReadiness, FactoryRuntimeResources, LogSearchMaintenanceError, RestoreMaintenanceError,
+  RestoredStateSummary, RuntimeAssemblyError, ServerRuntime, ServerRuntimeError, rebuild_log_search,
+  reconcile_restored_state, validate_runtime_files,
 };

@@ -90,7 +90,7 @@ pub struct DecisionEngineInput<'a> {
   policy: &'a DecisionPolicy,
   assessments: Vec<&'a Assessment>,
   signal_receipts: Vec<&'a DecisionSignalReceipt>,
-  signal_stage_attempt_ids: HashSet<crate::StageAttemptId>,
+  signal_node_attempt_ids: HashSet<crate::evaluation_progress::EvaluationNodeBinding>,
 }
 
 impl<'a> DecisionEngineInput<'a> {
@@ -108,9 +108,16 @@ impl<'a> DecisionEngineInput<'a> {
       policy,
       assessments: assessments.iter().collect(),
       signal_receipts: signal_receipts.iter().collect(),
-      signal_stage_attempt_ids: signal_receipts
+      signal_node_attempt_ids: signal_receipts
         .iter()
-        .map(|receipt| receipt.request().request().stage_attempt_id())
+        .map(|receipt| {
+          let request = receipt.request().request();
+          (
+            request.run_id(),
+            request.node_attempt_id(),
+            request.frozen_input_digest(),
+          )
+        })
         .collect(),
     }
   }
@@ -124,7 +131,7 @@ impl<'a> DecisionEngineInput<'a> {
     assessments: &'a [Assessment],
     signal_receipts: &'a [DecisionSignalReceipt],
   ) -> Result<Self, FactoryError> {
-    let (accepted, signal_stage_attempt_ids) = progress.decision_bindings(plan)?;
+    let (accepted, signal_node_attempt_ids) = progress.decision_bindings(plan)?;
     let mut selected = Vec::with_capacity(accepted.len());
     for id in accepted {
       let assessment =
@@ -142,7 +149,7 @@ impl<'a> DecisionEngineInput<'a> {
       policy,
       assessments: selected,
       signal_receipts: signal_receipts.iter().collect(),
-      signal_stage_attempt_ids,
+      signal_node_attempt_ids,
     })
   }
 }
@@ -328,18 +335,22 @@ fn validate_input(input: &DecisionEngineInput<'_>) -> Result<(), FactoryError> {
     });
   }
   validate_assessments(input.plan, input.evidence, &input.assessments)?;
-  validate_signal_receipts(input.plan, &input.signal_receipts, &input.signal_stage_attempt_ids)
+  validate_signal_receipts(input.plan, &input.signal_receipts, &input.signal_node_attempt_ids)
 }
 
 fn validate_signal_receipts(
   plan: &EvaluationPlan,
   receipts: &[&DecisionSignalReceipt],
-  allowed_stages: &HashSet<crate::StageAttemptId>,
+  allowed_nodes: &HashSet<crate::evaluation_progress::EvaluationNodeBinding>,
 ) -> Result<(), FactoryError> {
   let invalid_binding = receipts.iter().any(|receipt| {
     receipt.subject() != plan.subject().exact()
       || receipt.request().request().purpose() != DecisionSignalPurpose::Routing
-      || !allowed_stages.contains(&receipt.request().request().stage_attempt_id())
+      || !allowed_nodes.contains(&(
+        receipt.run_id(),
+        receipt.request().request().node_attempt_id(),
+        receipt.request().request().frozen_input_digest(),
+      ))
       || receipt.validate_integrity().is_err()
   });
   let duplicate_ids = receipts

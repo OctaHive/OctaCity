@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use serde::{Deserialize, Deserializer, Serialize, de::Error as _};
 
-use crate::{FactoryError, FactoryKey, StageAttemptId};
+use crate::{FactoryError, FactoryKey, NodeAttemptId};
 
 /// Purpose of one logical credential profile in the Factory trust model.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -21,10 +21,10 @@ pub enum FactoryCredentialPurpose {
 /// Trusted component allowed to consume one Factory credential purpose.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum FactoryCredentialConsumer {
-  /// Writable implementation or rework stage.
-  CodingStage,
-  /// Read-only independent evaluation stage.
-  EvaluationStage,
+  /// Writable implementation or rework node.
+  CodingNode,
+  /// Read-only independent evaluation node.
+  ReadOnlyReview,
   /// Trusted source-resolution adapter.
   SourceResolver,
   /// Trusted write-capable delivery adapter.
@@ -36,8 +36,8 @@ impl FactoryCredentialConsumer {
   #[must_use]
   pub const fn purpose(self) -> FactoryCredentialPurpose {
     match self {
-      Self::CodingStage => FactoryCredentialPurpose::Model,
-      Self::EvaluationStage => FactoryCredentialPurpose::Evaluator,
+      Self::CodingNode => FactoryCredentialPurpose::Model,
+      Self::ReadOnlyReview => FactoryCredentialPurpose::Evaluator,
       Self::SourceResolver => FactoryCredentialPurpose::Source,
       Self::DeliveryAdapter => FactoryCredentialPurpose::Delivery,
     }
@@ -108,13 +108,13 @@ impl FactoryCredentialProfiles {
     }
   }
 
-  /// Authorizes an exact logical profile for one trusted Stage consumer.
+  /// Authorizes an exact logical profile for one trusted Node consumer.
   ///
   /// This operation returns only public logical authority. Sensitive material
   /// must not be requested from a provider until this check succeeds.
   pub fn authorize(
     &self,
-    stage_attempt_id: StageAttemptId,
+    node_attempt_id: NodeAttemptId,
     consumer: FactoryCredentialConsumer,
     requested_profile: &FactoryKey,
   ) -> Result<AuthorizedFactoryCredentialProfile, FactoryError> {
@@ -125,7 +125,7 @@ impl FactoryCredentialProfiles {
       });
     }
     Ok(AuthorizedFactoryCredentialProfile {
-      stage_attempt_id,
+      node_attempt_id,
       consumer,
       purpose,
       profile: requested_profile.clone(),
@@ -133,23 +133,23 @@ impl FactoryCredentialProfiles {
   }
 }
 
-/// Public, stage-bound authorization to materialize one logical profile.
+/// Public, node-bound authorization to materialize one logical profile.
 ///
 /// The token deliberately carries no credential bytes and is not serializable,
 /// so durable records cannot be mistaken for secret-delivery authority.
 #[derive(Debug, Eq, PartialEq)]
 pub struct AuthorizedFactoryCredentialProfile {
-  stage_attempt_id: StageAttemptId,
+  node_attempt_id: NodeAttemptId,
   consumer: FactoryCredentialConsumer,
   purpose: FactoryCredentialPurpose,
   profile: FactoryKey,
 }
 
 impl AuthorizedFactoryCredentialProfile {
-  /// Returns the Stage Attempt to which later materialization must be bound.
+  /// Returns the Node Attempt to which later materialization must be bound.
   #[must_use]
-  pub const fn stage_attempt_id(&self) -> StageAttemptId {
-    self.stage_attempt_id
+  pub const fn node_attempt_id(&self) -> NodeAttemptId {
+    self.node_attempt_id
   }
 
   /// Returns the trusted component class allowed to receive the credential.

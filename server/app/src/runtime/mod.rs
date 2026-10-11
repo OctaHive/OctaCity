@@ -10,6 +10,11 @@ mod application;
 mod assembly;
 mod composition;
 mod error;
+mod factory;
+pub use factory::{
+  FactoryRuntimeInstallation, FactoryRuntimeInstallationError, FactoryRuntimeInstaller, FactoryRuntimeReadiness,
+  FactoryRuntimeResources,
+};
 mod lifecycle;
 mod listeners;
 mod maintenance;

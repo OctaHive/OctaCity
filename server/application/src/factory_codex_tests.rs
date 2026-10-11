@@ -6,13 +6,37 @@ use octacity_server_factory::{
   FactoryPermissionSet, FactoryRepositoryPath, FactoryResourceLimits, FactorySafeText, FactoryTaskControlDigests,
   FactoryTaskDeclaration, FactoryTaskDefinition, FactoryTaskDeliverable, FactoryTaskEnvelope, FactoryTaskMode,
   FactoryTaskResultSchema, FactoryTaskSubject, FactoryTaskToolchain, ImmutableReference, MountMode, MountPermission,
-  StageAttemptId, TaskEnvelopeId,
+  NodeAttemptId, TaskEnvelopeId,
 };
 use serde_json::Value;
 
 use crate::{CodexCompilationError, FactoryProtectedDocumentKind, codex_prompt_digest, compile_codex_task};
 
 const PROMPT: &str = "Implement the selected stage and return only the required structured result.";
+
+#[test]
+fn node_compilation_rejects_a_task_from_another_node_before_generating_protected_inputs() {
+  let (_, admitted, _, input, attempt) =
+    crate::factory_node_test_support::fixtures::execution_fixture(octacity_server_factory::FlowNodeKind::Reasoning);
+  let intent = octacity_server_factory::FlowBuildIntent::new(input, &admitted, attempt, Default::default(), 0).unwrap();
+  let task = task_envelope(
+    FactoryTaskMode::Implement,
+    PROMPT,
+    permissions(
+      FactoryTaskMode::Implement,
+      reference("codex", 10),
+      reference("codex-cli", 11),
+      true,
+    ),
+    standard_deliverables(),
+    reference("codex", 10),
+    reference("codex-cli", 11),
+  );
+  assert_eq!(
+    crate::compile_codex_node_task(&intent, &task, PROMPT, &credential_profiles()),
+    Err(CodexCompilationError::NodeBindings),
+  );
+}
 
 #[test]
 fn compiler_emits_one_deterministic_protected_task_with_fixed_control_fields() {
@@ -333,7 +357,7 @@ pub(super) fn task_envelope(
   FactoryTaskEnvelope::new(
     FactoryTaskDeclaration {
       id: TaskEnvelopeId::generate(),
-      stage_attempt_id: StageAttemptId::generate(),
+      node_attempt_id: NodeAttemptId::generate(),
       subject,
       mode,
     },

@@ -26,7 +26,7 @@ fn budget(elapsed: u64) -> BudgetLimit {
 
 struct Fixture {
   project_id: ProjectId,
-  run: FactoryRun,
+  work: WorkEnvelope,
   evidence: EvidenceManifest,
   policy: EvaluationPolicy,
   packs: Vec<CriterionPack>,
@@ -77,27 +77,16 @@ fn fixture() -> Fixture {
     ),
   )
   .expect("fixture work");
-  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
-  let stage = StageAttempt::new(
-    StageAttemptId::generate(),
-    &run,
-    StageAttemptNumber::INITIAL,
-    FactoryStageTarget::Implementation,
-    budget(1_000),
-    digest(2),
-    FactoryClaimOwnership::new(
-      key("worker"),
-      FactoryClaim::new(FactoryClaimFence::new(digest(3)), time(1), time(2)).expect("fixture claim"),
-    ),
-  );
   let subject = CandidateSubject::new(
-    stage.subject().clone(),
+    work.subject().clone(),
     ImmutableRevision::new("candidate").expect("fixture candidate"),
     digest(4),
   );
+  let (input, node) = crate::testing::candidate_node_fixture(&work);
   let changeset = ChangeSet::new(
     ChangeSetId::generate(),
-    &stage,
+    &input,
+    &node,
     subject.clone(),
     ArtifactId::generate(),
     ArtifactId::generate(),
@@ -171,7 +160,7 @@ fn fixture() -> Fixture {
   ];
   Fixture {
     project_id,
-    run,
+    work,
     evidence,
     policy,
     packs: vec![second_pack, first_pack],
@@ -427,24 +416,11 @@ fn persisted_review_records_reapply_constructor_invariants() {
 }
 
 fn accepted_branch_result(
-  run: &FactoryRun,
+  work: &WorkEnvelope,
   plan: &EvaluationPlan,
-  branch: &str,
   evaluator: ImmutableReference,
   byte: u8,
-) -> (EvaluationBranchResult, StageAttempt, MacroCall, Assessment) {
-  let stage = StageAttempt::new(
-    StageAttemptId::generate(),
-    run,
-    StageAttemptNumber::new(u64::from(byte)).expect("fixture attempt number"),
-    FactoryStageTarget::Evaluation(key(branch)),
-    plan.budget(),
-    digest(byte),
-    FactoryClaimOwnership::new(
-      key("review-worker"),
-      FactoryClaim::new(FactoryClaimFence::new(digest(byte)), time(1), time(2)).expect("fixture claim"),
-    ),
-  );
+) -> (EvaluationBranchResult, FlowNodeInput, NodeAttempt, Assessment) {
   let subject = FactoryTaskSubject::Candidate(plan.subject().clone());
   let evidence = artifact(byte.saturating_add(2));
   let context = ContextManifest::new(
@@ -466,22 +442,7 @@ fn accepted_branch_result(
     ],
   )
   .expect("fixture context");
-  let call = MacroCall::new(
-    MacroCallDeclaration::new(
-      MacroCallId::generate(),
-      subject.clone(),
-      MacroCallKind::Evaluate,
-      plan.budget(),
-      vec![],
-      vec![],
-      1,
-    )
-    .expect("fixture call declaration"),
-    &stage,
-    &context,
-    None,
-  )
-  .expect("fixture evaluator call");
+  let (input, node) = crate::testing::capability_node_fixture(work, Some(context));
   let assessment = Assessment::new(
     AssessmentId::generate(),
     plan,
@@ -503,9 +464,9 @@ fn accepted_branch_result(
   )
   .expect("fixture assessment");
   (
-    EvaluationBranchResult::new(plan, &stage, &call, &assessment).expect("fixture branch result"),
-    stage,
-    call,
+    EvaluationBranchResult::new(plan, &input, &node, &assessment).expect("fixture branch result"),
+    input,
+    node,
     assessment,
   )
 }
@@ -588,8 +549,8 @@ fn bounded_fan_out_restores_exact_branch_results_without_redispatch_or_early_joi
       EvaluationBranchState::ResultPending,
     ],
   );
-  let (completed, completed_stage, completed_call, completed_assessment) =
-    accepted_branch_result(&fixture.run, &plan, "completed", primaries[1].clone(), 80);
+  let (completed, completed_input, completed_node, completed_assessment) =
+    accepted_branch_result(&fixture.work, &plan, primaries[1].clone(), 80);
   progress = progress.record_result(completed.clone()).expect("completed result");
   assert!(
     progress.record_result(completed).is_err(),
@@ -633,24 +594,24 @@ fn bounded_fan_out_restores_exact_branch_results_without_redispatch_or_early_joi
       EvaluationBranchState::ResultPending,
     ],
   );
-  let (substituted, substituted_stage, substituted_call, substituted_assessment) =
-    accepted_branch_result(&fixture.run, &plan, "substituted", substitute, 100);
+  let (substituted, substituted_input, substituted_node, substituted_assessment) =
+    accepted_branch_result(&fixture.work, &plan, substitute, 100);
   progress = progress.record_result(substituted).expect("substituted result");
 
   let restored: EvaluationProgress =
     serde_json::from_slice(&serde_json::to_vec(&progress).expect("serialize fan-out")).expect("restore fan-out");
   assert_eq!(restored, progress);
-  let calls = [completed_call, substituted_call];
-  let stages = [completed_stage, substituted_stage];
+  let nodes = [completed_node, substituted_node];
+  let inputs = [completed_input, substituted_input];
   let assessments = [completed_assessment, substituted_assessment];
   restored
-    .validate_bindings(&plan, stages.iter(), calls.iter(), assessments.iter())
+    .validate_bindings(&plan, inputs.iter(), nodes.iter(), assessments.iter())
     .expect("restored exact bindings");
   assert!(
     restored
-      .validate_bindings(&plan, stages.iter(), std::iter::empty(), assessments.iter())
+      .validate_bindings(&plan, inputs.iter(), std::iter::empty(), assessments.iter())
       .is_err(),
-    "a result cannot survive without its exact durable calls"
+    "a result cannot survive without its exact durable attempts"
   );
   assert_eq!(
     restored
@@ -672,5 +633,5 @@ fn bounded_fan_out_restores_exact_branch_results_without_redispatch_or_early_joi
   assert!(!completed.is_substituted());
   assert!(substituted.is_substituted());
   assert_ne!(completed.context_manifest_id(), substituted.context_manifest_id());
-  assert_ne!(completed.call_id(), substituted.call_id());
+  assert_ne!(completed.node_attempt_id(), substituted.node_attempt_id());
 }

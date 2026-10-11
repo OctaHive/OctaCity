@@ -35,11 +35,15 @@ or process spawn.
 `JobSpecV3` retains the common Job and toolchain identity fields and uses these
 v3-only sections:
 
+- `execution_deadline_unix_ms` is the exclusive absolute execution ceiling in
+  Unix milliseconds, independent of the `issued_at` / `expires_at` window used
+  to admit the signed specification;
 - `execution` selects a protected input containing the server-generated
   Octafile, an ordered non-empty list of exact Octa task names, and at most one
-  logical stage-scoped credential profile;
+  logical node-scoped credential profile;
 - `factory` optionally carries only bounded logical Factory identities,
-  immutable configuration version, stage kind, and SHA-256 digests;
+  immutable configuration version, Flow Run, Workflow Cycle, Node Attempt,
+  input and subject digests, and explicit optional ChangeSet instructions;
 - `protected_inputs` contains bounded logical Artifact identities, exact sizes,
   lowercase SHA-256 digests, media types, and canonical destinations below
   `/octacity/protected`;
@@ -56,6 +60,23 @@ All v3 objects reject unknown fields. Canonical collections reject duplicate
 or out-of-order entries. Identities, paths, media types, command arguments,
 entry counts, and aggregate protected-input bytes are bounded before they can
 influence allocation or execution.
+
+The server freezes the Node Attempt deadline in its persisted template. Signing
+or replay cannot extend it. An eligible Ready transition in the last fractional
+second retains the exact millisecond ceiling; the signature expiry is capped
+at the first whole second outside that ceiling. The Agent applies the exact
+execution deadline to protected-input staging, source acquisition, ChangeSet
+materialization, identity preparation, execution and ChangeSet capture. Started
+execution can outlive signature validity, but cannot outlive its execution
+ceiling. Deadline cancellation drains trusted preprocessing adapters within the
+configured cancellation grace; a late identity lease is explicitly revoked.
+
+Factory admission reserves the sum of the complete DAG's signed artifact and
+report byte ceilings against the Node budget, including initially blocked Jobs.
+For managed Jobs, deleting an upload does not replenish its execution output
+ceiling. Ordinary Build Retry has no Factory claim authority; the configured
+Factory RetryNode control admits any new execution through normal fencing and
+budget checks.
 
 ## Protected inputs and managed Octa execution
 
@@ -176,7 +197,7 @@ the signed Artifact count and byte limits. Runner declarations cannot replace
 one of these names. The coordinator independently verifies and publishes the
 bytes before terminal completion, while Factory coordination accepts a
 candidate only from the current successful linked Build when its published
-Artifact identities, canonical manifest, component digests, exact base, Stage
+Artifact identities, canonical manifest, component digests, exact base, Node
 Attempt, and current Factory/outbox fences all agree. Exact lost-response replay
 returns the same candidate; stale or mismatched evidence cannot append one.
 

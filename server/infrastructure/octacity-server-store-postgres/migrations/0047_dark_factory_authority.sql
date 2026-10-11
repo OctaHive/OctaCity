@@ -125,8 +125,7 @@ CREATE TABLE factory_runs (
     REFERENCES factory_configuration_versions(factory_configuration_id, version),
   CONSTRAINT factory_runs_state_known CHECK (
     state IN (
-      'admitted', 'implementing', 'validating', 'evaluating', 'reworking',
-      'ready_for_delivery', 'delivering', 'escalated', 'rejected', 'cancelled', 'completed'
+      'admitted', 'running', 'waiting', 'cancelled', 'completed'
     )
   ),
   CONSTRAINT factory_runs_positive_version CHECK (version > 0),
@@ -279,309 +278,6 @@ CREATE TABLE factory_node_attempt_completions (
     FOREIGN KEY (node_attempt_id, run_id) REFERENCES factory_node_attempts(id, run_id)
 );
 
-CREATE TABLE factory_stage_attempts (
-  id UUID PRIMARY KEY REFERENCES factory_node_attempts(id),
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  stage_kind TEXT NOT NULL,
-  target_digest BYTEA NOT NULL,
-  stage_attempt JSONB NOT NULL,
-  CONSTRAINT factory_stage_attempts_kind_shape CHECK (
-    octet_length(stage_kind) BETWEEN 1 AND 128 AND stage_kind ~ '^[a-z0-9][a-z0-9._-]*$'
-  ),
-  CONSTRAINT factory_stage_attempts_target_digest_shape CHECK (octet_length(target_digest) = 32),
-  CONSTRAINT factory_stage_attempts_document_shape CHECK (
-    jsonb_typeof(stage_attempt) = 'object' AND octet_length(stage_attempt::text) BETWEEN 2 AND 262144
-  ),
-  CONSTRAINT factory_stage_attempts_id_run_fk
-    FOREIGN KEY (id, run_id) REFERENCES factory_node_attempts(id, run_id)
-);
-
-CREATE TABLE factory_stage_attempt_completions (
-  id BYTEA PRIMARY KEY,
-  stage_attempt_id UUID NOT NULL UNIQUE REFERENCES factory_stage_attempts(id),
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  outcome TEXT NOT NULL,
-  output_digest BYTEA NOT NULL,
-  completion JSONB NOT NULL,
-  completed_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_stage_attempt_completions_id_shape CHECK (octet_length(id) = 32),
-  CONSTRAINT factory_stage_attempt_completions_outcome_shape CHECK (
-    octet_length(outcome) BETWEEN 1 AND 128 AND outcome ~ '^[a-z0-9][a-z0-9._-]*$'
-  ),
-  CONSTRAINT factory_stage_attempt_completions_output_digest_shape CHECK (octet_length(output_digest) = 32),
-  CONSTRAINT factory_stage_attempt_completions_document_shape CHECK (
-    jsonb_typeof(completion) = 'object' AND octet_length(completion::text) BETWEEN 2 AND 262144
-  )
-);
-
-CREATE TABLE factory_call_nodes (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  stage_attempt_id UUID NOT NULL REFERENCES factory_stage_attempts(id),
-  parent_call_id UUID REFERENCES factory_call_nodes(id),
-  call_kind TEXT NOT NULL,
-  context_digest BYTEA NOT NULL,
-  call_node JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_call_nodes_kind_shape CHECK (
-    octet_length(call_kind) BETWEEN 1 AND 128 AND call_kind ~ '^[a-z0-9][a-z0-9._-]*$'
-  ),
-  CONSTRAINT factory_call_nodes_context_digest_shape CHECK (octet_length(context_digest) = 32),
-  CONSTRAINT factory_call_nodes_document_shape CHECK (
-    jsonb_typeof(call_node) = 'object' AND octet_length(call_node::text) BETWEEN 2 AND 262144
-  )
-);
-
-CREATE TABLE factory_decision_signal_requests (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  stage_attempt_id UUID REFERENCES factory_stage_attempts(id),
-  call_node_id UUID REFERENCES factory_call_nodes(id),
-  purpose TEXT NOT NULL,
-  policy_digest BYTEA NOT NULL,
-  input_digest BYTEA NOT NULL,
-  request JSONB NOT NULL,
-  requested_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_decision_signal_requests_purpose_shape CHECK (
-    octet_length(purpose) BETWEEN 1 AND 128 AND purpose ~ '^[a-z0-9][a-z0-9._-]*$'
-  ),
-  CONSTRAINT factory_decision_signal_requests_policy_digest_shape CHECK (octet_length(policy_digest) = 32),
-  CONSTRAINT factory_decision_signal_requests_input_digest_shape CHECK (octet_length(input_digest) = 32),
-  CONSTRAINT factory_decision_signal_requests_document_shape CHECK (
-    jsonb_typeof(request) = 'object' AND octet_length(request::text) BETWEEN 2 AND 262144
-  )
-);
-
-CREATE TABLE factory_decision_signal_receipts (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  request_id UUID NOT NULL UNIQUE REFERENCES factory_decision_signal_requests(id),
-  provider_digest BYTEA NOT NULL,
-  model_digest BYTEA NOT NULL,
-  policy_digest BYTEA NOT NULL,
-  input_digest BYTEA NOT NULL,
-  receipt_digest BYTEA NOT NULL UNIQUE,
-  receipt JSONB NOT NULL,
-  received_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_decision_signal_receipts_provider_digest_shape CHECK (octet_length(provider_digest) = 32),
-  CONSTRAINT factory_decision_signal_receipts_model_digest_shape CHECK (octet_length(model_digest) = 32),
-  CONSTRAINT factory_decision_signal_receipts_policy_digest_shape CHECK (octet_length(policy_digest) = 32),
-  CONSTRAINT factory_decision_signal_receipts_input_digest_shape CHECK (octet_length(input_digest) = 32),
-  CONSTRAINT factory_decision_signal_receipts_receipt_digest_shape CHECK (octet_length(receipt_digest) = 32),
-  CONSTRAINT factory_decision_signal_receipts_document_shape CHECK (
-    jsonb_typeof(receipt) = 'object' AND octet_length(receipt::text) BETWEEN 2 AND 262144
-  )
-);
-
-CREATE TABLE factory_build_links (
-  build_id UUID PRIMARY KEY REFERENCES builds(id),
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  stage_attempt_id UUID NOT NULL UNIQUE REFERENCES factory_stage_attempts(id),
-  attempt_id UUID NOT NULL REFERENCES attempts(id),
-  factory_configuration_id UUID NOT NULL,
-  factory_configuration_version BIGINT NOT NULL,
-  build_configuration_id UUID NOT NULL,
-  build_configuration_version BIGINT NOT NULL,
-  task_envelope_digest BYTEA NOT NULL,
-  effective_policy_digest BYTEA NOT NULL,
-  input_digest BYTEA NOT NULL,
-  exact_revision TEXT NOT NULL,
-  link JSONB NOT NULL,
-  linked_at TIMESTAMPTZ NOT NULL,
-  FOREIGN KEY (factory_configuration_id, factory_configuration_version)
-    REFERENCES factory_configuration_versions(factory_configuration_id, version),
-  FOREIGN KEY (build_configuration_id, build_configuration_version)
-    REFERENCES build_configuration_versions(build_configuration_id, version),
-  CONSTRAINT factory_build_links_task_envelope_digest_shape CHECK (octet_length(task_envelope_digest) = 32),
-  CONSTRAINT factory_build_links_effective_policy_digest_shape CHECK (octet_length(effective_policy_digest) = 32),
-  CONSTRAINT factory_build_links_input_digest_shape CHECK (octet_length(input_digest) = 32),
-  CONSTRAINT factory_build_links_exact_revision_shape CHECK (
-    octet_length(exact_revision) BETWEEN 1 AND 512
-    AND exact_revision = btrim(exact_revision)
-    AND exact_revision !~ '[[:cntrl:]]'
-  ),
-  CONSTRAINT factory_build_links_document_shape CHECK (
-    jsonb_typeof(link) = 'object' AND octet_length(link::text) BETWEEN 2 AND 262144
-  )
-);
-
-CREATE TABLE factory_build_link_jobs (
-  build_id UUID NOT NULL REFERENCES factory_build_links(build_id),
-  job_id UUID NOT NULL REFERENCES jobs(id),
-  ordinal SMALLINT NOT NULL,
-  PRIMARY KEY (build_id, job_id),
-  CONSTRAINT factory_build_link_jobs_positive_ordinal CHECK (ordinal >= 0),
-  CONSTRAINT factory_build_link_jobs_ordinal_key UNIQUE (build_id, ordinal)
-);
-
-CREATE TABLE factory_build_observations (
-  id BYTEA PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  build_id UUID NOT NULL REFERENCES factory_build_links(build_id),
-  attempt_id UUID NOT NULL REFERENCES attempts(id),
-  build_version BIGINT NOT NULL,
-  attempt_version BIGINT NOT NULL,
-  state TEXT NOT NULL,
-  observation JSONB NOT NULL,
-  observed_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_build_observations_id_shape CHECK (octet_length(id) = 32),
-  CONSTRAINT factory_build_observations_positive_versions CHECK (build_version > 0 AND attempt_version > 0),
-  CONSTRAINT factory_build_observations_terminal_state CHECK (state IN ('succeeded', 'failed', 'cancelled')),
-  CONSTRAINT factory_build_observations_document_shape CHECK (
-    jsonb_typeof(observation) = 'object' AND octet_length(observation::text) BETWEEN 2 AND 1048576
-  ),
-  CONSTRAINT factory_build_observations_version_key UNIQUE (build_id, build_version, attempt_version)
-);
-
-CREATE TABLE factory_changesets (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  stage_attempt_id UUID NOT NULL REFERENCES factory_stage_attempts(id),
-  base_revision TEXT NOT NULL,
-  candidate_revision TEXT NOT NULL,
-  changeset_digest BYTEA NOT NULL UNIQUE,
-  changeset JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_changesets_revision_shape CHECK (
-    octet_length(base_revision) BETWEEN 1 AND 512
-    AND octet_length(candidate_revision) BETWEEN 1 AND 512
-    AND base_revision = btrim(base_revision)
-    AND candidate_revision = btrim(candidate_revision)
-    AND base_revision !~ '[[:cntrl:]]'
-    AND candidate_revision !~ '[[:cntrl:]]'
-  ),
-  CONSTRAINT factory_changesets_digest_shape CHECK (octet_length(changeset_digest) = 32),
-  CONSTRAINT factory_changesets_document_shape CHECK (
-    jsonb_typeof(changeset) = 'object' AND octet_length(changeset::text) BETWEEN 2 AND 262144
-  )
-);
-
-CREATE TABLE factory_evidence_manifests (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  changeset_id UUID NOT NULL REFERENCES factory_changesets(id),
-  manifest_digest BYTEA NOT NULL UNIQUE,
-  manifest JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_evidence_manifests_digest_shape CHECK (octet_length(manifest_digest) = 32),
-  CONSTRAINT factory_evidence_manifests_document_shape CHECK (
-    jsonb_typeof(manifest) = 'object' AND octet_length(manifest::text) BETWEEN 2 AND 1048576
-  )
-);
-
-CREATE TABLE factory_evaluation_plans (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  changeset_id UUID NOT NULL REFERENCES factory_changesets(id),
-  evidence_manifest_id UUID NOT NULL REFERENCES factory_evidence_manifests(id),
-  plan_digest BYTEA NOT NULL UNIQUE,
-  plan JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_evaluation_plans_digest_shape CHECK (octet_length(plan_digest) = 32),
-  CONSTRAINT factory_evaluation_plans_document_shape CHECK (
-    jsonb_typeof(plan) = 'object' AND octet_length(plan::text) BETWEEN 2 AND 1048576
-  )
-);
-
-CREATE TABLE factory_assessments (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  evaluation_plan_id UUID NOT NULL REFERENCES factory_evaluation_plans(id),
-  evaluator TEXT NOT NULL,
-  assessment_digest BYTEA NOT NULL UNIQUE,
-  assessment JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_assessments_evaluator_shape CHECK (
-    octet_length(evaluator) BETWEEN 1 AND 128 AND evaluator ~ '^[a-z0-9][a-z0-9._-]*$'
-  ),
-  CONSTRAINT factory_assessments_digest_shape CHECK (octet_length(assessment_digest) = 32),
-  CONSTRAINT factory_assessments_document_shape CHECK (
-    jsonb_typeof(assessment) = 'object' AND octet_length(assessment::text) BETWEEN 2 AND 1048576
-  ),
-  CONSTRAINT factory_assessments_evaluator_key UNIQUE (evaluation_plan_id, evaluator)
-);
-
-CREATE TABLE factory_decisions (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  evaluation_plan_id UUID NOT NULL REFERENCES factory_evaluation_plans(id),
-  outcome TEXT NOT NULL,
-  input_digest BYTEA NOT NULL,
-  policy_digest BYTEA NOT NULL,
-  decision_digest BYTEA NOT NULL UNIQUE,
-  decision JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_decisions_outcome_known CHECK (
-    outcome IN ('accept', 'rework', 'reject', 'escalate', 'cancel')
-  ),
-  CONSTRAINT factory_decisions_input_digest_shape CHECK (octet_length(input_digest) = 32),
-  CONSTRAINT factory_decisions_policy_digest_shape CHECK (octet_length(policy_digest) = 32),
-  CONSTRAINT factory_decisions_digest_shape CHECK (octet_length(decision_digest) = 32),
-  CONSTRAINT factory_decisions_document_shape CHECK (
-    jsonb_typeof(decision) = 'object' AND octet_length(decision::text) BETWEEN 2 AND 1048576
-  )
-);
-
-CREATE TABLE factory_decision_assessments (
-  decision_id UUID NOT NULL REFERENCES factory_decisions(id),
-  assessment_id UUID NOT NULL REFERENCES factory_assessments(id),
-  ordinal SMALLINT NOT NULL,
-  PRIMARY KEY (decision_id, assessment_id),
-  CONSTRAINT factory_decision_assessments_positive_ordinal CHECK (ordinal >= 0),
-  CONSTRAINT factory_decision_assessments_ordinal_key UNIQUE (decision_id, ordinal)
-);
-
-CREATE TABLE factory_escalations (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  decision_id UUID REFERENCES factory_decisions(id),
-  reason TEXT NOT NULL,
-  escalation JSONB NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_escalations_reason_shape CHECK (
-    octet_length(reason) BETWEEN 1 AND 4096 AND reason = btrim(reason) AND reason !~ '[[:cntrl:]]'
-  ),
-  CONSTRAINT factory_escalations_document_shape CHECK (
-    jsonb_typeof(escalation) = 'object' AND octet_length(escalation::text) BETWEEN 2 AND 262144
-  )
-);
-
-CREATE TABLE factory_delivery_attempts (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  changeset_id UUID NOT NULL REFERENCES factory_changesets(id),
-  decision_id UUID NOT NULL REFERENCES factory_decisions(id),
-  attempt_number BIGINT NOT NULL,
-  state TEXT NOT NULL,
-  operation_digest BYTEA NOT NULL UNIQUE,
-  attempt JSONB NOT NULL,
-  recorded_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_delivery_attempts_positive_number CHECK (attempt_number > 0),
-  CONSTRAINT factory_delivery_attempts_state_known CHECK (state IN ('succeeded', 'failed', 'unknown')),
-  CONSTRAINT factory_delivery_attempts_operation_digest_shape CHECK (octet_length(operation_digest) = 32),
-  CONSTRAINT factory_delivery_attempts_document_shape CHECK (
-    jsonb_typeof(attempt) = 'object' AND octet_length(attempt::text) BETWEEN 2 AND 262144
-  ),
-  CONSTRAINT factory_delivery_attempts_number_key UNIQUE (run_id, attempt_number)
-);
-
-CREATE TABLE factory_reporting_attempts (
-  id UUID PRIMARY KEY,
-  run_id UUID NOT NULL REFERENCES factory_runs(id),
-  attempt_number BIGINT NOT NULL,
-  state TEXT NOT NULL,
-  operation_digest BYTEA NOT NULL UNIQUE,
-  attempt JSONB NOT NULL,
-  recorded_at TIMESTAMPTZ NOT NULL,
-  CONSTRAINT factory_reporting_attempts_positive_number CHECK (attempt_number > 0),
-  CONSTRAINT factory_reporting_attempts_state_known CHECK (state IN ('succeeded', 'failed', 'unknown')),
-  CONSTRAINT factory_reporting_attempts_operation_digest_shape CHECK (octet_length(operation_digest) = 32),
-  CONSTRAINT factory_reporting_attempts_document_shape CHECK (
-    jsonb_typeof(attempt) = 'object' AND octet_length(attempt::text) BETWEEN 2 AND 262144
-  ),
-  CONSTRAINT factory_reporting_attempts_number_key UNIQUE (run_id, attempt_number)
-);
-
 CREATE TABLE factory_audit_links (
   id BYTEA PRIMARY KEY,
   run_id UUID NOT NULL REFERENCES factory_runs(id),
@@ -611,19 +307,21 @@ CREATE TABLE factory_audit_links (
 CREATE TABLE factory_run_controls (
   id BYTEA PRIMARY KEY,
   run_id UUID NOT NULL REFERENCES factory_runs(id),
-  expected_version BIGINT NOT NULL,
+  run_version BIGINT NOT NULL,
   control_kind TEXT NOT NULL,
   request_identity_digest BYTEA NOT NULL,
   control JSONB NOT NULL,
   recorded_at TIMESTAMPTZ NOT NULL,
   CONSTRAINT factory_run_controls_id_shape CHECK (octet_length(id) = 32),
-  CONSTRAINT factory_run_controls_positive_version CHECK (expected_version > 0),
+  CONSTRAINT factory_run_controls_positive_version CHECK (run_version > 0),
   CONSTRAINT factory_run_controls_kind_shape CHECK (
     octet_length(control_kind) BETWEEN 1 AND 128 AND control_kind ~ '^[a-z0-9][a-z0-9._-]*$'
   ),
   CONSTRAINT factory_run_controls_request_digest_shape CHECK (octet_length(request_identity_digest) = 32),
   CONSTRAINT factory_run_controls_document_shape CHECK (
-    jsonb_typeof(control) = 'object' AND octet_length(control::text) BETWEEN 2 AND 262144
+    -- A schema-validated FlowPayload permits up to 1 MiB; leave room for the
+    -- immutable control envelope and JSONB's textual whitespace.
+    jsonb_typeof(control) = 'object' AND octet_length(control::text) BETWEEN 2 AND 2097152
   )
 );
 
@@ -672,18 +370,6 @@ CREATE TABLE factory_run_current (
   claim_id BYTEA REFERENCES factory_run_claims(id),
   budget_id BYTEA NOT NULL REFERENCES factory_run_budgets(id),
   lifecycle_checkpoint_id BYTEA NOT NULL REFERENCES factory_lifecycle_checkpoints(id),
-  stage_attempt_id UUID REFERENCES factory_stage_attempts(id),
-  call_node_id UUID REFERENCES factory_call_nodes(id),
-  signal_request_id UUID REFERENCES factory_decision_signal_requests(id),
-  signal_receipt_id UUID REFERENCES factory_decision_signal_receipts(id),
-  build_id UUID REFERENCES factory_build_links(build_id),
-  changeset_id UUID REFERENCES factory_changesets(id),
-  evidence_manifest_id UUID REFERENCES factory_evidence_manifests(id),
-  evaluation_plan_id UUID REFERENCES factory_evaluation_plans(id),
-  decision_id UUID REFERENCES factory_decisions(id),
-  escalation_id UUID REFERENCES factory_escalations(id),
-  delivery_attempt_id UUID REFERENCES factory_delivery_attempts(id),
-  reporting_attempt_id UUID REFERENCES factory_reporting_attempts(id),
   CONSTRAINT factory_run_current_positive_version CHECK (run_version > 0)
 );
 
@@ -693,8 +379,7 @@ CREATE TABLE factory_run_current (
 CREATE INDEX factory_runs_reconciliation_idx
   ON factory_runs (updated_at, id)
   WHERE state IN (
-    'admitted', 'implementing', 'validating', 'evaluating', 'reworking',
-    'ready_for_delivery', 'delivering', 'escalated'
+    'admitted', 'running', 'waiting'
   );
 
 CREATE INDEX factory_configurations_discovery_idx
@@ -718,21 +403,22 @@ CREATE INDEX factory_run_claims_history_idx
 -- Every diagnostics endpoint constrains one Run and advances by the immutable
 -- row identity. These covering order prefixes keep pages bounded without
 -- indexing JSONB payloads or speculative filters.
-CREATE INDEX factory_stage_attempts_diagnostics_idx ON factory_stage_attempts (run_id, id);
-CREATE INDEX factory_stage_attempt_completions_diagnostics_idx ON factory_stage_attempt_completions (run_id, id);
-CREATE INDEX factory_call_nodes_diagnostics_idx ON factory_call_nodes (run_id, id);
-CREATE INDEX factory_decision_signal_requests_diagnostics_idx ON factory_decision_signal_requests (run_id, id);
-CREATE INDEX factory_decision_signal_receipts_diagnostics_idx ON factory_decision_signal_receipts (run_id, id);
-CREATE INDEX factory_build_links_diagnostics_idx ON factory_build_links (run_id, build_id);
-CREATE INDEX factory_build_observations_diagnostics_idx ON factory_build_observations (run_id, id);
-CREATE INDEX factory_changesets_diagnostics_idx ON factory_changesets (run_id, id);
-CREATE INDEX factory_evidence_manifests_diagnostics_idx ON factory_evidence_manifests (run_id, id);
-CREATE INDEX factory_evaluation_plans_diagnostics_idx ON factory_evaluation_plans (run_id, id);
-CREATE INDEX factory_assessments_diagnostics_idx ON factory_assessments (run_id, id);
-CREATE INDEX factory_decisions_diagnostics_idx ON factory_decisions (run_id, id);
-CREATE INDEX factory_escalations_diagnostics_idx ON factory_escalations (run_id, id);
-CREATE INDEX factory_delivery_attempts_diagnostics_idx ON factory_delivery_attempts (run_id, id);
-CREATE INDEX factory_reporting_attempts_diagnostics_idx ON factory_reporting_attempts (run_id, id);
+CREATE INDEX factory_run_claims_diagnostics_idx
+  ON factory_run_claims (run_id, id);
+
+CREATE INDEX factory_audit_links_diagnostics_idx
+  ON factory_audit_links (run_id, id);
+
+-- A control restores only its exact immutable audit proof, even after many
+-- ownership renewals have enlarged the archive.
+CREATE INDEX factory_audit_links_control_proof_idx
+  ON factory_audit_links (run_id, operation, request_identity_digest, recorded_at, id);
+
+CREATE INDEX factory_node_attempts_diagnostics_idx
+  ON factory_node_attempts (run_id, id);
+
+CREATE INDEX factory_node_attempt_completions_diagnostics_idx
+  ON factory_node_attempt_completions (run_id, id);
 
 CREATE INDEX factory_outbox_operation_history_idx
   ON factory_outbox_records (operation_id, recorded_at DESC, id DESC);

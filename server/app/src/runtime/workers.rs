@@ -20,6 +20,7 @@ use tracing::{info, warn};
 use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, readiness::WorkerHealth};
 
 pub(super) struct DurableWorkers {
+  pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
   pub(super) expiry: LeaseExpiryWorker<PostgresAuthoritativeStore>,
   pub(super) expiry_health: Arc<WorkerHealth>,
   pub(super) schedules: ScheduleWorker<PostgresStore>,
@@ -41,6 +42,7 @@ pub(super) struct DurableWorkers {
   pub(super) managed_webhooks: Option<(ManagedWebhookRegistrationWorker, WorkerOwner, Arc<WorkerHealth>)>,
 }
 
+pub(super) const FACTORY_WORKER_NAME: &str = "factory-owner-worker";
 pub(super) const EXPIRY_WORKER_NAME: &str = "lease-expiry-worker";
 pub(super) const INTERNAL_TRIGGER_WORKER_NAME: &str = "internal-trigger-worker";
 pub(super) const LOG_INDEX_WORKER_NAME: &str = "log-index-worker";
@@ -135,6 +137,14 @@ pub(super) fn spawn_durable_workers(
       cancellation.child_token(),
     )
   });
+  let factory = workers.factory.map(|(worker, health)| {
+    spawn_factory_worker(
+      worker,
+      health,
+      config.factory().expect("validated enabled owner policy"),
+      cancellation.child_token(),
+    )
+  });
   let mut tasks = vec![
     (EXPIRY_WORKER_NAME, expiry),
     (SCHEDULE_WORKER_NAME, schedules),
@@ -143,6 +153,9 @@ pub(super) fn spawn_durable_workers(
     (RETENTION_WORKER_NAME, retention),
     (MANUAL_TRIGGER_RETRY_WORKER_NAME, manual_trigger_retries),
   ];
+  if let Some(task) = factory {
+    tasks.push((FACTORY_WORKER_NAME, task));
+  }
   if let Some(task) = webhook_deliveries {
     tasks.push((WEBHOOK_DELIVERY_WORKER_NAME, task));
   }
@@ -585,6 +598,39 @@ fn claim_window(claim_lifetime: Duration) -> Option<(Timestamp, Timestamp)> {
     Timestamp::from_unix_millis(now).ok()?,
     Timestamp::from_unix_millis(until).ok()?,
   ))
+}
+
+fn spawn_factory_worker(
+  worker: octacity_server_application::FactoryReconciler<PostgresStore>,
+  health: Arc<WorkerHealth>,
+  policy: crate::FactoryRuntimeConfig,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  let worker = Arc::new(worker);
+  let shutdown = Arc::new(octacity_server_application::FactoryReconciliationShutdown::new());
+  let pass_cancellation = cancellation.clone();
+  spawn_worker_loop(
+    WorkerIdentity::new(FACTORY_WORKER_NAME, WorkerKind::Factory),
+    health,
+    policy.poll_interval(),
+    policy.claim_lifetime(),
+    cancellation,
+    move |observed_at, expires_at| {
+      let worker = worker.clone();
+      let shutdown = shutdown.clone();
+      let cancellation = pass_cancellation.clone();
+      async move {
+        let pass = worker.run_once(observed_at, expires_at, &shutdown);
+        tokio::pin!(pass);
+        tokio::select! {
+          biased;
+          () = cancellation.cancelled() => { shutdown.request(); pass.await },
+          result = &mut pass => result,
+        }
+      }
+    },
+    |_| {},
+  )
 }
 
 #[cfg(test)]

@@ -16,7 +16,7 @@ OctaCity SHALL continue to accept and execute ordinary CI/CD Triggers and Builds
 - **THEN** other Projects and ordinary Build commands remain independent of that configuration and its provider availability
 
 ### Requirement: Versioned Factory Configuration
-The server SHALL store Factory Configurations as immutable versions owned by one Project. A version SHALL bind admission rules, the exact root Flow Definition and its reachable version closure, Build Configuration selections, budgets, WIP limits, permission policy, optional Decision Signal profiles and rollout policies, criterion packs, evaluator policy, rework limits, delivery policy, and enabled state. A Factory Run SHALL retain the exact version accepted at admission and SHALL NOT observe later replacements.
+The server SHALL store Factory Configurations as immutable versions owned by one Project. A version SHALL bind admission rules, the exact root Flow Definition and its reachable version closure, the schema catalogue, configured Build and action selections, budgets, WIP limits, permission policy, named pool policies, and enabled state. Capability-specific Decision Signal, evaluator, rework, delivery and rollout policies SHALL be selected by the nodes that use them rather than mandatory fixed-stage fields in the common configuration. A Factory Run SHALL retain the exact version accepted at admission and SHALL NOT observe later replacements.
 
 #### Scenario: Factory Configuration is replaced
 - **WHEN** an operator publishes a valid replacement using the current-version precondition
@@ -112,7 +112,7 @@ The server SHALL expose durable phase-ready pools derived from authoritative Flo
 ### Requirement: Defect and feature research are isolated typed subflows
 A Factory Configuration SHALL be able to route an accepted Triage Result into an immutable Research Flow with its own Context projections, model or command profile, budgets, permissions, attempts, and typed outcomes. A defect research branch SHALL bind the exact subject, symptoms, environment contract, and prior observations and SHALL produce deterministic reproduction evidence plus one declared outcome such as `reproduced`, `intermittent`, `environment_specific`, `cannot_reproduce`, or `needs_human_input`. A feature research branch SHALL produce a bounded proposal Artifact containing source references, assumptions, alternatives, and unresolved questions.
 
-Research output SHALL remain a non-authoritative Stage Handoff. Deterministic policy SHALL map it only to declared requirements, protected test-authoring, verification, escalation, rejection, or terminal-resolution routes. Research prose SHALL NOT make Work implementation-ready, replace required reproduction evidence, widen authority, or create an undeclared transition. Mutable external and repository discovery included in research SHALL be frozen into the Context Manifest and applicable Retrieval Receipts.
+Research output SHALL remain a schema-validated retained common node result whose payload does not itself grant transition authority. Deterministic policy SHALL map it only to declared requirements, protected test-authoring, verification, escalation, rejection, or terminal-resolution routes. Research prose SHALL NOT make Work implementation-ready, replace required reproduction evidence, widen authority, or create an undeclared transition. Mutable external and repository discovery included in research SHALL be frozen into the Context Manifest and applicable Retrieval Receipts.
 
 Research SHALL use the same ordinary Build creation boundary and generic Flow/Node Attempt identities as other Flows. Per-node profiles SHALL pin the model or command, task, plugin, Build Configuration and result output. Build priority SHALL be frozen in persisted intent and checked against the observed immutable Build. Configured node generations SHALL identify repeated executions independently of their payload contents. Ordinary Build dispatch and retry provenance and measured usage SHALL remain distinct from logical Flow node numbers, including intervening deterministic gates. Trusted output verification SHALL attest the full schema version and digest of exact bytes; neither a report format name nor a requested schema SHALL constitute evidence of schema validation. Restart SHALL replay the same operation; ordinary Build retries SHALL preserve the owning Node Attempt's aggregate resource ceiling and deadline. Execution failure or cancellation SHALL NOT be interpreted as a negative reproduction observation.
 
@@ -155,6 +155,16 @@ The action adapter SHALL reject an absent exact plugin permission before dispatc
 
 ### Requirement: Durable code-owned Factory lifecycle
 The server SHALL drive Factory Runs by interpreting their pinned Flow Definition closure into explicit persisted Flow Runs and Node Attempts. Program code SHALL own every node creation, nested-flow call and return, loop, branch, join, retry, timeout, budget check, and stop condition. A model result SHALL be treated only as a schema-validated typed value and SHALL NOT create a node, follow an undeclared edge, skip a required gate, or directly complete a Factory transition.
+
+Factory Configuration publication and admission SHALL require an explicit pinned Flow Definition closure and SHALL NOT synthesize a graph from stage roles. An operator-authored Flow SHALL NOT require implementation, validation or evaluation roles. Production reconciliation SHALL require a configured Flow coordinator and SHALL NOT use a second fixed-stage lifecycle decision. A root terminal SHALL atomically retain its exact arbitrary key and complete the Run under current ownership; the store SHALL reconstruct terminal authority from the admitted graph and retained results. Replay SHALL return the retained resolution without another transition.
+
+#### Scenario: Configuration omits the root Flow
+- **WHEN** publication or admission has no explicit pinned root Flow
+- **THEN** the request fails closed without inventing implementation, validation, evaluation or rework nodes
+
+#### Scenario: An operator-defined terminal finishes across restart
+- **WHEN** accepted results select an arbitrary terminal declared by the pinned root graph
+- **THEN** the exact terminal and technical Run completion commit atomically, a fabricated terminal is rejected, and recovery returns the same resolution without appending another completion
 
 #### Scenario: Harness claims success before validation
 - **WHEN** an implementation harness reports a completed result but required validation has not run

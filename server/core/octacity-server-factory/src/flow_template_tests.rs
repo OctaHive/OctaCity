@@ -1,5 +1,41 @@
 use crate::flow_test_support::*;
 use crate::*;
+
+#[test]
+fn an_editable_template_publishes_the_exact_configured_retry_bound() {
+  let mut wire: serde_json::Value =
+    serde_json::from_str(include_str!("../../../../config/factory/flows/base-intake.json")).unwrap();
+  let index = wire["nodes"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .position(|node| node["kind"] == "reasoning")
+    .unwrap();
+  wire["nodes"][index]["max_execution_retries"] = serde_json::json!(2);
+  let template: FlowDefinitionTemplate = serde_json::from_value(wire).unwrap();
+  let project = octacity_server_domain::ProjectId::generate();
+  let profiles = template
+    .nodes
+    .iter()
+    .filter_map(|node| node.build_profile.as_ref())
+    .map(|choice| {
+      let mut profile = binding(project);
+      profile.result_output = key("observations");
+      (choice.clone(), profile)
+    })
+    .collect::<BTreeMap<_, _>>();
+  let published = template
+    .instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
+    .unwrap();
+  assert_eq!(
+    published
+      .definition
+      .node(&template.nodes[index].key)
+      .unwrap()
+      .max_execution_retries(),
+    2
+  );
+}
 use std::collections::BTreeMap;
 
 #[test]

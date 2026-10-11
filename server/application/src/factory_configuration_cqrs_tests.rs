@@ -7,10 +7,9 @@ use std::{
 use async_trait::async_trait;
 use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, ProjectId, Timestamp};
 use octacity_server_factory::{
-  BudgetLimit, BuildConfigurationRef, DecisionOutcome, DeliveryPolicyDraft, EvaluationPolicyDraft, FactoryChoiceKind,
-  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId,
-  FactoryConfigurationVersion, FactoryCredentialProfiles, FactoryDigest, FactoryKey, FactoryReferenceChoice,
-  FactoryStageDraft, FactoryStageKind, FactoryWipLimits, ImmutableReference, ReworkPolicyDraft,
+  BudgetLimit, BuildConfigurationRef, FactoryChoiceKind, FactoryConfigurationChoiceEntries,
+  FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryConfigurationId, FactoryConfigurationVersion,
+  FactoryDigest, FactoryKey, FactoryReferenceChoice, FactoryStageKind, FactoryWipLimits, ImmutableReference,
 };
 use octacity_server_store::{
   IdempotencyKey,
@@ -77,7 +76,7 @@ fn fixture(build_project_id: ProjectId) -> Fixture {
     )],
   })
   .expect("fixture choices are valid");
-  let stage = |name, kind| FactoryStageDraft {
+  let stage = |name, kind| octacity_server_factory::testing::FactoryStageDraft {
     key: key(name),
     kind,
     build_configuration: key("build"),
@@ -86,44 +85,21 @@ fn fixture(build_project_id: ProjectId) -> Fixture {
   let draft = FactoryConfigurationDraft {
     flow: None,
     admission_policy: key("admission"),
-    stages: vec![
+    wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
+    hard_budget: budget(10),
+    permission_ceiling: key("permissions"),
+    enabled: true,
+  };
+  let draft = octacity_server_factory::testing::with_contract_flow(
+    draft,
+    vec![
       stage("implement", FactoryStageKind::Implementation),
       stage("validate", FactoryStageKind::Validation),
       stage("evaluate", FactoryStageKind::Evaluation),
     ],
-    wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
-    hard_budget: budget(10),
-    permission_ceiling: key("permissions"),
-    credential_profiles: credential_profiles(),
-    decision_signals: Vec::new(),
-    evaluation: EvaluationPolicyDraft {
-      criterion_packs: vec![key("criteria")],
-      evaluators: vec![key("evaluator")],
-      required_quorum: 1,
-      budget: budget(2),
-    },
-    rework: ReworkPolicyDraft {
-      max_cycles: 0,
-      stage: None,
-      exhausted_outcome: DecisionOutcome::Escalate,
-    },
-    delivery: DeliveryPolicyDraft {
-      adapter: key("delivery-adapter"),
-      policy: key("delivery-policy"),
-    },
-    enabled: true,
-  };
+    &choices,
+  );
   Fixture { choices, draft }
-}
-
-fn credential_profiles() -> FactoryCredentialProfiles {
-  FactoryCredentialProfiles::new(
-    key("model-coding"),
-    key("model-evaluation"),
-    key("source-read"),
-    key("delivery-write"),
-  )
-  .unwrap()
 }
 
 fn context() -> ManagementRequestContext {
@@ -292,14 +268,14 @@ fn immutable_creation_replacement_discovery_and_replay_are_atomic() {
 }
 
 #[test]
-fn project_ownership_and_disabled_mode_fail_before_mutation_but_history_stays_readable() {
+fn invalid_configuration_and_disabled_mode_fail_before_mutation_but_history_stays_readable() {
   run_ready(async {
     let project_id = ProjectId::generate();
-    let other_project_id = ProjectId::generate();
-    let wrong_owner = fixture(other_project_id);
+    let mut invalid_configuration = fixture(project_id);
+    invalid_configuration.draft.permission_ceiling = key("not-authorized");
     let store = Arc::new(InMemoryFactoryConfigurationStore::new());
     store.seed_project(project_id).unwrap();
-    store.enable_project(project_id, wrong_owner.choices).unwrap();
+    store.enable_project(project_id, invalid_configuration.choices).unwrap();
     let handlers = FactoryConfigurationHandlers::new(store.clone());
     let id = FactoryConfigurationId::generate();
     let invalid = query(
@@ -308,7 +284,7 @@ fn project_ownership_and_disabled_mode_fail_before_mutation_but_history_stays_re
         id,
         project_id,
         definition_digest: digest(30),
-        draft: wrong_owner.draft,
+        draft: invalid_configuration.draft,
       },
     )
     .await

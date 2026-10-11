@@ -78,7 +78,10 @@ pub struct BuildSummaryResource {
   /// Exact immutable Build Configuration version.
   pub configuration_version: u64,
   /// Provider-neutral cause that initiated the Build.
-  pub cause: TriggerCauseResource,
+  pub cause: Option<TriggerCauseResource>,
+  /// Exact initiating Factory operation when no Trigger created this Build.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub factory_origin: Option<Value>,
   /// Current aggregate state, including terminal outcome when complete.
   pub state: BuildStateResource,
   /// Authoritative Build creation time as Unix milliseconds.
@@ -154,6 +157,9 @@ pub struct BuildResource {
   pub version: u64,
   /// Safe normalized initiating Trigger facts.
   pub trigger: Value,
+  /// Exact Factory operation origin; absent for existing Trigger Builds.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub factory_origin: Option<Value>,
   /// Authoritative creation time as Unix milliseconds.
   pub created_at_unix_ms: i64,
   /// Latest accepted transition time as Unix milliseconds.

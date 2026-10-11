@@ -100,9 +100,50 @@ subflow return contracts. A call attempt and one child Flow/cycle are committed
 atomically; the call suspends while the child owns executable WIP. Child nodes
 explicitly select frozen caller data, and the parent returns only the exact
 retained child terminal result. The journal validates both caller-input and
-child-result provenance after restart. Production supervision and adapters for additional
-primitive capabilities remain separate composition tasks; the supplied
-manual-intake owner exercises ordinary Builds, built-in gates and named pools.
+child-result provenance after restart. The optional server owner uses this same
+runtime and the existing durable worker supervisor. Deployment installs the
+required technical capabilities explicitly; the supplied manual-intake contract
+exercises ordinary Builds, built-in gates and named pools.
+
+Factory reconciliation reads bounded execution state and only the current
+ownership proof. Complete claim and secret-safe audit histories use the paged
+Factory diagnostic port. Control reads validate their own canonical audit proofs
+under the Run lock; unrelated archived claims or audits cannot exhaust the
+working snapshot ceiling or disable cancellation.
+
+### Optional Factory runtime installation
+
+Absence of `[factory]` keeps ordinary CI/CD independent of Factory capabilities.
+Enabling the common owner requires four explicit worker settings:
+
+```toml
+[factory]
+poll_interval_milliseconds = 1000
+claim_lifetime_milliseconds = 30000
+batch_size = 16
+concurrency = 4
+```
+
+Intervals must be positive and at most five minutes, the batch must fit the
+store's reconciliation bound, and concurrency must be positive and no greater
+than the batch. These are technical resource bounds, not logical flow defaults.
+
+`ServerRuntime::start_with_factory` accepts a trusted `FactoryRuntimeInstaller`.
+The installer receives runtime-owned PostgreSQL journals, ordinary Build storage,
+retained object storage and the approved toolchain snapshot. It supplies exact
+immutable executor bindings, Project-scoped capability availability, a trusted
+input preparer and dependency readiness. Duplicate executor bindings fail startup;
+logical node names never select an executor. Installation is bounded by the
+configured readiness timeout. Provider-specific context selection, protected task
+compilation and output verification belong to the installed adapters.
+
+`ServerRuntime::start`, including the default binary, rejects enabled Factory
+configuration without an installer before loading resources or opening listeners.
+It does not supply implicit providers or a default business flow. A deployment
+using Factory must install the capabilities required by its published definitions.
+Disabled mode neither invokes installation nor probes its dependency readiness.
+Enabled mode tracks both the supervised owner's health and installed capability
+readiness. Shutdown drains the in-flight bounded pass before stopping the owner.
 
 ### Ordinary Build nodes and extensible actions
 
@@ -111,11 +152,35 @@ model or executable, plugin, Build Configuration, result schema/output,
 evidence requirements, effective permissions, budget, deadline, complete input,
 context and immutable Work priority. Its stable operation identity includes
 the Node Attempt; a restart cannot rediscover or replace those choices.
+`FactoryOrdinaryBuildService` loads that persisted intent and invokes an explicitly
+installed `FactoryBuildMaterializer`. The Codex compilation boundary
+`compile_codex_node_task` verifies the envelope against the intent, including the
+exact task Artifact selected in its frozen Context, before producing protected
+documents. Ordinary acceptance independently checks managed v3 Job causality,
+source revision, permissions, allowed pools and the original execution deadline.
+The atomic store transaction rechecks current ownership, cancellation and time
+after compilation. Creation replays retain the original Build without renewed
+authority or a fabricated Trigger.
+
+`BuildOrigin::Factory` retains the stable operation, Run, Node Attempt and input
+digest; ordinary trigger-origin Builds retain their existing origin. Discovery
+returns nullable trigger/cause fields and an optional `factory_origin` for a
+Factory Build. Terminal internal events carry their actual source origin and can
+start a normalized internal-event root without inventing a Trigger occurrence.
+Cancellation uses the current observer's claim and the original operation through
+the ordinary Job/queue transaction. A cancellation replay returns its original
+receipt after restart. Signed managed Jobs retain the Node's absolute deadline
+when observing ordinary retry history; Agent staging and execution obey that same ceiling.
+
 `FactoryNodeBuildAdapter` implements the same execution port for both kinds.
 It dispatches through `OrdinaryBuildApplication`, queries existing Build and
 Attempt state and requires retained published outputs from
-`FactoryNodeBuildOutputSource`. Ordinary retries stay inside the original Node
-Attempt; provenance uses their actual latest Attempt and Jobs.
+`FactoryNodeBuildOutputSource`. The observer can recover ordinary retry history
+inside the original Node Attempt; provenance uses the actual latest Attempt and
+Jobs. Management Build retry is rejected for Factory Builds because it carries
+no current owner fence. Operator retry uses `RetryNode` and creates a fresh
+configured Node Attempt. An owner-authorized ordinary retry producer remains
+part of the deferred worker integration.
 
 The adapter rechecks actual execution choices, exact schemas, tool/plugin
 identities, output digests, publication state, retention, measured usage and
@@ -183,7 +248,7 @@ subject. A policy replacement cannot change an admitted contract.
 The supplied bypass route still traverses `protected_tests`, `implementation`,
 `review` and `verification`. The current slice verifies this configured control
 path through the common owner and PostgreSQL restart; dedicated protected-test
-isolation, requirements authoring/review and production worker supervision
+isolation, requirements authoring/review and the full provider deployment
 remain tasks 11, 10.2/10.3 and 16.1. They can bind technical capabilities and
 profiles to these nodes without introducing stage-name dispatch.
 
@@ -267,7 +332,7 @@ management workflow available to headless REST clients.
 ## Crate ownership
 
 | Crate | Owns | Explicitly does not own |
-| --- | --- | --- |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `octacity-server` | Process composition and concrete adapter selection | Domain decisions or reusable transport contracts |
 | `octacity-server-api-rest` | Management REST DTOs, decoding, routing, OpenAPI, HTTP error mapping | Transactions, domain state, database rows |
 | `octacity-server-api-webhook` | Exact-body public webhook routing, bounded decoding, and mapping to typed application delivery commands | Provider SDKs, adapter process supervision, Trigger persistence |
@@ -445,7 +510,7 @@ documentation. A core port is a Rust interface inside the server and is not a
 wire compatibility promise.
 
 | Seam | Contract owner | Host or consumers | Trust and translation rule |
-| --- | --- | --- | --- |
+| ------------------------------- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Management commands and queries | `octacity-server-application` | REST now; future GraphQL | Each transport owns its DTOs and maps them to application types |
 | Public webhook delivery | `octacity-server-api-webhook` | Provider callbacks | The dedicated listener durably admits exact bounded bytes and allowlisted headers, returns a receipt identity, and never waits for adapter execution |
 | Server-Agent coordination | `octacity-protocol` | `octacity-server-api-agent`, `octacity-coordinator` | Enrollment, registration epoch, Lease fence, and signed JobSpec remain mandatory |
@@ -574,6 +639,12 @@ become `cancellation_requested`; terminal Jobs never change. The Attempt and
 Build remain running only while an Agent must acknowledge cancellation, then
 normal fenced completion derives their terminal `Cancelled` state. Exact
 replay returns the original transition set.
+
+Management Build Retry applies to Trigger-origin Builds. A Factory-origin Build
+must use the exact Factory RetryNode control: the ordinary command carries no
+current Factory claim or Node budget authority and is rejected atomically before
+materializing another Attempt. The ordinary read path still retains all prior
+Attempt history.
 
 A retry is allowed only for the latest failed Attempt. The PostgreSQL adapter
 locks the Build, calculates its next positive Attempt number in Rust, and

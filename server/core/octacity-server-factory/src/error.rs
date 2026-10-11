@@ -17,14 +17,8 @@ pub enum FactoryEntityKind {
   NodeAttempt,
   /// Append-only workflow cycle.
   WorkflowCycle,
-  /// Append-only Stage Attempt.
-  StageAttempt,
-  /// One bounded macro reasoning call.
-  MacroCall,
   /// One immutable versioned Factory Task Envelope.
   TaskEnvelope,
-  /// One immutable completed-stage handoff.
-  StageHandoff,
   /// One immutable ordered call-context manifest.
   ContextManifest,
   /// One immutable revision-bound repository retrieval receipt.
@@ -90,14 +84,10 @@ pub enum TextRejection {
 /// Stable classification of open enums parsed at Factory seams.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum FactoryEnumKind {
-  /// Factory stage kind.
-  Stage,
   /// Closed Factory Flow node kind.
   FlowNode,
   /// Factory Run state.
   RunState,
-  /// Macro call kind.
-  Call,
   /// Work risk class.
   Risk,
   /// Assessment outcome.

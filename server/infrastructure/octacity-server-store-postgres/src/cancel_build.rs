@@ -28,11 +28,73 @@ pub(crate) async fn execute(
     EntityKind::Build,
     &json!({"build_id": request.build_id}),
   )?;
+  execute_owned(pool, request, identity, CancellationAuthority::Management(audit)).await
+}
+
+enum CancellationAuthority<'a> {
+  Management(&'a MutationAuditContext),
+  Factory(&'a octacity_server_store::CancelFactoryBuildExecution),
+}
+
+pub(crate) async fn execute_factory(
+  pool: &PgPool,
+  request: octacity_server_store::CancelFactoryBuildExecution,
+) -> Result<CancellationDisposition, StoreError> {
+  let expected = octacity_server_factory::FactoryDigest::sha256(
+    "octacity.factory.build-cancellation.v1",
+    &[request.build_operation_id.as_bytes().as_slice()],
+  );
+  if request.operation_id != expected || request.requested_at > request.observed_at {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Build,
+    });
+  }
+  let identity = MutationIdentity::new_non_management(
+    MutationKind::CancelFactoryBuild,
+    request.operation_id.to_string(),
+    request.requested_at,
+    EntityKind::Build,
+    &json!({"build_id":request.build_id, "creation":request.build_operation_id,
+      "requested_at":request.requested_at}),
+  )?;
+  let ordinary = CancelBuild {
+    build_id: request.build_id,
+    requested_at: request.requested_at,
+    idempotency_key: octacity_server_store::IdempotencyKey::new(request.operation_id.to_string())
+      .map_err(|_| StoreError::Unavailable)?,
+  };
+  execute_owned(pool, ordinary, identity, CancellationAuthority::Factory(&request)).await
+}
+
+async fn execute_owned(
+  pool: &PgPool,
+  request: CancelBuild,
+  identity: MutationIdentity,
+  authority: CancellationAuthority<'_>,
+) -> Result<CancellationDisposition, StoreError> {
   let mut transaction = match crate::mutation::begin(pool, &identity).await? {
     MutationStart::Fresh(transaction) => transaction,
     MutationStart::Replay(outcome) => return replay(outcome),
   };
 
+  if let CancellationAuthority::Factory(factory) = &authority {
+    let origin: Option<sqlx::types::Json<octacity_server_store::FactoryBuildOrigin>> =
+      sqlx::query_scalar("SELECT factory_origin FROM builds WHERE id=$1")
+        .bind(request.build_id.as_uuid())
+        .fetch_optional(&mut *transaction)
+        .await
+        .map_err(unavailable)?
+        .flatten();
+    let origin = origin.ok_or(StoreError::Conflict {
+      entity: EntityKind::Build,
+    })?;
+    if origin.operation_id != factory.build_operation_id {
+      return Err(StoreError::Conflict {
+        entity: EntityKind::Build,
+      });
+    }
+    crate::factory_run::verify_cancellation_owner(&mut transaction, origin.run_id, factory).await?;
+  }
   let build_state_value: String = sqlx::query_scalar("SELECT state FROM builds WHERE id = $1 FOR UPDATE")
     .bind(request.build_id.as_uuid())
     .fetch_optional(&mut *transaction)
@@ -46,7 +108,7 @@ pub(crate) async fn execute(
     crate::mutation::commit(
       transaction,
       &identity,
-      facts(audit, &outcome),
+      facts(&authority, &outcome),
       encode_outcome(&StoredOutcome::from(&outcome))?,
     )
     .await?;
@@ -161,7 +223,7 @@ pub(crate) async fn execute(
   crate::mutation::commit(
     transaction,
     &identity,
-    facts(audit, &outcome),
+    facts(&authority, &outcome),
     encode_outcome(&StoredOutcome::from(&outcome))?,
   )
   .await?;
@@ -355,22 +417,29 @@ fn replay(value: Value) -> Result<CancellationDisposition, StoreError> {
   })
 }
 
-fn facts(audit: &MutationAuditContext, outcome: &CancellationDisposition) -> MutationFacts {
-  MutationFacts::management(
-    audit,
-    outcome.build_id.to_string(),
-    json!({
-      "attempt_id": outcome.attempt_id,
-      "cancelled_job_count": outcome.cancelled_jobs.len(),
-      "cancelling_job_count": outcome.cancelling_jobs.len(),
-    }),
-    json!({
-      "attempt_id": outcome.attempt_id,
-      "build_id": outcome.build_id,
-      "cancelled_jobs": outcome.cancelled_jobs,
-      "cancelling_jobs": outcome.cancelling_jobs,
-      "build_state": crate::state::build_state(outcome.build_state),
-      "schema_version": 1,
-    }),
-  )
+fn facts(authority: &CancellationAuthority<'_>, outcome: &CancellationDisposition) -> MutationFacts {
+  let metadata = json!({
+    "attempt_id": outcome.attempt_id,
+    "cancelled_job_count": outcome.cancelled_jobs.len(),
+    "cancelling_job_count": outcome.cancelling_jobs.len(),
+  });
+  let payload = json!({
+    "attempt_id": outcome.attempt_id,
+    "build_id": outcome.build_id,
+    "cancelled_jobs": outcome.cancelled_jobs,
+    "cancelling_jobs": outcome.cancelling_jobs,
+    "build_state": crate::state::build_state(outcome.build_state),
+    "schema_version": 1,
+  });
+  match authority {
+    CancellationAuthority::Management(audit) => {
+      MutationFacts::management(audit, outcome.build_id.to_string(), metadata, payload)
+    }
+    CancellationAuthority::Factory(request) => MutationFacts::non_management(
+      crate::mutation::NonManagementActor::Worker(request.operation_id.to_string()),
+      outcome.build_id.to_string(),
+      metadata,
+      payload,
+    ),
+  }
 }

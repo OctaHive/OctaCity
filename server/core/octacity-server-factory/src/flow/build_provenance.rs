@@ -133,8 +133,9 @@ impl FlowBuildProvenance {
       || self.profile.task_digest != binding.task_digest
       || self.profile.build_configuration != binding.build_configuration
       || self.profile.result_output != binding.result_output
+      || self.profile.result_output_kind != binding.result_output_kind
       || &raw.schema != payload.schema()
-      || raw.output_kind != EvidenceOutputKind::Report
+      || raw.output_kind != binding.result_output_kind
       || raw.producer.tool() != &binding.tool
       || raw.producer.plugin() != &binding.plugin
       || self.outputs.len() != binding.evidence.len() + 1

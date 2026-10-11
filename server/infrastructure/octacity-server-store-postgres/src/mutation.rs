@@ -318,6 +318,7 @@ pub(crate) enum MutationKind {
   CreateFactoryConfiguration,
   ReplaceFactoryConfiguration,
   AdmitFactoryWork,
+  ControlFactoryRun,
   CreateTriggerDefinition,
   PublishInternalTriggerVersion,
   CreateUnmanagedWebhook,
@@ -338,6 +339,7 @@ pub(crate) enum MutationKind {
   CompleteJob,
   FailLeaseAssignment,
   CancelBuild,
+  CancelFactoryBuild,
   RetryBuild,
   IssueAgentEnrollment,
   RegisterAgent,
@@ -358,7 +360,9 @@ impl MutationKind {
       | Self::RotateManagedWebhook
       | Self::DeleteManagedWebhook => NonManagementMutationClass::Adapter,
       Self::AcceptTrigger | Self::SuppressTrigger => NonManagementMutationClass::Trigger,
-      Self::RecoverExpiredLease | Self::FailLeaseAssignment => NonManagementMutationClass::Worker,
+      Self::RecoverExpiredLease | Self::FailLeaseAssignment | Self::CancelFactoryBuild => {
+        NonManagementMutationClass::Worker
+      }
       _ => panic!("management mutation kind cannot use a non-management namespace"),
     }
   }
@@ -489,6 +493,12 @@ impl MutationKind {
         "factory_run",
         "factory.run-admitted"
       ),
+      Self::ControlFactoryRun => metadata!(
+        b"octacity.control-factory-run.v1\0",
+        "control-factory-run",
+        "factory_run",
+        "factory.control-recorded"
+      ),
       Self::CreateTriggerDefinition => metadata!(
         b"octacity.create-trigger-definition.v1\0",
         "create-trigger-definition",
@@ -592,6 +602,12 @@ impl MutationKind {
         "fail-lease-assignment",
         "job",
         "job.completed"
+      ),
+      Self::CancelFactoryBuild => metadata!(
+        b"octacity.cancel-factory-build.v1\0",
+        "cancel-factory-build",
+        "build",
+        "build.cancellation-requested"
       ),
       Self::CancelBuild => metadata!(
         b"octacity.cancel-build.v1\0",

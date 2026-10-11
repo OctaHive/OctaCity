@@ -60,15 +60,21 @@ where
     };
     for claim in claims {
       for matched in &claim.matches {
-        let causality = match octacity_server_trigger::derive_internal_causality(
-          &claim.source_occurrence,
-          matched.trigger,
-          &claim.trigger_ancestry,
-        ) {
-          Ok(causality) => causality,
-          Err(_) => {
-            outcome.protected_occurrences += 1;
-            continue;
+        let causality = match &claim.source_origin {
+          octacity_server_store::InternalTriggerSourceOrigin::Trigger(parent) => {
+            match octacity_server_trigger::derive_internal_causality(parent, matched.trigger, &claim.trigger_ancestry) {
+              Ok(causality) => Some(causality),
+              Err(_) => {
+                outcome.protected_occurrences += 1;
+                continue;
+              }
+            }
+          }
+          octacity_server_store::InternalTriggerSourceOrigin::Factory(_) => {
+            if !claim.trigger_ancestry.is_empty() {
+              return Err(InternalTriggerWorkerError::InvalidPersistedDefinition);
+            }
+            None
           }
         };
         let definition: InternalTriggerDefinition = serde_json::from_value(matched.definition.clone())
@@ -80,7 +86,7 @@ where
           .map_err(|_| InternalTriggerWorkerError::InvalidPersistedDefinition)?;
         self
           .triggers
-          .accept_internal(
+          .accept_internal_event(
             ManualTriggerCommand {
               trigger: matched.trigger,
               target: matched.target,
@@ -172,7 +178,9 @@ mod tests {
           source_build_id: id(2),
           source_revision: ImmutableRevision::new("abc").unwrap(),
           source_target: target(),
-          source_occurrence: source_occurrence.clone(),
+          source_origin: octacity_server_store::InternalTriggerSourceOrigin::Trigger(Box::new(
+            source_occurrence.clone(),
+          )),
           trigger_ancestry: vec![trigger],
           event_kind: TerminalBuildEvent::Succeeded,
           occurred_at: time(10),

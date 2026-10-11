@@ -3,6 +3,295 @@ use crate::*;
 use crate::flow_test_support::*;
 
 #[test]
+fn confirmed_failures_do_not_occupy_capacity_after_a_later_configured_retry_completes() {
+  let time = |value| octacity_server_domain::Timestamp::from_unix_millis(value).unwrap();
+  let (_, admitted, schema, input, original) = execution_fixture_with_retries(FlowNodeKind::Reasoning, 2);
+  let definition = admitted.closure().definition(input.definition()).unwrap();
+  let ownership = FactoryClaimOwnership::new(original.owner().clone(), original.claim());
+  let retry = |input: &FlowNodeInput, previous: &NodeAttempt, number, started_at| {
+    NodeAttempt::new(
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      definition,
+      NodeAttemptInput {
+        id: NodeAttemptId::generate(),
+        node_key: previous.node_key().clone(),
+        node_kind: previous.node_kind(),
+        number: NodeAttemptNumber::new(number).unwrap(),
+        input_digest: input.digest().unwrap(),
+        budget: previous.budget(),
+        started_at: time(started_at),
+        deadline: time(started_at + 1000),
+        execution: previous.execution().clone(),
+        ownership: ownership.clone(),
+      },
+    )
+    .unwrap()
+    .with_retry_of(previous)
+    .unwrap()
+  };
+  let second_input = input.retry().unwrap();
+  let second = retry(&second_input, &original, 2, 20);
+  let third_input = second_input.retry().unwrap();
+  let third = retry(&third_input, &second, 3, 30);
+  let stops = vec![
+    FlowNodeStop::new(
+      &original,
+      ownership.clone(),
+      FlowNodeStopReason::ExecutionFailed,
+      time(15),
+      BudgetUsage {
+        tokens: 23,
+        ..Default::default()
+      },
+      None,
+    )
+    .unwrap(),
+    FlowNodeStop::new(
+      &second,
+      ownership.clone(),
+      FlowNodeStopReason::ExecutionFailed,
+      time(25),
+      BudgetUsage {
+        tokens: 7,
+        ..Default::default()
+      },
+      None,
+    )
+    .unwrap(),
+  ];
+  let completed = NodeAttemptCompletion::new(
+    &third,
+    definition,
+    NodeAttemptCompletionInput {
+      outcome: key("observed"),
+      output_schema: schema.reference().clone(),
+      output_digest: FactoryDigest::content_sha256(br#"{"count":9}"#),
+      ownership,
+      usage: BudgetUsage::default(),
+      observed_at: time(35),
+    },
+  )
+  .unwrap();
+  let source = third.id();
+  let attempts = vec![original, second, third];
+  let history = FlowRuntimeHistory {
+    stops: &stops,
+    flow_runs: std::slice::from_ref(admitted.root_run()),
+    cycles: std::slice::from_ref(admitted.initial_cycle()),
+    attempts: &attempts,
+    completions: std::slice::from_ref(&completed),
+  };
+  validate_flow_runtime_history(&admitted, history).unwrap();
+  assert_eq!(history.active_node_count(), 0);
+  let validated = admitted.validated().unwrap();
+  assert_eq!(
+    FlowInterpreter::new(&validated)
+      .progress(admitted.root_run(), admitted.initial_cycle(), history)
+      .unwrap(),
+    FlowProgress::Terminal {
+      key: key("done"),
+      source
+    }
+  );
+}
+
+#[test]
+fn a_technical_retry_preserves_frozen_input_and_requires_a_confirmed_failed_predecessor() {
+  let time = |value| octacity_server_domain::Timestamp::from_unix_millis(value).unwrap();
+  let (work, admitted, _, input, original) = execution_fixture_with_retries(FlowNodeKind::Reasoning, 1);
+  let definition = admitted.closure().definition(input.definition()).unwrap();
+  let retry_input = input.retry().unwrap();
+  assert_eq!(retry_input.generation(), 1);
+  assert_eq!(retry_input.payload(), input.payload());
+  assert_eq!(retry_input.context(), input.context());
+  let retry = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    definition,
+    NodeAttemptInput {
+      id: NodeAttemptId::generate(),
+      node_key: original.node_key().clone(),
+      node_kind: original.node_kind(),
+      number: NodeAttemptNumber::new(2).unwrap(),
+      input_digest: retry_input.digest().unwrap(),
+      budget: original.budget(),
+      started_at: time(20),
+      deadline: time(1020),
+      execution: original.execution().clone(),
+      ownership: FactoryClaimOwnership::new(original.owner().clone(), original.claim()),
+    },
+  )
+  .unwrap()
+  .with_retry_of(&original)
+  .unwrap();
+  assert_eq!(retry.retry_of(), Some(original.id()));
+  let intents = vec![
+    FlowBuildIntent::new(input.clone(), &admitted, original.clone(), BudgetUsage::default(), 1).unwrap(),
+    FlowBuildIntent::new(
+      retry_input.clone(),
+      &admitted,
+      retry.clone(),
+      BudgetUsage {
+        attempts: 1,
+        tokens: 23,
+        ..Default::default()
+      },
+      1,
+    )
+    .unwrap(),
+  ];
+  assert_ne!(intents[0].operation_id().unwrap(), intents[1].operation_id().unwrap());
+  let stops = vec![
+    FlowNodeStop::new(
+      &original,
+      FactoryClaimOwnership::new(original.owner().clone(), original.claim()),
+      FlowNodeStopReason::ExecutionFailed,
+      time(15),
+      BudgetUsage {
+        tokens: 23,
+        ..Default::default()
+      },
+      None,
+    )
+    .unwrap(),
+  ];
+  let attempts = vec![original, retry];
+  let history = FlowRuntimeHistory {
+    stops: &stops,
+    flow_runs: std::slice::from_ref(admitted.root_run()),
+    cycles: std::slice::from_ref(admitted.initial_cycle()),
+    attempts: &attempts,
+    completions: &[],
+  };
+  let data = FlowDataHistory {
+    stops: stops.clone(),
+    inputs: vec![input, retry_input],
+    build_intents: intents,
+    ..Default::default()
+  };
+  data.validate(&work, &admitted, history).unwrap();
+  assert_eq!(history.active_node_count(), 1);
+  assert!(
+    validate_flow_runtime_history(&admitted, FlowRuntimeHistory { stops: &[], ..history }).is_err(),
+    "retry cannot replace a still active operation"
+  );
+  let record = FlowNodeRecord::new(
+    &data.inputs[1],
+    &attempts[1],
+    definition,
+    FlowRecordObservation {
+      outcome: key("observed"),
+      payload: data.inputs[1].payload().clone(),
+      producer: attempts[1].execution().clone(),
+      observed_at: time(30),
+    },
+  )
+  .unwrap();
+  let completion = NodeAttemptCompletion::new(
+    &attempts[1],
+    definition,
+    NodeAttemptCompletionInput {
+      outcome: key("observed"),
+      output_schema: record.payload().schema().clone(),
+      output_digest: record.digest().unwrap(),
+      ownership: FactoryClaimOwnership::new(attempts[1].owner().clone(), attempts[1].claim()),
+      usage: BudgetUsage::default(),
+      observed_at: time(30),
+    },
+  )
+  .unwrap();
+  let resolved = FlowRuntimeHistory {
+    completions: std::slice::from_ref(&completion),
+    ..history
+  };
+  validate_flow_runtime_history(&admitted, resolved).unwrap();
+  let validated = admitted.validated().unwrap();
+  assert_eq!(
+    FlowInterpreter::new(&validated)
+      .progress(admitted.root_run(), admitted.initial_cycle(), resolved)
+      .unwrap(),
+    FlowProgress::Terminal {
+      key: key("done"),
+      source: attempts[1].id()
+    },
+    "the old failed execution must not block the retry's declared terminal"
+  );
+}
+
+#[test]
+fn retry_capacity_is_explicit_configuration_and_part_of_the_admitted_execution_bound() {
+  let (_, admitted, _, input, _) = execution_fixture(FlowNodeKind::Reasoning);
+  let original = admitted.closure().definition(input.definition()).unwrap();
+  assert_eq!(
+    original.nodes()[0].max_execution_retries(),
+    0,
+    "no implicit retry permission"
+  );
+  let configured = original.nodes()[0].clone().with_execution_retries(2).unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: original.reference().id(),
+    version: original.reference().version(),
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes: vec![configured],
+    transitions: original.transitions().to_vec(),
+    terminals: original.terminals().to_vec(),
+    context_projections: original.context_projections().to_vec(),
+    data_projections: original.data_projections().to_vec(),
+    execution: original.execution().clone(),
+  })
+  .unwrap();
+  assert_ne!(definition.reference(), original.reference());
+  let closure = PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap();
+  assert_eq!(
+    closure.validate(admitted.limits().clone()).unwrap().expanded_nodes(),
+    3,
+    "one original operation and two confirmed retries"
+  );
+  assert!(original.nodes()[0].clone().with_execution_retries(u16::MAX).is_err());
+}
+
+#[test]
+fn a_common_result_cannot_predate_the_frozen_node_execution_start() {
+  let (_, admitted, schema, input, original) = execution_fixture(FlowNodeKind::Reasoning);
+  let definition = admitted.closure().definition(input.definition()).unwrap();
+  let attempt = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    definition,
+    NodeAttemptInput {
+      id: original.id(),
+      node_key: original.node_key().clone(),
+      node_kind: original.node_kind(),
+      number: original.number(),
+      input_digest: original.input_digest(),
+      budget: original.budget(),
+      started_at: octacity_server_domain::Timestamp::from_unix_millis(11).unwrap(),
+      deadline: original.deadline(),
+      execution: original.execution().clone(),
+      ownership: FactoryClaimOwnership::new(original.owner().clone(), original.claim()),
+    },
+  )
+  .unwrap();
+  assert!(
+    FlowNodeRecord::new(
+      &input,
+      &attempt,
+      definition,
+      FlowRecordObservation {
+        outcome: key("observed"),
+        payload: FlowPayload::new(&schema, serde_json::json!({"count":9})).unwrap(),
+        producer: attempt.execution().clone(),
+        observed_at: octacity_server_domain::Timestamp::from_unix_millis(10).unwrap(),
+      }
+    )
+    .is_err(),
+    "an active creator claim does not permit results from before execution started"
+  );
+}
+
+#[test]
 fn generic_build_execution_links_retain_the_exact_operation_attempt_and_complete_job_set() {
   let (_, admitted, _, input, node) = execution_fixture(FlowNodeKind::Reasoning);
   let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
@@ -163,7 +452,9 @@ fn generic_build_intent_replays_the_exact_node_input_profile_priority_and_resour
 fn generic_build_intent_rejects_substitution_expired_reservations_and_tampered_restart_bytes() {
   let (_, admitted, _, input, attempt) = execution_fixture(FlowNodeKind::Reasoning);
   let mut wire = serde_json::to_value(&attempt).unwrap();
-  wire["deadline"] = serde_json::to_value(octacity_server_domain::Timestamp::from_unix_millis(101).unwrap()).unwrap();
+  // Start is 10ms and the declared execution ceiling is 1000ms; the worker
+  // lease ending at 100ms is an independent observation fence.
+  wire["deadline"] = serde_json::to_value(octacity_server_domain::Timestamp::from_unix_millis(1011).unwrap()).unwrap();
   let changed: NodeAttempt = serde_json::from_value(wire).unwrap();
   assert!(FlowBuildIntent::new(input.clone(), &admitted, changed, BudgetUsage::default(), 7).is_err());
   let intent = FlowBuildIntent::new(input.clone(), &admitted, attempt.clone(), BudgetUsage::default(), 7).unwrap();
@@ -271,6 +562,7 @@ fn an_ordinary_build_cannot_select_another_declared_semantic_outcome() {
     admitted.limits().clone(),
     flow,
     cycle,
+    crate::FactoryWipLimits::new(8, 16).unwrap(),
   )
   .unwrap()
   .with_data_schemas(vec![schema.clone()])
@@ -289,6 +581,7 @@ fn an_ordinary_build_cannot_select_another_declared_semantic_outcome() {
     admitted.initial_cycle(),
     &definition,
     NodeAttemptInput {
+      started_at: original_attempt.started_at(),
       id: NodeAttemptId::generate(),
       node_key: input.node().clone(),
       node_kind: FlowNodeKind::Reasoning,
@@ -314,5 +607,128 @@ fn an_ordinary_build_cannot_select_another_declared_semantic_outcome() {
       }
     )
     .is_err()
+  );
+}
+
+#[test]
+fn interpretation_charges_confirmed_failure_usage_before_advancing_a_successful_retry() {
+  let time = |value| octacity_server_domain::Timestamp::from_unix_millis(value).unwrap();
+  let (work, template, schema, _, original) = execution_fixture_with_retries(FlowNodeKind::Reasoning, 1);
+  let old = &template.closure().definitions()[0];
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: old.reference().id(),
+    version: old.reference().version(),
+    input_schema: old.input_schema().cloned(),
+    entry: old.entry().clone(),
+    nodes: old.nodes().to_vec(),
+    transitions: old.transitions().to_vec(),
+    terminals: old.terminals().to_vec(),
+    context_projections: old.context_projections().to_vec(),
+    data_projections: old.data_projections().to_vec(),
+    execution: FlowExecutionPolicy::new(
+      BudgetLimit::new(16, 10000, 100, 10000, 10000).unwrap(),
+      FactoryPermissionSet::deny_all(),
+      1,
+    )
+    .unwrap(),
+  })
+  .unwrap();
+  let run = FactoryRun::admitted(template.root_run().factory_run_id(), &work);
+  let flow = FlowRun::root(&run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition.clone()]).unwrap(),
+    template.limits().clone(),
+    flow.clone(),
+    cycle.clone(),
+    template.wip_limits(),
+  )
+  .unwrap()
+  .with_data_schemas(vec![schema.clone()])
+  .unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    &flow,
+    &cycle,
+    definition.entry().clone(),
+    FlowPayload::new(&schema, serde_json::json!({"count":3})).unwrap(),
+  )
+  .unwrap();
+  let ownership = FactoryClaimOwnership::new(original.owner().clone(), original.claim());
+  let attempt = |input: &FlowNodeInput, number, started_at| {
+    NodeAttempt::new(
+      &flow,
+      &cycle,
+      &definition,
+      NodeAttemptInput {
+        id: NodeAttemptId::generate(),
+        node_key: definition.entry().clone(),
+        node_kind: FlowNodeKind::Reasoning,
+        number: NodeAttemptNumber::new(number).unwrap(),
+        input_digest: input.digest().unwrap(),
+        budget: original.budget(),
+        started_at: time(started_at),
+        deadline: time(started_at + 1000),
+        execution: original.execution().clone(),
+        ownership: ownership.clone(),
+      },
+    )
+    .unwrap()
+  };
+  let first = attempt(&input, 1, 10);
+  let retry_input = input.retry().unwrap();
+  let second = attempt(&retry_input, 2, 20).with_retry_of(&first).unwrap();
+  let stop = FlowNodeStop::new(
+    &first,
+    ownership.clone(),
+    FlowNodeStopReason::ExecutionFailed,
+    time(15),
+    BudgetUsage {
+      tokens: 100,
+      ..Default::default()
+    },
+    None,
+  )
+  .unwrap();
+  let completion = NodeAttemptCompletion::new(
+    &second,
+    &definition,
+    NodeAttemptCompletionInput {
+      outcome: key("observed"),
+      output_schema: schema.reference().clone(),
+      output_digest: FactoryDigest::content_sha256(br#"{"count":9}"#),
+      ownership,
+      usage: BudgetUsage {
+        tokens: 1,
+        ..Default::default()
+      },
+      observed_at: time(25),
+    },
+  )
+  .unwrap();
+  let attempts = [first, second];
+  let history = FlowRuntimeHistory {
+    stops: std::slice::from_ref(&stop),
+    flow_runs: std::slice::from_ref(&flow),
+    cycles: std::slice::from_ref(&cycle),
+    attempts: &attempts,
+    completions: std::slice::from_ref(&completion),
+  };
+  assert!(matches!(
+    validate_flow_runtime_history(&admitted, history),
+    Err(FactoryError::BudgetExceeded {
+      resource: BudgetResource::Tokens
+    })
+  ));
+  let validated = admitted.validated().unwrap();
+  assert!(
+    matches!(
+      FlowInterpreter::new(&validated).advance(&flow, &cycle, &attempts[1], &completion, history),
+      Err(FactoryError::BudgetExceeded {
+        resource: BudgetResource::Tokens
+      })
+    ),
+    "100 tokens spent by a failed attempt plus one retry token exceed the configured Flow budget"
   );
 }
