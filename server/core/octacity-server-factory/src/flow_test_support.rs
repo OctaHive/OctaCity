@@ -492,3 +492,176 @@ fn execution_fixture_with_authority(
   .unwrap();
   (work, admitted, output_schema, input, attempt)
 }
+
+#[allow(dead_code)] // Shared promotion contracts use the same ordinary Build boundary.
+pub(crate) fn promotion_execution_fixture() -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt)
+{
+  promotion_execution_fixture_with_schema(None)
+}
+#[allow(dead_code)]
+pub(crate) fn promotion_execution_fixture_with_schema(
+  output: Option<FlowDataSchema>,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  promotion_execution_fixture_with_policy(output, |_| {})
+}
+#[allow(dead_code)]
+pub(crate) fn promotion_execution_fixture_with_policy(
+  output: Option<FlowDataSchema>,
+  change: impl FnOnce(&mut serde_json::Value),
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  promotion_execution_fixture_for_work(work(), output, change)
+}
+#[allow(dead_code)] // Production authorization tests vary immutable admitted risk.
+pub(crate) fn promotion_execution_fixture_for_work(
+  work: WorkEnvelope,
+  output: Option<FlowDataSchema>,
+  change: impl FnOnce(&mut serde_json::Value),
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  let (work, old, schema, prior, previous) = execution_fixture_for_work(FlowNodeKind::BuildCommand, work, vec![], None);
+  let original = old.closure().definition(prior.definition()).unwrap();
+  let mut node = serde_json::to_value(&original.nodes()[0]).unwrap();
+  let output = output.unwrap_or_else(|| schema.clone());
+  node["outcomes"][0]["schema"] = serde_json::to_value(output.reference()).unwrap();
+  let capability = reference("trusted.deployment");
+  let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+    plugins: vec![capability.clone()],
+    ..Default::default()
+  })
+  .unwrap();
+  node["permissions"] = serde_json::to_value(&permissions).unwrap();
+  let mut execution = serde_json::to_value(original.execution()).unwrap();
+  execution["permissions"] = serde_json::to_value(&permissions).unwrap();
+  let mut limits = serde_json::to_value(old.limits()).unwrap();
+  limits["permissions"] = serde_json::to_value(&permissions).unwrap();
+  node["kind"] = serde_json::json!("trusted_action");
+  node["build"]["tool"] = serde_json::to_value(&capability).unwrap();
+  node["action"] = serde_json::json!({"plugin":capability,"action":"deploy_exact_candidate","parameters":{"plan":{
+    "strategy":"operator.strategy", "environments":{"pilot":reference("exact.environment")},
+    "allocation":{"basis_points":1000}, "observation_window_millis":50,
+    "evidence_requirements":[], "required_gates":[],
+    "criteria":"decision"
+  }}});
+  change(&mut node["action"]["parameters"]["plan"]);
+  let mut gate = node.clone();
+  gate["key"] = serde_json::json!("decision");
+  gate["kind"] = serde_json::json!("deterministic_gate");
+  gate["input_schema"] = serde_json::to_value(output.reference()).unwrap();
+  gate["input_binding"] = serde_json::json!({"sources":{"result":{"source":"predecessor","view":"payload","path":""}},"mapping":{"value":{"mapping":"pointer","path":"/result"}}});
+  gate.as_object_mut().unwrap().remove("action");
+  gate.as_object_mut().unwrap().remove("build");
+  gate["gate"] = serde_json::to_value(
+    FlowGateProgram::new(vec![], key("observed"))
+      .unwrap()
+      .binding()
+      .unwrap(),
+  )
+  .unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: FlowDefinitionId::generate(),
+    version: FlowDefinitionVersion::INITIAL,
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes: vec![
+      serde_json::from_value(node).unwrap(),
+      serde_json::from_value(gate).unwrap(),
+    ],
+    transitions: vec![
+      FlowTransition::new(
+        original.entry().clone(),
+        key("observed"),
+        FlowTransitionTarget::Node(key("decision")),
+      ),
+      FlowTransition::new(
+        key("decision"),
+        key("observed"),
+        FlowTransitionTarget::Terminal(key("done")),
+      ),
+    ],
+    terminals: original
+      .terminals()
+      .iter()
+      .map(|row| FlowTerminalDefinition::new(row.key().clone(), output.reference().clone()))
+      .collect(),
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: serde_json::from_value(execution).unwrap(),
+  })
+  .unwrap();
+  let flow = FlowRun::root(
+    &FactoryRun::admitted(old.root_run().factory_run_id(), &work),
+    definition.reference(),
+  )
+  .unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    serde_json::from_value(limits).unwrap(),
+    flow,
+    cycle,
+    old.wip_limits(),
+  )
+  .unwrap()
+  .with_data_schemas(if schema == output {
+    vec![schema.clone()]
+  } else {
+    vec![schema.clone(), output.clone()]
+  })
+  .unwrap();
+  let candidate = CandidateSubject::new(
+    work.subject().clone(),
+    octacity_server_domain::ImmutableRevision::new("accepted-candidate").unwrap(),
+    FactoryDigest::from_bytes([91; 32]),
+  );
+  let subject = FactoryTaskSubject::Candidate(candidate);
+  let contract = work.artifacts().acceptance().clone();
+  let entry = ContextManifestEntry::new(
+    ContextSourceKind::Specification,
+    key("public-contract"),
+    subject.clone(),
+    FactoryContextReference::Artifact(contract.clone()),
+    contract.content_digest(),
+    contract.encoded_size(),
+    FactorySafeText::new("Exact public contract").unwrap(),
+    FactoryDigest::from_bytes([7; 32]),
+  )
+  .unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    prior.node().clone(),
+    prior.payload().clone(),
+  )
+  .unwrap()
+  .with_context(
+    ContextManifest::new(
+      ContextManifestId::generate(),
+      subject,
+      FactoryDigest::from_bytes([7; 32]),
+      vec![entry],
+    )
+    .unwrap(),
+    vec![],
+  )
+  .unwrap();
+  let attempt = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    admitted.closure().definition(input.definition()).unwrap(),
+    NodeAttemptInput {
+      id: NodeAttemptId::generate(),
+      node_key: input.node().clone(),
+      node_kind: FlowNodeKind::TrustedAction,
+      number: NodeAttemptNumber::INITIAL,
+      input_digest: input.digest().unwrap(),
+      budget: previous.budget(),
+      started_at: previous.started_at(),
+      deadline: previous.deadline(),
+      execution: NodeExecutionIdentity::External(capability),
+      ownership: FactoryClaimOwnership::new(previous.owner().clone(), previous.claim()),
+    },
+  )
+  .unwrap();
+  (work, admitted, output, input, attempt)
+}

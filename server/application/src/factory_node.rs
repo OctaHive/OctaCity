@@ -470,16 +470,18 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       append.flow.runs.push(child);
     }
     if node.build().is_some() {
-      append.flow.data.build_intents.push(
-        FlowBuildIntent::new(
-          input.clone(),
-          &snapshot.admitted_flow,
-          attempt.clone(),
-          current_usage(&snapshot)?,
-          i64::from(snapshot.work.priority().get()),
-        )
-        .map_err(invalid)?,
-      );
+      let intent = FlowBuildIntent::new(
+        input.clone(),
+        &snapshot.admitted_flow,
+        attempt.clone(),
+        current_usage(&snapshot)?,
+        i64::from(snapshot.work.priority().get()),
+      )
+      .map_err(invalid)?;
+      intent
+        .verify_reservation(&snapshot.admitted_flow, runtime(&snapshot))
+        .map_err(invalid)?;
+      append.flow.data.build_intents.push(intent);
     }
     if !snapshot.flow.data.inputs.contains(&input) {
       append.flow.data.inputs.push(input);

@@ -459,3 +459,13 @@ comes from the existing absence of protected inputs/grants in implementation.
 Production composition and live external-provider qualification remain tasks 16.1
 and 16.4. Owner/store qualification uses deterministic external ports; real Git
 capture/materialization and actual-byte Artifact validation have separate contracts.
+
+
+## Promotion through ordinary CI/CD
+
+[`promotion-flow/README.md`](promotion-flow/README.md) documents the nested rollout
+example, immutable Promotion Plan, exact candidate handoff, installed CI/CD Build
+capability, bounded observations and configured continuation/rollback policy.
+Strategy names and graph edits remain operator choices. Build-backed trusted
+actions use the common intent, execution proof and owner journal; they introduce
+no fixed lifecycle stages or separate deployment state machine.

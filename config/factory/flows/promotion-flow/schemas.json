@@ -1,0 +1,228 @@
+{
+  "schemas": {
+    "release_input": {
+      "identity": "factory.promotion.release_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "candidate_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "candidate_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "subject": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "candidate_subject"
+            }
+          },
+          "bundle": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "manifest": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "public_contract": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          }
+        }
+      }
+    },
+    "deployment_receipt": {
+      "identity": "factory.promotion.deployment_receipt",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "plan_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "subject": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "candidate_subject"
+            }
+          },
+          "environment": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "environment_contract": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "identity": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 128
+                  }
+                },
+                "version": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 128
+                  }
+                },
+                "digest": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 64
+                  }
+                }
+              }
+            }
+          },
+          "deployment": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "identity": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 128
+                  }
+                },
+                "version": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 128
+                  }
+                },
+                "digest": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 64
+                  }
+                }
+              }
+            }
+          },
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "passed",
+                "failed",
+                "indeterminate"
+              ]
+            }
+          },
+          "started_at": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          },
+          "finished_at": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          },
+          "measurements": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "errors": {
+                  "required": true,
+                  "value": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9223372036854775807
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "qualified_observation": {
+      "identity": "factory.promotion.qualified_observation",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "observation": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "deployment_receipt"
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "input_schema": "release_input",
+  "entry": "accepted_candidate",
+  "execution": {
+    "budget": {
+      "max_attempts": 40,
+      "max_elapsed_millis": 3600000,
+      "max_tokens": 1000000,
+      "max_cost_micro_units": 100000000,
+      "max_output_bytes": 33554432
+    },
+    "permissions": {
+      "plugins": [
+        {
+          "identity": "factory.deployment-build",
+          "version": "v1",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+      ],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "max_descendants": 0,
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "kinds": [],
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0
+      }
+    },
+    "max_active_nodes": 1
+  },
+  "parts": [
+    "base-flow/schemas/candidate_subject.json",
+    "base-flow/schemas/artifact_reference.json",
+    "promotion-flow/schemas.json",
+    "promotion-flow/nodes/accepted_candidate.json",
+    "promotion-flow/nodes/deploy_selected.json",
+    "promotion-flow/nodes/observation_policy.json",
+    "promotion-flow/nodes/rollback_selected.json",
+    "promotion-flow/nodes/rollback_policy.json",
+    "promotion-flow/transitions.json"
+  ]
+}

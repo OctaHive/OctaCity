@@ -51,7 +51,9 @@ impl FlowBuildBinding {
     if !matches!(
       node.kind(),
       crate::FlowNodeKind::BuildCommand | crate::FlowNodeKind::Reasoning
-    ) || node.input_schema().is_none()
+    ) && !(node.kind() == crate::FlowNodeKind::TrustedAction
+      && node.action().is_some_and(|action| action.plugin() == &self.tool))
+      || node.input_schema().is_none()
       || node.outcome(&self.result_outcome).is_none()
       || self
         .capture_write_paths

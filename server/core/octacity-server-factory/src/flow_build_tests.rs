@@ -534,6 +534,89 @@ fn an_external_build_record_cannot_complete_without_verified_retained_provenance
 }
 
 #[test]
+fn omitting_a_build_binding_does_not_let_external_nodes_commit_provider_only_records() {
+  for kind in [FlowNodeKind::Reasoning, FlowNodeKind::BuildCommand] {
+    let (work, original, schema, previous, old) = execution_fixture(kind);
+    let prior = original.closure().definition(previous.definition()).unwrap();
+    let mut node = serde_json::to_value(&prior.nodes()[0]).unwrap();
+    node.as_object_mut().unwrap().remove("build");
+    let definition = FlowDefinition::new(FlowDefinitionInput {
+      id: FlowDefinitionId::generate(),
+      version: FlowDefinitionVersion::INITIAL,
+      input_schema: prior.input_schema().cloned(),
+      entry: prior.entry().clone(),
+      nodes: vec![serde_json::from_value(node).unwrap()],
+      transitions: prior.transitions().to_vec(),
+      terminals: prior.terminals().to_vec(),
+      context_projections: vec![],
+      data_projections: vec![],
+      execution: prior.execution().clone(),
+    })
+    .unwrap();
+    let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+    let flow = FlowRun::root(&run, definition.reference()).unwrap();
+    let cycle = WorkflowCycle::initial(&flow).unwrap();
+    let admitted = AdmittedFlow::new(
+      PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition.clone()]).unwrap(),
+      original.limits().clone(),
+      flow,
+      cycle,
+      FactoryWipLimits::new(8, 16).unwrap(),
+    )
+    .unwrap()
+    .with_data_schemas(vec![schema.clone()])
+    .unwrap();
+    let input = FlowNodeInput::new(
+      &work,
+      &admitted,
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      previous.node().clone(),
+      previous.payload().clone(),
+    )
+    .unwrap();
+    let ownership = FactoryClaimOwnership::new(old.owner().clone(), old.claim());
+    let attempt = NodeAttempt::new(
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      &definition,
+      NodeAttemptInput {
+        id: NodeAttemptId::generate(),
+        node_key: input.node().clone(),
+        node_kind: kind,
+        number: NodeAttemptNumber::INITIAL,
+        input_digest: input.digest().unwrap(),
+        budget: old.budget(),
+        started_at: old.started_at(),
+        deadline: old.deadline(),
+        execution: old.execution().clone(),
+        ownership: ownership.clone(),
+      },
+    )
+    .unwrap();
+    let at = octacity_server_domain::Timestamp::from_unix_millis(30).unwrap();
+    let record = FlowNodeRecord::new(
+      &input,
+      &attempt,
+      &definition,
+      FlowRecordObservation {
+        outcome: key("observed"),
+        payload: FlowPayload::new(&schema, serde_json::json!({"count":9})).unwrap(),
+        producer: attempt.execution().clone(),
+        observed_at: at,
+      },
+    )
+    .unwrap();
+    assert!(
+      record
+        .completion(&attempt, &definition, ownership, BudgetUsage::default(), at)
+        .is_err(),
+      "{kind:?} requires actual Build proof even when its binding is absent"
+    );
+  }
+}
+
+#[test]
 fn an_ordinary_build_cannot_select_another_declared_semantic_outcome() {
   let (work, admitted, schema, _, original_attempt) = execution_fixture(FlowNodeKind::Reasoning);
   let original = admitted.closure().definition(admitted.closure().root()).unwrap();
@@ -1049,4 +1132,103 @@ fn declared_artifact_collections_select_every_exact_requirement_without_extra_co
   duplicate["entries"]["requirements.0"] = serde_json::json!({"source_kind":"specification","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifacts[0]}}}});
   let duplicate: FlowContextBinding = serde_json::from_value(duplicate).unwrap();
   assert!(duplicate.selected_sources(&input).is_err());
+}
+
+#[test]
+fn build_intent_reserves_the_factory_aggregate_separately_from_its_owning_flow() {
+  let (work, admitted, _, original_input, original_attempt) = execution_fixture(FlowNodeKind::BuildCommand);
+  let local = admitted
+    .closure()
+    .definition(original_input.definition())
+    .unwrap()
+    .execution()
+    .budget();
+  let mut wire = serde_json::to_value(&admitted).unwrap();
+  wire["limits"]["budget"]["max_attempts"] = serde_json::json!(local.max_attempts() + 10);
+  let admitted: AdmittedFlow = serde_json::from_value(wire).unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    original_input.node().clone(),
+    original_input.payload().clone(),
+  )
+  .unwrap()
+  .with_context(original_input.context().unwrap().clone(), vec![])
+  .unwrap();
+  let definition = admitted.closure().definition(input.definition()).unwrap();
+  let attempt = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    definition,
+    NodeAttemptInput {
+      id: original_attempt.id(),
+      node_key: input.node().clone(),
+      node_kind: FlowNodeKind::BuildCommand,
+      number: original_attempt.number(),
+      input_digest: input.digest().unwrap(),
+      budget: original_attempt.budget(),
+      started_at: original_attempt.started_at(),
+      deadline: original_attempt.deadline(),
+      execution: original_attempt.execution().clone(),
+      ownership: FactoryClaimOwnership::new(original_attempt.owner().clone(), original_attempt.claim()),
+    },
+  )
+  .unwrap();
+  // Earlier sibling/child work belongs to the Factory aggregate. A new local
+  // reservation must not treat those attempts as consumption of this Flow.
+  let aggregate = BudgetUsage {
+    attempts: local.max_attempts() + 1,
+    ..Default::default()
+  };
+  let intent = FlowBuildIntent::new(input, &admitted, attempt, aggregate, 7)
+    .expect("aggregate reservation is inside admission and separate from the local ceiling");
+  assert_eq!(intent.usage_before(), aggregate);
+}
+
+#[test]
+fn build_reservation_keeps_the_owning_flow_attempt_ceiling_even_with_spare_aggregate_budget() {
+  let (_, admitted, _, input, attempt) = execution_fixture(FlowNodeKind::BuildCommand);
+  let definition = admitted.closure().definition(input.definition()).unwrap();
+  let intent = FlowBuildIntent::new(input, &admitted, attempt.clone(), BudgetUsage::default(), 7).unwrap();
+  let mut prior = vec![];
+  let mut history = FlowRuntimeHistory {
+    flow_runs: std::slice::from_ref(admitted.root_run()),
+    cycles: std::slice::from_ref(admitted.initial_cycle()),
+    attempts: &[],
+    completions: &[],
+    stops: &[],
+  };
+  intent.verify_reservation(&admitted, history).unwrap();
+  for number in 1..=definition.execution().budget().max_attempts() {
+    prior.push(
+      NodeAttempt::new(
+        admitted.root_run(),
+        admitted.initial_cycle(),
+        definition,
+        NodeAttemptInput {
+          id: NodeAttemptId::generate(),
+          node_key: attempt.node_key().clone(),
+          node_kind: attempt.node_kind(),
+          number: NodeAttemptNumber::new(u64::from(number)).unwrap(),
+          input_digest: attempt.input_digest(),
+          budget: attempt.budget(),
+          started_at: attempt.started_at(),
+          deadline: attempt.deadline(),
+          execution: attempt.execution().clone(),
+          ownership: FactoryClaimOwnership::new(attempt.owner().clone(), attempt.claim()),
+        },
+      )
+      .unwrap(),
+    );
+  }
+  history.attempts = &prior;
+  assert!(
+    matches!(
+      intent.verify_reservation(&admitted, history),
+      Err(FactoryError::BudgetExceeded { .. })
+    ),
+    "a local attempt limit is enforced independently of aggregate capacity"
+  );
 }

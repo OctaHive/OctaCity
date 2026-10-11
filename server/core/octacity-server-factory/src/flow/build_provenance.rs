@@ -1,6 +1,6 @@
 use crate::{
   EvidenceOutputKind, EvidenceProducer, FactoryArtifactReference, FactoryError, FactoryKey, FlowBuildProfile,
-  FlowDefinition, FlowNodeInput, FlowNodeKind, FlowPayload, ImmutableReference,
+  FlowDefinition, FlowNodeInput, FlowPayload, ImmutableReference,
 };
 use octacity_server_domain::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -123,8 +123,8 @@ impl FlowBuildProvenance {
       .iter()
       .find(|output| output.name == binding.result_output)
       .ok_or_else(invalid)?;
-    if !matches!(node.kind(), FlowNodeKind::BuildCommand | FlowNodeKind::Reasoning)
-      || Self::new(self.profile.clone(), self.outputs.clone())? != *self
+    binding.validate_node(node)?;
+    if Self::new(self.profile.clone(), self.outputs.clone())? != *self
       || self.profile.definition != definition.reference()
       || &self.profile.node != input.node()
       || self.profile.tool != binding.tool

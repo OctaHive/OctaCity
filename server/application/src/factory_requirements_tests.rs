@@ -27,9 +27,9 @@ fn at(value: i64) -> octacity_server_domain::Timestamp {
   octacity_server_domain::Timestamp::from_unix_millis(value).unwrap()
 }
 
-struct QualifiedOutputs {
-  feedback: Option<FactoryKey>,
-  validation: Option<Arc<ValidationCase>>,
+pub(crate) struct QualifiedOutputs {
+  pub(crate) feedback: Option<FactoryKey>,
+  pub(crate) validation: Option<Arc<ValidationCase>>,
 }
 impl FactoryTestOutputBuilder for QualifiedOutputs {
   fn outputs(
@@ -234,11 +234,11 @@ pub(crate) enum PublicationCase {
   StaleReview,
   HumanDeclined,
 }
-struct Publisher {
-  behavior: PublicationCase,
-  lost: AtomicBool,
-  writes: Mutex<BTreeMap<FactoryDigest, FactoryCandidatePublication>>,
-  requests: Mutex<Vec<FactoryCandidatePublicationRequest>>,
+pub(crate) struct Publisher {
+  pub(crate) behavior: PublicationCase,
+  pub(crate) lost: AtomicBool,
+  pub(crate) writes: Mutex<BTreeMap<FactoryDigest, FactoryCandidatePublication>>,
+  pub(crate) requests: Mutex<Vec<FactoryCandidatePublicationRequest>>,
 }
 #[async_trait]
 impl FactoryCandidatePublisher for Publisher {
@@ -862,7 +862,7 @@ fn implementation_and_verification_defects_rerun_requirements_without_reusing_pr
   }
 }
 
-struct ValidationCase {
+pub(crate) struct ValidationCase {
   classification: &'static str,
   exhaust: bool,
   candidates: Mutex<Vec<Value>>,

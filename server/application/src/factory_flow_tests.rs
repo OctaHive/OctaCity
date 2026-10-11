@@ -141,8 +141,8 @@ pub(crate) struct Execution {
   pub(crate) clock: std::sync::atomic::AtomicI64,
   pub(crate) seeder: Option<Arc<dyn FactoryTestBuildSeeder>>,
   builds: Mutex<BTreeMap<FactoryDigest, Arc<Builds>>>,
-  requirements: BTreeMap<FactoryKey, Vec<EvidenceRequirement>>,
-  result_schemas: BTreeMap<FactoryKey, ImmutableReference>,
+  pub(crate) requirements: BTreeMap<FactoryKey, Vec<EvidenceRequirement>>,
+  pub(crate) result_schemas: BTreeMap<FactoryKey, ImmutableReference>,
   pub(crate) reports: BTreeMap<FactoryKey, serde_json::Value>,
   pub(crate) facts: BTreeMap<FactoryKey, serde_json::Value>,
   pub(crate) output_builder: Option<Arc<dyn FactoryTestOutputBuilder>>,
@@ -158,14 +158,33 @@ pub(crate) trait FactoryTestOutputBuilder: Send + Sync {
 }
 impl Execution {
   pub(crate) fn by_build(&self, id: octacity_server_domain::BuildId) -> Arc<Builds> {
-    self
+    let build = self
       .builds
       .lock()
       .unwrap()
       .values()
       .find(|build| build.acceptance.build_id == id)
       .unwrap()
-      .clone()
+      .clone();
+    let window = build
+      .requests
+      .lock()
+      .unwrap()
+      .first()
+      .and_then(|request| request.causality.action.as_ref())
+      .and_then(|action| action.parameters().get("plan"))
+      .and_then(|plan| plan.get("observation_window_millis"))
+      .and_then(serde_json::Value::as_u64);
+    if let Some(window) = window {
+      let ready = self.clock.load(std::sync::atomic::Ordering::SeqCst)
+        >= build.created_at.unix_millis() + i64::try_from(window).unwrap();
+      *build.state.lock().unwrap() = if ready {
+        octacity_server_orchestrator::BuildState::Succeeded
+      } else {
+        octacity_server_orchestrator::BuildState::Queued
+      };
+    }
+    build
   }
 }
 #[async_trait]
@@ -192,7 +211,9 @@ impl OrdinaryBuildApplication for Execution {
       map
         .entry(request.operation_id)
         .or_insert_with(|| {
-          let builds = Arc::new(Builds::new_at(at(self.clock.load(std::sync::atomic::Ordering::SeqCst))));
+          let mut configured = Builds::new_at(at(self.clock.load(std::sync::atomic::Ordering::SeqCst)));
+          configured.acceptance.effective_policy_digest = request.effective_permissions.digest();
+          let builds = Arc::new(configured);
           *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
           builds
         })

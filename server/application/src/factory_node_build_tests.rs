@@ -31,6 +31,8 @@ fn ordinary_verification_build_receives_the_exact_admitted_plan_without_implemen
       assert_eq!(Some(received), intent.verification_check());
       assert_eq!(received.target().public_contract, work.artifacts().acceptance().clone());
       assert_eq!(requests[0].causality.context.entries().len(), 1);
+      assert!(requests[0].causality.action.is_none());
+      assert!(requests[0].causality.action_input.is_none());
       assert!(requests[0].effective_permissions.mounts().next().is_none());
       assert!(requests[0].effective_permissions.secret_profiles().next().is_none());
     }
@@ -1308,5 +1310,33 @@ fn ordinary_build_receives_the_frozen_public_deliverable_contract() {
     );
     let wire = serde_json::to_string(contract).unwrap();
     assert!(!wire.contains("protected_inventory") && !wire.contains("author_transcript"));
+  });
+}
+
+#[test]
+fn ordinary_build_receives_the_exact_frozen_trusted_action_selection() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = promotion_execution_fixture();
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let mut configured = Builds::new();
+    configured.acceptance.effective_policy_digest = intent.permissions().digest();
+    let builds = Arc::new(configured);
+    FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)))
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    let requests = builds.requests.lock().unwrap();
+    assert_eq!(requests[0].causality.action.as_ref(), intent.action());
+    assert_eq!(
+      requests[0]
+        .causality
+        .context
+        .subject()
+        .candidate()
+        .unwrap()
+        .candidate_revision()
+        .as_str(),
+      "accepted-candidate"
+    );
   });
 }

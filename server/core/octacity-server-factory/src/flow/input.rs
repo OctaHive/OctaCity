@@ -302,7 +302,7 @@ impl FlowNodeInput {
   pub const fn caller_input_digest(&self) -> Option<FactoryDigest> {
     self.caller_input_digest
   }
-  pub(super) fn verify_work(&self, work: &WorkEnvelope, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
+  pub(crate) fn verify_work(&self, work: &WorkEnvelope, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
     self.verify_admission(admitted)?;
     if self.work_id != work.id()
       || self.work_digest != work_digest(work)?

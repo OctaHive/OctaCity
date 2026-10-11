@@ -42,6 +42,8 @@ mod factory_build;
 mod factory_build_service;
 pub use factory_build_service::{FactoryBuildMaterializer, FactoryOrdinaryBuildService};
 mod factory_candidate_publication;
+mod factory_promotion;
+pub use factory_promotion::FactoryPromotionBuildAdapter;
 mod factory_codex;
 mod factory_codex_contract;
 mod factory_codex_observation;
@@ -63,6 +65,10 @@ mod factory_decision_signal;
 mod factory_decision_signal_tests;
 mod factory_evaluation;
 mod factory_evidence;
+#[cfg(test)]
+mod factory_promotion_tests;
+#[cfg(test)]
+mod factory_release_journey_tests;
 mod factory_verification;
 #[cfg(test)]
 mod factory_verification_tests;

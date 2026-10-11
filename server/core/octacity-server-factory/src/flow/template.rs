@@ -211,6 +211,9 @@ impl FlowDefinitionTemplate {
         if let Some(binding) = &choice.context_binding {
           node = node.with_context_binding(binding.clone())?;
         }
+        if let Some(action) = &choice.action {
+          node = node.with_action(action.clone())?;
+        }
         if let Some(profile) = &choice.build_profile {
           let mut binding = profiles.get(profile).ok_or_else(invalid)?.clone();
           if let Some(contract) = &choice.capture_deliverables {
@@ -249,9 +252,6 @@ impl FlowDefinitionTemplate {
         }
         if !choice.accepted_work_outcomes.is_empty() {
           node = node.with_accepted_work_outcomes(choice.accepted_work_outcomes.clone())?;
-        }
-        if let Some(action) = &choice.action {
-          node = node.with_action(action.clone())?;
         }
         if let Some(pool) = &choice.pool {
           node = node.with_phase_pool(pool.clone());

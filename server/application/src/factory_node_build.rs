@@ -136,6 +136,7 @@ pub struct FactoryNodeBuildCompletion {
 pub struct FactoryNodeBuildAdapter<B, O> {
   builds: Arc<B>,
   outputs: Arc<O>,
+  action_input: Option<serde_json::Value>,
 }
 impl<B, O> FactoryNodeBuildAdapter<B, O>
 where
@@ -145,7 +146,28 @@ where
   /// Connects ordinary Build creation/query and bounded retained-output access.
   #[must_use]
   pub fn new(builds: Arc<B>, outputs: Arc<O>) -> Self {
-    Self { builds, outputs }
+    Self {
+      builds,
+      outputs,
+      action_input: None,
+    }
+  }
+  // Installed capabilities derive this bounded document from the frozen owner
+  // request. The common adapter does not interpret business policy or Flow names.
+  pub(crate) fn with_action_input(&self, input: serde_json::Value) -> Result<Self, ApplicationError> {
+    if !input.is_object()
+      || serde_json::to_vec(&input)
+        .map_err(|_| ApplicationError::invalid())?
+        .len()
+        > MAX_FLOW_DATA_BYTES
+    {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(Self {
+      builds: self.builds.clone(),
+      outputs: self.outputs.clone(),
+      action_input: Some(input),
+    })
   }
   /// Dispatches or observes the stable operation under current fenced ownership.
   pub async fn observe_or_dispatch(
@@ -178,7 +200,11 @@ where
     {
       return Err(ApplicationError::invalid());
     }
-    let request = factory_build_request(intent, ownership.clone())?;
+    let mut request = factory_build_request(intent, ownership.clone())?;
+    if self.action_input.is_some() && intent.action().is_none() {
+      return Err(ApplicationError::invalid());
+    }
+    request.causality.action_input = self.action_input.clone();
     match observe_build(self.builds.as_ref(), request, intent.node(), ownership.clone(), at).await? {
       BuildObservation::Waiting(observed) => Ok(FactoryNodeBuildStep::Waiting(Box::new(
         FlowBuildExecution::new(intent, observed.build_id, observed.attempt_id, observed.jobs).map_err(invalid)?,
@@ -416,6 +442,8 @@ pub(crate) fn factory_build_request(
       cycle_id: input.cycle_id(),
       node_attempt_id: intent.node().id(),
       profile: intent.profile().clone(),
+      action: intent.action().cloned(),
+      action_input: None,
       verification_check: intent.verification_check().cloned(),
       deliverable_contract: intent
         .profile()
@@ -539,7 +567,7 @@ fn complete_node(
     .usage_before()
     .checked_add(outputs.usage)
     .ok_or_else(ApplicationError::invalid)?
-    .validate(definition.execution().budget())
+    .validate(admitted.limits().budget())
     .map_err(invalid)?;
   let completion = record
     .completion(

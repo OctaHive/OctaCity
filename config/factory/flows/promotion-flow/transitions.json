@@ -1,0 +1,79 @@
+{
+  "transitions": [
+    {
+      "predecessor": "accepted_candidate",
+      "outcome": "accepted",
+      "target": {
+        "kind": "node",
+        "key": "deploy_selected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "deploy_selected",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "observation_policy"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "observation_policy",
+      "outcome": "continue",
+      "target": {
+        "kind": "terminal",
+        "key": "promoted"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "observation_policy",
+      "outcome": "rollback",
+      "target": {
+        "kind": "node",
+        "key": "rollback_selected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "rollback_selected",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "rollback_policy"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "rollback_policy",
+      "outcome": "finished",
+      "target": {
+        "kind": "terminal",
+        "key": "rolled_back"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "rollback_policy",
+      "outcome": "escalate",
+      "target": {
+        "kind": "terminal",
+        "key": "escalated"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ],
+  "terminals": {
+    "promoted": "deployment_receipt",
+    "rolled_back": "deployment_receipt",
+    "escalated": "deployment_receipt"
+  }
+}

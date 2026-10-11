@@ -99,6 +99,13 @@ pub(super) struct ProjectedInput {
   pub caller_input_digest: Option<crate::FactoryDigest>,
 }
 impl FlowInputBinding {
+  pub(crate) fn selects_record(&self, node: &FactoryKey) -> bool {
+    self
+      .sources
+      .values()
+      .any(|source| matches!(source,FlowInputSource::Record{node:selected,..} if selected==node))
+  }
+
   pub(super) fn validate_sources(&self, nodes: &[crate::FlowNodeDefinition]) -> Result<(), FactoryError> {
     for source in self.sources.values() {
       if let FlowInputSource::Record { node, outcome, .. } = source

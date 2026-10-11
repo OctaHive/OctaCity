@@ -43,6 +43,11 @@ pub struct FactoryNodeBuildCausality {
   pub node_attempt_id: octacity_server_factory::NodeAttemptId,
   /// Exact operator-selected model, command, task and Build configuration.
   pub profile: octacity_server_factory::FlowBuildProfile,
+  /// Exact installed trusted-action parameters; absent for model and command nodes.
+  pub action: Option<octacity_server_factory::FlowActionBinding>,
+  /// Bounded protected input derived by the installed action from immutable owner
+  /// facts. Recomputed identically on replay; absent for model and command nodes.
+  pub action_input: Option<serde_json::Value>,
   /// Exact public deliverable requirements frozen for task compilation.
   /// Contains acceptance and scope, never private test content or Artifact grants.
   pub deliverable_contract: Option<octacity_server_factory::CandidateDeliverableContract>,

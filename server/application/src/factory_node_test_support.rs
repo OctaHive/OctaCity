@@ -283,6 +283,39 @@ pub(crate) fn document_kind(
   tool: ImmutableReference,
   kind: EvidenceOutputKind,
 ) -> FactoryNodeBuildOutputDocument {
+  document_kind_at(builds, name, schema, bytes, tool, kind, builds.created_at)
+}
+
+// Observation receipts become immutable when their measurement window finishes,
+// which may be later than Build creation. Other fixtures keep the existing time.
+pub(crate) fn document_at(
+  builds: &Builds,
+  name: &FactoryKey,
+  schema: &ImmutableReference,
+  bytes: Vec<u8>,
+  tool: ImmutableReference,
+  published_at: octacity_server_domain::Timestamp,
+) -> FactoryNodeBuildOutputDocument {
+  document_kind_at(
+    builds,
+    name,
+    schema,
+    bytes,
+    tool,
+    EvidenceOutputKind::Report,
+    published_at,
+  )
+}
+
+fn document_kind_at(
+  builds: &Builds,
+  name: &FactoryKey,
+  schema: &ImmutableReference,
+  bytes: Vec<u8>,
+  tool: ImmutableReference,
+  kind: EvidenceOutputKind,
+  published_at: octacity_server_domain::Timestamp,
+) -> FactoryNodeBuildOutputDocument {
   use octacity_server_artifacts::*;
   let (attempt_id, job_id) = {
     let latest = builds.latest.lock().unwrap();
@@ -315,11 +348,11 @@ pub(crate) fn document_kind(
       &identity,
       record.version(),
       ArtifactEvent::BeginVerification,
-      builds.created_at,
+      published_at,
     )
     .unwrap();
   let record = record
-    .transition(&identity, record.version(), ArtifactEvent::Publish, builds.created_at)
+    .transition(&identity, record.version(), ArtifactEvent::Publish, published_at)
     .unwrap();
   FactoryNodeBuildOutputDocument {
     record,

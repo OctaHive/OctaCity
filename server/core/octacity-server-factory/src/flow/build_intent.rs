@@ -8,7 +8,9 @@ use serde::Serialize;
 ///
 /// The Flow owner persists this intent before dispatch and supplies cumulative
 /// usage from authoritative history. Construction reserves one external execution
-/// under the owning Flow budget; it never grants readiness or current ownership.
+/// under the admitted aggregate budget. The owner and store separately check the
+/// owning Flow reservation against authoritative history before publication.
+/// Neither check grants readiness or current ownership.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FlowBuildIntent {
   input: FlowNodeInput,
@@ -16,6 +18,8 @@ pub struct FlowBuildIntent {
   usage_before: BudgetUsage,
   priority: i64,
   profile: FlowBuildProfile,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  action: Option<crate::FlowActionBinding>,
   result_outcome: FactoryKey,
   permissions: FactoryPermissionSet,
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -53,15 +57,9 @@ impl FlowBuildIntent {
     }
     let budget = node.budget();
     usage_before
-      .checked_add(BudgetUsage {
-        attempts: 1,
-        elapsed_millis: budget.max_elapsed_millis(),
-        tokens: budget.max_tokens(),
-        cost_micro_units: budget.max_cost_micro_units(),
-        output_bytes: budget.max_output_bytes(),
-      })
+      .checked_add(reservation(budget))
       .ok_or_else(invalid)?
-      .validate(definition.execution().budget())?;
+      .validate(admitted.limits().budget())?;
     let profile = FlowBuildProfile {
       definition: definition.reference(),
       node: declared.key().clone(),
@@ -91,6 +89,7 @@ impl FlowBuildIntent {
       usage_before,
       priority,
       profile,
+      action: declared.action().cloned(),
       result_outcome: binding.result_outcome.clone(),
       permissions: declared.permissions().clone(),
     };
@@ -98,6 +97,42 @@ impl FlowBuildIntent {
       return Err(invalid());
     }
     Ok(intent)
+  }
+  /// Checks the local ceiling at intent publication, using owner-retained history.
+  /// The prospective attempt may already be present in the append; it is counted
+  /// exactly once. This is not an observation/replay check against later history.
+  pub fn verify_reservation(
+    &self,
+    admitted: &AdmittedFlow,
+    history: crate::FlowRuntimeHistory<'_>,
+  ) -> Result<(), FactoryError> {
+    let definition = admitted
+      .closure()
+      .definition(self.input.definition())
+      .ok_or_else(invalid)?;
+    let mut usage = history
+      .observed_usage_by_flow()?
+      .get(&self.input.flow_run_id())
+      .copied()
+      .unwrap_or_default();
+    usage.attempts = u32::try_from(
+      history
+        .attempts
+        .iter()
+        .filter(|attempt| attempt.flow_run_id() == self.input.flow_run_id() && attempt.id() != self.node.id())
+        .count(),
+    )
+    .map_err(|_| invalid())?;
+    usage
+      .checked_add(reservation(self.node.budget()))
+      .ok_or_else(invalid)?
+      .validate(definition.execution().budget())
+      .map(|_| ())
+  }
+  /// Exact installed action parameters, absent for command/reasoning nodes.
+  #[must_use]
+  pub const fn action(&self) -> Option<&crate::FlowActionBinding> {
+    self.action.as_ref()
   }
   /// Restores against exact trusted input, attempt, admission and retained operation identity.
   pub fn restore(
@@ -182,6 +217,15 @@ impl FlowBuildIntent {
   #[must_use]
   pub const fn verification_check(&self) -> Option<&crate::VerificationCheckInput> {
     self.verification_check.as_ref()
+  }
+}
+fn reservation(budget: BudgetLimit) -> BudgetUsage {
+  BudgetUsage {
+    attempts: 1,
+    elapsed_millis: budget.max_elapsed_millis(),
+    tokens: budget.max_tokens(),
+    cost_micro_units: budget.max_cost_micro_units(),
+    output_bytes: budget.max_output_bytes(),
   }
 }
 fn invalid() -> FactoryError {

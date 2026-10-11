@@ -263,12 +263,14 @@ impl FlowGateProgram {
       return Err(invalid());
     }
     let program: Self = serde_json::from_value(binding.parameters().clone()).map_err(|_| invalid())?;
-    if node.outcome(&program.fallback).is_none()
-      || program.rules.iter().any(|rule| node.outcome(&rule.outcome).is_none())
-    {
+    program.validate_outcomes(node)?;
+    Ok(program)
+  }
+  pub(crate) fn validate_outcomes(&self, node: &FlowNodeDefinition) -> Result<(), FactoryError> {
+    if node.outcome(&self.fallback).is_none() || self.rules.iter().any(|rule| node.outcome(&rule.outcome).is_none()) {
       return Err(invalid());
     }
-    Ok(program)
+    Ok(())
   }
   /// Validates and freezes rules; thresholds and logical names come from configuration.
   pub fn new(rules: Vec<FlowGateRule>, fallback: FactoryKey) -> Result<Self, FactoryError> {

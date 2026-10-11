@@ -1,0 +1,48 @@
+{
+  "nodes": [
+    {
+      "key": "accepted_candidate",
+      "kind": "deterministic_gate",
+      "input_schema": "release_input",
+      "outcomes": [
+        {
+          "key": "accepted",
+          "kind": "success",
+          "schema": "release_input"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "caller": {
+            "source": "caller_input",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/caller"
+          }
+        }
+      },
+      "gate": {
+        "rules": [],
+        "fallback": "accepted",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": ""
+          }
+        }
+      }
+    }
+  ]
+}

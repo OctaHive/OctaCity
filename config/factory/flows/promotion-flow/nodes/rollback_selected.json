@@ -1,0 +1,177 @@
+{
+  "nodes": [
+    {
+      "key": "rollback_selected",
+      "kind": "trusted_action",
+      "input_schema": "release_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "deployment_receipt"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "candidate": {
+            "source": "record",
+            "node": "accepted_candidate",
+            "outcome": "accepted",
+            "view": "payload",
+            "path": ""
+          },
+          "disposition": {
+            "source": "record",
+            "node": "observation_policy",
+            "outcome": "rollback",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/candidate"
+          }
+        }
+      },
+      "permissions": {
+        "plugins": [
+          {
+            "identity": "factory.deployment-build",
+            "version": "v1",
+            "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          }
+        ],
+        "executables": [],
+        "tools": [],
+        "commands": [],
+        "max_descendants": 0,
+        "mounts": [],
+        "network_hosts": [],
+        "secret_profiles": [],
+        "workload_identity_profiles": [],
+        "resources": {
+          "cpu_millis": 0,
+          "memory_bytes": 0,
+          "disk_bytes": 0,
+          "process_count": 0,
+          "elapsed_millis": 0
+        },
+        "outputs": {
+          "kinds": [],
+          "max_artifact_count": 0,
+          "max_artifact_bytes": 0,
+          "max_report_count": 0,
+          "max_report_bytes": 0
+        }
+      },
+      "build_profile": "deployment-rollback",
+      "action": {
+        "plugin": {
+          "identity": "factory.deployment-build",
+          "version": "v1",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "action": "invoke_rollback",
+        "parameters": {
+          "plan": {
+            "strategy": "stage-only",
+            "environments": {
+              "pilot": {
+                "identity": "operator.stage-environment",
+                "version": "v1",
+                "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+              }
+            },
+            "allocation": {
+              "cohort": "pilot",
+              "basis_points": 1000
+            },
+            "observation_window_millis": 1,
+            "evidence_requirements": [],
+            "required_gates": [
+              "accepted_candidate",
+              "observation_policy"
+            ],
+            "criteria": "rollback_policy",
+            "production_environments": [],
+            "allow_immediate_low_risk": false
+          }
+        }
+      },
+      "context_binding": {
+        "candidate_revision": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/candidate_revision"
+          }
+        },
+        "entries": {
+          "candidate_bundle": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/bundle"
+                  }
+                }
+              }
+            }
+          },
+          "candidate_manifest": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/manifest"
+                  }
+                }
+              }
+            }
+          },
+          "public_contract": {
+            "source_kind": "evidence",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/public_contract"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

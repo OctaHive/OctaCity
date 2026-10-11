@@ -1,0 +1,116 @@
+{
+  "nodes": [
+    {
+      "key": "observation_policy",
+      "kind": "deterministic_gate",
+      "input_schema": "qualified_observation",
+      "outcomes": [
+        {
+          "key": "continue",
+          "kind": "success",
+          "schema": "deployment_receipt"
+        },
+        {
+          "key": "rollback",
+          "kind": "failure",
+          "schema": "deployment_receipt"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "observation": {
+            "source": "record",
+            "node": "deploy_selected",
+            "outcome": "observed",
+            "view": "payload",
+            "path": ""
+          },
+          "freshness": {
+            "source": "record",
+            "node": "deploy_selected",
+            "outcome": "observed",
+            "view": "metadata",
+            "path": "/build/outputs/deployment_receipt/fresh_until"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "observation": {
+                "mapping": "pointer",
+                "path": "/observation"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/freshness"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/observation/outcome"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "passed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/observation/measurements/errors"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": 0
+                  }
+                }
+              ]
+            },
+            "outcome": "continue"
+          }
+        ],
+        "fallback": "rollback",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/observation"
+          }
+        },
+        "precondition": {
+          "operation": "compare",
+          "left": {
+            "source": "path",
+            "path": "/fresh_until"
+          },
+          "comparison": "greater",
+          "right": {
+            "source": "observation_time"
+          }
+        }
+      }
+    }
+  ]
+}

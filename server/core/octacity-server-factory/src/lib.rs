@@ -227,3 +227,9 @@ pub mod testing;
 
 #[cfg(any(test, feature = "test-support"))]
 pub use testing::FactoryStageKind;
+
+#[cfg(test)]
+mod promotion_plan_tests;
+
+mod promotion_plan;
+pub use promotion_plan::{PromotionObservation, PromotionPlan, PromotionPolicy};

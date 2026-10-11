@@ -533,6 +533,9 @@ fn validate_node_journal(
     }
   }
   for intent in &request.append.flow.data.build_intents {
+    intent
+      .verify_reservation(baseline.admitted_flow, history)
+      .map_err(|_| invalid())?;
     if intent.priority() != i64::from(baseline.work.priority().get()) || intent.usage_before() != baseline.budget.usage
     {
       return Err(invalid());

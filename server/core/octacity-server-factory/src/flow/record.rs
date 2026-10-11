@@ -197,11 +197,13 @@ impl FlowNodeRecord {
     }
     attempt.verify_observer(&ownership, at)?;
     self.validate_binding(attempt, definition)?;
-    if matches!(
+    let requires_build = matches!(
       attempt.node_kind(),
       crate::FlowNodeKind::BuildCommand | crate::FlowNodeKind::Reasoning
-    ) && self.build.is_none()
-    {
+    ) || definition
+      .node(attempt.node_key())
+      .is_some_and(|node| node.build().is_some());
+    if requires_build && self.build.is_none() {
       return Err(invalid());
     }
     if let Some(provenance) = &self.build {
