@@ -13,12 +13,16 @@ mod factory_node_test_support;
 #[allow(dead_code)]
 #[path = "../../application/src/factory_flow_tests.rs"]
 mod flow_contract;
+use flow_contract as factory_flow_tests;
 #[allow(dead_code)]
 #[path = "../../application/src/factory_flow_control_tests.rs"]
 mod human_contract;
 #[allow(dead_code)]
 #[path = "../../infrastructure/octacity-server-store-postgres/tests/support/mod.rs"]
 mod postgres_support;
+#[allow(dead_code)]
+#[path = "../../application/src/factory_requirements_tests.rs"]
+mod requirements_contract;
 
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
@@ -1732,4 +1736,51 @@ async fn signed_job_capture_cannot_widen_the_frozen_node_write_scope() {
     Some(accepted)
   );
   database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn declared_correction_cycles_retain_exact_causality_across_postgres_restart() {
+  let database = postgres_support::TestDatabase::migrated().await;
+  let (admission, execution) = flow_contract::correction_fixture();
+  let store = admit(&database.pool, &admission).await;
+  let mut execution = Arc::try_unwrap(execution).ok().unwrap();
+  execution.seeder = Some(Arc::new(Seeder {
+    pool: database.pool.clone(),
+    seeded: Mutex::new(Default::default()),
+  }));
+  let restarted = Arc::new(PostgresStore::new(database.pool.clone()));
+  flow_contract::verify_correction_owner(store, restarted, &admission, Arc::new(execution)).await;
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn specification_publication_and_correction_recover_exact_contracts_in_postgres() {
+  for feedback in [None, Some("implementation"), Some("verification")] {
+    let database = postgres_support::TestDatabase::migrated().await;
+    let (admission, execution) = requirements_contract::specified_fixture(
+      "feature_request",
+      "large",
+      "requirements",
+      feedback,
+      requirements_contract::PublicationCase::LostResponse,
+    );
+    let store = admit(&database.pool, &admission).await;
+    let mut execution = Arc::try_unwrap(execution).ok().unwrap();
+    execution.seeder = Some(Arc::new(Seeder {
+      pool: database.pool.clone(),
+      seeded: Mutex::new(Default::default()),
+    }));
+    requirements_contract::verify_specified_owner(
+      store,
+      Arc::new(PostgresStore::new(database.pool.clone())),
+      &admission,
+      Arc::new(execution),
+      requirements_contract::PublicationCase::LostResponse,
+      feedback,
+    )
+    .await;
+    database.cleanup().await;
+  }
 }

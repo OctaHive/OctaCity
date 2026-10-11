@@ -334,13 +334,7 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
       )];
       let template: FlowDefinitionTemplate =
         serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
-      let handoff_choice = &template.schemas[&key("spec_handoff")];
-      let handoff_schema = FlowDataSchema::new(
-        handoff_choice.identity.clone(),
-        handoff_choice.version.clone(),
-        handoff_choice.shape.clone(),
-      )
-      .unwrap();
+      let handoff_schema = template.data_schemas().unwrap().remove(&key("spec_handoff")).unwrap();
       if kind == FlowNodeKind::Reasoning {
         binding.evidence.push(EvidenceRequirement::new(
           key("specification_handoff"),
@@ -376,7 +370,7 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
       let mut outputs = capture_outputs(&intent, &builds, capture_base);
       outputs.documents[1].schema = schema.reference().clone();
       if kind == FlowNodeKind::Reasoning {
-        let handoff = serde_json::json!({"work_id":work.id().to_string(), "original_base":input.subject().base_revision().as_str(), "predecessor_revision":capture_base, "candidate_revision":"captured-revision", "input_digest":input.digest().unwrap().to_string(), "work_kind":"feature_request", "contract_path":"openspec/specs/example/spec.md", "change_path":"openspec/changes/example/proposal.md", "acceptance_criteria":["new behavior has an exact contract"], "regression_criteria":[]});
+        let handoff = serde_json::json!({"work_id":work.id().to_string(), "original_base":input.subject().base_revision().as_str(), "predecessor_revision":capture_base, "candidate_revision":"captured-revision", "input_digest":input.digest().unwrap().to_string(), "work_kind":"feature_request", "contract_path":"openspec/specs/example/spec.md", "change_path":"openspec/changes/example/proposal.md", "acceptance_criteria":["new behavior has an exact contract"], "regression_criteria":[],"declared_requirements":[]});
         let mut document = crate::factory_node_test_support::document(
           &builds,
           &key("specification_handoff"),

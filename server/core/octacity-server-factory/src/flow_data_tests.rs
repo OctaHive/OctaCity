@@ -1242,3 +1242,11 @@ fn a_decision_signal_binds_its_common_node_and_frozen_input() {
     .is_err()
   );
 }
+
+#[test]
+fn a_predecessor_can_explicitly_select_the_frozen_input_without_trusting_its_result() {
+  verify_record_source(
+    serde_json::from_value(serde_json::json!({"source":"predecessor","view":"input_payload","path":"/count"})).unwrap(),
+    3,
+  );
+}

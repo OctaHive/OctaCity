@@ -264,8 +264,8 @@ pub(super) async fn read_workflow_cycles(
   run_id: FactoryRunId,
   flow_runs: &[FlowRun],
 ) -> Result<Vec<WorkflowCycle>, StoreError> {
-  let rows = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, i64, Option<uuid::Uuid>)>(
-    "SELECT id, flow_run_id, cycle_number, predecessor_id FROM factory_workflow_cycles \
+  let rows = sqlx::query_as::<_, (uuid::Uuid, uuid::Uuid, i64, Option<uuid::Uuid>, Option<uuid::Uuid>)>(
+    "SELECT id, flow_run_id, cycle_number, predecessor_id, source_attempt_id FROM factory_workflow_cycles \
      WHERE factory_run_id = $1 ORDER BY cycle_number, id",
   )
   .bind(run_id.as_uuid())
@@ -273,7 +273,7 @@ pub(super) async fn read_workflow_cycles(
   .await
   .map_err(unavailable)?;
   let mut cycles = Vec::with_capacity(rows.len());
-  for (id, flow_run_id, number, predecessor_id) in rows {
+  for (id, flow_run_id, number, predecessor_id, source_attempt_id) in rows {
     let flow_run_id = FlowRunId::from_uuid(flow_run_id).map_err(|_| StoreError::Unavailable)?;
     let flow_run = flow_runs
       .iter()
@@ -281,7 +281,7 @@ pub(super) async fn read_workflow_cycles(
       .ok_or(StoreError::Unavailable)?;
     let number = WorkflowCycleNumber::new(positive(number)?).map_err(|_| StoreError::Unavailable)?;
     let cycle = match predecessor_id {
-      None if number == WorkflowCycleNumber::INITIAL => {
+      None if number == WorkflowCycleNumber::INITIAL && source_attempt_id.is_none() => {
         let cycle = WorkflowCycle::initial(flow_run).map_err(|_| StoreError::Unavailable)?;
         (cycle.id().as_uuid() == id)
           .then_some(cycle)
@@ -301,6 +301,8 @@ pub(super) async fn read_workflow_cycles(
           flow_run_id,
           number,
           predecessor,
+          NodeAttemptId::from_uuid(source_attempt_id.ok_or(StoreError::Unavailable)?)
+            .map_err(|_| StoreError::Unavailable)?,
         )
       }
       _ => return Err(StoreError::Unavailable),

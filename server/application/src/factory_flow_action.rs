@@ -28,6 +28,8 @@ pub struct FactoryFlowActionRequest<'a> {
   pub budget: BudgetLimit,
   /// Authoritative stop deadline, never extended by a retry.
   pub deadline: Timestamp,
+  /// Trusted observation time used to enforce input validity before effects.
+  pub observed_at: Timestamp,
 }
 
 /// Trusted plugin execution facts; the Flow validates the declared outcome again.
@@ -127,6 +129,7 @@ impl FactoryFlowActionAdapter {
       permissions: node.permissions(),
       budget: node.budget(),
       deadline: request.attempt.deadline(),
+      observed_at: request.observed_at,
     })
   }
 }

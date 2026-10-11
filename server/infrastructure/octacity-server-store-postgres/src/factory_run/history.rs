@@ -70,14 +70,15 @@ async fn insert_workflow_cycle(
 ) -> Result<(), StoreError> {
   sqlx::query(
     "INSERT INTO factory_workflow_cycles \
-       (id, factory_run_id, flow_run_id, cycle_number, predecessor_id, created_at) \
-     VALUES ($1, $2, $3, $4, $5, to_timestamp($6::double precision / 1000.0))",
+       (id, factory_run_id, flow_run_id, cycle_number, predecessor_id, source_attempt_id, created_at) \
+     VALUES ($1, $2, $3, $4, $5, $6, to_timestamp($7::double precision / 1000.0))",
   )
   .bind(record.id().as_uuid())
   .bind(run_id.as_uuid())
   .bind(record.flow_run_id().as_uuid())
   .bind(number(record.number().get())?)
   .bind(record.predecessor().map(|id| id.as_uuid()))
+  .bind(record.source_attempt_id().map(|id| id.as_uuid()))
   .bind(recorded_at.unix_millis())
   .execute(&mut **tx)
   .await
@@ -319,6 +320,9 @@ async fn insert_flow_history(
     }
     while let Some(index) = cycles.iter().position(|cycle| {
       !runs.iter().any(|run| run.id() == cycle.flow_run_id())
+        && cycle
+          .source_attempt_id()
+          .is_none_or(|id| !attempts.iter().any(|row| row.id() == id))
         && cycle
           .predecessor()
           .is_none_or(|id| !cycles.iter().any(|cycle| cycle.id() == id))

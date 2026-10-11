@@ -95,6 +95,14 @@ readiness for one node. Bounded repeats create new attempts and preserve prior
 records. Each node generation freezes a distinct input and acquires its own
 pool selection and capacity reservation, even for identical payloads.
 
+A configured `starts_cycle` edge records a bounded append-only cycle boundary
+with the exact triggering attempt. The interpreter derives its entry from that
+admitted edge; the journal retains the previous cycle, results and contracts for
+audit. Only the newest cycle and descendants of current parent calls retain
+execution authority. A new entry can explicitly select its triggering predecessor
+result, while other record selections stay within the new cycle. Restart and
+pool readiness use this same interpreter rather than assuming a fixed entry.
+
 The pure interpreter also validates nested definition closures and explicit
 subflow return contracts. A call attempt and one child Flow/cycle are committed
 atomically; the call suspends while the child owns executable WIP. Child nodes
@@ -212,6 +220,17 @@ objects stay outside Flow contracts; exact host and credential grants are
 checked before effects. Projection failure cannot produce a successful node
 completion, and an external status cannot authorize a Factory transition.
 
+`FactoryCandidatePublicationAction` selects a protected publisher through the
+same plugin execution boundary. Its frozen request includes the complete captured
+candidate, exact manifest/bundle, Work and cycle, operator target, permissions,
+budget and deadline. The connector verifies bytes and ancestry, deduplicates the
+whole request and observes the original operation before repeating an ambiguous
+write. Another operation or candidate cannot provide its receipt. Receipt-schema
+validation precedes effects, and review validity narrows the attempt deadline.
+Configured gates independently check exact receipt and review freshness before
+freezing readiness; publication alone is not acceptance. Provider SDKs and merge
+authority remain outside this port.
+
 ### Supplied base Flow and Accepted Work
 
 [`base-intake.json`](../../config/factory/flows/base-intake.json) supplies the
@@ -247,10 +266,12 @@ subject. A policy replacement cannot change an admitted contract.
 
 The supplied bypass route still traverses `protected_tests`, `implementation`,
 `review` and `verification`. The current slice verifies this configured control
-path through the common owner and PostgreSQL restart; dedicated protected-test
-isolation, requirements authoring/review and the full provider deployment
-remain tasks 11, 10.2/10.3 and 16.1. They can bind technical capabilities and
-profiles to these nodes without introducing stage-name dispatch.
+path through the common owner and PostgreSQL restart. Configured specification
+authoring, independent review, exact candidate publication and readiness are
+implemented through generic node contracts and installed capabilities. Dedicated
+protected-test isolation, production deployment and live provider qualification
+remain tasks 11, 16.1 and 16.4. These integrations bind technical capabilities and
+profiles without introducing stage-name dispatch.
 
 ### Durable phase-ready pools
 

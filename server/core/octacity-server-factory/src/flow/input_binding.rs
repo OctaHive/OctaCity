@@ -13,6 +13,9 @@ pub const MAX_FLOW_INPUT_BINDING_BYTES: usize = 16 * 1024;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FlowRecordView {
+  /// Only the producing attempt's frozen input payload, explicitly selected.
+  /// Neither its Context nor model-authored replacements are forwarded.
+  InputPayload,
   /// Only the schema-validated output payload.
   Payload,
   /// Only owner metadata and independently verified output facts.
@@ -169,11 +172,15 @@ impl FlowInputBinding {
             input.payload().value().pointer(path).ok_or_else(invalid)?
           }
           FlowInputSource::Predecessor { view, path } => {
-            let (node, outcome) = predecessor(context)?;
-            let record = select_record(context, node, outcome)?;
+            let attempt = predecessor(context)?;
+            let record = record_for_attempt(context, attempt)?;
             let reference = FlowRecordReference::from_record(record)?;
             references.insert(reference.node_attempt_id(), reference);
             let selected = match view {
+              FlowRecordView::InputPayload => copy_bounded(
+                record.input().payload().value().pointer(path).ok_or_else(invalid)?,
+                &mut remaining,
+              )?,
               FlowRecordView::Payload => copy_bounded(
                 record.payload().value().pointer(path).ok_or_else(invalid)?,
                 &mut remaining,
@@ -214,7 +221,7 @@ impl FlowInputBinding {
     })
   }
 }
-fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<(&'a FactoryKey, &'a FactoryKey), FactoryError> {
+fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<&'a crate::NodeAttempt, FactoryError> {
   let definition = context
     .admitted
     .closure()
@@ -232,10 +239,30 @@ fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<(&'a Factory
     .filter(|attempt| {
       attempt.flow_run_id() == context.flow.id()
         && attempt.workflow_cycle_id() == context.cycle.id()
-        && incoming.iter().any(|edge| edge.predecessor() == attempt.node_key())
+        && incoming
+          .iter()
+          .any(|edge| !edge.starts_cycle() && edge.predecessor() == attempt.node_key())
     })
-    .max_by_key(|attempt| attempt.number())
-    .ok_or_else(invalid)?;
+    .max_by_key(|attempt| attempt.number());
+  let attempt = match attempt {
+    Some(attempt) => attempt,
+    None => {
+      // Only the declared entry can consume the exact boundary trigger. Ordinary
+      // Record selections remain restricted to the containing cycle.
+      let validated = context.admitted.validated()?;
+      if crate::FlowInterpreter::new(&validated).cycle_entry(context.flow, context.cycle, context.history)?
+        != context.node
+      {
+        return Err(invalid());
+      }
+      context
+        .history
+        .attempts
+        .iter()
+        .find(|row| Some(row.id()) == context.cycle.source_attempt_id())
+        .ok_or_else(invalid)?
+    }
+  };
   let completion = context
     .history
     .completions
@@ -248,7 +275,7 @@ fn predecessor<'a>(context: &'a FlowInputPreparation<'_>) -> Result<(&'a Factory
   {
     return Err(invalid());
   }
-  Ok((attempt.node_key(), completion.outcome()))
+  Ok(attempt)
 }
 fn select_record<'a>(
   context: &'a FlowInputPreparation<'_>,
@@ -275,6 +302,18 @@ fn select_record<'a>(
   if completion.outcome() != outcome {
     return Err(invalid());
   }
+  record_for_attempt(context, attempt)
+}
+fn record_for_attempt<'a>(
+  context: &'a FlowInputPreparation<'_>,
+  attempt: &crate::NodeAttempt,
+) -> Result<&'a FlowNodeRecord, FactoryError> {
+  let completion = context
+    .history
+    .completions
+    .iter()
+    .find(|row| row.node_attempt_id() == attempt.id())
+    .ok_or_else(invalid)?;
   let mut records = context
     .records
     .iter()

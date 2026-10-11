@@ -121,6 +121,8 @@ pub struct FlowTransition {
   target: FlowTransitionTarget,
   max_repeats: u16,
   exhausted_terminal: Option<FactoryKey>,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  starts_cycle: bool,
 }
 
 impl FlowTransition {
@@ -133,6 +135,7 @@ impl FlowTransition {
       target,
       max_repeats: 0,
       exhausted_terminal: None,
+      starts_cycle: false,
     }
   }
 
@@ -155,6 +158,7 @@ impl FlowTransition {
       target,
       max_repeats,
       exhausted_terminal: Some(exhausted_terminal),
+      starts_cycle: false,
     })
   }
 
@@ -180,6 +184,12 @@ impl FlowTransition {
   #[must_use]
   pub const fn max_repeats(&self) -> u16 {
     self.max_repeats
+  }
+  /// Whether traversing this explicitly bounded edge supersedes the current cycle.
+  /// The target remains an operator-defined node in this exact definition.
+  #[must_use]
+  pub const fn starts_cycle(&self) -> bool {
+    self.starts_cycle
   }
 
   /// Returns the declared terminal route selected when the repeat bound is exhausted.

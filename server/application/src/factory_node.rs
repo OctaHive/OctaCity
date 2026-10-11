@@ -154,6 +154,9 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       .iter()
       .find(|row| row.id() == target.cycle_id)
       .ok_or_else(ApplicationError::invalid)?;
+    if !runtime(snapshot).is_current_cycle(cycle.id()) {
+      return Err(ApplicationError::invalid());
+    }
     let node = snapshot
       .admitted_flow
       .closure()
@@ -218,6 +221,9 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       .iter()
       .find(|row| row.id() == target.cycle_id && row.flow_run_id() == flow.id())
       .ok_or_else(ApplicationError::invalid)?;
+    if !runtime(&snapshot).is_current_cycle(cycle.id()) {
+      return Err(ApplicationError::invalid());
+    }
     let definition = snapshot
       .admitted_flow
       .closure()

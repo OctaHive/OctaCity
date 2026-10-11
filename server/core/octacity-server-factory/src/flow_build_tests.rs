@@ -952,3 +952,32 @@ fn a_context_contract_requires_a_typed_input_at_publication() {
     "a source mapping cannot read undeclared untyped input"
   );
 }
+
+#[test]
+fn declared_artifact_collections_select_every_exact_requirement_without_extra_context() {
+  let artifacts = (1..=6)
+    .map(|number| {
+      FactoryArtifactReference::new(
+        octacity_server_domain::ArtifactId::generate(),
+        FactoryDigest::from_bytes([number; 32]),
+        100,
+      )
+      .unwrap()
+    })
+    .collect::<Vec<_>>();
+  let binding:FlowContextBinding=serde_json::from_value(serde_json::json!({"entries":{},"artifact_collections":{"requirements":{"source_kind":"specification","source":{"value":{"mapping":"constant","value":artifacts}}}}})).unwrap();
+  let schema = FlowDataSchema::new(key("declared.context"), key("v1"), FlowValueSchema::Boolean).unwrap();
+  let input = FlowPayload::new(&schema, serde_json::json!(true)).unwrap();
+  let selected = binding.selected_sources(&input).unwrap();
+  assert_eq!(selected.len(), 6);
+  for (number, artifact) in artifacts.iter().enumerate() {
+    assert_eq!(
+      selected[&key(&format!("requirements.{number}"))].1,
+      FactoryContextReference::Artifact(artifact.clone())
+    );
+  }
+  let mut duplicate = serde_json::to_value(&binding).unwrap();
+  duplicate["entries"]["requirements.0"] = serde_json::json!({"source_kind":"specification","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifacts[0]}}}});
+  let duplicate: FlowContextBinding = serde_json::from_value(duplicate).unwrap();
+  assert!(duplicate.selected_sources(&input).is_err());
+}

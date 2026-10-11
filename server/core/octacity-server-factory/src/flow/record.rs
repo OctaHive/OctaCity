@@ -50,6 +50,7 @@ impl FlowNodeRecord {
     #[derive(Serialize)]
     struct Metadata<'a> {
       input_digest: FactoryDigest,
+      execution_revision: &'a octacity_server_domain::ImmutableRevision,
       observed_at: Timestamp,
       outcome: &'a FactoryKey,
       schema: &'a ImmutableReference,
@@ -61,6 +62,14 @@ impl FlowNodeRecord {
     });
     serde_json::to_value(Metadata {
       input_digest: self.input.digest()?,
+      execution_revision: self
+        .input
+        .context()
+        .and_then(|context| context.subject().candidate())
+        .map_or_else(
+          || self.input.subject().base_revision(),
+          |candidate| candidate.candidate_revision(),
+        ),
       observed_at: self.observed_at,
       outcome: &self.outcome,
       schema: self.payload.schema(),

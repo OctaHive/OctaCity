@@ -3,6 +3,9 @@ use crate::*;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
+// Bounds alias expansion before allocating a concrete immutable schema.
+const MAX_EXPANDED_SCHEMA_NODES: usize = 4096;
+
 /// Named data shape for an editor or supplied template; publication computes its digest.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -107,6 +110,28 @@ pub struct PublishedFlowTemplate {
   pub schemas: Vec<FlowDataSchema>,
 }
 impl FlowDefinitionTemplate {
+  /// Expands local schema choices under depth, node-count and encoded-size ceilings.
+  /// Consumers get concrete content-addressed contracts; aliases grant no authority.
+  pub fn data_schemas(&self) -> Result<BTreeMap<FactoryKey, FlowDataSchema>, FactoryError> {
+    if self.schemas.is_empty() || self.schemas.len() > MAX_FLOW_SCHEMA_ENTRIES {
+      return Err(invalid());
+    }
+    self
+      .schemas
+      .iter()
+      .map(|(choice, schema)| {
+        let mut remaining = MAX_EXPANDED_SCHEMA_NODES;
+        Ok((
+          choice.clone(),
+          FlowDataSchema::new(
+            schema.identity.clone(),
+            schema.version.clone(),
+            schema.shape.resolve(&self.schemas, 0, &mut remaining)?,
+          )?,
+        ))
+      })
+      .collect::<Result<BTreeMap<_, _>, FactoryError>>()
+  }
   /// Compiles editable choices into an immutable definition, rejecting unknown or invalid choices.
   /// A UI can author this same document; supplied example flows have no special compiler path.
   pub fn instantiate(
@@ -122,16 +147,7 @@ impl FlowDefinitionTemplate {
     {
       return Err(invalid());
     }
-    let schemas = self
-      .schemas
-      .iter()
-      .map(|(choice, schema)| {
-        Ok((
-          choice.clone(),
-          FlowDataSchema::new(schema.identity.clone(), schema.version.clone(), schema.shape.clone())?,
-        ))
-      })
-      .collect::<Result<BTreeMap<_, _>, FactoryError>>()?;
+    let schemas = self.data_schemas()?;
     let resolve = |choice: &FactoryKey| {
       schemas
         .get(choice)

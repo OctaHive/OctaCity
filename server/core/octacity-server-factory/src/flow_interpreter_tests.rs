@@ -842,6 +842,7 @@ fn interpreter_counts_budget_and_repeats_across_workflow_cycles() {
     flow_run.id(),
     crate::WorkflowCycleNumber::new(2).unwrap(),
     first_cycle.id(),
+    NodeAttemptId::from_uuid(Uuid::from_u128(325)).unwrap(),
   );
   let first = attempt(325, 1, &flow_run, &first_cycle, &root, "again", 10);
   let second = attempt(326, 2, &flow_run, &second_cycle, &root, "again", 10);
@@ -904,4 +905,398 @@ fn interpreter_counts_budget_and_repeats_across_workflow_cycles() {
       )
       .is_err()
   );
+}
+
+#[test]
+fn a_declared_bounded_restart_selects_a_new_cycle_at_an_arbitrary_node() {
+  let output = schema("correction.result");
+  let correction = node(
+    "rewrite_contract",
+    FlowNodeKind::Reasoning,
+    None,
+    output.clone(),
+    None,
+    100,
+  );
+  // No business-stage name has any runtime meaning.
+  let transitions=vec![FlowTransition::new(key("rewrite_contract"),key("accepted"),FlowTransitionTarget::Node(key("inspect_result"))),
+    serde_json::from_value(serde_json::json!({"predecessor":"inspect_result","outcome":"accepted","target":{"kind":"node","key":"rewrite_contract"},"max_repeats":1,"exhausted_terminal":"needs_operator","starts_cycle":true})).expect("cycle boundaries are explicitly configured")];
+  let root = definition(
+    801,
+    vec![
+      correction,
+      node(
+        "inspect_result",
+        FlowNodeKind::Reasoning,
+        None,
+        output.clone(),
+        None,
+        100,
+      ),
+    ],
+    transitions,
+    vec![FlowTerminalDefinition::new(key("needs_operator"), output.clone())],
+    vec![],
+    1,
+    100,
+  )
+  .unwrap();
+  let validated = PinnedFlowDefinitionClosure::new(root.reference(), vec![root.clone()])
+    .unwrap()
+    .validate(limits(1, 10, 1, 1, 100))
+    .unwrap();
+  let flow = FlowRun::nested(
+    FlowRunId::generate(),
+    FactoryRunId::generate(),
+    root.reference(),
+    FlowRunParent::new(FlowRunId::generate(), NodeAttemptId::generate()),
+  );
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let first = attempt(802, 1, &flow, &cycle, &root, "rewrite_contract", 100);
+  let second = attempt(803, 2, &flow, &cycle, &root, "inspect_result", 100);
+  let done_first = completion(&first, &root, &output, BudgetUsage::default());
+  let done_second = completion(&second, &root, &output, BudgetUsage::default());
+  let history = FlowRuntimeHistory {
+    stops: &[],
+    flow_runs: std::slice::from_ref(&flow),
+    cycles: std::slice::from_ref(&cycle),
+    attempts: &[first, second.clone()],
+    completions: &[done_first, done_second.clone()],
+  };
+  let interpreter = FlowInterpreter::new(&validated);
+  assert_eq!(
+    interpreter
+      .advance(&flow, &cycle, &second, &done_second, history)
+      .unwrap(),
+    vec![FlowDirective::RestartCycle {
+      node: key("rewrite_contract"),
+      source: second.id()
+    }]
+  );
+  assert_eq!(
+    interpreter.progress(&flow, &cycle, history).unwrap(),
+    crate::FlowProgress::RestartCycle {
+      node: key("rewrite_contract"),
+      source: second.id()
+    }
+  );
+}
+
+#[test]
+fn correction_cycles_retain_their_trigger_and_resume_only_the_declared_entry() {
+  let work = crate::flow_test_support::work();
+  let data_schema =
+    crate::FlowDataSchema::new(key("correction.result"), key("v1"), crate::FlowValueSchema::Boolean).unwrap();
+  let output = data_schema.reference().clone();
+  let transitions=vec![FlowTransition::new(key("intake"),key("accepted"),FlowTransitionTarget::Node(key("rewrite_contract"))),FlowTransition::new(key("rewrite_contract"),key("accepted"),FlowTransitionTarget::Node(key("inspect_result"))),serde_json::from_value(serde_json::json!({"predecessor":"inspect_result","outcome":"accepted","target":{"kind":"node","key":"rewrite_contract"},"max_repeats":1,"exhausted_terminal":"needs_operator","starts_cycle":true})).unwrap()];
+  let root = definition(
+    811,
+    vec![
+      node("intake", FlowNodeKind::Reasoning, None, output.clone(), None, 100),
+      node(
+        "rewrite_contract",
+        FlowNodeKind::Reasoning,
+        None,
+        output.clone(),
+        None,
+        100,
+      ),
+      node(
+        "inspect_result",
+        FlowNodeKind::Reasoning,
+        None,
+        output.clone(),
+        None,
+        100,
+      ),
+    ],
+    transitions,
+    vec![FlowTerminalDefinition::new(key("needs_operator"), output.clone())],
+    vec![],
+    1,
+    100,
+  )
+  .unwrap();
+  let run = crate::FactoryRun::admitted(FactoryRunId::generate(), &work);
+  let flow = FlowRun::root(&run, root.reference()).unwrap();
+  let first = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = crate::AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(root.reference(), vec![root.clone()]).unwrap(),
+    limits(1, 10, 1, 1, 100),
+    flow.clone(),
+    first.clone(),
+    crate::FactoryWipLimits::new(1, 1).unwrap(),
+  )
+  .unwrap()
+  .with_data_schemas(vec![data_schema])
+  .unwrap();
+  let attempts = [
+    attempt(812, 1, &flow, &first, &root, "intake", 100),
+    attempt(813, 2, &flow, &first, &root, "rewrite_contract", 100),
+    attempt(814, 3, &flow, &first, &root, "inspect_result", 100),
+  ];
+  let completions = attempts
+    .iter()
+    .map(|row| completion(row, &root, &output, BudgetUsage::default()))
+    .collect::<Vec<_>>();
+  let next = WorkflowCycle::restart(crate::WorkflowCycleId::generate(), &first, &attempts[2])
+    .expect("accepted restart has a causal source");
+  assert_eq!(next.source_attempt_id(), Some(attempts[2].id()));
+  let cycles = [first.clone(), next.clone()];
+  let history = FlowRuntimeHistory {
+    stops: &[],
+    flow_runs: std::slice::from_ref(&flow),
+    cycles: &cycles,
+    attempts: &attempts,
+    completions: &completions,
+  };
+  crate::validate_flow_runtime_history(&admitted, history).unwrap();
+  assert!(!history.is_current_cycle(first.id()));
+  assert!(history.is_current_cycle(next.id()));
+  assert_eq!(
+    FlowInterpreter::new(&admitted.validated().unwrap())
+      .progress(&flow, &next, history)
+      .unwrap(),
+    crate::FlowProgress::Node(key("rewrite_contract"))
+  );
+  let skipped = attempt(815, 4, &flow, &next, &root, "inspect_result", 100);
+  let mut bypassed = attempts.to_vec();
+  bypassed.push(skipped);
+  assert!(
+    crate::validate_flow_runtime_history(
+      &admitted,
+      FlowRuntimeHistory {
+        attempts: &bypassed,
+        ..history
+      }
+    )
+    .is_err(),
+    "a new cycle must rerun its declared entry rather than reuse a prior review edge"
+  );
+  let stopped_attempt = attempt(816, 4, &flow, &next, &root, "rewrite_contract", 100);
+  let stop = crate::FlowNodeStop::new(
+    &stopped_attempt,
+    ownership(),
+    crate::FlowNodeStopReason::ExecutionFailed,
+    Timestamp::from_unix_millis(2).unwrap(),
+    BudgetUsage::default(),
+    None,
+  )
+  .unwrap();
+  let mut with_stop = attempts.to_vec();
+  with_stop.push(stopped_attempt);
+  crate::validate_flow_runtime_history(
+    &admitted,
+    FlowRuntimeHistory {
+      attempts: &with_stop,
+      stops: &[stop],
+      ..history
+    },
+  )
+  .unwrap();
+  let forged = WorkflowCycle::restart(crate::WorkflowCycleId::generate(), &first, &attempts[0]).unwrap();
+  assert!(
+    crate::validate_flow_runtime_history(
+      &admitted,
+      FlowRuntimeHistory {
+        cycles: &[first, forged],
+        ..history
+      }
+    )
+    .is_err(),
+    "an accepted result without a declared restart cannot create a cycle"
+  );
+}
+
+#[test]
+fn a_cycle_boundary_cannot_share_an_outcome_with_another_fanout_route() {
+  let output = schema("payload");
+  let root = definition(
+    901,
+    vec![
+      node("split", FlowNodeKind::FanOut, None, output.clone(), None, 100),
+      node("left", FlowNodeKind::Join, None, output.clone(), None, 100),
+    ],
+    vec![
+      serde_json::from_value(serde_json::json!({"predecessor":"split","outcome":"accepted","target":{"kind":"node","key":"split"},"max_repeats":1,"exhausted_terminal":"exhausted","starts_cycle":true})).unwrap(),
+      FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("left"))),
+      terminal_route("left", "done"),
+    ],
+    vec![FlowTerminalDefinition::new(key("exhausted"), output.clone()), FlowTerminalDefinition::new(key("done"), output)],
+    vec![],
+    2,
+    100,
+  ).unwrap();
+  assert!(
+    PinnedFlowDefinitionClosure::new(root.reference(), vec![root])
+      .unwrap()
+      .validate(limits(1, 10, 2, 2, 100))
+      .is_err()
+  );
+}
+
+#[test]
+fn a_restart_remains_restorable_after_a_declared_sibling_finishes() {
+  for right_restarts in [false, true] {
+    let data_schema = crate::FlowDataSchema::new(key("output"), key("v1"), crate::FlowValueSchema::Boolean).unwrap();
+    let out = data_schema.reference().clone();
+    let restart = |name| {
+      serde_json::from_value(serde_json::json!({"predecessor":name,"outcome":"accepted","target":{"kind":"node","key":"split"},"max_repeats":1,"exhausted_terminal":"exhausted","starts_cycle":true})).unwrap()
+    };
+    let mut terminals = vec![FlowTerminalDefinition::new(key("exhausted"), out.clone())];
+    if !right_restarts {
+      terminals.push(FlowTerminalDefinition::new(key("done"), out.clone()));
+    }
+    let root = definition(
+      9801,
+      vec![
+        node("split", FlowNodeKind::FanOut, None, out.clone(), None, 100),
+        node("left", FlowNodeKind::Reasoning, None, out.clone(), None, 100),
+        node("right", FlowNodeKind::Reasoning, None, out.clone(), None, 100),
+      ],
+      vec![
+        FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("left"))),
+        FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("right"))),
+        restart("left"),
+        if right_restarts {
+          restart("right")
+        } else {
+          terminal_route("right", "done")
+        },
+      ],
+      terminals,
+      vec![],
+      2,
+      100,
+    )
+    .unwrap();
+    let v = PinnedFlowDefinitionClosure::new(root.reference(), vec![root.clone()])
+      .unwrap()
+      .validate(limits(1, 20, 2, 2, 100))
+      .unwrap();
+    let run = crate::FactoryRun::admitted(FactoryRunId::generate(), &crate::flow_test_support::work());
+    let flow = FlowRun::root(&run, root.reference()).unwrap();
+    let cycle = WorkflowCycle::initial(&flow).unwrap();
+    let admitted = crate::AdmittedFlow::new(
+      PinnedFlowDefinitionClosure::new(root.reference(), vec![root.clone()]).unwrap(),
+      limits(1, 20, 2, 2, 100),
+      flow.clone(),
+      cycle.clone(),
+      crate::FactoryWipLimits::new(2, 2).unwrap(),
+    )
+    .unwrap()
+    .with_data_schemas(vec![data_schema])
+    .unwrap();
+    let mut attempts = vec![
+      attempt(9802, 1, &flow, &cycle, &root, "split", 100),
+      attempt(9803, 2, &flow, &cycle, &root, "left", 100),
+      attempt(9804, 3, &flow, &cycle, &root, "right", 100),
+    ];
+    let done = attempts
+      .iter()
+      .map(|a| completion(a, &root, &out, BudgetUsage::default()))
+      .collect::<Vec<_>>();
+    let source = attempts[1].clone();
+    let other = attempts[2].clone();
+    // Restored rows can arrive in identity order rather than execution order.
+    attempts.reverse();
+    let h = FlowRuntimeHistory {
+      stops: &[],
+      flow_runs: std::slice::from_ref(&flow),
+      cycles: std::slice::from_ref(&cycle),
+      attempts: &attempts,
+      completions: &done,
+    };
+    let engine = FlowInterpreter::new(&v);
+    assert_eq!(
+      engine.progress(&flow, &cycle, h).unwrap(),
+      crate::FlowProgress::RestartCycle {
+        node: key("split"),
+        source: source.id()
+      }
+    );
+    let next = WorkflowCycle::restart(crate::WorkflowCycleId::generate(), &cycle, &source).unwrap();
+    assert_eq!(engine.cycle_entry(&flow, &next, h).unwrap(), key("split"));
+    let cycles = [cycle.clone(), next];
+    let restored = FlowRuntimeHistory { cycles: &cycles, ..h };
+    crate::validate_flow_runtime_history(&admitted, restored).unwrap();
+    let stale = attempt(9805, 4, &flow, &cycle, &root, "split", 100);
+    let mut stale_completions = done.clone();
+    stale_completions.push(completion(&stale, &root, &out, BudgetUsage::default()));
+    let mut stale_attempts = attempts.clone();
+    stale_attempts.push(stale);
+    assert!(
+      crate::validate_flow_runtime_history(
+        &admitted,
+        FlowRuntimeHistory {
+          attempts: &stale_attempts,
+          completions: &stale_completions,
+          ..restored
+        }
+      )
+      .is_err(),
+      "a restart edge cannot authorize its target in the preceding cycle"
+    );
+    if right_restarts {
+      let substituted = WorkflowCycle::restart(crate::WorkflowCycleId::generate(), &cycle, &other).unwrap();
+      assert!(
+        engine.cycle_entry(&flow, &substituted, h).is_err(),
+        "restoration must retain the same selected cause"
+      );
+    }
+  }
+}
+
+#[test]
+fn every_ready_fanout_sibling_remains_visible_without_reserving_existing_work_again() {
+  let output = schema("fanout.output");
+  let root = definition(
+    9901,
+    vec![
+      node("split", FlowNodeKind::FanOut, None, output.clone(), None, 100),
+      node("left", FlowNodeKind::Reasoning, None, output.clone(), None, 100),
+      node("right", FlowNodeKind::Reasoning, None, output.clone(), None, 100),
+    ],
+    vec![
+      FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("left"))),
+      FlowTransition::new(key("split"), key("accepted"), FlowTransitionTarget::Node(key("right"))),
+      terminal_route("left", "done"),
+      terminal_route("right", "done"),
+    ],
+    vec![FlowTerminalDefinition::new(key("done"), output.clone())],
+    vec![],
+    2,
+    100,
+  )
+  .unwrap();
+  let validated = PinnedFlowDefinitionClosure::new(root.reference(), vec![root.clone()])
+    .unwrap()
+    .validate(limits(1, 10, 2, 2, 100))
+    .unwrap();
+  let flow = FlowRun::nested(
+    FlowRunId::generate(),
+    FactoryRunId::generate(),
+    root.reference(),
+    FlowRunParent::new(FlowRunId::generate(), NodeAttemptId::generate()),
+  );
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let split = attempt(9902, 1, &flow, &cycle, &root, "split", 100);
+  let completed = completion(&split, &root, &output, BudgetUsage::default());
+  let left = attempt(9903, 2, &flow, &cycle, &root, "left", 100);
+  let interpreter = FlowInterpreter::new(&validated);
+  let expected = std::collections::BTreeSet::from([key("left"), key("right")]);
+  for attempts in [vec![split.clone()], vec![split.clone(), left]] {
+    let history = FlowRuntimeHistory {
+      stops: &[],
+      flow_runs: std::slice::from_ref(&flow),
+      cycles: std::slice::from_ref(&cycle),
+      attempts: &attempts,
+      completions: std::slice::from_ref(&completed),
+    };
+    assert_eq!(interpreter.ready_nodes(&flow, &cycle, history).unwrap(), expected);
+    assert_eq!(
+      interpreter.progress(&flow, &cycle, history).unwrap(),
+      crate::FlowProgress::Node(key("left"))
+    );
+  }
 }

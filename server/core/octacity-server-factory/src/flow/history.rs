@@ -21,6 +21,41 @@ pub struct FlowRuntimeHistory<'a> {
 }
 
 impl<'a> FlowRuntimeHistory<'a> {
+  /// Tests active authority through the owning cycle and every enclosing call.
+  /// Superseded rows remain readable for audit, but cannot dispatch or accept work.
+  #[must_use]
+  pub fn is_current_cycle(self, id: WorkflowCycleId) -> bool {
+    let mut current = id;
+    for _ in 0..=self.flow_runs.len() {
+      let Some(cycle) = self.cycles.iter().find(|row| row.id() == current) else {
+        return false;
+      };
+      if self
+        .cycles
+        .iter()
+        .filter(|row| row.flow_run_id() == cycle.flow_run_id())
+        .max_by_key(|row| row.number())
+        != Some(cycle)
+      {
+        return false;
+      }
+      let Some(flow) = self.flow_runs.iter().find(|row| row.id() == cycle.flow_run_id()) else {
+        return false;
+      };
+      let Some(parent) = flow.parent() else {
+        return true;
+      };
+      let Some(call) = self
+        .attempts
+        .iter()
+        .find(|row| row.id() == parent.node_attempt_id() && row.flow_run_id() == parent.flow_run_id())
+      else {
+        return false;
+      };
+      current = call.workflow_cycle_id();
+    }
+    false
+  }
   /// Counts unfinished executable attempts. Suspended subflow call frames are
   /// control records; their child attempts own executable WIP.
   #[must_use]
@@ -125,7 +160,7 @@ pub fn validate_flow_runtime_history(
     }
   }
 
-  validate_cycles(admitted, &flow_runs, &cycles)?;
+  validate_cycles(admitted, &validated, &flow_runs, &cycles, history)?;
   validate_attempts(&validated, &flow_runs, &cycles, &attempts, history)?;
   validate_completions(&validated, &flow_runs, &attempts, history.completions)?;
 
@@ -168,8 +203,10 @@ pub fn validate_flow_runtime_history(
 
 fn validate_cycles(
   admitted: &AdmittedFlow,
+  validated: &crate::ValidatedFlowDefinitionClosure,
   flow_runs: &BTreeMap<FlowRunId, &FlowRun>,
   cycles: &BTreeMap<WorkflowCycleId, &WorkflowCycle>,
+  history: FlowRuntimeHistory<'_>,
 ) -> Result<(), FactoryError> {
   if cycles.get(&admitted.initial_cycle().id()) != Some(&admitted.initial_cycle()) {
     return Err(invalid("initial workflow cycle"));
@@ -188,6 +225,7 @@ fn validate_cycles(
     if initial.len() != 1
       || initial[0].number() != WorkflowCycleNumber::INITIAL
       || initial[0].id().as_uuid() != flow_run.id().as_uuid()
+      || initial[0].source_attempt_id().is_some()
     {
       return Err(invalid("Flow Run initial cycle"));
     }
@@ -198,9 +236,15 @@ fn validate_cycles(
           .ok_or_else(|| invalid("workflow cycle predecessor"))?;
         if previous.flow_run_id() != flow_run.id()
           || previous.number().get().checked_add(1) != Some(cycle.number().get())
+          || cycles
+            .values()
+            .filter(|row| row.predecessor() == Some(predecessor))
+            .count()
+            != 1
         {
           return Err(invalid("workflow cycle sequence"));
         }
+        crate::FlowInterpreter::new(validated).cycle_entry(flow_run, cycle, history)?;
       }
     }
   }
@@ -304,13 +348,23 @@ fn validate_attempts(
         }
         continue;
       }
-      if index == 0 {
-        if attempt.node_key() != definition.entry() {
+      let cycle = cycles
+        .get(&attempt.workflow_cycle_id())
+        .ok_or_else(|| invalid("Node cycle"))?;
+      if !run_attempts[..index]
+        .iter()
+        .any(|previous| previous.workflow_cycle_id() == cycle.id())
+      {
+        let entry = crate::FlowInterpreter::new(validated).cycle_entry(flow_run, cycle, history)?;
+        if attempt.node_key() != &entry {
           return Err(invalid("Flow entry attempt"));
         }
         continue;
       }
       let declared = run_attempts[..index].iter().any(|predecessor| {
+        if predecessor.workflow_cycle_id() != cycle.id() {
+          return false;
+        }
         completions
           .iter()
           .find(|completion| completion.node_attempt_id() == predecessor.id())

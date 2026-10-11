@@ -89,6 +89,31 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
         return Ok(FactoryFlowStep::Resolved(terminal));
       }
       Next::Waiting => return Ok(FactoryFlowStep::Waiting),
+      Next::Restart { cycle, source } => {
+        let previous = snapshot
+          .flow
+          .cycles
+          .iter()
+          .find(|row| row.id() == cycle)
+          .ok_or_else(ApplicationError::invalid)?;
+        let trigger = snapshot
+          .flow
+          .attempts
+          .iter()
+          .find(|row| row.id() == source)
+          .ok_or_else(ApplicationError::invalid)?;
+        let mut append = FactoryRunHistoryAppend::default();
+        append.flow.cycles.push(
+          WorkflowCycle::restart(
+            WorkflowCycleId::from_uuid(source.as_uuid()).map_err(invalid)?,
+            previous,
+            trigger,
+          )
+          .map_err(invalid)?,
+        );
+        self.nodes.commit(&snapshot, append, at).await?;
+        return Ok(FactoryFlowStep::Advanced);
+      }
     };
     let definition = snapshot
       .flow
@@ -178,6 +203,10 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
 }
 enum Next {
   Node(FactoryNodeTarget),
+  Restart {
+    cycle: WorkflowCycleId,
+    source: NodeAttemptId,
+  },
   Terminal(FactoryKey),
   Waiting,
 }
@@ -204,6 +233,10 @@ fn next_in_flow(snapshot: &FactoryRunSnapshot, flow: &FlowRun) -> Result<Next, A
     .progress(flow, cycle, history)
     .map_err(invalid)?
   {
+    FlowProgress::RestartCycle { source, .. } => Ok(Next::Restart {
+      cycle: cycle.id(),
+      source,
+    }),
     FlowProgress::Node(node) => {
       let target = FactoryNodeTarget {
         flow_run_id: flow.id(),

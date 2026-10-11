@@ -183,7 +183,8 @@ fn configured_requirements_bypass_preserves_every_protected_downstream_gate() {
   for (outcome, next) in [
     ("bypass", "protected_tests"),
     ("observed", "implementation"),
-    ("observed", "review"),
+    ("observed", "implementation_result_gate"),
+    ("continue", "review"),
     ("observed", "verification"),
   ] {
     let edge = definition
@@ -283,11 +284,11 @@ fn publishing_another_gate_policy_cannot_change_the_pinned_small_work_decision()
 
 fn specification_feature_input() -> serde_json::Value {
   serde_json::json!({
-    "allowed_paths":["openspec/changes", "openspec/specs"],
-    "artifacts":{"manifest":{"artifact_id":"manifest-42","content_digest":"c".repeat(64),"encoded_size":100},"bundle":{"artifact_id":"bundle-42","content_digest":"d".repeat(64),"encoded_size":100}}, "output_deadlines":{"capture":100,"handoff":100,"facts":100}, "work_id":"work-42", "original_base":"original", "work_kind":"feature_request", "expected_input":"a".repeat(64), "handoff_digest":"b".repeat(64),
+    "expected_predecessor":"research-candidate", "declared_requirements":[], "allowed_paths":["openspec/changes", "openspec/specs"],
+    "artifacts":{"manifest":{"artifact_id":"00000000-0000-0000-0000-000000000001","content_digest":"c".repeat(64),"encoded_size":100},"bundle":{"artifact_id":"00000000-0000-0000-0000-000000000002","content_digest":"d".repeat(64),"encoded_size":100}}, "output_deadlines":{"capture":100,"handoff":100,"facts":100}, "work_id":"work-42", "original_base":"original", "work_kind":"feature_request", "expected_input":"a".repeat(64), "handoff_digest":"b".repeat(64),
     "manifest":{"format_version":1,"base_revision":"research-candidate","candidate_revision":"spec-candidate","node_attempt_id":"attempt-42","capture_tool":{"identity":"capture","version":"v1","sha256":"c".repeat(64)},"changed_paths":[{"status":"A","path":"openspec/specs/api/spec.md","old_mode":"000000","new_mode":"100644"},{"status":"A","path":"openspec/changes/new-api/proposal.md","old_mode":"000000","new_mode":"100644"}],"bundle":{"name":"change-set.bundle","size_bytes":100,"sha256":"d".repeat(64)}},
-    "handoff":{"work_id":"work-42","original_base":"original","predecessor_revision":"research-candidate","candidate_revision":"spec-candidate","input_digest":"a".repeat(64),"work_kind":"feature_request","contract_path":"openspec/specs/api/spec.md","change_path":"openspec/changes/new-api/proposal.md","acceptance_criteria":["new API has documented behavior"],"regression_criteria":[]},
-    "facts":{"accepted":true,"contract_exists":true,"input_digest":"a".repeat(64),"handoff_digest":"b".repeat(64),"fresh_until":100}
+    "handoff":{"work_id":"work-42","original_base":"original","predecessor_revision":"research-candidate","candidate_revision":"spec-candidate","input_digest":"a".repeat(64),"work_kind":"feature_request","contract_path":"openspec/specs/api/spec.md","change_path":"openspec/changes/new-api/proposal.md","acceptance_criteria":["new API has documented behavior"],"regression_criteria":[],"declared_requirements":[]},
+    "facts":{"accepted":true,"requirements_preserved":true,"contract_exists":true,"input_digest":"a".repeat(64),"handoff_digest":"b".repeat(64),"fresh_until":100}
   })
 }
 
@@ -346,7 +347,7 @@ fn configured_specification_authoring_requires_exact_capture_and_typed_handoff_b
       .find(|edge| edge.predecessor() == &key("requirements_needed") && edge.outcome() == &key("specification"))
       .unwrap()
       .target(),
-    &FlowTransitionTarget::Node(key("specification_author"))
+    &FlowTransitionTarget::Node(key("author_subject"))
   );
 }
 
@@ -375,9 +376,11 @@ fn changing_one_published_scope_updates_author_input_and_capture_gate() {
     FlowTransitionTarget::Terminal(key("done")),
   )];
   author_only.terminals = BTreeMap::from([(key("done"), key("spec_manifest"))]);
-  let choice = &author_only.schemas[&key("spec_author_input")];
-  let incoming_schema =
-    FlowDataSchema::new(choice.identity.clone(), choice.version.clone(), choice.shape.clone()).unwrap();
+  let incoming_schema = author_only
+    .data_schemas()
+    .unwrap()
+    .remove(&key("spec_author_input"))
+    .unwrap();
   let mut binding_wire = serde_json::to_value(&author_only.nodes[0].input_binding).unwrap();
   binding_wire["sources"]["previous"] =
     serde_json::json!({"source":"incoming","schema":incoming_schema.reference(),"path":"/accepted_input"});
@@ -408,7 +411,7 @@ fn changing_one_published_scope_updates_author_input_and_capture_gate() {
   .with_data_schemas(published.schemas.clone())
   .unwrap();
   let incoming = FlowIncomingData::new(&work, &admitted, FlowPayload::new(&incoming_schema,
-    serde_json::json!({"work_id":work.id(),"original_base":work.subject().base_revision(),"allowed_paths":["src"],"accepted_input":{"work_kind":"feature_request","size":"medium","risk":"low","admission_risk":"low","recommended_route":"development","research_required":false,"research_accepted":false,"component":"api","severity":"low","dependencies":[]}})).unwrap()).unwrap();
+    serde_json::json!({"work_id":work.id(),"original_base":work.subject().base_revision(),"allowed_paths":["src"],"declared_requirements":[],"task":work.artifacts().task(),"original_acceptance":work.artifacts().acceptance(),"accepted_input":{"work_kind":"feature_request","size":"medium","risk":"low","admission_risk":"low","recommended_route":"development","research_required":false,"research_accepted":false,"component":"api","severity":"low","dependencies":[]}})).unwrap()).unwrap();
   let schema = published
     .schemas
     .iter()
@@ -437,8 +440,11 @@ fn changing_one_published_scope_updates_author_input_and_capture_gate() {
     input.payload().value()["allowed_paths"],
     serde_json::json!(["contracts", "plans/changes"])
   );
-  let choice = &configured.schemas[&key("spec_gate_input")];
-  let schema = FlowDataSchema::new(choice.identity.clone(), choice.version.clone(), choice.shape.clone()).unwrap();
+  let schema = configured
+    .data_schemas()
+    .unwrap()
+    .remove(&key("spec_gate_input"))
+    .unwrap();
   let gate = configured
     .nodes
     .iter()
@@ -563,11 +569,11 @@ fn a_configured_human_gate_can_follow_specification_review_without_engine_change
     .find(|edge| edge["predecessor"] == "specification_review_gate" && edge["outcome"] == "publication_pending")
     .unwrap();
   edge["target"] = serde_json::json!({"kind":"node","key":"contract_owner_confirmation"});
-  for (outcome, target) in [
-    ("confirmed", "specification_reviewed"),
-    ("declined", "specification_review_declined"),
+  for (outcome, kind, target) in [
+    ("confirmed", "node", "specification_publication"),
+    ("declined", "terminal", "specification_review_declined"),
   ] {
-    transitions.push(serde_json::json!({"predecessor":"contract_owner_confirmation","outcome":outcome,"target":{"kind":"terminal","key":target},"max_repeats":0,"exhausted_terminal":null}));
+    transitions.push(serde_json::json!({"predecessor":"contract_owner_confirmation","outcome":outcome,"target":{"kind":kind,"key":target},"max_repeats":0,"exhausted_terminal":null}));
   }
   wire["terminals"]["specification_review_declined"] = serde_json::json!("spec_review");
   let template: FlowDefinitionTemplate = serde_json::from_value(wire).unwrap();
@@ -581,6 +587,21 @@ fn a_configured_human_gate_can_follow_specification_review_without_engine_change
   let published = template
     .instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
     .unwrap();
+  PinnedFlowDefinitionClosure::new(published.definition.reference(), vec![published.definition.clone()])
+    .unwrap()
+    .validate(
+      FlowAdmissionLimits::new(
+        4,
+        MAX_FLOW_EXPANDED_NODES,
+        3,
+        8,
+        8,
+        published.definition.execution().budget(),
+        published.definition.execution().permissions().clone(),
+      )
+      .unwrap(),
+    )
+    .unwrap();
   let confirmation = published.definition.node(&key("contract_owner_confirmation")).unwrap();
   assert_eq!(confirmation.kind(), FlowNodeKind::HumanGate);
   assert!(confirmation.accepted_work_outcomes().is_empty());
@@ -592,4 +613,218 @@ fn a_configured_human_gate_can_follow_specification_review_without_engine_change
       .accepted_work_outcomes()
       .is_empty()
   );
+}
+
+#[test]
+fn supplied_publication_requires_exact_receipt_before_implementation_readiness() {
+  let definition = published().definition;
+  let publication = definition
+    .node(&key("specification_publication"))
+    .expect("trusted publication precedes readiness");
+  assert_eq!(publication.kind(), FlowNodeKind::TrustedAction);
+  assert!(publication.accepted_work_outcomes().is_empty());
+  let edge = definition
+    .transitions()
+    .iter()
+    .find(|edge| {
+      edge.predecessor() == &key("specification_review_gate") && edge.outcome() == &key("publication_pending")
+    })
+    .unwrap();
+  assert_eq!(edge.target(), &FlowTransitionTarget::Node(publication.key().clone()));
+  let ready = definition.node(&key("specification_ready")).unwrap();
+  assert_eq!(ready.accepted_work_outcomes(), &[key("implementation_ready")]);
+  let summary = serde_json::json!({"work_kind":"feature_request","size":"large","risk":"low","admission_risk":"low","component":"api","severity":"low","dependencies":[],"recommended_route":"requirements","research_required":false,"research_accepted":false});
+  let input = serde_json::json!({"summary":summary,"publication":{"receipt":"a".repeat(64),"candidate_revision":"reviewed-candidate","changeset_digest":"b".repeat(64)},"expected_candidate":"reviewed-candidate","expected_digest":"b".repeat(64),"review_deadline":100});
+  assert_eq!(select("specification_ready", input.clone()), "implementation_ready");
+  for (field, value) in [
+    ("expected_candidate", serde_json::json!("other")),
+    ("expected_digest", serde_json::json!("c".repeat(64))),
+    ("review_deadline", serde_json::json!(20)),
+  ] {
+    let mut invalid = input.clone();
+    invalid[field] = value;
+    assert_eq!(select("specification_ready", invalid), "invalid");
+  }
+  let edge = definition
+    .transitions()
+    .iter()
+    .find(|edge| edge.predecessor() == ready.key() && edge.outcome() == &key("implementation_ready"))
+    .unwrap();
+  assert_eq!(edge.target(), &FlowTransitionTarget::Node(key("protected_tests")));
+}
+
+#[test]
+fn configured_specification_handoff_preserves_every_declared_requirement_reference() {
+  let mut input = specification_feature_input();
+  let declared = (1..=6).map(|number| serde_json::json!({"artifact_id":format!("00000000-0000-0000-0000-{number:012}"),"content_digest":format!("{number:064x}"),"encoded_size":100})).collect::<Vec<_>>();
+  input["declared_requirements"] = serde_json::json!(declared);
+  input["handoff"]["declared_requirements"] = input["declared_requirements"].clone();
+  input["facts"]["requirements_preserved"] = serde_json::json!(true);
+  assert_eq!(select("specification_gate", input.clone()), "review_pending");
+  for number in 0..6 {
+    let mut missing = input.clone();
+    missing["handoff"]["declared_requirements"]
+      .as_array_mut()
+      .unwrap()
+      .remove(number);
+    assert_eq!(select("specification_gate", missing), "invalid");
+  }
+  input["facts"]["requirements_preserved"] = serde_json::json!(false);
+  assert_eq!(select("specification_gate", input), "invalid");
+}
+
+#[test]
+fn supplied_execution_results_require_qualified_defects_and_declare_bounded_cycle_returns() {
+  let summary = serde_json::json!({"work_kind":"defect","size":"small","risk":"low","admission_risk":"low","component":"api","severity":"high","dependencies":[],"recommended_route":"development","research_required":false,"research_accepted":false,"requirements_defect":{"reason":"Missing retry contract","candidate_revision":"current-candidate","evidence":[{"artifact_id":"00000000-0000-0000-0000-000000000012","content_digest":"c".repeat(64),"encoded_size":100}]}});
+  let input = serde_json::json!({"trusted_input":summary,"execution_revision":"current-candidate","result":summary,"expected_input":"a".repeat(64),"expected_report":"b".repeat(64),"facts":{"input_digest":"a".repeat(64),"report_digest":"b".repeat(64),"fresh_until":100,"outcome":"requirements_defect","candidate_revision":"current-candidate","requirements_evidence":summary["requirements_defect"]["evidence"]}});
+  for node in ["implementation_result_gate", "verification_result_gate"] {
+    assert_eq!(select(node, input.clone()), "requirements_defect");
+    for (path, value) in [
+      ("/facts/input_digest", serde_json::json!("c".repeat(64))),
+      ("/facts/report_digest", serde_json::json!("c".repeat(64))),
+      ("/facts/fresh_until", serde_json::json!(20)),
+      ("/facts/candidate_revision", serde_json::json!("old-candidate")),
+    ] {
+      let mut invalid = input.clone();
+      *invalid.pointer_mut(path).unwrap() = value;
+      assert_eq!(select(node, invalid), "invalid");
+    }
+    let mut prose = input.clone();
+    prose["facts"]["outcome"] = serde_json::json!("observed");
+    assert_eq!(select(node, prose), "continue");
+    let definition = published().definition;
+    let edge = definition
+      .transitions()
+      .iter()
+      .find(|edge| edge.predecessor() == &key(node) && edge.outcome() == &key("requirements_defect"))
+      .unwrap();
+    assert!(edge.starts_cycle());
+    assert!(edge.max_repeats() > 0);
+    assert_eq!(edge.target(), &FlowTransitionTarget::Node(key("requirements_needed")));
+  }
+  assert_eq!(select("requirements_needed", input["result"].clone()), "specification");
+}
+
+#[test]
+fn configured_correction_author_selects_only_the_preceding_accepted_candidate() {
+  let authored = specification_feature_input();
+  let accepted = serde_json::json!({"work_id":authored["work_id"],"original_base":authored["original_base"],"manifest":authored["manifest"],"handoff":authored["handoff"],"readiness":"review_pending","artifacts":authored["artifacts"]});
+  let mut summary = serde_json::json!({"work_kind":"feature_request","size":"large","risk":"low","admission_risk":"low","component":"api","severity":"low","dependencies":[],"recommended_route":"requirements","research_required":false,"research_accepted":false});
+  assert_eq!(select("author_subject", summary.clone()), "original");
+  summary["specification"] = accepted;
+  assert_eq!(select("author_subject", summary.clone()), "correction");
+  let published = published();
+  let node = published.definition.node(&key("specification_correction")).unwrap();
+  let schema = published
+    .schemas
+    .iter()
+    .find(|s| Some(s.reference()) == node.input_schema())
+    .unwrap();
+  let payload=FlowPayload::new(schema,serde_json::json!({"work_id":"work-42","original_base":"original","accepted_input":summary,"declared_requirements":[],"task":{"artifact_id":"00000000-0000-0000-0000-000000000003","content_digest":"d".repeat(64),"encoded_size":100},"original_acceptance":{"artifact_id":"00000000-0000-0000-0000-000000000004","content_digest":"e".repeat(64),"encoded_size":100},"allowed_paths":["openspec/specs","openspec/changes"]})).unwrap();
+  let context = node.context_binding().unwrap();
+  assert_eq!(
+    context.candidate_revision(&payload).unwrap().unwrap().as_str(),
+    "spec-candidate"
+  );
+  let selected = context.selected_sources(&payload).unwrap();
+  assert_eq!(selected.len(), 4);
+  let FactoryContextReference::Artifact(manifest) = &selected[&key("manifest")].1 else {
+    panic!("exact artifact required")
+  };
+  assert_eq!(manifest.content_digest().to_string(), "c".repeat(64));
+}
+
+#[test]
+fn corrected_specification_must_amend_the_exact_execution_predecessor() {
+  let mut input = specification_feature_input();
+  input["expected_predecessor"] = serde_json::json!("accepted-candidate");
+  input["manifest"]["base_revision"] = serde_json::json!("accepted-candidate");
+  input["handoff"]["predecessor_revision"] = serde_json::json!("accepted-candidate");
+  input["manifest"]["changed_paths"][0]["status"] = serde_json::json!("M");
+  input["manifest"]["changed_paths"][1]["status"] = serde_json::json!("M");
+  assert_eq!(select("specification_gate", input.clone()), "review_pending");
+  input["handoff"]["predecessor_revision"] = serde_json::json!("superseded-candidate");
+  input["manifest"]["base_revision"] = serde_json::json!("superseded-candidate");
+  assert_eq!(select("specification_gate", input), "invalid");
+}
+
+#[test]
+fn supplied_reviewer_selects_all_declared_requirements_as_closed_immutable_context() {
+  let artifact = |number| serde_json::json!({"artifact_id":format!("00000000-0000-0000-0000-{number:012}"),"content_digest":format!("{number:064x}"),"encoded_size":100});
+  let declared = (10..16).map(artifact).collect::<Vec<_>>();
+  let published = published();
+  let node = published.definition.node(&key("specification_review")).unwrap();
+  let schema = published
+    .schemas
+    .iter()
+    .find(|schema| Some(schema.reference()) == node.input_schema())
+    .unwrap();
+  let input=FlowPayload::new(schema,serde_json::json!({"request":{"work_id":"work-42","original_base":"original","candidate_revision":"reviewed","manifest_digest":"a".repeat(64),"bundle_digest":"b".repeat(64)},"original_acceptance":artifact(3),"artifacts":{"manifest":artifact(1),"bundle":artifact(2)},"acceptance_criteria":["specified behavior"],"regression_criteria":[],"declared_requirements":declared})).unwrap();
+  let selected = node.context_binding().unwrap().selected_sources(&input).unwrap();
+  assert_eq!(selected.len(), 9);
+  for index in 0..6 {
+    assert!(selected.contains_key(&key(&format!("requirements.{index}"))));
+  }
+  assert!(!selected.contains_key(&key("task")));
+}
+
+#[test]
+fn execution_feedback_cannot_replace_the_frozen_specification_or_its_candidate() {
+  let authored = specification_feature_input();
+  let specification = serde_json::json!({"work_id":authored["work_id"],"original_base":authored["original_base"],"manifest":authored["manifest"],"handoff":authored["handoff"],"readiness":"review_pending","artifacts":authored["artifacts"]});
+  let trusted = serde_json::json!({"work_kind":"feature_request","size":"large","risk":"low","admission_risk":"low","component":"api","severity":"high","dependencies":[],"recommended_route":"requirements","research_required":false,"research_accepted":false,"specification":specification});
+  let mut result = trusted.clone();
+  result["requirements_defect"] = serde_json::json!({"reason":"Missing acceptance case","candidate_revision":"spec-candidate","evidence":[authored["artifacts"]["manifest"].clone()]});
+  let input = serde_json::json!({"trusted_input":trusted,"execution_revision":"original","result":result,"expected_input":"a".repeat(64),"expected_report":"b".repeat(64),"facts":{"input_digest":"a".repeat(64),"report_digest":"b".repeat(64),"fresh_until":100,"outcome":"requirements_defect","candidate_revision":"spec-candidate","requirements_evidence":result["requirements_defect"]["evidence"]}});
+  for node in ["implementation_result_gate", "verification_result_gate"] {
+    assert_eq!(select(node, input.clone()), "requirements_defect");
+    for path in [
+      "/result/specification/manifest/candidate_revision",
+      "/result/specification/artifacts/manifest/content_digest",
+    ] {
+      let mut replaced = input.clone();
+      *replaced.pointer_mut(path).unwrap() = if path.ends_with("content_digest") {
+        serde_json::json!("e".repeat(64))
+      } else {
+        serde_json::json!("older-candidate")
+      };
+      assert_eq!(select(node, replaced), "invalid");
+    }
+    let mut wrong_candidate = input.clone();
+    wrong_candidate["facts"]["candidate_revision"] = serde_json::json!("other-candidate");
+    wrong_candidate["result"]["requirements_defect"]["candidate_revision"] = serde_json::json!("other-candidate");
+    assert_eq!(select(node, wrong_candidate), "invalid");
+    let published = published();
+    let wire = serde_json::to_value(published.definition.node(&key(node)).unwrap()).unwrap();
+    assert_eq!(
+      wire["input_binding"]["sources"]["trusted_input"]["view"],
+      "input_payload"
+    );
+  }
+}
+
+#[test]
+fn a_requirements_defect_requires_exact_independently_verified_evidence_references() {
+  let t = template();
+  let schemas = t.data_schemas().unwrap();
+  let summary = serde_json::json!({"work_kind":"defect","size":"small","risk":"low","admission_risk":"low","component":"api","severity":"high","dependencies":[],"recommended_route":"development","research_required":false,"research_accepted":false});
+  let mut report = summary.clone();
+  report["requirements_defect"] =
+    serde_json::json!({"reason":"Contradictory requirement","candidate_revision":"current-candidate"});
+  assert!(
+    FlowPayload::new(&schemas[&key("summary")], report.clone()).is_err(),
+    "a reason alone does not identify requirements evidence"
+  );
+  let evidence = serde_json::json!([{"artifact_id":"00000000-0000-0000-0000-000000000012","content_digest":"c".repeat(64),"encoded_size":100}]);
+  report["requirements_defect"]["evidence"] = evidence.clone();
+  let input = serde_json::json!({"trusted_input":summary,"execution_revision":"current-candidate","result":report,"expected_input":"a".repeat(64),"expected_report":"b".repeat(64),"facts":{"input_digest":"a".repeat(64),"report_digest":"b".repeat(64),"fresh_until":100,"outcome":"requirements_defect","candidate_revision":"current-candidate","requirements_evidence":evidence}});
+  for node in ["implementation_result_gate", "verification_result_gate"] {
+    assert_eq!(select(node, input.clone()), "requirements_defect");
+    let mut substituted = input.clone();
+    substituted["result"]["requirements_defect"]["evidence"][0]["content_digest"] = serde_json::json!("d".repeat(64));
+    assert_eq!(select(node, substituted), "invalid");
+    let mut empty = input["result"].clone();
+    empty["requirements_defect"]["evidence"] = serde_json::json!([]);
+    assert!(FlowPayload::new(&schemas[&key("summary")], empty).is_err());
+  }
 }

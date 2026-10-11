@@ -84,3 +84,41 @@ fn editable_templates_resolve_schema_and_profile_choices_into_immutable_arbitrar
   let decoded: FlowDefinition = serde_json::from_slice(&serde_json::to_vec(&published.definition).unwrap()).unwrap();
   assert_eq!(decoded, published.definition);
 }
+
+#[test]
+fn named_nested_schema_choices_expand_before_publication_and_reject_cycles_or_unknown_choices() {
+  let original: FlowDefinitionTemplate =
+    serde_json::from_str(include_str!("../../../../config/factory/flows/base-intake.json")).unwrap();
+  let mut wire = serde_json::to_value(&original).unwrap();
+  wire["schemas"]["deadline"] = serde_json::json!({"identity":"reused.deadline","version":"v1","shape":{"type":"integer","minimum":0,"maximum":86400000}});
+  wire["schemas"]["execution_facts"]["shape"]["fields"]["fresh_until"]["value"] =
+    serde_json::json!({"type":"reference","schema":"deadline"});
+  let selected: FlowDefinitionTemplate = serde_json::from_value(wire.clone()).unwrap();
+  let project = octacity_server_domain::ProjectId::generate();
+  let profiles = original
+    .nodes
+    .iter()
+    .filter_map(|node| node.build_profile.as_ref())
+    .map(|name| (name.clone(), binding(project)))
+    .collect();
+  let id = FlowDefinitionId::generate();
+  let before = original
+    .instantiate(id, FlowDefinitionVersion::INITIAL, &profiles)
+    .unwrap();
+  let after = selected
+    .instantiate(id, FlowDefinitionVersion::INITIAL, &profiles)
+    .unwrap();
+  assert_eq!(before.definition, after.definition);
+  for expected in &before.schemas {
+    assert!(after.schemas.contains(expected));
+  }
+  for alias in ["deadline", "missing"] {
+    wire["schemas"]["deadline"]["shape"] = serde_json::json!({"type":"reference","schema":alias});
+    let invalid: FlowDefinitionTemplate = serde_json::from_value(wire.clone()).unwrap();
+    assert!(
+      invalid
+        .instantiate(id, FlowDefinitionVersion::INITIAL, &profiles)
+        .is_err()
+    );
+  }
+}

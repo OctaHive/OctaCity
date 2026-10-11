@@ -63,6 +63,7 @@ pub fn validate_factory_transition(
       StoreInputError::InvalidFactoryRunTransition,
     )
   };
+
   if request.append.record_count() > MAX_FACTORY_TRANSITION_RECORDS
     || request.outbox.len() > MAX_FACTORY_TRANSITION_OUTBOX_RECORDS
     || request
@@ -386,6 +387,46 @@ fn validate_node_journal(
       StoreInputError::InvalidFactoryRunTransition,
     )
   };
+  let appended = &request.append.flow;
+  if appended
+    .attempts
+    .iter()
+    .any(|row| !history.is_current_cycle(row.workflow_cycle_id()))
+    || appended
+      .completions
+      .iter()
+      .any(|row| !history.is_current_cycle(row.workflow_cycle_id()))
+    || appended
+      .data
+      .inputs
+      .iter()
+      .any(|row| !history.is_current_cycle(row.cycle_id()))
+    || appended
+      .data
+      .records
+      .iter()
+      .any(|row| !history.is_current_cycle(row.input().cycle_id()))
+    || appended
+      .data
+      .build_intents
+      .iter()
+      .any(|row| !history.is_current_cycle(row.node().workflow_cycle_id()))
+    || appended
+      .data
+      .stops
+      .iter()
+      .map(|row| row.node_attempt_id())
+      .chain(appended.data.build_executions.iter().map(|row| row.node_attempt_id()))
+      .any(|id| {
+        history
+          .attempts
+          .iter()
+          .find(|row| row.id() == id)
+          .is_none_or(|row| !history.is_current_cycle(row.workflow_cycle_id()))
+      })
+  {
+    return Err(invalid());
+  }
   let data = octacity_server_factory::FlowDataHistory {
     stops: baseline
       .data

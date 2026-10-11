@@ -117,6 +117,11 @@ fn validate_definition(
     .collect::<BTreeMap<_, _>>();
   let mut routes = BTreeMap::<(&FactoryKey, &FactoryKey), usize>::new();
   for transition in definition.transitions() {
+    if transition.starts_cycle()
+      && (transition.max_repeats() == 0 || !matches!(transition.target(), FlowTransitionTarget::Node(_)))
+    {
+      return Err(invalid("Flow cycle restart bound"));
+    }
     let predecessor = definition
       .node(transition.predecessor())
       .ok_or_else(|| invalid("Flow transition predecessor"))?;
@@ -162,6 +167,12 @@ fn validate_definition(
         used_terminals.insert(terminal);
       }
     }
+  }
+  // A cycle boundary closes this cycle; sibling routes cannot remain authoritative.
+  if definition.transitions().iter().any(|transition| {
+    transition.starts_cycle() && routes.get(&(transition.predecessor(), transition.outcome())).copied() != Some(1)
+  }) {
+    return Err(invalid("Flow cycle restart routes"));
   }
   if definition.nodes().iter().any(|node| {
     node.outcomes().iter().any(|outcome| {

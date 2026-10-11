@@ -259,6 +259,8 @@ pub struct WorkflowCycle {
   flow_run_id: FlowRunId,
   number: WorkflowCycleNumber,
   predecessor: Option<WorkflowCycleId>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  source_attempt_id: Option<NodeAttemptId>,
 }
 
 impl WorkflowCycle {
@@ -269,6 +271,7 @@ impl WorkflowCycle {
       flow_run_id: flow_run.id(),
       number: WorkflowCycleNumber::INITIAL,
       predecessor: None,
+      source_attempt_id: None,
     })
   }
 
@@ -279,12 +282,14 @@ impl WorkflowCycle {
     flow_run_id: FlowRunId,
     number: WorkflowCycleNumber,
     predecessor: WorkflowCycleId,
+    source: NodeAttemptId,
   ) -> Self {
     Self {
       id,
       flow_run_id,
       number,
       predecessor: Some(predecessor),
+      source_attempt_id: Some(source),
     }
   }
 
@@ -310,6 +315,29 @@ impl WorkflowCycle {
   #[must_use]
   pub const fn predecessor(&self) -> Option<WorkflowCycleId> {
     self.predecessor
+  }
+  /// Binds a new monotonic cycle to an exact preceding attempt. The common
+  /// journal separately verifies its accepted completion and configured restart.
+  pub fn restart(id: WorkflowCycleId, previous: &Self, source: &NodeAttempt) -> Result<Self, FactoryError> {
+    if source.flow_run_id() != previous.flow_run_id || source.workflow_cycle_id() != previous.id {
+      return Err(FactoryError::InvalidReference {
+        relationship: "workflow cycle source",
+      });
+    }
+    let number = previous
+      .number
+      .get()
+      .checked_add(1)
+      .and_then(|value| WorkflowCycleNumber::new(value).ok())
+      .ok_or(FactoryError::InvalidReference {
+        relationship: "workflow cycle number",
+      })?;
+    Ok(Self::next(id, previous.flow_run_id, number, previous.id, source.id()))
+  }
+  /// Accepted result that selected this cycle; initial cycles have no source.
+  #[must_use]
+  pub const fn source_attempt_id(&self) -> Option<NodeAttemptId> {
+    self.source_attempt_id
   }
 }
 

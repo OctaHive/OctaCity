@@ -316,39 +316,12 @@ pub fn derive_phase_pool_entry(
   }
   input.reservation.validate(node.budget()).map_err(|_| pool_invalid())?;
   let interpreter = FlowInterpreter::new(&validated);
-  let matches = |directive: &FlowDirective| match directive {
-    FlowDirective::ExecuteNode { node, .. } | FlowDirective::EnterSubflow { node, .. } => node == &input.node,
-    FlowDirective::Complete { .. } => false,
-  };
-  let ready = if &input.node == definition.entry() {
-    matches(&interpreter.start(flow).map_err(|_| pool_invalid())?)
-  } else {
-    let mut ready = false;
-    for completion in snapshot
-      .flow
-      .completions
-      .iter()
-      .filter(|completion| completion.workflow_cycle_id() == cycle.id())
-    {
-      let attempt = snapshot
-        .flow
-        .attempts
-        .iter()
-        .find(|attempt| attempt.id() == completion.node_attempt_id())
-        .ok_or_else(pool_invalid)?;
-      let directives = interpreter
-        .advance(flow, cycle, attempt, completion, snapshot.flow.runtime())
-        .map_err(|_| pool_invalid())?;
-      ready |= directives.iter().any(|directive| {
-        if !matches(directive) {
-          return false;
-        }
-        true
-      });
-    }
-    ready
-  };
-  if !ready {
+  if !snapshot.flow.runtime().is_current_cycle(cycle.id())
+    || !interpreter
+      .ready_nodes(flow, cycle, snapshot.flow.runtime())
+      .map_err(|_| pool_invalid())?
+      .contains(&input.node)
+  {
     return Err(pool_invalid());
   }
   let admitted_at = snapshot

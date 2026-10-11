@@ -1026,7 +1026,7 @@ fn configured_specification_review_dispatches_only_its_frozen_candidate_and_revi
     .with_data_schemas(published.schemas.clone())
     .unwrap();
     let request = serde_json::json!({"work_id":work.id().to_string(),"original_base":work.subject().base_revision().as_str(),"candidate_revision":"spec-candidate","manifest_digest":manifest.content_digest(),"bundle_digest":bundle.content_digest()});
-    let payload = serde_json::json!({"request":request,"original_acceptance":work.artifacts().acceptance(),"artifacts":{"manifest":manifest,"bundle":bundle},"acceptance_criteria":["specified behavior has a reproducible acceptance check"],"regression_criteria":[]});
+    let payload = serde_json::json!({"request":request,"original_acceptance":work.artifacts().acceptance(),"artifacts":{"manifest":manifest,"bundle":bundle},"acceptance_criteria":["specified behavior has a reproducible acceptance check"],"regression_criteria":[],"declared_requirements":[]});
     let subject = FactoryTaskSubject::Candidate(CandidateSubject::new(
       work.subject().clone(),
       octacity_server_domain::ImmutableRevision::new("spec-candidate").unwrap(),

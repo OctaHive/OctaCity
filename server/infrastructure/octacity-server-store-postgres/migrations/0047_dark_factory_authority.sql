@@ -182,7 +182,10 @@ CREATE TABLE factory_workflow_cycles (
   flow_run_id UUID NOT NULL REFERENCES factory_flow_runs(id),
   cycle_number BIGINT NOT NULL,
   predecessor_id UUID,
+  source_attempt_id UUID,
   created_at TIMESTAMPTZ NOT NULL,
+  CONSTRAINT factory_workflow_cycles_causal_origin CHECK ((predecessor_id IS NULL) = (source_attempt_id IS NULL)),
+  CONSTRAINT factory_workflow_cycles_source_unique UNIQUE (source_attempt_id),
   CONSTRAINT factory_workflow_cycles_positive_number CHECK (cycle_number > 0),
   CONSTRAINT factory_workflow_cycles_flow_run_key UNIQUE (flow_run_id, cycle_number),
   CONSTRAINT factory_workflow_cycles_id_run_unique UNIQUE (id, factory_run_id),
@@ -251,6 +254,10 @@ CREATE TABLE factory_node_attempts (
   CONSTRAINT factory_node_attempts_cycle_run_fk
     FOREIGN KEY (workflow_cycle_id, run_id) REFERENCES factory_workflow_cycles(id, factory_run_id)
 );
+
+ALTER TABLE factory_workflow_cycles
+  ADD CONSTRAINT factory_workflow_cycles_source_attempt_fk
+  FOREIGN KEY (source_attempt_id, factory_run_id) REFERENCES factory_node_attempts(id, run_id);
 
 ALTER TABLE factory_flow_runs
   ADD CONSTRAINT factory_flow_runs_parent_node_fk

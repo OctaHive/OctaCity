@@ -23,6 +23,8 @@ pub struct FlowContextSelection {
 pub struct FlowContextBinding {
   candidate_revision: Option<FlowDataMapping>,
   entries: BTreeMap<FactoryKey, FlowContextSelection>,
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  artifact_collections: BTreeMap<FactoryKey, FlowContextSelection>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,11 +32,19 @@ struct BindingWire {
   #[serde(default)]
   candidate_revision: Option<FlowDataMapping>,
   entries: BTreeMap<FactoryKey, FlowContextSelection>,
+  #[serde(default)]
+  artifact_collections: BTreeMap<FactoryKey, FlowContextSelection>,
 }
 impl TryFrom<BindingWire> for FlowContextBinding {
   type Error = FactoryError;
   fn try_from(wire: BindingWire) -> Result<Self, Self::Error> {
-    Self::new(wire.candidate_revision, wire.entries)
+    let binding = Self {
+      candidate_revision: wire.candidate_revision,
+      entries: wire.entries,
+      artifact_collections: wire.artifact_collections,
+    };
+    binding.validate()?;
+    Ok(binding)
   }
 }
 impl FlowContextBinding {
@@ -47,14 +57,19 @@ impl FlowContextBinding {
     let binding = Self {
       candidate_revision,
       entries,
+      artifact_collections: BTreeMap::new(),
     };
-    if binding.entries.is_empty()
-      || binding.entries.len() > MAX_CONTEXT_MANIFEST_ENTRIES
-      || serde_json::to_vec(&binding).map_err(|_| invalid())?.len() > MAX_FLOW_INPUT_BINDING_BYTES
+    binding.validate()?;
+    Ok(binding)
+  }
+  fn validate(&self) -> Result<(), FactoryError> {
+    if (self.entries.is_empty() && self.artifact_collections.is_empty())
+      || self.entries.len() + self.artifact_collections.len() > MAX_CONTEXT_MANIFEST_ENTRIES
+      || serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_FLOW_INPUT_BINDING_BYTES
     {
       return Err(invalid());
     }
-    Ok(binding)
+    Ok(())
   }
   /// Resolves only the declared immutable sources for a trusted context collector.
   /// The collector still verifies bytes, subject, size and any retrieval receipt;
@@ -63,14 +78,39 @@ impl FlowContextBinding {
     &self,
     input: &FlowPayload,
   ) -> Result<BTreeMap<FactoryKey, (ContextSourceKind, FactoryContextReference)>, FactoryError> {
-    self
+    let mut selected = self
       .entries
       .iter()
       .map(|(name, selection)| {
         let source = serde_json::from_value(selection.source.project_raw(input.value())?).map_err(|_| invalid())?;
         Ok((name.clone(), (selection.source_kind, source)))
       })
-      .collect()
+      .collect::<Result<BTreeMap<_, _>, FactoryError>>()?;
+    for (prefix, collection) in &self.artifact_collections {
+      // Collections select only immutable Artifact references. Repository access
+      // and discovery still require separately declared receipt-bound selections.
+      let artifacts: Vec<crate::FactoryArtifactReference> =
+        serde_json::from_value(collection.source.project_raw(input.value())?).map_err(|_| invalid())?;
+      if selected.len() + artifacts.len() > MAX_CONTEXT_MANIFEST_ENTRIES {
+        return Err(invalid());
+      }
+      for (index, artifact) in artifacts.into_iter().enumerate() {
+        let key = FactoryKey::new(format!("{prefix}.{index}")).map_err(|_| invalid())?;
+        if selected
+          .insert(
+            key,
+            (collection.source_kind, FactoryContextReference::Artifact(artifact)),
+          )
+          .is_some()
+        {
+          return Err(invalid());
+        }
+      }
+    }
+    if selected.is_empty() {
+      return Err(invalid());
+    }
+    Ok(selected)
   }
   /// Resolves the explicitly selected candidate; absence selects the original Work base.
   pub fn candidate_revision(
@@ -96,10 +136,10 @@ impl FlowContextBinding {
     {
       return Err(invalid());
     }
-    if context.entries().len() != self.entries.len() {
+    let selected = self.selected_sources(input.payload())?;
+    if context.entries().len() != selected.len() {
       return Err(invalid());
     }
-    let selected = self.selected_sources(input.payload())?;
     for entry in context.entries() {
       let (kind, source) = selected.get(entry.logical_identity()).ok_or_else(invalid)?;
       if entry.source_kind() != *kind || entry.source() != source {

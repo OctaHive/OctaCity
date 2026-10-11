@@ -41,6 +41,7 @@ mod factory_admission_tests;
 mod factory_build;
 mod factory_build_service;
 pub use factory_build_service::{FactoryBuildMaterializer, FactoryOrdinaryBuildService};
+mod factory_candidate_publication;
 mod factory_codex;
 mod factory_codex_contract;
 mod factory_codex_observation;
@@ -63,6 +64,10 @@ mod factory_decision_signal_tests;
 mod factory_evaluation;
 mod factory_evidence;
 mod factory_flow_action;
+pub use factory_candidate_publication::{
+  FactoryCandidatePublication, FactoryCandidatePublicationAction, FactoryCandidatePublicationRequest,
+  FactoryCandidatePublisher,
+};
 #[cfg(test)]
 mod factory_flow_action_tests;
 mod factory_node_capture;
@@ -441,6 +446,8 @@ pub const MAX_WEBHOOK_HEADER_VALUE_BYTES: usize = octacity_server_store::MAX_WEB
 mod factory_flow_control_tests;
 #[cfg(test)]
 mod factory_flow_tests;
+#[cfg(test)]
+mod factory_requirements_tests;
 
 mod factory_flow;
 

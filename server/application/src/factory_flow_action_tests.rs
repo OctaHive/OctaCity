@@ -61,8 +61,6 @@ struct Harness {
   outcome: FlowOutcomeDefinition,
 }
 fn harness(binding: FlowActionBinding, permissions: FactoryPermissionSet) -> Harness {
-  let fixture = store_testing::factory_node_journal_contract_fixture();
-  let work = fixture.admission.work;
   let schema = FlowDataSchema::new(
     key("action.receipt"),
     key("v1"),
@@ -77,6 +75,15 @@ fn harness(binding: FlowActionBinding, permissions: FactoryPermissionSet) -> Har
     },
   )
   .unwrap();
+  harness_with_result(binding, permissions, schema)
+}
+fn harness_with_result(
+  binding: FlowActionBinding,
+  permissions: FactoryPermissionSet,
+  schema: FlowDataSchema,
+) -> Harness {
+  let fixture = store_testing::factory_node_journal_contract_fixture();
+  let work = fixture.admission.work;
   let input_schema = FlowDataSchema::new(key("action.input"), key("v1"), FlowValueSchema::Boolean).unwrap();
   let outcome = FlowOutcomeDefinition::new(key("done"), FlowOutcomeKind::Success, schema.reference().clone());
   let budget = BudgetLimit::new(4, 1000, 100, 100, 10000).unwrap();
@@ -676,5 +683,339 @@ fn an_action_with_an_unknown_response_is_stopped_through_its_original_identity_a
       snapshot,
       "the adapter itself cannot select a graph transition"
     );
+  });
+}
+
+struct Publisher {
+  requests: Mutex<Vec<FactoryCandidatePublicationRequest>>,
+  published: Mutex<Option<FactoryCandidatePublication>>,
+  lose_response: std::sync::atomic::AtomicBool,
+}
+#[async_trait]
+impl FactoryCandidatePublisher for Publisher {
+  async fn observe(
+    &self,
+    request: &FactoryCandidatePublicationRequest,
+  ) -> Result<Option<FactoryCandidatePublication>, ApplicationError> {
+    let publication = self.published.lock().unwrap().clone();
+    if let Some(ref publication) = publication {
+      assert_eq!(publication.candidate, request.candidate);
+    }
+    Ok(publication)
+  }
+  async fn publish(
+    &self,
+    request: &FactoryCandidatePublicationRequest,
+  ) -> Result<FactoryCandidatePublication, ApplicationError> {
+    self.requests.lock().unwrap().push(request.clone());
+    let publication = FactoryCandidatePublication {
+      operation_id: request.operation_id,
+      candidate: request.candidate.clone(),
+      receipt: FactoryDigest::from_bytes([88; 32]),
+      usage: BudgetUsage::default(),
+    };
+    *self.published.lock().unwrap() = Some(publication.clone());
+    if self.lose_response.swap(false, std::sync::atomic::Ordering::SeqCst) {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(publication)
+  }
+  async fn cancel(
+    &self,
+    _: &FactoryCandidatePublicationRequest,
+    _: octacity_server_domain::Timestamp,
+  ) -> Result<Option<BudgetUsage>, ApplicationError> {
+    Ok(Some(BudgetUsage::default()))
+  }
+}
+fn publication_schema() -> FlowDataSchema {
+  FlowDataSchema::new(
+    key("candidate.receipt"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: [
+        (
+          key("receipt"),
+          FlowFieldSchema::required(FlowValueSchema::String {
+            min_bytes: 64,
+            max_bytes: 64,
+          }),
+        ),
+        (
+          key("candidate_revision"),
+          FlowFieldSchema::required(FlowValueSchema::String {
+            min_bytes: 1,
+            max_bytes: 128,
+          }),
+        ),
+        (
+          key("changeset_digest"),
+          FlowFieldSchema::required(FlowValueSchema::String {
+            min_bytes: 64,
+            max_bytes: 64,
+          }),
+        ),
+      ]
+      .into_iter()
+      .collect(),
+    },
+  )
+  .unwrap()
+}
+fn attach_candidate(h: &mut Harness) -> CandidateSubject {
+  let candidate = CandidateSubject::new(
+    h.input.subject().clone(),
+    octacity_server_domain::ImmutableRevision::new("reviewed-candidate").unwrap(),
+    FactoryDigest::from_bytes([77; 32]),
+  );
+  let subject = FactoryTaskSubject::Candidate(candidate.clone());
+  let entries = [("candidate_bytes", 41), ("candidate_manifest", 42)]
+    .into_iter()
+    .map(|(name, seed)| {
+      let artifact = FactoryArtifactReference::new(
+        octacity_server_domain::ArtifactId::generate(),
+        FactoryDigest::from_bytes([seed; 32]),
+        100,
+      )
+      .unwrap();
+      ContextManifestEntry::new(
+        ContextSourceKind::Specification,
+        key(name),
+        subject.clone(),
+        FactoryContextReference::Artifact(artifact.clone()),
+        artifact.content_digest(),
+        100,
+        FactorySafeText::new("Reviewed exact bytes").unwrap(),
+        FactoryDigest::from_bytes([9; 32]),
+      )
+      .unwrap()
+    })
+    .collect();
+  h.input = h
+    .input
+    .clone()
+    .with_context(
+      ContextManifest::new(
+        ContextManifestId::generate(),
+        subject,
+        FactoryDigest::from_bytes([9; 32]),
+        entries,
+      )
+      .unwrap(),
+      vec![],
+    )
+    .unwrap();
+  candidate
+}
+#[test]
+fn exact_candidate_publication_recovers_a_lost_response_without_another_write() {
+  crate::factory_admission_tests::run_ready(async {
+    let schema = publication_schema();
+    let mut h = harness_with_result(
+      binding(
+        "publisher",
+        "publish_candidate",
+        serde_json::json!({"bundle":"candidate_bytes", "manifest":"candidate_manifest", "target":"review_branch"}),
+      ),
+      permissions("publisher"),
+      schema,
+    );
+    let candidate = attach_candidate(&mut h);
+    let publisher = Arc::new(Publisher {
+      requests: Mutex::new(vec![]),
+      published: Mutex::new(None),
+      lose_response: std::sync::atomic::AtomicBool::new(true),
+    });
+    let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(
+      FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome.clone()),
+    )));
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      adapter.clone(),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input.clone()), at(11))
+      .await
+      .unwrap();
+    assert!(
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), None, at(12))
+        .await
+        .is_err()
+    );
+    assert!(
+      h.store
+        .factory_run_snapshot(h.run)
+        .await
+        .unwrap()
+        .flow
+        .data
+        .records
+        .is_empty()
+    );
+    let restarted = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
+    let FactoryNodeStep::Completed(record) = restarted
+      .run_once(h.run, h.claim, h.target, None, at(13))
+      .await
+      .unwrap()
+    else {
+      panic!("exact observed publication required")
+    };
+    assert_eq!(
+      record.payload().value(),
+      &serde_json::json!({"receipt":FactoryDigest::from_bytes([88;32]),"candidate_revision":"reviewed-candidate","changeset_digest":FactoryDigest::from_bytes([77;32])})
+    );
+    let requests = publisher.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].candidate, candidate);
+    assert_eq!(requests[0].cycle_id, h.input.cycle_id());
+    assert_eq!(requests[0].deadline, at(511));
+  });
+}
+
+#[test]
+fn publication_rejects_an_incompatible_receipt_contract_before_any_external_write() {
+  crate::factory_admission_tests::run_ready(async {
+    let mut h = harness(
+      binding(
+        "publisher",
+        "publish_candidate",
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":"review_branch"}),
+      ),
+      permissions("publisher"),
+    );
+    attach_candidate(&mut h);
+    let publisher = Arc::new(Publisher {
+      requests: Mutex::new(vec![]),
+      published: Mutex::new(None),
+      lose_response: std::sync::atomic::AtomicBool::new(false),
+    });
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(
+        FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome),
+      ))),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(runner.run_once(h.run, h.claim, h.target, None, at(12)).await.is_err());
+    assert!(
+      publisher.requests.lock().unwrap().is_empty(),
+      "invalid output contracts must fail before credentials or publication"
+    );
+  });
+}
+
+#[test]
+fn lost_publication_cannot_be_accepted_after_the_declared_review_expiry() {
+  crate::factory_admission_tests::run_ready(async {
+    let mut h = harness_with_result(
+      binding(
+        "publisher",
+        "publish_candidate",
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":"review_branch","valid_until":{"value":{"mapping":"constant","value":14}}}),
+      ),
+      permissions("publisher"),
+      publication_schema(),
+    );
+    attach_candidate(&mut h);
+    let publisher = Arc::new(Publisher {
+      requests: Mutex::new(vec![]),
+      published: Mutex::new(None),
+      lose_response: std::sync::atomic::AtomicBool::new(true),
+    });
+    let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(
+      FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome),
+    )));
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      adapter.clone(),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), None, at(12))
+        .await
+        .is_err()
+    );
+    assert_eq!(
+      publisher.requests.lock().unwrap().len(),
+      1,
+      "publication was valid before expiry"
+    );
+    let restarted = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
+    assert!(
+      restarted
+        .run_once(h.run, h.claim, h.target, None, at(14))
+        .await
+        .is_err()
+    );
+    assert!(
+      h.store
+        .factory_run_snapshot(h.run)
+        .await
+        .unwrap()
+        .flow
+        .data
+        .records
+        .is_empty()
+    );
+    assert_eq!(publisher.requests.lock().unwrap().len(), 1);
+  });
+}
+
+#[test]
+fn a_receipt_for_another_publication_cannot_authorize_the_same_candidate() {
+  crate::factory_admission_tests::run_ready(async {
+    let mut h = harness_with_result(
+      binding(
+        "publisher",
+        "publish_candidate",
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":"review_branch"}),
+      ),
+      permissions("publisher"),
+      publication_schema(),
+    );
+    attach_candidate(&mut h);
+    let publisher = Arc::new(Publisher {
+      requests: Mutex::new(vec![]),
+      published: Mutex::new(None),
+      lose_response: std::sync::atomic::AtomicBool::new(true),
+    });
+    let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(
+      FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome),
+    )));
+    let runner = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), None, at(12))
+        .await
+        .is_err()
+    );
+    publisher.published.lock().unwrap().as_mut().unwrap().operation_id = FactoryDigest::from_bytes([99; 32]);
+    assert!(runner.run_once(h.run, h.claim, h.target, None, at(13)).await.is_err());
+    assert!(
+      h.store
+        .factory_run_snapshot(h.run)
+        .await
+        .unwrap()
+        .flow
+        .data
+        .records
+        .is_empty()
+    );
+    assert_eq!(publisher.requests.lock().unwrap().len(), 1);
   });
 }

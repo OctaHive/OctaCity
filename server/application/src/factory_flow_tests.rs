@@ -30,6 +30,65 @@ impl FactoryFlowInputPreparer for Inputs {
     let input = FactoryNodeRunner::<store_testing::InMemoryFactoryConfigurationStore, FakePending>::prepare_input(
       snapshot, target,
     )?;
+    let binding = snapshot
+      .admitted_flow
+      .closure()
+      .definition(input.definition())
+      .unwrap()
+      .node(input.node())
+      .unwrap()
+      .context_binding();
+    if let Some(binding) = binding {
+      let selected = binding.selected_sources(input.payload()).unwrap();
+      let subject = match binding.candidate_revision(input.payload()).unwrap() {
+        None => FactoryTaskSubject::Exact(snapshot.work.subject().clone()),
+        Some(revision) => {
+          let (_, (_, FactoryContextReference::Artifact(manifest))) = selected
+            .iter()
+            .find(|(name, _)| name.as_str() == "manifest" || name.as_str() == "candidate_manifest")
+            .unwrap()
+          else {
+            panic!("fixture requires a verified manifest artifact")
+          };
+          FactoryTaskSubject::Candidate(CandidateSubject::new(
+            snapshot.work.subject().clone(),
+            revision,
+            manifest.content_digest(),
+          ))
+        }
+      };
+      let entries = selected
+        .into_iter()
+        .map(|(name, (kind, source))| {
+          let FactoryContextReference::Artifact(artifact) = &source else {
+            panic!("fixture has only independently verified artifacts")
+          };
+          ContextManifestEntry::new(
+            kind,
+            name,
+            subject.clone(),
+            source.clone(),
+            artifact.content_digest(),
+            artifact.encoded_size(),
+            FactorySafeText::new("Qualified exact fixture artifact").unwrap(),
+            FactoryDigest::from_bytes([4; 32]),
+          )
+          .unwrap()
+        })
+        .collect();
+      return input
+        .with_context(
+          ContextManifest::new(
+            ContextManifestId::generate(),
+            subject,
+            FactoryDigest::from_bytes([4; 32]),
+            entries,
+          )
+          .unwrap(),
+          vec![],
+        )
+        .map_err(|_| ApplicationError::invalid());
+    }
     let subject = FactoryTaskSubject::Exact(snapshot.work.subject().clone());
     let task = snapshot.work.artifacts().task().clone();
     let manifest = ContextManifest::new(
@@ -73,13 +132,23 @@ impl FactoryNodeExecutor for FakePending {
 }
 
 pub(crate) struct Execution {
-  clock: std::sync::atomic::AtomicI64,
+  pub(crate) clock: std::sync::atomic::AtomicI64,
   pub(crate) seeder: Option<Arc<dyn FactoryTestBuildSeeder>>,
   builds: Mutex<BTreeMap<FactoryDigest, Arc<Builds>>>,
   requirements: BTreeMap<FactoryKey, Vec<EvidenceRequirement>>,
   result_schemas: BTreeMap<FactoryKey, ImmutableReference>,
-  reports: BTreeMap<FactoryKey, serde_json::Value>,
-  facts: BTreeMap<FactoryKey, serde_json::Value>,
+  pub(crate) reports: BTreeMap<FactoryKey, serde_json::Value>,
+  pub(crate) facts: BTreeMap<FactoryKey, serde_json::Value>,
+  pub(crate) output_builder: Option<Arc<dyn FactoryTestOutputBuilder>>,
+}
+pub(crate) trait FactoryTestOutputBuilder: Send + Sync {
+  fn outputs(
+    &self,
+    request: &CreateFactoryBuild,
+    builds: &Builds,
+    schema: &ImmutableReference,
+    requirements: &[EvidenceRequirement],
+  ) -> Option<FactoryNodeBuildOutputs>;
 }
 impl Execution {
   fn by_build(&self, id: octacity_server_domain::BuildId) -> Arc<Builds> {
@@ -171,6 +240,16 @@ impl FactoryNodeBuildOutputSource for Execution {
     let request = builds.requests.lock().unwrap()[0].clone();
     let causality = request.causality.as_ref();
     let profile = &causality.profile;
+    if let Some(outputs) = self.output_builder.as_ref().and_then(|builder| {
+      builder.outputs(
+        &request,
+        &builds,
+        &self.result_schema(profile.node.clone()),
+        &self.requirements[&profile.node],
+      )
+    }) {
+      return Ok(outputs);
+    }
     let wire: serde_json::Value = serde_json::from_slice(&causality.input).unwrap();
     let report = self
       .reports
@@ -191,6 +270,8 @@ impl FactoryNodeBuildOutputSource for Execution {
         serde_json::json!({"problem":"bounded feature proposal","sources":["admitted.task"],"assumptions":[],"alternatives":["existing contract"],"unresolved_questions":[]})
       } else if requirement.kind() == &key("terminal_resolution") {
         serde_json::json!({"accepted":false,"outcome":"unresolved"})
+      } else if requirement.kind() == &key("execution_facts") {
+        serde_json::json!({"outcome":"observed","candidate_revision":request.immutable_revision,"report_digest":FactoryDigest::content_sha256(&documents[0].bytes),"fresh_until":10000,"requirements_evidence":[]})
       } else {
         self.facts[&profile.node].clone()
       };
@@ -234,7 +315,6 @@ impl Execution {
 }
 
 pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>) {
-  let work = store_testing::factory_node_journal_contract_fixture().admission.work;
   let mut template: FlowDefinitionTemplate =
     serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
   let mut audit = template
@@ -267,21 +347,27 @@ pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>
     key("observed"),
     FlowTransitionTarget::Node(key("protected_tests")),
   ));
-  let schemas = template
-    .schemas
-    .iter()
-    .map(|(key, schema)| {
-      (
-        key.clone(),
-        FlowDataSchema::new(schema.identity.clone(), schema.version.clone(), schema.shape.clone()).unwrap(),
-      )
-    })
-    .collect::<BTreeMap<_, _>>();
+  configured_fixture_from_template(template)
+}
+
+pub(crate) fn configured_fixture_from_template(
+  template: FlowDefinitionTemplate,
+) -> (PublishedFactoryAdmission, Arc<Execution>) {
+  let work = store_testing::factory_node_journal_contract_fixture().admission.work;
+  configured_fixture_with_work(template, work)
+}
+pub(crate) fn configured_fixture_with_work(
+  template: FlowDefinitionTemplate,
+  work: WorkEnvelope,
+) -> (PublishedFactoryAdmission, Arc<Execution>) {
+  let schemas = template.data_schemas().unwrap();
   let fact_schemas = BTreeMap::from([
     (key("eligibility"), key("eligibility_facts")),
     (key("classification"), key("classification_facts")),
     (key("defect_research"), key("defect_facts")),
     (key("feature_research"), key("feature_facts")),
+    (key("implementation"), key("execution_facts")),
+    (key("verification"), key("execution_facts")),
   ]);
   let mut profiles = BTreeMap::new();
   let mut requirements = BTreeMap::new();
@@ -292,7 +378,11 @@ pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>
       profile.result_output = key("observations");
       if let Some(facts) = fact_schemas.get(&node.key) {
         profile.evidence = vec![EvidenceRequirement::new(
-          key("facts"),
+          if matches!(node.key.as_str(), "implementation" | "verification") {
+            key("execution_facts")
+          } else {
+            key("facts")
+          },
           EvidenceOutputKind::Report,
           schemas[facts].reference().clone(),
           reference("independent.verifier"),
@@ -317,6 +407,47 @@ pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>
           reference("verifier.plugin"),
         ));
       }
+      match node.outcomes[0].schema.as_str() {
+        "spec_manifest" => {
+          profile.result_output = key("change-set-manifest.json");
+          profile.result_output_kind = EvidenceOutputKind::Artifact;
+          profile.result_tool = Some(reference("capture"));
+          profile.evidence = vec![
+            EvidenceRequirement::new(
+              key("change-set.bundle"),
+              EvidenceOutputKind::Artifact,
+              reference("capture.artifacts"),
+              reference("capture"),
+              profile.plugin.clone(),
+            ),
+            EvidenceRequirement::new(
+              key("specification_handoff"),
+              EvidenceOutputKind::Report,
+              schemas[&key("spec_handoff")].reference().clone(),
+              profile.tool.clone(),
+              profile.plugin.clone(),
+            ),
+            EvidenceRequirement::new(
+              key("specification_facts"),
+              EvidenceOutputKind::Report,
+              schemas[&key("spec_facts")].reference().clone(),
+              reference("independent.verifier"),
+              reference("verifier.plugin"),
+            ),
+          ];
+        }
+        "spec_review" => {
+          profile.result_output = key("specification_review");
+          profile.evidence = vec![EvidenceRequirement::new(
+            key("specification_review_facts"),
+            EvidenceOutputKind::Report,
+            schemas[&key("spec_review_facts")].reference().clone(),
+            reference("independent.verifier"),
+            reference("verifier.plugin"),
+          )];
+        }
+        _ => {}
+      }
       requirements.insert(node.key.clone(), profile.evidence.clone());
       result_schemas.insert(node.key.clone(), schemas[&node.outcomes[0].schema].reference().clone());
       profiles.insert(choice.clone(), profile);
@@ -329,7 +460,8 @@ pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>
   let flow = FlowRun::root(&run, published.definition.reference()).unwrap();
   let cycle = WorkflowCycle::initial(&flow).unwrap();
   let limits =
-    FlowAdmissionLimits::product_defaults(4, template.execution.budget(), FactoryPermissionSet::deny_all()).unwrap();
+    FlowAdmissionLimits::product_defaults(4, template.execution.budget(), template.execution.permissions().clone())
+      .unwrap();
   let policy = PhasePoolPolicy {
     phase: key("development.ready"),
     order: vec![
@@ -381,6 +513,7 @@ pub(crate) fn configured_fixture() -> (PublishedFactoryAdmission, Arc<Execution>
   let execution = Execution {
     clock: std::sync::atomic::AtomicI64::new(30),
     seeder: None,
+    output_builder: None,
     builds: Mutex::new(BTreeMap::new()),
     requirements,
     result_schemas,
@@ -661,8 +794,10 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
       "accessibility_audit",
       "protected_tests",
       "implementation",
+      "implementation_result_gate",
       "review",
-      "verification"
+      "verification",
+      "verification_result_gate"
     ]
   );
   assert_eq!(snapshot.flow.data.build_intents.len(), 8);
@@ -758,7 +893,15 @@ fn model_small_work_claim_cannot_bypass_independently_verified_large_work() {
         .find(|record| record.input().node() == &key("requirements_needed"))
       {
         decision = Some(key(record.metadata().unwrap()["outcome"].as_str().unwrap()));
-        break;
+        if current
+          .flow
+          .data
+          .records
+          .iter()
+          .any(|row| row.input().node() == &key("author_subject"))
+        {
+          break;
+        }
       }
     }
     assert_eq!(decision, Some(key("specification")));
@@ -794,7 +937,7 @@ fn model_small_work_claim_cannot_bypass_independently_verified_large_work() {
 pub(crate) trait FactoryTestBuildSeeder: Send + Sync {
   async fn seed(&self, request: &CreateFactoryBuild, accepted: &FactoryBuildAcceptance);
 }
-fn run_ready<T>(future: impl std::future::Future<Output = T>) -> T {
+pub(crate) fn run_ready<T>(future: impl std::future::Future<Output = T>) -> T {
   let mut context = std::task::Context::from_waker(std::task::Waker::noop());
   let mut future = std::pin::pin!(future);
   match future.as_mut().poll(&mut context) {
@@ -1446,5 +1589,478 @@ fn configured_feature_research_retains_an_actual_proposal_artifact_before_bypass
           && execution.attempt_id() == proposal.producer.attempt_id()
           && execution.jobs().contains(&proposal.producer.job_id()))
     );
+  });
+}
+
+pub(crate) fn correction_fixture() -> (PublishedFactoryAdmission, Arc<Execution>) {
+  configured_fixture_from_template(correction_template())
+}
+fn correction_template() -> FlowDefinitionTemplate {
+  let mut template: FlowDefinitionTemplate =
+    serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+  let prototype = template
+    .nodes
+    .iter()
+    .find(|node| node.key == key("implementation"))
+    .unwrap()
+    .clone();
+  let summary = serde_json::json!({"work_kind":"feature_request","size":"small","risk":"low","admission_risk":"low","research_required":false,"research_accepted":false,"component":"api","severity":"high","dependencies":[],"recommended_route":"requirements"});
+  template.entry = key("seed_input");
+  template.input_schema = key("summary");
+  template.nodes = ["seed_input", "write_policy", "inspect_policy"].into_iter().map(|name| {
+    let mut node = prototype.clone();
+    node.key = key(name);
+    node.pool = None;
+    node.required = true;
+    node.build_profile = Some(key(name));
+    node.input_binding = serde_json::from_value(if name == "seed_input" {
+      serde_json::json!({"sources":{},"mapping":{"value":{"mapping":"constant","value":summary}}})
+    } else {
+      serde_json::json!({"sources":{"previous":{"source":"predecessor","view":"payload","path":""}},"mapping":{"value":{"mapping":"pointer","path":"/previous"}}})
+    }).unwrap();
+    node
+  }).collect();
+  template.transitions = serde_json::from_value(serde_json::json!([
+    {"predecessor":"seed_input","outcome":"observed","target":{"kind":"node","key":"write_policy"},"max_repeats":0},
+    {"predecessor":"write_policy","outcome":"observed","target":{"kind":"node","key":"inspect_policy"},"max_repeats":0},
+    {"predecessor":"inspect_policy","outcome":"observed","target":{"kind":"node","key":"write_policy"},"max_repeats":1,"exhausted_terminal":"needs_operator","starts_cycle":true}
+  ])).unwrap();
+  template.terminals = BTreeMap::from([(key("needs_operator"), key("summary"))]);
+  template
+}
+
+pub(crate) async fn verify_correction_owner<S: FactoryRunStore + FactoryPhasePoolStore>(
+  store: Arc<S>,
+  restarted: Arc<S>,
+  admission: &PublishedFactoryAdmission,
+  execution: Arc<Execution>,
+) {
+  let claim = FactoryRunClaimRecord::new(
+    admission.run.id(),
+    key("flow.worker"),
+    FactoryClaim::new(
+      FactoryClaimFence::new(FactoryDigest::from_bytes([2; 32])),
+      at(10),
+      at(900),
+    )
+    .unwrap(),
+  );
+  store
+    .claim_factory_run(ClaimFactoryRun {
+      run_id: admission.run.id(),
+      expected_version: admission.run.version(),
+      record: claim.clone(),
+      audit: FactoryAuditFact::new(
+        admission.run.id(),
+        AuditActorKind::Worker,
+        None,
+        key("factory.claimed"),
+        FactoryDigest::from_bytes([1; 32]),
+        key("accepted"),
+        at(10),
+      ),
+    })
+    .await
+    .unwrap();
+  let mut resolved = false;
+  let mut checked_old_authority = false;
+  for time in 31..65 {
+    let before = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+    if before.flow.cycles.len() == 2 && !checked_old_authority {
+      let stale = FactoryNodeRunner::new(
+        store.clone(),
+        Arc::new(FakePending),
+        crate::factory_node_test_support::clock(),
+      );
+      let target = FactoryNodeTarget {
+        flow_run_id: admission.flow.root_run().id(),
+        cycle_id: admission.flow.initial_cycle().id(),
+        node: key("write_policy"),
+      };
+      assert!(
+        stale
+          .run_once(admission.run.id(), claim.id, target, None, at(time))
+          .await
+          .is_err(),
+        "old-cycle acceptance cannot authorize execution after correction"
+      );
+      let stale_input = before
+        .flow
+        .data
+        .inputs
+        .iter()
+        .find(|input| input.cycle_id() == admission.flow.initial_cycle().id() && input.node() == &key("write_policy"))
+        .unwrap()
+        .retry()
+        .unwrap();
+      let mut append = FactoryRunHistoryAppend::default();
+      append.flow.data.inputs.push(stale_input);
+      assert!(
+        store
+          .commit_factory_run_transition(append_request(&before, append, at(time)))
+          .await
+          .is_err(),
+        "the store must reject direct append of an input carrying superseded cycle authority"
+      );
+      checked_old_authority = true;
+    }
+    execution.clock.store(time, std::sync::atomic::Ordering::SeqCst);
+    let owner = FactoryFlowRunner::new(
+      if time % 2 == 0 {
+        store.clone()
+      } else {
+        restarted.clone()
+      },
+      Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),
+      Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
+    );
+    match owner
+      .reconcile_flow(admission.run.id(), claim.id, at(time))
+      .await
+      .unwrap_or_else(|error| panic!("correction at {time}: {error:?}"))
+    {
+      FactoryFlowStep::Advanced => {}
+      FactoryFlowStep::Resolved(terminal) => {
+        assert_eq!(terminal, key("needs_operator"));
+        resolved = true;
+        break;
+      }
+      other => panic!("unexpected correction progress {other:?}"),
+    }
+  }
+  assert!(checked_old_authority);
+  assert!(resolved, "declared correction must terminate at its bounded exhaustion");
+  let snapshot = restarted.factory_run_snapshot(admission.run.id()).await.unwrap();
+  assert_eq!(snapshot.flow.cycles.len(), 2);
+  assert_eq!(snapshot.flow.attempts.len(), 5);
+  assert_eq!(snapshot.flow.data.records.len(), 5);
+  let first = snapshot.flow.cycles.iter().min_by_key(|row| row.number()).unwrap();
+  let second = snapshot.flow.cycles.iter().max_by_key(|row| row.number()).unwrap();
+  let mut attempts = snapshot.flow.attempts.iter().collect::<Vec<_>>();
+  attempts.sort_by_key(|row| row.number());
+  assert_eq!(second.predecessor(), Some(first.id()));
+  assert_eq!(second.source_attempt_id(), Some(attempts[2].id()));
+  assert_eq!(attempts[3].node_key(), &key("write_policy"));
+  assert_eq!(attempts[3].workflow_cycle_id(), second.id());
+  let input = snapshot
+    .flow
+    .data
+    .inputs
+    .iter()
+    .find(|input| input.digest().unwrap() == attempts[3].input_digest())
+    .unwrap();
+  assert_eq!(input.sources().len(), 1);
+  assert_eq!(input.sources()[0].node_attempt_id(), attempts[2].id());
+  let trigger = snapshot
+    .flow
+    .data
+    .records
+    .iter()
+    .find(|row| row.node_attempt_id() == attempts[2].id())
+    .unwrap();
+  assert_eq!(input.payload().value(), trigger.payload().value());
+}
+
+#[test]
+fn configured_correction_recovers_a_fresh_cycle_and_exact_trigger_without_reusing_old_authority() {
+  let (admission, execution) = correction_fixture();
+  let store = Arc::new(store_testing::InMemoryFactoryConfigurationStore::new());
+  let audit = store_testing::management_mutation_with_request((), "correction-flow")
+    .audit()
+    .clone();
+  store
+    .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
+    .unwrap();
+  run_ready(verify_correction_owner(store.clone(), store, &admission, execution));
+}
+
+fn append_request(
+  snapshot: &FactoryRunSnapshot,
+  append: FactoryRunHistoryAppend,
+  time: octacity_server_domain::Timestamp,
+) -> CommitFactoryRunTransition {
+  let claim = snapshot.current_claim.as_ref().unwrap();
+  let version = FactoryRunVersion::new(snapshot.run.version().get() + 1).unwrap();
+  let usage = snapshot
+    .budgets
+    .iter()
+    .find(|row| row.id == snapshot.current.budget_id)
+    .unwrap()
+    .usage;
+  let budget = FactoryBudgetRecord::new(snapshot.run.id(), version, usage, time);
+  let lifecycle_checkpoint = FactoryLifecycleCheckpoint::new(
+    snapshot.run.id(),
+    version,
+    FactoryLifecycleProgress::FlowRunning {
+      root: snapshot.admitted_flow.root_run().id(),
+    },
+    false,
+    time,
+  );
+  let mut current = snapshot.current.clone();
+  current.budget_id = budget.id;
+  current.lifecycle_checkpoint_id = lifecycle_checkpoint.id;
+  CommitFactoryRunTransition {
+    run_id: snapshot.run.id(),
+    expected_version: snapshot.run.version(),
+    claim_id: claim.id,
+    owner: claim.owner.clone(),
+    fence: claim.claim.fence(),
+    committed_at: time,
+    next_run: FactoryRun::restore(
+      snapshot.run.id(),
+      snapshot.run.configuration().clone(),
+      &snapshot.work,
+      snapshot.run.subject().clone(),
+      FactoryRunState::Running,
+      version,
+    )
+    .unwrap(),
+    budget,
+    lifecycle_checkpoint,
+    current,
+    append,
+    outbox: vec![],
+    audit: FactoryAuditFact::new(
+      snapshot.run.id(),
+      AuditActorKind::Worker,
+      None,
+      key("factory.node.advance"),
+      FactoryDigest::sha256(
+        "octacity.factory.node-transition.v1",
+        &[&snapshot.run.version().get().to_be_bytes()],
+      ),
+      key("accepted"),
+      time,
+    ),
+  }
+}
+
+#[test]
+fn every_ready_fanout_sibling_can_be_published_to_its_configured_pool() {
+  struct Fork;
+  #[async_trait]
+  impl FactoryNodeExecutor for Fork {
+    async fn cancel(
+      &self,
+      _: FactoryNodeExecutionRequest<'_>,
+      _: octacity_server_domain::Timestamp,
+    ) -> Result<crate::FactoryNodeCancellationStep, ApplicationError> {
+      panic!("the fork has no external operation")
+    }
+    async fn observe(
+      &self,
+      request: FactoryNodeExecutionRequest<'_>,
+    ) -> Result<FactoryNodeExecutionStep, ApplicationError> {
+      let definition = request
+        .admitted
+        .closure()
+        .definition(request.input.definition())
+        .unwrap();
+      let record = FlowNodeRecord::new(
+        request.input,
+        request.attempt,
+        definition,
+        FlowRecordObservation {
+          outcome: key("observed"),
+          payload: request.input.payload().clone(),
+          producer: request.attempt.execution().clone(),
+          observed_at: request.observed_at,
+        },
+      )
+      .unwrap();
+      Ok(FactoryNodeExecutionStep::Completed {
+        execution: None,
+        record: Box::new(record),
+        usage: BudgetUsage::default(),
+      })
+    }
+  }
+  let mut template = correction_template();
+  template.nodes[0].kind = FlowNodeKind::FanOut;
+  template.nodes[0].build_profile = None;
+  for node in &mut template.nodes[1..] {
+    node.pool = Some(key("development.ready"));
+  }
+  template.transitions = serde_json::from_value(serde_json::json!([
+    {"predecessor":"seed_input","outcome":"observed","target":{"kind":"node","key":"write_policy"},"max_repeats":0},
+    {"predecessor":"seed_input","outcome":"observed","target":{"kind":"node","key":"inspect_policy"},"max_repeats":0},
+    {"predecessor":"write_policy","outcome":"observed","target":{"kind":"terminal","key":"done"},"max_repeats":0},
+    {"predecessor":"inspect_policy","outcome":"observed","target":{"kind":"terminal","key":"done"},"max_repeats":0}
+  ]))
+  .unwrap();
+  template.terminals = BTreeMap::from([(key("done"), key("summary"))]);
+  let (admission, _) = configured_fixture_from_template(template);
+  let store = Arc::new(store_testing::InMemoryFactoryConfigurationStore::new());
+  let audit = store_testing::management_mutation_with_request((), "fanout-pool")
+    .audit()
+    .clone();
+  store
+    .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
+    .unwrap();
+  run_ready(async {
+    let claim = FactoryRunClaimRecord::new(
+      admission.run.id(),
+      key("pool.owner"),
+      FactoryClaim::new(
+        FactoryClaimFence::new(FactoryDigest::from_bytes([2; 32])),
+        at(10),
+        at(100),
+      )
+      .unwrap(),
+    );
+    store
+      .claim_factory_run(ClaimFactoryRun {
+        run_id: admission.run.id(),
+        expected_version: admission.run.version(),
+        record: claim.clone(),
+        audit: FactoryAuditFact::new(
+          admission.run.id(),
+          AuditActorKind::Worker,
+          None,
+          key("factory.claimed"),
+          FactoryDigest::from_bytes([1; 32]),
+          key("accepted"),
+          at(10),
+        ),
+      })
+      .await
+      .unwrap();
+    let owner = FactoryFlowRunner::new(
+      store.clone(),
+      Arc::new(Fork),
+      Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
+    );
+    for time in 31..34 {
+      assert_eq!(
+        owner
+          .reconcile_flow(admission.run.id(), claim.id, at(time))
+          .await
+          .unwrap(),
+        FactoryFlowStep::Advanced
+      );
+    }
+    let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+    assert_eq!(snapshot.flow.completions.len(), 1);
+    let mut append = FactoryRunHistoryAppend::default();
+    for name in ["write_policy", "inspect_policy"] {
+      append.flow.data.inputs.push(
+        Inputs
+          .prepare(
+            &snapshot,
+            &FactoryNodeTarget {
+              flow_run_id: admission.flow.root_run().id(),
+              cycle_id: admission.flow.initial_cycle().id(),
+              node: key(name),
+            },
+          )
+          .await
+          .unwrap(),
+      );
+    }
+    store
+      .commit_factory_run_transition(append_request(&snapshot, append, at(34)))
+      .await
+      .unwrap();
+    let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+    let policy = snapshot.admitted_flow.pool_settings()[&key("development.ready")]
+      .policy
+      .clone();
+    for name in ["write_policy", "inspect_policy"] {
+      let input = snapshot
+        .flow
+        .data
+        .inputs
+        .iter()
+        .find(|input| input.node() == &key(name))
+        .unwrap();
+      let ready = store
+        .publish_phase_ready(policy.clone(), configured_phase_pool_input(&snapshot, input).unwrap())
+        .await;
+      assert!(ready.is_ok(), "declared sibling {name} must be publishable: {ready:?}");
+    }
+  });
+}
+
+#[test]
+fn a_correction_cycle_can_publish_its_non_root_entry_to_a_configured_pool() {
+  let mut template = correction_template();
+  template.transitions[0] = FlowTransition::new(
+    key("seed_input"),
+    key("observed"),
+    FlowTransitionTarget::Node(key("inspect_policy")),
+  );
+  template
+    .nodes
+    .iter_mut()
+    .find(|node| node.key == key("write_policy"))
+    .unwrap()
+    .pool = Some(key("development.ready"));
+  let (admission, execution) = configured_fixture_from_template(template);
+  let store = Arc::new(store_testing::InMemoryFactoryConfigurationStore::new());
+  let audit = store_testing::management_mutation_with_request((), "correction-pool")
+    .audit()
+    .clone();
+  store
+    .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
+    .unwrap();
+  run_ready(async {
+    let claim = FactoryRunClaimRecord::new(
+      admission.run.id(),
+      key("pool.owner"),
+      FactoryClaim::new(
+        FactoryClaimFence::new(FactoryDigest::from_bytes([2; 32])),
+        at(10),
+        at(100),
+      )
+      .unwrap(),
+    );
+    store
+      .claim_factory_run(ClaimFactoryRun {
+        run_id: admission.run.id(),
+        expected_version: admission.run.version(),
+        record: claim.clone(),
+        audit: FactoryAuditFact::new(
+          admission.run.id(),
+          AuditActorKind::Worker,
+          None,
+          key("factory.claimed"),
+          FactoryDigest::from_bytes([1; 32]),
+          key("accepted"),
+          at(10),
+        ),
+      })
+      .await
+      .unwrap();
+    let owner = FactoryFlowRunner::new(
+      store.clone(),
+      Arc::new(FactoryNodeBuildAdapter::new(execution.clone(), execution.clone())),
+      Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
+    );
+    let mut reached = false;
+    for time in 31..48 {
+      execution.clock.store(time, std::sync::atomic::Ordering::SeqCst);
+      match owner
+        .reconcile_flow(admission.run.id(), claim.id, at(time))
+        .await
+        .unwrap()
+      {
+        FactoryFlowStep::Advanced => {}
+        FactoryFlowStep::Ready(entry) => {
+          let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+          assert_eq!(snapshot.flow.cycles.len(), 2);
+          let current = snapshot.flow.cycles.iter().max_by_key(|cycle| cycle.number()).unwrap();
+          assert_eq!(entry.input.node, key("write_policy"));
+          assert_eq!(entry.input.cycle_id, current.id());
+          reached = true;
+          break;
+        }
+        other => panic!("unexpected pooled correction {other:?}"),
+      }
+    }
+    assert!(reached);
   });
 }

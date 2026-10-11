@@ -29,7 +29,7 @@ pub async fn seed_factory_build(
   .execute(&mut *transaction)
   .await
   .unwrap();
-  sqlx::query("INSERT INTO build_configurations (id, project_id, name, created_at) VALUES ($1, $2, $3, now())")
+  sqlx::query("INSERT INTO build_configurations (id, project_id, name, created_at) VALUES ($1, $2, $3, now()) ON CONFLICT (id) DO NOTHING")
     .bind(build_configuration_id.as_uuid())
     .bind(subject.project_id().as_uuid())
     .bind(format!("factory-linked-{build_id}"))
@@ -41,7 +41,7 @@ pub async fn seed_factory_build(
            (build_configuration_id, version, enabled, repository_id, repository_version, pipeline_id, \
             pipeline_version, configuration_snapshot, job_concurrency_limit, allowed_pool_ids, retry_max_attempts, \
             retries_infrastructure, published_at) \
-         VALUES ($1, 1, true, $2, $3, $4, 1, '{}', 1, ARRAY[$5::uuid], 1, false, now())",
+         VALUES ($1, 1, true, $2, $3, $4, 1, '{}', 1, ARRAY[$5::uuid], 1, false, now()) ON CONFLICT (build_configuration_id, version) DO NOTHING",
   )
   .bind(build_configuration_id.as_uuid())
   .bind(subject.repository_id().as_uuid())

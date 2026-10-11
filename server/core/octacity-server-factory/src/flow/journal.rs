@@ -367,7 +367,10 @@ impl FlowDataHistory {
         let record = records.get(&source.node_attempt_id()).ok_or_else(invalid)?;
         if record.digest()? != source.digest()
           || record.input().flow_run_id() != input.flow_run_id()
-          || record.input().cycle_id() != input.cycle_id()
+          || (record.input().cycle_id() != input.cycle_id()
+            && !history.cycles.iter().any(|cycle| {
+              cycle.id() == input.cycle_id() && cycle.source_attempt_id() == Some(source.node_attempt_id())
+            }))
         {
           return Err(invalid());
         }

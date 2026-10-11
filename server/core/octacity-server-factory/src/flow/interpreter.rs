@@ -17,6 +17,13 @@ pub struct FlowDirectiveInputs {
 /// One pure code-owned instruction derived from persisted Flow facts.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FlowDirective {
+  /// Append a correction cycle before executing its explicitly declared entry.
+  RestartCycle {
+    /// Operator-selected entry in the same definition.
+    node: FactoryKey,
+    /// Accepted result that selected the bounded restart edge.
+    source: crate::NodeAttemptId,
+  },
   /// Dispatch one closed primitive node from the current definition.
   ExecuteNode {
     /// Exact definition containing the node.
@@ -63,6 +70,116 @@ impl<'a> FlowInterpreter<'a> {
     let definition = self.definition(flow_run)?;
     directive_for_node(definition, definition.entry(), FlowDirectiveInputs::default())
   }
+  /// Reconstructs the configured entry from a retained restart source, never a node name.
+  pub fn cycle_entry(
+    &self,
+    flow: &FlowRun,
+    cycle: &WorkflowCycle,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<FactoryKey, FactoryError> {
+    if cycle.flow_run_id() != flow.id() {
+      return Err(invalid("workflow cycle owner"));
+    }
+    if cycle.predecessor().is_none() {
+      return Ok(self.definition(flow)?.entry().clone());
+    }
+    let source = cycle
+      .source_attempt_id()
+      .ok_or_else(|| invalid("workflow cycle source"))?;
+    let attempt = history
+      .attempts
+      .iter()
+      .find(|row| row.id() == source)
+      .ok_or_else(|| invalid("workflow cycle source"))?;
+    let previous = history
+      .cycles
+      .iter()
+      .find(|row| Some(row.id()) == cycle.predecessor())
+      .ok_or_else(|| invalid("workflow cycle predecessor"))?;
+    if attempt.flow_run_id() != flow.id()
+      || attempt.workflow_cycle_id() != previous.id()
+      || history.attempts.iter().any(|row| {
+        row.workflow_cycle_id() == previous.id()
+          && !history
+            .completions
+            .iter()
+            .any(|done| done.node_attempt_id() == row.id())
+          && !history.stops.iter().any(|stop| stop.node_attempt_id() == row.id())
+      })
+    {
+      return Err(invalid("workflow cycle unfinished predecessor"));
+    }
+    match self.restart_in_cycle(flow, previous, history)? {
+      Some((selected, node)) if selected == source => Ok(node),
+      _ => Err(invalid("workflow cycle declared restart")),
+    }
+  }
+
+  // Historical boundaries use only their cycle's execution prefix. Later cycles
+  // cannot alter repeat counts or the canonical earliest accepted restart cause.
+  fn restart_in_cycle(
+    &self,
+    flow: &FlowRun,
+    cycle: &WorkflowCycle,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<Option<(crate::NodeAttemptId, FactoryKey)>, FactoryError> {
+    let definition = self.definition(flow)?;
+    let ceiling = history
+      .attempts
+      .iter()
+      .filter(|row| row.workflow_cycle_id() == cycle.id())
+      .map(|row| row.number())
+      .max();
+    let mut traversals = std::collections::BTreeMap::new();
+    for completion in history.completions.iter().filter(|row| row.flow_run_id() == flow.id()) {
+      if history
+        .attempts
+        .iter()
+        .any(|row| row.id() == completion.node_attempt_id() && Some(row.number()) <= ceiling)
+      {
+        *traversals
+          .entry((completion.node_key(), completion.outcome()))
+          .or_insert(0_usize) += 1;
+      }
+    }
+    let mut selected = None;
+    for attempt in history
+      .attempts
+      .iter()
+      .filter(|row| row.workflow_cycle_id() == cycle.id() && row.flow_run_id() == flow.id())
+    {
+      let Some(completion) = history
+        .completions
+        .iter()
+        .find(|row| row.node_attempt_id() == attempt.id())
+      else {
+        continue;
+      };
+      let Some(edge) = definition.transitions().iter().find(|edge| {
+        edge.starts_cycle() && edge.predecessor() == attempt.node_key() && edge.outcome() == completion.outcome()
+      }) else {
+        continue;
+      };
+      if traversals
+        .get(&(attempt.node_key(), completion.outcome()))
+        .copied()
+        .unwrap_or_default()
+        > usize::from(edge.max_repeats())
+      {
+        continue;
+      }
+      let crate::FlowTransitionTarget::Node(node) = edge.target() else {
+        return Err(invalid("workflow cycle declared restart"));
+      };
+      if selected
+        .as_ref()
+        .is_none_or(|(number, _, _)| attempt.number() < *number)
+      {
+        selected = Some((attempt.number(), attempt.id(), node.clone()));
+      }
+    }
+    Ok(selected.map(|(_, source, node)| (source, node)))
+  }
 
   /// Derives all next control actions from persisted attempts and completions.
   ///
@@ -70,6 +187,33 @@ impl<'a> FlowInterpreter<'a> {
   /// edge. Callers must commit the returned instruction and any external work
   /// to the authoritative fenced transaction/outbox before dispatch.
   pub fn advance(
+    &self,
+    flow_run: &FlowRun,
+    cycle: &WorkflowCycle,
+    attempt: &NodeAttempt,
+    completion: &NodeAttemptCompletion,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<Vec<FlowDirective>, FactoryError> {
+    let directives = self.control_directives(flow_run, cycle, attempt, completion, history)?;
+    let definition = self.definition(flow_run)?;
+    let next_nodes = directives
+      .iter()
+      .filter(|directive| !matches!(directive, FlowDirective::Complete { .. }))
+      .count();
+    let active = history.active_node_count();
+    let max_wip = definition
+      .execution()
+      .max_active_nodes()
+      .min(self.validated.limits().max_wip());
+    if active.saturating_add(next_nodes) > usize::from(max_wip) {
+      return Err(invalid("Flow WIP exhausted"));
+    }
+    Ok(directives)
+  }
+
+  // Inspecting retained control does not reserve capacity for successors that
+  // have already started. Dispatch keeps the independent WIP check in advance.
+  pub(super) fn control_directives(
     &self,
     flow_run: &FlowRun,
     cycle: &WorkflowCycle,
@@ -131,6 +275,13 @@ impl<'a> FlowInterpreter<'a> {
       }
       match transition.target() {
         crate::FlowTransitionTarget::Node(successor) => {
+          if transition.starts_cycle() {
+            directives.push(FlowDirective::RestartCycle {
+              node: successor.clone(),
+              source: attempt.id(),
+            });
+            continue;
+          }
           directives.push(directive_for_node(
             definition,
             successor,
@@ -151,18 +302,6 @@ impl<'a> FlowInterpreter<'a> {
         }
       }
     }
-    let next_nodes = directives
-      .iter()
-      .filter(|directive| !matches!(directive, FlowDirective::Complete { .. }))
-      .count();
-    let active = history.active_node_count();
-    let max_wip = definition
-      .execution()
-      .max_active_nodes()
-      .min(self.validated.limits().max_wip());
-    if active.saturating_add(next_nodes) > usize::from(max_wip) {
-      return Err(invalid("Flow WIP exhausted"));
-    }
     Ok(directives)
   }
 
@@ -174,7 +313,7 @@ impl<'a> FlowInterpreter<'a> {
       .ok_or_else(|| invalid("Flow Run definition"))
   }
 
-  /// Returns the finite code-owned node routes for one declared outcome.
+  /// Returns the finite same-cycle node routes for one declared outcome.
   ///
   /// Runtime-history validation uses the same selector as forward
   /// interpretation, so a restored store snapshot cannot admit a route that
@@ -187,7 +326,9 @@ impl<'a> FlowInterpreter<'a> {
     definition
       .transitions()
       .iter()
-      .filter(|transition| transition.predecessor() == predecessor && transition.outcome() == outcome)
+      .filter(|transition| {
+        !transition.starts_cycle() && transition.predecessor() == predecessor && transition.outcome() == outcome
+      })
       .filter_map(|transition| match transition.target() {
         crate::FlowTransitionTarget::Node(successor) => Some(successor.clone()),
         crate::FlowTransitionTarget::Terminal(_) => None,

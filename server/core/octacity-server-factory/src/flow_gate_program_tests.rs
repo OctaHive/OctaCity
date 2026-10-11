@@ -649,3 +649,61 @@ fn a_configured_precondition_fails_closed_before_any_routing_rule() {
     );
   }
 }
+
+#[test]
+fn configured_exact_value_comparison_preserves_complete_structured_contracts() {
+  let schema = FlowDataSchema::new(key("preserved.contract"),key("v1"),serde_json::from_value(serde_json::json!({"type":"object","fields":{
+    "declared":{"required":true,"value":{"type":"array","min_items":0,"max_items":8,"item":{"type":"string","min_bytes":1,"max_bytes":128}}},
+    "returned":{"required":true,"value":{"type":"array","min_items":0,"max_items":8,"item":{"type":"string","min_bytes":1,"max_bytes":128}}}
+  }})).unwrap()).unwrap();
+  let program:FlowGateProgram = serde_json::from_value(serde_json::json!({"rules":[{"when":{"operation":"compare","left":{"source":"path","path":"/declared"},"comparison":"exact_value","right":{"source":"path","path":"/returned"}},"outcome":"preserved"}],"fallback":"changed"})).unwrap();
+  for (returned, expected) in [
+    (
+      serde_json::json!(["design", "performance", "security", "ui", "compatibility", "operations"]),
+      "preserved",
+    ),
+    (
+      serde_json::json!(["design", "performance", "security", "compatibility", "operations"]),
+      "changed",
+    ),
+    (
+      serde_json::json!(["design", "performance", "security", "ui", "compatibility", "different"]),
+      "changed",
+    ),
+  ] {
+    let input=FlowPayload::new(&schema,serde_json::json!({"declared":["design","performance","security","ui","compatibility","operations"],"returned":returned})).unwrap();
+    assert_eq!(program.select(&input).unwrap().as_str(), expected);
+  }
+}
+
+#[test]
+fn explicit_optional_field_absence_does_not_change_unknown_fact_semantics() {
+  let schema = FlowDataSchema::new(
+    key("optional.contract"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: BTreeMap::from([(key("contract"), FlowFieldSchema::optional(FlowValueSchema::Boolean))]),
+    },
+  )
+  .unwrap();
+  let program:FlowGateProgram = serde_json::from_value(serde_json::json!({"rules":[{"when":{"operation":"absent","path":"/contract"},"outcome":"original"}],"fallback":"candidate"})).unwrap();
+  assert_eq!(
+    program
+      .select(&FlowPayload::new(&schema, serde_json::json!({})).unwrap())
+      .unwrap(),
+    key("original")
+  );
+  assert_eq!(
+    program
+      .select(&FlowPayload::new(&schema, serde_json::json!({"contract":false})).unwrap())
+      .unwrap(),
+    key("candidate")
+  );
+  let negated:FlowGateProgram = serde_json::from_value(serde_json::json!({"rules":[{"when":{"operation":"not","predicate":{"operation":"exists","operand":{"source":"path","path":"/contract"}}},"outcome":"original"}],"fallback":"candidate"})).unwrap();
+  assert_eq!(
+    negated
+      .select(&FlowPayload::new(&schema, serde_json::json!({})).unwrap())
+      .unwrap(),
+    key("candidate")
+  );
+}

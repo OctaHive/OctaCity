@@ -18,6 +18,12 @@ pub const MAX_FLOW_SCHEMA_ITEMS: u16 = 128;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "type", deny_unknown_fields)]
 pub enum FlowValueSchema {
+  /// Named editable-template shape, expanded before immutable publication.
+  /// An unresolved reference is never a valid published data contract.
+  Reference {
+    /// Exact choice in the same template catalogue.
+    schema: FactoryKey,
+  },
   /// Closed object: every undeclared field is rejected.
   Object {
     /// Declared field shapes and presence requirements.
@@ -174,6 +180,50 @@ impl FlowPayload {
   }
 }
 impl FlowValueSchema {
+  pub(super) fn resolve(
+    &self,
+    schemas: &BTreeMap<FactoryKey, crate::FlowTemplateSchema>,
+    depth: usize,
+    remaining: &mut usize,
+  ) -> Result<Self, FactoryError> {
+    *remaining = remaining.checked_sub(1).ok_or_else(invalid)?;
+    if depth > MAX_FLOW_SCHEMA_DEPTH {
+      return Err(invalid());
+    }
+    Ok(match self {
+      Self::Reference { schema } => {
+        schemas
+          .get(schema)
+          .ok_or_else(invalid)?
+          .shape
+          .resolve(schemas, depth + 1, remaining)?
+      }
+      Self::Object { fields } => Self::Object {
+        fields: fields
+          .iter()
+          .map(|(key, field)| {
+            Ok((
+              key.clone(),
+              FlowFieldSchema {
+                required: field.required,
+                value: field.value.resolve(schemas, depth + 1, remaining)?,
+              },
+            ))
+          })
+          .collect::<Result<_, FactoryError>>()?,
+      },
+      Self::Array {
+        item,
+        min_items,
+        max_items,
+      } => Self::Array {
+        item: Box::new(item.resolve(schemas, depth + 1, remaining)?),
+        min_items: *min_items,
+        max_items: *max_items,
+      },
+      other => other.clone(),
+    })
+  }
   fn validate(&self, depth: usize) -> Result<(), FactoryError> {
     if depth > MAX_FLOW_SCHEMA_DEPTH {
       return Err(invalid());
@@ -207,6 +257,7 @@ impl FlowValueSchema {
   }
   fn accepts(&self, value: &Value) -> bool {
     match self {
+      Self::Reference { .. } => false,
       Self::Boolean => value.is_boolean(),
       Self::Integer { minimum, maximum } => value.as_i64().is_some_and(|n| n >= *minimum && n <= *maximum),
       Self::String { min_bytes, max_bytes } => value

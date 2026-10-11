@@ -6,6 +6,13 @@ use std::collections::BTreeSet;
 /// Current configured control position derived only from retained runtime history.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FlowProgress {
+  /// Accepted feedback requires a new fenced cycle before any successor dispatch.
+  RestartCycle {
+    /// Explicit correction entry.
+    node: FactoryKey,
+    /// Exact accepted source result.
+    source: NodeAttemptId,
+  },
   /// Ready or unfinished node; nested calls are interpreted by the owning Flow.
   Node(FactoryKey),
   /// Exact result that selected the declared terminal, after all ready work is consumed.
@@ -26,12 +33,38 @@ impl FlowInterpreter<'_> {
     cycle: &WorkflowCycle,
     history: FlowRuntimeHistory<'_>,
   ) -> Result<FlowProgress, FactoryError> {
-    let attempts = history
+    self.position(flow, cycle, history).map(|(position, _)| position)
+  }
+
+  /// Returns all eligible nodes, including unfinished attempts, without selecting
+  /// one sibling or reserving dispatch capacity. A pending restart suppresses
+  /// unstarted old-cycle work; only unfinished attempts may drain before it.
+  pub fn ready_nodes(
+    &self,
+    flow: &FlowRun,
+    cycle: &WorkflowCycle,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<BTreeSet<FactoryKey>, FactoryError> {
+    self.position(flow, cycle, history).map(|(_, ready)| ready)
+  }
+
+  fn position(
+    &self,
+    flow: &FlowRun,
+    cycle: &WorkflowCycle,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<(FlowProgress, BTreeSet<FactoryKey>), FactoryError> {
+    let mut attempts = history
       .attempts
       .iter()
       .filter(|row| row.flow_run_id() == flow.id() && row.workflow_cycle_id() == cycle.id())
       .collect::<Vec<_>>();
-    if let Some(pending) = attempts
+    attempts.sort_by_key(|row| row.number());
+    if attempts.is_empty() {
+      let entry = self.cycle_entry(flow, cycle, history)?;
+      return Ok((FlowProgress::Node(entry.clone()), BTreeSet::from([entry])));
+    }
+    let pending = attempts
       .iter()
       .filter(|attempt| {
         !attempts.iter().any(|next| next.retry_of() == Some(attempt.id()))
@@ -40,17 +73,13 @@ impl FlowInterpreter<'_> {
             .iter()
             .any(|row| row.node_attempt_id() == attempt.id())
       })
-      .min_by_key(|row| row.number())
-    {
-      return Ok(FlowProgress::Node(pending.node_key().clone()));
-    }
-    if attempts.is_empty() {
-      return Ok(match self.start(flow)? {
-        FlowDirective::ExecuteNode { node, .. } | FlowDirective::EnterSubflow { node, .. } => FlowProgress::Node(node),
-        FlowDirective::Complete { .. } => FlowProgress::Waiting,
-      });
-    }
-    let mut ready = BTreeSet::new();
+      .copied()
+      .collect::<Vec<_>>();
+    let mut ready = pending
+      .iter()
+      .map(|row| row.node_key().clone())
+      .collect::<BTreeSet<_>>();
+    let mut restart = None;
     let mut terminal = None;
     for attempt in &attempts {
       let Some(completion) = history
@@ -60,8 +89,13 @@ impl FlowInterpreter<'_> {
       else {
         continue;
       };
-      for directive in self.advance(flow, cycle, attempt, completion, history)? {
+      for directive in self.control_directives(flow, cycle, attempt, completion, history)? {
         match directive {
+          FlowDirective::RestartCycle { node, source } => {
+            if restart.is_none() {
+              restart = Some(FlowProgress::RestartCycle { node, source });
+            }
+          }
           FlowDirective::ExecuteNode { node, .. } | FlowDirective::EnterSubflow { node, .. } => {
             if !attempts
               .iter()
@@ -81,12 +115,24 @@ impl FlowInterpreter<'_> {
         }
       }
     }
-    Ok(if let Some(node) = ready.into_iter().next() {
-      FlowProgress::Node(node)
+    if let Some(restart) = restart {
+      ready = pending.iter().map(|row| row.node_key().clone()).collect();
+      return Ok((
+        pending
+          .first()
+          .map_or(restart, |row| FlowProgress::Node(row.node_key().clone())),
+        ready,
+      ));
+    }
+    let position = if let Some(pending) = pending.first() {
+      FlowProgress::Node(pending.node_key().clone())
+    } else if let Some(node) = ready.iter().next() {
+      FlowProgress::Node(node.clone())
     } else if let Some((_, key, source)) = terminal {
       FlowProgress::Terminal { key, source }
     } else {
       FlowProgress::Waiting
-    })
+    };
+    Ok((position, ready))
   }
 }

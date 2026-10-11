@@ -47,6 +47,9 @@ impl FlowQuantifier {
 pub enum FlowComparison {
   /// Exact scalar equality.
   Equal,
+  /// Exact bounded JSON equality, including all fields and ordered collection members.
+  /// Inputs and literals have already passed their schema and encoded size ceilings.
+  ExactValue,
   /// Portable repository path equality or descendant membership, by components.
   /// This comparison grants no filesystem authority.
   RepositoryPathWithin,
@@ -86,6 +89,12 @@ pub enum FlowOperand {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "operation", deny_unknown_fields)]
 pub enum FlowPredicate {
+  /// Explicit absence of an optional field in the schema-validated root input.
+  /// Unlike negating an unknown observation, this tests the document's structure.
+  Absent {
+    /// RFC 6901 pointer whose optional value must be absent.
+    path: String,
+  },
   /// Typed comparison between two operands.
   Compare {
     /// Left observation or constant.
@@ -402,6 +411,7 @@ impl FlowPredicate {
       }
       Self::Not { predicate } => predicate.validate(depth + 1, count, in_item)?,
       Self::Exists { operand } => operand.validate(in_item)?,
+      Self::Absent { path } => validate_pointer(path)?,
       Self::Compare { left, right, .. } => {
         left.validate(in_item)?;
         right.validate(in_item)?;
@@ -436,6 +446,7 @@ impl FlowPredicate {
       }
       Self::Not { predicate } => predicate.evaluate(root, item, at, remaining).map(|known| !known),
       Self::Exists { operand } => operand.resolve(root, item, at).map(|_| true),
+      Self::Absent { path } => Some(root.pointer(path).is_none()),
       Self::Compare {
         left,
         comparison,
@@ -443,6 +454,7 @@ impl FlowPredicate {
       } => {
         let (left, right) = (left.resolve(root, item, at)?, right.resolve(root, item, at)?);
         match comparison {
+          FlowComparison::ExactValue => Some(left == right),
           FlowComparison::Equal => {
             let same_type = matches!(
               (left, right),
