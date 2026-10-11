@@ -81,6 +81,19 @@ impl AcceptFactoryBuild {
           || factory.node_attempt_id != self.intent.node().id().to_string()
           || factory.input_digest != digest
           || factory.subject_digest != input.subject().digest().to_string()
+          || self.intent.profile().capture_write_paths.as_ref().is_some_and(|paths| {
+            let matches = |wire: &[String]| {
+              paths
+                .iter()
+                .map(|path| path.as_str())
+                .eq(wire.iter().map(String::as_str))
+            };
+            !factory.source_write_paths.as_deref().is_some_and(matches)
+              || factory
+                .change_set_capture
+                .as_ref()
+                .is_none_or(|capture| !matches(&capture.policy.allowed_path_prefixes))
+          })
           || managed.permissions().resources.elapsed_millis > self.intent.budget().max_elapsed_millis()
           || managed
             .permissions()

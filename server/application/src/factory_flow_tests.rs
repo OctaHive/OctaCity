@@ -735,7 +735,7 @@ fn model_small_work_claim_cannot_bypass_independently_verified_large_work() {
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    let mut terminal = None;
+    let mut decision = None;
     for time in 31..65 {
       execution.clock.store(time, std::sync::atomic::Ordering::SeqCst);
       match owner
@@ -745,14 +745,45 @@ fn model_small_work_claim_cannot_bypass_independently_verified_large_work() {
       {
         FactoryFlowStep::Advanced => {}
         FactoryFlowStep::Resolved(outcome) => {
-          terminal = Some(outcome);
-          break;
+          panic!("authoring must remain unfinished: {outcome}");
         }
         other => panic!("unexpected readiness: {other:?}"),
       }
+      let current = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+      if let Some(record) = current
+        .flow
+        .data
+        .records
+        .iter()
+        .find(|record| record.input().node() == &key("requirements_needed"))
+      {
+        decision = Some(key(record.metadata().unwrap()["outcome"].as_str().unwrap()));
+        break;
+      }
     }
-    assert_eq!(terminal, Some(key("specification_required")));
+    assert_eq!(decision, Some(key("specification")));
     let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+    let author_input = Inputs
+      .prepare(
+        &snapshot,
+        &FactoryNodeTarget {
+          flow_run_id: snapshot.admitted_flow.root_run().id(),
+          cycle_id: snapshot.admitted_flow.initial_cycle().id(),
+          node: key("specification_author"),
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      author_input.payload().value()["work_id"],
+      snapshot.work.id().to_string()
+    );
+    assert_eq!(
+      author_input.payload().value()["original_base"],
+      snapshot.work.subject().base_revision().as_str()
+    );
+    assert_eq!(author_input.payload().value()["accepted_input"]["size"], "large");
+    assert_eq!(author_input.sources().len(), 1);
     assert!(!snapshot.flow.attempts.iter().any(
       |attempt| attempt.node_key() == &key("accessibility_audit") || attempt.node_key() == &key("protected_tests")
     ));

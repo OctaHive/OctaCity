@@ -218,11 +218,14 @@ impl SandboxPlan {
     let writable_mounts = match &request.factory {
       Some(factory) => {
         let mut roots = vec![
-          (FACTORY_SCRATCH_ROOT, &factory.scratch),
-          (FACTORY_OUTPUT_ROOT, &factory.output),
+          (FACTORY_SCRATCH_ROOT.to_owned(), factory.scratch.clone()),
+          (FACTORY_OUTPUT_ROOT.to_owned(), factory.output.clone()),
         ];
         if !factory.source_read_only {
-          roots.insert(0, (FACTORY_SOURCE_ROOT, &factory.source));
+          roots.insert(0, (FACTORY_SOURCE_ROOT.to_owned(), factory.source.clone()));
+        }
+        for path in &factory.source_writable_paths {
+          roots.push((guest_path(FACTORY_SOURCE_ROOT, &factory.source, path)?, path.clone()));
         }
         if remaining_quota_mib < u32::try_from(roots.len()).expect("Factory writable-root count fits u32") {
           return Err(unavailable(

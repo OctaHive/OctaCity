@@ -48,6 +48,108 @@ use std::collections::BTreeMap;
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
+
+#[test]
+fn configured_path_scope_uses_a_bounded_list_and_rejects_unknown_prefixes() {
+  let schema = FlowDataSchema::new(
+    key("path.scope"),
+    key("v1"),
+    FlowValueSchema::Object {
+      fields: BTreeMap::from([
+        (
+          key("path"),
+          FlowFieldSchema::required(FlowValueSchema::String {
+            min_bytes: 1,
+            max_bytes: 1024,
+          }),
+        ),
+        (
+          key("roots"),
+          FlowFieldSchema::required(FlowValueSchema::Array {
+            item: Box::new(FlowValueSchema::String {
+              min_bytes: 1,
+              max_bytes: 1024,
+            }),
+            min_items: 0,
+            max_items: 128,
+          }),
+        ),
+      ]),
+    },
+  )
+  .unwrap();
+  let comparison: FlowComparison = serde_json::from_value(serde_json::json!("repository_path_within_any"))
+    .expect("a path can be checked against an explicitly selected scope list");
+  let predicate = FlowPredicate::Compare {
+    left: FlowOperand::Path { path: "/path".into() },
+    comparison,
+    right: FlowOperand::Path { path: "/roots".into() },
+  };
+  let program = FlowGateProgram::new(
+    vec![FlowGateRule {
+      when: predicate.clone(),
+      outcome: key("allowed"),
+    }],
+    key("denied"),
+  )
+  .unwrap();
+  for (path, roots, expected) in [
+    (
+      "contracts/api/spec.md",
+      serde_json::json!(["docs", "contracts"]),
+      "allowed",
+    ),
+    ("contracts", serde_json::json!(["contracts"]), "allowed"),
+    ("contracts-old/spec.md", serde_json::json!(["contracts"]), "denied"),
+    ("contracts/../src/lib.rs", serde_json::json!(["contracts"]), "denied"),
+    ("contracts/api/spec.md", serde_json::json!([]), "denied"),
+    (
+      "contracts/api/spec.md",
+      serde_json::json!(["contracts", "C:/docs"]),
+      "denied",
+    ),
+  ] {
+    let input = FlowPayload::new(&schema, serde_json::json!({"path":path,"roots":roots})).unwrap();
+    assert_eq!(program.select(&input).unwrap(), key(expected));
+  }
+  let negated = FlowGateProgram::new(
+    vec![FlowGateRule {
+      when: FlowPredicate::Not {
+        predicate: Box::new(predicate.clone()),
+      },
+      outcome: key("outside"),
+    }],
+    key("unknown"),
+  )
+  .unwrap();
+  let invalid = FlowPayload::new(
+    &schema,
+    serde_json::json!({"path":"contracts/api/spec.md","roots":["contracts", "C:/docs"]}),
+  )
+  .unwrap();
+  assert_eq!(negated.select(&invalid).unwrap(), key("unknown"));
+  let amplified = FlowGateProgram::new(
+    vec![FlowGateRule {
+      when: FlowPredicate::ForEach {
+        collection: FlowOperand::Path { path: "/roots".into() },
+        quantifier: FlowQuantifier::Every,
+        predicate: Box::new(predicate),
+      },
+      outcome: key("allowed"),
+    }],
+    key("denied"),
+  )
+  .unwrap();
+  let input = FlowPayload::new(
+    &schema,
+    serde_json::json!({"path":"contracts/api/spec.md", "roots":vec!["contracts";128]}),
+  )
+  .unwrap();
+  assert!(
+    amplified.select(&input).is_err(),
+    "list comparisons consume the shared evaluation budget"
+  );
+}
 fn compare(path: &str, comparison: FlowComparison, value: serde_json::Value) -> FlowPredicate {
   FlowPredicate::Compare {
     left: FlowOperand::Path { path: path.into() },
@@ -484,4 +586,66 @@ fn declared_outcomes_can_share_one_bounded_output_mapping_with_explicit_override
   };
   verify(program.clone(), 4);
   verify(program.with_output_mapping(key("observed"), make(9)).unwrap(), 9);
+}
+
+#[test]
+fn configured_path_comparisons_respect_components_and_reject_nonportable_paths() {
+  let schema = FlowDataSchema::new(
+    key("paths"),
+    key("v1"),
+    FlowValueSchema::String {
+      min_bytes: 1,
+      max_bytes: 128,
+    },
+  )
+  .unwrap();
+  let program: FlowGateProgram = serde_json::from_value(serde_json::json!({
+    "rules": [{"when": {"operation": "compare", "left": {"source": "path", "path": ""}, "comparison": "repository_path_within", "right": {"source": "literal", "value": "contracts"}}, "outcome": "allowed"}],
+    "fallback": "denied", "outputs": {}
+  })).expect("path containment is configurable");
+  for (path, expected) in [
+    ("contracts", "allowed"),
+    ("contracts/service/spec.md", "allowed"),
+    ("contracts-extra/spec.md", "denied"),
+    ("contracts/../src/lib.rs", "denied"),
+    ("contracts//spec.md", "denied"),
+    ("/contracts/spec.md", "denied"),
+    ("contracts\\spec.md", "denied"),
+  ] {
+    assert_eq!(
+      program
+        .select(&FlowPayload::new(&schema, serde_json::json!(path)).unwrap())
+        .unwrap(),
+      key(expected)
+    );
+  }
+}
+
+#[test]
+fn a_configured_precondition_fails_closed_before_any_routing_rule() {
+  let schema = FlowDataSchema::new(
+    key("guarded"),
+    key("v1"),
+    FlowValueSchema::String {
+      min_bytes: 1,
+      max_bytes: 128,
+    },
+  )
+  .unwrap();
+  let program: FlowGateProgram = serde_json::from_value(serde_json::json!({
+    "precondition":{"operation":"compare","left":{"source":"path","path":""},"comparison":"repository_path_within","right":{"source":"literal","value":"contracts"}},
+    "rules":[{"when":{"operation":"compare","left":{"source":"literal","value":true},"comparison":"equal","right":{"source":"literal","value":true}},"outcome":"accepted"}],"fallback":"denied"
+  })).expect("one bounded shared precondition is configurable");
+  for (value, expected) in [
+    ("contracts/spec.md", "accepted"),
+    ("src/lib.rs", "denied"),
+    ("contracts/../escape", "denied"),
+  ] {
+    assert_eq!(
+      program
+        .select(&FlowPayload::new(&schema, serde_json::json!(value)).unwrap())
+        .unwrap(),
+      key(expected)
+    );
+  }
 }

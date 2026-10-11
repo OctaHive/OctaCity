@@ -183,7 +183,7 @@ impl FactoryRepositoryPath {
       && value.len() <= MAX_FACTORY_REPOSITORY_PATH_BYTES
       && !value.starts_with('/')
       && !value.ends_with('/')
-      && !value.contains('\\')
+      && !value.contains(['\\', ':'])
       && !value.chars().any(char::is_control)
       && value
         .split('/')
@@ -194,6 +194,11 @@ impl FactoryRepositoryPath {
     Ok(Self(value))
   }
 
+  /// Tests equality or descendant membership using portable path components.
+  #[must_use]
+  pub fn is_within(&self, prefix: &Self) -> bool {
+    self == prefix || self.0.strip_prefix(&prefix.0).is_some_and(|tail| tail.starts_with('/'))
+  }
   /// Borrows the normalized repository-relative path.
   #[must_use]
   pub fn as_str(&self) -> &str {

@@ -120,6 +120,16 @@ impl ExecutionBackend for FakeBackend {
         }
       );
       assert_eq!(factory.source, request.workspace);
+      // The public backend receives the effective write authority, independently
+      // of a broad source mount ceiling selected at signed admission.
+      if factory.source.join("contracts").exists() {
+        assert!(factory.source_read_only, "the rest of source must reject writes");
+        assert_eq!(
+          factory.source_writable_paths,
+          vec![factory.source.join("contracts"), factory.source.join("plans/changes")]
+        );
+      }
+
       assert!(request.data_dir.starts_with(&factory.scratch));
       assert_ne!(factory.source, factory.scratch);
       assert_ne!(factory.source, factory.output);

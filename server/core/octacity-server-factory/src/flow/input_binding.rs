@@ -23,6 +23,12 @@ pub enum FlowRecordView {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case", tag = "source", deny_unknown_fields)]
 pub enum FlowInputSource {
+  /// Explicit field of this node's immutable admitted definition.
+  /// Operator-owned settings are selected without copying other node data.
+  NodeConfiguration {
+    /// RFC 6901 selection in this exact published node, including its Build binding.
+    path: String,
+  },
   /// Explicit projection of the exact frozen input of this Flow's parent call.
   CallerInput {
     /// RFC 6901 selection in the calling node's payload; no implicit context transfer.
@@ -107,7 +113,8 @@ impl FlowInputBinding {
     }
     for source in sources.values() {
       match source {
-        FlowInputSource::Work { path }
+        FlowInputSource::NodeConfiguration { path }
+        | FlowInputSource::Work { path }
         | FlowInputSource::Predecessor { path, .. }
         | FlowInputSource::Record { path, .. }
         | FlowInputSource::Incoming { path, .. }
@@ -131,6 +138,19 @@ impl FlowInputBinding {
       .iter()
       .map(|(alias, source)| {
         let value = match source {
+          FlowInputSource::NodeConfiguration { path } => {
+            let node = context
+              .admitted
+              .closure()
+              .definition(context.flow.definition())
+              .and_then(|definition| definition.node(&context.node))
+              .ok_or_else(invalid)?;
+            let configuration = serde_json::to_value(node).map_err(|_| invalid())?;
+            return Ok((
+              alias.as_str().to_owned(),
+              copy_bounded(configuration.pointer(path).ok_or_else(invalid)?, &mut remaining)?,
+            ));
+          }
           FlowInputSource::CallerInput { path } => {
             let parent = context.flow.parent().ok_or_else(invalid)?;
             let attempt = context

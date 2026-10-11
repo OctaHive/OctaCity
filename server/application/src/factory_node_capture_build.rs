@@ -52,7 +52,7 @@ impl<B: OrdinaryBuildCancellationApplication + BuildQueryStore, O: FactoryNodeBu
       .and_then(|node| node.build())
       .ok_or_else(ApplicationError::invalid)?;
     // Reject a substituted capability selection before creating an ordinary operation.
-    if intent.profile().tool != self.capture_tool
+    if intent.profile().result_tool() != &self.capture_tool
       || binding.result_output.as_str() != CHANGE_SET_MANIFEST_OUTPUT
       || binding.result_output_kind != EvidenceOutputKind::Artifact
       || !binding.evidence.iter().any(|output| {

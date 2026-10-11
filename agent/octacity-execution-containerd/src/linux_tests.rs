@@ -353,6 +353,7 @@ fn projects_the_factory_layout_without_a_writable_parent_mount() {
       protected_inputs: protected.clone(),
       source: source.clone(),
       source_read_only: false,
+      source_writable_paths: Vec::new(),
       scratch: scratch.clone(),
       output: output.clone(),
       process_limit: 3,

@@ -787,6 +787,53 @@ fn configured_node_prepares_its_input_from_explicit_work_sources_and_mapping() {
 }
 
 #[test]
+fn configured_node_projects_only_explicit_fields_from_its_pinned_configuration() {
+  for (path, expected) in [("/budget/max_attempts", Some(16)), ("/absent_setting", None)] {
+    let binding: FlowInputBinding = serde_json::from_value(serde_json::json!({
+      "sources":{"setting":{"source":"node_configuration","path":path}},
+      "mapping":{"value":{"mapping":"object","fields":{"count":{"mapping":"pointer","path":"/setting"}}}}
+    }))
+    .expect("configuration is an explicit immutable input source");
+    let (work, admitted, schema) = node_fixture_with_bindings(None, Some(binding));
+    let prepared = FlowNodeInput::prepare(FlowInputPreparation {
+      work: &work,
+      admitted: &admitted,
+      flow: admitted.root_run(),
+      cycle: admitted.initial_cycle(),
+      node: key("accessibility_audit"),
+      schema: &schema,
+      history: history(&admitted, &[], &[]),
+      records: &[],
+      inputs: &[],
+      incoming: None,
+    });
+    if let Some(count) = expected {
+      let input = prepared.unwrap();
+      assert_eq!(input.payload().value(), &serde_json::json!({"count":count}));
+      assert!(input.sources().is_empty());
+      assert_eq!(
+        FlowNodeInput::restore(
+          &serde_json::to_vec(&input).unwrap(),
+          &work,
+          &admitted,
+          admitted.root_run(),
+          admitted.initial_cycle(),
+          &schema,
+          input.digest().unwrap()
+        )
+        .unwrap(),
+        input
+      );
+    } else {
+      assert!(
+        prepared.is_err(),
+        "missing configuration is not inferred from Work or incoming data"
+      );
+    }
+  }
+}
+
+#[test]
 fn configured_node_can_select_arbitrary_incoming_data_with_an_exact_retained_identity() {
   let incoming_schema = FlowDataSchema::new(
     key("external.intake"),

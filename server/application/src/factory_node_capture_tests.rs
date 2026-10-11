@@ -310,107 +310,225 @@ fn capture_schema() -> FlowDataSchema {
 #[test]
 fn configured_capture_executor_returns_the_verified_manifest_through_the_common_node_contract() {
   crate::factory_admission_tests::run_ready(async {
-    let work = work();
-    let mut binding = binding(work.subject().project_id());
-    binding.tool = reference("git.capture");
-    binding.result_output = key(CHANGE_SET_MANIFEST_OUTPUT);
-    binding.result_output_kind = EvidenceOutputKind::Artifact;
-    binding.evidence = vec![EvidenceRequirement::new(
-      key(CHANGE_SET_BUNDLE_OUTPUT),
-      EvidenceOutputKind::Artifact,
-      reference("capture.artifacts"),
-      binding.tool.clone(),
-      binding.plugin.clone(),
-    )];
-    let (work, admitted, schema, input, node) =
-      execution_fixture_for_work_with_binding(FlowNodeKind::BuildCommand, work, binding, None, Some(capture_schema()));
-    let intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
-    let builds = std::sync::Arc::new(Builds::new());
-    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
-    let mut outputs = capture_outputs(&intent, &builds, input.subject().base_revision().as_str());
-    outputs.documents[1].schema = schema.reference().clone();
-    let execution = FlowBuildExecution::new(
-      &intent,
-      builds.acceptance.build_id,
-      builds.acceptance.attempt_id,
-      builds.acceptance.job_ids.clone(),
-    )
-    .unwrap();
-    let expected =
-      verify_factory_node_change_set(&intent, &execution, &outputs, &reference("git.capture"), time(31)).unwrap();
-    let adapter = FactoryNodeCaptureBuildAdapter::new(
-      builds.clone(),
-      std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs))),
-      reference("git.capture"),
-    );
-    let result = FactoryNodeExecutor::observe(
-      &adapter,
-      FactoryNodeExecutionRequest {
-        run_id: input.factory_run_id(),
-        work: &work,
-        admitted: &admitted,
-        input: &input,
-        attempt: &node,
-        build: Some(&intent),
-        ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
-        observed_at: time(31),
-      },
-    )
-    .await
-    .unwrap();
-    let FactoryNodeExecutionStep::Completed {
-      execution: Some(execution),
-      record,
-      usage,
-    } = result
-    else {
-      panic!("trusted capture must publish a common result rather than a lifecycle checkpoint");
-    };
-    assert_eq!(execution.node_attempt_id(), node.id());
-    assert_eq!(record.node_attempt_id(), node.id());
-    assert_eq!(
-      record.payload().value()["candidate_revision"],
-      serde_json::json!("captured-revision")
-    );
-    assert_eq!(
-      record.payload().value()["node_attempt_id"],
-      serde_json::json!(node.id().to_string())
-    );
-    assert_eq!(record.build_provenance().unwrap().outputs().len(), 2);
-    assert!(usage.output_bytes > 0);
-    assert_eq!(builds.requests.lock().unwrap().len(), 1);
-    let definition = admitted.closure().definition(input.definition()).unwrap();
-    let completion = record
-      .completion(
-        &node,
-        definition,
-        FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
-        usage,
-        time(32),
+    for kind in [FlowNodeKind::BuildCommand, FlowNodeKind::Reasoning] {
+      let work = work();
+      let mut binding = binding(work.subject().project_id());
+      let capture_tool = reference("git.capture");
+      if kind == FlowNodeKind::BuildCommand {
+        binding.tool = capture_tool.clone();
+      } else {
+        // A reasoning harness remains the executed capability; the independent
+        // trusted capture tool supplies its primary verified result.
+        let mut wire = serde_json::to_value(&binding).unwrap();
+        wire["result_tool"] = serde_json::to_value(&capture_tool).unwrap();
+        binding = serde_json::from_value(wire).expect("independent result verifier must be configurable");
+      }
+      binding.result_output = key(CHANGE_SET_MANIFEST_OUTPUT);
+      binding.result_output_kind = EvidenceOutputKind::Artifact;
+      binding.evidence = vec![EvidenceRequirement::new(
+        key(CHANGE_SET_BUNDLE_OUTPUT),
+        EvidenceOutputKind::Artifact,
+        reference("capture.artifacts"),
+        capture_tool.clone(),
+        binding.plugin.clone(),
+      )];
+      let template: FlowDefinitionTemplate =
+        serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+      let handoff_choice = &template.schemas[&key("spec_handoff")];
+      let handoff_schema = FlowDataSchema::new(
+        handoff_choice.identity.clone(),
+        handoff_choice.version.clone(),
+        handoff_choice.shape.clone(),
       )
       .unwrap();
-    let restored = FlowNodeRecord::restore(
-      &serde_json::to_vec(&record).unwrap(),
-      &input,
-      &node,
-      definition,
-      &schema,
-      &completion,
-    )
-    .unwrap();
-    assert_eq!(
-      factory_node_change_set(&restored, &intent, &execution, &reference("git.capture")).unwrap(),
-      expected
-    );
-    assert!(factory_node_change_set(&restored, &intent, &execution, &reference("another.capture")).is_err());
-    let foreign = FlowBuildExecution::new(
-      &intent,
-      octacity_server_domain::BuildId::generate(),
-      execution.attempt_id(),
-      execution.jobs().to_vec(),
-    )
-    .unwrap();
-    assert!(factory_node_change_set(&restored, &intent, &foreign, &reference("git.capture")).is_err());
+      if kind == FlowNodeKind::Reasoning {
+        binding.evidence.push(EvidenceRequirement::new(
+          key("specification_handoff"),
+          EvidenceOutputKind::Report,
+          handoff_schema.reference().clone(),
+          binding.tool.clone(),
+          binding.plugin.clone(),
+        ));
+      }
+      let (work, mut admitted, schema, input, node) =
+        execution_fixture_for_work_with_binding(kind, work, binding, None, Some(capture_schema()));
+      let mut contracts = admitted.data_schemas().to_vec();
+      contracts.push(handoff_schema.clone());
+      admitted = admitted.with_data_schemas(contracts).unwrap();
+      let (input, node) = if kind == FlowNodeKind::Reasoning {
+        let predecessor = CandidateSubject::new(
+          input.subject().clone(),
+          octacity_server_domain::ImmutableRevision::new("research-candidate").unwrap(),
+          FactoryDigest::from_bytes([92; 32]),
+        );
+        crate::factory_node_test_support::input_with_candidate_context(&admitted, input, &node, predecessor)
+      } else {
+        (input, node)
+      };
+      let capture_base = if kind == FlowNodeKind::Reasoning {
+        "research-candidate"
+      } else {
+        input.subject().base_revision().as_str()
+      };
+      let intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
+      let builds = std::sync::Arc::new(Builds::new());
+      *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+      let mut outputs = capture_outputs(&intent, &builds, capture_base);
+      outputs.documents[1].schema = schema.reference().clone();
+      if kind == FlowNodeKind::Reasoning {
+        let handoff = serde_json::json!({"work_id":work.id().to_string(), "original_base":input.subject().base_revision().as_str(), "predecessor_revision":capture_base, "candidate_revision":"captured-revision", "input_digest":input.digest().unwrap().to_string(), "work_kind":"feature_request", "contract_path":"openspec/specs/example/spec.md", "change_path":"openspec/changes/example/proposal.md", "acceptance_criteria":["new behavior has an exact contract"], "regression_criteria":[]});
+        let mut document = crate::factory_node_test_support::document(
+          &builds,
+          &key("specification_handoff"),
+          handoff_schema.reference(),
+          serde_json::to_vec(&handoff).unwrap(),
+          intent.profile().tool.clone(),
+        );
+        document.plugin = intent.profile().plugin.clone();
+        outputs.usage.output_bytes += document.bytes.len() as u64;
+        outputs.documents.push(document);
+      }
+      let accepted_outputs = outputs.clone();
+      let execution = FlowBuildExecution::new(
+        &intent,
+        builds.acceptance.build_id,
+        builds.acceptance.attempt_id,
+        builds.acceptance.job_ids.clone(),
+      )
+      .unwrap();
+      let expected =
+        verify_factory_node_change_set(&intent, &execution, &outputs, &reference("git.capture"), time(31)).unwrap();
+      let adapter = FactoryNodeCaptureBuildAdapter::new(
+        builds.clone(),
+        std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs))),
+        reference("git.capture"),
+      );
+      let result = FactoryNodeExecutor::observe(
+        &adapter,
+        FactoryNodeExecutionRequest {
+          run_id: input.factory_run_id(),
+          work: &work,
+          admitted: &admitted,
+          input: &input,
+          attempt: &node,
+          build: Some(&intent),
+          ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
+          observed_at: time(31),
+        },
+      )
+      .await
+      .unwrap();
+      let FactoryNodeExecutionStep::Completed {
+        execution: Some(execution),
+        record,
+        usage,
+      } = result
+      else {
+        panic!("trusted capture must publish a common result rather than a lifecycle checkpoint");
+      };
+      assert_eq!(expected.subject().exact(), work.subject());
+      assert_eq!(record.payload().value()["base_revision"], capture_base);
+      assert_eq!(execution.node_attempt_id(), node.id());
+      assert_eq!(
+        builds.requests.lock().unwrap()[0].causality.profile.tool,
+        intent.profile().tool
+      );
+      assert_eq!(record.node_attempt_id(), node.id());
+      assert_eq!(
+        record.payload().value()["candidate_revision"],
+        serde_json::json!("captured-revision")
+      );
+      assert_eq!(
+        record.payload().value()["node_attempt_id"],
+        serde_json::json!(node.id().to_string())
+      );
+      assert_eq!(
+        record.build_provenance().unwrap().outputs().len(),
+        if kind == FlowNodeKind::Reasoning { 3 } else { 2 }
+      );
+      if kind == FlowNodeKind::Reasoning {
+        let handoff = record
+          .build_provenance()
+          .unwrap()
+          .outputs()
+          .iter()
+          .find(|output| output.name == key("specification_handoff"))
+          .unwrap();
+        assert_eq!(
+          handoff.data.as_ref().unwrap().payload().value()["work_id"],
+          work.id().to_string()
+        );
+      }
+      assert!(usage.output_bytes > 0);
+      assert_eq!(builds.requests.lock().unwrap().len(), 1);
+      let definition = admitted.closure().definition(input.definition()).unwrap();
+      let completion = record
+        .completion(
+          &node,
+          definition,
+          FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
+          usage,
+          time(32),
+        )
+        .unwrap();
+      let restored = FlowNodeRecord::restore(
+        &serde_json::to_vec(&record).unwrap(),
+        &input,
+        &node,
+        definition,
+        &schema,
+        &completion,
+      )
+      .unwrap();
+      assert_eq!(
+        factory_node_change_set(&restored, &intent, &execution, &reference("git.capture")).unwrap(),
+        expected
+      );
+      assert!(factory_node_change_set(&restored, &intent, &execution, &reference("another.capture")).is_err());
+      let foreign = FlowBuildExecution::new(
+        &intent,
+        octacity_server_domain::BuildId::generate(),
+        execution.attempt_id(),
+        execution.jobs().to_vec(),
+      )
+      .unwrap();
+      assert!(factory_node_change_set(&restored, &intent, &foreign, &reference("git.capture")).is_err());
+      if kind == FlowNodeKind::Reasoning {
+        for omitted in [
+          CHANGE_SET_BUNDLE_OUTPUT,
+          CHANGE_SET_MANIFEST_OUTPUT,
+          "specification_handoff",
+        ] {
+          let mut incomplete = accepted_outputs.clone();
+          incomplete
+            .documents
+            .retain(|doc| doc.record.identity().logical_name.as_str() != omitted);
+          let incomplete = FactoryNodeCaptureBuildAdapter::new(
+            builds.clone(),
+            std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(incomplete))),
+            reference("git.capture"),
+          );
+          assert!(
+            FactoryNodeExecutor::observe(
+              &incomplete,
+              FactoryNodeExecutionRequest {
+                run_id: input.factory_run_id(),
+                work: &work,
+                admitted: &admitted,
+                input: &input,
+                attempt: &node,
+                build: Some(&intent),
+                ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
+                observed_at: time(31)
+              }
+            )
+            .await
+            .is_err(),
+            "{omitted} cannot be replaced by a model's prose or handoff"
+          );
+        }
+      }
+    }
   });
 }
 

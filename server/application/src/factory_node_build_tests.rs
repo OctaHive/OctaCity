@@ -938,3 +938,250 @@ fn capability_observation_is_bound_to_actual_common_execution_without_a_stage_pr
     assert!(FactoryBuildObservation::from_execution(&execution, &build, &attempt, outputs, time(29)).is_err());
   });
 }
+
+#[test]
+fn configured_specification_review_dispatches_only_its_frozen_candidate_and_reviewer_context() {
+  crate::factory_admission_tests::run_ready(async {
+    use std::collections::BTreeMap;
+    let work = work();
+    let template: FlowDefinitionTemplate =
+      serde_json::from_str(include_str!("../../../config/factory/flows/base-intake.json")).unwrap();
+    let mut selection = binding(work.subject().project_id());
+    selection.model_or_tool = reference("reviewer.parameters");
+    selection.task_digest = FactoryDigest::from_bytes([84; 32]);
+    selection.result_output = key("specification_review");
+    let profiles = template
+      .nodes
+      .iter()
+      .filter_map(|node| node.build_profile.as_ref())
+      .map(|name| (name.clone(), selection.clone()))
+      .collect::<BTreeMap<_, _>>();
+    let published = template
+      .instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
+      .unwrap();
+    let reviewer = published.definition.node(&key("specification_review")).unwrap();
+    let input_schema = published
+      .schemas
+      .iter()
+      .find(|schema| Some(schema.reference()) == reviewer.input_schema())
+      .unwrap();
+    let result_schema = published
+      .schemas
+      .iter()
+      .find(|schema| schema.reference() == reviewer.outcomes()[0].schema())
+      .unwrap();
+    let manifest = FactoryArtifactReference::new(
+      octacity_server_domain::ArtifactId::generate(),
+      FactoryDigest::from_bytes([81; 32]),
+      200,
+    )
+    .unwrap();
+    let bundle = FactoryArtifactReference::new(
+      octacity_server_domain::ArtifactId::generate(),
+      FactoryDigest::from_bytes([82; 32]),
+      400,
+    )
+    .unwrap();
+    let skills = FactoryArtifactReference::new(
+      octacity_server_domain::ArtifactId::generate(),
+      FactoryDigest::from_bytes([83; 32]),
+      100,
+    )
+    .unwrap();
+    // Publication adds a required exact reviewer-owned document to the closed contract.
+    let mut wire = serde_json::to_value(reviewer).unwrap();
+    wire["context_binding"]["entries"]["reviewer_skills"] = serde_json::json!({"source_kind":"policy","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":skills}}}});
+    let reviewer: FlowNodeDefinition = serde_json::from_value(wire).unwrap();
+    let definition = FlowDefinition::new(FlowDefinitionInput {
+      id: FlowDefinitionId::generate(),
+      version: FlowDefinitionVersion::INITIAL,
+      input_schema: reviewer.input_schema().cloned(),
+      entry: reviewer.key().clone(),
+      nodes: vec![reviewer.clone()],
+      transitions: vec![FlowTransition::new(
+        reviewer.key().clone(),
+        key("observed"),
+        FlowTransitionTarget::Terminal(key("review_observed")),
+      )],
+      terminals: vec![FlowTerminalDefinition::new(
+        key("review_observed"),
+        result_schema.reference().clone(),
+      )],
+      context_projections: vec![],
+      data_projections: vec![],
+      execution: template.execution.clone(),
+    })
+    .unwrap();
+    let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+    let flow = FlowRun::root(&run, definition.reference()).unwrap();
+    let cycle = WorkflowCycle::initial(&flow).unwrap();
+    let admitted = AdmittedFlow::new(
+      PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition.clone()]).unwrap(),
+      FlowAdmissionLimits::product_defaults(4, template.execution.budget(), FactoryPermissionSet::deny_all()).unwrap(),
+      flow,
+      cycle,
+      FactoryWipLimits::new(8, 16).unwrap(),
+    )
+    .unwrap()
+    .with_data_schemas(published.schemas.clone())
+    .unwrap();
+    let request = serde_json::json!({"work_id":work.id().to_string(),"original_base":work.subject().base_revision().as_str(),"candidate_revision":"spec-candidate","manifest_digest":manifest.content_digest(),"bundle_digest":bundle.content_digest()});
+    let payload = serde_json::json!({"request":request,"original_acceptance":work.artifacts().acceptance(),"artifacts":{"manifest":manifest,"bundle":bundle},"acceptance_criteria":["specified behavior has a reproducible acceptance check"],"regression_criteria":[]});
+    let subject = FactoryTaskSubject::Candidate(CandidateSubject::new(
+      work.subject().clone(),
+      octacity_server_domain::ImmutableRevision::new("spec-candidate").unwrap(),
+      FactoryDigest::from_bytes([85; 32]),
+    ));
+    let entries = [
+      ("manifest", ContextSourceKind::Specification, manifest),
+      ("bundle", ContextSourceKind::Evidence, bundle),
+      ("reviewer_skills", ContextSourceKind::Policy, skills),
+      (
+        "original_acceptance",
+        ContextSourceKind::Task,
+        work.artifacts().acceptance().clone(),
+      ),
+    ]
+    .into_iter()
+    .map(|(name, kind, artifact)| {
+      ContextManifestEntry::new(
+        kind,
+        key(name),
+        subject.clone(),
+        FactoryContextReference::Artifact(artifact.clone()),
+        artifact.content_digest(),
+        artifact.encoded_size(),
+        FactorySafeText::new("Exact independent review input").unwrap(),
+        FactoryDigest::from_bytes([86; 32]),
+      )
+      .unwrap()
+    })
+    .collect();
+    let context = ContextManifest::new(
+      ContextManifestId::generate(),
+      subject,
+      FactoryDigest::from_bytes([86; 32]),
+      entries,
+    )
+    .unwrap();
+    let input = FlowNodeInput::new(
+      &work,
+      &admitted,
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      reviewer.key().clone(),
+      FlowPayload::new(input_schema, payload).unwrap(),
+    )
+    .unwrap()
+    .with_context(context.clone(), vec![])
+    .unwrap();
+    let node = NodeAttempt::new(
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      &definition,
+      NodeAttemptInput {
+        id: NodeAttemptId::generate(),
+        node_key: reviewer.key().clone(),
+        node_kind: reviewer.kind(),
+        number: NodeAttemptNumber::INITIAL,
+        input_digest: input.digest().unwrap(),
+        budget: reviewer.budget(),
+        started_at: time(10),
+        deadline: time(100),
+        execution: NodeExecutionIdentity::External(selection.tool.clone()),
+        ownership: FactoryClaimOwnership::new(
+          key("review.owner"),
+          FactoryClaim::new(
+            FactoryClaimFence::new(FactoryDigest::from_bytes([87; 32])),
+            time(10),
+            time(100),
+          )
+          .unwrap(),
+        ),
+      },
+    )
+    .unwrap();
+    let intent = FlowBuildIntent::new(input.clone(), &admitted, node, BudgetUsage::default(), 0).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    adapter
+      .observe_or_dispatch(&intent, &admitted, result_schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    {
+      let requests = builds.requests.lock().unwrap();
+      let dispatched = &requests[0];
+      assert_eq!(dispatched.causality.context, context);
+      assert_eq!(
+        dispatched.causality.profile.model_or_tool.identity().as_str(),
+        "reviewer.parameters"
+      );
+      assert_eq!(
+        dispatched.causality.profile.task_digest,
+        FactoryDigest::from_bytes([84; 32])
+      );
+      let frozen: serde_json::Value = serde_json::from_slice(&dispatched.causality.input).unwrap();
+      assert_eq!(
+        frozen["payload"]["value"]["acceptance_criteria"][0],
+        "specified behavior has a reproducible acceptance check"
+      );
+      assert_eq!(dispatched.causality.context.entries().len(), 4);
+      assert!(
+        dispatched.causality.context.entries().iter().all(
+          |entry| entry.logical_identity() != &key("task") && entry.logical_identity() != &key("author_transcript")
+        )
+      );
+    }
+    let intent = FlowBuildIntent::restore(
+      &serde_json::to_vec(&intent).unwrap(),
+      &input,
+      &admitted,
+      intent.node(),
+      intent.operation_id().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(intent.input().context(), Some(&context));
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+    let mut review = request.clone();
+    review["input_digest"] = serde_json::json!(input.digest().unwrap());
+    review["quality"] = serde_json::json!({"complete":"satisfied","consistent":"satisfied","feasible":"satisfied","testable":"satisfied","in_scope":"satisfied"});
+    review["findings"] = serde_json::json!([]);
+    let mut document = crate::factory_node_test_support::document(
+      &builds,
+      &selection.result_output,
+      result_schema.reference(),
+      serde_json::to_vec(&review).unwrap(),
+      selection.tool.clone(),
+    );
+    document.plugin = selection.plugin.clone();
+    let size = document.bytes.len() as u64;
+    let outputs = FactoryNodeBuildOutputs {
+      execution: FactoryNodeBuildExecutionFacts {
+        profile: intent.profile().clone(),
+        input_digest: input.digest().unwrap(),
+        permissions: intent.permissions().clone(),
+        budget: intent.budget(),
+        deadline: intent.node().deadline(),
+      },
+      documents: vec![document],
+      usage: BudgetUsage {
+        attempts: 1,
+        output_bytes: size,
+        ..Default::default()
+      },
+      verified_at: time(30),
+      fresh_until: time(1000),
+    };
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(Some(outputs))));
+    let FactoryNodeBuildStep::Completed(done) = adapter
+      .observe_or_dispatch(&intent, &admitted, result_schema, ownership(&intent), time(32))
+      .await
+      .unwrap()
+    else {
+      panic!("retained reviewer observations required")
+    };
+    assert_eq!(done.record.payload().value(), &review);
+    assert_eq!(done.completion.outcome().as_str(), "observed");
+    assert!(reviewer.accepted_work_outcomes().is_empty());
+  });
+}

@@ -224,6 +224,11 @@ pub struct FactoryCausalityV3 {
   pub input_digest: String,
   /// Digest of the exact subject revision and repository identity.
   pub subject_digest: String,
+  /// Optional canonical disjoint directory roots writable beneath source.
+  /// Narrows an explicit source read/write grant; absent retains its mount mode.
+  /// This is independent of the ChangeSet filter, which may select files.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source_write_paths: Option<Vec<String>>,
   /// Explicit trusted capture instruction for a node granted source write access.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub change_set_capture: Option<ChangeSetCaptureV3>,
@@ -251,6 +256,23 @@ impl FactoryCausalityV3 {
     }
     digest("factory.input_digest", &self.input_digest)?;
     digest("factory.subject_digest", &self.subject_digest)?;
+    if let Some(paths) = &self.source_write_paths {
+      if paths.is_empty() || paths.len() > MAX_FACTORY_PERMISSION_ENTRIES {
+        return Err("source write root count is outside protocol bounds".to_owned());
+      }
+      strictly_ordered("factory.source_write_paths", paths, |value| value)?;
+      for (index, path) in paths.iter().enumerate() {
+        portable_repository_path_prefix(path)?;
+        if path == "."
+          || paths
+            .iter()
+            .take(index)
+            .any(|parent| path.strip_prefix(parent).is_some_and(|tail| tail.starts_with('/')))
+        {
+          return Err("source write roots must be disjoint strict descendants".to_owned());
+        }
+      }
+    }
     if let Some(capture) = &self.change_set_capture {
       capture.validate()?;
     }
@@ -967,9 +989,10 @@ pub(crate) fn validate_factory_execution(
     .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
     .ok_or_else(|| "Factory source mount authority is absent".to_owned())?
     .mode;
-  if factory.is_some_and(|factory| factory.change_set_capture.is_some()) && source_mode != FactoryMountModeV3::ReadWrite
+  if factory.is_some_and(|factory| factory.change_set_capture.is_some() || factory.source_write_paths.is_some())
+    && source_mode != FactoryMountModeV3::ReadWrite
   {
-    return Err("ChangeSet capture requires explicit source write authority".to_owned());
+    return Err("ChangeSet capture and writable source roots require explicit source write authority".to_owned());
   }
   let required_mounts = [
     FactoryMountPermissionV3 {

@@ -409,7 +409,7 @@ fn complete_node(
     &intent.profile().result_output,
     intent.profile().result_output_kind,
     schema.reference(),
-    &intent.profile().tool,
+    intent.profile().result_tool(),
     &intent.profile().plugin,
   )?;
   let payload = FlowPayload::new(

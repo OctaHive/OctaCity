@@ -160,6 +160,7 @@ fn v3_spec() -> JobSpecV3 {
       node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
       input_digest: DIGEST.to_owned(),
       subject_digest: DIGEST.to_owned(),
+      source_write_paths: None,
       change_set_capture: None,
       change_set_materialization: None,
     }),
@@ -330,6 +331,35 @@ fn signed_factory_provenance_addresses_an_arbitrary_node_without_a_stage_role() 
     serde_json::json!("00000000-0000-0000-0000-000000000003")
   );
   assert!(encoded["factory"].get("stage_kind").is_none());
+}
+
+#[test]
+fn signed_source_write_roots_are_explicit_disjoint_and_require_write_authority() {
+  let mut wire = serde_json::to_value(v3_spec()).unwrap();
+  wire["factory"]["source_write_paths"] = serde_json::json!(["contracts", "plans/changes"]);
+  let scoped: JobSpecV3 = serde_json::from_value(wire.clone()).expect("explicit signed directory scope");
+  scoped.validate(&v3_binding(&scoped)).unwrap();
+  for paths in [
+    serde_json::json!([]),
+    serde_json::json!(["."]),
+    serde_json::json!(["contracts:next"]),
+    serde_json::json!(["contracts", "contracts/api"]),
+    serde_json::json!(["plans/changes", "contracts"]),
+    serde_json::json!(vec!["contracts"; MAX_FACTORY_PERMISSION_ENTRIES + 1]),
+  ] {
+    wire["factory"]["source_write_paths"] = paths;
+    let invalid: JobSpecV3 = serde_json::from_value(wire.clone()).unwrap();
+    assert!(invalid.validate(&v3_binding(&invalid)).is_err());
+  }
+  let mut readonly = scoped;
+  readonly
+    .permissions
+    .mounts
+    .iter_mut()
+    .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
+    .unwrap()
+    .mode = FactoryMountModeV3::ReadOnly;
+  assert!(readonly.validate(&v3_binding(&readonly)).is_err());
 }
 
 #[test]

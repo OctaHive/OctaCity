@@ -91,6 +91,8 @@ pub struct FlowNodeDefinition {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   input_binding: Option<crate::FlowInputBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  context_binding: Option<crate::FlowContextBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   build: Option<crate::FlowBuildBinding>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   accepted_work_outcomes: Vec<FactoryKey>,
@@ -125,6 +127,7 @@ impl FlowNodeDefinition {
       phase_pool: None,
       gate: None,
       input_binding: None,
+      context_binding: None,
       build: None,
       accepted_work_outcomes: vec![],
       max_execution_retries: 0,
@@ -218,6 +221,22 @@ impl FlowNodeDefinition {
   #[must_use]
   pub const fn input_binding(&self) -> Option<&crate::FlowInputBinding> {
     self.input_binding.as_ref()
+  }
+
+  /// Freezes a closed exact context contract independent of business node names.
+  pub fn with_context_binding(mut self, binding: crate::FlowContextBinding) -> Result<Self, FactoryError> {
+    if self.input_schema.is_none() {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Flow context binding schema",
+      });
+    }
+    self.context_binding = Some(binding);
+    Ok(self)
+  }
+  /// Returns explicitly permitted context sources; no control edge supplies them.
+  #[must_use]
+  pub const fn context_binding(&self) -> Option<&crate::FlowContextBinding> {
+    self.context_binding.as_ref()
   }
 
   /// Binds a configured pure policy to the ordinary deterministic-gate primitive.
@@ -543,7 +562,7 @@ fn definition_digest(content: &FlowDefinitionContent<'_>) -> Result<FactoryDiges
 fn validate_bindings(nodes: &[FlowNodeDefinition]) -> Result<(), FactoryError> {
   if nodes
     .iter()
-    .any(|node| node.input_binding.is_some() && node.input_schema.is_none())
+    .any(|node| (node.input_binding.is_some() || node.context_binding.is_some()) && node.input_schema.is_none())
   {
     return Err(FactoryError::InvalidConfiguration {
       field: "Flow input binding schema",

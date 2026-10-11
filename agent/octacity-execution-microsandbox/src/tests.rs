@@ -382,6 +382,7 @@ async fn projects_only_the_bounded_factory_roots() {
     protected_inputs: protected.clone(),
     source: source.clone(),
     source_read_only: false,
+    source_writable_paths: Vec::new(),
     scratch: scratch.clone(),
     output: output.clone(),
     process_limit: 3,
@@ -432,6 +433,27 @@ async fn projects_only_the_bounded_factory_roots() {
   assert_eq!(read_only_plan.read_only_mounts.len(), 1);
   assert_eq!(read_only_plan.read_only_mounts[0].host, source);
   assert_eq!(read_only_plan.read_only_mounts[0].guest, FACTORY_SOURCE_ROOT);
+
+  let contracts = source.join("contracts");
+  fs::create_dir(&contracts).unwrap();
+  request.factory.as_mut().unwrap().source_writable_paths = vec![contracts.clone()];
+  let scoped = SandboxPlan::build("agent-1", &runner(&release), &request)
+    .await
+    .unwrap();
+  assert_eq!(scoped.read_only_mounts[0].host, source);
+  assert_eq!(
+    scoped
+      .writable_mounts
+      .iter()
+      .map(|mount| mount.guest.as_str())
+      .collect::<Vec<_>>(),
+    [FACTORY_SCRATCH_ROOT, FACTORY_OUTPUT_ROOT, "/workspace/source/contracts"]
+  );
+  assert_eq!(scoped.writable_mounts[2].host, contracts);
+  assert_eq!(
+    scoped.writable_mounts.iter().map(|mount| mount.quota_mib).sum::<u32>(),
+    1024
+  );
 
   fs::write(job_root.join(".microsandbox-workspace/unexpected"), []).unwrap();
   assert!(matches!(

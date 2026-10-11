@@ -173,6 +173,13 @@ pub(super) fn oci_spec(
         "options": options,
       }));
     }
+    for path in &factory.source_writable_paths {
+      let destination = map_path(&factory.source, path, Path::new(FACTORY_SOURCE_ROOT))?;
+      mounts.push(serde_json::json!({
+        "destination": destination, "type": "bind", "source": path,
+        "options": ["rbind", "rw", "nosuid", "nodev"],
+      }));
+    }
   }
   if let Some(identity) = &request.workload_identity {
     spec["mounts"]

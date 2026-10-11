@@ -206,7 +206,7 @@ pub fn factory_node_change_set(
   if record.input() != intent.input()
     || record.node_attempt_id() != intent.node().id()
     || provenance.profile() != intent.profile()
-    || &intent.profile().tool != capture_tool
+    || intent.profile().result_tool() != capture_tool
     || intent.profile().result_output.as_str() != CHANGE_SET_MANIFEST_OUTPUT
     || intent.profile().result_output_kind != EvidenceOutputKind::Artifact
     || FlowBuildExecution::new(

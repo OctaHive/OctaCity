@@ -49,9 +49,15 @@ pub struct FlowTemplateNode {
   pub required: bool,
   /// Explicit sources and input mapping.
   pub input_binding: FlowInputBinding,
+  /// Optional closed context contract; only exact declared sources can be dispatched.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub context_binding: Option<crate::FlowContextBinding>,
   /// Installed command/reasoning profile choice.
   #[serde(default)]
   pub build_profile: Option<FactoryKey>,
+  /// Optional disjoint writable directory scope for capture jobs; narrows the selected profile.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub capture_write_paths: Option<Vec<crate::FactoryRepositoryPath>>,
   /// Declarative deterministic program.
   #[serde(default)]
   pub gate: Option<FlowGateProgram>,
@@ -158,8 +164,22 @@ impl FlowDefinitionTemplate {
         })?
         .with_input_binding(choice.input_binding.clone())?
         .with_execution_retries(choice.max_execution_retries)?;
+        if let Some(binding) = &choice.context_binding {
+          node = node.with_context_binding(binding.clone())?;
+        }
         if let Some(profile) = &choice.build_profile {
-          node = node.with_build(profiles.get(profile).ok_or_else(invalid)?.clone())?;
+          let mut binding = profiles.get(profile).ok_or_else(invalid)?.clone();
+          if let Some(paths) = &choice.capture_write_paths {
+            if binding.capture_write_paths.as_ref().is_some_and(|ceiling| {
+              paths
+                .iter()
+                .any(|path| !ceiling.iter().any(|parent| path.is_within(parent)))
+            }) {
+              return Err(invalid());
+            }
+            binding.capture_write_paths = Some(paths.clone());
+          }
+          node = node.with_build(binding)?;
         }
         if let Some(program) = &choice.gate {
           node = node.with_gate(program.binding()?)?;
@@ -172,6 +192,9 @@ impl FlowDefinitionTemplate {
         }
         if let Some(pool) = &choice.pool {
           node = node.with_phase_pool(pool.clone());
+        }
+        if choice.capture_write_paths.is_some() && choice.build_profile.is_none() {
+          return Err(invalid());
         }
         if matches!(choice.kind, FlowNodeKind::BuildCommand | FlowNodeKind::Reasoning) && choice.build_profile.is_none()
           || choice.kind == FlowNodeKind::DeterministicGate && choice.gate.is_none()

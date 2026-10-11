@@ -653,6 +653,13 @@ fn protected_build_admission(managed: bool) -> PublishedFactoryAdmission {
 }
 
 fn protected_build_admission_with_output_budget(managed: bool, output_bytes: u64) -> PublishedFactoryAdmission {
+  protected_build_admission_with_capture_paths(managed, output_bytes, None)
+}
+fn protected_build_admission_with_capture_paths(
+  managed: bool,
+  output_bytes: u64,
+  capture_paths: Option<&[&str]>,
+) -> PublishedFactoryAdmission {
   let original = failure_contract::single_slot_admissions().remove(0);
   if !managed {
     return original;
@@ -665,6 +672,12 @@ fn protected_build_admission_with_output_budget(managed: bool, output_bytes: u64
   let mut binding = declared.build().unwrap().clone();
   binding.tool = grants.executables().next().unwrap().clone();
   binding.plugin = grants.plugins().next().unwrap().clone();
+  binding.capture_write_paths = capture_paths.map(|paths| {
+    paths
+      .iter()
+      .map(|path| FactoryRepositoryPath::new(*path).unwrap())
+      .collect()
+  });
   let node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
     key: declared.key().clone(),
     kind: declared.kind(),
@@ -1195,8 +1208,19 @@ async fn prepared_factory_build_with_output_budget(
   managed: bool,
   output_bytes: u64,
 ) -> (postgres_support::TestDatabase, Arc<PostgresStore>, AcceptFactoryBuild) {
+  prepared_factory_build_with_capture_paths(managed, output_bytes, None).await
+}
+async fn prepared_factory_build_with_capture_paths(
+  managed: bool,
+  output_bytes: u64,
+  capture_paths: Option<&[&str]>,
+) -> (postgres_support::TestDatabase, Arc<PostgresStore>, AcceptFactoryBuild) {
   let database = postgres_support::TestDatabase::migrated().await;
-  let admissions = [protected_build_admission_with_output_budget(managed, output_bytes)];
+  let admissions = [protected_build_admission_with_capture_paths(
+    managed,
+    output_bytes,
+    capture_paths,
+  )];
   let admissions = &admissions[..];
   let store = admit_runs(&database.pool, admissions).await;
   let (claims, targets, inputs) = failure_contract::claim_configuration_nodes(store.as_ref(), admissions).await;
@@ -1273,7 +1297,23 @@ async fn prepared_factory_build_with_output_budget(
           node_attempt_id: intent.node().id().to_string(),
           input_digest: input.digest().unwrap().to_string(),
           subject_digest: input.subject().digest().to_string(),
-          change_set_capture: None,
+          source_write_paths: capture_paths.map(|paths| paths.iter().map(|path| (*path).to_owned()).collect()),
+          change_set_capture: capture_paths.map(|paths| octacity_protocol::ChangeSetCaptureV3 {
+            author_name: "Factory fixture".to_owned(),
+            author_email: "factory@example.test".to_owned(),
+            committed_at: 100,
+            patch_max_bytes: None,
+            policy: octacity_protocol::ChangeSetCapturePolicyV3 {
+              allowed_path_prefixes: paths.iter().map(|path| (*path).to_owned()).collect(),
+              forbidden_control_paths: vec![".git".to_owned()],
+              max_changed_paths: 64,
+              max_file_bytes: 1024,
+              max_total_bytes: 2048,
+              allow_empty: false,
+              binary_policy: octacity_protocol::ChangeSetBinaryPolicyV3::Reject,
+              forbidden_secret_patterns: octacity_protocol::ChangeSetSecretPatternV3::ALL.to_vec(),
+            },
+          }),
           change_set_materialization: None,
         };
         let grants = intent.permissions().clone();
@@ -1635,5 +1675,61 @@ async fn production_factory_owner_uses_installed_bindings_and_recovers_the_same_
   assert_eq!(recovered.flow.data.inputs, frozen.flow.data.inputs);
   assert_eq!(recovered.flow.data.build_intents, frozen.flow.data.build_intents);
   restarted.shutdown().await.unwrap();
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn signed_job_capture_cannot_widen_the_frozen_node_write_scope() {
+  let (database, _, request) =
+    prepared_factory_build_with_capture_paths(true, 10_000, Some(&["contracts", "plans/changes"])).await;
+  request.validate().unwrap();
+  let store = octacity_server_store_postgres::PostgresAuthoritativeStore::new(
+    database.pool.clone(),
+    postgres_support::test_signer(),
+  );
+  let operation = request.intent.operation_id().unwrap();
+  for roots in [
+    serde_json::Value::Null,
+    serde_json::json!(["contracts"]),
+    serde_json::json!(["src"]),
+  ] {
+    let mut substituted = request.clone();
+    let mut wire = serde_json::to_value(&substituted.jobs[0].job_spec_template).unwrap();
+    *wire.pointer_mut("/execution/factory/source_write_paths").unwrap() = roots;
+    substituted.jobs[0].job_spec_template = serde_json::from_value(wire).unwrap();
+    assert!(
+      store.accept_factory_build(substituted).await.is_err(),
+      "capture filtering cannot replace the exact signed writable directory scope"
+    );
+    assert!(store.factory_build_for_operation(operation).await.unwrap().is_none());
+  }
+  for whitelist in [
+    serde_json::json!(["."]),
+    serde_json::json!(["contracts"]),
+    serde_json::Value::Null,
+  ] {
+    let mut substituted = request.clone();
+    let mut wire = serde_json::to_value(&substituted.jobs[0].job_spec_template).unwrap();
+    let capture = wire
+      .pointer_mut("/execution/factory/change_set_capture")
+      .expect("managed template retains the exact capture policy");
+    if whitelist.is_null() {
+      *capture = serde_json::Value::Null;
+    } else {
+      capture["policy"]["allowed_path_prefixes"] = whitelist;
+    }
+    substituted.jobs[0].job_spec_template = serde_json::from_value(wire).unwrap();
+    assert!(
+      store.accept_factory_build(substituted).await.is_err(),
+      "a signed job cannot substitute even one DAG member's effective write scope"
+    );
+    assert!(store.factory_build_for_operation(operation).await.unwrap().is_none());
+  }
+  let accepted = store.accept_factory_build(request).await.unwrap();
+  assert_eq!(
+    store.factory_build_for_operation(operation).await.unwrap(),
+    Some(accepted)
+  );
   database.cleanup().await;
 }

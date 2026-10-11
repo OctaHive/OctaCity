@@ -306,7 +306,7 @@ async fn rejects_an_incomplete_factory_backend_before_source_or_spawn() {
 
 #[tokio::test]
 async fn stages_and_projects_an_admitted_factory_job() {
-  let (completion, cancelled, _work_root) = captured_factory_job(None, false).await;
+  let (completion, cancelled, _work_root) = captured_factory_job(None, false, &[]).await;
   let completion = completion.unwrap();
   assert!(!cancelled.load(Ordering::SeqCst));
   assert_eq!(
@@ -318,8 +318,24 @@ async fn stages_and_projects_an_admitted_factory_job() {
 }
 
 #[tokio::test]
+async fn capture_filters_preserve_file_and_overlapping_prefixes_without_mount_grants() {
+  for prefixes in [
+    &["Octafile.yml"][..],
+    &["contracts/new.md"][..],
+    &["docs", "docs/specs"][..],
+  ] {
+    let (completion, _, _root) = captured_factory_job(None, false, prefixes).await;
+    let completion = completion.expect("a capture filter does not declare writable mount roots");
+    assert!(completion.workspace().join("Octafile.yml").is_file());
+    assert!(!completion.workspace().join("contracts/new.md").exists());
+    assert!(!completion.workspace().join("docs").exists());
+    completion.cleanup().await.unwrap();
+  }
+}
+
+#[tokio::test]
 async fn an_admitted_managed_execution_outlives_its_signature_validity() {
-  let (completion, cancelled, _root) = captured_factory_job(Some(Duration::from_secs(3)), false).await;
+  let (completion, cancelled, _root) = captured_factory_job(Some(Duration::from_secs(3)), false, &[]).await;
   assert!(!cancelled.load(Ordering::SeqCst));
   completion
     .expect("admitted execution retains its own deadline")
@@ -330,7 +346,7 @@ async fn an_admitted_managed_execution_outlives_its_signature_validity() {
 
 #[tokio::test]
 async fn managed_capture_obeys_the_absolute_deadline_and_drains_cancellation() {
-  let (completion, cancelled, _work_root) = captured_factory_job(Some(Duration::from_millis(500)), false).await;
+  let (completion, cancelled, _work_root) = captured_factory_job(Some(Duration::from_millis(500)), false, &[]).await;
   let failure = completion.expect_err("capture cannot turn an expired execution into success");
   assert!(matches!(failure.error(), JobError::TimedOut));
   assert!(
@@ -342,7 +358,7 @@ async fn managed_capture_obeys_the_absolute_deadline_and_drains_cancellation() {
 
 #[tokio::test]
 async fn managed_materialization_obeys_the_deadline_before_starting_the_runner() {
-  let (completion, cancelled, _root) = captured_factory_job(Some(Duration::from_millis(500)), true).await;
+  let (completion, cancelled, _root) = captured_factory_job(Some(Duration::from_millis(500)), true, &[]).await;
   let failure = completion.expect_err("expired preparation cannot execute the runner");
   assert!(matches!(failure.error(), JobError::TimedOut));
   assert!(
@@ -376,6 +392,16 @@ impl ChangeSetMaterializer for SlowChangeSetMaterializer {
 async fn captured_factory_job(
   deadline: Option<Duration>,
   materialization: bool,
+  write_paths: &[&str],
+) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
+  captured_factory_job_with_source_scope(deadline, materialization, write_paths, None).await
+}
+
+async fn captured_factory_job_with_source_scope(
+  deadline: Option<Duration>,
+  materialization: bool,
+  write_paths: &[&str],
+  source_write_paths: Option<&[&str]>,
 ) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
   use sha2::Digest as _;
   use std::time::SystemTime;
@@ -418,6 +444,19 @@ async fn captured_factory_job(
   spec.protected_inputs.inputs[0].media_type = "application/yaml".to_owned();
   spec.octa.runner_sha256 = hex::encode(sha2::Sha256::digest(FACTORY_RUNNER_BYTES));
   spec.factory = Some(capture_causality());
+  spec.factory.as_mut().unwrap().source_write_paths =
+    source_write_paths.map(|paths| paths.iter().map(|path| (*path).to_owned()).collect());
+  if !write_paths.is_empty() {
+    spec
+      .factory
+      .as_mut()
+      .unwrap()
+      .change_set_capture
+      .as_mut()
+      .unwrap()
+      .policy
+      .allowed_path_prefixes = write_paths.iter().map(|path| (*path).to_owned()).collect();
+  }
   spec.expires_at = SystemTime::now()
     .duration_since(SystemTime::UNIX_EPOCH)
     .unwrap()
@@ -1008,6 +1047,7 @@ fn capture_causality() -> FactoryCausalityV3 {
     node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
     input_digest: DIGEST.to_owned(),
     subject_digest: DIGEST.to_owned(),
+    source_write_paths: None,
     change_set_capture: Some(ChangeSetCaptureV3 {
       author_name: "OctaCity Factory".to_owned(),
       author_email: "factory@octacity.invalid".to_owned(),
@@ -1042,4 +1082,14 @@ fn transfers(manifest: &ProtectedInputManifestV3) -> Vec<ProtectedInputTransferV
       },
     })
     .collect()
+}
+
+#[tokio::test]
+async fn signed_source_write_roots_narrow_the_runner_write_projection_before_authoring() {
+  let (completion, _, _root) =
+    captured_factory_job_with_source_scope(None, false, &[], Some(&["contracts", "plans/changes"])).await;
+  let completion = completion.unwrap();
+  assert!(completion.workspace().join("contracts").is_dir());
+  assert!(completion.workspace().join("plans/changes").is_dir());
+  completion.cleanup().await.unwrap();
 }

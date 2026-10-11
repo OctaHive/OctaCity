@@ -259,8 +259,12 @@ pub struct FactoryExecutionLayout {
   pub protected_inputs: PathBuf,
   /// Exact source directory projected at [`FACTORY_SOURCE_ROOT`].
   pub source: PathBuf,
-  /// Whether the source projection must reject every write.
+  /// Whether the base source projection rejects writes outside explicit overlays.
   pub source_read_only: bool,
+  /// Canonical directory overlays writable within an otherwise read-only source.
+  /// Empty means no exception. Paths must be disjoint strict descendants; they
+  /// narrow a signed capture policy, never grant authority beyond admission.
+  pub source_writable_paths: Vec<PathBuf>,
   /// Writable disposable state projected at [`FACTORY_SCRATCH_ROOT`].
   pub scratch: PathBuf,
   /// Writable declared-output root projected at [`FACTORY_OUTPUT_ROOT`].
@@ -278,6 +282,48 @@ impl FactoryExecutionLayout {
     }
     let canonical_work_root = canonical_directory(workspace_root, "workspace_root")?;
     let source = canonical_directory(&self.source, "Factory source")?;
+    if self.source_writable_paths.len() > octacity_protocol::MAX_FACTORY_PERMISSION_ENTRIES
+      || !self.source_read_only && !self.source_writable_paths.is_empty()
+    {
+      return Err(ExecutionError::Invalid(
+        "source write overlays exceed the signed count ceiling or require a read-only source".to_owned(),
+      ));
+    }
+    for (index, path) in self.source_writable_paths.iter().enumerate() {
+      let relative = path
+        .strip_prefix(&source)
+        .map_err(|_| ExecutionError::Invalid("source write path escapes source".to_owned()))?;
+      if relative.as_os_str().is_empty()
+        || relative
+          .components()
+          .any(|component| !matches!(component, Component::Normal(_)))
+        || self
+          .source_writable_paths
+          .iter()
+          .take(index)
+          .any(|other| path.starts_with(other) || other.starts_with(path))
+      {
+        return Err(ExecutionError::Invalid(
+          "source write paths must be disjoint strict descendants".to_owned(),
+        ));
+      }
+      let mut resolved = source.clone();
+      for component in relative.components() {
+        resolved.push(component);
+        let metadata = std::fs::symlink_metadata(&resolved).map_err(ExecutionError::Io)?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+          return Err(ExecutionError::Invalid(
+            "source write path must contain only directories".to_owned(),
+          ));
+        }
+        #[cfg(windows)]
+        if octacity_private_fs::is_reparse_point(&resolved).map_err(ExecutionError::Io)? {
+          return Err(ExecutionError::Invalid(
+            "source write path contains a reparse point".to_owned(),
+          ));
+        }
+      }
+    }
     let scratch = canonical_directory(&self.scratch, "Factory scratch")?;
     let output = canonical_directory(&self.output, "Factory output")?;
     let protected = canonical_directory(&self.protected_inputs, "Factory protected inputs")?;
@@ -798,6 +844,7 @@ mod tests {
       protected_inputs: protected.canonicalize().unwrap(),
       source: source.canonicalize().unwrap(),
       source_read_only: false,
+      source_writable_paths: Vec::new(),
       scratch: scratch.canonicalize().unwrap(),
       output: output.canonicalize().unwrap(),
       process_limit: 4,
@@ -825,6 +872,29 @@ mod tests {
       network: NetworkAccess::Disabled,
     };
     assert!(request.validate().is_ok());
+    let mut scoped = request.clone();
+    let policy = scoped.factory.as_mut().unwrap();
+    policy.source_read_only = true;
+    policy.source_writable_paths = (0..=octacity_protocol::MAX_FACTORY_PERMISSION_ENTRIES)
+      .map(|index| {
+        let path = policy.source.join(format!("contract-{index}"));
+        std::fs::create_dir(&path).unwrap();
+        path
+      })
+      .collect();
+    assert!(
+      scoped.validate().is_err(),
+      "effective write projections retain the signed permission count ceiling"
+    );
+    scoped.factory.as_mut().unwrap().source_writable_paths.truncate(2);
+    assert!(scoped.validate().is_ok());
+    scoped
+      .factory
+      .as_mut()
+      .unwrap()
+      .source_writable_paths
+      .push(scoped.workspace.clone());
+    assert!(scoped.validate().is_err(), "a narrow grant cannot reopen all source");
 
     request.factory.as_mut().unwrap().process_limit = 0;
     assert!(request.validate().is_err());

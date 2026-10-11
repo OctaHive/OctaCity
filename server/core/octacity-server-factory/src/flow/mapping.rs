@@ -67,8 +67,11 @@ impl FlowDataMapping {
     self.project_value(input.value(), schema)
   }
   pub(super) fn project_value(&self, input: &Value, schema: &FlowDataSchema) -> Result<FlowPayload, FactoryError> {
+    FlowPayload::new(schema, self.project_raw(input)?)
+  }
+  pub(super) fn project_raw(&self, input: &Value) -> Result<Value, FactoryError> {
     let mut remaining = MAX_FLOW_DATA_BYTES;
-    FlowPayload::new(schema, self.value.project(input, &mut remaining)?)
+    self.value.project(input, &mut remaining)
   }
 }
 impl FlowValueMapping {

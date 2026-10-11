@@ -47,6 +47,12 @@ impl FlowQuantifier {
 pub enum FlowComparison {
   /// Exact scalar equality.
   Equal,
+  /// Portable repository path equality or descendant membership, by components.
+  /// This comparison grants no filesystem authority.
+  RepositoryPathWithin,
+  /// Membership in an explicitly selected list of portable repository roots.
+  /// Invalid roots remain unknown; every root consumes the shared evaluation budget.
+  RepositoryPathWithinAny,
   /// Signed integer ordering.
   Greater,
   /// Signed integer ordering including equality.
@@ -134,6 +140,8 @@ pub struct FlowGateRule {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "ProgramWire")]
 pub struct FlowGateProgram {
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  precondition: Option<FlowPredicate>,
   rules: Vec<FlowGateRule>,
   fallback: FactoryKey,
   #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -144,6 +152,8 @@ pub struct FlowGateProgram {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ProgramWire {
+  #[serde(default)]
+  precondition: Option<FlowPredicate>,
   rules: Vec<FlowGateRule>,
   fallback: FactoryKey,
   #[serde(default)]
@@ -155,6 +165,9 @@ impl TryFrom<ProgramWire> for FlowGateProgram {
   type Error = FactoryError;
   fn try_from(wire: ProgramWire) -> Result<Self, Self::Error> {
     let mut program = Self::new(wire.rules, wire.fallback)?;
+    if let Some(precondition) = wire.precondition {
+      program = program.with_precondition(precondition)?;
+    }
     if let Some(mapping) = wire.default_output {
       program = program.with_default_output_mapping(mapping)?;
     }
@@ -165,6 +178,14 @@ impl TryFrom<ProgramWire> for FlowGateProgram {
   }
 }
 impl FlowGateProgram {
+  /// Requires one shared bounded predicate before selecting any routing rule.
+  /// A false or unknown condition selects the explicit fallback; total predicate
+  /// and evaluation ceilings include both this condition and every rule.
+  pub fn with_precondition(mut self, precondition: FlowPredicate) -> Result<Self, FactoryError> {
+    self.precondition = Some(precondition);
+    self.validate_bytes()?;
+    Ok(self)
+  }
   /// Shares one bounded mapping across declared outcomes without an explicit override.
   /// Output shape is still checked against the selected outcome's exact schema.
   pub fn with_default_output_mapping(mut self, mapping: FlowDataMapping) -> Result<Self, FactoryError> {
@@ -245,11 +266,8 @@ impl FlowGateProgram {
     if rules.len() > MAX_RULES {
       return Err(invalid());
     }
-    let mut count = 0;
-    for rule in &rules {
-      rule.when.validate(0, &mut count, false)?;
-    }
     let program = Self {
+      precondition: None,
       rules,
       fallback,
       outputs: BTreeMap::new(),
@@ -259,6 +277,13 @@ impl FlowGateProgram {
     Ok(program)
   }
   fn validate_bytes(&self) -> Result<(), FactoryError> {
+    let mut count = 0;
+    if let Some(precondition) = &self.precondition {
+      precondition.validate(0, &mut count, false)?;
+    }
+    for rule in &self.rules {
+      rule.when.validate(0, &mut count, false)?;
+    }
     if serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_FLOW_GATE_PARAMETER_BYTES {
       return Err(invalid());
     }
@@ -274,6 +299,15 @@ impl FlowGateProgram {
   }
   fn select_with_time(&self, input: &FlowPayload, at: Option<Value>) -> Result<FactoryKey, FactoryError> {
     let mut remaining = MAX_EVALUATION_STEPS;
+    if let Some(precondition) = &self.precondition {
+      let matched = precondition.evaluate(input.value(), None, at.as_ref(), &mut remaining);
+      if remaining == 0 {
+        return Err(invalid());
+      }
+      if matched != Some(true) {
+        return Ok(self.fallback.clone());
+      }
+    }
     for rule in &self.rules {
       let matched = rule.when.evaluate(input.value(), None, at.as_ref(), &mut remaining);
       if remaining == 0 {
@@ -304,7 +338,7 @@ fn policy_reference() -> Result<ImmutableReference, FactoryError> {
     FactoryKey::new("v1")?,
     FactoryDigest::sha256(
       "octacity.factory.declarative-gate-contract.v1",
-      &[b"ordered-rules;typed-scalars;missing-unknown;bounded-quantifiers;explicit-fallback;owner-observation-time;default-output-with-exact-overrides;16384-steps"],
+      &[b"ordered-rules;typed-scalars;missing-unknown;bounded-quantifiers;explicit-fallback;owner-observation-time;default-output-with-exact-overrides;portable-repository-path-containment;bounded-repository-root-list;fail-closed-shared-precondition;16384-steps"],
     ),
   ))
 }
@@ -415,6 +449,21 @@ impl FlowPredicate {
               (Value::Null, Value::Null) | (Value::Bool(_), Value::Bool(_)) | (Value::String(_), Value::String(_))
             ) || (left.as_i64().is_some() && right.as_i64().is_some());
             same_type.then_some(left == right)
+          }
+          FlowComparison::RepositoryPathWithin => {
+            let path = crate::FactoryRepositoryPath::new(left.as_str()?).ok()?;
+            let prefix = crate::FactoryRepositoryPath::new(right.as_str()?).ok()?;
+            Some(path.is_within(&prefix))
+          }
+          FlowComparison::RepositoryPathWithinAny => {
+            let path = crate::FactoryRepositoryPath::new(left.as_str()?).ok()?;
+            let mut matched = false;
+            for prefix in right.as_array()? {
+              *remaining = remaining.checked_sub(1)?;
+              let prefix = crate::FactoryRepositoryPath::new(prefix.as_str()?).ok()?;
+              matched |= path.is_within(&prefix);
+            }
+            Some(matched)
           }
           FlowComparison::Greater | FlowComparison::LessOrEqual => {
             let (left, right) = (left.as_i64()?, right.as_i64()?);

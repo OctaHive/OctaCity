@@ -9,6 +9,8 @@ pub(crate) fn reference(name: &str) -> ImmutableReference {
 pub(crate) fn binding(project: octacity_server_domain::ProjectId) -> FlowBuildBinding {
   FlowBuildBinding {
     tool: reference("audit.command"),
+    result_tool: None,
+    capture_write_paths: None,
     plugin: reference("runner"),
     model_or_tool: reference("audit.parameters"),
     task_digest: FactoryDigest::from_bytes([61; 32]),

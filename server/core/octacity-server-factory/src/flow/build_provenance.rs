@@ -128,6 +128,8 @@ impl FlowBuildProvenance {
       || self.profile.definition != definition.reference()
       || &self.profile.node != input.node()
       || self.profile.tool != binding.tool
+      || self.profile.result_tool != binding.result_tool
+      || self.profile.capture_write_paths != binding.capture_write_paths
       || self.profile.plugin != binding.plugin
       || self.profile.model_or_tool != binding.model_or_tool
       || self.profile.task_digest != binding.task_digest
@@ -136,7 +138,7 @@ impl FlowBuildProvenance {
       || self.profile.result_output_kind != binding.result_output_kind
       || &raw.schema != payload.schema()
       || raw.output_kind != binding.result_output_kind
-      || raw.producer.tool() != &binding.tool
+      || raw.producer.tool() != binding.result_tool()
       || raw.producer.plugin() != &binding.plugin
       || self.outputs.len() != binding.evidence.len() + 1
       || binding.evidence.iter().any(|requirement| {

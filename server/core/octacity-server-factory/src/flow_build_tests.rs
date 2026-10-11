@@ -449,6 +449,23 @@ fn generic_build_intent_replays_the_exact_node_input_profile_priority_and_resour
 }
 
 #[test]
+fn published_capture_scopes_require_portable_signed_job_paths() {
+  let selected = binding(octacity_server_domain::ProjectId::generate());
+  for (paths, accepted) in [
+    (serde_json::json!(["contracts", "plans/changes"]), true),
+    (serde_json::json!(["contracts:next"]), false),
+    (serde_json::json!(["C:/contracts"]), false),
+  ] {
+    let mut wire = serde_json::to_value(&selected).unwrap();
+    wire["capture_write_paths"] = paths.clone();
+    let published = serde_json::from_value::<FlowBuildBinding>(wire)
+      .ok()
+      .and_then(|binding| node(FlowNodeKind::Reasoning).with_build(binding).ok());
+    assert_eq!(published.is_some(), accepted, "capture scope {paths}");
+  }
+}
+
+#[test]
 fn generic_build_intent_rejects_substitution_expired_reservations_and_tampered_restart_bytes() {
   let (_, admitted, _, input, attempt) = execution_fixture(FlowNodeKind::Reasoning);
   let mut wire = serde_json::to_value(&attempt).unwrap();
@@ -730,5 +747,208 @@ fn interpretation_charges_confirmed_failure_usage_before_advancing_a_successful_
       })
     ),
     "100 tokens spent by a failed attempt plus one retry token exceed the configured Flow budget"
+  );
+}
+
+#[test]
+fn a_node_context_contract_excludes_undeclared_sources_and_substituted_candidates() {
+  let (work, original, schema, _, previous) = execution_fixture(FlowNodeKind::Reasoning);
+  let old = &original.closure().definitions()[0];
+  let task = work.artifacts().task().clone();
+  let skills = FactoryArtifactReference::new(
+    octacity_server_domain::ArtifactId::generate(),
+    FactoryDigest::from_bytes([74; 32]),
+    42,
+  )
+  .unwrap();
+  let source = |artifact: &FactoryArtifactReference| serde_json::json!({"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}});
+  let mut wire = serde_json::to_value(&old.nodes()[0]).unwrap();
+  wire["context_binding"] = serde_json::json!({
+    "candidate_revision":{"value":{"mapping":"constant","value":"spec-candidate"}},
+    "entries":{
+      "requirements":{"source_kind":"specification","source":source(&task)},
+      "reviewer_skills":{"source_kind":"policy","source":source(&skills)}
+    }
+  });
+  let selected: FlowNodeDefinition =
+    serde_json::from_value(wire).expect("node context is configured independently of its name");
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: old.reference().id(),
+    version: old.reference().version(),
+    input_schema: old.input_schema().cloned(),
+    entry: old.entry().clone(),
+    nodes: vec![selected],
+    transitions: old.transitions().to_vec(),
+    terminals: old.terminals().to_vec(),
+    context_projections: old.context_projections().to_vec(),
+    data_projections: old.data_projections().to_vec(),
+    execution: old.execution().clone(),
+  })
+  .unwrap();
+  let run = FactoryRun::admitted(original.root_run().factory_run_id(), &work);
+  let flow = FlowRun::root(&run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition.clone()]).unwrap(),
+    original.limits().clone(),
+    flow,
+    cycle,
+    FactoryWipLimits::new(8, 16).unwrap(),
+  )
+  .unwrap()
+  .with_data_schemas(vec![schema.clone()])
+  .unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    key("accessibility_audit"),
+    FlowPayload::new(&schema, serde_json::json!({"count":3})).unwrap(),
+  )
+  .unwrap();
+  let subject = FactoryTaskSubject::Candidate(CandidateSubject::new(
+    work.subject().clone(),
+    octacity_server_domain::ImmutableRevision::new("spec-candidate").unwrap(),
+    FactoryDigest::from_bytes([75; 32]),
+  ));
+  let entry = |name, kind, subject: &FactoryTaskSubject, artifact: &FactoryArtifactReference| {
+    ContextManifestEntry::new(
+      kind,
+      key(name),
+      subject.clone(),
+      FactoryContextReference::Artifact(artifact.clone()),
+      artifact.content_digest(),
+      artifact.encoded_size(),
+      FactorySafeText::new("Explicit independent input").unwrap(),
+      FactoryDigest::from_bytes([76; 32]),
+    )
+    .unwrap()
+  };
+  let entries = vec![
+    entry("requirements", ContextSourceKind::Specification, &subject, &task),
+    entry("reviewer_skills", ContextSourceKind::Policy, &subject, &skills),
+  ];
+  let attach = |subject: FactoryTaskSubject, entries| {
+    input
+      .clone()
+      .with_context(
+        ContextManifest::new(
+          ContextManifestId::generate(),
+          subject,
+          FactoryDigest::from_bytes([76; 32]),
+          entries,
+        )
+        .unwrap(),
+        vec![],
+      )
+      .unwrap()
+  };
+  let intent = |input: FlowNodeInput| {
+    let node = NodeAttempt::new(
+      admitted.root_run(),
+      admitted.initial_cycle(),
+      &definition,
+      NodeAttemptInput {
+        id: NodeAttemptId::generate(),
+        node_key: input.node().clone(),
+        node_kind: previous.node_kind(),
+        number: NodeAttemptNumber::INITIAL,
+        input_digest: input.digest().unwrap(),
+        budget: previous.budget(),
+        started_at: previous.started_at(),
+        deadline: previous.deadline(),
+        execution: previous.execution().clone(),
+        ownership: FactoryClaimOwnership::new(previous.owner().clone(), previous.claim()),
+      },
+    )
+    .unwrap();
+    FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 0)
+  };
+  let declared = definition.node(input.node()).unwrap().context_binding().unwrap();
+  let sources = declared.selected_sources(input.payload()).unwrap();
+  assert_eq!(sources.len(), 2);
+  assert_eq!(
+    sources[&key("reviewer_skills")],
+    (
+      ContextSourceKind::Policy,
+      FactoryContextReference::Artifact(skills.clone())
+    )
+  );
+  assert_eq!(
+    declared.candidate_revision(input.payload()).unwrap().unwrap().as_str(),
+    "spec-candidate"
+  );
+  let valid = attach(subject.clone(), entries.clone());
+  assert!(intent(valid.clone()).is_ok());
+  let mut leaked = entries.clone();
+  leaked.push(entry(
+    "author_transcript",
+    ContextSourceKind::BoundedSummary,
+    &subject,
+    &task,
+  ));
+  assert!(
+    intent(attach(subject.clone(), leaked)).is_err(),
+    "control order grants no transcript"
+  );
+  let mut substituted = entries.clone();
+  substituted[1] = entry("reviewer_skills", ContextSourceKind::Policy, &subject, &task);
+  assert!(
+    intent(attach(subject.clone(), substituted)).is_err(),
+    "reviewer skills are exact immutable bytes"
+  );
+  assert!(
+    intent(attach(subject.clone(), vec![entries[0].clone()])).is_err(),
+    "required context cannot be omitted"
+  );
+  let foreign = FactoryTaskSubject::Candidate(CandidateSubject::new(
+    work.subject().clone(),
+    octacity_server_domain::ImmutableRevision::new("other-candidate").unwrap(),
+    FactoryDigest::from_bytes([75; 32]),
+  ));
+  let foreign_entries = vec![
+    entry("requirements", ContextSourceKind::Specification, &foreign, &task),
+    entry("reviewer_skills", ContextSourceKind::Policy, &foreign, &skills),
+  ];
+  assert!(intent(attach(foreign, foreign_entries)).is_err());
+  assert!(intent(input).is_err());
+  let restored = FlowNodeInput::restore(
+    &serde_json::to_vec(&valid).unwrap(),
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    &schema,
+    valid.digest().unwrap(),
+  )
+  .unwrap();
+  assert_eq!(restored, valid);
+}
+
+#[test]
+fn a_context_contract_requires_a_typed_input_at_publication() {
+  let (_, admitted, _, _, _) = execution_fixture(FlowNodeKind::Reasoning);
+  let old = &admitted.closure().definitions()[0];
+  let mut wire = serde_json::to_value(&old.nodes()[0]).unwrap();
+  wire["input_schema"] = serde_json::Value::Null;
+  wire["build"] = serde_json::Value::Null;
+  wire["context_binding"] = serde_json::json!({"entries":{"declared":{"source_kind":"task","source":{"value":{"mapping":"constant","value":{}}}}}});
+  let node = serde_json::from_value(wire).unwrap();
+  assert!(
+    FlowDefinition::new(FlowDefinitionInput {
+      id: old.reference().id(),
+      version: old.reference().version(),
+      input_schema: None,
+      entry: old.entry().clone(),
+      nodes: vec![node],
+      transitions: old.transitions().to_vec(),
+      terminals: old.terminals().to_vec(),
+      context_projections: vec![],
+      data_projections: vec![],
+      execution: old.execution().clone(),
+    })
+    .is_err(),
+    "a source mapping cannot read undeclared untyped input"
   );
 }

@@ -43,7 +43,8 @@ v3-only sections:
   logical node-scoped credential profile;
 - `factory` optionally carries only bounded logical Factory identities,
   immutable configuration version, Flow Run, Workflow Cycle, Node Attempt,
-  input and subject digests, and explicit optional ChangeSet instructions;
+  input and subject digests, optional writable source directory roots, and
+  explicit optional ChangeSet instructions;
 - `protected_inputs` contains bounded logical Artifact identities, exact sizes,
   lowercase SHA-256 digests, media types, and canonical destinations below
   `/octacity/protected`;
@@ -107,10 +108,17 @@ The managed Octafile is selected by logical protected-input identity. It
 cannot be replaced by a workspace-relative repository path. Every named task
 must be explicit and unique. Backends expose only the fixed portable roots
 `/octacity/protected`, `/workspace/source`, `/workspace/scratch`, and
-`/workspace/output`; protected inputs are always read-only, source is
-read-only for evaluation and read-write for the other current stage kinds,
-and the scratch/output roots are distinct writable scopes below one private
+`/workspace/output`; protected inputs are always read-only, source mode follows
+the signed permission set, and the scratch/output roots are distinct writable scopes below one private
 Job. v3 rejects direct Host execution.
+
+Optional `factory.source_write_paths` narrows an explicitly granted source
+read/write mount to canonical repository-relative directory roots. The list
+must be nonempty, sorted, disjoint and bounded; `.` and platform-specific paths
+are rejected. Agent prepares missing directories before credential provisioning
+and rejects file, symlink or reparse redirects. Backends project the source base
+read-only and expose only these directory overlays as writable. Absence preserves
+the signed source mount mode and never derives roots from capture filters.
 
 ## Factory Permission Set
 
@@ -152,10 +160,10 @@ fallback.
 
 ## Trusted ChangeSet capture policy
 
-A writable implementation or rework stage may carry one signed
+A node with explicit source write authority may carry one signed
 `factory.change_set_capture` instruction. The instruction fixes the canonical
-author and committer identity, Stage Attempt time, optional patch ceiling, and
-the complete capture policy. Evaluation and other read-only stages reject this
+author and committer identity, Node Attempt time, optional patch ceiling, and
+the complete capture policy. Nodes with read-only source authority reject this
 instruction. An Agent without an operator-verified `change_set_capture`
 tool rejects it before source materialization.
 
@@ -168,6 +176,12 @@ traversing, empty-segment, platform-specific, control-character, duplicate,
 and out-of-order paths are invalid. Arbitrary regular expressions are not part
 of the signed protocol because their semantics and resource costs would not be
 portable or deterministic.
+
+Allowed capture prefixes filter resulting changes; they may name individual
+files or overlap. They do not create directories or writable mounts. Explicit
+`factory.source_write_paths` is a separate runtime restriction. Factory Build
+admission for a node with a frozen capture directory scope requires every Job
+to retain both that exact capture filter and the same signed writable roots.
 
 After a successful runner and before workspace cleanup, the trusted Agent
 re-resolves the owned Git root and requires it to be the exact workspace. It
@@ -261,10 +275,11 @@ no workspace, perform no source checkout, spawn no process, and never fall back
 to Host execution.
 
 After admission, the Agent passes a provider-neutral Factory layout to the
-selected backend. Containerd binds only the three writable roots, binds the
-protected root read-only/no-exec, and applies the effective process count to
-the OCI cgroup. Microsandbox seals the `/workspace` parent, binds the three
-writable roots separately, partitions their growth quotas so their sum cannot
+selected backend. Containerd binds scratch/output writable and source according
+to its signed mode or explicit directory overlays, binds the protected root
+read-only/no-exec, and applies the effective process count to the OCI cgroup.
+Microsandbox seals the `/workspace` parent, projects the same source authority
+and writable roots separately, partitions their growth quotas so their sum cannot
 exceed the Job disk ceiling, binds protected inputs read-only/no-exec, applies
 `RLIMIT_NPROC`, and translates the exact restricted-host policy into its
 default-deny network policy. Both retain the existing CPU, memory, elapsed-time,

@@ -61,6 +61,8 @@ impl FlowBuildIntent {
       definition: definition.reference(),
       node: declared.key().clone(),
       tool: binding.tool.clone(),
+      result_tool: binding.result_tool.clone(),
+      capture_write_paths: binding.capture_write_paths.clone(),
       plugin: binding.plugin.clone(),
       model_or_tool: binding.model_or_tool.clone(),
       task_digest: binding.task_digest,

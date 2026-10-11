@@ -649,6 +649,14 @@ impl JobExecutor {
       }
       let data_dir = scratch.as_ref().unwrap_or(&workspace).join(".octacity");
       create_private_directory(&data_dir)?;
+      let source_writable_paths = match managed
+        .as_ref()
+        .and_then(|intent| intent.factory.as_ref())
+        .and_then(|factory| factory.source_write_paths.as_ref())
+      {
+        Some(paths) => prepare_source_write_paths(&workspace, paths)?,
+        None => Vec::new(),
+      };
       let identity = match spec.runtime.workload_identity_profile() {
         Some(profile) => Some(
           self
@@ -710,11 +718,13 @@ impl JobExecutor {
             Some(FactoryExecutionLayout {
               protected_inputs,
               source: workspace.clone(),
-              source_read_only: intent
-                .permissions
-                .mounts
-                .iter()
-                .any(|mount| mount.root == FACTORY_SOURCE_ROOT && mount.mode == FactoryMountModeV3::ReadOnly),
+              source_read_only: !source_writable_paths.is_empty()
+                || intent
+                  .permissions
+                  .mounts
+                  .iter()
+                  .any(|mount| mount.root == FACTORY_SOURCE_ROOT && mount.mode == FactoryMountModeV3::ReadOnly),
+              source_writable_paths,
               scratch: scratch.clone(),
               output: output.clone(),
               process_limit,
@@ -1202,3 +1212,44 @@ fn map_runner_error(error: RunnerSupervisionError) -> JobError {
 
 #[cfg(test)]
 mod tests;
+
+// Explicit signed directory roots narrow the runner's source projection before
+// execution. Missing directories are created by the trusted Agent; repository
+// symlinks/reparse points never become guest writable mount destinations.
+fn prepare_source_write_paths(source: &Path, prefixes: &[String]) -> Result<Vec<PathBuf>, JobError> {
+  prefixes
+    .iter()
+    .map(|prefix| {
+      let mut path = source.to_owned();
+      for component in Path::new(prefix).components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+          return Err(JobError::Invalid("invalid source write prefix".to_owned()));
+        }
+        path.push(component);
+        match fs::symlink_metadata(&path) {
+          Ok(metadata) if metadata.is_dir() && !metadata.file_type().is_symlink() =>
+          {
+            #[cfg(windows)]
+            if octacity_private_fs::is_reparse_point(&path)
+              .map_err(|source| filesystem("inspect source write path", &path, source))?
+            {
+              return Err(JobError::Invalid(
+                "source write prefix contains a reparse point".to_owned(),
+              ));
+            }
+          }
+          Ok(_) => {
+            return Err(JobError::Invalid(
+              "source write prefix must contain only directories".to_owned(),
+            ));
+          }
+          Err(error) if error.kind() == std::io::ErrorKind::NotFound => create_private_directory(&path)?,
+          Err(error) => {
+            return Err(filesystem("inspect source write path", &path, error));
+          }
+        }
+      }
+      Ok(path)
+    })
+    .collect()
+}

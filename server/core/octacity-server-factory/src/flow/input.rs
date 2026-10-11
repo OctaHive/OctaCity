@@ -113,6 +113,7 @@ impl FlowNodeInput {
   /// Callers provide the current authoritative source history; historical reads
   /// use the source attempts frozen in this input instead of later replacements.
   pub fn verify_preparation(&self, context: FlowInputPreparation<'_>) -> Result<(), FactoryError> {
+    self.verify_admission(context.admitted)?;
     let binding = context
       .admitted
       .closure()
@@ -319,6 +320,14 @@ impl FlowNodeInput {
     {
       return Err(invalid());
     }
+    if let Some(binding) = admitted
+      .closure()
+      .definition(self.definition)
+      .and_then(|definition| definition.node(&self.node))
+      .and_then(crate::FlowNodeDefinition::context_binding)
+    {
+      binding.verify(self)?;
+    }
     Ok(())
   }
   /// Restores bytes against the owner-retained digest and exact Work, admission and schema.
@@ -370,6 +379,7 @@ impl FlowNodeInput {
     if wire != serde_json::to_value(&input).map_err(|_| invalid())? || input.digest()? != expected_digest {
       return Err(invalid());
     }
+    input.verify_admission(admitted)?;
     Ok(input)
   }
   /// Returns the stable identity consumed by the persisted Node Attempt.

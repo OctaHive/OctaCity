@@ -280,3 +280,316 @@ fn publishing_another_gate_policy_cannot_change_the_pinned_small_work_decision()
   assert_ne!(original.definition.reference(), replacement.definition.reference());
   assert_eq!(frozen.select(&input).unwrap(), key("bypass"));
 }
+
+fn specification_feature_input() -> serde_json::Value {
+  serde_json::json!({
+    "allowed_paths":["openspec/changes", "openspec/specs"],
+    "artifacts":{"manifest":{"artifact_id":"manifest-42","content_digest":"c".repeat(64),"encoded_size":100},"bundle":{"artifact_id":"bundle-42","content_digest":"d".repeat(64),"encoded_size":100}}, "output_deadlines":{"capture":100,"handoff":100,"facts":100}, "work_id":"work-42", "original_base":"original", "work_kind":"feature_request", "expected_input":"a".repeat(64), "handoff_digest":"b".repeat(64),
+    "manifest":{"format_version":1,"base_revision":"research-candidate","candidate_revision":"spec-candidate","node_attempt_id":"attempt-42","capture_tool":{"identity":"capture","version":"v1","sha256":"c".repeat(64)},"changed_paths":[{"status":"A","path":"openspec/specs/api/spec.md","old_mode":"000000","new_mode":"100644"},{"status":"A","path":"openspec/changes/new-api/proposal.md","old_mode":"000000","new_mode":"100644"}],"bundle":{"name":"change-set.bundle","size_bytes":100,"sha256":"d".repeat(64)}},
+    "handoff":{"work_id":"work-42","original_base":"original","predecessor_revision":"research-candidate","candidate_revision":"spec-candidate","input_digest":"a".repeat(64),"work_kind":"feature_request","contract_path":"openspec/specs/api/spec.md","change_path":"openspec/changes/new-api/proposal.md","acceptance_criteria":["new API has documented behavior"],"regression_criteria":[]},
+    "facts":{"accepted":true,"contract_exists":true,"input_digest":"a".repeat(64),"handoff_digest":"b".repeat(64),"fresh_until":100}
+  })
+}
+
+#[test]
+fn configured_specification_authoring_requires_exact_capture_and_typed_handoff_before_review() {
+  let feature = specification_feature_input();
+  assert_eq!(select("specification_gate", feature.clone()), "review_pending");
+  for (pointer, value) in [
+    ("/handoff/work_id", serde_json::json!("other")),
+    ("/handoff/original_base", serde_json::json!("other")),
+    ("/handoff/predecessor_revision", serde_json::json!("other")),
+    ("/handoff/candidate_revision", serde_json::json!("other")),
+    ("/handoff/input_digest", serde_json::json!("e".repeat(64))),
+    ("/facts/handoff_digest", serde_json::json!("e".repeat(64))),
+    ("/facts/accepted", serde_json::json!(false)),
+    ("/facts/fresh_until", serde_json::json!(20)),
+    ("/facts/fresh_until", serde_json::json!(30)),
+    ("/output_deadlines/capture", serde_json::json!(30)),
+    ("/output_deadlines/handoff", serde_json::json!(20)),
+    ("/output_deadlines/facts", serde_json::json!(30)),
+    ("/manifest/changed_paths/0/path", serde_json::json!("src/lib.rs")),
+    ("/manifest/changed_paths/1/status", serde_json::json!("M")),
+  ] {
+    let mut invalid = feature.clone();
+    *invalid.pointer_mut(pointer).unwrap() = value;
+    assert_eq!(select("specification_gate", invalid), "invalid", "{pointer}");
+  }
+  let mut defect = feature.clone();
+  defect["work_kind"] = serde_json::json!("defect");
+  defect["handoff"]["work_kind"] = serde_json::json!("defect");
+  defect["handoff"]["regression_criteria"] = serde_json::json!(["prior behavior reproduces the bug"]);
+  defect["manifest"]["changed_paths"][0]["status"] = serde_json::json!("M");
+  assert_eq!(select("specification_gate", defect.clone()), "review_pending");
+  defect["handoff"]["regression_criteria"] = serde_json::json!([]);
+  assert_eq!(select("specification_gate", defect), "invalid");
+  let definition = published().definition;
+  assert_eq!(
+    definition.node(&key("specification_author")).unwrap().kind(),
+    FlowNodeKind::Reasoning
+  );
+  assert_eq!(
+    serde_json::to_value(definition.node(&key("specification_author")).unwrap().build().unwrap()).unwrap()["capture_write_paths"],
+    serde_json::json!(["openspec/changes", "openspec/specs"])
+  );
+  assert!(
+    definition
+      .node(&key("specification_gate"))
+      .unwrap()
+      .accepted_work_outcomes()
+      .is_empty()
+  );
+  assert_eq!(
+    definition
+      .transitions()
+      .iter()
+      .find(|edge| edge.predecessor() == &key("requirements_needed") && edge.outcome() == &key("specification"))
+      .unwrap()
+      .target(),
+    &FlowTransitionTarget::Node(key("specification_author"))
+  );
+}
+
+#[test]
+fn changing_one_published_scope_updates_author_input_and_capture_gate() {
+  let work = work();
+  let mut configured = template();
+  let roots = vec![
+    FactoryRepositoryPath::new("contracts").unwrap(),
+    FactoryRepositoryPath::new("plans/changes").unwrap(),
+  ];
+  configured
+    .nodes
+    .iter_mut()
+    .find(|node| node.key == key("specification_author"))
+    .unwrap()
+    .capture_write_paths = Some(roots);
+  // This configured author accepts incoming data instead of a previous node.
+  let mut author_only = configured.clone();
+  author_only.nodes.retain(|node| node.key == key("specification_author"));
+  author_only.entry = key("specification_author");
+  author_only.input_schema = key("spec_author_input");
+  author_only.transitions = vec![FlowTransition::new(
+    key("specification_author"),
+    key("observed"),
+    FlowTransitionTarget::Terminal(key("done")),
+  )];
+  author_only.terminals = BTreeMap::from([(key("done"), key("spec_manifest"))]);
+  let choice = &author_only.schemas[&key("spec_author_input")];
+  let incoming_schema =
+    FlowDataSchema::new(choice.identity.clone(), choice.version.clone(), choice.shape.clone()).unwrap();
+  let mut binding_wire = serde_json::to_value(&author_only.nodes[0].input_binding).unwrap();
+  binding_wire["sources"]["previous"] =
+    serde_json::json!({"source":"incoming","schema":incoming_schema.reference(),"path":"/accepted_input"});
+  author_only.nodes[0].input_binding = serde_json::from_value(binding_wire).unwrap();
+  let published = author_only
+    .instantiate(
+      FlowDefinitionId::generate(),
+      FlowDefinitionVersion::INITIAL,
+      &BTreeMap::from([(key("specification_author"), binding(work.subject().project_id()))]),
+    )
+    .unwrap();
+  let definition = &published.definition;
+  let flow = FlowRun::root(
+    &FactoryRun::admitted(FactoryRunId::generate(), &work),
+    definition.reference(),
+  )
+  .unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition.clone()]).unwrap(),
+    FlowAdmissionLimits::product_defaults(4, definition.execution().budget(), FactoryPermissionSet::deny_all())
+      .unwrap(),
+    flow,
+    cycle,
+    FactoryWipLimits::new(8, 16).unwrap(),
+  )
+  .unwrap()
+  .with_data_schemas(published.schemas.clone())
+  .unwrap();
+  let incoming = FlowIncomingData::new(&work, &admitted, FlowPayload::new(&incoming_schema,
+    serde_json::json!({"work_id":work.id(),"original_base":work.subject().base_revision(),"allowed_paths":["src"],"accepted_input":{"work_kind":"feature_request","size":"medium","risk":"low","admission_risk":"low","recommended_route":"development","research_required":false,"research_accepted":false,"component":"api","severity":"low","dependencies":[]}})).unwrap()).unwrap();
+  let schema = published
+    .schemas
+    .iter()
+    .find(|schema| Some(schema.reference()) == definition.nodes()[0].input_schema())
+    .unwrap();
+  let input = FlowNodeInput::prepare(FlowInputPreparation {
+    work: &work,
+    admitted: &admitted,
+    flow: admitted.root_run(),
+    cycle: admitted.initial_cycle(),
+    node: key("specification_author"),
+    schema,
+    history: FlowRuntimeHistory {
+      flow_runs: std::slice::from_ref(admitted.root_run()),
+      cycles: std::slice::from_ref(admitted.initial_cycle()),
+      attempts: &[],
+      completions: &[],
+      stops: &[],
+    },
+    records: &[],
+    inputs: &[],
+    incoming: Some(&incoming),
+  })
+  .unwrap();
+  assert_eq!(
+    input.payload().value()["allowed_paths"],
+    serde_json::json!(["contracts", "plans/changes"])
+  );
+  let choice = &configured.schemas[&key("spec_gate_input")];
+  let schema = FlowDataSchema::new(choice.identity.clone(), choice.version.clone(), choice.shape.clone()).unwrap();
+  let gate = configured
+    .nodes
+    .iter()
+    .find(|node| node.key == key("specification_gate"))
+    .unwrap()
+    .gate
+    .as_ref()
+    .unwrap();
+  let mut feature = specification_feature_input();
+  feature["allowed_paths"] = input.payload().value()["allowed_paths"].clone();
+  for (index, path) in [(0, "contracts/api/spec.md"), (1, "plans/changes/new-api/proposal.md")] {
+    feature["manifest"]["changed_paths"][index]["path"] = serde_json::json!(path);
+  }
+  feature["handoff"]["contract_path"] = serde_json::json!("contracts/api/spec.md");
+  feature["handoff"]["change_path"] = serde_json::json!("plans/changes/new-api/proposal.md");
+  let at = octacity_server_domain::Timestamp::from_unix_millis(30).unwrap();
+  assert_eq!(
+    gate
+      .select_at(&FlowPayload::new(&schema, feature.clone()).unwrap(), at)
+      .unwrap(),
+    key("review_pending")
+  );
+  feature["manifest"]["changed_paths"][0]["path"] = serde_json::json!("openspec/specs/api/spec.md");
+  feature["handoff"]["contract_path"] = serde_json::json!("openspec/specs/api/spec.md");
+  assert_eq!(
+    gate
+      .select_at(&FlowPayload::new(&schema, feature).unwrap(), at)
+      .unwrap(),
+    key("invalid")
+  );
+}
+
+#[test]
+fn configured_specification_review_checks_quality_and_exact_candidate_without_granting_readiness() {
+  let input = serde_json::json!({
+    "request":{"work_id":"work-42","original_base":"original","candidate_revision":"spec-candidate","manifest_digest":"a".repeat(64),"bundle_digest":"b".repeat(64)},
+    "expected_input":"c".repeat(64),"review_digest":"d".repeat(64),"output_deadlines":{"review":100,"facts":100},
+    "review":{"work_id":"work-42","original_base":"original","candidate_revision":"spec-candidate","manifest_digest":"a".repeat(64),"bundle_digest":"b".repeat(64),"input_digest":"c".repeat(64),
+      "quality":{"complete":"satisfied","consistent":"satisfied","feasible":"satisfied","testable":"satisfied","in_scope":"satisfied"},"findings":[]},
+    "facts":{"accepted":true,"input_digest":"c".repeat(64),"report_digest":"d".repeat(64),"fresh_until":100}
+  });
+  assert_eq!(
+    select("specification_review_gate", input.clone()),
+    "publication_pending"
+  );
+  for (pointer, value, outcome) in [
+    ("/review/candidate_revision", serde_json::json!("other"), "invalid"),
+    ("/review/manifest_digest", serde_json::json!("e".repeat(64)), "invalid"),
+    ("/review/bundle_digest", serde_json::json!("e".repeat(64)), "invalid"),
+    ("/review/work_id", serde_json::json!("other"), "invalid"),
+    ("/review/original_base", serde_json::json!("other"), "invalid"),
+    ("/review/input_digest", serde_json::json!("e".repeat(64)), "invalid"),
+    ("/facts/accepted", serde_json::json!(false), "invalid"),
+    ("/facts/report_digest", serde_json::json!("e".repeat(64)), "invalid"),
+    ("/facts/input_digest", serde_json::json!("e".repeat(64)), "invalid"),
+    ("/facts/fresh_until", serde_json::json!(30), "invalid"),
+    ("/output_deadlines/review", serde_json::json!(20), "invalid"),
+    ("/output_deadlines/facts", serde_json::json!(30), "invalid"),
+    (
+      "/review/quality/consistent",
+      serde_json::json!("violated"),
+      "changes_required",
+    ),
+    (
+      "/review/quality/testable",
+      serde_json::json!("indeterminate"),
+      "needs_human_input",
+    ),
+  ] {
+    let mut changed = input.clone();
+    *changed.pointer_mut(pointer).unwrap() = value;
+    assert_eq!(select("specification_review_gate", changed), outcome, "{pointer}");
+  }
+  let published = published();
+  let definition = &published.definition;
+  let reviewer = definition.node(&key("specification_review")).unwrap();
+  assert_eq!(reviewer.kind(), FlowNodeKind::Reasoning);
+  assert!(reviewer.context_binding().is_some());
+  assert!(
+    definition
+      .node(&key("specification_review_gate"))
+      .unwrap()
+      .accepted_work_outcomes()
+      .is_empty()
+  );
+  assert_eq!(
+    definition
+      .transitions()
+      .iter()
+      .find(|edge| edge.predecessor() == &key("specification_gate") && edge.outcome() == &key("review_pending"))
+      .unwrap()
+      .target(),
+    &FlowTransitionTarget::Node(key("specification_review"))
+  );
+  let schema = published
+    .schemas
+    .iter()
+    .find(|s| Some(s.reference()) == reviewer.input_schema())
+    .unwrap();
+  assert!(FlowPayload::new(schema, serde_json::json!({"prose":"ready for implementation"})).is_err());
+}
+
+#[test]
+fn a_configured_human_gate_can_follow_specification_review_without_engine_changes() {
+  let mut wire = serde_json::to_value(template()).unwrap();
+  let gate = wire["nodes"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|n| n["key"] == "specification_review_gate")
+    .unwrap()
+    .clone();
+  wire["nodes"].as_array_mut().unwrap().push(serde_json::json!({
+    "key":"contract_owner_confirmation","kind":"human_gate","input_schema":"spec_review",
+    "outcomes":[{"key":"confirmed","kind":"success","schema":"spec_review"},{"key":"declined","kind":"failure","schema":"spec_review"}],
+    "budget":gate["budget"],"required":true,
+    "input_binding":{"sources":{"review":{"source":"predecessor","view":"payload","path":""}},"mapping":{"value":{"mapping":"pointer","path":"/review"}}}
+  }));
+  let transitions = wire["transitions"].as_array_mut().unwrap();
+  let edge = transitions
+    .iter_mut()
+    .find(|edge| edge["predecessor"] == "specification_review_gate" && edge["outcome"] == "publication_pending")
+    .unwrap();
+  edge["target"] = serde_json::json!({"kind":"node","key":"contract_owner_confirmation"});
+  for (outcome, target) in [
+    ("confirmed", "specification_reviewed"),
+    ("declined", "specification_review_declined"),
+  ] {
+    transitions.push(serde_json::json!({"predecessor":"contract_owner_confirmation","outcome":outcome,"target":{"kind":"terminal","key":target},"max_repeats":0,"exhausted_terminal":null}));
+  }
+  wire["terminals"]["specification_review_declined"] = serde_json::json!("spec_review");
+  let template: FlowDefinitionTemplate = serde_json::from_value(wire).unwrap();
+  let project = octacity_server_domain::ProjectId::generate();
+  let profiles = template
+    .nodes
+    .iter()
+    .filter_map(|node| node.build_profile.as_ref())
+    .map(|name| (name.clone(), binding(project)))
+    .collect();
+  let published = template
+    .instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
+    .unwrap();
+  let confirmation = published.definition.node(&key("contract_owner_confirmation")).unwrap();
+  assert_eq!(confirmation.kind(), FlowNodeKind::HumanGate);
+  assert!(confirmation.accepted_work_outcomes().is_empty());
+  assert!(
+    published
+      .definition
+      .node(&key("specification_review_gate"))
+      .unwrap()
+      .accepted_work_outcomes()
+      .is_empty()
+  );
+}
