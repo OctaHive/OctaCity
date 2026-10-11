@@ -46,6 +46,9 @@ pub struct FactoryNodeBuildCausality {
   /// Exact public deliverable requirements frozen for task compilation.
   /// Contains acceptance and scope, never private test content or Artifact grants.
   pub deliverable_contract: Option<octacity_server_factory::CandidateDeliverableContract>,
+  /// Common immutable verification plan and exact per-check target/input identity.
+  /// Absent for ordinary nodes that select no verification contract.
+  pub verification_check: Option<octacity_server_factory::VerificationCheckInput>,
   /// Exact typed task input schema.
   pub input_schema: octacity_server_factory::ImmutableReference,
   /// Complete frozen task document, bounded by its schema before dispatch.

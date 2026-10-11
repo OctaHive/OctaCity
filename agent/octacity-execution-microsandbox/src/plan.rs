@@ -180,7 +180,16 @@ impl SandboxPlan {
     .to_owned();
     let guest_workspace = request.factory.as_ref().map_or_else(
       || guest_path(&guest_job_root, &job_root, &workspace),
-      |_| Ok(FACTORY_SOURCE_ROOT.to_owned()),
+      |factory| {
+        Ok(
+          if factory.source_visible {
+            FACTORY_SOURCE_ROOT
+          } else {
+            FACTORY_SCRATCH_ROOT
+          }
+          .to_owned(),
+        )
+      },
     )?;
     let private_files = request
       .workload_identity
@@ -208,7 +217,7 @@ impl SandboxPlan {
     let read_only_mounts = request
       .factory
       .as_ref()
-      .filter(|factory| factory.source_read_only)
+      .filter(|factory| factory.source_visible && factory.source_read_only)
       .map(|factory| SandboxReadOnlyMount {
         host: factory.source.clone(),
         guest: FACTORY_SOURCE_ROOT.to_owned(),
@@ -221,7 +230,7 @@ impl SandboxPlan {
           (FACTORY_SCRATCH_ROOT.to_owned(), factory.scratch.clone()),
           (FACTORY_OUTPUT_ROOT.to_owned(), factory.output.clone()),
         ];
-        if !factory.source_read_only {
+        if factory.source_visible && !factory.source_read_only {
           roots.insert(0, (FACTORY_SOURCE_ROOT.to_owned(), factory.source.clone()));
         }
         for path in &factory.source_writable_paths {

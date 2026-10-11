@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "path": "/contract",
+      "status": 200,
+      "contains": [
+        "Save"
+      ]
+    },
+    {
+      "path": "/",
+      "status": 200
+    }
+  ]
+}

@@ -82,6 +82,11 @@ mod candidate_deliverable_tests;
 #[cfg(test)]
 mod protected_test_tests;
 mod review_plan;
+mod verification_plan;
+pub use verification_plan::{
+  VerificationCheck, VerificationCheckInput, VerificationMeasurement, VerificationObservation, VerificationPlan,
+  VerificationPolicy, VerificationSourceVisibility, VerificationTarget,
+};
 #[cfg(test)]
 mod review_plan_tests;
 mod subject;
@@ -89,6 +94,8 @@ mod task_contract;
 #[cfg(test)]
 mod task_contract_tests;
 mod value;
+#[cfg(test)]
+mod verification_plan_tests;
 
 pub use assessment::{
   Assessment, AssessmentEvidenceReference, AssessmentFinding, AssessmentFindingKind, AssessmentInput,

@@ -1,0 +1,164 @@
+{
+  "schemas": {
+    "immutable_reference": {
+      "identity": "verification.immutable-reference",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "identity": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "version": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    },
+    "verification_target": {
+      "identity": "verification.target",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "subject": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "candidate_subject"
+            }
+          },
+          "environment": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "immutable_reference"
+            }
+          },
+          "public_contract": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "endpoint": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          }
+        }
+      }
+    },
+    "verification_input": {
+      "identity": "verification.input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "target": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "verification_target"
+            }
+          }
+        }
+      }
+    },
+    "verification_observation": {
+      "identity": "verification.observation",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "plan_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          },
+          "check": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "outcome": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "passed",
+                "failed",
+                "indeterminate"
+              ]
+            }
+          },
+          "measurements": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 128,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "name": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  },
+                  "value": {
+                    "required": true,
+                    "value": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9223372036854775807
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 64,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

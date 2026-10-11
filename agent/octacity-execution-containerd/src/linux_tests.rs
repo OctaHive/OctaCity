@@ -352,6 +352,7 @@ fn projects_the_factory_layout_without_a_writable_parent_mount() {
     factory: Some(FactoryExecutionLayout {
       protected_inputs: protected.clone(),
       source: source.clone(),
+      source_visible: true,
       source_read_only: false,
       source_writable_paths: Vec::new(),
       scratch: scratch.clone(),

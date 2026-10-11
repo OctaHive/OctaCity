@@ -12,6 +12,102 @@ fn time(value: i64) -> octacity_server_domain::Timestamp {
 }
 
 #[test]
+fn ordinary_verification_build_receives_the_exact_admitted_plan_without_implementation_context() {
+  crate::factory_admission_tests::run_ready(async {
+    for kind in [FlowNodeKind::BuildCommand, FlowNodeKind::Reasoning] {
+      let (work, admitted, schema, input, node) = verification_execution_fixture(kind);
+      let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+      let builds = Arc::new(Builds::new());
+      FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)))
+        .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+        .await
+        .unwrap();
+      let requests = builds.requests.lock().unwrap();
+      let received = requests[0]
+        .causality
+        .verification_check
+        .as_ref()
+        .expect("verification plan must reach trusted task compilation");
+      assert_eq!(Some(received), intent.verification_check());
+      assert_eq!(received.target().public_contract, work.artifacts().acceptance().clone());
+      assert_eq!(requests[0].causality.context.entries().len(), 1);
+      assert!(requests[0].effective_permissions.mounts().next().is_none());
+      assert!(requests[0].effective_permissions.secret_profiles().next().is_none());
+    }
+  });
+}
+
+#[test]
+fn verification_endpoint_uses_the_existing_canonical_ipv6_host_grant() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) =
+      verification_execution_fixture_with_endpoint_host(FlowNodeKind::BuildCommand, "http://[::1]", "::1");
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+    let builds = Arc::new(Builds::new());
+    let _ = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)))
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await;
+    assert_eq!(
+      builds.requests.lock().unwrap().len(),
+      1,
+      "URL brackets must not discard a declared canonical IP grant"
+    );
+  });
+}
+
+#[test]
+fn verification_dispatch_rejects_endpoint_substitution_and_embedded_credentials() {
+  crate::factory_admission_tests::run_ready(async {
+    for endpoint in [
+      "https://other.example.test",
+      "https://user:secret@stage.example.test",
+      "ftp://stage.example.test",
+      "https://stage.example.test/#fragment",
+    ] {
+      let (_, admitted, schema, input, node) =
+        verification_execution_fixture_with_endpoint(FlowNodeKind::BuildCommand, endpoint);
+      let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+      let builds = Arc::new(Builds::new());
+      let _ = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)))
+        .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+        .await;
+      assert!(
+        builds.requests.lock().unwrap().is_empty(),
+        "an invalid endpoint must never reach ordinary Build dispatch"
+      );
+    }
+  });
+}
+
+#[test]
+fn black_box_build_rejects_source_and_other_undeclared_mounts_before_dispatch() {
+  crate::factory_admission_tests::run_ready(async {
+    for root in ["/workspace/source", "/workspace", "/secrets", "/octacity/protected"] {
+      let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+        mounts: vec![MountPermission::new(
+          FactoryPath::new(root).unwrap(),
+          MountMode::ReadWrite,
+        )],
+        ..Default::default()
+      })
+      .unwrap();
+      let (_, admitted, schema, input, node) =
+        verification_execution_fixture_with_permissions(FlowNodeKind::BuildCommand, permissions);
+      let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+      let builds = Arc::new(Builds::new());
+      assert!(
+        FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)))
+          .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+          .await
+          .is_err(),
+        "black-box dispatch must reject {root}"
+      );
+      assert!(builds.requests.lock().unwrap().is_empty());
+    }
+  });
+}
+
+#[test]
 fn dispatch_retains_the_current_observer_claim_separately_from_the_frozen_intent() {
   crate::factory_admission_tests::run_ready(async {
     let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);

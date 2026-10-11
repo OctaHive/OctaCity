@@ -1,0 +1,67 @@
+{
+  "nodes": [
+    {
+      "key": "independent_assessment",
+      "kind": "reasoning",
+      "input_schema": "verification_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "verification_observation"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "incoming": {
+            "source": "caller_input",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/incoming"
+          }
+        }
+      },
+      "context_binding": {
+        "candidate_revision": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/target/subject/candidate_revision"
+          }
+        },
+        "entries": {
+          "public-contract": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/target/public_contract"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "independent_assessment"
+    }
+  ]
+}

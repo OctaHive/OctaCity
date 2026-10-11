@@ -1,0 +1,259 @@
+{
+  "transitions": [
+    {
+      "predecessor": "contract_sequence",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "contract_sequence.gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "contract_sequence.gate",
+      "outcome": "passed",
+      "target": {
+        "kind": "node",
+        "key": "latency_budget"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "contract_sequence.gate",
+      "outcome": "failed",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "contract_sequence.gate",
+      "outcome": "pending",
+      "target": {
+        "kind": "terminal",
+        "key": "incomplete"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "latency_budget",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "latency_budget.gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "latency_budget.gate",
+      "outcome": "passed",
+      "target": {
+        "kind": "node",
+        "key": "public_interface"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "latency_budget.gate",
+      "outcome": "failed",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "latency_budget.gate",
+      "outcome": "pending",
+      "target": {
+        "kind": "terminal",
+        "key": "incomplete"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "public_interface",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "public_interface.gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "public_interface.gate",
+      "outcome": "passed",
+      "target": {
+        "kind": "node",
+        "key": "access_boundary"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "public_interface.gate",
+      "outcome": "failed",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "public_interface.gate",
+      "outcome": "pending",
+      "target": {
+        "kind": "terminal",
+        "key": "incomplete"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "access_boundary",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "access_boundary.gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "access_boundary.gate",
+      "outcome": "passed",
+      "target": {
+        "kind": "node",
+        "key": "staged_contract"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "access_boundary.gate",
+      "outcome": "failed",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "access_boundary.gate",
+      "outcome": "pending",
+      "target": {
+        "kind": "terminal",
+        "key": "incomplete"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "staged_contract",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "staged_contract.gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "staged_contract.gate",
+      "outcome": "passed",
+      "target": {
+        "kind": "node",
+        "key": "deployment_observation"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "staged_contract.gate",
+      "outcome": "failed",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "staged_contract.gate",
+      "outcome": "pending",
+      "target": {
+        "kind": "terminal",
+        "key": "incomplete"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "deployment_observation",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "deployment_observation.gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "deployment_observation.gate",
+      "outcome": "passed",
+      "target": {
+        "kind": "node",
+        "key": "independent_assessment"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "deployment_observation.gate",
+      "outcome": "failed",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "deployment_observation.gate",
+      "outcome": "pending",
+      "target": {
+        "kind": "terminal",
+        "key": "incomplete"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "independent_assessment",
+      "outcome": "observed",
+      "target": {
+        "kind": "terminal",
+        "key": "observed"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ],
+  "terminals": {
+    "observed": "verification_observation",
+    "rejected": "verification_observation",
+    "incomplete": "verification_observation"
+  }
+}

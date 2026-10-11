@@ -718,12 +718,17 @@ impl JobExecutor {
             Some(FactoryExecutionLayout {
               protected_inputs,
               source: workspace.clone(),
+              source_visible: intent
+                .permissions
+                .mounts
+                .iter()
+                .any(|mount| mount.root == FACTORY_SOURCE_ROOT),
               source_read_only: !source_writable_paths.is_empty()
-                || intent
+                || !intent
                   .permissions
                   .mounts
                   .iter()
-                  .any(|mount| mount.root == FACTORY_SOURCE_ROOT && mount.mode == FactoryMountModeV3::ReadOnly),
+                  .any(|mount| mount.root == FACTORY_SOURCE_ROOT && mount.mode == FactoryMountModeV3::ReadWrite),
               source_writable_paths,
               scratch: scratch.clone(),
               output: output.clone(),

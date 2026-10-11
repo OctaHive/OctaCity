@@ -80,6 +80,10 @@ operations and runs it through the same owner in memory and PostgreSQL.
 Permissions in the supplied example default to deny-all: publication must
 select qualified profile and authority choices for real execution.
 
+`verification-flow.json` supplies an independently editable nested verification
+flow. Its [installation and evidence contract](verification-flow/README.md)
+describes source visibility, deployed targets, ordinary Build profiles and quorum.
+
 `requirements_needed.accepted_work_outcomes` marks the configured bypass result
 as an accepting gate. Accepted Work freezes the original Work and complete
 accepted ancestry. The configured bypass still enters every declared downstream

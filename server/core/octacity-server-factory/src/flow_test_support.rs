@@ -2,12 +2,19 @@ use super::factory::*;
 
 #[allow(dead_code)] // Shared core/application contracts load the supplied editable example.
 pub(crate) fn supplied_base_flow_template() -> FlowDefinitionTemplate {
+  supplied_flow_template("base-flow.json")
+}
+#[allow(dead_code)] // Common contracts also exercise the standalone nested verification example.
+pub(crate) fn supplied_verification_flow_template() -> FlowDefinitionTemplate {
+  supplied_flow_template("verification-flow.json")
+}
+fn supplied_flow_template(name: &str) -> FlowDefinitionTemplate {
   let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
     .ancestors()
     .find(|path| path.join("config/factory/flows").is_dir())
     .unwrap()
     .join("config/factory/flows");
-  let manifest = std::fs::read(root.join("base-flow.json")).unwrap();
+  let manifest = std::fs::read(root.join(name)).unwrap();
   FlowDefinitionTemplate::from_manifest(&manifest, |path| {
     std::fs::read(root.join(path.as_str())).map_err(|_| FactoryError::InvalidConfiguration {
       field: "supplied configuration part",
@@ -81,6 +88,159 @@ pub(crate) fn execution_fixture(
   kind: FlowNodeKind,
 ) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
   execution_fixture_with_evidence(kind, vec![])
+}
+
+#[allow(dead_code)] // Shared command/reasoning contracts opt into independent verification.
+pub(crate) fn verification_execution_fixture(
+  kind: FlowNodeKind,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  verification_execution_fixture_with_permissions(kind, FactoryPermissionSet::deny_all())
+}
+#[allow(dead_code)] // Verification isolation tests vary the admitted mount authority.
+pub(crate) fn verification_execution_fixture_with_permissions(
+  kind: FlowNodeKind,
+  permissions: FactoryPermissionSet,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  verification_execution_fixture_with_schema(kind, permissions, None)
+}
+#[allow(dead_code)] // Typed verification reports select their own closed output schema.
+pub(crate) fn verification_execution_fixture_with_schema(
+  kind: FlowNodeKind,
+  permissions: FactoryPermissionSet,
+  output_schema: Option<FlowDataSchema>,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  verification_fixture(kind, permissions, output_schema, None)
+}
+#[allow(dead_code)] // Endpoint authority contracts intentionally vary selected URLs.
+pub(crate) fn verification_execution_fixture_with_endpoint(
+  kind: FlowNodeKind,
+  endpoint: &str,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  verification_fixture(
+    kind,
+    FactoryPermissionSet::deny_all(),
+    None,
+    Some((endpoint, "stage.example.test")),
+  )
+}
+#[allow(dead_code)] // Endpoint normalization tests use existing canonical IP grants.
+pub(crate) fn verification_execution_fixture_with_endpoint_host(
+  kind: FlowNodeKind,
+  endpoint: &str,
+  host: &str,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  verification_fixture(kind, FactoryPermissionSet::deny_all(), None, Some((endpoint, host)))
+}
+fn verification_fixture(
+  kind: FlowNodeKind,
+  permissions: FactoryPermissionSet,
+  output_schema: Option<FlowDataSchema>,
+  endpoint: Option<(&str, &str)>,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  let work = work();
+  let selection = binding(work.subject().project_id());
+  let (work, prior, schema, previous_input, previous) =
+    execution_fixture_with_permissions(kind, work, selection, output_schema, permissions);
+  let original = prior.closure().definition(prior.closure().root()).unwrap();
+  let mut execution = serde_json::to_value(original.execution()).unwrap();
+  execution["verification"] = serde_json::json!({
+    "data_handling": reference("internal-only"), "required_quorum":1,
+    "checks":{"accessibility_audit":{
+      "class":"custom-contract", "source_visibility":"black_box", "endpoints":[],
+      "secret_profiles":[], "identity_profiles":[], "required":true,
+      "target":{"value":{"mapping":"object","fields":{
+        "environment":{"mapping":"constant","value":reference("stage-v1")},
+        "public_contract":{"mapping":"pointer","path":"/context/entries/0/source/value"},
+        "subject":{"mapping":"pointer","path":"/context/subject/value"}
+      }}}
+    }}
+  });
+  if let Some((endpoint, host)) = endpoint {
+    let check = &mut execution["verification"]["checks"]["accessibility_audit"];
+    check["endpoints"] = serde_json::json!([host]);
+    check["target"]["value"]["fields"]["endpoint"] = serde_json::json!({"mapping":"constant","value":endpoint});
+  }
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: original.reference().id(),
+    version: original.reference().version(),
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes: original.nodes().to_vec(),
+    transitions: original.transitions().to_vec(),
+    terminals: original.terminals().to_vec(),
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: serde_json::from_value(execution).unwrap(),
+  })
+  .unwrap();
+  let run = FactoryRun::admitted(prior.root_run().factory_run_id(), &work);
+  let flow = FlowRun::root(&run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    prior.limits().clone(),
+    flow,
+    cycle,
+    prior.wip_limits(),
+  )
+  .unwrap()
+  .with_data_schemas(prior.data_schemas().to_vec())
+  .unwrap();
+  let subject = FactoryTaskSubject::Candidate(CandidateSubject::new(
+    work.subject().clone(),
+    octacity_server_domain::ImmutableRevision::new("candidate").unwrap(),
+    FactoryDigest::from_bytes([95; 32]),
+  ));
+  let contract = work.artifacts().acceptance().clone();
+  let entry = ContextManifestEntry::new(
+    ContextSourceKind::Task,
+    key("public-contract"),
+    subject.clone(),
+    FactoryContextReference::Artifact(contract.clone()),
+    contract.content_digest(),
+    contract.encoded_size(),
+    FactorySafeText::new("Explicit deployed contract").unwrap(),
+    FactoryDigest::from_bytes([9; 32]),
+  )
+  .unwrap();
+  let context = ContextManifest::new(
+    ContextManifestId::generate(),
+    subject,
+    FactoryDigest::from_bytes([9; 32]),
+    vec![entry],
+  )
+  .unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    original.entry().clone(),
+    previous_input.payload().clone(),
+  )
+  .unwrap()
+  .with_context(context, vec![])
+  .unwrap();
+  let definition = admitted.closure().definition(input.definition()).unwrap();
+  let attempt = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    definition,
+    NodeAttemptInput {
+      id: NodeAttemptId::generate(),
+      node_key: input.node().clone(),
+      node_kind: kind,
+      number: NodeAttemptNumber::INITIAL,
+      input_digest: input.digest().unwrap(),
+      budget: previous.budget(),
+      started_at: previous.started_at(),
+      deadline: previous.deadline(),
+      execution: previous.execution().clone(),
+      ownership: FactoryClaimOwnership::new(previous.owner().clone(), previous.claim()),
+    },
+  )
+  .unwrap();
+  (work, admitted, schema, input, attempt)
 }
 pub(crate) fn execution_fixture_with_evidence(
   kind: FlowNodeKind,

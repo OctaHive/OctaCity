@@ -12,7 +12,11 @@ pub(super) const LINUX_UTS_HOSTNAME_MAX_BYTES: usize = 64;
 pub(super) fn guest_paths(runner: &RunnerProgram, request: &StartExecution) -> Result<ExecutionPaths, ExecutionError> {
   let (workspace, data_dir) = match &request.factory {
     Some(factory) => (
-      PathBuf::from(FACTORY_SOURCE_ROOT),
+      PathBuf::from(if factory.source_visible {
+        FACTORY_SOURCE_ROOT
+      } else {
+        FACTORY_SCRATCH_ROOT
+      }),
       map_path(&factory.scratch, &request.data_dir, Path::new(FACTORY_SCRATCH_ROOT))?,
     ),
     None => (
@@ -161,6 +165,9 @@ pub(super) fn oci_spec(
       (FACTORY_OUTPUT_ROOT, &factory.output, false),
       (FACTORY_PROTECTED_INPUT_ROOT, &factory.protected_inputs, true),
     ] {
+      if destination == FACTORY_SOURCE_ROOT && !factory.source_visible {
+        continue;
+      }
       let mut options = vec!["rbind", "rw", "nosuid", "nodev"];
       if readonly {
         options[1] = "ro";

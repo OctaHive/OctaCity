@@ -487,19 +487,8 @@ impl EvidenceManifest {
 
   /// Binds all exact immutable auxiliary inputs used by deterministic execution.
   /// This is independent of Flow node names and supports any installed validator.
-  pub fn with_inputs(mut self, mut inputs: Vec<FactoryArtifactReference>) -> Result<Self, FactoryError> {
-    inputs.sort_by_key(FactoryArtifactReference::artifact_id);
-    if inputs.is_empty()
-      || inputs.len() > crate::MAX_CONTEXT_MANIFEST_ENTRIES
-      || inputs
-        .windows(2)
-        .any(|pair| pair[0].artifact_id() == pair[1].artifact_id())
-    {
-      return Err(FactoryError::InvalidReference {
-        relationship: "evidence inputs",
-      });
-    }
-    self.inputs = inputs;
+  pub fn with_inputs(mut self, inputs: Vec<FactoryArtifactReference>) -> Result<Self, FactoryError> {
+    self.inputs = canonical_evidence_inputs(inputs)?;
     Ok(self)
   }
 
@@ -593,4 +582,22 @@ fn validate_count<T>(
     return Err(FactoryError::CollectionLimitExceeded { collection });
   }
   Ok(())
+}
+
+// One invariant for both selected verification inputs and retained Evidence Manifests.
+pub(crate) fn canonical_evidence_inputs(
+  mut inputs: Vec<FactoryArtifactReference>,
+) -> Result<Vec<FactoryArtifactReference>, FactoryError> {
+  inputs.sort_by_key(FactoryArtifactReference::artifact_id);
+  if inputs.is_empty()
+    || inputs.len() > crate::MAX_CONTEXT_MANIFEST_ENTRIES
+    || inputs
+      .windows(2)
+      .any(|pair| pair[0].artifact_id() == pair[1].artifact_id())
+  {
+    return Err(FactoryError::InvalidReference {
+      relationship: "evidence inputs",
+    });
+  }
+  Ok(inputs)
 }

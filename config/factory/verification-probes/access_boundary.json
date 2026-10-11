@@ -1,0 +1,15 @@
+{
+  "steps": [
+    {
+      "path": "/",
+      "status": 200,
+      "headers": {
+        "X-Content-Type-Options": "nosniff"
+      }
+    },
+    {
+      "path": "/private",
+      "status": 403
+    }
+  ]
+}

@@ -63,6 +63,12 @@ mod factory_decision_signal;
 mod factory_decision_signal_tests;
 mod factory_evaluation;
 mod factory_evidence;
+mod factory_verification;
+#[cfg(test)]
+mod factory_verification_tests;
+pub use factory_verification::{
+  VerifiedFactoryVerificationCheck, evaluate_factory_verification, verify_factory_verification_check,
+};
 mod factory_flow_action;
 pub use factory_candidate_publication::{
   FactoryCandidatePublication, FactoryCandidatePublicationAction, FactoryCandidatePublicationRequest,

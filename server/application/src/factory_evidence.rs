@@ -230,12 +230,24 @@ mod tests {
   use std::sync::Arc;
 
   struct Fixture {
+    intent: FlowBuildIntent,
     change_set: ChangeSet,
     completed: FactoryNodeBuildCompletion,
     record: ArtifactRecord,
     bytes: Vec<u8>,
     requirement: EvidenceRequirement,
     attestation: FactoryEvidenceAttestation,
+  }
+  impl Fixture {
+    fn document(&self) -> crate::FactoryNodeBuildOutputDocument {
+      crate::FactoryNodeBuildOutputDocument {
+        record: self.record.clone(),
+        bytes: self.bytes.clone(),
+        schema: self.attestation.schema.clone(),
+        tool: self.attestation.tool.clone(),
+        plugin: self.attestation.plugin.clone(),
+      }
+    }
   }
   fn time(value: i64) -> Timestamp {
     Timestamp::from_unix_millis(value).unwrap()
@@ -245,13 +257,36 @@ mod tests {
   }
 
   fn fixture() -> Fixture {
+    fixture_for_verification(None)
+  }
+  fn fixture_for_verification(outcome: Option<DeterministicGateOutcome>) -> Fixture {
+    fixture_with_report(outcome, |bytes| bytes).unwrap()
+  }
+  fn fixture_with_report(
+    outcome: Option<DeterministicGateOutcome>,
+    transform: impl FnOnce(Vec<u8>) -> Vec<u8>,
+  ) -> Result<Fixture, crate::ApplicationError> {
     crate::factory_admission_tests::run_ready(async {
-      let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
-      let subject = CandidateSubject::new(
-        input.subject().clone(),
-        ImmutableRevision::new("candidate").unwrap(),
-        digest(2),
-      );
+      let (_, admitted, schema, input, node) = if outcome.is_some() {
+        verification_execution_fixture_with_schema(
+          FlowNodeKind::BuildCommand,
+          octacity_server_factory::FactoryPermissionSet::deny_all(),
+          Some(verification_schema()),
+        )
+      } else {
+        execution_fixture(FlowNodeKind::BuildCommand)
+      };
+      let subject = input
+        .context()
+        .and_then(|context| context.subject().candidate())
+        .cloned()
+        .unwrap_or_else(|| {
+          CandidateSubject::new(
+            input.subject().clone(),
+            ImmutableRevision::new("candidate").unwrap(),
+            digest(2),
+          )
+        });
       let change_set = ChangeSet::new(
         octacity_server_factory::ChangeSetId::generate(),
         &input,
@@ -261,12 +296,27 @@ mod tests {
         ArtifactId::generate(),
       )
       .unwrap();
-      let (input, node) =
-        crate::factory_node_test_support::input_with_candidate_context(&admitted, input, &node, subject.clone());
+      let (input, node) = if outcome.is_some() {
+        (input, node)
+      } else {
+        crate::factory_node_test_support::input_with_candidate_context(&admitted, input, &node, subject.clone())
+      };
       let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
       let builds = Arc::new(Builds::new());
       *builds.state.lock().unwrap() = BuildState::Succeeded;
-      let bytes = br#"{"count":9}"#.to_vec();
+      let bytes = if let Some(outcome) = outcome {
+        serde_json::to_vec(&octacity_server_factory::VerificationObservation {
+          plan_digest: intent.verification_plan().unwrap().digest().unwrap(),
+          input_digest: intent.input().digest().unwrap(),
+          check: intent.input().node().clone(),
+          outcome,
+          measurements: vec![],
+        })
+        .unwrap()
+      } else {
+        br#"{"count":9}"#.to_vec()
+      };
+      let bytes = transform(bytes);
       let mut document = crate::factory_node_test_support::document(
         &builds,
         &intent.profile().result_output,
@@ -318,20 +368,126 @@ mod tests {
           FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
           time(31),
         )
-        .await
-        .unwrap()
+        .await?
       else {
         panic!("verified Build must complete");
       };
-      Fixture {
+      Ok(Fixture {
+        intent,
         change_set,
         completed: *completed,
         record,
         bytes,
         requirement,
         attestation,
-      }
+      })
     })
+  }
+
+  #[test]
+  fn verification_build_cannot_commit_a_report_for_another_plan_or_node() {
+    for (field, value) in [
+      ("plan_digest", serde_json::json!(digest(99))),
+      ("input_digest", serde_json::json!(digest(99))),
+      ("check", serde_json::json!("other-check")),
+    ] {
+      let result = fixture_with_report(Some(DeterministicGateOutcome::Passed), |bytes| {
+        let mut wire: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        wire[field] = value;
+        serde_json::to_vec(&wire).unwrap()
+      });
+      assert!(
+        result.is_err(),
+        "a retained report with substituted {field} must fail before journaling"
+      );
+    }
+  }
+
+  fn verification_schema() -> octacity_server_factory::FlowDataSchema {
+    use octacity_server_factory::{FlowDataSchema, FlowFieldSchema, FlowValueSchema};
+    let text = || FlowValueSchema::String {
+      min_bytes: 1,
+      max_bytes: 128,
+    };
+    FlowDataSchema::new(
+      key("operator.verification-report"),
+      key("v1"),
+      FlowValueSchema::Object {
+        fields: std::collections::BTreeMap::from([
+          (key("plan_digest"), FlowFieldSchema::required(text())),
+          (key("input_digest"), FlowFieldSchema::required(text())),
+          (key("check"), FlowFieldSchema::required(text())),
+          (
+            key("outcome"),
+            FlowFieldSchema::required(FlowValueSchema::Enum {
+              values: vec![
+                serde_json::json!("passed"),
+                serde_json::json!("failed"),
+                serde_json::json!("indeterminate"),
+              ],
+            }),
+          ),
+          (
+            key("measurements"),
+            FlowFieldSchema::required(FlowValueSchema::Array {
+              item: Box::new(FlowValueSchema::Object {
+                fields: std::collections::BTreeMap::from([
+                  (key("name"), FlowFieldSchema::required(text())),
+                  (
+                    key("value"),
+                    FlowFieldSchema::required(FlowValueSchema::Integer {
+                      minimum: 0,
+                      maximum: i64::MAX,
+                    }),
+                  ),
+                ]),
+              }),
+              min_items: 0,
+              max_items: 128,
+            }),
+          ),
+        ]),
+      },
+    )
+    .unwrap()
+  }
+
+  #[test]
+  fn verification_evidence_qualifies_actual_output_and_required_failure_cannot_be_overridden() {
+    let fixture = fixture_for_verification(Some(DeterministicGateOutcome::Failed));
+    let proof = crate::verify_factory_verification_check(
+      &fixture.intent,
+      &fixture.change_set,
+      &fixture.completed,
+      &fixture.document(),
+      time(33),
+      time(40),
+    )
+    .unwrap();
+    let plan = fixture.intent.verification_plan().unwrap();
+    assert_eq!(proof.evidence().items()[0].outcome(), DeterministicGateOutcome::Failed);
+    assert_eq!(
+      crate::evaluate_factory_verification(plan, &[proof], time(34)).unwrap(),
+      DeterministicGateOutcome::Failed
+    );
+    assert_eq!(
+      crate::evaluate_factory_verification(plan, &[], time(34)).unwrap(),
+      DeterministicGateOutcome::Indeterminate
+    );
+    let passing = fixture_for_verification(Some(DeterministicGateOutcome::Passed));
+    let other = crate::verify_factory_verification_check(
+      &passing.intent,
+      &passing.change_set,
+      &passing.completed,
+      &passing.document(),
+      time(33),
+      time(40),
+    )
+    .unwrap();
+    assert!(
+      crate::evaluate_factory_verification(plan, &[other], time(34)).is_err(),
+      "another candidate/environment/plan cannot supply quorum"
+    );
   }
 
   #[test]

@@ -1,0 +1,9 @@
+{
+  "steps": [
+    {
+      "path": "/contract",
+      "status": 200,
+      "max_latency_ms": 2500
+    }
+  ]
+}

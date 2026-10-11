@@ -444,7 +444,7 @@ impl FlowDefinition {
       execution: &input.execution,
     };
     let digest = definition_digest(&content)?;
-    Ok(Self {
+    let definition = Self {
       reference: FlowDefinitionRef::new(input.id, input.version, digest),
       input_schema: input.input_schema,
       entry: input.entry,
@@ -454,7 +454,11 @@ impl FlowDefinition {
       context_projections: input.context_projections,
       data_projections: input.data_projections,
       execution: input.execution,
-    })
+    };
+    if let Some(policy) = definition.execution.verification() {
+      policy.validate_definition(&definition)?;
+    }
+    Ok(definition)
   }
 
   /// Returns the exact immutable reference.
@@ -510,6 +514,9 @@ impl FlowDefinition {
 
   pub(crate) fn validate_canonical_form(&self) -> Result<(), FactoryError> {
     validate_bindings(&self.nodes)?;
+    if let Some(policy) = self.execution.verification() {
+      policy.validate_definition(self)?;
+    }
     let content = FlowDefinitionContent {
       id: self.reference.id(),
       version: self.reference.version(),

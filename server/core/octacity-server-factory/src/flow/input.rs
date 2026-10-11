@@ -313,7 +313,7 @@ impl FlowNodeInput {
     }
     Ok(())
   }
-  pub(super) fn verify_admission(&self, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
+  pub(crate) fn verify_admission(&self, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
     if self.root_definition != admitted.closure().root()
       || &self.admission_limits != admitted.limits()
       || self.factory_run_id != admitted.root_run().factory_run_id()

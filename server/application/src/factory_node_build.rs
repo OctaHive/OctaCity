@@ -355,6 +355,50 @@ pub(crate) fn factory_build_request(
   ownership: FactoryClaimOwnership,
 ) -> Result<CreateFactoryBuild, ApplicationError> {
   let input = intent.input();
+  if let Some(selected) = intent.verification_check() {
+    let check = selected
+      .plan()
+      .policy()
+      .checks
+      .get(input.node())
+      .ok_or_else(ApplicationError::invalid)?;
+    let target = selected.target();
+    if let Some(endpoint) = &target.endpoint {
+      let url = url::Url::parse(endpoint).map_err(|_| ApplicationError::invalid())?;
+      let host = url.host().map(|host| match host {
+        url::Host::Ipv6(address) => address.to_string(),
+        other => other.to_string(),
+      });
+      if !matches!(url.scheme(), "http" | "https")
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+        || host.as_ref().is_none_or(|host| !check.endpoints.contains(host))
+      {
+        return Err(ApplicationError::invalid());
+      }
+    } else if !check.endpoints.is_empty() {
+      return Err(ApplicationError::invalid());
+    }
+    let source_visible = check.source_visibility == VerificationSourceVisibility::ReadOnlySource;
+    if intent.permissions().mounts().any(|mount| {
+      !matches!(
+        (mount.root().as_str(), mount.mode()),
+        (octacity_protocol::PROTECTED_INPUT_ROOT, MountMode::ReadOnly)
+          | (
+            octacity_protocol::FACTORY_OUTPUT_ROOT | octacity_protocol::FACTORY_SCRATCH_ROOT,
+            MountMode::ReadWrite
+          )
+      ) && !(source_visible
+        && mount.root().as_str() == octacity_protocol::FACTORY_SOURCE_ROOT
+        && mount.mode() == MountMode::ReadOnly)
+    }) || intent.profile().capture_write_paths.is_some()
+      || intent.profile().capture_deliverables.is_some()
+    {
+      return Err(ApplicationError::invalid());
+    }
+  }
   Ok(CreateFactoryBuild {
     ownership,
     operation_id: intent.operation_id().map_err(invalid)?,
@@ -372,6 +416,7 @@ pub(crate) fn factory_build_request(
       cycle_id: input.cycle_id(),
       node_attempt_id: intent.node().id(),
       profile: intent.profile().clone(),
+      verification_check: intent.verification_check().cloned(),
       deliverable_contract: intent
         .profile()
         .capture_deliverables
@@ -424,6 +469,14 @@ fn complete_node(
     serde_json::from_slice(&document.bytes).map_err(|_| ApplicationError::invalid())?,
   )
   .map_err(invalid)?;
+  if let Some(selected) = intent.verification_check() {
+    let observation: VerificationObservation =
+      serde_json::from_value(payload.value().clone()).map_err(|_| ApplicationError::invalid())?;
+    observation.verify(selected).map_err(invalid)?;
+    if &observation.check != intent.input().node() {
+      return Err(ApplicationError::invalid());
+    }
+  }
   let mut verified = vec![FlowVerifiedBuildOutput {
     name: intent.profile().result_output.clone(),
     output_kind: intent.profile().result_output_kind,

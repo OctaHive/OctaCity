@@ -612,6 +612,24 @@ fn verifies_v3_only_after_signature_and_strict_semantic_validation() {
 }
 
 #[test]
+fn v3_allows_source_free_execution_but_never_source_capture_or_write_overlays() {
+  let mut value = v3_spec();
+  value
+    .permissions
+    .mounts
+    .retain(|mount| mount.root != FACTORY_SOURCE_ROOT);
+  assert!(
+    value.validate(&binding(&spec())).is_ok(),
+    "a deployed-contract check needs no source mount"
+  );
+  enable_change_set_materialization(&mut value);
+  assert!(
+    value.validate(&binding(&spec())).is_err(),
+    "source materialization cannot leak into a source-free job"
+  );
+}
+
+#[test]
 fn v3_rejects_unsafe_inputs_incomplete_enforcement_and_host_fallback() {
   let mut value = v3_spec();
   value.protected_inputs.inputs[0].destination = "/octacity/protected/../escape".to_owned();

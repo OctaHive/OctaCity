@@ -318,6 +318,8 @@ pub struct FlowExecutionPolicy {
   budget: BudgetLimit,
   permissions: FactoryPermissionSet,
   max_active_nodes: u16,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  verification: Option<crate::VerificationPolicy>,
 }
 
 impl FlowExecutionPolicy {
@@ -336,6 +338,7 @@ impl FlowExecutionPolicy {
       budget,
       permissions,
       max_active_nodes,
+      verification: None,
     })
   }
 
@@ -355,6 +358,11 @@ impl FlowExecutionPolicy {
   #[must_use]
   pub const fn max_active_nodes(&self) -> u16 {
     self.max_active_nodes
+  }
+  /// Returns the optional configured verification contract for this nested Flow.
+  #[must_use]
+  pub const fn verification(&self) -> Option<&crate::VerificationPolicy> {
+    self.verification.as_ref()
   }
 }
 

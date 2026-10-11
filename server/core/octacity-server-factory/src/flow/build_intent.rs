@@ -18,6 +18,8 @@ pub struct FlowBuildIntent {
   profile: FlowBuildProfile,
   result_outcome: FactoryKey,
   permissions: FactoryPermissionSet,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  verification_check: Option<crate::VerificationCheckInput>,
 }
 impl FlowBuildIntent {
   /// Freezes the containing node's exact profile, bounded reservation and Build priority.
@@ -75,6 +77,15 @@ impl FlowBuildIntent {
       result_output_kind: binding.result_output_kind,
     };
     let intent = Self {
+      verification_check: if definition
+        .execution()
+        .verification()
+        .is_some_and(|policy| policy.checks.contains_key(input.node()))
+      {
+        Some(crate::VerificationCheckInput::new(admitted, &input)?)
+      } else {
+        None
+      },
       input,
       node,
       usage_before,
@@ -158,6 +169,19 @@ impl FlowBuildIntent {
   #[must_use]
   pub const fn priority(&self) -> i64 {
     self.priority
+  }
+  /// Returns the exact configured verification snapshot retained before dispatch.
+  #[must_use]
+  pub fn verification_plan(&self) -> Option<&crate::VerificationPlan> {
+    self
+      .verification_check
+      .as_ref()
+      .map(crate::VerificationCheckInput::plan)
+  }
+  /// Returns the exact selected verification input and common plan, absent for unselected nodes.
+  #[must_use]
+  pub const fn verification_check(&self) -> Option<&crate::VerificationCheckInput> {
+    self.verification_check.as_ref()
   }
 }
 fn invalid() -> FactoryError {

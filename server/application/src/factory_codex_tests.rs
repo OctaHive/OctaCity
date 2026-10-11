@@ -281,6 +281,32 @@ fn compiler_rejects_digest_drift_or_authority_it_cannot_project_exactly() {
 }
 
 #[test]
+fn compiler_supports_source_free_evaluation_with_only_declared_public_context() {
+  let plugin = reference("codex", 10);
+  let executable = reference("codex-cli", 11);
+  let mut wire = serde_json::to_value(permissions(
+    FactoryTaskMode::Evaluate,
+    plugin.clone(),
+    executable.clone(),
+    true,
+  ))
+  .unwrap();
+  wire["mounts"]
+    .as_array_mut()
+    .unwrap()
+    .retain(|mount| mount["root"] != "/workspace/source");
+  let envelope = task_envelope(
+    FactoryTaskMode::Evaluate,
+    PROMPT,
+    serde_json::from_value(wire).unwrap(),
+    vec![],
+    plugin,
+    executable,
+  );
+  assert!(compile_codex_task(&envelope, PROMPT, &credential_profiles()).is_ok());
+}
+
+#[test]
 fn compiler_rejects_cross_stage_credentials_and_writable_evaluation_source() {
   let plugin = reference("codex", 10);
   let executable = reference("codex-cli", 11);

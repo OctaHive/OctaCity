@@ -1,0 +1,7 @@
+{
+  "classification": "internal",
+  "source": "excluded",
+  "credentials": "explicit profiles only",
+  "evidence": "immutable retained artifacts",
+  "responses": "counts and declared assertions; response bodies excluded from diagnostics"
+}

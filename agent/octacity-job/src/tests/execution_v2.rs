@@ -318,6 +318,37 @@ async fn stages_and_projects_an_admitted_factory_job() {
 }
 
 #[tokio::test]
+async fn source_free_job_preserves_absent_source_authority_through_the_backend_request() {
+  let (completion, _, _root) = captured_factory_job_with_visibility(None, false, &[], None, false).await;
+  let completion = completion.expect("an ordinary source-free job is admitted");
+  assert!(completion.change_set().is_none());
+  completion.cleanup().await.unwrap();
+}
+
+struct SourceFreeBackend(Arc<dyn ExecutionBackend>);
+#[async_trait]
+impl ExecutionBackend for SourceFreeBackend {
+  async fn start(
+    &self,
+    runner: &RunnerProgram,
+    request: StartExecution,
+    cancellation: CancellationToken,
+  ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+    let layout = request.factory.as_ref().expect("managed layout reaches the backend");
+    assert!(
+      !layout.source_visible,
+      "an absent signed source mount cannot become workload authority"
+    );
+    assert!(layout.source_read_only);
+    assert!(layout.source_writable_paths.is_empty());
+    self.0.start(runner, request, cancellation).await
+  }
+  async fn cleanup_orphans(&self) -> Result<(), ExecutionError> {
+    self.0.cleanup_orphans().await
+  }
+}
+
+#[tokio::test]
 async fn capture_filters_preserve_file_and_overlapping_prefixes_without_mount_grants() {
   for prefixes in [
     &["Octafile.yml"][..],
@@ -403,6 +434,16 @@ async fn captured_factory_job_with_source_scope(
   write_paths: &[&str],
   source_write_paths: Option<&[&str]>,
 ) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
+  captured_factory_job_with_visibility(deadline, materialization, write_paths, source_write_paths, true).await
+}
+
+async fn captured_factory_job_with_visibility(
+  deadline: Option<Duration>,
+  materialization: bool,
+  write_paths: &[&str],
+  source_write_paths: Option<&[&str]>,
+  source_visible: bool,
+) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
   use sha2::Digest as _;
   use std::time::SystemTime;
   use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -446,6 +487,13 @@ async fn captured_factory_job_with_source_scope(
   spec.factory = Some(capture_causality());
   spec.factory.as_mut().unwrap().source_write_paths =
     source_write_paths.map(|paths| paths.iter().map(|path| (*path).to_owned()).collect());
+  if !source_visible {
+    spec.factory = None;
+    spec
+      .permissions
+      .mounts
+      .retain(|mount| mount.root != FACTORY_SOURCE_ROOT);
+  }
   if !write_paths.is_empty() {
     spec
       .factory
@@ -512,6 +560,11 @@ async fn captured_factory_job_with_source_scope(
     FactoryEnforcementCapabilityV3::ALL,
   );
   install_revalidatable_runner(&mut executor, work_root.path());
+  if !source_visible {
+    for route in executor.execution_backends.values_mut() {
+      route.backend = Arc::new(SourceFreeBackend(route.backend.clone()));
+    }
+  }
   executor.factory_permissions = Some(spec.permissions.clone());
   let stager = ProtectedInputStager::new(ProtectedInputStagerConfig {
     allowed_origins: vec![origin.clone()],
@@ -572,7 +625,7 @@ async fn captured_factory_job_with_source_scope(
   assert_eq!(source_calls.load(Ordering::SeqCst), 1);
   if !materialization {
     assert_eq!(starts.load(Ordering::SeqCst), 1);
-    assert!(captured.load(Ordering::SeqCst));
+    assert_eq!(captured.load(Ordering::SeqCst), source_visible);
   } else {
     assert_eq!(starts.load(Ordering::SeqCst), 0);
     assert!(!captured.load(Ordering::SeqCst));

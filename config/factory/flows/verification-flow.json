@@ -1,0 +1,174 @@
+{
+  "input_schema": "verification_input",
+  "entry": "contract_sequence",
+  "execution": {
+    "budget": {
+      "max_attempts": 40,
+      "max_elapsed_millis": 3600000,
+      "max_tokens": 1000000,
+      "max_cost_micro_units": 100000000,
+      "max_output_bytes": 33554432
+    },
+    "permissions": {
+      "plugins": [],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "max_descendants": 0,
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "kinds": [],
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0
+      }
+    },
+    "max_active_nodes": 1,
+    "verification": {
+      "data_handling": {
+        "identity": "verification.example-handling",
+        "version": "v1",
+        "digest": "54156d067450ae30e75d002a71f30a25ec6f63fcb67098f96260a8bb213f78d8"
+      },
+      "required_quorum": 6,
+      "checks": {
+        "contract_sequence": {
+          "class": "end-to-end",
+          "target": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/payload/value/target"
+            }
+          },
+          "source_visibility": "black_box",
+          "endpoints": [
+            "stage.example.test"
+          ],
+          "secret_profiles": [],
+          "identity_profiles": [],
+          "required": true
+        },
+        "latency_budget": {
+          "class": "performance",
+          "target": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/payload/value/target"
+            }
+          },
+          "source_visibility": "black_box",
+          "endpoints": [
+            "stage.example.test"
+          ],
+          "secret_profiles": [],
+          "identity_profiles": [],
+          "required": true
+        },
+        "public_interface": {
+          "class": "ui",
+          "target": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/payload/value/target"
+            }
+          },
+          "source_visibility": "black_box",
+          "endpoints": [
+            "stage.example.test"
+          ],
+          "secret_profiles": [],
+          "identity_profiles": [],
+          "required": true
+        },
+        "access_boundary": {
+          "class": "security",
+          "target": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/payload/value/target"
+            }
+          },
+          "source_visibility": "black_box",
+          "endpoints": [
+            "stage.example.test"
+          ],
+          "secret_profiles": [],
+          "identity_profiles": [],
+          "required": true
+        },
+        "staged_contract": {
+          "class": "staged-environment",
+          "target": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/payload/value/target"
+            }
+          },
+          "source_visibility": "black_box",
+          "endpoints": [
+            "stage.example.test"
+          ],
+          "secret_profiles": [],
+          "identity_profiles": [],
+          "required": true
+        },
+        "deployment_observation": {
+          "class": "post-deployment",
+          "target": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/payload/value/target"
+            }
+          },
+          "source_visibility": "black_box",
+          "endpoints": [
+            "stage.example.test"
+          ],
+          "secret_profiles": [],
+          "identity_profiles": [],
+          "required": true
+        },
+        "independent_assessment": {
+          "class": "acceptance",
+          "target": {
+            "value": {
+              "mapping": "pointer",
+              "path": "/payload/value/target"
+            }
+          },
+          "source_visibility": "black_box",
+          "endpoints": [
+            "stage.example.test"
+          ],
+          "secret_profiles": [],
+          "identity_profiles": [],
+          "required": false
+        }
+      }
+    }
+  },
+  "parts": [
+    "base-flow/schemas/candidate_subject.json",
+    "base-flow/schemas/artifact_reference.json",
+    "verification-flow/schemas.json",
+    "verification-flow/nodes/contract_sequence.json",
+    "verification-flow/nodes/latency_budget.json",
+    "verification-flow/nodes/public_interface.json",
+    "verification-flow/nodes/access_boundary.json",
+    "verification-flow/nodes/staged_contract.json",
+    "verification-flow/nodes/deployment_observation.json",
+    "verification-flow/nodes/independent_assessment.json",
+    "verification-flow/transitions.json"
+  ]
+}

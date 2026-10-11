@@ -381,6 +381,7 @@ async fn projects_only_the_bounded_factory_roots() {
   request.factory = Some(FactoryExecutionLayout {
     protected_inputs: protected.clone(),
     source: source.clone(),
+    source_visible: true,
     source_read_only: false,
     source_writable_paths: Vec::new(),
     scratch: scratch.clone(),
@@ -433,6 +434,20 @@ async fn projects_only_the_bounded_factory_roots() {
   assert_eq!(read_only_plan.read_only_mounts.len(), 1);
   assert_eq!(read_only_plan.read_only_mounts[0].host, source);
   assert_eq!(read_only_plan.read_only_mounts[0].guest, FACTORY_SOURCE_ROOT);
+
+  request.factory.as_mut().unwrap().source_visible = false;
+  let black_box = SandboxPlan::build("agent-1", &runner(&release), &request)
+    .await
+    .unwrap();
+  assert_eq!(black_box.guest_workspace, FACTORY_SCRATCH_ROOT);
+  assert!(black_box.read_only_mounts.is_empty());
+  assert!(
+    black_box
+      .writable_mounts
+      .iter()
+      .all(|mount| mount.host != source && mount.guest != FACTORY_SOURCE_ROOT)
+  );
+  request.factory.as_mut().unwrap().source_visible = true;
 
   let contracts = source.join("contracts");
   fs::create_dir(&contracts).unwrap();

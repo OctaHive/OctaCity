@@ -435,12 +435,11 @@ fn validate_source_mount(envelope: &FactoryTaskEnvelope) -> Result<(), CodexComp
     .filter(|mount| mount.root().as_str() == FACTORY_SOURCE_ROOT)
     .collect::<Vec<_>>();
   let valid_evaluation_workspace = envelope.mode() != FactoryTaskMode::Evaluate
-    || (mounts.len() == 4
+    || (mounts.len() == 3 + source_mounts.len()
       && [
         (PROTECTED_INPUT_ROOT, MountMode::ReadOnly),
         (FACTORY_OUTPUT_ROOT, MountMode::ReadWrite),
         (FACTORY_SCRATCH_ROOT, MountMode::ReadWrite),
-        (FACTORY_SOURCE_ROOT, MountMode::ReadOnly),
       ]
       .into_iter()
       .all(|(root, mode)| {
@@ -450,7 +449,12 @@ fn validate_source_mount(envelope: &FactoryTaskEnvelope) -> Result<(), CodexComp
           .count()
           == 1
       }));
-  if source_mounts.len() != 1 || source_mounts[0].mode() != required_mode || !valid_evaluation_workspace {
+  let valid_source = if envelope.mode() == FactoryTaskMode::Evaluate {
+    source_mounts.len() <= 1 && source_mounts.iter().all(|mount| mount.mode() == required_mode)
+  } else {
+    source_mounts.len() == 1 && source_mounts[0].mode() == required_mode
+  };
+  if !valid_source || !valid_evaluation_workspace {
     return Err(CodexCompilationError::CandidateWriteAccess);
   }
   Ok(())

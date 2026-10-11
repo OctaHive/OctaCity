@@ -1018,14 +1018,21 @@ pub(crate) fn validate_factory_execution(
     .mounts
     .iter()
     .find(|mount| mount.root == FACTORY_SOURCE_ROOT)
-    .ok_or_else(|| "Factory source mount authority is absent".to_owned())?
-    .mode;
+    .map(|mount| mount.mode);
+  if factory.is_some_and(|factory| {
+    factory.change_set_capture.is_some()
+      || factory.source_write_paths.is_some()
+      || factory.change_set_materialization.is_some()
+  }) && source_mode.is_none()
+  {
+    return Err("source operations require explicit source mount authority".to_owned());
+  }
   if factory.is_some_and(|factory| factory.change_set_capture.is_some() || factory.source_write_paths.is_some())
-    && source_mode != FactoryMountModeV3::ReadWrite
+    && source_mode != Some(FactoryMountModeV3::ReadWrite)
   {
     return Err("ChangeSet capture and writable source roots require explicit source write authority".to_owned());
   }
-  let required_mounts = [
+  let mut required_mounts = vec![
     FactoryMountPermissionV3 {
       root: PROTECTED_INPUT_ROOT.to_owned(),
       mode: FactoryMountModeV3::ReadOnly,
@@ -1038,11 +1045,13 @@ pub(crate) fn validate_factory_execution(
       root: FACTORY_SCRATCH_ROOT.to_owned(),
       mode: FactoryMountModeV3::ReadWrite,
     },
-    FactoryMountPermissionV3 {
-      root: FACTORY_SOURCE_ROOT.to_owned(),
-      mode: source_mode,
-    },
   ];
+  if let Some(mode) = source_mode {
+    required_mounts.push(FactoryMountPermissionV3 {
+      root: FACTORY_SOURCE_ROOT.to_owned(),
+      mode,
+    });
+  }
   if permissions.mounts.as_slice() != required_mounts.as_slice() {
     return Err("Factory permissions must exactly authorize the protected/source/scratch/output layout".to_owned());
   }

@@ -257,8 +257,10 @@ pub enum NetworkAccess {
 pub struct FactoryExecutionLayout {
   /// Immutable host directory projected at [`FACTORY_PROTECTED_INPUT_ROOT`].
   pub protected_inputs: PathBuf,
-  /// Exact source directory projected at [`FACTORY_SOURCE_ROOT`].
+  /// Exact private host checkout, projected at [`FACTORY_SOURCE_ROOT`] only when visible.
   pub source: PathBuf,
+  /// Whether the workload receives any source mount; false keeps host source private.
+  pub source_visible: bool,
   /// Whether the base source projection rejects writes outside explicit overlays.
   pub source_read_only: bool,
   /// Canonical directory overlays writable within an otherwise read-only source.
@@ -284,6 +286,7 @@ impl FactoryExecutionLayout {
     let source = canonical_directory(&self.source, "Factory source")?;
     if self.source_writable_paths.len() > octacity_protocol::MAX_FACTORY_PERMISSION_ENTRIES
       || !self.source_read_only && !self.source_writable_paths.is_empty()
+      || !self.source_visible && (!self.source_read_only || !self.source_writable_paths.is_empty())
     {
       return Err(ExecutionError::Invalid(
         "source write overlays exceed the signed count ceiling or require a read-only source".to_owned(),
@@ -843,6 +846,7 @@ mod tests {
     let layout = FactoryExecutionLayout {
       protected_inputs: protected.canonicalize().unwrap(),
       source: source.canonicalize().unwrap(),
+      source_visible: true,
       source_read_only: false,
       source_writable_paths: Vec::new(),
       scratch: scratch.canonicalize().unwrap(),

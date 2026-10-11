@@ -1,0 +1,22 @@
+{
+  "steps": [
+    {
+      "path": "/deployment",
+      "status": 200,
+      "json_equals": {
+        "/release": {
+          "source": "target",
+          "path": "/subject/candidate_revision"
+        },
+        "/changeset_digest": {
+          "source": "target",
+          "path": "/subject/changeset_digest"
+        },
+        "/deployment_receipt": {
+          "source": "target",
+          "path": "/environment"
+        }
+      }
+    }
+  ]
+}

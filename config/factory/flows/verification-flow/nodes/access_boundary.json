@@ -1,0 +1,153 @@
+{
+  "nodes": [
+    {
+      "key": "access_boundary",
+      "kind": "build_command",
+      "input_schema": "verification_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "verification_observation"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "incoming": {
+            "source": "caller_input",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/incoming"
+          }
+        }
+      },
+      "context_binding": {
+        "candidate_revision": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/target/subject/candidate_revision"
+          }
+        },
+        "entries": {
+          "public-contract": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/target/public_contract"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "access_boundary"
+    },
+    {
+      "key": "access_boundary.gate",
+      "kind": "deterministic_gate",
+      "input_schema": "verification_observation",
+      "outcomes": [
+        {
+          "key": "passed",
+          "kind": "success",
+          "schema": "verification_observation"
+        },
+        {
+          "key": "failed",
+          "kind": "failure",
+          "schema": "verification_observation"
+        },
+        {
+          "key": "pending",
+          "kind": "failure",
+          "schema": "verification_observation"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "observation": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "pointer",
+            "path": "/observation"
+          }
+        }
+      },
+      "gate": {
+        "rules": [
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/outcome"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "failed"
+              }
+            },
+            "outcome": "failed"
+          },
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/outcome"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "passed"
+              }
+            },
+            "outcome": "passed"
+          }
+        ],
+        "fallback": "pending",
+        "default_output": {
+          "value": {
+            "mapping": "pointer",
+            "path": ""
+          }
+        }
+      }
+    }
+  ]
+}
