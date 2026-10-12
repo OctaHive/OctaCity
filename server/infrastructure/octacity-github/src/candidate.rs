@@ -43,7 +43,9 @@ impl<'a> Candidate<'a> {
       .ok_or(FailureClass::Permanent)?
       .remote
       .clone();
-    let mut scratch = tempfile::Builder::new();
+    let scratch = tempfile::Builder::new();
+    #[cfg(unix)]
+    let mut scratch = scratch;
     #[cfg(unix)]
     {
       use std::os::unix::fs::PermissionsExt as _;
