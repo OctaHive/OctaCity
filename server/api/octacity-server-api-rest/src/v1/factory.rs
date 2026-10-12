@@ -1,6 +1,41 @@
 use serde::{Deserialize, Serialize};
 
 use super::Cursor;
+/// Closed request interpreted only by the exact retained HumanGate binding.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryNodeOperationRequest {
+  /// Escalation, delivery or promotion purpose.
+  pub operation: String,
+  /// Bounded disposition valid for the chosen purpose.
+  pub disposition: String,
+  /// Bounded human reason; retained privately rather than echoed in diagnostics.
+  pub reason: String,
+}
+/// Observations for one exact pending HumanGate. Its schema is server-selected.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryNodeResponseRequest {
+  /// One finite outcome from the pinned node declaration.
+  pub outcome: String,
+  /// Bounded observations checked against the retained outcome schema.
+  pub value: serde_json::Value,
+}
+/// Safe receipt of a bounded, preconditioned operator intent.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRunControlResponse {
+  /// Applied or replayed original intent.
+  pub disposition: super::MutationDisposition,
+  /// Exact controlled Run.
+  pub run_id: String,
+  /// Aggregate version produced by the original intent.
+  pub version: u64,
+  /// Code-owned lifecycle state after accepting the intent.
+  pub state: String,
+  /// Durable cancellation flag consumed by the common owner.
+  pub cancellation_requested: bool,
+}
 
 /// Initial immutable configuration publication with a stable replay identity.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

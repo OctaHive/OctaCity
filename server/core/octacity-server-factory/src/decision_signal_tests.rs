@@ -793,6 +793,39 @@ fn rollout_modes_never_give_shadow_or_advisory_authority() {
       key("baseline"),
     )
     .expect("signal is consumed");
+    let projection = serde_json::to_value(crate::FlowDiscoveryFacts::decision_signal(&receipt)).unwrap();
+    assert_eq!(projection["kind"], "decision_signal");
+    assert_eq!(projection["id"], receipt.id().to_string());
+    assert_eq!(projection["request_id"], request.id().to_string());
+    assert_eq!(
+      projection["provider"],
+      serde_json::to_value(receipt.provider()).unwrap()
+    );
+    assert_eq!(projection["model"], serde_json::to_value(receipt.model()).unwrap());
+    assert_eq!(
+      projection["question_set"],
+      serde_json::to_value(receipt.question_set()).unwrap()
+    );
+    assert_eq!(
+      projection["probability_semantics"],
+      serde_json::to_value(receipt.probability_semantics()).unwrap()
+    );
+    assert_eq!(
+      projection["input_digest"],
+      receipt.request().input().digest().to_string()
+    );
+    assert_eq!(
+      projection["frozen_input_digest"],
+      receipt.request().request().frozen_input_digest().to_string()
+    );
+
+    assert_eq!(
+      projection["consumption"],
+      serde_json::to_value(receipt.consumption()).unwrap()
+    );
+    for private in ["state_document", "request", "result", "answers", "reasoning"] {
+      assert!(projection.get(private).is_none(), "{private}");
+    }
     assert_eq!(receipt.consumption().kind(), expected_kind);
     assert_eq!(
       receipt.consumption().recommendation(),

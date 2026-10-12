@@ -756,6 +756,8 @@ catalogue or mutable source state again.
 | GET | `/projects/{project_id}/factory-configurations` | Page visible current configurations |
 | POST | `/projects/{project_id}/factory-work` | Admit bounded provider-neutral manual Work |
 | GET | `/factory-runs` | Global visible Run collection |
+| GET | `/factory-runs/{factory_run_id}` | Read a visible Run and its strong version ETag |
+| GET | `/factory-runs/{factory_run_id}/{collection}` | Page safe immutable diagnostic records |
 | GET | `/projects/{project_id}/factory-runs` | Project-scoped visible Run collection |
 | GET | `/factory-phase-ready` | Visible ready entries for an exact `policy_digest` |
 | GET | `/projects/{project_id}/factory-phase-ready` | Project-scoped ready entries for that policy |
@@ -814,7 +816,7 @@ until a verified owner result retains them; arbitrary payloads and node labels
 never populate these fields. No task text, commands, prompts, findings, connector
 targets or private provider links are embedded in summaries.
 
-All collection limits are `1..200`. `total` counts visible matching items before
+Discovery collection limits are `1..200`. `total` counts visible matching items before
 continuation. Run cursors encode exclusive admission-time/ID positions in newest-first
 order. Flow/configuration cursors encode publication/creation positions. Choice
 cursors belong to their Project; phase-ready cursors belong to an exact policy and
@@ -822,6 +824,86 @@ include its deterministic priority tuple. Treat them as opaque and keep the same
 Project, filters and policy for continuation. Concurrent newer inserts do not
 reappear on a later page. Empty visible pages return no continuation.
 
+Run diagnostic collections are `work`, `flow-runs`, `workflow-cycles`,
+`node-attempts`, `node-completions`, `node-stops`, `builds`, `calls`,
+`decision-signals`, `changesets`, `evidence`, `review-plans`, `assessments`,
+`decisions`, `budgets`, `escalations`, `delivery`, `promotion`, `reporting` and
+`audit`. They accept `limit=1..100` (default 50) and an opaque `after` cursor
+bound to the exact Run and collection. Responses contain `items` and
+`next_cursor`, without a history-wide count. Records advance by immutable identity;
+both Run and owning Project visibility are checked before reading a child page.
+
+Calls describe external node invocations. Build-backed invocations also expose
+frozen task, context, permission and binding digests; other invocations have a null
+profile. Nested call relationships appear in Flow Run parent identities. Node
+completions describe verified declared outcomes; stop receipts describe confirmed
+execution failure or cancellation. Neither exposes worker ownership, result bytes
+or commands. A HumanGate cancelled without an external process has no stop receipt.
+
+Domain records originate in verified owner facts, never inferred from outcome or
+node names. Evidence and review records expose identities, digests and bounded
+classifications rather than protected test material, criterion bodies or findings.
+Decision Signal records retain provider/model/question-set/input/policy provenance
+and explicitly separate signal consumption from authoritative Decisions. Promotion
+records omit measurements; reporter records omit connector targets. Audit records
+retain operation and correlation digests without raw actor or request identities.
+
+Decision facts can include `explanation`: `plan_id`, bounded `assessment_ids` and
+`signal_receipt_ids`, typed `reasons`, `input_digest`, `policy_version` and
+`policy_digest`. These links explain rework without exposing evaluator findings.
+Older retained facts may omit the explanation; clients must treat it as unavailable.
+Record input bindings select `view: "payload"` or `view: "metadata"`; neither view
+permits unrestricted access to another node's frozen input.
+
 The phase-ready response omits frozen inputs, dependencies and full histories.
 It is an observation of retained ready entries; claiming or selecting Work belongs
 to the separate fenced worker contract. Reading it does not take worker Run locks.
+
+Factory operator commands require `Idempotency-Key` and the strong `If-Match`
+returned by Run detail. Their paths are relative to `/api/v1`:
+
+| POST path | Body | Operation ID |
+| --- | --- | --- |
+| `/factory-runs/{factory_run_id}/cancellations` | `{}` | `cancelFactoryRun` |
+| `/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/retries` | `{}` | `retryFactoryNode` |
+| `/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/responses` | `outcome`, `value` | `submitFactoryNodeResponse` |
+| `/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/requests` | `operation`, `disposition`, `reason` | `confirmFactoryNodeOperation` |
+
+Use the retained Node Attempt identity and a declared human outcome. The server
+resolves the response schema from the immutable admitted closure. A HumanGate may
+declare `operator_requests`, containing a technical `operation` (`escalation`,
+`delivery`, `promotion`) and a map from supported dispositions to declared outcome
+keys. Escalation permits `acknowledge`, `resume`, `abort`; delivery and promotion
+permit `confirm`. Publication validates each response schema against the
+emitted `operation/disposition/reason` object. Reason is nonempty and bounded to
+4 KiB. Generic responses cannot bypass a bound operator contract.
+
+Commands record intent; the common fenced Flow owner commits execution outcomes.
+They cannot supply lifecycle state, candidates or successful execution receipts.
+Cancellation targets the Run; other commands authorize the exact Node Attempt.
+All require owning Project visibility before mutation. Obsolete cycles and resolved
+attempts conflict, and retry eligibility follows the admitted execution policy.
+An exact replay returns the original receipt even after later progress; changed
+intent or version conflicts. Server timestamps and request correlation do not
+change replay identity or append another audit fact. Responses retain correlation
+headers and a safe receipt with the accepted Run version and ETag.
+
+The executable headless example is `server/app/tests/factory_rest_journey.rs`.
+Its client discovers paths and validates JSON through the released OpenAPI document;
+only deployment execution adapters are deterministic fixtures. PostgreSQL, runtime
+workers, authorization, management routes and Flow ownership remain real.
+The nested child exercises the supplied eligibility and classification contracts
+with configured deterministic rejection and review routes. The client checks
+their retained schema references through completion diagnostics before responding
+to the human gate.
+With disposable PostgreSQL and object storage configured through
+`OCTACITY_POSTGRES_URL` and `OCTACITY_MINIO_ENDPOINT`, run:
+
+```sh
+CARGO_INCREMENTAL=0 cargo test -p octacity-server \
+  --test factory_rest_journey --test postgres_runtime -- --ignored
+```
+
+The ordinary journey runs with Factory disabled and enabled but unused. The
+shared storage fixture uses bucket `octacity-artifacts` and test credentials
+`octacity` / `octacity-secret`; it does not connect to a real forge or deployment.

@@ -209,6 +209,26 @@ pub(crate) async fn verify_effectful_cancellation<
   );
   let stopped = restarted.factory_run_snapshot(run.id()).await.unwrap();
   assert_eq!(stopped.flow.data.stops.len(), 1);
+  let page = restarted
+    .list_factory_run_diagnostics(
+      octacity_server_store::ListFactoryRunDiagnostics::new(
+        run.id(),
+        octacity_server_store::FactoryRunDiagnosticKind::NodeStop,
+        None,
+        1,
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(
+    page.items,
+    vec![octacity_server_store::FactoryRunDiagnosticRecord::NodeStop(Box::new(
+      stopped.flow.data.stops[0].clone()
+    ))]
+  );
+  assert!(page.next.is_none());
+
   assert_eq!(
     octacity_server_factory::FlowRuntimeHistory {
       stops: &stopped.flow.data.stops,

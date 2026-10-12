@@ -56,6 +56,8 @@ mod factory_configuration_cqrs;
 #[cfg(test)]
 mod factory_configuration_cqrs_tests;
 mod factory_control;
+mod factory_operator;
+pub use factory_operator::FactoryOperatorHandlers;
 #[cfg(test)]
 mod factory_control_tests;
 mod factory_credentials;
@@ -312,8 +314,9 @@ pub use factory_configuration_cqrs::{
   ListProjectFactoryConfigurationsQuery, ReplaceFactoryConfigurationCommand, ValidateFactoryConfigurationQuery,
 };
 pub use factory_control::{
-  CancelFactoryRunCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome, ResolveFactoryNodeCommand,
-  RetryFactoryNodeCommand,
+  CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome,
+  MAX_FACTORY_OPERATOR_REASON_BYTES, ResolveFactoryNodeCommand, RetryFactoryNodeCommand,
+  SubmitFactoryNodeResponseCommand,
 };
 pub use factory_credentials::{FactoryCredentialResolutionError, ScopedFactoryCredential, resolve_factory_credential};
 pub use factory_decision_signal::{
@@ -527,8 +530,14 @@ pub use octacity_server_store::MutationDisposition as StoreMutationDisposition;
 pub use management_input::factory::ManualFactoryWorkInput;
 
 mod factory_discovery;
-pub use factory_discovery::{FactoryDiscoveryHandlers, ListFactoryRunsQuery};
-pub use management_input::factory::FactoryRunListInput;
+pub use factory_discovery::{
+  FactoryAuditProjection, FactoryCallProjection, FactoryDiagnosticCollection, FactoryDiagnosticPage,
+  FactoryDiagnosticRecord, FactoryDiscoveryHandlers, FactoryNodeAttemptProjection, FactoryNodeCompletionProjection,
+  FactoryNodeStopProjection, FactoryWorkProjection, GetFactoryRunQuery, ListFactoryDiagnosticsQuery,
+  ListFactoryRunsQuery, MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
+};
+pub use management_input::factory::{FactoryNodeControlInput, FactoryRunListInput};
+pub use octacity_server_factory::{MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS, MAX_DECISION_SIGNAL_RECEIPTS};
 pub use octacity_server_store::{
   FactoryRunPage as FactoryRunPageProjection, FactoryRunSummary as FactoryRunSummaryProjection,
   MAX_FACTORY_RUN_SUMMARY_NODES,

@@ -61,7 +61,8 @@ fn representative_resource(kind: ManagementResourceKind) -> ManagementResource {
     | ManagementResourceKind::Artifact
     | ManagementResourceKind::CacheSession
     | ManagementResourceKind::WebhookIntegration
-    | ManagementResourceKind::Retention => ManagementResource::instance(kind, identity()).unwrap(),
+    | ManagementResourceKind::Retention
+    | ManagementResourceKind::FactoryNodeAttempt => ManagementResource::instance(kind, identity()).unwrap(),
   }
 }
 

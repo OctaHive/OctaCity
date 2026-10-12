@@ -1,14 +1,96 @@
 use octacity_server_application::{
-  AdmitManualFactoryWorkCommand, CreateFactoryConfigurationCommand, CreateFactoryFlowDefinitionCommand,
-  GetCurrentFactoryConfigurationQuery, GetFactoryConfigurationQuery, GetFactoryFlowDefinitionQuery,
-  ListFactoryConfigurationChoicesQuery, ListFactoryPhaseReadyQuery, ListFactoryRunsQuery,
+  AdmitManualFactoryWorkCommand, CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand,
+  CreateFactoryConfigurationCommand, CreateFactoryFlowDefinitionCommand, GetCurrentFactoryConfigurationQuery,
+  GetFactoryConfigurationQuery, GetFactoryFlowDefinitionQuery, GetFactoryRunQuery,
+  ListFactoryConfigurationChoicesQuery, ListFactoryDiagnosticsQuery, ListFactoryPhaseReadyQuery, ListFactoryRunsQuery,
   ListProjectFactoryConfigurationsQuery, ListProjectFactoryFlowDefinitionsQuery, ReplaceFactoryConfigurationCommand,
-  ReplaceFactoryFlowDefinitionCommand, ValidateFactoryConfigurationQuery, ValidateFactoryFlowDefinitionQuery,
+  ReplaceFactoryFlowDefinitionCommand, RetryFactoryNodeCommand, SubmitFactoryNodeResponseCommand,
+  ValidateFactoryConfigurationQuery, ValidateFactoryFlowDefinitionQuery,
 };
 
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
+  operation!(
+    ConfirmFactoryNodeOperationCommand,
+    "POST",
+    "/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/requests",
+    "confirmFactoryNodeOperation",
+    "Factory",
+    "Confirm a pinned escalation, delivery or promotion disposition",
+    Some("FactoryNodeOperationRequest"),
+    "FactoryRunControlResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    RetryFactoryNodeCommand,
+    "POST",
+    "/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/retries",
+    "retryFactoryNode",
+    "Factory",
+    "Confirm one bounded retry of an exact failed execution",
+    Some("FactoryConfirmationRequest"),
+    "FactoryRunControlResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    SubmitFactoryNodeResponseCommand,
+    "POST",
+    "/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/responses",
+    "submitFactoryNodeResponse",
+    "Factory",
+    "Respond to an exact pending configured HumanGate",
+    Some("FactoryNodeResponseRequest"),
+    "FactoryRunControlResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    CancelFactoryRunCommand,
+    "POST",
+    "/api/v1/factory-runs/{factory_run_id}/cancellations",
+    "cancelFactoryRun",
+    "Factory",
+    "Request durable cancellation of an exact Factory Run",
+    Some("FactoryConfirmationRequest"),
+    "FactoryRunControlResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    ListFactoryDiagnosticsQuery,
+    "GET",
+    "/api/v1/factory-runs/{factory_run_id}/{collection}",
+    "listFactoryDiagnostics",
+    "Factory",
+    "Read bounded safe Factory execution diagnostics",
+    None,
+    "FactoryDiagnosticPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::FactoryDiagnostics)
+  .with_visibility::<ListFactoryDiagnosticsQuery>(),
+  operation!(
+    GetFactoryRunQuery,
+    "GET",
+    "/api/v1/factory-runs/{factory_run_id}",
+    "getFactoryRun",
+    "Factory",
+    "Read safe current Factory Run facts",
+    None,
+    "FactoryRunSummaryResource",
+    "200",
+    false,
+    false
+  ),
   operation!(
     ListFactoryPhaseReadyQuery,
     "GET",

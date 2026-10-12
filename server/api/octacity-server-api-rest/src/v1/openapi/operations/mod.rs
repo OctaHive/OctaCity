@@ -84,6 +84,7 @@ pub(crate) enum ParameterProfile {
   ProjectList,
   CurrentDefinitionList,
   FactoryConfigurationChoices,
+  FactoryDiagnostics,
   FactoryRunList,
   FactoryPhaseReady,
   AgentPoolList,

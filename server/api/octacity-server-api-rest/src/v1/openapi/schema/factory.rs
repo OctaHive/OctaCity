@@ -5,6 +5,7 @@ use serde_json::{Map, Value, json};
 
 mod bindings;
 mod data;
+mod diagnostics;
 mod flow;
 mod permissions;
 
@@ -36,6 +37,45 @@ fn tagged<const N: usize>(tag: &str, variant: &str, properties: [(&str, Value); 
 
 pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   let bounds = octacity_server_application::factory_configuration_document_bounds();
+  diagnostics::insert(schemas);
+  schemas.insert(
+    "FactoryFlowHumanGateBinding".to_owned(),
+    json!({"oneOf":[
+      tagged("operation", "escalation", [("outcomes", json!({"type":"object","minProperties":1,"maxProperties":3,
+        "propertyNames":{"enum":["acknowledge","resume","abort"]},"additionalProperties":key()}))], &["outcomes"]),
+      tagged("operation", "delivery", [("outcomes", object([("confirm", key())], &["confirm"]))], &["outcomes"]),
+      tagged("operation", "promotion", [("outcomes", object([("confirm", key())], &["confirm"]))], &["outcomes"]),
+    ]}),
+  );
+  schemas.insert("FactoryNodeOperationRequest".to_owned(), json!({"oneOf":[
+    tagged("operation", "escalation", [
+      ("disposition", json!({"type":"string","enum":["acknowledge","resume","abort"]})),
+      ("reason", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_FACTORY_OPERATOR_REASON_BYTES})),
+    ], &["disposition","reason"]),
+    tagged("operation", "delivery", [
+      ("disposition", json!({"const":"confirm"})), ("reason", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_FACTORY_OPERATOR_REASON_BYTES})),
+    ], &["disposition","reason"]),
+    tagged("operation", "promotion", [
+      ("disposition", json!({"const":"confirm"})), ("reason", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_FACTORY_OPERATOR_REASON_BYTES})),
+    ], &["disposition","reason"]),
+  ]}));
+  schemas.insert("FactoryNodeResponseRequest".to_owned(), object([
+    ("outcome", key()), ("value", json!({"description":"Bounded observations validated against the exact declared outcome schema; no lifecycle authority."})),
+  ], &["outcome","value"]));
+  schemas.insert("FactoryConfirmationRequest".to_owned(), object([], &[]));
+  schemas.insert(
+    "FactoryRunControlResponse".to_owned(),
+    object(
+      [
+        ("disposition", schema_ref("MutationDisposition")),
+        ("run_id", non_empty_string()),
+        ("version", positive_integer()),
+        ("state", schema_ref("FactoryRunState")),
+        ("cancellation_requested", boolean()),
+      ],
+      &["disposition", "run_id", "version", "state", "cancellation_requested"],
+    ),
+  );
   schemas.insert(
     "FactoryConfigurationValidation".to_owned(),
     object(

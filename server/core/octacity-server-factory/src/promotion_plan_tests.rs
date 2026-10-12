@@ -242,6 +242,14 @@ fn promotion_observations_bind_exact_scope_and_require_a_complete_passing_window
   observation
     .verify(&plan, &input, time(10), time(120), time(111))
     .unwrap();
+  let projection = serde_json::to_value(FlowDiscoveryFacts::promotion(&observation)).unwrap();
+  assert_eq!(projection["kind"], "promotion");
+  assert_eq!(projection["plan_digest"], plan.digest().unwrap().to_string());
+  assert_eq!(
+    projection["deployment"],
+    serde_json::to_value(&observation.deployment).unwrap()
+  );
+  assert!(projection.get("measurements").is_none());
   for mutate in 0..7 {
     let mut wrong = observation.clone();
     match mutate {

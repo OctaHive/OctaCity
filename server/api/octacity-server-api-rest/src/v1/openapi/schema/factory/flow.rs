@@ -125,6 +125,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("action", nullable(schema_ref("FactoryFlowAction"))),
         ("phase_pool", nullable(key())),
         ("gate", nullable(schema_ref("FactoryFlowGate"))),
+        ("operator_requests", nullable(schema_ref("FactoryFlowHumanGateBinding"))),
         ("input_binding", nullable(schema_ref("FactoryFlowInputBinding"))),
         ("context_binding", nullable(schema_ref("FactoryFlowContextBinding"))),
         ("build", nullable(schema_ref("FactoryFlowBuildBinding"))),

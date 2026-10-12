@@ -9,6 +9,9 @@ use serde_json::{Value, json};
 use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
+#[allow(dead_code)] // Shared deployment fixture; this test exercises ordinary CI/CD only.
+#[path = "support/factory_rest_fixture.rs"]
+mod factory_fixture;
 mod support;
 
 use support::{get_json, post_management, publish_policy_and_trigger_definition, resource_id, string};
@@ -20,10 +23,30 @@ use support::{get_json, post_management, publish_policy_and_trigger_definition, 
 #[tokio::test]
 #[ignore = "requires OCTACITY_POSTGRES_URL and a disposable PostgreSQL database"]
 async fn management_and_agent_http_complete_a_sequential_pipeline() {
+  verify_sequential_pipeline(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires OCTACITY_POSTGRES_URL and a disposable PostgreSQL database"]
+async fn ordinary_headless_pipeline_completes_with_factory_enabled_but_unused() {
+  verify_sequential_pipeline(true).await;
+}
+
+async fn verify_sequential_pipeline(factory_enabled: bool) {
   let postgres_url = std::env::var("OCTACITY_POSTGRES_URL").expect("OCTACITY_POSTGRES_URL must be set");
   let object_endpoint = std::env::var("OCTACITY_MINIO_ENDPOINT").unwrap_or_else(|_| "http://127.0.0.1:9000".to_owned());
   let directory = tempfile::tempdir().unwrap();
-  let config = runtime_config(directory.path(), &postgres_url, &object_endpoint);
+  let config = if factory_enabled {
+    octacity_server::ServerConfig::parse_toml(&support::runtime::runtime_config_source(
+      directory.path(),
+      &postgres_url,
+      &object_endpoint,
+      "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=5000\nbatch_size=4\nconcurrency=2",
+    ))
+    .unwrap()
+  } else {
+    runtime_config(directory.path(), &postgres_url, &object_endpoint)
+  };
   let pool = PgPoolOptions::new()
     .max_connections(4)
     .connect(&postgres_url)
@@ -31,7 +54,13 @@ async fn management_and_agent_http_complete_a_sequential_pipeline() {
     .unwrap();
   octacity_server_store_postgres::migrate(&pool).await.unwrap();
 
-  let runtime = ServerRuntime::start(config).await.unwrap();
+  let runtime = if factory_enabled {
+    ServerRuntime::start_with_factory(config, std::sync::Arc::new(factory_fixture::Installation))
+      .await
+      .unwrap()
+  } else {
+    ServerRuntime::start(config).await.unwrap()
+  };
   let management_origin = format!("http://{}", runtime.management_addr());
   let agent_origin = format!(
     "http://{}",

@@ -509,3 +509,273 @@ fn hidden_selected_repository_is_rejected_before_factory_revision_resolution() {
     assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
   });
 }
+
+#[test]
+fn factory_run_detail_cannot_disclose_a_run_owned_by_a_hidden_project() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let admission = admit(
+      &FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default())),
+      command(project, configuration, repository_id),
+    )
+    .await
+    .unwrap();
+    let policy = Arc::new(HideFactoryOwnerProject);
+    let queries = crate::AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryDiscoveryHandlers::with_policy(
+        store.clone(),
+        policy.clone(),
+      )),
+    );
+    let error = queries
+      .handle_query(
+        &context(),
+        crate::GetFactoryRunQuery {
+          run_id: admission.factory_run_id,
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    for collection in crate::FactoryDiagnosticCollection::ALL {
+      let error = queries
+        .handle_query(
+          &context(),
+          crate::ListFactoryDiagnosticsQuery::try_new(admission.factory_run_id, collection, None, 1).unwrap(),
+        )
+        .await
+        .unwrap_err();
+      assert_eq!(
+        error.application().unwrap().classification(),
+        ApplicationFailure::NotFound,
+        "{collection:?}"
+      );
+    }
+    let before = store.mutation_evidence_counts().await;
+    let operators = crate::AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryOperatorHandlers::new(store.clone(), policy)),
+    );
+    let error = operators
+      .handle_command(
+        &context(),
+        crate::CancelFactoryRunCommand {
+          run_id: admission.factory_run_id,
+          expected_version: octacity_server_factory::FactoryRunVersion::INITIAL,
+          idempotency_key: IdempotencyKey::new("hidden-run-cancellation").unwrap(),
+          requested_at: time(12),
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    let node = octacity_server_factory::NodeAttemptId::generate();
+    let error = operators
+      .handle_command(
+        &context(),
+        crate::RetryFactoryNodeCommand {
+          run_id: admission.factory_run_id,
+          node_attempt_id: node,
+          expected_version: octacity_server_factory::FactoryRunVersion::INITIAL,
+          idempotency_key: IdempotencyKey::new("hidden-node-retry").unwrap(),
+          requested_at: time(12),
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    let error = operators
+      .handle_command(
+        &context(),
+        crate::SubmitFactoryNodeResponseCommand {
+          run_id: admission.factory_run_id,
+          node_attempt_id: node,
+          outcome: "unseen".parse().unwrap(),
+          value: serde_json::json!(true),
+          expected_version: octacity_server_factory::FactoryRunVersion::INITIAL,
+          idempotency_key: IdempotencyKey::new("hidden-node-response").unwrap(),
+          requested_at: time(12),
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    let error = operators
+      .handle_command(
+        &context(),
+        crate::ConfirmFactoryNodeOperationCommand {
+          run_id: admission.factory_run_id,
+          node_attempt_id: node,
+          operation: octacity_server_factory::FlowHumanOperation::Promotion,
+          disposition: octacity_server_factory::FlowHumanDisposition::Confirm,
+          reason: octacity_server_factory::FactoryText::new("unseen request").unwrap(),
+          expected_version: octacity_server_factory::FactoryRunVersion::INITIAL,
+          idempotency_key: IdempotencyKey::new("hidden-node-request").unwrap(),
+          requested_at: time(12),
+        },
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    assert_eq!(
+      store.mutation_evidence_counts().await,
+      before,
+      "hidden parent must reject before mutation or audit"
+    );
+  });
+}
+
+struct HideFactoryOwnerProject;
+#[async_trait]
+impl ManagementAuthorizationPolicy for HideFactoryOwnerProject {
+  async fn authorize(
+    &self,
+    _context: &ManagementRequestContext,
+    _action: ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    Ok(ManagementAuthorizationGrant::new(
+      if resource.kind() == crate::ManagementResourceKind::Project {
+        ManagementVisibility::none()
+      } else {
+        ManagementVisibility::all()
+      },
+    ))
+  }
+}
+
+#[test]
+fn factory_cycle_collection_preserves_exact_causal_identity_and_rejects_foreign_cursors() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let admission = admit(
+      &FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default())),
+      command(project, configuration, repository_id),
+    )
+    .await
+    .unwrap();
+    let snapshot = store.factory_run_snapshot(admission.factory_run_id).await.unwrap();
+    let queries = crate::AuthorizedQueryHandler::new(
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(crate::FactoryDiscoveryHandlers::new(store)),
+    );
+    let collection = crate::FactoryDiagnosticCollection::WorkflowCycles;
+    let query = crate::ListFactoryDiagnosticsQuery::try_new(admission.factory_run_id, collection, None, 1).unwrap();
+    let page = queries.handle_query(&context(), query).await.unwrap();
+    let nodes = queries
+      .handle_query(
+        &context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          admission.factory_run_id,
+          crate::FactoryDiagnosticCollection::NodeAttempts,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert!(nodes.items.is_empty());
+    let budgets = queries
+      .handle_query(
+        &context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          admission.factory_run_id,
+          crate::FactoryDiagnosticCollection::Budgets,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      serde_json::to_value(&budgets.items[0]).unwrap()["record"]["usage"]["attempts"],
+      0
+    );
+    let builds = queries
+      .handle_query(
+        &context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          admission.factory_run_id,
+          crate::FactoryDiagnosticCollection::Builds,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert!(builds.items.is_empty());
+    let audit = queries
+      .handle_query(
+        &context(),
+        crate::ListFactoryDiagnosticsQuery::try_new(
+          admission.factory_run_id,
+          crate::FactoryDiagnosticCollection::Audit,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(audit.items.len(), 1);
+    assert!(
+      serde_json::to_value(&audit.items[0]).unwrap()["record"]
+        .get("actor_identity")
+        .is_none()
+    );
+    let json = serde_json::to_value(page).unwrap();
+    assert_eq!(json["items"][0]["kind"], "workflow_cycle");
+    assert_eq!(
+      json["items"][0]["record"]["id"],
+      snapshot.admitted_flow.initial_cycle().id().to_string()
+    );
+    assert_eq!(json["items"][0]["record"]["number"], 1);
+    assert!(json["items"][0]["record"].get("input").is_none());
+    assert!(
+      crate::ListFactoryDiagnosticsQuery::try_new(
+        admission.factory_run_id,
+        collection,
+        Some(&format!(
+          "1:{}:flow-runs:{}",
+          admission.factory_run_id,
+          snapshot.admitted_flow.root_run().id()
+        )),
+        1
+      )
+      .is_err()
+    );
+  });
+}

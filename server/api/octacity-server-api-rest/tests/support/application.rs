@@ -126,6 +126,7 @@ where
           queries.clone(),
           commands.clone(),
           queries.clone(),
+          commands.clone(),
         ),
       ),
       AgentManagementApplication::new(

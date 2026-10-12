@@ -12,6 +12,177 @@ use crate::{
   ManagementResourceKind, ManagementResourceResult, MutationDisposition,
   management_security::{audited_mutation, instance_resource},
 };
+/// Maximum UTF-8 bytes in a retained operator reason, shared with the core contract.
+pub const MAX_FACTORY_OPERATOR_REASON_BYTES: usize = octacity_server_factory::MAX_FACTORY_TEXT_BYTES;
+
+/// Schema-free transport intent; the server selects the exact retained HumanGate
+/// outcome contract. It never accepts a caller-authored schema or lifecycle fact.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SubmitFactoryNodeResponseCommand {
+  /// Owning Run.
+  pub run_id: FactoryRunId,
+  /// Exact immutable pending attempt.
+  pub node_attempt_id: octacity_server_factory::NodeAttemptId,
+  /// One configured finite outcome.
+  pub outcome: octacity_server_factory::FactoryKey,
+  /// Bounded observations validated against that outcome's pinned schema.
+  pub value: serde_json::Value,
+  /// Exact aggregate version shown to the operator.
+  pub expected_version: FactoryRunVersion,
+  /// Stable transport replay identity.
+  pub idempotency_key: IdempotencyKey,
+  /// Trusted request time.
+  pub requested_at: Timestamp,
+}
+impl Command for SubmitFactoryNodeResponseCommand {
+  type Outcome = FactoryRunControlCommandOutcome;
+}
+impl ManagementAuthorizationTarget for SubmitFactoryNodeResponseCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping = ResolveFactoryNodeCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    instance_resource(ManagementResourceKind::FactoryNodeAttempt, self.node_attempt_id)
+  }
+}
+
+/// Closed escalation, delivery or promotion confirmation for a pinned HumanGate.
+/// A confirmation cannot supply an outcome key, candidate, Decision or success.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ConfirmFactoryNodeOperationCommand {
+  /// Owning Run.
+  pub run_id: FactoryRunId,
+  /// Exact immutable operator gate attempt.
+  pub node_attempt_id: octacity_server_factory::NodeAttemptId,
+  /// Closed purpose matching the retained node binding.
+  pub operation: octacity_server_factory::FlowHumanOperation,
+  /// One bounded choice explicitly enabled by that binding.
+  pub disposition: octacity_server_factory::FlowHumanDisposition,
+  /// Bounded human reason retained in the private control journal.
+  pub reason: octacity_server_factory::FactoryText,
+  /// Exact aggregate version shown to the operator.
+  pub expected_version: FactoryRunVersion,
+  /// Stable scoped replay identity.
+  pub idempotency_key: IdempotencyKey,
+  /// Trusted acceptance time.
+  pub requested_at: Timestamp,
+}
+impl Command for ConfirmFactoryNodeOperationCommand {
+  type Outcome = FactoryRunControlCommandOutcome;
+}
+impl ManagementAuthorizationTarget for ConfirmFactoryNodeOperationCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping = ResolveFactoryNodeCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    instance_resource(ManagementResourceKind::FactoryNodeAttempt, self.node_attempt_id)
+  }
+}
+
+#[async_trait]
+impl<S: FactoryRunControlStore + octacity_server_store::FactoryRunStore + 'static>
+  crate::ManagementCommandUseCase<ConfirmFactoryNodeOperationCommand> for FactoryControlHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    grant: &crate::ManagementAuthorizationGrant,
+    command: ConfirmFactoryNodeOperationCommand,
+  ) -> Result<FactoryRunControlCommandOutcome, Self::Error> {
+    let snapshot = self.store.factory_run_snapshot(command.run_id).await?;
+    let node = configured_node(&snapshot, command.node_attempt_id)?;
+    let binding = node
+      .operator_requests()
+      .filter(|binding| binding.operation() == command.operation)
+      .ok_or_else(ApplicationError::invalid)?;
+    let outcome = binding
+      .outcome(command.disposition)
+      .cloned()
+      .ok_or_else(ApplicationError::invalid)?;
+    let schema = node
+      .outcome(&outcome)
+      .and_then(|outcome| snapshot.admitted_flow.data_schema(outcome.schema()))
+      .ok_or_else(ApplicationError::invalid)?;
+    let value = binding
+      .response(command.disposition, &command.reason)
+      .map_err(|_| ApplicationError::invalid())?;
+    let payload = octacity_server_factory::FlowPayload::new(schema, value).map_err(|_| ApplicationError::invalid())?;
+    self
+      .execute_management_command(
+        context,
+        grant,
+        ResolveFactoryNodeCommand {
+          run_id: command.run_id,
+          node_attempt_id: command.node_attempt_id,
+          outcome,
+          payload,
+          expected_version: command.expected_version,
+          idempotency_key: command.idempotency_key,
+          requested_at: command.requested_at,
+        },
+      )
+      .await
+  }
+}
+
+fn configured_node(
+  snapshot: &octacity_server_store::FactoryRunSnapshot,
+  attempt: octacity_server_factory::NodeAttemptId,
+) -> Result<&octacity_server_factory::FlowNodeDefinition, ApplicationError> {
+  let attempt = snapshot
+    .flow
+    .attempts
+    .iter()
+    .find(|node| node.id() == attempt)
+    .ok_or_else(ApplicationError::invalid)?;
+  snapshot
+    .flow
+    .runs
+    .iter()
+    .find(|flow| flow.id() == attempt.flow_run_id())
+    .and_then(|flow| snapshot.admitted_flow.closure().definition(flow.definition()))
+    .and_then(|definition| definition.node(attempt.node_key()))
+    .ok_or_else(ApplicationError::invalid)
+}
+
+#[async_trait]
+impl<S: FactoryRunControlStore + octacity_server_store::FactoryRunStore + 'static>
+  crate::ManagementCommandUseCase<SubmitFactoryNodeResponseCommand> for FactoryControlHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    grant: &crate::ManagementAuthorizationGrant,
+    command: SubmitFactoryNodeResponseCommand,
+  ) -> Result<FactoryRunControlCommandOutcome, Self::Error> {
+    let snapshot = self.store.factory_run_snapshot(command.run_id).await?;
+    let node = configured_node(&snapshot, command.node_attempt_id)?;
+    if node.operator_requests().is_some() {
+      return Err(ApplicationError::invalid());
+    }
+    let schema = node
+      .outcome(&command.outcome)
+      .and_then(|outcome| snapshot.admitted_flow.data_schema(outcome.schema()))
+      .ok_or_else(ApplicationError::invalid)?;
+    let payload =
+      octacity_server_factory::FlowPayload::new(schema, command.value).map_err(|_| ApplicationError::invalid())?;
+    // Only immutable declaration lookup precedes the atomic replay check. Active
+    // state, cycle and deadline eligibility remain under the store's Run lock.
+    self
+      .execute_management_command(
+        context,
+        grant,
+        ResolveFactoryNodeCommand {
+          run_id: command.run_id,
+          node_attempt_id: command.node_attempt_id,
+          outcome: command.outcome,
+          payload,
+          expected_version: command.expected_version,
+          idempotency_key: command.idempotency_key,
+          requested_at: command.requested_at,
+        },
+      )
+      .await
+  }
+}
 
 /// Requests durable cancellation of one non-terminal Factory Run.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -63,9 +234,9 @@ impl Command for ResolveFactoryNodeCommand {
 }
 impl ManagementAuthorizationTarget for ResolveFactoryNodeCommand {
   const AUTHORIZATION: ManagementAuthorizationMapping =
-    ManagementAuthorizationMapping::instance(ManagementAction::Execute, ManagementResourceKind::FactoryRun);
+    ManagementAuthorizationMapping::instance(ManagementAction::Execute, ManagementResourceKind::FactoryNodeAttempt);
   fn management_resource(&self) -> ManagementResourceResult {
-    instance_resource(ManagementResourceKind::FactoryRun, self.run_id)
+    instance_resource(ManagementResourceKind::FactoryNodeAttempt, self.node_attempt_id)
   }
 }
 #[async_trait]
@@ -117,9 +288,9 @@ impl Command for RetryFactoryNodeCommand {
 }
 impl ManagementAuthorizationTarget for RetryFactoryNodeCommand {
   const AUTHORIZATION: ManagementAuthorizationMapping =
-    ManagementAuthorizationMapping::instance(ManagementAction::Execute, ManagementResourceKind::FactoryRun);
+    ManagementAuthorizationMapping::instance(ManagementAction::Retry, ManagementResourceKind::FactoryNodeAttempt);
   fn management_resource(&self) -> ManagementResourceResult {
-    instance_resource(ManagementResourceKind::FactoryRun, self.run_id)
+    instance_resource(ManagementResourceKind::FactoryNodeAttempt, self.node_attempt_id)
   }
 }
 #[async_trait]

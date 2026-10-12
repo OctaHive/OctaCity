@@ -868,6 +868,78 @@ fn persisted_assessments_reapply_shape_and_exact_binding_invariants() {
 }
 
 #[test]
+fn decision_explanations_reject_oversized_links_and_empty_reasons() {
+  let fixture = fixture();
+  let decision = decide(
+    &fixture,
+    &policy(IndeterminatePolicy::RequiredOnly),
+    &[assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])],
+  )
+  .unwrap();
+  let public = serde_json::to_value(FlowDiscoveryFacts::decision(&decision)).unwrap();
+  for (field, maximum, reason) in [
+    ("assessment_ids", MAX_DECISION_ASSESSMENTS, false),
+    ("signal_receipt_ids", MAX_DECISION_SIGNAL_RECEIPTS, false),
+    ("reasons", MAX_DECISION_REASONS, true),
+  ] {
+    let mut invalid = public.clone();
+    invalid["explanation"][field] = serde_json::Value::Array(
+      (0..=maximum)
+        .map(|index| {
+          if reason {
+            serde_json::json!("PolicySatisfied")
+          } else {
+            serde_json::json!(uuid::Uuid::from_u128(index as u128 + 1).to_string())
+          }
+        })
+        .collect(),
+    );
+    assert!(
+      serde_json::from_value::<FlowDiscoveryFacts>(invalid).is_err(),
+      "{field} must retain its public collection bound"
+    );
+  }
+  let mut invalid = public;
+  invalid["explanation"]["reasons"] = serde_json::json!([]);
+  assert!(serde_json::from_value::<FlowDiscoveryFacts>(invalid).is_err());
+}
+
+#[test]
+fn rework_discovery_retains_safe_decision_explanation_and_exact_links() {
+  let fixture = fixture_with_test_outcome(DeterministicGateOutcome::Failed);
+  let policy = policy(IndeterminatePolicy::RequiredOnly);
+  let assessments = [assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])];
+  let decision = decide(&fixture, &policy, &assessments).unwrap();
+  let facts = FlowDiscoveryFacts::decision(&decision);
+  let public = serde_json::to_value(&facts).unwrap();
+  assert_eq!(public["outcome"], "rework");
+  let explanation = &public["explanation"];
+  assert_eq!(explanation["plan_id"], fixture.plan.id().to_string());
+  assert_eq!(explanation["assessment_ids"], serde_json::json!([assessments[0].id()]));
+  assert_eq!(explanation["signal_receipt_ids"], serde_json::json!([]));
+  assert_eq!(
+    explanation["reasons"],
+    serde_json::json!([{"RequiredEvidenceFailed":"tests"}])
+  );
+  assert_eq!(explanation["input_digest"], decision.input_digest().to_string());
+  assert_eq!(explanation["policy_digest"], policy.digest().to_string());
+  assert_eq!(explanation["policy_version"], serde_json::json!(policy.version()));
+  for private in ["summary", "findings", "prompt", "evidence", "payload"] {
+    assert!(explanation.get(private).is_none(), "{private}");
+  }
+  let restored: FlowDiscoveryFacts = serde_json::from_value(public).unwrap();
+  assert_eq!(restored, facts);
+  let legacy =
+    serde_json::json!({"kind":"decision","subject":decision.subject(),"id":decision.id(),"outcome":"rework"});
+  let restored: FlowDiscoveryFacts = serde_json::from_value(legacy.clone()).unwrap();
+  assert_eq!(
+    serde_json::to_value(restored).unwrap(),
+    legacy,
+    "historical result bytes remain stable"
+  );
+}
+
+#[test]
 fn a_decision_observation_cannot_promote_its_subject_to_the_current_candidate() {
   let fixture = fixture();
   let policy = policy(IndeterminatePolicy::RequiredOnly);
@@ -893,4 +965,26 @@ fn a_frozen_branch_context_cannot_replace_an_explicit_current_candidate() {
   );
   let declared = FlowDiscoveryFacts::candidate(current.clone());
   assert_eq!(declared.select_current_candidate(Some(old)), Some(&current));
+}
+
+#[test]
+fn safe_review_and_evidence_projections_omit_protected_material_and_findings() {
+  let fixture = fixture();
+  let assessment = assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![]);
+  let evidence = FlowDiscoveryFacts::evidence(&fixture.evidence).unwrap();
+  let review = FlowDiscoveryFacts::review_plan(&fixture.plan).unwrap();
+  let assessed = FlowDiscoveryFacts::assessment(&assessment).unwrap();
+  for (facts, kind, id) in [
+    (evidence, "evidence", fixture.evidence.id().to_string()),
+    (review, "review_plan", fixture.plan.id().to_string()),
+    (assessed, "assessment", assessment.id().to_string()),
+  ] {
+    assert_eq!(facts.candidate_subject(), Some(fixture.evidence.subject()));
+    let projection = serde_json::to_value(facts).unwrap();
+    assert_eq!(projection["kind"], kind);
+    assert_eq!(projection["id"], id);
+    for private in ["items", "inputs", "artifact", "findings", "summary", "criterion_packs"] {
+      assert!(projection.get(private).is_none(), "{kind}: {private}");
+    }
+  }
 }

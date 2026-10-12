@@ -37,7 +37,7 @@ pub(crate) async fn apply_control(
     format!("{}:{}", request.intent.operation(), request.idempotency_key.as_str()),
     request.requested_at,
     EntityKind::FactoryRun,
-    &request,
+    &request.replay_intent(),
   )?;
   let mut transaction = match mutation::begin(pool, &identity).await? {
     MutationStart::Fresh(transaction) => transaction,

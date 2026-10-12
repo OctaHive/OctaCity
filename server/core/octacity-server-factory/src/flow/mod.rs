@@ -1,5 +1,5 @@
 mod discovery;
-pub use discovery::FlowDiscoveryFacts;
+pub use discovery::{FlowDiscoveryFacts, FlowDiscoveryKind};
 mod stop;
 pub use stop::{FlowNodeStop, FlowNodeStopReason};
 mod action;
@@ -18,6 +18,8 @@ pub use build_intent::FlowBuildIntent;
 pub use build_provenance::{FlowBuildProvenance, FlowVerifiedBuildData, FlowVerifiedBuildOutput};
 mod data;
 mod gate;
+mod human;
+pub use human::{FlowHumanDisposition, FlowHumanGateBinding, FlowHumanOperation};
 mod predicate;
 pub use predicate::{FlowComparison, FlowGateProgram, FlowGateRule, FlowOperand, FlowPredicate, FlowQuantifier};
 mod incoming;

@@ -267,6 +267,55 @@ async fn an_operator_response_resumes_an_exact_human_node_after_postgres_restart
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn pinned_operator_requests_preserve_purpose_and_replay_in_postgres() {
+  for (operation, disposition, purpose, choice) in [
+    (
+      FlowHumanOperation::Delivery,
+      FlowHumanDisposition::Confirm,
+      "delivery",
+      "confirm",
+    ),
+    (
+      FlowHumanOperation::Promotion,
+      FlowHumanDisposition::Confirm,
+      "promotion",
+      "confirm",
+    ),
+    (
+      FlowHumanOperation::Escalation,
+      FlowHumanDisposition::Resume,
+      "escalation",
+      "resume",
+    ),
+  ] {
+    let database = postgres_support::TestDatabase::migrated().await;
+    let binding = FlowHumanGateBinding::new(
+      operation,
+      std::collections::BTreeMap::from([(disposition, key("approved"))]),
+    )
+    .unwrap();
+    let schema = FlowDataSchema::new(
+      key("operator.response"),
+      key("v1"),
+      binding.response_shape(disposition).unwrap(),
+    )
+    .unwrap();
+    let admission = human_contract::human_fixture_with_binding(schema, Some(binding.clone()));
+    let store = admit(&database.pool, &admission).await;
+    human_contract::verify_operator_confirmation(
+      store,
+      &admission,
+      &binding,
+      disposition,
+      serde_json::json!({"operation":purpose,"disposition":choice,"reason":"request review publication"}),
+    )
+    .await;
+    database.cleanup().await;
+  }
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn technical_cancellation_resumes_without_a_business_outcome_after_postgres_restart() {
   let database = postgres_support::TestDatabase::migrated().await;
   let admission = human_contract::human_fixture();
@@ -1609,13 +1658,15 @@ async fn production_factory_owner_uses_installed_bindings_and_recovers_the_same_
     directory.path(),
     url.as_str(),
     &std::env::var("OCTACITY_MINIO_ENDPOINT").unwrap(),
-    "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=100\nbatch_size=4\nconcurrency=2",
+    // Real PostgreSQL snapshots must fit within the lease even under the parallel
+    // migration suite. Expired claims are verified separately with controlled time.
+    "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=5000\nbatch_size=4\nconcurrency=2",
   ))
   .unwrap();
   let runtime = octacity_server::ServerRuntime::start_with_factory(config.clone(), installer.clone())
     .await
     .unwrap();
-  tokio::time::timeout(std::time::Duration::from_secs(5), node.observed.notified())
+  tokio::time::timeout(std::time::Duration::from_secs(15), node.observed.notified())
     .await
     .unwrap();
   let frozen = store.factory_run_snapshot(admission.run.id()).await.unwrap();
@@ -1665,7 +1716,7 @@ async fn production_factory_owner_uses_installed_bindings_and_recovers_the_same_
   let restarted = octacity_server::ServerRuntime::start_with_factory(config, installer)
     .await
     .unwrap();
-  tokio::time::timeout(std::time::Duration::from_secs(5), node.observed.notified())
+  tokio::time::timeout(std::time::Duration::from_secs(15), node.observed.notified())
     .await
     .unwrap();
   tokio::time::timeout(std::time::Duration::from_secs(5), async {

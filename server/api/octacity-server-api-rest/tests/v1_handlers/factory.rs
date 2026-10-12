@@ -1,5 +1,113 @@
 use super::*;
 use octacity_server_application::{FactoryConfigurationPageProjection, ListProjectFactoryConfigurationsQuery};
+#[async_trait]
+impl ManagementCommandUseCase<octacity_server_application::ConfirmFactoryNodeOperationCommand>
+  for RecordingApplication
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    command: octacity_server_application::ConfirmFactoryNodeOperationCommand,
+  ) -> Result<octacity_server_application::FactoryRunControlCommandOutcome, Self::Error> {
+    self.record("confirm_factory_node_operation");
+    assert_eq!(
+      command.node_attempt_id.to_string(),
+      "44444444-4444-4444-8444-444444444444"
+    );
+    assert_eq!(command.reason.as_str(), "operator confirmation");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(octacity_server_application::FactoryRunControlCommandOutcome {
+      disposition: octacity_server_application::MutationDisposition::Applied,
+      run_id: command.run_id,
+      version: serde_json::from_value(serde_json::json!(2)).unwrap(),
+      state: "running".parse().unwrap(),
+      cancellation_requested: false,
+    })
+  }
+}
+#[async_trait]
+impl ManagementCommandUseCase<octacity_server_application::RetryFactoryNodeCommand> for RecordingApplication {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    command: octacity_server_application::RetryFactoryNodeCommand,
+  ) -> Result<octacity_server_application::FactoryRunControlCommandOutcome, Self::Error> {
+    self.record("retry_factory_node");
+    assert_eq!(
+      command.node_attempt_id.to_string(),
+      "44444444-4444-4444-8444-444444444444"
+    );
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(octacity_server_application::FactoryRunControlCommandOutcome {
+      disposition: octacity_server_application::MutationDisposition::Applied,
+      run_id: command.run_id,
+      version: serde_json::from_value(serde_json::json!(2)).unwrap(),
+      state: "running".parse().unwrap(),
+      cancellation_requested: false,
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementCommandUseCase<octacity_server_application::SubmitFactoryNodeResponseCommand> for RecordingApplication {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    command: octacity_server_application::SubmitFactoryNodeResponseCommand,
+  ) -> Result<octacity_server_application::FactoryRunControlCommandOutcome, Self::Error> {
+    self.record("submit_factory_node_response");
+    assert_eq!(
+      command.node_attempt_id.to_string(),
+      "44444444-4444-4444-8444-444444444444"
+    );
+    assert_eq!(command.outcome.as_str(), "operator-chosen");
+    assert_eq!(command.value, serde_json::json!(true));
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(octacity_server_application::FactoryRunControlCommandOutcome {
+      disposition: octacity_server_application::MutationDisposition::Applied,
+      run_id: command.run_id,
+      version: serde_json::from_value(serde_json::json!(2)).unwrap(),
+      state: "running".parse().unwrap(),
+      cancellation_requested: false,
+    })
+  }
+}
+
+#[async_trait]
+impl ManagementCommandUseCase<octacity_server_application::CancelFactoryRunCommand> for RecordingApplication {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    command: octacity_server_application::CancelFactoryRunCommand,
+  ) -> Result<octacity_server_application::FactoryRunControlCommandOutcome, Self::Error> {
+    self.record("cancel_factory_run");
+    assert_eq!(command.expected_version.get(), 1);
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(octacity_server_application::FactoryRunControlCommandOutcome {
+      disposition: octacity_server_application::MutationDisposition::Applied,
+      run_id: command.run_id,
+      version: serde_json::from_value(serde_json::json!(2)).unwrap(),
+      state: "running".parse().unwrap(),
+      cancellation_requested: true,
+    })
+  }
+}
 
 #[async_trait]
 impl ManagementQueryUseCase<ListProjectFactoryConfigurationsQuery> for RecordingApplication {
@@ -794,24 +902,10 @@ impl ManagementQueryUseCase<octacity_server_application::ListFactoryRunsQuery> f
       .as_ref()
       .is_some_and(|source| source.as_str() == "summary-contract")
     {
-      let exact = serde_json::json!({"project_id":"11111111-1111-4111-8111-111111111111", "repository_id":"33333333-3333-4333-8333-333333333333", "base_revision":"exact-base"});
-      let candidate =
-        serde_json::json!({"exact":exact,"candidate_revision":"exact-candidate","changeset_digest":"ab".repeat(32)});
       return Ok(octacity_server_application::FactoryRunPageProjection {
-        total:1, next_cursor:None, items:vec![octacity_server_application::FactoryRunSummaryProjection {
-          id:"22222222-2222-4222-8222-222222222222".parse().unwrap(),
-          project_id:"11111111-1111-4111-8111-111111111111".parse().unwrap(),
-          work_id:"44444444-4444-4444-8444-444444444444".parse().unwrap(),
-          configuration_id:"55555555-5555-4555-8555-555555555555".parse().unwrap(),
-          configuration_version:serde_json::from_value(serde_json::json!(1)).unwrap(),
-          source:"manual".parse().unwrap(), external_identity:"operator/work".parse().unwrap(),
-          state:"admitted".parse().unwrap(), version:serde_json::from_value(serde_json::json!(1)).unwrap(),
-          admitted_at:serde_json::from_value(serde_json::json!(1)).unwrap(), updated_at:serde_json::from_value(serde_json::json!(1)).unwrap(),
-          diagnostics:serde_json::from_value(serde_json::json!({"base_revision":"exact-base","candidate":candidate,"current_nodes":[],"active_node_count":0,
-            "budget":{"usage":{"attempts":1,"elapsed_millis":0,"tokens":0,"cost_micro_units":0,"output_bytes":0},"limit":{"max_attempts":4,"max_elapsed_millis":1000,"max_tokens":0,"max_cost_micro_units":0,"max_output_bytes":0}},
-            "latest_decision":{"id":"88888888-8888-4888-8888-888888888888","subject":candidate,"outcome":"accept"},
-            "delivery":null,"escalation":null})).unwrap(),
-        }],
+        total: 1,
+        next_cursor: None,
+        items: vec![factory_run_summary_fixture()],
       });
     }
     Ok(octacity_server_application::FactoryRunPageProjection {
@@ -1021,4 +1115,639 @@ async fn malformed_factory_limits_return_field_diagnostics_before_dispatch() {
   assert_eq!(body["diagnostics"]["errors"][0]["field"], "/wip_limits/max_active_runs");
   assert_eq!(body["diagnostics"]["errors"][0]["code"], "invalid_contract");
   assert!(application.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn factory_run_detail_returns_safe_current_facts_and_a_strong_precondition() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let response = routes
+    .oneshot(empty_request(
+      "GET",
+      "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222",
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers()["etag"], "\"1\"");
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["id"], "22222222-2222-4222-8222-222222222222");
+  assert_eq!(body["diagnostics"]["latest_decision"]["outcome"], "accept");
+  assert!(body.get("task").is_none());
+  assert!(body.get("context").is_none());
+  assert_json_matches_component(&openapi_document(), "FactoryRunSummaryResource", &body);
+}
+
+fn factory_run_summary_fixture() -> octacity_server_application::FactoryRunSummaryProjection {
+  let exact = serde_json::json!({"project_id":"11111111-1111-4111-8111-111111111111", "repository_id":"33333333-3333-4333-8333-333333333333", "base_revision":"exact-base"});
+  let candidate =
+    serde_json::json!({"exact":exact,"candidate_revision":"exact-candidate","changeset_digest":"ab".repeat(32)});
+  octacity_server_application::FactoryRunSummaryProjection {
+          id:"22222222-2222-4222-8222-222222222222".parse().unwrap(),
+          project_id:"11111111-1111-4111-8111-111111111111".parse().unwrap(),
+          work_id:"44444444-4444-4444-8444-444444444444".parse().unwrap(),
+          configuration_id:"55555555-5555-4555-8555-555555555555".parse().unwrap(),
+          configuration_version:serde_json::from_value(serde_json::json!(1)).unwrap(),
+          source:"manual".parse().unwrap(), external_identity:"operator/work".parse().unwrap(),
+          state:"admitted".parse().unwrap(), version:serde_json::from_value(serde_json::json!(1)).unwrap(),
+          admitted_at:serde_json::from_value(serde_json::json!(1)).unwrap(), updated_at:serde_json::from_value(serde_json::json!(1)).unwrap(),
+          diagnostics:serde_json::from_value(serde_json::json!({"base_revision":"exact-base","candidate":candidate,"current_nodes":[],"active_node_count":0,
+            "budget":{"usage":{"attempts":1,"elapsed_millis":0,"tokens":0,"cost_micro_units":0,"output_bytes":0},"limit":{"max_attempts":4,"max_elapsed_millis":1000,"max_tokens":0,"max_cost_micro_units":0,"max_output_bytes":0}},
+            "latest_decision":{"id":"88888888-8888-4888-8888-888888888888","subject":candidate,"outcome":"accept"},
+            "delivery":null,"escalation":null})).unwrap(),
+        }
+}
+#[async_trait]
+impl ManagementQueryUseCase<octacity_server_application::GetFactoryRunQuery> for RecordingApplication {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: octacity_server_application::GetFactoryRunQuery,
+  ) -> Result<octacity_server_application::FactoryRunSummaryProjection, ApplicationError> {
+    self.record("get_factory_run");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    let fixture = factory_run_summary_fixture();
+    assert_eq!(query.run_id, fixture.id);
+    Ok(fixture)
+  }
+}
+
+#[tokio::test]
+async fn factory_flow_collection_is_bounded_and_omits_execution_inputs() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let response = routes
+    .oneshot(empty_request(
+      "GET",
+      "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/flow-runs?limit=1",
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["items"][0]["kind"], "flow_run");
+  assert_eq!(body["items"][0]["record"]["definition"]["version"], 1);
+  assert!(body["items"][0]["record"].get("input").is_none());
+  assert_json_matches_component(&openapi_document(), "FactoryDiagnosticPage", &body);
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<octacity_server_application::ListFactoryDiagnosticsQuery> for RecordingApplication {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: octacity_server_application::ListFactoryDiagnosticsQuery,
+  ) -> Result<octacity_server_application::FactoryDiagnosticPage, ApplicationError> {
+    self.record("list_factory_diagnostics");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    assert_eq!(query.limit(), 1);
+    if let Some(facts) = factory_domain_fact_fixture(query.collection()) {
+      return Ok(octacity_server_application::FactoryDiagnosticPage {
+        items: vec![
+          serde_json::from_value(serde_json::json!({"kind":"domain_fact","record":{
+            "id":"ab".repeat(32), "node_attempt_id":"44444444-4444-4444-8444-444444444444",
+            "flow_run_id":"22222222-2222-4222-8222-222222222222", "cycle_id":"22222222-2222-4222-8222-222222222222",
+            "input_digest":"ac".repeat(32), "observed_at":2, "facts":facts
+          }}))
+          .unwrap(),
+        ],
+        next_cursor: None,
+      });
+    }
+    if query.collection() == octacity_server_application::FactoryDiagnosticCollection::Calls {
+      return Ok(octacity_server_application::FactoryDiagnosticPage {
+        items: vec![serde_json::from_value(serde_json::json!({"kind":"call","record":{
+          "node":{"id":"44444444-4444-4444-8444-444444444444","factory_run_id":"22222222-2222-4222-8222-222222222222",
+            "flow_run_id":"22222222-2222-4222-8222-222222222222","cycle_id":"22222222-2222-4222-8222-222222222222",
+            "node_key":"arbitrary","node_kind":"reasoning","number":1,"input_digest":"ab".repeat(32),
+            "execution":{"kind":"external","identity":{"identity":"installed","version":"v1","digest":"ab".repeat(32)}},
+            "started_at":1,"deadline":10000,"retry_of":null},
+          "profile":{"operation_id":"ab".repeat(32),"context_id":"88888888-8888-4888-8888-888888888888","context_digest":"ac".repeat(32),
+            "tool":{"identity":"harness","version":"v1","digest":"ab".repeat(32)},
+            "plugin":{"identity":"runner","version":"v1","digest":"ab".repeat(32)},
+            "model_or_tool":{"identity":"model","version":"v1","digest":"ab".repeat(32)},
+            "task_digest":"ad".repeat(32),"permission_digest":"ae".repeat(32),
+            "build_configuration":{"id":"55555555-5555-4555-8555-555555555555","version":1,"project_id":"11111111-1111-4111-8111-111111111111","definition_digest":"ab".repeat(32)}}
+        }})).unwrap()], next_cursor: None,
+      });
+    }
+    let terminal = match query.collection() {
+      octacity_server_application::FactoryDiagnosticCollection::Work => {
+        Some(serde_json::json!({"kind":"work","record":{
+          "id":"44444444-4444-4444-8444-444444444444",
+          "configuration":{"id":"55555555-5555-4555-8555-555555555555","version":1,"project_id":"11111111-1111-4111-8111-111111111111","definition_digest":"ab".repeat(32)},
+          "external_identity":"operator/work", "subject":factory_domain_fact_fixture(octacity_server_application::FactoryDiagnosticCollection::Escalations).unwrap()["subject"],
+          "priority":10,"risk":"medium"
+        }}))
+      }
+      octacity_server_application::FactoryDiagnosticCollection::NodeCompletions => {
+        Some(serde_json::json!({"kind":"node_completion","record":{
+          "id":"ab".repeat(32),"node_attempt_id":"44444444-4444-4444-8444-444444444444",
+          "flow_run_id":"22222222-2222-4222-8222-222222222222","cycle_id":"22222222-2222-4222-8222-222222222222",
+          "node_key":"arbitrary","outcome":"declared-result","output_schema":{"identity":"result","version":"v1","digest":"ab".repeat(32)},
+          "output_digest":"ac".repeat(32),"usage":{"attempts":0,"elapsed_millis":0,"tokens":0,"cost_micro_units":0,"output_bytes":0},"observed_at":20
+        }}))
+      }
+      octacity_server_application::FactoryDiagnosticCollection::NodeStops => {
+        Some(serde_json::json!({"kind":"node_stop","record":{
+          "id":"ab".repeat(32),"node_attempt_id":"44444444-4444-4444-8444-444444444444","reason":{"kind":"execution_failed"},
+          "usage":{"attempts":0,"elapsed_millis":0,"tokens":0,"cost_micro_units":0,"output_bytes":0},"execution":null,"observed_at":20
+        }}))
+      }
+      _ => None,
+    };
+    if let Some(record) = terminal {
+      return Ok(octacity_server_application::FactoryDiagnosticPage {
+        items: vec![serde_json::from_value(record).unwrap()],
+        next_cursor: None,
+      });
+    }
+    let other = match query.collection() {
+      octacity_server_application::FactoryDiagnosticCollection::Builds => {
+        Some(serde_json::json!({"kind":"build","record":{
+          "id":"ab".repeat(32),"operation_id":"ac".repeat(32),"node_attempt_id":"44444444-4444-4444-8444-444444444444",
+          "build_id":"55555555-5555-4555-8555-555555555555","attempt_id":"66666666-6666-4666-8666-666666666666",
+          "jobs":["77777777-7777-4777-8777-777777777777"]
+        }}))
+      }
+      octacity_server_application::FactoryDiagnosticCollection::Budgets => {
+        Some(serde_json::json!({"kind":"budget","record":{
+          "id":"ab".repeat(32),"run_version":1,"usage":{"attempts":0,"elapsed_millis":0,"tokens":0,"cost_micro_units":0,"output_bytes":0},"recorded_at":1
+        }}))
+      }
+      octacity_server_application::FactoryDiagnosticCollection::Audit => {
+        Some(serde_json::json!({"kind":"audit","record":{
+          "id":"ab".repeat(32),"run_id":"22222222-2222-4222-8222-222222222222","actor_kind":"unauthenticated_management",
+          "actor_identity_digest":null,"operation":"factory.admitted","request_identity_digest":"ac".repeat(32),"outcome":"applied","recorded_at":1
+        }}))
+      }
+      _ => None,
+    };
+    if let Some(record) = other {
+      return Ok(octacity_server_application::FactoryDiagnosticPage {
+        items: vec![serde_json::from_value(record).unwrap()],
+        next_cursor: None,
+      });
+    }
+    if query.collection() == octacity_server_application::FactoryDiagnosticCollection::NodeAttempts {
+      return Ok(octacity_server_application::FactoryDiagnosticPage {
+        items: vec![
+          serde_json::from_value(serde_json::json!({"kind":"node_attempt","record":{
+            "id":"44444444-4444-4444-8444-444444444444","factory_run_id":"22222222-2222-4222-8222-222222222222",
+            "flow_run_id":"22222222-2222-4222-8222-222222222222","cycle_id":"22222222-2222-4222-8222-222222222222",
+            "node_key":"arbitrary","node_kind":"human_gate","number":1,"input_digest":"ab".repeat(32),
+            "execution":{"kind":"built_in"},"started_at":1,"deadline":10000,"retry_of":null
+          }}))
+          .unwrap(),
+        ],
+        next_cursor: None,
+      });
+    }
+    if query.collection() == octacity_server_application::FactoryDiagnosticCollection::WorkflowCycles {
+      return Ok(octacity_server_application::FactoryDiagnosticPage {
+        items: vec![
+          serde_json::from_value(serde_json::json!({"kind":"workflow_cycle","record":{
+            "id":"22222222-2222-4222-8222-222222222222","flow_run_id":"22222222-2222-4222-8222-222222222222",
+            "number":1,"predecessor":null
+          }}))
+          .unwrap(),
+        ],
+        next_cursor: None,
+      });
+    }
+    Ok(octacity_server_application::FactoryDiagnosticPage {
+      items: vec![
+        serde_json::from_value(serde_json::json!({"kind":"flow_run","record":{
+          "id":"22222222-2222-4222-8222-222222222222","factory_run_id":"22222222-2222-4222-8222-222222222222",
+          "definition":{"id":"33333333-3333-4333-8333-333333333333","version":1,"digest":"ab".repeat(32)},"parent":null
+        }}))
+        .unwrap(),
+      ],
+      next_cursor: None,
+    })
+  }
+}
+
+#[tokio::test]
+async fn factory_cycle_collection_matches_the_published_openapi_contract() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let response = routes
+    .oneshot(empty_request(
+      "GET",
+      "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/workflow-cycles?limit=1",
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["items"][0]["kind"], "workflow_cycle");
+  assert_json_matches_component(&openapi_document(), "FactoryDiagnosticPage", &body);
+}
+
+#[tokio::test]
+async fn factory_node_collection_has_an_explicit_safe_openapi_projection() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let response = routes
+    .oneshot(empty_request(
+      "GET",
+      "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/node-attempts?limit=1",
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["items"][0]["kind"], "node_attempt");
+  assert_json_matches_component(&openapi_document(), "FactoryDiagnosticPage", &body);
+}
+
+#[tokio::test]
+async fn factory_build_budget_and_audit_collections_match_safe_openapi_schemas() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  for (collection, kind) in [("builds", "build"), ("budgets", "budget"), ("audit", "audit")] {
+    let response = routes
+      .clone()
+      .oneshot(empty_request(
+        "GET",
+        &format!("/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/{collection}?limit=1"),
+        None,
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "{collection}");
+    let body: serde_json::Value =
+      serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["items"][0]["kind"], kind);
+    assert_json_matches_component(&openapi_document(), "FactoryDiagnosticPage", &body);
+  }
+}
+
+fn factory_domain_fact_fixture(
+  collection: octacity_server_application::FactoryDiagnosticCollection,
+) -> Option<serde_json::Value> {
+  use octacity_server_application::FactoryDiagnosticCollection::*;
+  let candidate = serde_json::to_value(factory_run_summary_fixture().diagnostics.candidate.unwrap()).unwrap();
+  let exact = candidate["exact"].clone();
+  let id = "88888888-8888-4888-8888-888888888888";
+  let reference = serde_json::json!({"identity":"installed","version":"v1","digest":"ab".repeat(32)});
+  Some(match collection {
+    ChangeSets => {
+      serde_json::json!({"kind":"changeset","subject":candidate,"id":id,"node_attempt_id":"44444444-4444-4444-8444-444444444444"})
+    }
+    Evidence => {
+      serde_json::json!({"kind":"evidence","subject":candidate,"id":id,"changeset_id":id,"digest":"ab".repeat(32),"item_count":1})
+    }
+    ReviewPlans => {
+      serde_json::json!({"kind":"review_plan","subject":candidate,"id":id,"evidence_id":id,"digest":"ab".repeat(32),"purpose":"verification","required_quorum":1,"deadline":1000})
+    }
+    Assessments => {
+      serde_json::json!({"kind":"assessment","subject":candidate,"id":id,"plan_id":id,"digest":"ab".repeat(32),"evaluator":reference,"model":reference,"prompt_digest":"ac".repeat(32),"outcome":"satisfied"})
+    }
+    Decisions => serde_json::json!({"kind":"decision","subject":candidate,"id":id,"outcome":"rework",
+      "explanation":{"plan_id":"77777777-7777-4777-8777-777777777777", "assessment_ids":[id],"signal_receipt_ids":[],
+        "reasons":[{"RequiredEvidenceFailed":"contract_tests"}],"input_digest":"ac".repeat(32),"policy_version":1,"policy_digest":"ad".repeat(32)}}),
+    Delivery => serde_json::json!({"kind":"delivery","subject":candidate,"id":id,"decision_id":id,"state":"succeeded"}),
+    Escalations => serde_json::json!({"kind":"escalation","subject":exact,"id":id}),
+    Reporting => serde_json::json!({"kind":"reporting","subject":exact,"id":id,"number":1,"state":"succeeded"}),
+    Promotion => {
+      serde_json::json!({"kind":"promotion","subject":candidate,"plan_digest":"ab".repeat(32),"input_digest":"ac".repeat(32),"environment_contract":reference,"deployment":reference,"outcome":"passed","started_at":1,"finished_at":100})
+    }
+    DecisionSignals => {
+      serde_json::json!({"kind":"decision_signal","subject":exact,"id":id,"request_id":id,"receipt_digest":"ab".repeat(32),"input_digest":"ac".repeat(32),"frozen_input_digest":"ad".repeat(32),"question_set":reference,"probability_semantics":reference,"provider":reference,"adapter":reference,"model":reference,"policy":reference,"state":"completed",
+      "consumption":{"baseline":{"Route":"baseline"},"recommendation":{"Route":"fast"},"final_disposition":{"Route":"baseline"},"kind":"Advisory"}})
+    }
+    _ => return None,
+  })
+}
+
+#[tokio::test]
+async fn factory_input_sources_document_the_actual_retained_record_views() {
+  let document = openapi_document();
+  assert_eq!(
+    document["components"]["schemas"]["FactoryFlowRecordView"]["enum"],
+    serde_json::json!(["payload", "metadata"])
+  );
+  for view in ["payload", "metadata"] {
+    assert_json_matches_component(
+      &document,
+      "FactoryFlowInputSource",
+      &serde_json::json!({"source":"predecessor","view":view,"path":""}),
+    );
+  }
+}
+
+#[tokio::test]
+async fn factory_domain_collections_publish_safe_typed_openapi_facts() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  for collection in octacity_server_application::FactoryDiagnosticCollection::ALL {
+    let Some(expected) = factory_domain_fact_fixture(collection) else {
+      continue;
+    };
+    let response = routes
+      .clone()
+      .oneshot(empty_request(
+        "GET",
+        &format!(
+          "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/{}?limit=1",
+          collection.as_str()
+        ),
+        None,
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "{collection:?}");
+    let body: serde_json::Value =
+      serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["items"][0]["record"]["facts"], expected);
+    assert_json_matches_component(&openapi_document(), "FactoryDiagnosticPage", &body);
+  }
+}
+
+#[tokio::test]
+async fn factory_calls_publish_frozen_task_metadata_without_context_entries() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let response = routes
+    .oneshot(empty_request(
+      "GET",
+      "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/calls?limit=1",
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["items"][0]["kind"], "call");
+  assert!(body["items"][0]["record"]["profile"].get("entries").is_none());
+  assert_json_matches_component(&openapi_document(), "FactoryDiagnosticPage", &body);
+}
+
+#[tokio::test]
+async fn factory_work_completions_and_stops_have_distinct_safe_openapi_records() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  for (collection, kind) in [
+    ("work", "work"),
+    ("node-completions", "node_completion"),
+    ("node-stops", "node_stop"),
+  ] {
+    let response = routes
+      .clone()
+      .oneshot(empty_request(
+        "GET",
+        &format!("/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/{collection}?limit=1"),
+        None,
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: serde_json::Value =
+      serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_eq!(body["items"][0]["kind"], kind);
+    assert!(body["items"][0]["record"].get("ownership").is_none());
+    assert_json_matches_component(&openapi_document(), "FactoryDiagnosticPage", &body);
+  }
+}
+
+#[tokio::test]
+async fn diagnostic_pages_reject_unbounded_or_foreign_cursors_before_dispatch() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  for parameters in [
+    "limit=0",
+    "limit=101",
+    "limit=1&offset=1",
+    "limit=1&after=invalid",
+    "limit=1&after=1:33333333-3333-4333-8333-333333333333:flow-runs:44444444-4444-4444-8444-444444444444",
+    "limit=1&after=1:22222222-2222-4222-8222-222222222222:workflow-cycles:44444444-4444-4444-8444-444444444444",
+    "limit=1&after=1:22222222-2222-4222-8222-222222222222:flow-runs:bad-identity",
+  ] {
+    let response = routes
+      .clone()
+      .oneshot(empty_request(
+        "GET",
+        &format!("/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/flow-runs?{parameters}"),
+        None,
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{parameters}");
+  }
+  assert!(application.calls.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn cancellation_requires_a_precondition_and_returns_a_typed_correlated_receipt() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let path = "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/cancellations";
+  let response = routes
+    .clone()
+    .oneshot(json_request("POST", path, "cancel-run", Some("\"1\""), "{}"))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers().get("etag").unwrap(), "\"2\"");
+  assert!(response.headers().contains_key("x-request-id"));
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["cancellation_requested"], true);
+  assert_eq!(body["run_id"], "22222222-2222-4222-8222-222222222222");
+  assert_json_matches_component(&openapi_document(), "FactoryRunControlResponse", &body);
+  let response = routes
+    .oneshot(json_request("POST", path, "cancel-run", None, "{}"))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::PRECONDITION_REQUIRED);
+  assert_eq!(*application.calls.lock().unwrap(), ["cancel_factory_run"]);
+}
+
+#[tokio::test]
+async fn human_response_addresses_an_exact_attempt_without_a_caller_supplied_schema() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let path =
+    "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/nodes/44444444-4444-4444-8444-444444444444/responses";
+  let response = routes
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      path,
+      "node-response",
+      Some("\"1\""),
+      r#"{"outcome":"operator-chosen","value":true}"#,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["cancellation_requested"], false);
+  assert_json_matches_component(&openapi_document(), "FactoryRunControlResponse", &body);
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      path,
+      "node-response",
+      Some("\"1\""),
+      r#"{"outcome":"operator-chosen","value":true,"state":"completed"}"#,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(*application.calls.lock().unwrap(), ["submit_factory_node_response"]);
+}
+
+#[tokio::test]
+async fn retry_confirms_the_exact_attempt_and_rejects_a_caller_defined_next_state() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let path =
+    "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/nodes/44444444-4444-4444-8444-444444444444/retries";
+  let response = routes
+    .clone()
+    .oneshot(json_request("POST", path, "retry-node", Some("\"1\""), "{}"))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_json_matches_component(&openapi_document(), "FactoryRunControlResponse", &body);
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      path,
+      "retry-node",
+      Some("\"1\""),
+      r#"{"state":"running"}"#,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(*application.calls.lock().unwrap(), ["retry_factory_node"]);
+}
+
+#[tokio::test]
+async fn operator_requests_expose_only_closed_dispositions_and_a_bounded_reason() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let path =
+    "/api/v1/factory-runs/22222222-2222-4222-8222-222222222222/nodes/44444444-4444-4444-8444-444444444444/requests";
+  for (operation, disposition) in [
+    ("escalation", "resume"),
+    ("delivery", "confirm"),
+    ("promotion", "confirm"),
+  ] {
+    let request = serde_json::json!({"operation":operation,"disposition":disposition,"reason":"operator confirmation"});
+    let response = routes
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        path,
+        operation,
+        Some("\"1\""),
+        &request.to_string(),
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::OK, "{operation}");
+    assert_json_matches_component(&openapi_document(), "FactoryNodeOperationRequest", &request);
+    let body: serde_json::Value =
+      serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+    assert_json_matches_component(&openapi_document(), "FactoryRunControlResponse", &body);
+  }
+  for invalid in [
+    serde_json::json!({"operation":"delivery","disposition":"resume","reason":"operator confirmation"}),
+    serde_json::json!({"operation":"delivery","disposition":"confirm","reason":"operator confirmation","candidate_digest":"ab".repeat(32)}),
+    serde_json::json!({"operation":"future","disposition":"confirm","reason":"operator confirmation"}),
+    serde_json::json!({"operation":"delivery","disposition":"confirm","reason":""}),
+  ] {
+    let response = routes
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        path,
+        "bad-request",
+        Some("\"1\""),
+        &invalid.to_string(),
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  }
+  assert_eq!(
+    *application.calls.lock().unwrap(),
+    ["confirm_factory_node_operation"; 3]
+  );
+}
+
+#[test]
+fn operator_gate_bindings_are_part_of_the_closed_flow_authoring_grammar() {
+  let mut node = flow_draft_request()["definition"]["root"]["nodes"][0].clone();
+  node["kind"] = serde_json::json!("human_gate");
+  for operation in ["delivery", "promotion", "escalation"] {
+    let disposition = if operation == "escalation" { "resume" } else { "confirm" };
+    node["operator_requests"] =
+      serde_json::json!({"operation":operation,"outcomes":{disposition:"caller-selected-result"}});
+    assert_json_matches_component(&openapi_document(), "FactoryFlowNodeDefinition", &node);
+  }
 }

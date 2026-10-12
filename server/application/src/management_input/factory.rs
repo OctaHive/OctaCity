@@ -1,7 +1,90 @@
 use super::*;
 use crate::{FactoryConfigurationPagePosition, ListProjectFactoryConfigurationsQuery};
 
+/// Transport primitives shared by exact Node Attempt control commands.
+pub struct FactoryNodeControlInput<'a> {
+  /// Owning Run UUID.
+  pub run_id: &'a str,
+  /// Exact target attempt UUID.
+  pub node_attempt_id: &'a str,
+  /// Strong aggregate precondition.
+  pub expected_version: u64,
+  /// Stable scoped replay key.
+  pub idempotency_key: &'a str,
+  /// Trusted acceptance time in Unix milliseconds.
+  pub requested_at: i64,
+}
+
 impl ManagementInputFactory {
+  /// Parses closed operator choices without accepting caller lifecycle data.
+  pub fn confirm_factory_node_operation(
+    &self,
+    input: FactoryNodeControlInput<'_>,
+    operation: &str,
+    disposition: &str,
+    reason: &str,
+  ) -> Result<crate::ConfirmFactoryNodeOperationCommand, ManagementInputError> {
+    let operation: octacity_server_factory::FlowHumanOperation = factory_decode(Value::String(operation.to_owned()))?;
+    let disposition = factory_decode(Value::String(disposition.to_owned()))?;
+    if !operation.permits(disposition) {
+      return Err(ManagementInputError::Invalid("operator disposition"));
+    }
+    Ok(crate::ConfirmFactoryNodeOperationCommand {
+      run_id: parse(input.run_id, "factory run id")?,
+      node_attempt_id: parse(input.node_attempt_id, "node attempt id")?,
+      operation,
+      disposition,
+      reason: parse(reason, "operator reason")?,
+      expected_version: version(input.expected_version, "factory run version")?,
+      idempotency_key: parse(input.idempotency_key, "idempotency key")?,
+      requested_at: timestamp(input.requested_at)?,
+    })
+  }
+  /// Confirms a retry target; atomic store validation owns technical eligibility.
+  pub fn retry_factory_node(
+    &self,
+    input: FactoryNodeControlInput<'_>,
+  ) -> Result<crate::RetryFactoryNodeCommand, ManagementInputError> {
+    Ok(crate::RetryFactoryNodeCommand {
+      run_id: parse(input.run_id, "factory run id")?,
+      node_attempt_id: parse(input.node_attempt_id, "node attempt id")?,
+      expected_version: version(input.expected_version, "factory run version")?,
+      idempotency_key: parse(input.idempotency_key, "idempotency key")?,
+      requested_at: timestamp(input.requested_at)?,
+    })
+  }
+  /// Decodes bounded observations without accepting a caller-provided schema.
+  pub fn submit_factory_node_response(
+    &self,
+    input: FactoryNodeControlInput<'_>,
+    outcome: &str,
+    value: Value,
+  ) -> Result<crate::SubmitFactoryNodeResponseCommand, ManagementInputError> {
+    Ok(crate::SubmitFactoryNodeResponseCommand {
+      run_id: parse(input.run_id, "factory run id")?,
+      node_attempt_id: parse(input.node_attempt_id, "node attempt id")?,
+      outcome: parse(outcome, "node outcome")?,
+      value,
+      expected_version: version(input.expected_version, "factory run version")?,
+      idempotency_key: parse(input.idempotency_key, "idempotency key")?,
+      requested_at: timestamp(input.requested_at)?,
+    })
+  }
+  /// Decodes cancellation of the exact version observed by the operator.
+  pub fn cancel_factory_run(
+    &self,
+    run: &str,
+    expected: u64,
+    key: &str,
+    now: i64,
+  ) -> Result<crate::CancelFactoryRunCommand, ManagementInputError> {
+    Ok(crate::CancelFactoryRunCommand {
+      run_id: parse(run, "factory run id")?,
+      expected_version: version(expected, "factory run version")?,
+      idempotency_key: parse(key, "idempotency key")?,
+      requested_at: timestamp(now)?,
+    })
+  }
   /// Creates an immutable Flow publication intent.
   pub fn create_factory_flow_definition(
     &self,
@@ -426,4 +509,32 @@ fn factory_decode<T: serde::de::DeserializeOwned>(value: Value) -> Result<T, Man
     };
     ManagementInputError::FactoryValidation(report)
   })
+}
+
+impl ManagementInputFactory {
+  /// Decodes a current Factory Run detail request.
+  pub fn get_factory_run(&self, id: &str) -> Result<crate::GetFactoryRunQuery, ManagementInputError> {
+    Ok(crate::GetFactoryRunQuery {
+      run_id: parse(id, "factory run id")?,
+    })
+  }
+}
+
+impl ManagementInputFactory {
+  /// Decodes a closed diagnostic collection and its self-contained continuation.
+  pub fn list_factory_diagnostics(
+    &self,
+    run: &str,
+    collection: &str,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<crate::ListFactoryDiagnosticsQuery, ManagementInputError> {
+    crate::ListFactoryDiagnosticsQuery::try_new(
+      parse(run, "factory run id")?,
+      decode(Value::String(collection.to_owned()), "factory diagnostic collection")?,
+      after,
+      limit,
+    )
+    .map_err(|_| ManagementInputError::Invalid("factory diagnostic page"))
+  }
 }

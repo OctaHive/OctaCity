@@ -74,6 +74,8 @@ pub enum ManagementResourceKind {
   FactoryChoice,
   /// Durable Dark Factory Run.
   FactoryRun,
+  /// Exact configured execution attempt within a Factory Run.
+  FactoryNodeAttempt,
   /// Manual, scheduled, external, or internal Trigger definition.
   Trigger,
   /// Durable schedule definition.
@@ -108,7 +110,7 @@ pub enum ManagementResourceKind {
 
 impl ManagementResourceKind {
   /// Complete closed resource-kind vocabulary used by coverage and policy tests.
-  pub const ALL: [Self; 25] = [
+  pub const ALL: [Self; 26] = [
     Self::ControlPlane,
     Self::Project,
     Self::ProjectPolicy,
@@ -118,6 +120,7 @@ impl ManagementResourceKind {
     Self::FactoryConfiguration,
     Self::FlowDefinition,
     Self::FactoryRun,
+    Self::FactoryNodeAttempt,
     Self::FactoryChoice,
     Self::Trigger,
     Self::Schedule,
@@ -413,6 +416,7 @@ const fn supports_instance(kind: ManagementResourceKind) -> bool {
       | ManagementResourceKind::FlowDefinition
       | ManagementResourceKind::FactoryConfiguration
       | ManagementResourceKind::FactoryRun
+      | ManagementResourceKind::FactoryNodeAttempt
       | ManagementResourceKind::FactoryChoice
       | ManagementResourceKind::Trigger
       | ManagementResourceKind::Schedule

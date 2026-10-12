@@ -124,6 +124,16 @@ pub struct ApplyFactoryRunControl {
   pub requested_at: Timestamp,
 }
 
+impl ApplyFactoryRunControl {
+  /// Stable user intent within the scoped operation/key. Server request time
+  /// and correlation can change after a lost response; accepted audit facts
+  /// and the original receipt remain immutable.
+  #[must_use]
+  pub fn replay_intent(&self) -> (FactoryRunId, FactoryRunVersion, &FactoryRunControlIntent) {
+    (self.run_id, self.expected_version, &self.intent)
+  }
+}
+
 /// Safe result of applying or replaying one Factory Run control intent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct FactoryRunControlOutcome {
@@ -173,14 +183,17 @@ pub fn validate_factory_node_response(
     .outcome(outcome)
     .and_then(|outcome| snapshot.admitted_flow.data_schema(outcome.schema()))
     .ok_or_else(invalid)?;
+  if node.kind() != FlowNodeKind::HumanGate || at < attempt.claim().claimed_at() {
+    return Err(invalid());
+  }
   if !snapshot.flow.runtime().is_current_cycle(attempt.workflow_cycle_id())
-    || snapshot.run.state().is_terminal() || node.kind() != FlowNodeKind::HumanGate
-    || at < attempt.claim().claimed_at() || at > attempt.deadline()
+    || snapshot.run.state().is_terminal()
+    || at > attempt.deadline()
     || snapshot.lifecycle_checkpoints.iter().find(|row| row.id == snapshot.current.lifecycle_checkpoint_id).is_none_or(|row| row.cancellation_requested)
     || snapshot.flow.completions.iter().any(|row| row.node_attempt_id() == attempt_id)
     || snapshot.flow.attempts.iter().any(|row| row.flow_run_id() == attempt.flow_run_id() && row.workflow_cycle_id() == attempt.workflow_cycle_id() && row.node_key() == attempt.node_key() && row.number() > attempt.number())
     || snapshot.controls.iter().any(|row| matches!(row.intent, FactoryRunControlIntent::ResolveNode { node_attempt_id, .. } if node_attempt_id == attempt_id))
-  { return Err(invalid()); }
+  { return Err(crate::StoreError::Conflict { entity: octacity_server_domain::EntityKind::FactoryRun }); }
   FlowPayload::restore(&serde_json::to_vec(payload).map_err(|_| invalid())?, schema).map_err(|_| invalid())?;
   Ok(())
 }
@@ -212,8 +225,12 @@ pub fn validate_factory_node_retry(
     .and_then(|run| snapshot.admitted_flow.closure().definition(run.definition()))
     .and_then(|definition| definition.node(attempt.node_key()))
     .ok_or_else(invalid)?;
-  if !snapshot.flow.runtime().is_current_cycle(attempt.workflow_cycle_id())
-    || snapshot.run.state().is_terminal()
+  if !snapshot.flow.runtime().is_current_cycle(attempt.workflow_cycle_id()) {
+    return Err(crate::StoreError::Conflict {
+      entity: octacity_server_domain::EntityKind::FactoryRun,
+    });
+  }
+  if snapshot.run.state().is_terminal()
     || snapshot.lifecycle_checkpoints.iter().find(|row| row.id == snapshot.current.lifecycle_checkpoint_id).is_none_or(|row| row.cancellation_requested)
     || snapshot.flow.attempts.iter().any(|row| row.flow_run_id() == attempt.flow_run_id() && row.workflow_cycle_id() == attempt.workflow_cycle_id() && row.node_key() == attempt.node_key() && row.number() > attempt.number())
     || snapshot.controls.iter().any(|row| matches!(row.intent, FactoryRunControlIntent::RetryNode { node_attempt_id } if node_attempt_id == attempt_id))

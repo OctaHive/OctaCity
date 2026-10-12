@@ -11,6 +11,8 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "configuration_id",
     "factory_configuration_id",
     "flow_definition_id",
+    "factory_run_id",
+    "node_attempt_id",
     "build_id",
     "attempt_id",
     "job_id",
@@ -31,7 +33,12 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       }));
     }
   }
+  if operation.path.contains("{collection}") {
+    parameters.push(json!({"name":"collection","in":"path","required":true,"schema":{"type":"string","enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|kind| kind.as_str()).collect::<Vec<_>>()}}));
+  }
   match operation.parameter_profile {
+    ParameterProfile::FactoryDiagnostics => parameters.extend([cursor_parameter_with_max(256),
+      limit_parameter(octacity_server_application::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::None => {}
     ParameterProfile::ProjectList => parameters.extend([
       json!({"name": "parent_id", "in": "query", "required": false, "schema": non_empty_string()}),

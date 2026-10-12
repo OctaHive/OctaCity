@@ -63,26 +63,44 @@ where
     let action_input =
       serde_json::json!({"plan":plan,"plan_digest":plan.digest().map_err(|_|ApplicationError::invalid())?});
     let step = self.build.with_action_input(action_input)?.observe(request).await?;
-    if let FactoryNodeExecutionStep::Completed { record, .. } = &step {
-      if record
-        .build_provenance()
-        .is_none_or(|proof| proof.outputs().iter().any(|output| output.fresh_until <= at))
-      {
-        return Err(ApplicationError::invalid());
+    match step {
+      FactoryNodeExecutionStep::Completed {
+        execution,
+        record,
+        usage,
+        outbox,
+      } => {
+        if record
+          .build_provenance()
+          .is_none_or(|proof| proof.outputs().iter().any(|output| output.fresh_until <= at))
+        {
+          return Err(ApplicationError::invalid());
+        }
+        let observation: PromotionObservation =
+          serde_json::from_value(record.payload().value().clone()).map_err(|_| ApplicationError::invalid())?;
+        // The common Build adapter binds record.observed_at to trusted primary
+        // receipt publication. Its bytes cannot describe later measurements;
+        // re-verifying earlier bytes cannot repair this.
+        if observation.finished_at > record.observed_at() {
+          return Err(ApplicationError::invalid());
+        }
+        observation
+          .verify(&plan, input, started_at, deadline, at)
+          .map_err(|_| ApplicationError::invalid())?;
+        // Emit only qualified owner facts. The common owner computes its completion
+        // from this complete record, so discovery shares the retained result digest.
+        let record = (*record)
+          .with_discovery(FlowDiscoveryFacts::promotion(&observation))
+          .map_err(|_| ApplicationError::invalid())?;
+        Ok(FactoryNodeExecutionStep::Completed {
+          execution,
+          record: Box::new(record),
+          usage,
+          outbox,
+        })
       }
-      let observation: PromotionObservation =
-        serde_json::from_value(record.payload().value().clone()).map_err(|_| ApplicationError::invalid())?;
-      // The common Build adapter binds record.observed_at to trusted primary
-      // receipt publication. Its bytes cannot describe later measurements;
-      // re-verifying earlier bytes cannot repair this.
-      if observation.finished_at > record.observed_at() {
-        return Err(ApplicationError::invalid());
-      }
-      observation
-        .verify(&plan, input, started_at, deadline, at)
-        .map_err(|_| ApplicationError::invalid())?;
+      pending => Ok(pending),
     }
-    Ok(step)
   }
   async fn cancel(
     &self,

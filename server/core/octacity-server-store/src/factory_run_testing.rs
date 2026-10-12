@@ -382,11 +382,93 @@ impl StoredFactoryRun {
   }
 }
 
+// The memory backend indexes completions by producing node; the public cursor
+// belongs to the immutable observation itself, independently of producer order.
+fn ordered_diagnostics(
+  rows: impl Iterator<Item = FactoryRunDiagnosticRecord>,
+) -> Box<dyn Iterator<Item = FactoryRunDiagnosticRecord>> {
+  let mut rows = rows.collect::<Vec<_>>();
+  rows.sort_by_key(FactoryRunDiagnosticRecord::cursor);
+  Box::new(rows.into_iter())
+}
+
 fn diagnostic_records(
   stored: &StoredFactoryRun,
   kind: FactoryRunDiagnosticKind,
 ) -> Box<dyn Iterator<Item = FactoryRunDiagnosticRecord> + '_> {
   match kind {
+    FactoryRunDiagnosticKind::NodeStop => ordered_diagnostics(
+      stored
+        .node_stops
+        .values()
+        .cloned()
+        .map(|row| FactoryRunDiagnosticRecord::NodeStop(Box::new(row))),
+    ),
+
+    FactoryRunDiagnosticKind::Work => Box::new(std::iter::once(FactoryRunDiagnosticRecord::Work(Box::new(
+      stored.work.clone(),
+    )))),
+    FactoryRunDiagnosticKind::Call => Box::new(
+      stored
+        .node_attempts
+        .values()
+        .filter(|node| {
+          matches!(
+            node.execution(),
+            octacity_server_factory::NodeExecutionIdentity::External(_)
+          )
+        })
+        .map(|node| FactoryRunDiagnosticRecord::Call {
+          node: Box::new(node.clone()),
+          profile: stored.node_build_intents.get(&node.id()).map(|intent| {
+            Box::new(
+              crate::FactoryCallProfileDiagnostic::try_from(intent)
+                .expect("stored frozen intents are verified before commit"),
+            )
+          }),
+        }),
+    ),
+    FactoryRunDiagnosticKind::DomainFact(kind) => {
+      let mut records = stored
+        .node_records
+        .values()
+        .filter(|row| row.discovery().is_some_and(|facts| facts.kind() == kind))
+        .map(|row| {
+          FactoryRunDiagnosticRecord::DomainFact(Box::new(
+            crate::FactoryDomainDiagnostic::try_from(row).expect("stored node records are verified before commit"),
+          ))
+        })
+        .collect::<Vec<_>>();
+      records.sort_by_key(FactoryRunDiagnosticRecord::cursor);
+      Box::new(records.into_iter())
+    }
+    FactoryRunDiagnosticKind::BuildExecution => Box::new(
+      stored
+        .node_build_executions
+        .values()
+        .map(|row| FactoryRunDiagnosticRecord::BuildExecution(Box::new(row.into()))),
+    ),
+    FactoryRunDiagnosticKind::Budget => Box::new(
+      stored
+        .budgets
+        .values()
+        .cloned()
+        .map(|row| FactoryRunDiagnosticRecord::Budget(Box::new(row))),
+    ),
+    FactoryRunDiagnosticKind::WorkflowCycle => Box::new(
+      stored
+        .workflow_cycles
+        .values()
+        .cloned()
+        .map(|row| FactoryRunDiagnosticRecord::WorkflowCycle(Box::new(row))),
+    ),
+    FactoryRunDiagnosticKind::FlowRun => Box::new(
+      stored
+        .flow_runs
+        .values()
+        .cloned()
+        .map(|row| FactoryRunDiagnosticRecord::FlowRun(Box::new(row))),
+    ),
     FactoryRunDiagnosticKind::Claim => Box::new(
       stored
         .claims
@@ -408,7 +490,7 @@ fn diagnostic_records(
         .cloned()
         .map(|row| FactoryRunDiagnosticRecord::NodeAttempt(Box::new(row))),
     ),
-    FactoryRunDiagnosticKind::NodeAttemptCompletion => Box::new(
+    FactoryRunDiagnosticKind::NodeAttemptCompletion => ordered_diagnostics(
       stored
         .node_attempt_completions
         .values()
@@ -439,19 +521,7 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
     let stored = state.factory_runs.get(&request.run_id).ok_or(StoreError::NotFound {
       entity: EntityKind::FactoryRun,
     })?;
-    if matches!(
-      request.kind,
-      FactoryRunDiagnosticKind::Claim | FactoryRunDiagnosticKind::Audit
-    ) && request
-      .after
-      .as_ref()
-      .is_some_and(|key| FactoryDigest::from_lower_hex(key.as_str()).is_err())
-    {
-      return Err(StoreError::invalid(
-        StoreOperation::ListFactoryRunDiagnostics,
-        StoreInputError::InvalidFactoryRunDiagnosticCursor,
-      ));
-    }
+    request.validate()?;
     let limit = usize::from(request.limit.get());
     let mut records: Vec<_> = diagnostic_records(stored, request.kind)
       .filter(|record| request.after.as_ref().is_none_or(|after| record.cursor() > *after))
@@ -749,7 +819,7 @@ impl FactoryRunControlStore for InMemoryFactoryConfigurationStore {
     let idempotency = audit_context.scoped_idempotency_key(&request.idempotency_key);
     let mut state = self.lock()?;
     if let Some(stored) = state.factory_run_controls.get(&(operation, idempotency.clone())) {
-      if stored.request != request {
+      if stored.request.replay_intent() != request.replay_intent() {
         return Err(conflict());
       }
       let mut outcome = stored.outcome.clone();
@@ -806,6 +876,11 @@ fn claim_is_selectable(stored: &StoredFactoryRun, request: &ClaimFactoryRuns) ->
         || (current.owner == request.owner
           && current.claim.claimed_at() == request.observed_at
           && current.claim.expires_at() == request.claim_expires_at)
+        || (current.owner == request.owner
+          && current.claim.claimed_at() <= request.observed_at
+          && stored
+            .updated_at()
+            .is_ok_and(|at| at >= current.claim.claimed_at() && at <= request.observed_at))
     })
   })
 }
@@ -922,10 +997,14 @@ fn validate_claim(stored: &StoredFactoryRun, request: &ClaimFactoryRun) -> Resul
     return Err(conflict());
   }
   if stored.current_claim_id.is_some_and(|id| {
-    stored
-      .claims
-      .get(&id)
-      .is_none_or(|current| current.claim.expires_at() > request.record.claim.claimed_at())
+    stored.claims.get(&id).is_none_or(|current| {
+      current.claim.expires_at() > request.record.claim.claimed_at()
+        && !(current.owner == request.record.owner
+          && current.claim.claimed_at() <= request.record.claim.claimed_at()
+          && stored
+            .updated_at()
+            .is_ok_and(|at| at >= current.claim.claimed_at() && at <= request.record.claim.claimed_at()))
+    })
   }) {
     return Err(conflict());
   }
@@ -2298,6 +2377,69 @@ mod tests {
   }
 
   #[test]
+  fn completion_pages_follow_completion_identity_order_across_continuations() {
+    run_ready(
+      async {
+        let fixture = fixture();
+        seed_full_history(&fixture).await;
+        let snapshot = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+        let expected_minimum = snapshot
+          .flow
+          .completions
+          .iter()
+          .map(NodeAttemptCompletion::id)
+          .min()
+          .unwrap();
+        let expected_maximum = snapshot
+          .flow
+          .completions
+          .iter()
+          .map(NodeAttemptCompletion::id)
+          .max()
+          .unwrap();
+        assert_ne!(expected_minimum, expected_maximum);
+        let first = fixture
+          .store
+          .list_factory_run_diagnostics(
+            ListFactoryRunDiagnostics::new(
+              fixture.run.id(),
+              FactoryRunDiagnosticKind::NodeAttemptCompletion,
+              None,
+              1,
+            )
+            .unwrap(),
+          )
+          .await
+          .unwrap();
+        let FactoryRunDiagnosticRecord::NodeAttemptCompletion(row) = &first.items[0] else {
+          panic!("completion collection")
+        };
+        assert_eq!(row.id(), expected_minimum);
+        let last = fixture
+          .store
+          .list_factory_run_diagnostics(
+            ListFactoryRunDiagnostics::new(
+              fixture.run.id(),
+              FactoryRunDiagnosticKind::NodeAttemptCompletion,
+              first.next,
+              1,
+            )
+            .unwrap(),
+          )
+          .await
+          .unwrap();
+        assert_eq!(last.items.len(), 1);
+        let FactoryRunDiagnosticRecord::NodeAttemptCompletion(row) = &last.items[0] else {
+          panic!("completion collection")
+        };
+        assert_eq!(row.id(), expected_maximum);
+        assert!(last.next.is_none());
+      },
+      "completion pagination is ready",
+    );
+  }
+
+  #[test]
   fn diagnostic_pages_are_bounded_stable_and_collection_typed() {
     run_ready(
       async {
@@ -2807,7 +2949,16 @@ mod tests {
         let request = control_request(&fixture, FactoryRunControlIntent::Cancel, "cancel-1");
 
         let applied = fixture.store.apply_factory_run_control(request.clone()).await.unwrap();
-        let replayed = fixture.store.apply_factory_run_control(request).await.unwrap();
+        let (mut replay, _) = request.into_parts();
+        replay.requested_at = time(200);
+        let replayed = fixture
+          .store
+          .apply_factory_run_control(ManagementMutation::new(
+            replay,
+            control_context("lost-response-follow-up"),
+          ))
+          .await
+          .unwrap();
         assert_eq!(applied.disposition, MutationDisposition::Applied);
         assert_eq!(replayed.disposition, MutationDisposition::Replayed);
         assert_eq!(applied.version, replayed.version);

@@ -54,7 +54,8 @@ impl FactoryRunClaimRecord {
 }
 
 /// Immutable aggregate budget observation recorded at one Run version.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryBudgetRecord {
   /// Content-derived identity of this budget row.
   pub id: FactoryDigest,
@@ -596,9 +597,144 @@ pub struct FactoryRunSnapshot {
   pub current: FactoryRunCurrentProjection,
 }
 
+/// Allowlisted ordinary Build correlation without Job specifications or object locations.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryBuildExecutionDiagnostic {
+  /// Immutable execution-link identity.
+  pub id: FactoryDigest,
+  /// Stable frozen operation identity shared by its ordinary retries.
+  pub operation_id: FactoryDigest,
+  /// Exact owning node execution.
+  pub node_attempt_id: octacity_server_factory::NodeAttemptId,
+  /// Actual ordinary Build.
+  pub build_id: octacity_server_domain::BuildId,
+  /// Actual ordinary execution attempt.
+  pub attempt_id: octacity_server_domain::AttemptId,
+  /// Complete bounded sorted Job identities.
+  pub jobs: Vec<octacity_server_domain::JobId>,
+}
+impl From<&octacity_server_factory::FlowBuildExecution> for FactoryBuildExecutionDiagnostic {
+  fn from(execution: &octacity_server_factory::FlowBuildExecution) -> Self {
+    Self {
+      id: execution
+        .digest()
+        .expect("validated bounded execution identities have a canonical digest"),
+      operation_id: execution.operation_id(),
+      node_attempt_id: execution.node_attempt_id(),
+      build_id: execution.build_id(),
+      attempt_id: execution.attempt_id(),
+      jobs: execution.jobs().to_vec(),
+    }
+  }
+}
+
+/// Safe common result correlation; input, Context and provider payload are never projected.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryDomainDiagnostic {
+  /// Complete immutable producing record identity.
+  pub id: FactoryDigest,
+  /// Exact producing node execution.
+  pub node_attempt_id: octacity_server_factory::NodeAttemptId,
+  /// Exact root or nested Flow execution.
+  pub flow_run_id: octacity_server_factory::FlowRunId,
+  /// Exact producing cycle.
+  pub cycle_id: octacity_server_factory::WorkflowCycleId,
+  /// Exact frozen input identity without its contents.
+  pub input_digest: FactoryDigest,
+  /// Trusted observation time retained with the completion.
+  pub observed_at: Timestamp,
+  /// Typed verified domain projection, excluding prose and protected material.
+  pub facts: octacity_server_factory::FlowDiscoveryFacts,
+}
+impl TryFrom<&octacity_server_factory::FlowNodeRecord> for FactoryDomainDiagnostic {
+  type Error = octacity_server_factory::FactoryError;
+  fn try_from(record: &octacity_server_factory::FlowNodeRecord) -> Result<Self, Self::Error> {
+    Ok(Self {
+      id: record.digest()?,
+      node_attempt_id: record.node_attempt_id(),
+      flow_run_id: record.input().flow_run_id(),
+      cycle_id: record.input().cycle_id(),
+      input_digest: record.input().digest()?,
+      observed_at: record.observed_at(),
+      facts: record
+        .discovery()
+        .cloned()
+        .ok_or(octacity_server_factory::FactoryError::InvalidConfiguration {
+          field: "domain diagnostic",
+        })?,
+    })
+  }
+}
+
+/// Safe frozen task and executor provenance for an ordinary Build-backed call.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryCallProfileDiagnostic {
+  /// Complete immutable external request identity.
+  pub operation_id: FactoryDigest,
+  /// Selected immutable context identity without entries or protected references.
+  pub context_id: octacity_server_factory::ContextManifestId,
+  /// Content identity of the exact selected Context.
+  pub context_digest: FactoryDigest,
+  /// Exact executed harness or deterministic tool.
+  pub tool: octacity_server_factory::ImmutableReference,
+  /// Exact runner plugin.
+  pub plugin: octacity_server_factory::ImmutableReference,
+  /// Exact configured model or tool contract.
+  pub model_or_tool: octacity_server_factory::ImmutableReference,
+  /// Content identity of the exact task/prompt contract, excluding rendered text.
+  pub task_digest: FactoryDigest,
+  /// Digest of the narrowed permission set, excluding command and path details.
+  pub permission_digest: FactoryDigest,
+  /// Immutable ordinary Build definition selected for this request.
+  pub build_configuration: octacity_server_factory::BuildConfigurationRef,
+}
+impl TryFrom<&octacity_server_factory::FlowBuildIntent> for FactoryCallProfileDiagnostic {
+  type Error = octacity_server_factory::FactoryError;
+  fn try_from(intent: &octacity_server_factory::FlowBuildIntent) -> Result<Self, Self::Error> {
+    let context = intent
+      .input()
+      .context()
+      .ok_or(octacity_server_factory::FactoryError::InvalidConfiguration {
+        field: "call profile Context",
+      })?;
+    let profile = intent.profile();
+    Ok(Self {
+      operation_id: intent.operation_id()?,
+      context_id: context.id(),
+      context_digest: context.digest()?,
+      tool: profile.tool.clone(),
+      plugin: profile.plugin.clone(),
+      model_or_tool: profile.model_or_tool.clone(),
+      task_digest: profile.task_digest,
+      permission_digest: intent.permissions().digest(),
+      build_configuration: profile.build_configuration.clone(),
+    })
+  }
+}
+
 /// One append-only Factory Run diagnostic collection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FactoryRunDiagnosticKind {
+  /// Confirmed technical stops without configured business outcomes.
+  NodeStop,
+
+  /// Immutable admitted Work identity and authority.
+  Work,
+  /// Exact external node invocation and safe frozen task metadata.
+  Call,
+  /// Safe verified observations retained in the common node journal.
+  DomainFact(octacity_server_factory::FlowDiscoveryKind),
+  /// Exact ordinary execution links.
+  BuildExecution,
+  /// Authoritative aggregate consumption observations.
+  Budget,
+  /// Exact workflow cycle and its causal predecessor.
+  WorkflowCycle,
+  /// Root and nested executions of the exact admitted definitions.
+  FlowRun,
   /// Complete ownership history, independent of the working snapshot ceiling.
   Claim,
   /// Complete secret-safe audit history.
@@ -612,6 +748,28 @@ pub enum FactoryRunDiagnosticKind {
 /// Typed immutable row returned by a common execution diagnostic collection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FactoryRunDiagnosticRecord {
+  /// Confirmed stopped execution, including its technical cause.
+  NodeStop(Box<octacity_server_factory::FlowNodeStop>),
+
+  /// Immutable admitted Work, projected through an allowlist by management.
+  Work(Box<WorkEnvelope>),
+  /// External invocation whose full execution input remains private.
+  Call {
+    /// Persisted execution, projected through an allowlist by management.
+    node: Box<NodeAttempt>,
+    /// Frozen task metadata when the invocation uses an ordinary Build.
+    profile: Option<Box<FactoryCallProfileDiagnostic>>,
+  },
+  /// Allowlisted owner observation with exact producing journal identity.
+  DomainFact(Box<FactoryDomainDiagnostic>),
+  /// Safe ordinary execution links.
+  BuildExecution(Box<FactoryBuildExecutionDiagnostic>),
+  /// Aggregate consumption at an exact Run version.
+  Budget(Box<FactoryBudgetRecord>),
+  /// Exact workflow cycle without execution input.
+  WorkflowCycle(Box<WorkflowCycle>),
+  /// Exact Flow identity and parent-call relation, without input data.
+  FlowRun(Box<FlowRun>),
   /// Canonical immutable ownership proof.
   Claim(Box<FactoryRunClaimRecord>),
   /// Canonical immutable audit fact.
@@ -627,6 +785,17 @@ impl FactoryRunDiagnosticRecord {
   #[must_use]
   pub fn cursor(&self) -> FactoryKey {
     let value = match self {
+      Self::NodeStop(value) => value
+        .digest()
+        .expect("verified stops have canonical identities")
+        .to_string(),
+      Self::Work(value) => value.id().to_string(),
+      Self::WorkflowCycle(value) => value.id().to_string(),
+      Self::Call { node, .. } => node.id().to_string(),
+      Self::DomainFact(value) => value.id.to_string(),
+      Self::BuildExecution(value) => value.id.to_string(),
+      Self::Budget(value) => value.id.to_string(),
+      Self::FlowRun(value) => value.id().to_string(),
       Self::Claim(value) => value.id.to_string(),
       Self::Audit(value) => value.id.to_string(),
       Self::NodeAttempt(value) => value.id().to_string(),
@@ -657,20 +826,55 @@ impl ListFactoryRunDiagnostics {
     after: Option<FactoryKey>,
     limit: u16,
   ) -> Result<Self, StoreError> {
-    let limit = NonZeroU16::new(limit)
-      .filter(|value| value.get() <= MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE)
-      .ok_or_else(|| {
-        StoreError::invalid(
-          StoreOperation::ListFactoryRunDiagnostics,
-          StoreInputError::InvalidFactoryRunDiagnosticPageSize,
-        )
-      })?;
-    Ok(Self {
+    let limit = NonZeroU16::new(limit).ok_or_else(|| {
+      StoreError::invalid(
+        StoreOperation::ListFactoryRunDiagnostics,
+        StoreInputError::InvalidFactoryRunDiagnosticPageSize,
+      )
+    })?;
+    let request = Self {
       run_id,
       kind,
       after,
       limit,
-    })
+    };
+    request.validate()?;
+    Ok(request)
+  }
+  /// Revalidates bounded requests at the store boundary, including struct literals.
+  pub fn validate(&self) -> Result<(), StoreError> {
+    if self.limit.get() > MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE {
+      return Err(StoreError::invalid(
+        StoreOperation::ListFactoryRunDiagnostics,
+        StoreInputError::InvalidFactoryRunDiagnosticPageSize,
+      ));
+    }
+    if let Some(key) = &self.after {
+      let valid = match self.kind {
+        FactoryRunDiagnosticKind::FlowRun
+        | FactoryRunDiagnosticKind::WorkflowCycle
+        | FactoryRunDiagnosticKind::NodeAttempt
+        | FactoryRunDiagnosticKind::Call
+        | FactoryRunDiagnosticKind::Work => key
+          .as_str()
+          .parse::<uuid::Uuid>()
+          .is_ok_and(|id| id.to_string() == key.as_str()),
+        FactoryRunDiagnosticKind::Claim
+        | FactoryRunDiagnosticKind::Audit
+        | FactoryRunDiagnosticKind::Budget
+        | FactoryRunDiagnosticKind::BuildExecution
+        | FactoryRunDiagnosticKind::DomainFact(_)
+        | FactoryRunDiagnosticKind::NodeAttemptCompletion
+        | FactoryRunDiagnosticKind::NodeStop => FactoryDigest::from_lower_hex(key.as_str()).is_ok(),
+      };
+      if !valid {
+        return Err(StoreError::invalid(
+          StoreOperation::ListFactoryRunDiagnostics,
+          StoreInputError::InvalidFactoryRunDiagnosticCursor,
+        ));
+      }
+    }
+    Ok(())
   }
 }
 

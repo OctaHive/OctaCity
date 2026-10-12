@@ -742,7 +742,9 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
   );
 
   // Views derive projections and have no column constraints. Retained documents
-  // may bound serialized text bytes or PostgreSQL's JSONB representation.
+  // may bound serialized text bytes or PostgreSQL's JSONB representation. The
+  // discovery index inherits its bound from the canonical document only when
+  // PostgreSQL enforces both exact projection equality and that document cap.
   let unbounded_documents: i64 = sqlx::query_scalar(
     "SELECT COUNT(*) FROM information_schema.columns AS column_definition \
      JOIN information_schema.tables AS table_definition USING (table_schema, table_name) \
@@ -757,9 +759,24 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
            AND pg_get_constraintdef(table_constraint.oid) LIKE '%' || column_definition.column_name || '%' \
            AND pg_get_constraintdef(table_constraint.oid) LIKE '%jsonb_typeof%' \
            AND (pg_get_constraintdef(table_constraint.oid) LIKE '%octet_length%' \
-             OR pg_get_constraintdef(table_constraint.oid) LIKE '%pg_column_size%')\
+             OR pg_get_constraintdef(table_constraint.oid) LIKE '%pg_column_size%' \
+             OR (column_definition.table_name = 'factory_flow_records' \
+               AND column_definition.column_name = 'discovery_facts' \
+               AND table_constraint.conname = 'factory_flow_records_discovery_matches_document' \
+               AND pg_get_constraintdef(table_constraint.oid) \
+                 LIKE '%NOT (discovery_facts IS DISTINCT FROM%convert_from(document,%-> ''discovery''%' \
+               AND EXISTS (\
+                 SELECT 1 FROM pg_constraint AS document_constraint \
+                 WHERE document_constraint.conrelid = table_constraint.conrelid \
+                   AND document_constraint.contype = 'c' \
+                   AND pg_get_constraintdef(document_constraint.oid) LIKE $1\
+               )))\
        )",
   )
+  .bind(format!(
+    "%octet_length(document) <= {}%",
+    octacity_server_factory::MAX_FLOW_DATA_BYTES
+  ))
   .fetch_one(pool)
   .await?;
   assert_eq!(

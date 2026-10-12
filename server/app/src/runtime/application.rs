@@ -203,11 +203,19 @@ pub(super) fn management_application(
   );
   let factory_discovery = authorized_queries(
     &management_policy,
-    Arc::new(octacity_server_application::FactoryDiscoveryHandlers::new(
+    Arc::new(octacity_server_application::FactoryDiscoveryHandlers::with_policy(
       store.clone(),
+      management_policy.clone(),
     )),
   );
   let factory_commands = authorized_commands(&management_policy, factory.clone());
+  let factory_control = authorized_commands(
+    &management_policy,
+    Arc::new(octacity_server_application::FactoryOperatorHandlers::new(
+      store.clone(),
+      management_policy.clone(),
+    )),
+  );
   let factory_queries = authorized_queries(&management_policy, factory);
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
@@ -229,6 +237,7 @@ pub(super) fn management_application(
           flow_queries,
           factory_admission,
           factory_discovery,
+          factory_control,
         ),
       ),
       AgentManagementApplication::new(

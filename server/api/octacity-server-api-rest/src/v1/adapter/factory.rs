@@ -1,4 +1,143 @@
 use super::*;
+pub(super) async fn confirm_factory_node_operation(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path((run, node)): Path<(String, String)>,
+  headers: HeaderMap,
+  payload: Result<Json<crate::v1::FactoryNodeOperationRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let body = body(payload, &request_id)?;
+  let key = idempotency_key(&headers, &request_id)?;
+  let expected = precondition(&headers, &request_id)?;
+  let command = application
+    .inputs
+    .confirm_factory_node_operation(
+      octacity_server_application::FactoryNodeControlInput {
+        run_id: &run,
+        node_attempt_id: &node,
+        expected_version: expected.version(),
+        idempotency_key: key.as_str(),
+        requested_at: now_unix_ms(&request_id)?,
+      },
+      &body.operation,
+      &body.disposition,
+      &body.reason,
+    )
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let outcome = application
+    .factory
+    .confirm_node
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  factory_control_response(outcome, &request_id)
+}
+pub(super) async fn retry_factory_node(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path((run, node)): Path<(String, String)>,
+  headers: HeaderMap,
+  payload: Result<Json<FactoryConfirmationRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let _ = body(payload, &request_id)?;
+  let key = idempotency_key(&headers, &request_id)?;
+  let expected = precondition(&headers, &request_id)?;
+  let command = application
+    .inputs
+    .retry_factory_node(octacity_server_application::FactoryNodeControlInput {
+      run_id: &run,
+      node_attempt_id: &node,
+      expected_version: expected.version(),
+      idempotency_key: key.as_str(),
+      requested_at: now_unix_ms(&request_id)?,
+    })
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let outcome = application
+    .factory
+    .retry_node
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  factory_control_response(outcome, &request_id)
+}
+pub(super) async fn submit_factory_node_response(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path((run, node)): Path<(String, String)>,
+  headers: HeaderMap,
+  payload: Result<Json<crate::v1::FactoryNodeResponseRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let body = body(payload, &request_id)?;
+  let key = idempotency_key(&headers, &request_id)?;
+  let expected = precondition(&headers, &request_id)?;
+  let command = application
+    .inputs
+    .submit_factory_node_response(
+      octacity_server_application::FactoryNodeControlInput {
+        run_id: &run,
+        node_attempt_id: &node,
+        expected_version: expected.version(),
+        idempotency_key: key.as_str(),
+        requested_at: now_unix_ms(&request_id)?,
+      },
+      &body.outcome,
+      body.value,
+    )
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let outcome = application
+    .factory
+    .respond_node
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  factory_control_response(outcome, &request_id)
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FactoryConfirmationRequest {}
+
+pub(super) async fn cancel_factory_run(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path(id): Path<String>,
+  headers: HeaderMap,
+  payload: Result<Json<FactoryConfirmationRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let _ = body(payload, &request_id)?;
+  let key = idempotency_key(&headers, &request_id)?;
+  let expected = precondition(&headers, &request_id)?;
+  let command = application
+    .inputs
+    .cancel_factory_run(&id, expected.version(), key.as_str(), now_unix_ms(&request_id)?)
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let outcome = application
+    .factory
+    .cancel_run
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  factory_control_response(outcome, &request_id)
+}
+
+fn factory_control_response(
+  outcome: octacity_server_application::FactoryRunControlCommandOutcome,
+  request_id: &RequestId,
+) -> Result<axum::response::Response, ApiError> {
+  let etag = VersionPrecondition::new(outcome.version.get()).map_err(|_| internal_conversion(request_id))?;
+  Ok(
+    (
+      [(axum::http::header::ETAG, etag.to_header_value())],
+      Json(crate::v1::FactoryRunControlResponse {
+        disposition: mutation_disposition(outcome.disposition),
+        run_id: outcome.run_id.to_string(),
+        version: outcome.version.get(),
+        state: outcome.state.as_str().to_owned(),
+        cancellation_requested: outcome.cancellation_requested,
+      }),
+    )
+      .into_response(),
+  )
+}
 use crate::v1::{
   CreateFactoryConfigurationRequest, FactoryConfigurationDetails, FactoryConfigurationMutationResponse,
   ReplaceFactoryConfigurationRequest,
@@ -557,22 +696,7 @@ async fn list_run_page(
   let items = page
     .items
     .into_iter()
-    .map(|item| {
-      Ok(FactoryRunSummaryResource {
-        diagnostics: encode(item.diagnostics, request_id)?,
-        id: item.id.to_string(),
-        project_id: item.project_id.to_string(),
-        work_id: item.work_id.to_string(),
-        configuration_id: item.configuration_id.to_string(),
-        configuration_version: item.configuration_version.get(),
-        source: item.source.to_string(),
-        external_identity: item.external_identity.to_string(),
-        state: item.state.as_str().to_owned(),
-        version: item.version.get(),
-        admitted_at_unix_ms: item.admitted_at.unix_millis(),
-        updated_at_unix_ms: item.updated_at.unix_millis(),
-      })
-    })
+    .map(|item| run_summary_resource(item, request_id))
     .collect::<Result<Vec<_>, ApiError>>()?;
   let next_cursor = page
     .next_cursor
@@ -661,4 +785,77 @@ async fn list_phase_page(
     items,
     next_cursor: cursor,
   }))
+}
+
+pub(super) async fn get_factory_run(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path(id): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+  let query = application
+    .inputs
+    .get_factory_run(&id)
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let item = application
+    .factory
+    .get_run
+    .handle_authorized_query(&context, query)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  let etag = VersionPrecondition::new(item.version.get()).map_err(|_| internal_conversion(&request_id))?;
+  Ok((
+    [(axum::http::header::ETAG, etag.to_header_value())],
+    Json(run_summary_resource(item, &request_id)?),
+  ))
+}
+fn run_summary_resource(
+  item: octacity_server_application::FactoryRunSummaryProjection,
+  request_id: &RequestId,
+) -> Result<FactoryRunSummaryResource, ApiError> {
+  Ok(FactoryRunSummaryResource {
+    diagnostics: encode(item.diagnostics, request_id)?,
+    id: item.id.to_string(),
+    project_id: item.project_id.to_string(),
+    work_id: item.work_id.to_string(),
+    configuration_id: item.configuration_id.to_string(),
+    configuration_version: item.configuration_version.get(),
+    source: item.source.to_string(),
+    external_identity: item.external_identity.to_string(),
+    state: item.state.as_str().to_owned(),
+    version: item.version.get(),
+    admitted_at_unix_ms: item.admitted_at.unix_millis(),
+    updated_at_unix_ms: item.updated_at.unix_millis(),
+  })
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct FactoryDiagnosticParameters {
+  after: Option<Cursor>,
+  #[serde(default = "default_page_limit")]
+  limit: u16,
+}
+pub(super) async fn list_factory_diagnostics(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path((run, collection)): Path<(String, String)>,
+  parameters: Result<Query<FactoryDiagnosticParameters>, QueryRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let Query(parameters) = parameters.map_err(|error| query_error(error, &request_id))?;
+  let query = application
+    .inputs
+    .list_factory_diagnostics(
+      &run,
+      &collection,
+      parameters.after.as_ref().map(Cursor::as_str),
+      parameters.limit,
+    )
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let page = application
+    .factory
+    .diagnostics
+    .handle_authorized_query(&context, query)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  Ok(Json(encode(page, &request_id)?))
 }

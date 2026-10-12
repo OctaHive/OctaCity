@@ -9,8 +9,8 @@ use octacity_server_domain::{
 use octacity_server_factory::{
   BudgetLimit, ExactSubject, ExternalWorkIdentity, FactoryArtifactReference, FactoryConfiguration,
   FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryMetadata, FactoryRun,
-  FactoryRunId, FactoryWipLimits, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId,
-  WorkPriority,
+  FactoryRunId, FactoryWipLimits, ImmutableReference, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope,
+  WorkEnvelopeId, WorkPriority,
 };
 use octacity_server_store::{
   AdmitFactoryWork, CreateFactoryConfiguration, FactoryAdmissionProbe, FactoryAdmissionStore as _,
@@ -31,20 +31,53 @@ async fn configured_unknown_node_journal_matches_memory_and_survives_restart() {
   assert_configured_node_discovery("candidate").await;
 }
 
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn configured_changeset_owner_facts_are_discovered_after_restart() {
+  assert_configured_node_discovery("changeset").await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn maximum_signal_provenance_survives_native_completion_and_diagnostic_reads() {
+  assert_configured_node_discovery("large_signal").await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn verified_promotion_facts_are_paged_after_restart() {
+  assert_configured_node_discovery("promotion").await;
+}
+
 async fn assert_configured_node_discovery(kind: &str) {
   use octacity_server_factory::FactoryFlowConfiguration;
   use octacity_server_store::testing::{factory_node_journal_contract_fixture, verify_factory_node_journal_contract};
   let database = TestDatabase::migrated().await;
   let postgres = PostgresStore::new(database.pool.clone());
-  let mut node_fixture = factory_node_journal_contract_fixture();
+  let mut node_fixture = if kind == "large_signal" {
+    octacity_server_store::testing::factory_node_journal_contract_fixture_with_large_signal()
+  } else {
+    factory_node_journal_contract_fixture()
+  };
   let candidate = octacity_server_factory::CandidateSubject::new(
     node_fixture.admission.work.subject().clone(),
     ImmutableRevision::new("review-candidate").unwrap(),
     digest(91),
   );
   node_fixture.discovery = Some(match kind {
+    "large_signal" => node_fixture.discovery.clone().unwrap(),
     "candidate" => octacity_server_factory::FlowDiscoveryFacts::candidate(candidate.clone()),
-    "decision" => serde_json::from_value(serde_json::json!({"kind":"decision", "subject":candidate, "id":"88888888-8888-4888-8888-888888888888", "outcome":"accept"})).unwrap(),
+    "changeset" => serde_json::from_value(serde_json::json!({"kind":"changeset", "subject":candidate,
+      "id":"77777777-7777-4777-8777-777777777777", "node_attempt_id":node_fixture.attempt.id()})).unwrap(),
+    "decision" => serde_json::from_value(serde_json::json!({"kind":"decision", "subject":candidate, "id":"88888888-8888-4888-8888-888888888888", "outcome":"accept",
+      "explanation":{"plan_id":"77777777-7777-4777-8777-777777777777","assessment_ids":["99999999-9999-4999-8999-999999999999"],"signal_receipt_ids":[],
+      "reasons":["PolicySatisfied"],"input_digest":node_fixture.input.digest().unwrap(),"policy_version":1,"policy_digest":digest(9)}})).unwrap(),
+    "promotion" => octacity_server_factory::FlowDiscoveryFacts::promotion(&octacity_server_factory::PromotionObservation {
+      subject:candidate.clone(),plan_digest:digest(9),input_digest:node_fixture.input.digest().unwrap(),
+      environment:key("pilot"),environment_contract:ImmutableReference::new(key("environment"),key("v1"),digest(9)),
+      deployment:ImmutableReference::new(key("deployment"),key("v1"),digest(9)),
+      outcome:octacity_server_factory::DeterministicGateOutcome::Passed,started_at:time(10),finished_at:time(20),measurements:Default::default(),
+    }),
     "delivery" => serde_json::from_value(serde_json::json!({"kind":"delivery", "subject":candidate, "id":"99999999-9999-4999-8999-999999999999", "decision_id":"88888888-8888-4888-8888-888888888888", "state":"failed"})).unwrap(),
     _ => unreachable!("closed fixture cases"),
   });
@@ -142,7 +175,14 @@ async fn assert_configured_node_discovery(kind: &str) {
     .await
     .unwrap();
   assert_eq!(summary.diagnostics.base_revision, *work.subject().base_revision());
-  assert_eq!(summary.diagnostics.candidate, Some(candidate.clone()));
+  assert_eq!(
+    summary.diagnostics.candidate,
+    if kind == "large_signal" {
+      None
+    } else {
+      Some(candidate.clone())
+    }
+  );
   assert_eq!(summary.diagnostics.budget.usage.attempts, 1);
   assert!(summary.diagnostics.current_nodes.is_empty());
   if kind == "decision" {
@@ -684,6 +724,24 @@ async fn representative_factory_discovery_plans_use_only_justified_indexes() {
   ] {
     let plan = explain(&mut transaction, statement, run_id(501).as_uuid()).await;
     assert_plan_uses(&plan, index);
+  }
+
+  // Every new diagnostic family must bound its scan to this Run and advance
+  // in immutable identity order without sorting the entire retained history.
+  for statement in [
+    "SELECT id FROM factory_flow_runs WHERE factory_run_id=$1 ORDER BY id LIMIT 10",
+    "SELECT id FROM factory_workflow_cycles WHERE factory_run_id=$1 ORDER BY id LIMIT 10",
+    "SELECT id FROM factory_flow_build_executions WHERE run_id=$1 ORDER BY id LIMIT 10",
+    "SELECT id FROM factory_run_budgets WHERE run_id=$1 ORDER BY id LIMIT 10",
+    "SELECT id FROM factory_node_stops WHERE run_id=$1 ORDER BY id LIMIT 10",
+    "SELECT id FROM factory_flow_records WHERE run_id=$1 AND discovery_facts ->> 'kind'='evidence' ORDER BY id LIMIT 10",
+  ] {
+    let plan = explain(&mut transaction, statement, run_id(501).as_uuid()).await;
+    let rendered = plan.to_string();
+    assert!(
+      !rendered.contains("Sort") && rendered.contains("Index Cond") && rendered.contains("run_id ="),
+      "diagnostic page must use a Run-scoped ordered scan: {statement}: {plan}"
+    );
   }
 
   // An archival page must advance in identity order without sorting history.

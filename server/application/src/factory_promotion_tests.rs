@@ -233,9 +233,23 @@ fn promotion_completion_rejects_a_substituted_or_partial_observation_before_comm
           "substitution, stale proof or partial window cannot qualify this deployment: case {bad}"
         );
       } else {
-        assert!(
-          matches!(step.unwrap(),FactoryNodeExecutionStep::Completed{record,..} if record.build_provenance().is_some())
+        let FactoryNodeExecutionStep::Completed { record, .. } = step.unwrap() else {
+          panic!("the verified complete observation must publish a result");
+        };
+        assert!(record.build_provenance().is_some());
+        let facts = record.discovery().expect("verified promotion must be discoverable");
+        assert_eq!(facts.kind(), FlowDiscoveryKind::Promotion);
+        let public = serde_json::to_value(facts).unwrap();
+        assert_eq!(public["subject"], serde_json::to_value(plan.subject()).unwrap());
+        assert_eq!(
+          public["deployment"],
+          serde_json::to_value(reference("actual.deployment")).unwrap()
         );
+        assert_eq!(public["outcome"], "passed");
+        assert_eq!(public["finished_at"], 60);
+        for private in ["measurements", "parameters", "credentials", "payload"] {
+          assert!(public.get(private).is_none(), "{private}");
+        }
       }
     }
   });

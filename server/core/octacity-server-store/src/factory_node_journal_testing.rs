@@ -31,7 +31,45 @@ pub fn factory_node_journal_contract_fixture() -> FactoryNodeJournalContractFixt
 /// Constructs a generic node with an explicit operator-controlled retry allowance.
 #[must_use]
 pub fn factory_node_journal_contract_fixture_with_retries(maximum: u16) -> FactoryNodeJournalContractFixture {
-  let (work, admitted, schema, input, attempt) = execution_fixture_with_retries(FlowNodeKind::Reasoning, maximum);
+  journal_fixture(execution_fixture_with_retries(FlowNodeKind::Reasoning, maximum))
+}
+
+/// Exercises valid maximum-length signal provenance, including escaped revision bytes.
+#[must_use]
+pub fn factory_node_journal_contract_fixture_with_large_signal() -> FactoryNodeJournalContractFixture {
+  let mut work = serde_json::to_value(work()).unwrap();
+  work["subject"]["base_revision"] =
+    serde_json::json!("\\".repeat(octacity_server_domain::MAX_IMMUTABLE_REVISION_BYTES));
+  let mut fixture = journal_fixture(execution_fixture_for_work(
+    FlowNodeKind::Reasoning,
+    serde_json::from_value(work).unwrap(),
+    vec![],
+    None,
+  ));
+  let reference = ImmutableReference::new(
+    key(&"a".repeat(MAX_FACTORY_KEY_BYTES)),
+    key(&"v".repeat(MAX_FACTORY_KEY_BYTES)),
+    digest(9),
+  );
+  let route = serde_json::json!({"Route":"r".repeat(MAX_FACTORY_KEY_BYTES)});
+  fixture.discovery = Some(
+    serde_json::from_value(serde_json::json!({
+      "kind":"decision_signal", "subject":fixture.admission.work.subject(),
+      "id":"00000000-0000-0000-0000-000000000003", "request_id":"00000000-0000-0000-0000-000000000004",
+      "receipt_digest":digest(9), "input_digest":digest(9), "frozen_input_digest":digest(9),
+      "question_set":reference, "probability_semantics":reference, "provider":reference,
+      "adapter":reference, "model":reference, "policy":reference, "state":"completed",
+      "consumption":{"baseline":route,"recommendation":route,"final_disposition":route,"kind":"BoundedControl"}
+    }))
+    .unwrap(),
+  );
+  assert!(serde_json::to_vec(fixture.discovery.as_ref().unwrap()).unwrap().len() > 4096);
+  fixture
+}
+
+fn journal_fixture(
+  (work, admitted, schema, input, attempt): (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt),
+) -> FactoryNodeJournalContractFixture {
   let admitted = admitted.with_data_schemas(vec![schema.clone()]).unwrap();
   let run = FactoryRun::admitted(admitted.root_run().factory_run_id(), &work);
   FactoryNodeJournalContractFixture {
@@ -67,6 +105,21 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
   restarted: &R,
   fixture: &FactoryNodeJournalContractFixture,
 ) {
+  for kind in [
+    FactoryRunDiagnosticKind::FlowRun,
+    FactoryRunDiagnosticKind::WorkflowCycle,
+    FactoryRunDiagnosticKind::NodeAttempt,
+    FactoryRunDiagnosticKind::Call,
+    FactoryRunDiagnosticKind::BuildExecution,
+    FactoryRunDiagnosticKind::Budget,
+    FactoryRunDiagnosticKind::Audit,
+    FactoryRunDiagnosticKind::NodeAttemptCompletion,
+  ] {
+    assert!(
+      ListFactoryRunDiagnostics::new(fixture.admission.run.id(), kind, Some(key("not-an-identity")), 1).is_err(),
+      "{kind:?}"
+    );
+  }
   let run = &fixture.admission.run;
   let admitted = &fixture.admission.flow;
   let schema = &fixture.schema;
@@ -83,6 +136,45 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
     .await
     .unwrap();
   let snapshot = store.factory_run_snapshot(run.id()).await.unwrap();
+  let work_page = store
+    .list_factory_run_diagnostics(
+      ListFactoryRunDiagnostics::new(run.id(), FactoryRunDiagnosticKind::Work, None, 1).unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(
+    work_page.items,
+    vec![FactoryRunDiagnosticRecord::Work(Box::new(
+      fixture.admission.work.clone()
+    ))]
+  );
+  assert!(work_page.next.is_none());
+  let flows = store
+    .list_factory_run_diagnostics(
+      ListFactoryRunDiagnostics::new(run.id(), FactoryRunDiagnosticKind::FlowRun, None, 1).unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(flows.items.len(), 1);
+  let FactoryRunDiagnosticRecord::FlowRun(root) = &flows.items[0] else {
+    panic!("the Flow collection must contain typed Flow records")
+  };
+  assert_eq!(root.id(), admitted.root_run().id());
+  assert_eq!(root.definition(), admitted.closure().root());
+  assert!(flows.next.is_none());
+  let cycles = store
+    .list_factory_run_diagnostics(
+      ListFactoryRunDiagnostics::new(run.id(), FactoryRunDiagnosticKind::WorkflowCycle, None, 1).unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(
+    cycles.items,
+    vec![FactoryRunDiagnosticRecord::WorkflowCycle(Box::new(
+      admitted.initial_cycle().clone()
+    ))]
+  );
+  assert!(cycles.next.is_none());
   // A worker cannot manufacture completion before a configured root result exists.
   let mut forged_terminal = factory_flow_contract_transition(&snapshot, &claim, 11);
   forged_terminal.next_run = FactoryRun::restore(
@@ -154,6 +246,27 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
   );
   assert!(snapshot.flow.data.records.is_empty());
   assert!(snapshot.flow.data.build_executions.is_empty());
+  let calls = restarted
+    .list_factory_run_diagnostics(
+      ListFactoryRunDiagnostics::new(run.id(), FactoryRunDiagnosticKind::Call, None, 1).unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(calls.items.len(), 1);
+  let FactoryRunDiagnosticRecord::Call {
+    node,
+    profile: Some(profile),
+  } = &calls.items[0]
+  else {
+    panic!("a Build-backed call retains safe frozen task metadata")
+  };
+  assert_eq!(node.id(), attempt.id());
+  assert_eq!(profile.operation_id, intent.operation_id().unwrap());
+  assert_eq!(profile.task_digest, intent.profile().task_digest);
+  assert_eq!(profile.model_or_tool, intent.profile().model_or_tool);
+  assert_eq!(profile.context_digest, input.context().unwrap().digest().unwrap());
+  assert!(calls.next.is_none());
+
   let mut observed = factory_flow_contract_transition(&snapshot, &claim, 12);
   observed
     .append
@@ -246,7 +359,35 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
   let restored = restarted.factory_run_snapshot(run.id()).await.unwrap();
   assert_eq!(restored.flow.data.records, vec![record]);
   assert_eq!(restored.flow.completions, vec![completion]);
+  if let Some(facts) = &fixture.discovery {
+    let page = restarted
+      .list_factory_run_diagnostics(
+        ListFactoryRunDiagnostics::new(run.id(), FactoryRunDiagnosticKind::DomainFact(facts.kind()), None, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(page.items.len(), 1);
+    let FactoryRunDiagnosticRecord::DomainFact(projection) = &page.items[0] else {
+      panic!("typed domain projection required")
+    };
+    assert_eq!(&projection.facts, facts);
+    assert_eq!(projection.node_attempt_id, attempt.id());
+    assert_eq!(projection.input_digest, input.digest().unwrap());
+    assert_eq!(projection.id, restored.flow.data.records[0].digest().unwrap());
+    assert!(page.next.is_none());
+  }
+
   for (kind, expected) in [
+    (
+      FactoryRunDiagnosticKind::BuildExecution,
+      FactoryRunDiagnosticRecord::BuildExecution(Box::new(FactoryBuildExecutionDiagnostic::from(&fixture.execution))),
+    ),
+    (
+      FactoryRunDiagnosticKind::Budget,
+      FactoryRunDiagnosticRecord::Budget(Box::new(
+        restored.budgets.iter().min_by_key(|row| row.id).unwrap().clone(),
+      )),
+    ),
     (
       FactoryRunDiagnosticKind::NodeAttempt,
       FactoryRunDiagnosticRecord::NodeAttempt(Box::new(attempt.clone())),
@@ -261,20 +402,70 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
       .await
       .unwrap();
     assert_eq!(page.items, vec![expected.clone()]);
-    assert!(page.next.is_none());
+    if kind != FactoryRunDiagnosticKind::Budget {
+      assert!(page.next.is_none());
+    }
     let next = restarted
       .list_factory_run_diagnostics(ListFactoryRunDiagnostics::new(run.id(), kind, Some(expected.cursor()), 1).unwrap())
       .await
       .unwrap();
-    assert!(next.items.is_empty());
-    assert!(next.next.is_none());
+    if kind != FactoryRunDiagnosticKind::Budget {
+      assert!(next.items.is_empty());
+    }
+    if kind != FactoryRunDiagnosticKind::Budget {
+      assert!(next.next.is_none());
+    }
   }
+  // A live owner must resume committed progress without waiting for lease expiry.
+  let request = ClaimFactoryRuns::new(claim.owner.clone(), time(22), time(100), 1).unwrap();
+  let resumed = restarted.claim_factory_runs(request.clone()).await.unwrap();
+  assert_eq!(resumed.len(), 1, "the same owner resumes committed progress");
+  assert_eq!(resumed[0].expected_version, restored.run.version());
+  assert_ne!(resumed[0].record.id, claim.id);
+  let replay = restarted.claim_factory_runs(request).await.unwrap();
+  assert_eq!(replay[0].record, resumed[0].record);
+  assert_eq!(replay[0].disposition, MutationDisposition::Replayed);
+  assert!(
+    restarted
+      .claim_factory_runs(ClaimFactoryRuns::new(key("peer.owner"), time(23), time(101), 1).unwrap())
+      .await
+      .unwrap()
+      .is_empty()
+  );
+  let stale = factory_flow_contract_transition(&restored, &claim, 23);
+  assert!(store.commit_factory_run_transition(stale).await.is_err());
+  assert_eq!(
+    restarted.factory_run_snapshot(run.id()).await.unwrap().run,
+    restored.run
+  );
+}
+
+#[cfg(test)]
+#[test]
+fn maximum_signal_provenance_survives_completion_and_diagnostic_reads() {
+  let fixture = factory_node_journal_contract_fixture_with_large_signal();
+  let store = crate::testing::InMemoryFactoryConfigurationStore::new();
+  let audit = crate::testing::management_mutation_with_request((), "large-signal-admission")
+    .audit()
+    .clone();
+  store
+    .seed_factory_run(fixture.admission.clone(), digest(1), &audit)
+    .unwrap();
+  crate::test_support::run_ready(
+    verify_factory_node_journal_contract(&store, &store, &fixture),
+    "large signal contract yielded",
+  );
 }
 
 #[cfg(test)]
 #[test]
 fn frozen_node_data_and_completions_are_committed_atomically_and_survive_snapshot_reads() {
-  let fixture = factory_node_journal_contract_fixture();
+  let mut fixture = factory_node_journal_contract_fixture();
+  fixture.discovery = Some(FlowDiscoveryFacts::candidate(CandidateSubject::new(
+    fixture.admission.work.subject().clone(),
+    octacity_server_domain::ImmutableRevision::new("safe-candidate").unwrap(),
+    FactoryDigest::from_bytes([91; 32]),
+  )));
   let store = crate::testing::InMemoryFactoryConfigurationStore::new();
   let audit = crate::testing::management_mutation_with_request((), "generic-node-admission")
     .audit()

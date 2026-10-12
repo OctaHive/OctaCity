@@ -562,6 +562,33 @@ impl CacheManagementApplication {
 
 /// Authorization-decorated Factory management queries supplied by the composition root.
 pub struct FactoryManagementApplication {
+  pub(super) confirm_node: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::ConfirmFactoryNodeOperationCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) retry_node: Arc<
+    dyn AuthorizedManagementCommandHandler<octacity_server_application::RetryFactoryNodeCommand, Error = ApplicationError>,
+  >,
+  pub(super) respond_node: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::SubmitFactoryNodeResponseCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) cancel_run: Arc<
+    dyn AuthorizedManagementCommandHandler<octacity_server_application::CancelFactoryRunCommand, Error = ApplicationError>,
+  >,
+  pub(super) diagnostics: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ListFactoryDiagnosticsQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) get_run: Arc<
+    dyn AuthorizedManagementQueryHandler<octacity_server_application::GetFactoryRunQuery, Error = ApplicationError>,
+  >,
   pub(super) list_phase_ready: Arc<
     dyn AuthorizedManagementQueryHandler<
         octacity_server_application::ListFactoryPhaseReadyQuery,
@@ -653,15 +680,25 @@ pub struct FactoryManagementApplication {
 
 impl FactoryManagementApplication {
   /// Installs configuration discovery without introducing lifecycle behavior in REST.
-  pub fn new<C, Q, FC, F, A, D>(
+  pub fn new<C, Q, FC, F, A, D, T>(
     commands: Arc<C>,
     queries: Arc<Q>,
     flow_commands: Arc<FC>,
     flows: Arc<F>,
     admission: Arc<A>,
     discovery: Arc<D>,
+    control: Arc<T>,
   ) -> Self
   where
+    T: AuthorizedManagementCommandHandler<octacity_server_application::CancelFactoryRunCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<
+        octacity_server_application::ConfirmFactoryNodeOperationCommand,
+        Error = ApplicationError,
+      > + AuthorizedManagementCommandHandler<octacity_server_application::RetryFactoryNodeCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<
+        octacity_server_application::SubmitFactoryNodeResponseCommand,
+        Error = ApplicationError,
+      > + 'static,
     C: AuthorizedManagementCommandHandler<
         octacity_server_application::CreateFactoryConfigurationCommand,
         Error = ApplicationError,
@@ -685,7 +722,11 @@ impl FactoryManagementApplication {
         octacity_server_application::ListFactoryConfigurationChoicesQuery,
         Error = ApplicationError,
       > + 'static,
-    D: AuthorizedManagementQueryHandler<octacity_server_application::ListFactoryRunsQuery, Error = ApplicationError>
+    D: AuthorizedManagementQueryHandler<
+        octacity_server_application::ListFactoryDiagnosticsQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<octacity_server_application::GetFactoryRunQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<octacity_server_application::ListFactoryRunsQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<
         octacity_server_application::ListFactoryPhaseReadyQuery,
         Error = ApplicationError,
@@ -713,6 +754,12 @@ impl FactoryManagementApplication {
       > + 'static,
   {
     Self {
+      respond_node: control.clone(),
+      confirm_node: control.clone(),
+      retry_node: control.clone(),
+      cancel_run: control,
+      diagnostics: discovery.clone(),
+      get_run: discovery.clone(),
       list_phase_ready: discovery.clone(),
       list_runs: discovery,
       admit_work: admission,

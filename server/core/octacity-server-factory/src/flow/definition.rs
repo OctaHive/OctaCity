@@ -89,6 +89,8 @@ pub struct FlowNodeDefinition {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   gate: Option<crate::FlowGateBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  operator_requests: Option<crate::FlowHumanGateBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   input_binding: Option<crate::FlowInputBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   context_binding: Option<crate::FlowContextBinding>,
@@ -118,6 +120,8 @@ struct FlowNodeDefinitionWire {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   gate: Option<crate::FlowGateBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
+  operator_requests: Option<crate::FlowHumanGateBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
   input_binding: Option<crate::FlowInputBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   context_binding: Option<crate::FlowContextBinding>,
@@ -140,6 +144,9 @@ impl<'de> Deserialize<'de> for FlowNodeDefinition {
 
 impl FlowNodeDefinition {
   fn validate_declaration(&self) -> Result<(), FactoryError> {
+    if let Some(binding) = &self.operator_requests {
+      binding.validate_node(self)?;
+    }
     if self.outcomes.is_empty() || self.outcomes.windows(2).any(|pair| pair[0].key() == pair[1].key()) {
       return Err(FactoryError::InvalidConfiguration {
         field: "Flow node outcomes",
@@ -167,6 +174,7 @@ impl FlowNodeDefinition {
       action: None,
       phase_pool: None,
       gate: None,
+      operator_requests: None,
       input_binding: None,
       context_binding: None,
       build: None,
@@ -299,6 +307,17 @@ impl FlowNodeDefinition {
   #[must_use]
   pub const fn gate(&self) -> Option<&crate::FlowGateBinding> {
     self.gate.as_ref()
+  }
+  /// Freezes typed management requests without interpreting logical node names.
+  pub fn with_operator_requests(mut self, binding: crate::FlowHumanGateBinding) -> Result<Self, FactoryError> {
+    binding.validate_node(&self)?;
+    self.operator_requests = Some(binding);
+    Ok(self)
+  }
+  /// Returns the pinned management contract, independently of route or phase labels.
+  #[must_use]
+  pub const fn operator_requests(&self) -> Option<&crate::FlowHumanGateBinding> {
+    self.operator_requests.as_ref()
   }
 
   /// Binds a plugin action without adding a new Flow primitive or implicit route.

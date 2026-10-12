@@ -49,7 +49,10 @@ pub(crate) async fn claim_batch(
        AND (current.claim_id IS NULL OR claim.expires_at <= to_timestamp($1::double precision / 1000.0) \
          OR (claim.owner = $2 \
            AND claim.claimed_at = to_timestamp($1::double precision / 1000.0) \
-           AND claim.expires_at = to_timestamp($3::double precision / 1000.0))) \
+           AND claim.expires_at = to_timestamp($3::double precision / 1000.0)) \
+         OR (claim.owner = $2 AND claim.claimed_at <= to_timestamp($1::double precision / 1000.0) \
+           AND run.updated_at >= claim.claimed_at \
+           AND run.updated_at <= to_timestamp($1::double precision / 1000.0))) \
      ORDER BY run.updated_at, run.id \
      FOR UPDATE OF run SKIP LOCKED LIMIT $4",
   )
@@ -121,7 +124,12 @@ async fn validate_claim(
     let current = read_claim(transaction, current_id)
       .await?
       .ok_or(StoreError::Unavailable)?;
-    if current.claim.expires_at() > request.record.claim.claimed_at() {
+    if current.claim.expires_at() > request.record.claim.claimed_at()
+      && !(current.owner == request.record.owner
+        && current.claim.claimed_at() <= request.record.claim.claimed_at()
+        && locked.lifecycle.recorded_at >= current.claim.claimed_at()
+        && locked.lifecycle.recorded_at <= request.record.claim.claimed_at())
+    {
       return Err(conflict());
     }
   }

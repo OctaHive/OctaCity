@@ -66,9 +66,14 @@ fn commands_have_target_specific_authorization_and_only_closed_inputs() {
     CancelFactoryRunCommand::AUTHORIZATION.action(),
     ManagementAction::Cancel
   );
+  assert_eq!(RetryFactoryNodeCommand::AUTHORIZATION.action(), ManagementAction::Retry);
   assert_eq!(
-    RetryFactoryNodeCommand::AUTHORIZATION.action(),
-    ManagementAction::Execute
+    RetryFactoryNodeCommand::AUTHORIZATION.resource_kind(),
+    crate::ManagementResourceKind::FactoryNodeAttempt
+  );
+  assert_eq!(
+    ResolveFactoryNodeCommand::AUTHORIZATION.resource_kind(),
+    crate::ManagementResourceKind::FactoryNodeAttempt
   );
   assert_eq!(
     ResolveFactoryNodeCommand::AUTHORIZATION.action(),

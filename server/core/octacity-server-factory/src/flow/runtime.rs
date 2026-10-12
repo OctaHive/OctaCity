@@ -775,6 +775,20 @@ pub(crate) fn validate_data_catalogue(
     return Err(invalid());
   }
   for definition in closure.definitions() {
+    for node in definition.nodes() {
+      if let Some(binding) = node.operator_requests() {
+        for disposition in binding.dispositions() {
+          let schema = binding
+            .outcome(disposition)
+            .and_then(|key| node.outcome(key))
+            .and_then(|outcome| schemas.iter().find(|schema| schema.reference() == outcome.schema()))
+            .ok_or_else(invalid)?;
+          if !schema.accepts_all(&binding.response_shape(disposition)?) {
+            return Err(invalid());
+          }
+        }
+      }
+    }
     for reference in definition
       .input_schema()
       .into_iter()

@@ -1,3 +1,7 @@
+use octacity_server_application::{
+  CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand, ListFactoryDiagnosticsQuery, RetryFactoryNodeCommand,
+  SubmitFactoryNodeResponseCommand,
+};
 use std::{any::TypeId, collections::BTreeSet, sync::Arc};
 
 use axum::{
@@ -13,10 +17,10 @@ use octacity_server_application::{
   CreateUnmanagedWebhookCommand, DeleteAgentPoolCommand, DeleteManagedWebhookRegistrationCommand, DeleteProjectCommand,
   DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery, GetArtifactQuery, GetAttemptQuery, GetBuildConfigurationQuery,
   GetBuildQuery, GetBuildResultRetentionQuery, GetCacheSessionQuery, GetCurrentFactoryConfigurationQuery,
-  GetFactoryConfigurationQuery, GetFactoryFlowDefinitionQuery, GetInternalTriggerQuery, GetJobQuery,
-  GetManualTriggerDefinitionQuery, GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery, GetRepositoryQuery,
-  GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery,
-  ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListFactoryConfigurationChoicesQuery,
+  GetFactoryConfigurationQuery, GetFactoryFlowDefinitionQuery, GetFactoryRunQuery, GetInternalTriggerQuery,
+  GetJobQuery, GetManualTriggerDefinitionQuery, GetOperationalMetadataQuery, GetPipelineQuery, GetProjectQuery,
+  GetRepositoryQuery, GetScheduleQuery, IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery,
+  ListAuditFactsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery, ListFactoryConfigurationChoicesQuery,
   ListFactoryPhaseReadyQuery, ListFactoryRunsQuery, ListInternalTriggersQuery, ListOperatorAttentionQuery,
   ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery, ListProjectFactoryConfigurationsQuery,
   ListProjectFactoryFlowDefinitionsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery,
@@ -31,25 +35,25 @@ use octacity_server_application::{
 
 use super::{
   MAX_MANAGEMENT_BODY_BYTES, ManagementApplication, accept_manual_trigger, admit_manual_factory_work, api_not_found,
-  authorize_artifact_download, cancel_build, create_agent_pool, create_build_configuration,
-  create_factory_configuration, create_factory_flow_definition, create_internal_trigger, create_managed_webhook,
-  create_manual_trigger_definition, create_pipeline, create_project, create_repository,
+  authorize_artifact_download, cancel_build, cancel_factory_run, confirm_factory_node_operation, create_agent_pool,
+  create_build_configuration, create_factory_configuration, create_factory_flow_definition, create_internal_trigger,
+  create_managed_webhook, create_manual_trigger_definition, create_pipeline, create_project, create_repository,
   create_scheduled_trigger_definition, create_unmanaged_webhook, delete_agent_pool, delete_managed_webhook,
   delete_project, drain_agent, get_agent, get_agent_pool, get_artifact, get_attempt, get_build,
   get_build_configuration, get_build_result_retention, get_cache_session, get_current_agent_pool,
   get_current_factory_configuration, get_current_factory_flow_definition, get_factory_configuration,
-  get_factory_flow_definition, get_internal_trigger, get_job, get_manual_trigger_definition, get_operational_metadata,
-  get_pipeline, get_project, get_repository, get_schedule, issue_agent_enrollment, list_agent_pools, list_agents,
-  list_audit_facts, list_build_artifacts, list_build_cache_sessions, list_factory_configuration_choices,
-  list_factory_phase_ready, list_factory_runs, list_internal_triggers, list_operator_attention,
-  list_project_build_configurations, list_project_builds, list_project_factory_configurations,
-  list_project_factory_flow_definitions, list_project_factory_phase_ready, list_project_factory_runs,
-  list_project_pipelines, list_project_repositories, list_project_trigger_definitions, list_projects, move_project,
-  observe_managed_webhook, openapi, place_build_result_hold, publish_agent_pool, publish_build_configuration,
-  publish_internal_trigger, publish_pipeline, publish_project_policy, publish_repository, read_job_events,
-  reassign_agent_pool, release_build_result_hold, rename_project, replace_factory_configuration,
-  replace_factory_flow_definition, retry_build, rotate_managed_webhook, search_build_logs, search_resources,
-  validate_factory_configuration, validate_factory_flow_definition,
+  get_factory_flow_definition, get_factory_run, get_internal_trigger, get_job, get_manual_trigger_definition,
+  get_operational_metadata, get_pipeline, get_project, get_repository, get_schedule, issue_agent_enrollment,
+  list_agent_pools, list_agents, list_audit_facts, list_build_artifacts, list_build_cache_sessions,
+  list_factory_configuration_choices, list_factory_diagnostics, list_factory_phase_ready, list_factory_runs,
+  list_internal_triggers, list_operator_attention, list_project_build_configurations, list_project_builds,
+  list_project_factory_configurations, list_project_factory_flow_definitions, list_project_factory_phase_ready,
+  list_project_factory_runs, list_project_pipelines, list_project_repositories, list_project_trigger_definitions,
+  list_projects, move_project, observe_managed_webhook, openapi, place_build_result_hold, publish_agent_pool,
+  publish_build_configuration, publish_internal_trigger, publish_pipeline, publish_project_policy, publish_repository,
+  read_job_events, reassign_agent_pool, release_build_result_hold, rename_project, replace_factory_configuration,
+  replace_factory_flow_definition, retry_build, retry_factory_node, rotate_managed_webhook, search_build_logs,
+  search_resources, submit_factory_node_response, validate_factory_configuration, validate_factory_flow_definition,
 };
 use crate::v1::{API_PREFIX, MANAGEMENT_OPERATIONS, ManagementOperation};
 
@@ -283,6 +287,12 @@ fn registered_routes() -> ManagementRoutes {
     .get::<ListAuditFactsQuery, _, _>("listAuditFacts", list_audit_facts)
     .get::<ListFactoryPhaseReadyQuery, _, _>("listFactoryPhaseReady", list_factory_phase_ready)
     .get::<ListFactoryPhaseReadyQuery, _, _>("listProjectFactoryPhaseReady", list_project_factory_phase_ready)
+    .get::<ListFactoryDiagnosticsQuery, _, _>("listFactoryDiagnostics", list_factory_diagnostics)
+    .get::<GetFactoryRunQuery, _, _>("getFactoryRun", get_factory_run)
+    .post::<CancelFactoryRunCommand, _, _>("cancelFactoryRun", cancel_factory_run)
+    .post::<SubmitFactoryNodeResponseCommand, _, _>("submitFactoryNodeResponse", submit_factory_node_response)
+    .post::<RetryFactoryNodeCommand, _, _>("retryFactoryNode", retry_factory_node)
+    .post::<ConfirmFactoryNodeOperationCommand, _, _>("confirmFactoryNodeOperation", confirm_factory_node_operation)
     .get::<ListFactoryRunsQuery, _, _>("listFactoryRuns", list_factory_runs)
     .get::<ListFactoryRunsQuery, _, _>("listProjectFactoryRuns", list_project_factory_runs)
     .post::<AdmitManualFactoryWorkCommand, _, _>("admitManualFactoryWork", admit_manual_factory_work)

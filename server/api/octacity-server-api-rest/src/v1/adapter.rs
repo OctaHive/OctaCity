@@ -95,11 +95,12 @@ mod webhook;
 
 use authorization::authorized_handler_error;
 use factory::{
-  admit_manual_factory_work, create_factory_configuration, create_factory_flow_definition,
-  get_current_factory_configuration, get_current_factory_flow_definition, get_factory_configuration,
-  get_factory_flow_definition, list_factory_configuration_choices, list_factory_phase_ready, list_factory_runs,
-  list_project_factory_configurations, list_project_factory_flow_definitions, list_project_factory_phase_ready,
-  list_project_factory_runs, replace_factory_configuration, replace_factory_flow_definition,
+  admit_manual_factory_work, cancel_factory_run, confirm_factory_node_operation, create_factory_configuration,
+  create_factory_flow_definition, get_current_factory_configuration, get_current_factory_flow_definition,
+  get_factory_configuration, get_factory_flow_definition, get_factory_run, list_factory_configuration_choices,
+  list_factory_diagnostics, list_factory_phase_ready, list_factory_runs, list_project_factory_configurations,
+  list_project_factory_flow_definitions, list_project_factory_phase_ready, list_project_factory_runs,
+  replace_factory_configuration, replace_factory_flow_definition, retry_factory_node, submit_factory_node_response,
   validate_factory_configuration, validate_factory_flow_definition,
 };
 

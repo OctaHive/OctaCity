@@ -28,6 +28,8 @@ pub trait FactoryRunStore: Send + Sync {
   async fn claim_factory_run(&self, request: ClaimFactoryRun) -> Result<ClaimFactoryRunOutcome, StoreError>;
 
   /// Atomically claims a deterministic bounded set of eligible Runs.
+  /// A live owner may renew after committed progress; another owner waits for
+  /// expiry. Renewal appends a new fence, so stale transitions still conflict.
   async fn claim_factory_runs(&self, request: ClaimFactoryRuns) -> Result<Vec<ClaimedFactoryRun>, StoreError>;
 
   /// Atomically appends immutable history, audit and outbox rows and then

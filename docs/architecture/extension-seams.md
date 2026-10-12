@@ -129,17 +129,34 @@ empty crate or unused dependency is not acceptable evidence.
 ### Factory result discovery facts
 
 A trusted `FactoryFlowActionPlugin` may return optional `FlowDiscoveryFacts` in
-its observation. Construct these from a verified exact candidate, authoritative
-Decision, delivery attempt or escalation. The common owner binds them to the Work
+its observation. Construct these from a verified exact candidate, ChangeSet,
+Evidence Manifest, Evaluation Plan, Assessment, Decision Signal receipt,
+authoritative Decision, delivery attempt, escalation, promotion observation or
+reporting attempt. The common owner binds them to the Work
 subject and includes them in the result digest and fenced completion. Provider JSON,
 Decision Signal recommendations, arbitrary outcome keys and plugin parameter field
 names cannot become discovery authority. The facts do not drive Flow interpretation.
 
 Emit candidate facts for explicit verified publication. Decision and delivery facts
 carry their own exact subjects; a late receipt cannot replace a newer candidate.
-Discovery projects only IDs, exact subjects and closed classifications. Escalation
-reason text, assessments, findings, task/context payloads, connector targets and
+Discovery projects only IDs, exact subjects, provenance digests and closed
+classifications. Installed extensions must explicitly emit verified facts for their
+diagnostic collections; absent facts produce empty collections, not guesses from
+payloads. Escalation reason text, assessment findings, task/context payloads, connector targets and
 private links remain outside this projection. Persist every fact through the common
 result journal; do not add a parallel phase-specific history or infer semantics from
 logical Flow/node names. PostgreSQL read indexes must be checked against the retained
 record bytes and updated in the same completion transaction.
+
+Diagnostic facts share the complete canonical result document's byte ceiling
+(`MAX_FLOW_DATA_BYTES`, 1 MiB). The PostgreSQL JSONB index must match those bytes;
+it has no smaller limit on its expanded text representation. This preserves valid
+escaped revisions and complete provenance without accepting an unbounded record.
+The promotion adapter emits facts only after verifying the exact plan, input,
+freshness and observation window. The common owner includes them in its final
+completion digest.
+
+Decision facts include an explicit safe explanation: plan and consumed receipt
+identities, typed policy reasons, and input/policy digests. They exclude findings,
+summaries and rendered prompts. Historical facts omit this optional extension;
+restoration preserves their original bytes rather than reconstructing explanations.
