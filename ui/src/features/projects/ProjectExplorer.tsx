@@ -30,6 +30,8 @@ export function ProjectExplorer({ api }: ProjectExplorerProps) {
     matchPath(CONSOLE_PATHS.project, location.pathname)?.params.projectId ?? null;
   const selectedProject = useQuery({
     enabled: selectedProjectId !== null,
+    // Layout remounts reuse the selected detail; its main view owns revalidation.
+    refetchOnMount: false,
     queryFn: ({ signal }) => api.getProject(requireSelection(selectedProjectId), signal),
     queryKey:
       selectedProjectId === null
@@ -247,6 +249,9 @@ function useProjectPage(api: ProjectHierarchyApi, parentId: string | null, enabl
     string | null
   >({
     enabled,
+    // Collapsing or resizing the explorer must not refetch already loaded branches.
+    // First loads, pagination and the explicit refresh control still fetch normally.
+    refetchOnMount: false,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     initialPageParam: null,
     queryFn: ({ pageParam, signal }) => api.listProjects(parentId, pageParam, signal),

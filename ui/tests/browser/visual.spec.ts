@@ -127,6 +127,13 @@ for (const visual of visualCases) {
     if ('language' in visual) await selectRussian(page);
     await expect(page.locator('body')).toHaveCSS('font-family', /ui-sans-serif/u);
 
+    // Retained headings can be visible while another observer refreshes its data.
+    // Capture the settled fixture, including after a presentation change.
+    await expect(
+      page
+        .getByRole('status')
+        .filter({ hasText: /^(Loading |Refreshing |Загрузка: |Обновление: )/u }),
+    ).toHaveCount(0);
     await expect(page).toHaveScreenshot(visual.name, { fullPage: true });
   });
 }

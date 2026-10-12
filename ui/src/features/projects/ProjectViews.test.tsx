@@ -40,6 +40,32 @@ describe('Project hierarchy', () => {
     ).toBeTruthy();
   });
 
+  it('retains loaded hierarchy reads when the explorer remounts and still supports explicit refresh', async () => {
+    const api = fakeProjectsApi();
+    api.getProject.mockResolvedValue({ ancestors: [], project: project('selected', 'Selected') });
+    api.listProjects.mockResolvedValue(page([project('selected', 'Selected')], null));
+    renderProjects('/projects/selected', api);
+    const explorer = await screen.findByRole('complementary', { name: 'Projects explorer' });
+    await within(explorer).findByRole('link', { name: 'Selected' });
+    await screen.findByRole('heading', { level: 1, name: 'Selected' });
+    api.getProject.mockClear();
+    api.listProjects.mockClear();
+
+    await userEvent.click(
+      within(explorer).getByRole('button', { name: 'Collapse Projects explorer' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Open Projects explorer' }));
+    const restored = await screen.findByRole('complementary', { name: 'Projects explorer' });
+    await within(restored).findByRole('link', { name: 'Selected' });
+    expect(api.getProject).not.toHaveBeenCalled();
+    expect(api.listProjects).not.toHaveBeenCalled();
+
+    await userEvent.click(
+      within(restored).getByRole('button', { name: 'Refresh Project hierarchy' }),
+    );
+    await waitFor(() => expect(api.listProjects).toHaveBeenCalledTimes(1));
+  });
+
   it('uses returned ancestry for breadcrumbs and child selection deep links', async () => {
     const api = fakeProjectsApi();
     api.getProject.mockResolvedValue({
