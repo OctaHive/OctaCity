@@ -266,8 +266,10 @@ pub use factory_configuration_model::{
 pub use factory_configuration_port::FactoryConfigurationStore;
 pub use factory_discovery_model::{
   CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary, FactoryConfigurationPagePosition,
-  FactoryRunFilter, FactoryRunPage, FactoryRunPagePosition, FactoryRunSummary, ListFactoryRuns,
-  ListProjectFactoryConfigurations, MAX_FACTORY_CONFIGURATION_PAGE_SIZE, MAX_FACTORY_RUN_PAGE_SIZE,
+  FactoryRunBudgetSummary, FactoryRunDecisionSummary, FactoryRunDeliverySummary, FactoryRunFilter,
+  FactoryRunNodeSummary, FactoryRunPage, FactoryRunPagePosition, FactoryRunSummary, FactoryRunSummaryDiagnostics,
+  ListFactoryRuns, ListProjectFactoryConfigurations, MAX_FACTORY_CONFIGURATION_PAGE_SIZE, MAX_FACTORY_RUN_PAGE_SIZE,
+  MAX_FACTORY_RUN_SUMMARY_NODES,
 };
 pub use factory_discovery_port::FactoryDiscoveryStore;
 pub use factory_phase_pool::{
@@ -397,9 +399,10 @@ pub use project_port::ProjectStore;
 pub use read_visibility::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
-  FactoryConfigurationListVisibility, FactoryRunListVisibility, InternalTriggerListVisibility, JobEventReadVisibility,
-  MAX_READ_VISIBILITY_IDENTITIES, PipelineListVisibility, ProjectListVisibility, ReadVisibilityError,
-  ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility, TriggerDefinitionListVisibility,
+  FactoryChoiceListVisibility, FactoryConfigurationListVisibility, FactoryRunListVisibility,
+  FlowDefinitionListVisibility, InternalTriggerListVisibility, JobEventReadVisibility, MAX_READ_VISIBILITY_IDENTITIES,
+  PipelineListVisibility, ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView,
+  RepositoryListVisibility, TriggerDefinitionListVisibility,
 };
 pub use resource_search_model::{
   MAX_RESOURCE_SEARCH_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_LABEL_BYTES, MAX_RESOURCE_SEARCH_PAGE_SIZE,
@@ -729,3 +732,13 @@ mod factory_node_journal_testing;
 
 mod factory_job_policy;
 pub use factory_job_policy::factory_job_permissions;
+
+mod factory_flow_definition;
+pub use factory_flow_definition::{
+  FactoryFlowDefinitionMutationOutcome, FactoryFlowDefinitionPage, FactoryFlowDefinitionStore,
+  FlowDefinitionPagePosition, PublishFactoryFlowDefinition, PublishedFactoryFlowDefinition,
+  ReplayFactoryFlowDefinition,
+};
+
+mod factory_phase_discovery;
+pub use factory_phase_discovery::{ListPhaseReadyEntries, PhaseReadyPage, PhaseReadyPagePosition};

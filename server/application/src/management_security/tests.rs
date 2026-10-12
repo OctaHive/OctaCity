@@ -36,6 +36,8 @@ fn representative_resource(kind: ManagementResourceKind) -> ManagementResource {
     | ManagementResourceKind::Agent
     | ManagementResourceKind::AuditFact
     | ManagementResourceKind::FactoryConfiguration
+    | ManagementResourceKind::FlowDefinition
+    | ManagementResourceKind::FactoryChoice
     | ManagementResourceKind::FactoryRun => ManagementResource::collection(kind).unwrap(),
     ManagementResourceKind::ProjectPolicy => {
       ManagementResource::owned_collection(kind, ManagementResourceKind::Project, identity()).unwrap()

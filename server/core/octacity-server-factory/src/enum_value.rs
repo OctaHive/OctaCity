@@ -16,6 +16,8 @@ macro_rules! factory_enum {
     }
 
     impl $name {
+      /// Complete canonical vocabulary, without logical Flow or node names.
+      pub const VALUES: &'static [Self] = &[$(Self::$variant),+];
       /// Returns the canonical stable representation.
       #[must_use]
       pub const fn as_str(self) -> &'static str {

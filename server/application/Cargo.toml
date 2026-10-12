@@ -27,6 +27,7 @@ octacity-server-store = { path = "../core/octacity-server-store" }
 octacity-server-trigger = { path = "../core/octacity-server-trigger" }
 serde.workspace = true
 serde_json.workspace = true
+serde_path_to_error.workspace = true
 thiserror.workspace = true
 uuid = { workspace = true, features = ["v5"] }
 url.workspace = true

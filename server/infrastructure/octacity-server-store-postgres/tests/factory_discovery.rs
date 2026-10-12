@@ -28,11 +28,26 @@ use support::TestDatabase;
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn configured_unknown_node_journal_matches_memory_and_survives_restart() {
+  assert_configured_node_discovery("candidate").await;
+}
+
+async fn assert_configured_node_discovery(kind: &str) {
   use octacity_server_factory::FactoryFlowConfiguration;
   use octacity_server_store::testing::{factory_node_journal_contract_fixture, verify_factory_node_journal_contract};
   let database = TestDatabase::migrated().await;
   let postgres = PostgresStore::new(database.pool.clone());
-  let node_fixture = factory_node_journal_contract_fixture();
+  let mut node_fixture = factory_node_journal_contract_fixture();
+  let candidate = octacity_server_factory::CandidateSubject::new(
+    node_fixture.admission.work.subject().clone(),
+    ImmutableRevision::new("review-candidate").unwrap(),
+    digest(91),
+  );
+  node_fixture.discovery = Some(match kind {
+    "candidate" => octacity_server_factory::FlowDiscoveryFacts::candidate(candidate.clone()),
+    "decision" => serde_json::from_value(serde_json::json!({"kind":"decision", "subject":candidate, "id":"88888888-8888-4888-8888-888888888888", "outcome":"accept"})).unwrap(),
+    "delivery" => serde_json::from_value(serde_json::json!({"kind":"delivery", "subject":candidate, "id":"99999999-9999-4999-8999-999999999999", "decision_id":"88888888-8888-4888-8888-888888888888", "state":"failed"})).unwrap(),
+    _ => unreachable!("closed fixture cases"),
+  });
   let work = &node_fixture.admission.work;
   let project = work.subject().project_id();
   seed_projects(&database.pool, project, ProjectId::generate()).await;
@@ -122,6 +137,100 @@ async fn configured_unknown_node_journal_matches_memory_and_survives_restart() {
   .await;
   let restarted = PostgresStore::new(database.pool.clone());
   verify_factory_node_journal_contract(&postgres, &restarted, &node_fixture).await;
+  let summary = restarted
+    .factory_run_summary(node_fixture.admission.run.id(), FactoryRunListVisibility::all())
+    .await
+    .unwrap();
+  assert_eq!(summary.diagnostics.base_revision, *work.subject().base_revision());
+  assert_eq!(summary.diagnostics.candidate, Some(candidate.clone()));
+  assert_eq!(summary.diagnostics.budget.usage.attempts, 1);
+  assert!(summary.diagnostics.current_nodes.is_empty());
+  if kind == "decision" {
+    assert_eq!(
+      summary.diagnostics.latest_decision.as_ref().unwrap().outcome,
+      octacity_server_factory::DecisionOutcome::Accept
+    );
+    let matching = restarted
+      .list_factory_runs(
+        ListFactoryRuns::new(
+          None,
+          FactoryRunFilter {
+            decision: Some(octacity_server_factory::DecisionOutcome::Accept),
+            ..Default::default()
+          },
+          None,
+          1,
+          FactoryRunListVisibility::all(),
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(run_ids(&matching), [node_fixture.admission.run.id()]);
+    assert_eq!(matching.total, 1);
+    let absent = restarted
+      .list_factory_runs(
+        ListFactoryRuns::new(
+          None,
+          FactoryRunFilter {
+            decision: Some(octacity_server_factory::DecisionOutcome::Reject),
+            ..Default::default()
+          },
+          None,
+          1,
+          FactoryRunListVisibility::all(),
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(absent.total, 0);
+    assert!(absent.items.is_empty());
+  } else if kind == "delivery" {
+    assert_eq!(
+      summary.diagnostics.delivery.as_ref().unwrap().state,
+      octacity_server_factory::DeliveryState::Failed
+    );
+    let matching = restarted
+      .list_factory_runs(
+        ListFactoryRuns::new(
+          None,
+          FactoryRunFilter {
+            delivery_state: Some(octacity_server_factory::DeliveryState::Failed),
+            ..Default::default()
+          },
+          None,
+          1,
+          FactoryRunListVisibility::all(),
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(run_ids(&matching), [node_fixture.admission.run.id()]);
+    assert_eq!(matching.total, 1);
+    let absent = restarted
+      .list_factory_runs(
+        ListFactoryRuns::new(
+          None,
+          FactoryRunFilter {
+            delivery_state: Some(octacity_server_factory::DeliveryState::Succeeded),
+            ..Default::default()
+          },
+          None,
+          1,
+          FactoryRunListVisibility::all(),
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(absent.total, 0);
+  } else {
+    assert!(summary.diagnostics.latest_decision.is_none());
+    assert!(summary.diagnostics.delivery.is_none());
+  }
+  assert!(summary.diagnostics.escalation.is_none());
   cleanup_generic_node_journal(
     &restarted,
     node_fixture.admission.run.id(),
@@ -129,6 +238,13 @@ async fn configured_unknown_node_journal_matches_memory_and_survives_restart() {
   )
   .await;
   database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn run_discovery_filters_authoritative_decisions_and_delivery_states() {
+  assert_configured_node_discovery("decision").await;
+  assert_configured_node_discovery("delivery").await;
 }
 
 async fn cleanup_generic_node_journal(store: &PostgresStore, run_id: FactoryRunId, build_id: BuildId) {
@@ -464,6 +580,7 @@ async fn factory_configuration_admission_and_discovery_match_the_in_memory_contr
         state: Some(octacity_server_factory::FactoryRunState::Admitted),
         admitted_from: Some(time(20)),
         admitted_before: Some(time(31)),
+        ..Default::default()
       },
       None,
       20,
@@ -917,6 +1034,133 @@ mod run_contract {
       capabilities: BTreeSet::new(),
       limit: 1,
     }
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn phase_ready_management_does_not_wait_for_worker_run_locks() {
+    use octacity_server_factory::FindingSeverity;
+    use octacity_server_store::{
+      FactoryPhasePoolStore as _, ListPhaseReadyEntries, testing::phase_pool_contract_input,
+    };
+    let setup = Setup::new().await;
+    let admission = setup
+      .pool_run(
+        24,
+        pool_settings(FindingSeverity::High),
+        BudgetLimit::new(1, 1, 1, 1, 1).unwrap(),
+      )
+      .await;
+    let run = admission.run.id();
+    let snapshot = octacity_server_store::testing::freeze_phase_pool_contract_input(&setup.postgres, run).await;
+    setup
+      .postgres
+      .publish_phase_ready(
+        pool_policy(),
+        phase_pool_contract_input(&snapshot, FindingSeverity::High),
+      )
+      .await
+      .unwrap();
+    let mut worker = setup.database.pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM factory_runs WHERE id=$1 FOR UPDATE")
+      .bind(run.as_uuid())
+      .fetch_one(&mut *worker)
+      .await
+      .unwrap();
+    let result = tokio::time::timeout(
+      std::time::Duration::from_secs(1),
+      setup.postgres.list_phase_ready_entries(
+        ListPhaseReadyEntries::new(None, pool_policy().digest(), None, 10, FactoryRunListVisibility::all()).unwrap(),
+      ),
+    )
+    .await;
+    worker.rollback().await.unwrap();
+    let page = result
+      .expect("management discovery must not wait for a worker lock")
+      .unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].input.run_id, run);
+    setup.database.cleanup().await;
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn phase_ready_management_applies_visibility_before_order_count_and_composite_cursor() {
+    use octacity_server_factory::FindingSeverity;
+    use octacity_server_store::{
+      FactoryPhasePoolStore as _, ListPhaseReadyEntries, testing::phase_pool_contract_input,
+    };
+    let setup = Setup::new().await;
+    let reservation = BudgetLimit::new(1, 1, 1, 1, 1).unwrap();
+    let high = setup
+      .pool_run(21, pool_settings(FindingSeverity::High), reservation)
+      .await;
+    let medium = setup
+      .pool_run(22, pool_settings(FindingSeverity::Medium), reservation)
+      .await;
+    let hidden = setup
+      .pool_run(23, pool_settings(FindingSeverity::Critical), reservation)
+      .await;
+    for (run, severity) in [
+      (medium.run.id(), FindingSeverity::Medium),
+      (hidden.run.id(), FindingSeverity::Critical),
+      (high.run.id(), FindingSeverity::High),
+    ] {
+      let snapshot = octacity_server_store::testing::freeze_phase_pool_contract_input(&setup.postgres, run).await;
+      setup
+        .postgres
+        .publish_phase_ready(pool_policy(), phase_pool_contract_input(&snapshot, severity))
+        .await
+        .unwrap();
+    }
+    let visibility = FactoryRunListVisibility::restricted([high.run.id(), medium.run.id()]).unwrap();
+    let request =
+      |after| ListPhaseReadyEntries::new(None, pool_policy().digest(), after, 1, visibility.clone()).unwrap();
+    let first = setup.postgres.list_phase_ready_entries(request(None)).await.unwrap();
+    assert_eq!(first.total, 2);
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].input.run_id, high.run.id());
+    let cursor = first.next_cursor.unwrap();
+    assert_eq!(
+      cursor
+        .to_string()
+        .parse::<octacity_server_store::PhaseReadyPagePosition>()
+        .unwrap(),
+      cursor
+    );
+    // A new entry sorts ahead of the cursor and cannot duplicate the first page.
+    let inserted = setup
+      .pool_run(24, pool_settings(FindingSeverity::Critical), reservation)
+      .await;
+    let snapshot =
+      octacity_server_store::testing::freeze_phase_pool_contract_input(&setup.postgres, inserted.run.id()).await;
+    setup
+      .postgres
+      .publish_phase_ready(
+        pool_policy(),
+        phase_pool_contract_input(&snapshot, FindingSeverity::Critical),
+      )
+      .await
+      .unwrap();
+    let second = PostgresStore::new(setup.database.pool.clone())
+      .list_phase_ready_entries(request(Some(cursor)))
+      .await
+      .unwrap();
+    assert_eq!(second.total, 2);
+    assert_eq!(second.items.len(), 1);
+    assert_eq!(second.items[0].input.run_id, medium.run.id());
+    assert!(second.next_cursor.is_none());
+    let none = setup
+      .postgres
+      .list_phase_ready_entries(
+        ListPhaseReadyEntries::new(None, digest(254), None, 1, FactoryRunListVisibility::none()).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(none.total, 0);
+    assert!(none.items.is_empty());
+    assert!(none.next_cursor.is_none());
+    setup.cleanup().await;
   }
 
   #[tokio::test]
@@ -1736,3 +1980,40 @@ mod run_contract {
 }
 
 use support::factory_build::seed_factory_build;
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn empty_factory_visibility_does_not_resolve_a_missing_project() {
+  let database = TestDatabase::migrated().await;
+  let postgres = PostgresStore::new(database.pool.clone());
+  let memory = InMemoryFactoryConfigurationStore::new();
+  let project = ProjectId::generate();
+  for store in [&postgres as &dyn octacity_server_store::FactoryDiscoveryStore, &memory] {
+    let runs = store
+      .list_factory_runs(
+        ListFactoryRuns::new(
+          Some(project),
+          FactoryRunFilter::default(),
+          None,
+          1,
+          FactoryRunListVisibility::none(),
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(runs.total, 0);
+    assert!(runs.items.is_empty());
+    assert!(runs.next_cursor.is_none());
+    let configurations = store
+      .list_project_factory_configurations(
+        ListProjectFactoryConfigurations::new(project, None, 1, FactoryConfigurationListVisibility::none()).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(configurations.total, 0);
+    assert!(configurations.items.is_empty());
+    assert!(configurations.next_cursor.is_none());
+  }
+  database.cleanup().await;
+}

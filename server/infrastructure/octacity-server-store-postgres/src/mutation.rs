@@ -315,6 +315,7 @@ pub(crate) enum MutationKind {
   PublishRepositoryVersion,
   CreateBuildConfiguration,
   PublishBuildConfigurationVersion,
+  PublishFactoryFlowDefinition,
   CreateFactoryConfiguration,
   ReplaceFactoryConfiguration,
   AdmitFactoryWork,
@@ -474,6 +475,12 @@ impl MutationKind {
         "publish-build-configuration-version",
         "build_configuration",
         "build-configuration.version-published"
+      ),
+      Self::PublishFactoryFlowDefinition => metadata!(
+        b"octacity.publish-factory-flow-definition.v1\0",
+        "publish-factory-flow-definition",
+        "flow_definition",
+        "factory.flow-version-published"
       ),
       Self::CreateFactoryConfiguration => metadata!(
         b"octacity.create-factory-configuration.v1\0",

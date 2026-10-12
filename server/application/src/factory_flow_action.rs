@@ -38,6 +38,9 @@ pub struct FactoryFlowActionRequest<'a> {
 
 /// Trusted plugin execution facts; the Flow validates the declared outcome again.
 pub struct FactoryFlowActionObservation {
+  /// Verified domain facts for safe discovery, retained with the fenced result.
+  /// Provider observations and arbitrary JSON cannot populate this projection.
+  pub discovery: Option<FlowDiscoveryFacts>,
   /// One outcome declared by the immutable node.
   pub outcome: FactoryKey,
   /// Bounded result including the plugin's idempotent receipt, under a published contract.
@@ -183,7 +186,7 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
       schema,
     )
     .map_err(|_| ApplicationError::invalid())?;
-    let record = FlowNodeRecord::new(
+    let mut record = FlowNodeRecord::new(
       request.input,
       request.attempt,
       definition,
@@ -195,6 +198,9 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
       },
     )
     .map_err(|_| ApplicationError::invalid())?;
+    if let Some(facts) = result.discovery {
+      record = record.with_discovery(facts).map_err(|_| ApplicationError::invalid())?;
+    }
     Ok(crate::FactoryNodeExecutionStep::Completed {
       execution: None,
       record: Box::new(record),
@@ -345,6 +351,7 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
     if let Some(policy) = parameters.outbox {
       policy.validate()?;
       return Ok(FactoryFlowActionObservation {
+        discovery: None,
         outcome: self.outcome.key().clone(),
         payload: FlowPayload::new(
           request
@@ -376,6 +383,7 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
       })
       .await?;
     Ok(FactoryFlowActionObservation {
+      discovery: None,
       outcome: self.outcome.key().clone(),
       payload: FlowPayload::new(
         request

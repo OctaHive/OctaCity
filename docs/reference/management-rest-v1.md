@@ -728,3 +728,100 @@ Drain an Agent with `POST /api/v1/agents/{agent_id}/drain`, an
 `graceful_drain` or `forced_drain` applies the same directive atomically to all
 current Leases in that Pool. A draining Agent remains ineligible for placement,
 including after re-registration.
+
+## Optional Factory management
+
+Factory routes use the same request correlation, authorization and mutation
+contracts as ordinary management. Published choices come from the trusted Project
+and deployment capability catalogue; enabling Factory does not enable an adapter
+by discovery alone. Without installed Factory capability, ordinary CI/CD remains
+available and Factory publication/admission reports capability unavailability.
+An exact mutation replay returns its original result before resolving current
+catalogue or mutable source state again.
+
+| Method | Path under `/api/v1` | Purpose |
+| --- | --- | --- |
+| GET | `/projects/{project_id}/factory-configuration-choices` | Bounded visible choices; optional `kind`, `after`, `limit` |
+| POST | `/flow-definitions/validate` | Validate a typed root and resolve exact published subflows |
+| POST | `/flow-definitions` | Publish version one of an immutable Flow root |
+| POST | `/flow-definitions/{id}/versions` | Publish the next Flow version with `If-Match` |
+| GET | `/flow-definitions/{id}` | Read the current published Flow |
+| GET | `/flow-definitions/{id}/versions/{version}` | Read an exact published Flow version |
+| GET | `/projects/{project_id}/flow-definitions` | Page visible current Flow roots |
+| POST | `/factory-configurations/validate` | Resolve a candidate and return safe validation diagnostics |
+| POST | `/factory-configurations` | Publish Factory Configuration version one |
+| POST | `/factory-configurations/{id}/versions` | Publish its next version with `If-Match` |
+| GET | `/factory-configurations/{id}` | Read the current configuration |
+| GET | `/factory-configurations/{id}/versions/{version}` | Read an exact configuration version |
+| GET | `/projects/{project_id}/factory-configurations` | Page visible current configurations |
+| POST | `/projects/{project_id}/factory-work` | Admit bounded provider-neutral manual Work |
+| GET | `/factory-runs` | Global visible Run collection |
+| GET | `/projects/{project_id}/factory-runs` | Project-scoped visible Run collection |
+| GET | `/factory-phase-ready` | Visible ready entries for an exact `policy_digest` |
+| GET | `/projects/{project_id}/factory-phase-ready` | Project-scoped ready entries for that policy |
+
+Create/replace/admission commands require `Idempotency-Key`. Replacement also
+requires a strong current-version `If-Match` and retains prior immutable versions.
+A changed replay intent conflicts; an exact replay preserves the original resource
+and resolved base. Validation allocates no version and commits no lifecycle fact.
+Use returned IDs and versions rather than assuming a generated logical Flow or
+node name. The generated OpenAPI document defines the closed request grammar.
+
+A Flow draft has `root`, `limits`, `data_schemas` and optional `pools`. Root nodes
+use arbitrary logical keys and the closed technical primitive vocabulary. Select
+nested `subflow_call` definitions from visible published versions and retain their
+exact `id/version/digest`. Publication resolves the reachable closure, rejects
+recursion, digest drift, malformed nodes and incompatible graph/data contracts,
+and computes the root digest. A Factory Configuration contains the resolved
+`FactoryFlowConfiguration` closure, together with its admission policy, hard
+budget, WIP limits, permission ceiling and enablement flag.
+
+Select exact references from their technical choice category. Plugins, executable
+and tool grants use `node_capability`; gate/data-handling policies use
+`execution_policy`; Build model/tool bindings use `decision_signal_model` or
+`node_capability`. Secret and workload identity profiles are logical references,
+never credential values. Plugin/policy parameters are bounded extension data;
+objects resembling an immutable reference do not acquire authority from their
+field names. Their selected adapter validates the parameter contract before effects.
+
+Configuration validation returns `configuration` and `diagnostics`. Diagnostics
+contain `errors`, `unavailable_references` (field pointers only), required node and
+Agent capabilities, required backend enforcement categories, `effective_permissions`
+per exact definition/node, and stable warning codes. The warning
+`agent_local_permissions_resolved_at_dispatch` means the displayed Flow ceilings
+can be narrowed again by Agent-local grants. Invalid definitions return the usual
+safe error envelope with optional `diagnostics`; unknown and hidden choices are
+indistinguishable and never expose catalogue contents. Decode errors use field
+pointers relative to the submitted `definition`. Resolved graph errors carry an
+exact `definition` reference and optional logical `node` key; their `field` pointer
+is relative to that binding, so canonical sorting never changes the editor target.
+
+Choices may include deployment-declared `metadata`: supported `node_kinds`,
+`signal_purposes`, `enforcement` categories and typed `compatible_choices` aliases.
+Every compatibility alias is filtered through the same Project visibility before
+publication. Missing metadata means compatibility is undeclared. These bounded
+hints never grant permissions or replace server-side exact contract validation;
+provider options, credentials and raw payloads are absent.
+
+Run filters are `configuration_id`, `source`, `state`, `decision`, `delivery_state`,
+`admitted_from_unix_ms` (inclusive) and `admitted_before_unix_ms` (exclusive).
+Decision filters refer to authoritative dispositions, independently of advisory
+Decision Signals. Delivery filters refer to the current exact candidate. The
+`diagnostics` object includes exact base/candidate, bounded active node/attempt
+identities, `active_node_count`, current budget `usage/limit`, candidate-bound
+`latest_decision` and `delivery`, and escalation identity. Optional facts are null
+until a verified owner result retains them; arbitrary payloads and node labels
+never populate these fields. No task text, commands, prompts, findings, connector
+targets or private provider links are embedded in summaries.
+
+All collection limits are `1..200`. `total` counts visible matching items before
+continuation. Run cursors encode exclusive admission-time/ID positions in newest-first
+order. Flow/configuration cursors encode publication/creation positions. Choice
+cursors belong to their Project; phase-ready cursors belong to an exact policy and
+include its deterministic priority tuple. Treat them as opaque and keep the same
+Project, filters and policy for continuation. Concurrent newer inserts do not
+reappear on a later page. Empty visible pages return no continuation.
+
+The phase-ready response omits frozen inputs, dependencies and full histories.
+It is an observation of retained ready entries; claiming or selecting Work belongs
+to the separate fenced worker contract. Reading it does not take worker Run locks.

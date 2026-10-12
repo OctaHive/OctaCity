@@ -8,6 +8,8 @@ pub fn concrete_path(path: &str) -> String {
     .replace("{project_id}", "11111111-1111-4111-8111-111111111111")
     .replace("{pipeline_id}", "22222222-2222-4222-8222-222222222222")
     .replace("{repository_id}", "33333333-3333-4333-8333-333333333333")
+    .replace("{flow_definition_id}", "33333333-3333-4333-8333-333333333333")
+    .replace("{factory_configuration_id}", "22222222-2222-4222-8222-222222222222")
     .replace("{configuration_id}", "44444444-4444-4444-8444-444444444444")
     .replace("{trigger_id}", "88888888-8888-4888-8888-888888888888")
     .replace("{build_id}", "99999999-9999-4999-8999-999999999999")

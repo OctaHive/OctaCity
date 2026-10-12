@@ -10,6 +10,8 @@ use fixtures::*;
 /// Immutable fixture shared by memory and PostgreSQL node-journal contracts.
 #[derive(Clone)]
 pub struct FactoryNodeJournalContractFixture {
+  /// Optional verified safe facts used to exercise discovery over the common journal.
+  pub discovery: Option<FlowDiscoveryFacts>,
   /// Actual ordinary execution identities provided by the Build boundary.
   pub execution: FlowBuildExecution,
   /// Immutable Work and initial generic Flow admission.
@@ -33,6 +35,7 @@ pub fn factory_node_journal_contract_fixture_with_retries(maximum: u16) -> Facto
   let admitted = admitted.with_data_schemas(vec![schema.clone()]).unwrap();
   let run = FactoryRun::admitted(admitted.root_run().factory_run_id(), &work);
   FactoryNodeJournalContractFixture {
+    discovery: None,
     execution: FlowBuildExecution::new(
       &FlowBuildIntent::new(
         input.clone(),
@@ -212,6 +215,11 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
   .unwrap()
   .with_build_provenance(provenance, definition)
   .unwrap();
+  let record = if let Some(facts) = &fixture.discovery {
+    record.with_discovery(facts.clone()).unwrap()
+  } else {
+    record
+  };
   let completion = record
     .completion(
       attempt,

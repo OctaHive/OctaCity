@@ -703,6 +703,7 @@ impl FactoryFlowActionPlugin for Notification {
       .find(|schema| schema.reference().identity() == &key("action.receipt"))
       .unwrap();
     Ok(FactoryFlowActionObservation {
+      discovery: None,
       outcome: key("done"),
       payload: FlowPayload::new(schema, serde_json::json!({"receipt":FactoryDigest::from_bytes([8;32])})).unwrap(),
       usage: BudgetUsage::default(),
@@ -1071,6 +1072,10 @@ fn exact_candidate_publication_recovers_a_lost_response_without_another_write() 
       record.payload().value(),
       &serde_json::json!({"receipt":FactoryDigest::from_bytes([88;32]),"candidate_revision":"reviewed-candidate","changeset_digest":FactoryDigest::from_bytes([77;32]),
         "external":{"branch_reference":"refs/heads/reviewed-candidate","remote_head":"reviewed-candidate","review_identity":"23","review_state":"open"}})
+    );
+    assert_eq!(
+      record.discovery().and_then(FlowDiscoveryFacts::candidate_subject),
+      Some(&candidate)
     );
     let requests = publisher.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);

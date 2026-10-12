@@ -56,6 +56,8 @@ mod audit;
 mod build_discovery;
 #[path = "v1_handlers/definition_discovery.rs"]
 mod definition_discovery;
+#[path = "v1_handlers/factory.rs"]
+mod factory;
 #[path = "v1_handlers/log_search.rs"]
 mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
@@ -1261,6 +1263,40 @@ fn management_contract_requests() -> Vec<Request<Body>> {
       Some("\"1\""),
       r#"{"mode":"graceful"}"#,
     ),
+    empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project_id}/factory-configurations?limit=1"),
+      None,
+    ),
+    empty_request(
+      "GET",
+      "/api/v1/factory-configurations/22222222-2222-4222-8222-222222222222",
+      None,
+    ),
+    empty_request(
+      "GET",
+      "/api/v1/factory-configurations/22222222-2222-4222-8222-222222222222/versions/1",
+      None,
+    ),
+    empty_request(
+      "GET",
+      &format!("/api/v1/projects/{project_id}/factory-configuration-choices?limit=1"),
+      None,
+    ),
+    json_request("POST","/api/v1/factory-configurations","create-factory",None,factory::CREATE_CONFIGURATION),
+    json_request("POST","/api/v1/factory-configurations/22222222-2222-4222-8222-222222222222/versions","replace-factory",Some("\"1\""),&serde_json::json!({"definition":serde_json::from_str::<serde_json::Value>(factory::CREATE_CONFIGURATION).unwrap()["definition"]}).to_string()),
+    json_request("POST","/api/v1/factory-configurations/validate","unused",None,factory::CREATE_CONFIGURATION),
+    json_request("POST","/api/v1/flow-definitions/validate","unused",None,&factory::flow_draft_request().to_string()),
+    json_request("POST","/api/v1/flow-definitions","flow-create",None,&factory::flow_draft_request().to_string()),
+    json_request("POST","/api/v1/flow-definitions/33333333-3333-4333-8333-333333333333/versions","flow-replace",Some("\"1\""),&serde_json::json!({"definition":factory::flow_draft_request()["definition"]}).to_string()),
+    empty_request("GET","/api/v1/flow-definitions/33333333-3333-4333-8333-333333333333",None),
+    empty_request("GET","/api/v1/flow-definitions/33333333-3333-4333-8333-333333333333/versions/1",None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/flow-definitions?limit=1"),None),
+    json_request("POST",&format!("/api/v1/projects/{project_id}/factory-work"),"admit-work",None,&factory::manual_work_request().to_string()),
+    empty_request("GET","/api/v1/factory-runs?limit=1",None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/factory-runs?limit=1"),None),
+    empty_request("GET",&format!("/api/v1/factory-phase-ready?policy_digest={}&limit=1","ab".repeat(32)),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/factory-phase-ready?policy_digest={}&limit=1","ab".repeat(32)),None),
   ]
 }
 
@@ -1352,6 +1388,24 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_agents",
       "reassign_agent_pool",
       "drain_agent",
+      "list_project_factory_configurations",
+      "get_current_factory_configuration",
+      "get_factory_configuration",
+      "list_factory_configuration_choices",
+      "create_factory_configuration",
+      "replace_factory_configuration",
+      "validate_factory_configuration",
+      "validate_factory_flow_definition",
+      "create_factory_flow_definition",
+      "replace_factory_flow_definition",
+      "get_factory_flow_definition",
+      "get_factory_flow_definition",
+      "list_project_factory_flow_definitions",
+      "admit_manual_factory_work",
+      "list_factory_runs",
+      "list_factory_runs",
+      "list_factory_phase_ready",
+      "list_factory_phase_ready",
     ]
   );
 }

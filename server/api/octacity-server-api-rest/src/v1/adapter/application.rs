@@ -560,6 +560,178 @@ impl CacheManagementApplication {
   }
 }
 
+/// Authorization-decorated Factory management queries supplied by the composition root.
+pub struct FactoryManagementApplication {
+  pub(super) list_phase_ready: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ListFactoryPhaseReadyQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) list_runs: Arc<
+    dyn AuthorizedManagementQueryHandler<octacity_server_application::ListFactoryRunsQuery, Error = ApplicationError>,
+  >,
+  pub(super) admit_work: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::AdmitManualFactoryWorkCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) create_flow: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::CreateFactoryFlowDefinitionCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) replace_flow: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::ReplaceFactoryFlowDefinitionCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) get_flow: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::GetFactoryFlowDefinitionQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) list_flows: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ListProjectFactoryFlowDefinitionsQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) validate_flow: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ValidateFactoryFlowDefinitionQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) validate_configuration: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ValidateFactoryConfigurationQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) replace_configuration: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::ReplaceFactoryConfigurationCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) create_configuration: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::CreateFactoryConfigurationCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) list_choices: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ListFactoryConfigurationChoicesQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) get_configuration: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::GetFactoryConfigurationQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) get_current_configuration: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::GetCurrentFactoryConfigurationQuery,
+        Error = ApplicationError,
+      >,
+  >,
+  pub(super) list_configurations: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ListProjectFactoryConfigurationsQuery,
+        Error = ApplicationError,
+      >,
+  >,
+}
+
+impl FactoryManagementApplication {
+  /// Installs configuration discovery without introducing lifecycle behavior in REST.
+  pub fn new<C, Q, FC, F, A, D>(
+    commands: Arc<C>,
+    queries: Arc<Q>,
+    flow_commands: Arc<FC>,
+    flows: Arc<F>,
+    admission: Arc<A>,
+    discovery: Arc<D>,
+  ) -> Self
+  where
+    C: AuthorizedManagementCommandHandler<
+        octacity_server_application::CreateFactoryConfigurationCommand,
+        Error = ApplicationError,
+      > + AuthorizedManagementCommandHandler<
+        octacity_server_application::ReplaceFactoryConfigurationCommand,
+        Error = ApplicationError,
+      > + 'static,
+    Q: AuthorizedManagementQueryHandler<
+        octacity_server_application::ListProjectFactoryConfigurationsQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
+        octacity_server_application::GetFactoryConfigurationQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
+        octacity_server_application::GetCurrentFactoryConfigurationQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
+        octacity_server_application::ValidateFactoryConfigurationQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
+        octacity_server_application::ListFactoryConfigurationChoicesQuery,
+        Error = ApplicationError,
+      > + 'static,
+    D: AuthorizedManagementQueryHandler<octacity_server_application::ListFactoryRunsQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<
+        octacity_server_application::ListFactoryPhaseReadyQuery,
+        Error = ApplicationError,
+      > + 'static,
+    A: AuthorizedManagementCommandHandler<
+        octacity_server_application::AdmitManualFactoryWorkCommand,
+        Error = ApplicationError,
+      > + 'static,
+    FC: AuthorizedManagementCommandHandler<
+        octacity_server_application::CreateFactoryFlowDefinitionCommand,
+        Error = ApplicationError,
+      > + AuthorizedManagementCommandHandler<
+        octacity_server_application::ReplaceFactoryFlowDefinitionCommand,
+        Error = ApplicationError,
+      > + 'static,
+    F: AuthorizedManagementQueryHandler<
+        octacity_server_application::ValidateFactoryFlowDefinitionQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
+        octacity_server_application::GetFactoryFlowDefinitionQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
+        octacity_server_application::ListProjectFactoryFlowDefinitionsQuery,
+        Error = ApplicationError,
+      > + 'static,
+  {
+    Self {
+      list_phase_ready: discovery.clone(),
+      list_runs: discovery,
+      admit_work: admission,
+      create_flow: flow_commands.clone(),
+      replace_flow: flow_commands,
+      get_flow: flows.clone(),
+      list_flows: flows.clone(),
+      validate_flow: flows,
+      validate_configuration: queries.clone(),
+      replace_configuration: commands.clone(),
+      create_configuration: commands,
+      list_choices: queries.clone(),
+      get_configuration: queries.clone(),
+      get_current_configuration: queries.clone(),
+      list_configurations: queries,
+    }
+  }
+}
+
 /// Catalog-oriented management handlers.
 pub struct CatalogManagementApplication {
   pub(super) projects: ProjectManagementApplication,
@@ -568,6 +740,7 @@ pub struct CatalogManagementApplication {
   pub(super) definitions: DefinitionManagementApplication,
   pub(super) schedules: ScheduleManagementApplication,
   pub(super) internal_triggers: InternalTriggerManagementApplication,
+  pub(super) factory: FactoryManagementApplication,
 }
 
 impl CatalogManagementApplication {
@@ -579,6 +752,7 @@ impl CatalogManagementApplication {
     definitions: DefinitionManagementApplication,
     schedules: ScheduleManagementApplication,
     internal_triggers: InternalTriggerManagementApplication,
+    factory: FactoryManagementApplication,
   ) -> Self {
     Self {
       projects,
@@ -587,6 +761,7 @@ impl CatalogManagementApplication {
       definitions,
       schedules,
       internal_triggers,
+      factory,
     }
   }
 }

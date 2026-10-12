@@ -4,7 +4,7 @@ use octacity_server_domain::{
   AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, JobId, PipelineId, PoolId,
   ProjectId, RepositoryId, TriggerId,
 };
-use octacity_server_factory::{FactoryConfigurationId, FactoryRunId};
+use octacity_server_factory::{FactoryChoiceIdentity, FactoryConfigurationId, FactoryRunId};
 use thiserror::Error;
 
 /// Maximum identities accepted by one restricted management read scope.
@@ -170,6 +170,16 @@ query_visibility!(
   FactoryConfigurationListVisibility,
   FactoryConfigurationId,
   "Visibility input for a deterministic current Factory Configuration page."
+);
+query_visibility!(
+  FactoryChoiceListVisibility,
+  FactoryChoiceIdentity,
+  "Visibility of exact Project-scoped configuration choices."
+);
+query_visibility!(
+  FlowDefinitionListVisibility,
+  octacity_server_factory::FlowDefinitionId,
+  "Visible immutable Flow Definition identities."
 );
 query_visibility!(
   FactoryRunListVisibility,

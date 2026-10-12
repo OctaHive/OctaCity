@@ -119,8 +119,21 @@ pub enum FactoryEnumKind {
 }
 
 /// Stable category used while resolving a configuration alias.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FactoryChoiceKind {
+  /// Exact installed node execution capability.
+  NodeCapability,
+  /// Exact deployment execution policy.
+  ExecutionPolicy,
+  /// Exact supported execution target.
+  ExecutionTarget,
+  /// Exact semantic enforcement capability.
+  EnforcementCapability,
+  /// Logical credential reference, without secret material.
+  SecretProfile,
+  /// Logical workload identity reference, without credentials.
+  WorkloadIdentityProfile,
   /// Immutable admission policy.
   AdmissionPolicy,
   /// Project-owned immutable Build Configuration version.
@@ -145,6 +158,54 @@ pub enum FactoryChoiceKind {
   DeliveryAdapter,
   /// Immutable delivery target policy.
   DeliveryPolicy,
+}
+
+impl FactoryChoiceKind {
+  /// Complete technical choice categories supported by this release.
+  pub const ALL: [Self; 18] = [
+    Self::NodeCapability,
+    Self::ExecutionPolicy,
+    Self::ExecutionTarget,
+    Self::EnforcementCapability,
+    Self::SecretProfile,
+    Self::WorkloadIdentityProfile,
+    Self::AdmissionPolicy,
+    Self::BuildConfiguration,
+    Self::PermissionCeiling,
+    Self::DecisionSignalProvider,
+    Self::DecisionSignalAdapter,
+    Self::DecisionSignalModel,
+    Self::DecisionSignalQuestionSet,
+    Self::DecisionSignalPolicy,
+    Self::CriterionPack,
+    Self::Evaluator,
+    Self::DeliveryAdapter,
+    Self::DeliveryPolicy,
+  ];
+  /// Stable category name for configuration choices and authorization identities.
+  #[must_use]
+  pub const fn as_str(self) -> &'static str {
+    match self {
+      Self::NodeCapability => "node_capability",
+      Self::ExecutionPolicy => "execution_policy",
+      Self::ExecutionTarget => "execution_target",
+      Self::EnforcementCapability => "enforcement_capability",
+      Self::SecretProfile => "secret_profile",
+      Self::WorkloadIdentityProfile => "workload_identity_profile",
+      Self::AdmissionPolicy => "admission_policy",
+      Self::BuildConfiguration => "build_configuration",
+      Self::PermissionCeiling => "permission_ceiling",
+      Self::DecisionSignalProvider => "decision_signal_provider",
+      Self::DecisionSignalAdapter => "decision_signal_adapter",
+      Self::DecisionSignalModel => "decision_signal_model",
+      Self::DecisionSignalQuestionSet => "decision_signal_question_set",
+      Self::DecisionSignalPolicy => "decision_signal_policy",
+      Self::CriterionPack => "criterion_pack",
+      Self::Evaluator => "evaluator",
+      Self::DeliveryAdapter => "delivery_adapter",
+      Self::DeliveryPolicy => "delivery_policy",
+    }
+  }
 }
 
 /// Validation failure returned while constructing Factory domain values.

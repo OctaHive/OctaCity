@@ -16,6 +16,21 @@ fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
 
+#[test]
+fn deserialization_rejects_subflow_calls_without_an_exact_child() {
+  let valid = node(
+    "operator-step",
+    FlowNodeKind::TrustedAction,
+    None,
+    schema("output"),
+    None,
+    100,
+  );
+  let mut wire = serde_json::to_value(valid).unwrap();
+  wire["kind"] = serde_json::json!("subflow_call");
+  assert!(serde_json::from_value::<FlowNodeDefinition>(wire).is_err());
+}
+
 fn schema(value: &str) -> ImmutableReference {
   ImmutableReference::new(
     key(value),

@@ -656,3 +656,100 @@ fn common_wip_limits_address_nodes_without_a_stage_catalogue() {
     serde_json::json!({"max_active_runs": 3, "max_active_nodes": 7})
   );
 }
+
+#[test]
+fn configuration_budget_and_wip_wire_values_cannot_bypass_constructor_bounds() {
+  let valid_budget = serde_json::json!({
+    "max_attempts":1,"max_elapsed_millis":1,"max_tokens":1,
+    "max_cost_micro_units":1,"max_output_bytes":1,
+  });
+  assert!(serde_json::from_value::<BudgetLimit>(valid_budget.clone()).is_ok());
+  for (field, value) in [
+    ("max_attempts", 0u64),
+    ("max_attempts", 1001),
+    ("max_elapsed_millis", 0),
+    ("max_tokens", 1000000001),
+    ("max_cost_micro_units", 1000000000001),
+    ("max_output_bytes", 1099511627777),
+  ] {
+    let mut invalid = valid_budget.clone();
+    invalid[field] = serde_json::json!(value);
+    assert!(
+      serde_json::from_value::<BudgetLimit>(invalid).is_err(),
+      "{field}={value}"
+    );
+  }
+  for invalid in [
+    serde_json::json!({"max_active_runs":0,"max_active_nodes":1}),
+    serde_json::json!({"max_active_runs":10001,"max_active_nodes":1}),
+    serde_json::json!({"max_active_runs":1,"max_active_nodes":0}),
+    serde_json::json!({"max_active_runs":1,"max_active_nodes":1001}),
+  ] {
+    assert!(serde_json::from_value::<FactoryWipLimits>(invalid).is_err());
+  }
+  let valid_wip = FactoryWipLimits::new(1, 1).unwrap();
+  assert_eq!(
+    serde_json::from_value::<FactoryWipLimits>(serde_json::to_value(valid_wip).unwrap()).unwrap(),
+    valid_wip
+  );
+}
+
+#[test]
+fn flow_admission_wire_limits_and_closure_preserve_constructor_invariants() {
+  let limits = FlowAdmissionLimits::new(1, 1, 1, 1, 1, hard_budget(), FactoryPermissionSet::deny_all()).unwrap();
+  let valid = serde_json::to_value(&limits).unwrap();
+  assert_eq!(
+    serde_json::from_value::<FlowAdmissionLimits>(valid.clone()).unwrap(),
+    limits
+  );
+  for (field, value) in [
+    ("max_depth", 17),
+    ("max_expanded_nodes", 16385),
+    ("max_repeat_count", 33),
+    ("max_fan_out", 65),
+    ("max_wip", 1001),
+  ] {
+    let mut invalid = valid.clone();
+    invalid[field] = serde_json::json!(value);
+    assert!(
+      serde_json::from_value::<FlowAdmissionLimits>(invalid).is_err(),
+      "{field}={value}"
+    );
+  }
+  let execution = crate::FlowExecutionPolicy::new(hard_budget(), FactoryPermissionSet::deny_all(), 1).unwrap();
+  let mut invalid = serde_json::to_value(execution).unwrap();
+  invalid["max_active_nodes"] = serde_json::json!(0);
+  assert!(serde_json::from_value::<crate::FlowExecutionPolicy>(invalid).is_err());
+  let fixture = valid_fixture();
+  let flow = fixture.draft.flow.unwrap();
+  let mut invalid = serde_json::to_value(&flow.closure).unwrap();
+  let duplicate = invalid["definitions"][0].clone();
+  invalid["definitions"].as_array_mut().unwrap().push(duplicate);
+  assert!(serde_json::from_value::<crate::PinnedFlowDefinitionClosure>(invalid).is_err());
+}
+
+#[test]
+fn zero_consumable_budgets_allow_control_work_but_deny_any_consumption() {
+  let limit = BudgetLimit::new(1, 1000, 0, 0, 0).expect("control nodes need no model or output allowance");
+  crate::BudgetUsage::default().validate(limit).unwrap();
+  for usage in [
+    crate::BudgetUsage {
+      tokens: 1,
+      ..Default::default()
+    },
+    crate::BudgetUsage {
+      cost_micro_units: 1,
+      ..Default::default()
+    },
+    crate::BudgetUsage {
+      output_bytes: 1,
+      ..Default::default()
+    },
+  ] {
+    assert!(usage.validate(limit).is_err());
+  }
+  assert_eq!(
+    serde_json::from_value::<BudgetLimit>(serde_json::to_value(limit).unwrap()).unwrap(),
+    limit
+  );
+}

@@ -458,3 +458,54 @@ pub(super) fn run_ready<T>(future: impl Future<Output = T>) -> T {
     Poll::Pending => panic!("deterministic in-memory future unexpectedly yielded"),
   }
 }
+
+struct HideSelectedRepository;
+#[async_trait]
+impl ManagementAuthorizationPolicy for HideSelectedRepository {
+  async fn authorize(
+    &self,
+    _context: &ManagementRequestContext,
+    _action: ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    if resource.kind() == crate::ManagementResourceKind::Repository {
+      Err(ManagementAuthorizationDenial::forbidden())
+    } else {
+      Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
+    }
+  }
+}
+#[test]
+fn hidden_selected_repository_is_rejected_before_factory_revision_resolution() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(
+        project,
+        repository_id,
+        Some(SourceReference::new("refs/heads/main").unwrap()),
+      ),
+    );
+    let resolver = Arc::new(RecordingResolver::default());
+    let policy = Arc::new(HideSelectedRepository);
+    let handler = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(FactoryAdmissionHandlers::with_policy(
+        store.clone(),
+        resolver.clone(),
+        policy,
+      )),
+    );
+    let error = handler
+      .handle_command(&context(), command(project, configuration, repository_id))
+      .await
+      .unwrap_err();
+    assert!(matches!(error, ManagementHandlerError::Application(_)));
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+  });
+}

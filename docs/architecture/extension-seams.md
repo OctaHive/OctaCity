@@ -125,3 +125,21 @@ layer silently, while a named deferred SDK cannot be approved accidentally by
 another layer rule. Moving an extension into production requires an explicit
 architecture-policy change together with its implemented vertical slice; an
 empty crate or unused dependency is not acceptable evidence.
+
+### Factory result discovery facts
+
+A trusted `FactoryFlowActionPlugin` may return optional `FlowDiscoveryFacts` in
+its observation. Construct these from a verified exact candidate, authoritative
+Decision, delivery attempt or escalation. The common owner binds them to the Work
+subject and includes them in the result digest and fenced completion. Provider JSON,
+Decision Signal recommendations, arbitrary outcome keys and plugin parameter field
+names cannot become discovery authority. The facts do not drive Flow interpretation.
+
+Emit candidate facts for explicit verified publication. Decision and delivery facts
+carry their own exact subjects; a late receipt cannot replace a newer candidate.
+Discovery projects only IDs, exact subjects and closed classifications. Escalation
+reason text, assessments, findings, task/context payloads, connector targets and
+private links remain outside this projection. Persist every fact through the common
+result journal; do not add a parallel phase-specific history or infer semantics from
+logical Flow/node names. PostgreSQL read indexes must be checked against the retained
+record bytes and updated in the same completion transaction.

@@ -5,11 +5,11 @@ use octacity_server_api_rest::v1::{
   AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
   BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
-  DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
-  JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-  ManualTriggerManagementApplication, OperationalMetadataManagementApplication, OperatorAttentionManagementApplication,
-  PipelineManagementApplication, ProjectManagementApplication, ResourceSearchManagementApplication,
-  ScheduleManagementApplication,
+  DefinitionManagementApplication, ExecutionManagementApplication, FactoryManagementApplication,
+  InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplication,
+  ManagementApplicationHandlers, ManualTriggerManagementApplication, OperationalMetadataManagementApplication,
+  OperatorAttentionManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
+  ResourceSearchManagementApplication, ScheduleManagementApplication,
 };
 use octacity_server_application::{
   ApplicationError, AuthorizedCommandHandler, AuthorizedQueryHandler, GetBuildResultRetentionQuery,
@@ -119,6 +119,14 @@ where
         DefinitionManagementApplication::new(commands.clone(), commands.clone(), queries.clone()),
         ScheduleManagementApplication::new(commands.clone(), queries.clone()),
         InternalTriggerManagementApplication::new(commands.clone(), queries.clone()),
+        FactoryManagementApplication::new(
+          commands.clone(),
+          queries.clone(),
+          commands.clone(),
+          queries.clone(),
+          commands.clone(),
+          queries.clone(),
+        ),
       ),
       AgentManagementApplication::new(
         commands.clone(),

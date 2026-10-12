@@ -181,6 +181,21 @@ class ArchitecturePolicyTests(unittest.TestCase):
             ["ARCH018_FACTORY_CORE_COUPLING"],
         )
 
+    def test_application_may_track_safe_decode_paths_without_opening_other_layers(self):
+        from dataclasses import replace
+
+        application = replace(package_fixture(
+            "octacity-server-application",
+            REPOSITORY / "server/application/Cargo.toml",
+            external_dependencies=("serde_path_to_error",),
+        ), role="application")
+        self.assertEqual(ARCHITECTURE.check(ARCHITECTURE.Graph(packages=(application,), edges=())), [])
+        core = replace(application, name="another-core", role="core")
+        self.assertEqual(
+            [violation.code for violation in ARCHITECTURE.check(ARCHITECTURE.Graph(packages=(core,), edges=()))],
+            ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"],
+        )
+
     def test_factory_graph_module_rejects_runtime_and_product_coupling(self):
         invalid_sources = {
             "crate domain dependency": "use crate::FactoryKey;\n",

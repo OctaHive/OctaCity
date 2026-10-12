@@ -11,7 +11,7 @@ use super::super::{
   object, positive_integer, schema_ref, string_enum, string_map, unique_array, versioned_resource,
 };
 use super::{
-  agent, artifact, audit, cache, definition_discovery, execution, log_search, operational, operator_attention,
+  agent, artifact, audit, cache, definition_discovery, execution, factory, log_search, operational, operator_attention,
   resource_search, retention, trigger,
 };
 
@@ -28,6 +28,7 @@ use management_schema::{insert_common_schemas, insert_pipeline_schemas, insert_p
 pub(crate) fn component_schemas() -> Value {
   let mut schemas = Map::new();
   insert_common_schemas(&mut schemas);
+  factory::insert_factory_schemas(&mut schemas);
   operational::insert_operational_schemas(&mut schemas);
   audit::insert_audit_schemas(&mut schemas);
   insert_project_schemas(&mut schemas);

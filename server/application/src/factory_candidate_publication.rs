@@ -267,6 +267,7 @@ impl<P: FactoryCandidatePublisher> FactoryFlowActionPlugin for FactoryCandidateP
       return Err(ApplicationError::invalid());
     }
     Ok(FactoryFlowActionObservation {
+      discovery: Some(FlowDiscoveryFacts::candidate(publication.candidate.clone())),
       outcome: self.outcome.key().clone(),
       payload: FlowPayload::new(
         schema,

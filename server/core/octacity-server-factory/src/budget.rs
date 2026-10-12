@@ -44,7 +44,7 @@ impl BudgetResource {
 
 /// Immutable hard limits for one bounded Factory scope.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "BudgetLimitWire")]
 pub struct BudgetLimit {
   max_attempts: u32,
   max_elapsed_millis: u64,
@@ -53,8 +53,33 @@ pub struct BudgetLimit {
   max_output_bytes: u64,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BudgetLimitWire {
+  max_attempts: u32,
+  max_elapsed_millis: u64,
+  max_tokens: u64,
+  max_cost_micro_units: u64,
+  max_output_bytes: u64,
+}
+
+impl TryFrom<BudgetLimitWire> for BudgetLimit {
+  type Error = FactoryError;
+
+  fn try_from(wire: BudgetLimitWire) -> Result<Self, Self::Error> {
+    Self::new(
+      wire.max_attempts,
+      wire.max_elapsed_millis,
+      wire.max_tokens,
+      wire.max_cost_micro_units,
+      wire.max_output_bytes,
+    )
+  }
+}
+
 impl BudgetLimit {
-  /// Constructs hard non-zero bounds within product safety ceilings.
+  /// Constructs finite bounds within product safety ceilings.
+  /// Attempts and elapsed time are positive; zero consumable allowances prohibit usage.
   pub fn new(
     max_attempts: u32,
     max_elapsed_millis: u64,
@@ -175,7 +200,7 @@ impl BudgetUsage {
 }
 
 fn validate_limit(value: u64, ceiling: u64, resource: BudgetResource) -> Result<(), FactoryError> {
-  if value == 0 || value > ceiling {
+  if (value == 0 && matches!(resource, BudgetResource::Attempts | BudgetResource::ElapsedTime)) || value > ceiling {
     return Err(FactoryError::InvalidBudget { resource });
   }
   Ok(())

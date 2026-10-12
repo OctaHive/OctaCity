@@ -128,6 +128,10 @@ pub struct FactoryRunFilter {
   pub source: Option<FactoryKey>,
   /// Exact current lifecycle state, when selected.
   pub state: Option<FactoryRunState>,
+  /// Exact authoritative disposition for the current candidate; signals do not match.
+  pub decision: Option<octacity_server_factory::DecisionOutcome>,
+  /// Exact current-candidate delivery state.
+  pub delivery_state: Option<octacity_server_factory::DeliveryState>,
   /// Inclusive lower admission-time bound.
   pub admitted_from: Option<Timestamp>,
   /// Exclusive upper admission-time bound.
@@ -218,9 +222,197 @@ impl ListFactoryRuns {
   }
 }
 
+/// Maximum active node summaries embedded in one collection item.
+pub const MAX_FACTORY_RUN_SUMMARY_NODES: usize = 32;
+/// Safe current facts, derived only from the common owner-verified journal.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRunSummaryDiagnostics {
+  /// Exact admitted repository base.
+  pub base_revision: octacity_server_domain::ImmutableRevision,
+  /// Latest exact candidate; no subject is inferred from prose or logical node names.
+  pub candidate: Option<octacity_server_factory::CandidateSubject>,
+  /// Bounded active attempts in stable Flow/cycle/node/attempt order.
+  pub current_nodes: Vec<FactoryRunNodeSummary>,
+  /// Total active attempts before truncating their summaries.
+  pub active_node_count: u64,
+  /// Current authoritative aggregate consumption and its admission-time ceiling.
+  pub budget: FactoryRunBudgetSummary,
+  /// Latest disposition for this exact current candidate, independently of signals.
+  pub latest_decision: Option<FactoryRunDecisionSummary>,
+  /// Latest delivery for this exact current candidate.
+  pub delivery: Option<FactoryRunDeliverySummary>,
+  /// Latest escalation identity without private reason text.
+  pub escalation: Option<octacity_server_factory::EscalationId>,
+}
+/// One active attempt without input, execution commands or context payloads.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRunNodeSummary {
+  /// Exact retained attempt identity.
+  pub id: octacity_server_factory::NodeAttemptId,
+  /// Owning root or nested Flow instance.
+  pub flow_run_id: octacity_server_factory::FlowRunId,
+  /// Exact workflow cycle.
+  pub cycle_id: octacity_server_factory::WorkflowCycleId,
+  /// Caller-configured logical node key.
+  pub node: FactoryKey,
+  /// Positive attempt number.
+  pub attempt: u64,
+}
+/// Authoritative budget counters, including zero consumable allowances.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRunBudgetSummary {
+  /// Consumption from the current immutable budget record.
+  pub usage: octacity_server_factory::BudgetUsage,
+  /// Limits frozen at admission.
+  pub limit: octacity_server_factory::BudgetLimit,
+}
+/// Safe authoritative disposition without reasons, assessments or findings.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRunDecisionSummary {
+  /// Immutable Decision identity.
+  pub id: octacity_server_factory::DecisionId,
+  /// Exact subject to distinguish rework candidates.
+  pub subject: octacity_server_factory::CandidateSubject,
+  /// Authoritative disposition.
+  pub outcome: octacity_server_factory::DecisionOutcome,
+}
+/// Safe delivery state without connector payloads, credentials or private URLs.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRunDeliverySummary {
+  /// Immutable delivery attempt identity.
+  pub id: octacity_server_factory::DeliveryAttemptId,
+  /// Correlated authoritative Decision.
+  pub decision_id: octacity_server_factory::DecisionId,
+  /// Exact candidate to which delivery applies.
+  pub subject: octacity_server_factory::CandidateSubject,
+  /// Closed delivery state.
+  pub state: octacity_server_factory::DeliveryState,
+}
+impl FactoryRunSummaryDiagnostics {
+  /// Projects a validated snapshot without publishing arbitrary result payload fields.
+  pub fn from_snapshot(snapshot: &crate::FactoryRunSnapshot) -> Result<Self, StoreError> {
+    let mut records = snapshot.flow.data.records.iter().collect::<Vec<_>>();
+    records.sort_by_key(|record| (record.observed_at(), record.node_attempt_id()));
+    let context = snapshot
+      .flow
+      .attempts
+      .iter()
+      .filter_map(|attempt| {
+        snapshot
+          .flow
+          .data
+          .inputs
+          .iter()
+          .find(|input| input.digest().ok() == Some(attempt.input_digest()))
+          .and_then(|input| input.context())
+          .and_then(|context| context.subject().candidate())
+          .map(|candidate| (attempt.started_at(), attempt.id(), candidate))
+      })
+      .max_by_key(|(at, id, _)| (*at, *id))
+      .map(|(_, _, candidate)| candidate);
+    let facts = records.iter().rev().filter_map(|record| record.discovery());
+    let selected = facts
+      .clone()
+      .find(|facts| facts.published_candidate().is_some())
+      .or_else(|| facts.into_iter().find(|facts| facts.candidate_subject().is_some()));
+    let candidate = selected
+      .and_then(|facts| facts.select_current_candidate(context))
+      .or(context)
+      .cloned();
+    let matching = records
+      .iter()
+      .rev()
+      .filter_map(|record| record.discovery())
+      .filter(|facts| facts.candidate_subject() == candidate.as_ref())
+      .collect::<Vec<_>>();
+    let latest_decision = matching.iter().find_map(|facts| {
+      facts.decision_summary().map(|(id, outcome)| FactoryRunDecisionSummary {
+        id,
+        outcome,
+        subject: facts.candidate_subject().expect("Decision carries a candidate").clone(),
+      })
+    });
+    let delivery = matching.iter().find_map(|facts| {
+      facts
+        .delivery_summary()
+        .map(|(id, decision_id, state)| FactoryRunDeliverySummary {
+          id,
+          decision_id,
+          state,
+          subject: facts.candidate_subject().expect("delivery carries a candidate").clone(),
+        })
+    });
+    let escalation = records
+      .iter()
+      .rev()
+      .find_map(|record| record.discovery().and_then(|facts| facts.escalation_id()));
+    let mut active = snapshot
+      .flow
+      .attempts
+      .iter()
+      .filter(|attempt| {
+        !snapshot
+          .flow
+          .completions
+          .iter()
+          .any(|completion| completion.node_attempt_id() == attempt.id())
+          && !snapshot
+            .flow
+            .data
+            .stops
+            .iter()
+            .any(|stop| stop.node_attempt_id() == attempt.id())
+      })
+      .map(|attempt| FactoryRunNodeSummary {
+        id: attempt.id(),
+        flow_run_id: attempt.flow_run_id(),
+        cycle_id: attempt.workflow_cycle_id(),
+        node: attempt.node_key().clone(),
+        attempt: attempt.number().get(),
+      })
+      .collect::<Vec<_>>();
+    active.sort_by(|left, right| {
+      (left.flow_run_id, left.cycle_id, &left.node, left.attempt).cmp(&(
+        right.flow_run_id,
+        right.cycle_id,
+        &right.node,
+        right.attempt,
+      ))
+    });
+    let active_node_count = active.len() as u64;
+    active.truncate(MAX_FACTORY_RUN_SUMMARY_NODES);
+    let usage = snapshot
+      .budgets
+      .iter()
+      .find(|row| row.id == snapshot.current.budget_id)
+      .ok_or(StoreError::Unavailable)?
+      .usage;
+    Ok(Self {
+      base_revision: snapshot.work.subject().base_revision().clone(),
+      candidate,
+      current_nodes: active,
+      active_node_count,
+      budget: FactoryRunBudgetSummary {
+        usage,
+        limit: snapshot.admitted_flow.limits().budget(),
+      },
+      latest_decision,
+      delivery,
+      escalation,
+    })
+  }
+}
+
 /// Safe current Factory Run and admitted Work facts used by discovery.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryRunSummary {
+  /// Bounded safe current facts derived from the owner journal.
+  pub diagnostics: FactoryRunSummaryDiagnostics,
   /// Stable Factory Run identity.
   pub id: FactoryRunId,
   /// Owning Project identity.

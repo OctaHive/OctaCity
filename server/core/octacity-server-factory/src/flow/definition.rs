@@ -71,7 +71,7 @@ pub struct FlowNodeDefinitionInput {
 }
 
 /// One immutable node declaration from the closed Factory primitive set.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FlowNodeDefinition {
   key: FactoryKey,
@@ -100,21 +100,62 @@ pub struct FlowNodeDefinition {
   max_execution_retries: u16,
 }
 
+#[derive(Deserialize)]
+#[serde(remote = "FlowNodeDefinition", deny_unknown_fields)]
+struct FlowNodeDefinitionWire {
+  key: FactoryKey,
+  kind: FlowNodeKind,
+  input_schema: Option<ImmutableReference>,
+  outcomes: Vec<FlowOutcomeDefinition>,
+  budget: BudgetLimit,
+  permissions: FactoryPermissionSet,
+  required: bool,
+  subflow: Option<FlowDefinitionRef>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  action: Option<crate::FlowActionBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  phase_pool: Option<FactoryKey>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  gate: Option<crate::FlowGateBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  input_binding: Option<crate::FlowInputBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  context_binding: Option<crate::FlowContextBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  build: Option<crate::FlowBuildBinding>,
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  accepted_work_outcomes: Vec<FactoryKey>,
+  #[serde(default)]
+  max_execution_retries: u16,
+}
+
+impl<'de> Deserialize<'de> for FlowNodeDefinition {
+  fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    let mut node = FlowNodeDefinitionWire::deserialize(deserializer)?;
+    node.outcomes.sort_by(|left, right| left.key().cmp(right.key()));
+    node.validate_declaration().map_err(serde::de::Error::custom)?;
+    Ok(node)
+  }
+}
+
 impl FlowNodeDefinition {
-  /// Constructs a bounded typed primitive or exact subflow-call node.
-  pub fn new(mut input: FlowNodeDefinitionInput) -> Result<Self, FactoryError> {
-    input.outcomes.sort_by(|left, right| left.key().cmp(right.key()));
-    if input.outcomes.is_empty() || input.outcomes.windows(2).any(|pair| pair[0].key() == pair[1].key()) {
+  fn validate_declaration(&self) -> Result<(), FactoryError> {
+    if self.outcomes.is_empty() || self.outcomes.windows(2).any(|pair| pair[0].key() == pair[1].key()) {
       return Err(FactoryError::InvalidConfiguration {
         field: "Flow node outcomes",
       });
     }
-    if (input.kind == FlowNodeKind::SubflowCall) != input.subflow.is_some() {
+    if (self.kind == FlowNodeKind::SubflowCall) != self.subflow.is_some() {
       return Err(FactoryError::InvalidReference {
         relationship: "subflow definition",
       });
     }
-    Ok(Self {
+    Ok(())
+  }
+  /// Constructs a bounded typed primitive or exact subflow-call node.
+  pub fn new(mut input: FlowNodeDefinitionInput) -> Result<Self, FactoryError> {
+    input.outcomes.sort_by(|left, right| left.key().cmp(right.key()));
+    let node = Self {
       key: input.key,
       kind: input.kind,
       input_schema: input.input_schema,
@@ -131,7 +172,9 @@ impl FlowNodeDefinition {
       build: None,
       accepted_work_outcomes: vec![],
       max_execution_retries: 0,
-    })
+    };
+    node.validate_declaration()?;
+    Ok(node)
   }
 
   /// Permits bounded, explicitly confirmed retries after technical failure.
@@ -576,6 +619,7 @@ fn validate_bindings(nodes: &[FlowNodeDefinition]) -> Result<(), FactoryError> {
     });
   }
   for node in nodes {
+    node.validate_declaration()?;
     if let Some(binding) = node.build() {
       binding.validate_node(node)?;
     }
@@ -622,10 +666,25 @@ fn validate_size(nodes: usize, transitions: usize) -> Result<(), FactoryError> {
 
 /// Exact reachable immutable Flow Definition closure pinned at admission.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "PinnedFlowDefinitionClosureWire")]
 pub struct PinnedFlowDefinitionClosure {
   root: FlowDefinitionRef,
   definitions: Vec<FlowDefinition>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PinnedFlowDefinitionClosureWire {
+  root: FlowDefinitionRef,
+  definitions: Vec<FlowDefinition>,
+}
+
+impl TryFrom<PinnedFlowDefinitionClosureWire> for PinnedFlowDefinitionClosure {
+  type Error = FactoryError;
+
+  fn try_from(wire: PinnedFlowDefinitionClosureWire) -> Result<Self, Self::Error> {
+    Self::new(wire.root, wire.definitions)
+  }
 }
 
 impl PinnedFlowDefinitionClosure {

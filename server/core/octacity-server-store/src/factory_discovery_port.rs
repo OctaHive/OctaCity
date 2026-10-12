@@ -9,6 +9,12 @@ use crate::{
 /// Backend-neutral authorization-safe Factory management discovery.
 #[async_trait]
 pub trait FactoryDiscoveryStore: Send + Sync {
+  /// Lists visible current unselected phase entries before deriving counts and cursors.
+  async fn list_phase_ready_entries(
+    &self,
+    request: crate::ListPhaseReadyEntries,
+  ) -> Result<crate::PhaseReadyPage, StoreError>;
+
   /// Lists current immutable Factory Configurations owned by one Project.
   async fn list_project_factory_configurations(
     &self,

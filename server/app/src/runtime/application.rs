@@ -6,9 +6,9 @@ use octacity_server_api_rest::{
     AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
     BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
     CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
-    DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
-    JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-    ManualTriggerManagementApplication, OperationalMetadataManagementApplication,
+    DefinitionManagementApplication, ExecutionManagementApplication, FactoryManagementApplication,
+    InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplication,
+    ManagementApplicationHandlers, ManualTriggerManagementApplication, OperationalMetadataManagementApplication,
     OperatorAttentionManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
     ResourceSearchManagementApplication, ScheduleManagementApplication,
   },
@@ -105,7 +105,7 @@ pub(super) fn management_application(
   let manual_triggers = Arc::new(ManualTriggerService::new(
     authoritative_store,
     trigger_context,
-    revision_resolver,
+    revision_resolver.clone(),
   ));
   let durable_manual_triggers = Arc::new(DurableManualTriggerService::new(
     manual_triggers.clone(),
@@ -149,9 +149,13 @@ pub(super) fn management_application(
   let audit = Arc::new(AuditQueries::new(store.clone()));
   let resource_search = Arc::new(ResourceSearchHandlers::new(store.clone()));
   let operator_attention = Arc::new(OperatorAttentionHandlers::new(store.clone()));
-  let log_search = Arc::new(BuildLogSearch::new(store, log_search_index));
-  let operational_metadata = Arc::new(OperationalMetadataQueries::new(operational_metadata));
   let management_policy: Arc<dyn ManagementAuthorizationPolicy> = Arc::new(TrustedNetworkManagementPolicy);
+  let factory = Arc::new(octacity_server_application::FactoryConfigurationHandlers::with_policy(
+    store.clone(),
+    management_policy.clone(),
+  ));
+  let log_search = Arc::new(BuildLogSearch::new(store.clone(), log_search_index));
+  let operational_metadata = Arc::new(OperationalMetadataQueries::new(operational_metadata));
   let project_commands = authorized_commands(&management_policy, projects.clone());
   let pipeline_commands = authorized_commands(&management_policy, pipelines.clone());
   let configuration_commands = authorized_commands(&management_policy, configurations.clone());
@@ -183,6 +187,28 @@ pub(super) fn management_application(
   let resource_search_queries = authorized_queries(&management_policy, resource_search);
   let operator_attention_queries = authorized_queries(&management_policy, operator_attention);
   let operational_queries = authorized_queries(&management_policy, operational_metadata);
+  let flow_handlers = Arc::new(octacity_server_application::FactoryFlowDefinitionHandlers::new(
+    store.clone(),
+    management_policy.clone(),
+  ));
+  let flow_commands = authorized_commands(&management_policy, flow_handlers.clone());
+  let flow_queries = authorized_queries(&management_policy, flow_handlers);
+  let factory_admission = authorized_commands(
+    &management_policy,
+    Arc::new(octacity_server_application::FactoryAdmissionHandlers::with_policy(
+      store.clone(),
+      revision_resolver,
+      management_policy.clone(),
+    )),
+  );
+  let factory_discovery = authorized_queries(
+    &management_policy,
+    Arc::new(octacity_server_application::FactoryDiscoveryHandlers::new(
+      store.clone(),
+    )),
+  );
+  let factory_commands = authorized_commands(&management_policy, factory.clone());
+  let factory_queries = authorized_queries(&management_policy, factory);
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
@@ -196,6 +222,14 @@ pub(super) fn management_application(
         DefinitionManagementApplication::new(definition_commands, webhook_commands, definition_queries),
         ScheduleManagementApplication::new(schedule_commands, schedule_queries),
         InternalTriggerManagementApplication::new(internal_trigger_commands, internal_trigger_queries),
+        FactoryManagementApplication::new(
+          factory_commands,
+          factory_queries,
+          flow_commands,
+          flow_queries,
+          factory_admission,
+          factory_discovery,
+        ),
       ),
       AgentManagementApplication::new(
         pool_commands,

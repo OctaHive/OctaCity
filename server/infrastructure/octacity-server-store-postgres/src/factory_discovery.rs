@@ -29,6 +29,7 @@ struct ConfigurationSummaryRow {
 
 #[derive(FromRow)]
 struct RunSummaryRow {
+  diagnostics: sqlx::types::Json<octacity_server_store::FactoryRunSummaryDiagnostics>,
   id: uuid::Uuid,
   project_id: uuid::Uuid,
   work_id: uuid::Uuid,
@@ -46,7 +47,6 @@ pub(crate) async fn list_configurations(
   pool: &PgPool,
   request: ListProjectFactoryConfigurations,
 ) -> Result<CurrentFactoryConfigurationPage, StoreError> {
-  require_project(pool, request.project_id()).await?;
   if request.visibility().kind() == ReadVisibilityKind::None {
     return Ok(CurrentFactoryConfigurationPage {
       total: 0,
@@ -54,6 +54,7 @@ pub(crate) async fn list_configurations(
       next_cursor: None,
     });
   }
+  require_project(pool, request.project_id()).await?;
   let mut transaction = repeatable_read(pool).await?;
   let visibility = sql_read_visibility(request.visibility().view(), |id| id.as_uuid());
   let total: i64 = sqlx::query_scalar(
@@ -105,9 +106,6 @@ pub(crate) async fn list_configurations(
 }
 
 pub(crate) async fn list_runs(pool: &PgPool, request: ListFactoryRuns) -> Result<FactoryRunPage, StoreError> {
-  if let Some(project_id) = request.project_id() {
-    require_project(pool, project_id).await?;
-  }
   if request.visibility().kind() == ReadVisibilityKind::None {
     return Ok(FactoryRunPage {
       total: 0,
@@ -115,19 +113,25 @@ pub(crate) async fn list_runs(pool: &PgPool, request: ListFactoryRuns) -> Result
       next_cursor: None,
     });
   }
+  if let Some(project_id) = request.project_id() {
+    require_project(pool, project_id).await?;
+  }
   let mut transaction = repeatable_read(pool).await?;
   let visibility = sql_read_visibility(request.visibility().view(), |id| id.as_uuid());
   let filter = request.filter();
   let total: i64 = sqlx::query_scalar(
     "SELECT COUNT(*) FROM factory_runs AS run \
      JOIN factory_work_envelopes AS work ON work.id = run.work_envelope_id \
+     JOIN factory_run_discovery discovery ON discovery.id = run.id \
      WHERE run.visible AND ($1::uuid IS NULL OR run.project_id = $1) \
        AND ($2 OR run.id = ANY($3::uuid[])) \
        AND ($4::uuid IS NULL OR run.factory_configuration_id = $4) \
        AND ($5::text IS NULL OR work.source_kind = $5) \
        AND ($6::text IS NULL OR run.state = $6) \
        AND ($7::bigint IS NULL OR run.admitted_at >= to_timestamp($7::double precision / 1000.0)) \
-       AND ($8::bigint IS NULL OR run.admitted_at < to_timestamp($8::double precision / 1000.0))",
+       AND ($8::bigint IS NULL OR run.admitted_at < to_timestamp($8::double precision / 1000.0)) \
+       AND ($9::text IS NULL OR discovery.decision_outcome = $9) \
+       AND ($10::text IS NULL OR discovery.delivery_state = $10)",
   )
   .bind(request.project_id().map(ProjectId::as_uuid))
   .bind(visibility.all)
@@ -137,6 +141,8 @@ pub(crate) async fn list_runs(pool: &PgPool, request: ListFactoryRuns) -> Result
   .bind(filter.state.map(FactoryRunState::as_str))
   .bind(filter.admitted_from.map(|time| time.unix_millis()))
   .bind(filter.admitted_before.map(|time| time.unix_millis()))
+  .bind(filter.decision.map(|outcome| outcome.as_str()))
+  .bind(filter.delivery_state.map(|state| state.as_str()))
   .fetch_one(&mut *transaction)
   .await
   .map_err(unavailable)?;
@@ -145,11 +151,12 @@ pub(crate) async fn list_runs(pool: &PgPool, request: ListFactoryRuns) -> Result
     "SELECT run.id, run.project_id, run.work_envelope_id AS work_id, \
             run.factory_configuration_id AS configuration_id, \
             run.factory_configuration_version AS configuration_version, \
-            work.source_kind, work.external_identity, run.state, run.version, \
+            work.source_kind, work.external_identity, run.state, run.version, discovery.diagnostics, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis, \
             FLOOR(EXTRACT(EPOCH FROM run.updated_at) * 1000)::BIGINT AS updated_at_millis \
      FROM factory_runs AS run \
      JOIN factory_work_envelopes AS work ON work.id = run.work_envelope_id \
+     JOIN factory_run_discovery discovery ON discovery.id = run.id \
      WHERE run.visible AND ($1::uuid IS NULL OR run.project_id = $1) \
        AND ($2 OR run.id = ANY($3::uuid[])) \
        AND ($4::uuid IS NULL OR run.factory_configuration_id = $4) \
@@ -157,9 +164,11 @@ pub(crate) async fn list_runs(pool: &PgPool, request: ListFactoryRuns) -> Result
        AND ($6::text IS NULL OR run.state = $6) \
        AND ($7::bigint IS NULL OR run.admitted_at >= to_timestamp($7::double precision / 1000.0)) \
        AND ($8::bigint IS NULL OR run.admitted_at < to_timestamp($8::double precision / 1000.0)) \
-       AND ($9::bigint IS NULL OR (run.admitted_at, run.id) < \
-         (to_timestamp($9::double precision / 1000.0), $10::uuid)) \
-     ORDER BY run.admitted_at DESC, run.id DESC LIMIT $11",
+       AND ($9::text IS NULL OR discovery.decision_outcome = $9) \
+       AND ($10::text IS NULL OR discovery.delivery_state = $10) \
+       AND ($11::bigint IS NULL OR (run.admitted_at, run.id) < \
+         (to_timestamp($11::double precision / 1000.0), $12::uuid)) \
+     ORDER BY run.admitted_at DESC, run.id DESC LIMIT $13",
   )
   .bind(request.project_id().map(ProjectId::as_uuid))
   .bind(visibility.all)
@@ -169,6 +178,8 @@ pub(crate) async fn list_runs(pool: &PgPool, request: ListFactoryRuns) -> Result
   .bind(filter.state.map(FactoryRunState::as_str))
   .bind(filter.admitted_from.map(|time| time.unix_millis()))
   .bind(filter.admitted_before.map(|time| time.unix_millis()))
+  .bind(filter.decision.map(|outcome| outcome.as_str()))
+  .bind(filter.delivery_state.map(|state| state.as_str()))
   .bind(after.map(|position| position.admitted_at.unix_millis()))
   .bind(after.map(|position| position.run_id.as_uuid()))
   .bind(requested_row_limit(request.limit().get()))
@@ -201,11 +212,12 @@ pub(crate) async fn read_run(
     "SELECT run.id, run.project_id, run.work_envelope_id AS work_id, \
             run.factory_configuration_id AS configuration_id, \
             run.factory_configuration_version AS configuration_version, \
-            work.source_kind, work.external_identity, run.state, run.version, \
+            work.source_kind, work.external_identity, run.state, run.version, discovery.diagnostics, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis, \
             FLOOR(EXTRACT(EPOCH FROM run.updated_at) * 1000)::BIGINT AS updated_at_millis \
      FROM factory_runs AS run \
      JOIN factory_work_envelopes AS work ON work.id = run.work_envelope_id \
+     JOIN factory_run_discovery discovery ON discovery.id = run.id \
      WHERE run.id = $1 AND run.visible",
   )
   .bind(run_id.as_uuid())
@@ -230,6 +242,7 @@ fn decode_configuration(row: ConfigurationSummaryRow) -> Result<CurrentFactoryCo
 
 fn decode_run(row: RunSummaryRow) -> Result<FactoryRunSummary, StoreError> {
   Ok(FactoryRunSummary {
+    diagnostics: row.diagnostics.0,
     id: FactoryRunId::from_uuid(row.id).map_err(|_| StoreError::Unavailable)?,
     project_id: ProjectId::from_uuid(row.project_id).map_err(|_| StoreError::Unavailable)?,
     work_id: WorkEnvelopeId::from_uuid(row.work_id).map_err(|_| StoreError::Unavailable)?,

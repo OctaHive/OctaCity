@@ -103,7 +103,9 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     # URL syntax is validated before an endpoint enters an Agent capability.
     # The same boundary decodes shared runner output frames and keeps configured
     # redaction material in zeroing memory before any durable write.
-    "octacity-server-application": frozenset({"base64", "url", "zeroize"}),
+    # serde_path_to_error tracks safe authoring-field locations without exposing
+    # rejected input values or introducing transport/provider dependencies.
+    "octacity-server-application": frozenset({"base64", "serde_path_to_error", "url", "zeroize"}),
     # Cache namespace syntax follows Octa's public protocol while HMAC protects
     # the server-private credential derivation boundary.
     "octacity-server-cache": frozenset({"blake3", "hmac", "octa-cache-protocol", "zstd"}),

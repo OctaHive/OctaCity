@@ -107,9 +107,10 @@ pub use budget::{
 };
 pub use configuration::{
   BuildConfigurationRef, DecisionSignalProfile, DecisionSignalProfileDefinition, EvaluationPolicy,
-  FactoryConfiguration, FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft,
-  FactoryReferenceChoice, FactoryWipLimits, ImmutableReference, MAX_CONFIGURATION_CHOICES_PER_KIND,
-  MAX_FACTORY_ACTIVE_NODES, MAX_FACTORY_ACTIVE_RUNS,
+  FactoryChoiceCompatibility, FactoryChoiceIdentity, FactoryChoiceMetadata, FactoryConfiguration,
+  FactoryConfigurationChoiceEntries, FactoryConfigurationChoices, FactoryConfigurationDraft, FactoryReferenceChoice,
+  FactoryWipLimits, ImmutableReference, MAX_CONFIGURATION_CHOICES_PER_KIND, MAX_FACTORY_ACTIVE_NODES,
+  MAX_FACTORY_ACTIVE_RUNS,
 };
 pub use credential::{
   AuthorizedFactoryCredentialProfile, FactoryCredentialConsumer, FactoryCredentialProfiles, FactoryCredentialPurpose,
@@ -146,8 +147,8 @@ pub use flow::{
   FlowBuildProfile, FlowBuildProvenance, FlowComparison, FlowContextBinding, FlowContextProjection,
   FlowContextSelection, FlowDataHistory, FlowDataMapping, FlowDataProjection, FlowDataSchema, FlowDefinition,
   FlowDefinitionInput, FlowDefinitionRef, FlowDefinitionTemplate, FlowDirective, FlowDirectiveInputs,
-  FlowExecutionPolicy, FlowFieldSchema, FlowGateBinding, FlowGateProgram, FlowGateRule, FlowIncomingData,
-  FlowInputBinding, FlowInputPreparation, FlowInputSource, FlowInterpreter, FlowNodeDefinition,
+  FlowDiscoveryFacts, FlowExecutionPolicy, FlowFieldSchema, FlowGateBinding, FlowGateProgram, FlowGateRule,
+  FlowIncomingData, FlowInputBinding, FlowInputPreparation, FlowInputSource, FlowInterpreter, FlowNodeDefinition,
   FlowNodeDefinitionInput, FlowNodeInput, FlowNodeRecord, FlowNodeStop, FlowNodeStopReason, FlowOperand,
   FlowOutcomeDefinition, FlowOutcomeKind, FlowPayload, FlowPredicate, FlowProgress, FlowQuantifier,
   FlowRecordObservation, FlowRecordReference, FlowRecordView, FlowRun, FlowRunParent, FlowRuntimeHistory,

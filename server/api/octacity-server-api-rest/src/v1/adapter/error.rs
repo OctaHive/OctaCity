@@ -22,8 +22,18 @@ impl ApiError {
         code,
         message: message.to_owned(),
         request_id: request_id.0.clone(),
+        diagnostics: None,
       },
     }
+  }
+  pub(super) fn with_factory_diagnostics(
+    mut self,
+    report: &octacity_server_application::FactoryValidationDiagnostics,
+  ) -> Self {
+    if let Ok(value) = serde_json::to_value(report) {
+      self.body.diagnostics = Some(value);
+    }
+    self
   }
 }
 

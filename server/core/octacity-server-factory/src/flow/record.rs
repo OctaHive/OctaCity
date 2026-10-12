@@ -36,8 +36,27 @@ pub struct FlowNodeRecord {
   build: Option<crate::FlowBuildProvenance>,
   #[serde(skip_serializing_if = "Option::is_none")]
   subflow: Option<crate::FlowRecordReference>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  discovery: Option<crate::FlowDiscoveryFacts>,
 }
 impl FlowNodeRecord {
+  /// Adds a verified domain projection to the same content-bound completion.
+  /// It grants no permission and cannot change interpretation or readiness.
+  pub fn with_discovery(mut self, facts: crate::FlowDiscoveryFacts) -> Result<Self, FactoryError> {
+    if facts.exact_subject() != self.input.subject() {
+      return Err(invalid());
+    }
+    self.discovery = Some(facts);
+    if self.bytes()?.len() > MAX_FLOW_DATA_BYTES {
+      return Err(invalid());
+    }
+    Ok(self)
+  }
+  /// Borrows safe owner facts; absence means the result asserts no semantic disposition.
+  #[must_use]
+  pub const fn discovery(&self) -> Option<&crate::FlowDiscoveryFacts> {
+    self.discovery.as_ref()
+  }
   /// Bounded owner metadata for explicit projections, without producing input,
   /// task context or provider-authored payload fields. Verified report facts
   /// remain under their exact Build output provenance.
@@ -96,6 +115,7 @@ impl FlowNodeRecord {
       observed_at: observation.observed_at,
       build: None,
       subflow: None,
+      discovery: None,
     };
     record.validate_binding(attempt, definition)?;
     if record.bytes()?.len() > MAX_FLOW_DATA_BYTES {
@@ -255,6 +275,9 @@ impl FlowNodeRecord {
     }
     if let Some(source) = wire.get("subflow") {
       record.subflow = Some(serde_json::from_value(source.clone()).map_err(|_| invalid())?);
+    }
+    if let Some(facts) = wire.get("discovery") {
+      record = record.with_discovery(serde_json::from_value(facts.clone()).map_err(|_| invalid())?)?;
     }
     let expected = record.completion(
       attempt,

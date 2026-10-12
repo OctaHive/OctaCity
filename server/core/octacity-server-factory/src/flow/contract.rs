@@ -313,13 +313,33 @@ impl FlowDataProjection {
 
 /// Definition-local execution ceilings enforced above the structural graph module.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "FlowExecutionPolicyWire")]
 pub struct FlowExecutionPolicy {
   budget: BudgetLimit,
   permissions: FactoryPermissionSet,
   max_active_nodes: u16,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   verification: Option<crate::VerificationPolicy>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlowExecutionPolicyWire {
+  budget: BudgetLimit,
+  permissions: FactoryPermissionSet,
+  max_active_nodes: u16,
+  #[serde(default)]
+  verification: Option<crate::VerificationPolicy>,
+}
+
+impl TryFrom<FlowExecutionPolicyWire> for FlowExecutionPolicy {
+  type Error = FactoryError;
+
+  fn try_from(wire: FlowExecutionPolicyWire) -> Result<Self, Self::Error> {
+    let mut policy = Self::new(wire.budget, wire.permissions, wire.max_active_nodes)?;
+    policy.verification = wire.verification;
+    Ok(policy)
+  }
 }
 
 impl FlowExecutionPolicy {
@@ -368,7 +388,7 @@ impl FlowExecutionPolicy {
 
 /// Admission-wide safety ceilings applied to an exact pinned closure.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "FlowAdmissionLimitsWire")]
 pub struct FlowAdmissionLimits {
   max_depth: u16,
   max_expanded_nodes: u32,
@@ -377,6 +397,34 @@ pub struct FlowAdmissionLimits {
   max_wip: u16,
   budget: BudgetLimit,
   permissions: FactoryPermissionSet,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FlowAdmissionLimitsWire {
+  max_depth: u16,
+  max_expanded_nodes: u32,
+  max_repeat_count: u16,
+  max_fan_out: u16,
+  max_wip: u16,
+  budget: BudgetLimit,
+  permissions: FactoryPermissionSet,
+}
+
+impl TryFrom<FlowAdmissionLimitsWire> for FlowAdmissionLimits {
+  type Error = FactoryError;
+
+  fn try_from(wire: FlowAdmissionLimitsWire) -> Result<Self, Self::Error> {
+    Self::new(
+      wire.max_depth,
+      wire.max_expanded_nodes,
+      wire.max_repeat_count,
+      wire.max_fan_out,
+      wire.max_wip,
+      wire.budget,
+      wire.permissions,
+    )
+  }
 }
 
 impl FlowAdmissionLimits {

@@ -68,6 +68,10 @@ pub enum ManagementResourceKind {
   BuildConfiguration,
   /// Versioned Dark Factory Configuration.
   FactoryConfiguration,
+  /// Immutable Factory Flow Definition.
+  FlowDefinition,
+  /// Exact Project-scoped selectable Factory capability or policy reference.
+  FactoryChoice,
   /// Durable Dark Factory Run.
   FactoryRun,
   /// Manual, scheduled, external, or internal Trigger definition.
@@ -104,7 +108,7 @@ pub enum ManagementResourceKind {
 
 impl ManagementResourceKind {
   /// Complete closed resource-kind vocabulary used by coverage and policy tests.
-  pub const ALL: [Self; 23] = [
+  pub const ALL: [Self; 25] = [
     Self::ControlPlane,
     Self::Project,
     Self::ProjectPolicy,
@@ -112,7 +116,9 @@ impl ManagementResourceKind {
     Self::Repository,
     Self::BuildConfiguration,
     Self::FactoryConfiguration,
+    Self::FlowDefinition,
     Self::FactoryRun,
+    Self::FactoryChoice,
     Self::Trigger,
     Self::Schedule,
     Self::Build,
@@ -390,8 +396,10 @@ const fn supports_collection(kind: ManagementResourceKind) -> bool {
       | ManagementResourceKind::AgentPool
       | ManagementResourceKind::Agent
       | ManagementResourceKind::AuditFact
+      | ManagementResourceKind::FlowDefinition
       | ManagementResourceKind::FactoryConfiguration
       | ManagementResourceKind::FactoryRun
+      | ManagementResourceKind::FactoryChoice
   )
 }
 
@@ -402,8 +410,10 @@ const fn supports_instance(kind: ManagementResourceKind) -> bool {
       | ManagementResourceKind::Pipeline
       | ManagementResourceKind::Repository
       | ManagementResourceKind::BuildConfiguration
+      | ManagementResourceKind::FlowDefinition
       | ManagementResourceKind::FactoryConfiguration
       | ManagementResourceKind::FactoryRun
+      | ManagementResourceKind::FactoryChoice
       | ManagementResourceKind::Trigger
       | ManagementResourceKind::Schedule
       | ManagementResourceKind::Build
@@ -434,7 +444,9 @@ const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: Man
         ManagementResourceKind::FactoryConfiguration,
         ManagementResourceKind::Project
       )
+      | (ManagementResourceKind::FlowDefinition, ManagementResourceKind::Project)
       | (ManagementResourceKind::FactoryRun, ManagementResourceKind::Project)
+      | (ManagementResourceKind::FactoryChoice, ManagementResourceKind::Project)
       | (ManagementResourceKind::Trigger, ManagementResourceKind::Project)
       | (
         ManagementResourceKind::Trigger,

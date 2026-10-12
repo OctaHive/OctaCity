@@ -13,8 +13,8 @@ use crate::{
 
 #[derive(Clone, Default)]
 pub(super) struct PhasePoolMemoryState {
-  policies: BTreeMap<FactoryDigest, PhasePoolPolicy>,
-  entries: BTreeMap<FactoryDigest, PhasePoolEntry>,
+  pub(super) policies: BTreeMap<FactoryDigest, PhasePoolPolicy>,
+  pub(super) entries: BTreeMap<FactoryDigest, PhasePoolEntry>,
   pub(super) selections: BTreeMap<FactoryDigest, PhasePoolSelection>,
   passes: BTreeMap<FactoryDigest, (SelectPhasePool, Vec<PhasePoolSelection>)>,
   scan_after: BTreeMap<FactoryDigest, (FactoryDigest, FactoryDigest)>,

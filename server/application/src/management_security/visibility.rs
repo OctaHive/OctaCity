@@ -1,20 +1,22 @@
 use crate::{
   ListAgentPoolsQuery, ListAgentsQuery, ListAuditFactsQuery, ListBuildArtifactsQuery, ListBuildCacheSessionsQuery,
   ListInternalTriggersQuery, ListOperatorAttentionQuery, ListProjectBuildConfigurationsQuery, ListProjectBuildsQuery,
-  ListProjectPipelinesQuery, ListProjectRepositoriesQuery, ListProjectTriggerDefinitionsQuery, ListProjectsQuery,
-  ManagementAuthorizationGrant, ManagementResource, ManagementResourceKind, ManagementVisibilityView, Query,
-  ReadJobEventsQuery, SearchBuildLogsQuery, SearchResourcesQuery,
+  ListProjectFactoryConfigurationsQuery, ListProjectPipelinesQuery, ListProjectRepositoriesQuery,
+  ListProjectTriggerDefinitionsQuery, ListProjectsQuery, ManagementAuthorizationGrant, ManagementResource,
+  ManagementResourceKind, ManagementVisibilityView, Query, ReadJobEventsQuery, SearchBuildLogsQuery,
+  SearchResourcesQuery,
 };
 use octacity_server_domain::{
   AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, JobId, PipelineId, PoolId,
   ProjectId, RepositoryId, TriggerId,
 };
+use octacity_server_factory::FactoryConfigurationId;
 use octacity_server_store::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
-  InternalTriggerListVisibility, JobEventReadVisibility, OperatorAttentionTarget, OperatorAttentionVisibility,
-  PipelineListVisibility, ProjectListVisibility, RepositoryListVisibility, ResourceSearchResource,
-  ResourceSearchVisibility, TriggerDefinitionListVisibility,
+  FactoryConfigurationListVisibility, InternalTriggerListVisibility, JobEventReadVisibility, OperatorAttentionTarget,
+  OperatorAttentionVisibility, PipelineListVisibility, ProjectListVisibility, RepositoryListVisibility,
+  ResourceSearchResource, ResourceSearchVisibility, TriggerDefinitionListVisibility,
 };
 use thiserror::Error;
 
@@ -97,7 +99,10 @@ macro_rules! instance_scoped_query_registry {
         CacheSessionId,
         ManagementResourceKind::CacheSession,
         14
-      )
+      ),
+      (crate::ListFactoryRunsQuery, octacity_server_store::FactoryRunListVisibility, octacity_server_factory::FactoryRunId, ManagementResourceKind::FactoryRun, 17),
+      (crate::ListProjectFactoryFlowDefinitionsQuery, octacity_server_store::FlowDefinitionListVisibility, octacity_server_factory::FlowDefinitionId, ManagementResourceKind::FlowDefinition, 16),
+      (ListProjectFactoryConfigurationsQuery, FactoryConfigurationListVisibility, FactoryConfigurationId, ManagementResourceKind::FactoryConfiguration, 15)
     }
   };
 }
@@ -141,6 +146,24 @@ pub trait ManagementVisibilityTarget: Query {
 }
 
 instance_scoped_query_registry!(implement_instance_scoped_queries);
+
+impl sealed::VisibilityInput for octacity_server_store::FactoryChoiceListVisibility {}
+impl ManagementVisibilityInput for octacity_server_store::FactoryChoiceListVisibility {}
+
+impl ManagementVisibilityTarget for crate::ListFactoryConfigurationChoicesQuery {
+  type Visibility = octacity_server_store::FactoryChoiceListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::FactoryChoice];
+
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    translate_visibility(
+      grant,
+      |resource| instance_identity::<crate::FactoryChoiceIdentity>(resource, ManagementResourceKind::FactoryChoice),
+      Self::Visibility::all,
+      Self::Visibility::none,
+      Self::Visibility::restricted,
+    )
+  }
+}
 
 impl sealed::VisibilityInput for ResourceSearchVisibility {}
 impl ManagementVisibilityInput for ResourceSearchVisibility {}
@@ -283,6 +306,14 @@ fn attention_target_identity(
     _ => return Err(ManagementVisibilityError::UnsupportedScope),
   }
   .map_err(|_| ManagementVisibilityError::InvalidIdentity)
+}
+
+impl ManagementVisibilityTarget for crate::ListFactoryPhaseReadyQuery {
+  type Visibility = octacity_server_store::FactoryRunListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::FactoryRun];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListFactoryRunsQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
 }
 
 #[cfg(test)]

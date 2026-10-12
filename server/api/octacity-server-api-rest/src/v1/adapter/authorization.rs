@@ -8,9 +8,19 @@ use crate::v1::MANAGEMENT_FORBIDDEN_MESSAGE;
 
 pub(crate) trait ApplicationErrorClassification {
   fn classification(&self) -> ApplicationFailure;
+  fn factory_diagnostics(&self) -> Option<&octacity_server_application::FactoryValidationDiagnostics> {
+    None
+  }
 }
 
 impl ApplicationErrorClassification for ApplicationError {
+  fn factory_diagnostics(&self) -> Option<&octacity_server_application::FactoryValidationDiagnostics> {
+    match self {
+      ApplicationError::FactoryValidation(report) => Some(report),
+      _ => None,
+    }
+  }
+
   fn classification(&self) -> ApplicationFailure {
     ApplicationError::classification(self)
   }
@@ -42,7 +52,14 @@ pub(crate) fn authorized_handler_error<E: ApplicationErrorClassification>(
         &request_id,
       )
     }
-    ManagementHandlerError::Application(error) => application_error(error.classification(), request_id),
+    ManagementHandlerError::Application(error) => {
+      let response = application_error(error.classification(), request_id);
+      if let Some(report) = error.factory_diagnostics() {
+        response.with_factory_diagnostics(report)
+      } else {
+        response
+      }
+    }
   }
 }
 

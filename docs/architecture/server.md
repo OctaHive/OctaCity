@@ -58,15 +58,33 @@ formats, retries, and concrete adapters remain outside the core.
 
 ### Configured node contracts and graph ownership
 
-`FlowDefinitionTemplate` is the editable representation shared by supplied
-examples and a future Flow editor. It declares arbitrary node keys, schema
-choices, primitive capabilities, input sources and mappings, exact Build
-profile choices or plugin actions, finite typed outcomes, deterministic gate
-programs, transitions, bounded repeats and terminals. Publication resolves
-choices to immutable references and validates the complete definition closure.
-`FactoryFlowConfiguration` holds that closure, execution limits, the exact data
-schema catalogue and arbitrary named pool settings. Replacing configuration
-affects future admissions; an admitted Work retains its complete closure.
+`FlowDefinitionTemplate` is the editable representation for supplied examples and
+profile-driven instantiation. Management REST authoring uses
+`FactoryFlowDefinitionDraft`: its `FactoryFlowRootDraft` carries the same typed
+node, transition, terminal, context and data grammar, while the server owns root
+identity/version/digest publication and resolves exact published subflows.
+Deserialization preserves node constructor invariants, including unique finite
+outcomes and the correspondence between `subflow_call` and its exact child.
+
+`FactoryFlowConfiguration` holds the reachable immutable closure, execution
+limits, exact data schema catalogue and arbitrary named pool settings.
+Publication checks technical references against their selectable catalogue
+categories. Plugin/tool permission grants require `node_capability`; external
+gate policies and verification data-handling policies require `execution_policy`;
+Build model selections require `node_capability` or `decision_signal_model`.
+Credential references retain their own categories, and Build bindings require
+an exact visible Project-owned Build Configuration. Arbitrary extension parameter
+objects remain data owned by their exact plugin/policy contract: their JSON field
+names never become reference or permission authority. The selected adapter
+validates its parameter contract before effects. Replacing configuration affects
+future admissions; admitted Work retains its complete closure.
+
+Configuration validation returns the resolved document plus safe field diagnostics,
+required node/Agent/backend contracts, and the intersection of Flow, definition
+and node permissions. Backend enforcement includes denied categories. Agent-local
+grants are resolved at dispatch and can narrow those ceilings again; previews
+report that boundary explicitly. Rejected publication exposes only field pointers
+and stable error codes, without hidden choice identities or provider messages.
 
 `FlowDataSchema` describes closed objects, bounded strings, integers, booleans,
 arrays and scalar enums. Unknown fields, deep or oversized values and schema
@@ -374,6 +392,35 @@ over the ordinary Run claim and preserves the original logical selection. Dispat
 Retention removes selections and entries before their referenced claims and
 Flow history. Manual-intake wiring and worker supervision use these operations
 through the application boundary.
+
+### Factory management discovery
+
+Run collections expose bounded safe diagnostics: exact base/candidate, up to
+`MAX_FACTORY_RUN_SUMMARY_NODES` active attempts plus the full active count, current
+budget consumption/limits, and candidate-bound Decision and delivery summaries.
+Escalation exposes its immutable identity without reason text. Null means no
+verified fact is retained, rather than inferring a disposition from a logical node
+name, advisory signal, payload field or prose.
+
+Trusted action adapters can attach `FlowDiscoveryFacts` to the common result.
+The owner checks the exact Work subject before committing those facts under the
+same result digest, completion fence and immutable journal. Candidate publication
+already supplies its exact verified subject. Decision/delivery/escalation adapters
+project verified domain records through the same extension seam. These read facts
+never select transitions or grant execution authority. The latest explicit candidate
+publication takes precedence over frozen branch Context, which is a fallback only
+when no publication exists. Both precede receipt subjects; late results from an
+older branch cannot replace the current candidate. Decision/delivery summaries
+are matched to the current exact subject.
+
+PostgreSQL schema 53 indexes safe result metadata with checks that tie every
+indexed value to the retained document. `factory_run_discovery` derives current
+facts and supports decision/delivery filters before pagination. It stores no
+parallel semantic history. Counts and composite cursors use only visible matching
+Runs. Phase-ready collection reads use a read-only repeatable-read transaction;
+an entry was validated under the publication lock, and its exact Run version,
+unselected target and generation are checked before paging. Discovery therefore
+does not reconstruct full histories or acquire worker Run locks.
 
 ### Browser console boundary
 

@@ -507,20 +507,89 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
 
 #[async_trait]
 impl FactoryDiscoveryStore for InMemoryFactoryConfigurationStore {
+  async fn list_phase_ready_entries(
+    &self,
+    request: crate::ListPhaseReadyEntries,
+  ) -> Result<crate::PhaseReadyPage, StoreError> {
+    let state = self.lock()?;
+    if request.visibility().kind() == ReadVisibilityKind::None {
+      return Ok(crate::PhaseReadyPage::default());
+    }
+    let visible = state
+      .phase_pools
+      .entries
+      .values()
+      .filter(|entry| request.visibility().allows(&entry.input.run_id))
+      .filter(|entry| {
+        request.project_id().is_none_or(|project| project == entry.project_id)
+          && entry.policy_digest == request.policy()
+      })
+      .filter(|entry| {
+        !state.phase_pools.selections.values().any(|selected| {
+          selected.entry.input.run_id == entry.input.run_id
+            && selected.entry.input.flow_run_id == entry.input.flow_run_id
+            && selected.entry.input.cycle_id == entry.input.cycle_id
+            && selected.entry.input.node == entry.input.node
+            && selected.entry.input.generation == entry.input.generation
+        })
+      })
+      .collect::<Vec<_>>();
+    if visible.is_empty() {
+      return Ok(crate::PhaseReadyPage::default());
+    }
+    let policy = state
+      .phase_pools
+      .policies
+      .get(&request.policy())
+      .ok_or(StoreError::Unavailable)?;
+    let mut items = vec![];
+    for entry in visible {
+      let snapshot = state
+        .factory_runs
+        .get(&entry.input.run_id)
+        .ok_or(StoreError::Unavailable)?
+        .snapshot()?;
+      if crate::derive_phase_pool_entry(policy, entry.input.clone(), &snapshot).is_ok_and(|current| current == *entry) {
+        items.push(entry.clone());
+      }
+    }
+    let total = items.len() as u64;
+    items.retain(|entry| {
+      request
+        .after()
+        .is_none_or(|after| crate::PhaseReadyPagePosition::of(policy, entry) > *after)
+    });
+    items.sort_by_key(|entry| crate::PhaseReadyPagePosition::of(policy, entry));
+    let more = items.len() > usize::from(request.limit());
+    items.truncate(usize::from(request.limit()));
+    let next_cursor = more
+      .then(|| {
+        items
+          .last()
+          .map(|entry| crate::PhaseReadyPagePosition::of(policy, entry))
+      })
+      .flatten();
+    Ok(crate::PhaseReadyPage {
+      total,
+      items,
+      next_cursor,
+    })
+  }
+
   async fn list_project_factory_configurations(
     &self,
     request: ListProjectFactoryConfigurations,
   ) -> Result<CurrentFactoryConfigurationPage, StoreError> {
     let state = self.lock()?;
-    if !state.projects.contains(&request.project_id()) {
-      return Err(not_found(EntityKind::Project));
-    }
     if request.visibility().kind() == ReadVisibilityKind::None {
       return Ok(CurrentFactoryConfigurationPage {
         total: 0,
         items: Vec::new(),
         next_cursor: None,
       });
+    }
+    if !state.projects.contains(&request.project_id()) {
+      return Err(not_found(EntityKind::Project));
     }
     let mut items = state
       .current_versions
@@ -562,18 +631,18 @@ impl FactoryDiscoveryStore for InMemoryFactoryConfigurationStore {
 
   async fn list_factory_runs(&self, request: ListFactoryRuns) -> Result<FactoryRunPage, StoreError> {
     let state = self.lock()?;
-    if request
-      .project_id()
-      .is_some_and(|project_id| !state.projects.contains(&project_id))
-    {
-      return Err(not_found(EntityKind::Project));
-    }
     if request.visibility().kind() == ReadVisibilityKind::None {
       return Ok(FactoryRunPage {
         total: 0,
         items: Vec::new(),
         next_cursor: None,
       });
+    }
+    if request
+      .project_id()
+      .is_some_and(|project_id| !state.projects.contains(&project_id))
+    {
+      return Err(not_found(EntityKind::Project));
     }
     let mut items = state
       .factory_runs
@@ -587,6 +656,20 @@ impl FactoryDiscoveryStore for InMemoryFactoryConfigurationStore {
         && filter.configuration_id.is_none_or(|id| summary.configuration_id == id)
         && filter.source.as_ref().is_none_or(|source| &summary.source == source)
         && filter.state.is_none_or(|state| summary.state == state)
+        && filter.decision.is_none_or(|outcome| {
+          summary
+            .diagnostics
+            .latest_decision
+            .as_ref()
+            .is_some_and(|decision| decision.outcome == outcome)
+        })
+        && filter.delivery_state.is_none_or(|state| {
+          summary
+            .diagnostics
+            .delivery
+            .as_ref()
+            .is_some_and(|delivery| delivery.state == state)
+        })
         && filter.admitted_from.is_none_or(|from| summary.admitted_at >= from)
         && filter.admitted_before.is_none_or(|before| summary.admitted_at < before)
     });
@@ -633,6 +716,7 @@ fn factory_run_summary(
   };
   let run = stored.run();
   Ok(Some(FactoryRunSummary {
+    diagnostics: crate::FactoryRunSummaryDiagnostics::from_snapshot(&stored.snapshot()?)?,
     id: run.id(),
     project_id: run.subject().project_id(),
     work_id: work.id(),

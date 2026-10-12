@@ -1,4 +1,8 @@
-use std::collections::{BTreeMap, HashSet};
+use std::{
+  collections::{BTreeMap, HashSet},
+  fmt,
+  str::FromStr,
+};
 
 use octacity_server_domain::{BuildConfigurationId, BuildConfigurationVersion, ProjectId};
 use serde::{Deserialize, Serialize};
@@ -118,6 +122,47 @@ pub struct FactoryReferenceChoice {
   pub reference: ImmutableReference,
 }
 
+/// Project-scoped selectable alias; identical names in other Projects grant no access.
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct FactoryChoiceIdentity {
+  /// Owning Project.
+  pub project_id: ProjectId,
+  /// Closed technical reference category.
+  pub kind: FactoryChoiceKind,
+  /// Operator-facing alias within this Project and category.
+  pub alias: FactoryKey,
+}
+
+impl fmt::Display for FactoryChoiceIdentity {
+  fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+    write!(formatter, "{}:{}:{}", self.project_id, self.kind.as_str(), self.alias)
+  }
+}
+
+impl FromStr for FactoryChoiceIdentity {
+  type Err = FactoryError;
+
+  fn from_str(value: &str) -> Result<Self, Self::Err> {
+    let invalid = || FactoryError::InvalidConfiguration {
+      field: "configuration choice identity",
+    };
+    let mut parts = value.split(':');
+    let (Some(project), Some(kind), Some(alias), None) = (parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+      return Err(invalid());
+    };
+    let identity = Self {
+      project_id: project.parse().map_err(|_| invalid())?,
+      kind: serde_json::from_value(serde_json::Value::String(kind.to_owned())).map_err(|_| invalid())?,
+      alias: alias.parse()?,
+    };
+    if identity.to_string() != value {
+      return Err(invalid());
+    }
+    Ok(identity)
+  }
+}
+
 /// Bounded aliases and exact authorized identities available during publication.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct FactoryConfigurationChoiceEntries {
@@ -132,6 +177,32 @@ pub struct FactoryConfigurationChoiceEntries {
 pub struct FactoryConfigurationChoices {
   references: BTreeMap<(FactoryChoiceKind, FactoryKey), ImmutableReference>,
   build_configurations: BTreeMap<FactoryKey, BuildConfigurationRef>,
+  metadata: BTreeMap<(FactoryChoiceKind, FactoryKey), FactoryChoiceMetadata>,
+}
+
+/// Safe deployment-declared capabilities. Absence means no declaration is available;
+/// these hints never grant execution authority or replace exact contract validation.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryChoiceMetadata {
+  /// Technical node kinds supported by this installed choice.
+  pub node_kinds: Vec<crate::FlowNodeKind>,
+  /// Supported non-authoritative signal purposes.
+  pub signal_purposes: Vec<crate::DecisionSignalPurpose>,
+  /// Restrictions this installed capability can enforce.
+  pub enforcement: Vec<crate::PermissionCategory>,
+  /// Compatible aliases in the same Project catalog, filtered again for the reader.
+  pub compatible_choices: Vec<FactoryChoiceCompatibility>,
+}
+
+/// One typed compatibility relationship within a Project choice catalog.
+#[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryChoiceCompatibility {
+  /// Closed technical category of the compatible choice.
+  pub kind: FactoryChoiceKind,
+  /// Selectable alias in that category.
+  pub alias: FactoryKey,
 }
 
 impl FactoryConfigurationChoices {
@@ -140,7 +211,81 @@ impl FactoryConfigurationChoices {
     Ok(Self {
       references: reference_choice_map(entries.references)?,
       build_configurations: choice_map(entries.build_configurations, FactoryChoiceKind::BuildConfiguration)?,
+      metadata: BTreeMap::new(),
     })
+  }
+
+  /// Attaches a bounded declaration from the deployment owner to an installed alias.
+  /// Unknown aliases and relationships cannot create new selectable choices.
+  pub fn with_choice_metadata(
+    mut self,
+    kind: FactoryChoiceKind,
+    alias: FactoryKey,
+    mut metadata: FactoryChoiceMetadata,
+  ) -> Result<Self, FactoryError> {
+    let installed = |kind, alias: &FactoryKey| {
+      if kind == FactoryChoiceKind::BuildConfiguration {
+        self.build_configurations.contains_key(alias)
+      } else {
+        self.references.contains_key(&(kind, alias.clone()))
+      }
+    };
+    if !installed(kind, &alias)
+      || metadata
+        .compatible_choices
+        .iter()
+        .any(|choice| !installed(choice.kind, &choice.alias))
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "choice metadata alias",
+      });
+    }
+    if metadata.node_kinds.len() > crate::FlowNodeKind::VALUES.len()
+      || metadata.signal_purposes.len() > crate::DecisionSignalPurpose::VALUES.len()
+      || metadata.enforcement.len() > crate::PermissionCategory::ALL.len()
+      || metadata.compatible_choices.len() > MAX_CONFIGURATION_CHOICES_PER_KIND
+    {
+      return Err(FactoryError::CollectionLimitExceeded {
+        collection: "choice metadata",
+      });
+    }
+    metadata.node_kinds.sort();
+    metadata.node_kinds.dedup();
+    metadata.signal_purposes.sort();
+    metadata.signal_purposes.dedup();
+    metadata.enforcement.sort();
+    metadata.enforcement.dedup();
+    metadata.compatible_choices.sort();
+    metadata.compatible_choices.dedup();
+    self.metadata.insert((kind, alias), metadata);
+    Ok(self)
+  }
+
+  /// Returns a safe declaration for an exact installed category/alias.
+  #[must_use]
+  pub fn choice_metadata(&self, kind: FactoryChoiceKind, alias: &FactoryKey) -> Option<&FactoryChoiceMetadata> {
+    self.metadata.get(&(kind, alias.clone()))
+  }
+
+  /// Returns the bounded exact catalog in deterministic category/alias order.
+  #[must_use]
+  pub fn entries(&self) -> FactoryConfigurationChoiceEntries {
+    FactoryConfigurationChoiceEntries {
+      references: self
+        .references
+        .iter()
+        .map(|((kind, alias), reference)| FactoryReferenceChoice {
+          kind: *kind,
+          alias: alias.clone(),
+          reference: reference.clone(),
+        })
+        .collect(),
+      build_configurations: self
+        .build_configurations
+        .iter()
+        .map(|(alias, reference)| (alias.clone(), reference.clone()))
+        .collect(),
+    }
   }
 
   /// Resolves one explicitly selected immutable Build configuration alias.
@@ -164,10 +309,25 @@ impl FactoryConfigurationChoices {
 
 /// Per-configuration work-in-progress ceilings.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(try_from = "FactoryWipLimitsWire")]
 pub struct FactoryWipLimits {
   max_active_runs: u32,
   max_active_nodes: u32,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FactoryWipLimitsWire {
+  max_active_runs: u32,
+  max_active_nodes: u32,
+}
+
+impl TryFrom<FactoryWipLimitsWire> for FactoryWipLimits {
+  type Error = FactoryError;
+
+  fn try_from(wire: FactoryWipLimitsWire) -> Result<Self, Self::Error> {
+    Self::new(wire.max_active_runs, wire.max_active_nodes)
+  }
 }
 
 impl FactoryWipLimits {

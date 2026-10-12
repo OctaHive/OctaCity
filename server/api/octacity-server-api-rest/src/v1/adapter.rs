@@ -77,6 +77,7 @@ mod configuration;
 mod definition_discovery;
 mod error;
 mod execution;
+mod factory;
 mod internal_trigger;
 mod job_event;
 mod log_search;
@@ -93,6 +94,14 @@ mod schedule;
 mod webhook;
 
 use authorization::authorized_handler_error;
+use factory::{
+  admit_manual_factory_work, create_factory_configuration, create_factory_flow_definition,
+  get_current_factory_configuration, get_current_factory_flow_definition, get_factory_configuration,
+  get_factory_flow_definition, list_factory_configuration_choices, list_factory_phase_ready, list_factory_runs,
+  list_project_factory_configurations, list_project_factory_flow_definitions, list_project_factory_phase_ready,
+  list_project_factory_runs, replace_factory_configuration, replace_factory_flow_definition,
+  validate_factory_configuration, validate_factory_flow_definition,
+};
 
 pub(crate) use artifact::DEFAULT_ARTIFACT_LIMIT;
 pub(crate) use audit::DEFAULT_AUDIT_LIMIT;
@@ -106,10 +115,11 @@ pub use application::{
   AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
   BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
-  DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
-  JobEventManagementApplication, ManagementApplicationHandlers, ManualTriggerManagementApplication,
-  OperationalMetadataManagementApplication, OperatorAttentionManagementApplication, PipelineManagementApplication,
-  ProjectManagementApplication, ResourceSearchManagementApplication, ScheduleManagementApplication,
+  DefinitionManagementApplication, ExecutionManagementApplication, FactoryManagementApplication,
+  InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplicationHandlers,
+  ManualTriggerManagementApplication, OperationalMetadataManagementApplication, OperatorAttentionManagementApplication,
+  PipelineManagementApplication, ProjectManagementApplication, ResourceSearchManagementApplication,
+  ScheduleManagementApplication,
 };
 use artifact::{authorize_artifact_download, get_artifact, list_build_artifacts};
 use audit::list_audit_facts;
@@ -169,6 +179,7 @@ where
 /// REST crate has no dependency on an infrastructure adapter.
 pub struct ManagementApplication {
   inputs: ManagementInputFactory,
+  factory: FactoryManagementApplication,
   projects: ProjectManagementApplication,
   pipelines: PipelineManagementApplication,
   configurations: ConfigurationManagementApplication,
@@ -214,6 +225,7 @@ impl ManagementApplication {
       definitions,
       schedules,
       internal_triggers,
+      factory,
     } = catalog;
     let ExecutionManagementApplication {
       builds,
@@ -237,6 +249,7 @@ impl ManagementApplication {
       projects,
       pipelines,
       configurations,
+      factory,
       agent_pools,
       agents,
       builds,
@@ -367,12 +380,17 @@ fn optional_precondition(headers: &HeaderMap, request_id: &RequestId) -> Result<
 }
 
 fn invalid_input(error: ManagementInputError, request_id: &RequestId) -> ApiError {
-  ApiError::new(
+  let response = ApiError::new(
     StatusCode::BAD_REQUEST,
     ErrorCode::InvalidRequest,
     &error.to_string(),
     request_id,
-  )
+  );
+  if let ManagementInputError::FactoryValidation(report) = error {
+    response.with_factory_diagnostics(&report)
+  } else {
+    response
+  }
 }
 
 fn application_error(failure: ApplicationFailure, request_id: &RequestId) -> ApiError {

@@ -1,3 +1,5 @@
+mod discovery;
+pub use discovery::FlowDiscoveryFacts;
 mod stop;
 pub use stop::{FlowNodeStop, FlowNodeStopReason};
 mod action;

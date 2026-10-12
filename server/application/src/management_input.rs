@@ -37,6 +37,7 @@ mod agent;
 mod configuration;
 mod enrollment;
 mod execution;
+pub(crate) mod factory;
 mod project;
 mod retention;
 mod trigger;
@@ -212,11 +213,14 @@ impl ManagementInputFactory {
 }
 
 /// Stable application-boundary classification for invalid command primitives.
-#[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
+#[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum ManagementInputError {
   /// One named input could not be parsed or validated.
   #[error("invalid {0}")]
   Invalid(&'static str),
+  /// Safe field diagnostics from decoding the closed Factory authoring grammar.
+  #[error("factory definition failed validation")]
+  FactoryValidation(Box<crate::FactoryValidationDiagnostics>),
 }
 
 fn parse<T>(value: &str, field: &'static str) -> Result<T, ManagementInputError>

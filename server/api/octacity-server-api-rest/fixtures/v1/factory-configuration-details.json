@@ -1,0 +1,619 @@
+{
+  "configuration": {
+    "admission_policy": {
+      "digest": "0101010101010101010101010101010101010101010101010101010101010101",
+      "identity": "manual.medium",
+      "version": "v1"
+    },
+    "enabled": true,
+    "flow": {
+      "closure": {
+        "definitions": [
+          {
+            "context_projections": [],
+            "data_projections": [],
+            "entry": "implement",
+            "execution": {
+              "budget": {
+                "max_attempts": 10,
+                "max_cost_micro_units": 10000,
+                "max_elapsed_millis": 10000,
+                "max_output_bytes": 10000,
+                "max_tokens": 1000
+              },
+              "max_active_nodes": 4,
+              "permissions": {
+                "commands": [],
+                "executables": [],
+                "max_descendants": 0,
+                "mounts": [],
+                "network_hosts": [],
+                "outputs": {
+                  "kinds": [],
+                  "max_artifact_bytes": 0,
+                  "max_artifact_count": 0,
+                  "max_report_bytes": 0,
+                  "max_report_count": 0
+                },
+                "plugins": [],
+                "resources": {
+                  "cpu_millis": 0,
+                  "disk_bytes": 0,
+                  "elapsed_millis": 0,
+                  "memory_bytes": 0,
+                  "process_count": 0
+                },
+                "secret_profiles": [],
+                "tools": [],
+                "workload_identity_profiles": []
+              }
+            },
+            "input_schema": {
+              "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+              "identity": "contract.stage-result",
+              "version": "v1"
+            },
+            "nodes": [
+              {
+                "action": {
+                  "action": "evaluate",
+                  "parameters": {
+                    "build_configuration": {
+                      "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707",
+                      "id": "467728d6-88ce-4d26-a7ca-4cff47e8e05b",
+                      "project_id": "11111111-1111-4111-8111-111111111111",
+                      "version": 1
+                    },
+                    "kind": "evaluation"
+                  },
+                  "plugin": {
+                    "digest": "4747474747474747474747474747474747474747474747474747474747474747",
+                    "identity": "contract.capability",
+                    "version": "v1"
+                  }
+                },
+                "budget": {
+                  "max_attempts": 2,
+                  "max_cost_micro_units": 10000,
+                  "max_elapsed_millis": 10000,
+                  "max_output_bytes": 10000,
+                  "max_tokens": 1000
+                },
+                "input_binding": {
+                  "mapping": {
+                    "value": {
+                      "mapping": "constant",
+                      "value": true
+                    }
+                  },
+                  "sources": {}
+                },
+                "input_schema": {
+                  "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                  "identity": "contract.stage-result",
+                  "version": "v1"
+                },
+                "key": "evaluate",
+                "kind": "trusted_action",
+                "max_execution_retries": 0,
+                "outcomes": [
+                  {
+                    "key": "cancelled",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "failed",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "retryable",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "succeeded",
+                    "kind": "success",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  }
+                ],
+                "permissions": {
+                  "commands": [],
+                  "executables": [],
+                  "max_descendants": 0,
+                  "mounts": [],
+                  "network_hosts": [],
+                  "outputs": {
+                    "kinds": [],
+                    "max_artifact_bytes": 0,
+                    "max_artifact_count": 0,
+                    "max_report_bytes": 0,
+                    "max_report_count": 0
+                  },
+                  "plugins": [],
+                  "resources": {
+                    "cpu_millis": 0,
+                    "disk_bytes": 0,
+                    "elapsed_millis": 0,
+                    "memory_bytes": 0,
+                    "process_count": 0
+                  },
+                  "secret_profiles": [],
+                  "tools": [],
+                  "workload_identity_profiles": []
+                },
+                "required": true,
+                "subflow": null
+              },
+              {
+                "action": {
+                  "action": "implement",
+                  "parameters": {
+                    "build_configuration": {
+                      "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707",
+                      "id": "467728d6-88ce-4d26-a7ca-4cff47e8e05b",
+                      "project_id": "11111111-1111-4111-8111-111111111111",
+                      "version": 1
+                    },
+                    "kind": "implementation"
+                  },
+                  "plugin": {
+                    "digest": "4747474747474747474747474747474747474747474747474747474747474747",
+                    "identity": "contract.capability",
+                    "version": "v1"
+                  }
+                },
+                "budget": {
+                  "max_attempts": 2,
+                  "max_cost_micro_units": 10000,
+                  "max_elapsed_millis": 10000,
+                  "max_output_bytes": 10000,
+                  "max_tokens": 1000
+                },
+                "input_binding": {
+                  "mapping": {
+                    "value": {
+                      "mapping": "constant",
+                      "value": true
+                    }
+                  },
+                  "sources": {}
+                },
+                "input_schema": {
+                  "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                  "identity": "contract.stage-result",
+                  "version": "v1"
+                },
+                "key": "implement",
+                "kind": "trusted_action",
+                "max_execution_retries": 0,
+                "outcomes": [
+                  {
+                    "key": "cancelled",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "failed",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "retryable",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "succeeded",
+                    "kind": "success",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  }
+                ],
+                "permissions": {
+                  "commands": [],
+                  "executables": [],
+                  "max_descendants": 0,
+                  "mounts": [],
+                  "network_hosts": [],
+                  "outputs": {
+                    "kinds": [],
+                    "max_artifact_bytes": 0,
+                    "max_artifact_count": 0,
+                    "max_report_bytes": 0,
+                    "max_report_count": 0
+                  },
+                  "plugins": [],
+                  "resources": {
+                    "cpu_millis": 0,
+                    "disk_bytes": 0,
+                    "elapsed_millis": 0,
+                    "memory_bytes": 0,
+                    "process_count": 0
+                  },
+                  "secret_profiles": [],
+                  "tools": [],
+                  "workload_identity_profiles": []
+                },
+                "required": true,
+                "subflow": null
+              },
+              {
+                "action": {
+                  "action": "validate",
+                  "parameters": {
+                    "build_configuration": {
+                      "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707",
+                      "id": "467728d6-88ce-4d26-a7ca-4cff47e8e05b",
+                      "project_id": "11111111-1111-4111-8111-111111111111",
+                      "version": 1
+                    },
+                    "kind": "validation"
+                  },
+                  "plugin": {
+                    "digest": "4747474747474747474747474747474747474747474747474747474747474747",
+                    "identity": "contract.capability",
+                    "version": "v1"
+                  }
+                },
+                "budget": {
+                  "max_attempts": 2,
+                  "max_cost_micro_units": 10000,
+                  "max_elapsed_millis": 10000,
+                  "max_output_bytes": 10000,
+                  "max_tokens": 1000
+                },
+                "input_binding": {
+                  "mapping": {
+                    "value": {
+                      "mapping": "constant",
+                      "value": true
+                    }
+                  },
+                  "sources": {}
+                },
+                "input_schema": {
+                  "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                  "identity": "contract.stage-result",
+                  "version": "v1"
+                },
+                "key": "validate",
+                "kind": "trusted_action",
+                "max_execution_retries": 0,
+                "outcomes": [
+                  {
+                    "key": "cancelled",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "failed",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "retryable",
+                    "kind": "failure",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  },
+                  {
+                    "key": "succeeded",
+                    "kind": "success",
+                    "schema": {
+                      "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                      "identity": "contract.stage-result",
+                      "version": "v1"
+                    }
+                  }
+                ],
+                "permissions": {
+                  "commands": [],
+                  "executables": [],
+                  "max_descendants": 0,
+                  "mounts": [],
+                  "network_hosts": [],
+                  "outputs": {
+                    "kinds": [],
+                    "max_artifact_bytes": 0,
+                    "max_artifact_count": 0,
+                    "max_report_bytes": 0,
+                    "max_report_count": 0
+                  },
+                  "plugins": [],
+                  "resources": {
+                    "cpu_millis": 0,
+                    "disk_bytes": 0,
+                    "elapsed_millis": 0,
+                    "memory_bytes": 0,
+                    "process_count": 0
+                  },
+                  "secret_profiles": [],
+                  "tools": [],
+                  "workload_identity_profiles": []
+                },
+                "required": true,
+                "subflow": null
+              }
+            ],
+            "reference": {
+              "digest": "126d16ee79d845a95e274d18cedd3a57518f6e985b8fc7b691d932e29aca5730",
+              "id": "e4bf7b34-9cd8-0dea-e08f-b9604bcf18b2",
+              "version": 1
+            },
+            "terminals": [
+              {
+                "key": "cancelled",
+                "schema": {
+                  "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                  "identity": "contract.stage-result",
+                  "version": "v1"
+                }
+              },
+              {
+                "key": "failed",
+                "schema": {
+                  "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                  "identity": "contract.stage-result",
+                  "version": "v1"
+                }
+              },
+              {
+                "key": "succeeded",
+                "schema": {
+                  "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+                  "identity": "contract.stage-result",
+                  "version": "v1"
+                }
+              }
+            ],
+            "transitions": [
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "cancelled",
+                "predecessor": "evaluate",
+                "target": {
+                  "key": "cancelled",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "failed",
+                "predecessor": "evaluate",
+                "target": {
+                  "key": "failed",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "retryable",
+                "predecessor": "evaluate",
+                "target": {
+                  "key": "failed",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "succeeded",
+                "predecessor": "evaluate",
+                "target": {
+                  "key": "succeeded",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "cancelled",
+                "predecessor": "implement",
+                "target": {
+                  "key": "cancelled",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "failed",
+                "predecessor": "implement",
+                "target": {
+                  "key": "failed",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": "failed",
+                "max_repeats": 10,
+                "outcome": "retryable",
+                "predecessor": "implement",
+                "target": {
+                  "key": "implement",
+                  "kind": "node"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "succeeded",
+                "predecessor": "implement",
+                "target": {
+                  "key": "validate",
+                  "kind": "node"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "cancelled",
+                "predecessor": "validate",
+                "target": {
+                  "key": "cancelled",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "failed",
+                "predecessor": "validate",
+                "target": {
+                  "key": "failed",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "retryable",
+                "predecessor": "validate",
+                "target": {
+                  "key": "failed",
+                  "kind": "terminal"
+                }
+              },
+              {
+                "exhausted_terminal": null,
+                "max_repeats": 0,
+                "outcome": "succeeded",
+                "predecessor": "validate",
+                "target": {
+                  "key": "evaluate",
+                  "kind": "node"
+                }
+              }
+            ]
+          }
+        ],
+        "root": {
+          "digest": "126d16ee79d845a95e274d18cedd3a57518f6e985b8fc7b691d932e29aca5730",
+          "id": "e4bf7b34-9cd8-0dea-e08f-b9604bcf18b2",
+          "version": 1
+        }
+      },
+      "data_schemas": [
+        {
+          "reference": {
+            "digest": "4fd83042da71acbcceea07490fc015b53431f1baaf6b24a64f8fda6b6c548ec5",
+            "identity": "contract.stage-result",
+            "version": "v1"
+          },
+          "shape": {
+            "type": "boolean"
+          }
+        }
+      ],
+      "limits": {
+        "budget": {
+          "max_attempts": 10,
+          "max_cost_micro_units": 10000,
+          "max_elapsed_millis": 10000,
+          "max_output_bytes": 10000,
+          "max_tokens": 1000
+        },
+        "max_depth": 16,
+        "max_expanded_nodes": 16384,
+        "max_fan_out": 64,
+        "max_repeat_count": 32,
+        "max_wip": 4,
+        "permissions": {
+          "commands": [],
+          "executables": [],
+          "max_descendants": 0,
+          "mounts": [],
+          "network_hosts": [],
+          "outputs": {
+            "kinds": [],
+            "max_artifact_bytes": 0,
+            "max_artifact_count": 0,
+            "max_report_bytes": 0,
+            "max_report_count": 0
+          },
+          "plugins": [],
+          "resources": {
+            "cpu_millis": 0,
+            "disk_bytes": 0,
+            "elapsed_millis": 0,
+            "memory_bytes": 0,
+            "process_count": 0
+          },
+          "secret_profiles": [],
+          "tools": [],
+          "workload_identity_profiles": []
+        }
+      }
+    },
+    "hard_budget": {
+      "max_attempts": 10,
+      "max_cost_micro_units": 10000,
+      "max_elapsed_millis": 10000,
+      "max_output_bytes": 10000,
+      "max_tokens": 1000
+    },
+    "permission_ceiling": {
+      "digest": "0202020202020202020202020202020202020202020202020202020202020202",
+      "identity": "restricted",
+      "version": "v1"
+    },
+    "reference": {
+      "definition_digest": "e03f78a8e0ddef904c1195ee6c9aebedc7e396f0961775f8141d23c409f10ef0",
+      "id": "22222222-2222-4222-8222-222222222222",
+      "project_id": "11111111-1111-4111-8111-111111111111",
+      "version": 1
+    },
+    "wip_limits": {
+      "max_active_nodes": 4,
+      "max_active_runs": 2
+    }
+  },
+  "published_at_unix_ms": 1
+}

@@ -13,6 +13,7 @@ mod common;
 mod configuration;
 mod definition_discovery;
 mod execution;
+mod factory;
 mod job_event;
 mod log_search;
 mod openapi;
@@ -29,12 +30,12 @@ pub use adapter::{
   AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
   BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
   CacheManagementApplication, CatalogManagementApplication, ConfigurationManagementApplication,
-  DefinitionManagementApplication, ExecutionManagementApplication, InternalTriggerManagementApplication,
-  JobEventManagementApplication, ManagementApplication, ManagementApplicationHandlers,
-  ManagementAuthorizationOperation, ManualTriggerManagementApplication, OperationalMetadataManagementApplication,
-  OperatorAttentionManagementApplication, PipelineManagementApplication, ProjectManagementApplication,
-  ResourceSearchManagementApplication, ScheduleManagementApplication, management_authorization_operations,
-  router as management_routes,
+  DefinitionManagementApplication, ExecutionManagementApplication, FactoryManagementApplication,
+  InternalTriggerManagementApplication, JobEventManagementApplication, ManagementApplication,
+  ManagementApplicationHandlers, ManagementAuthorizationOperation, ManualTriggerManagementApplication,
+  OperationalMetadataManagementApplication, OperatorAttentionManagementApplication, PipelineManagementApplication,
+  ProjectManagementApplication, ResourceSearchManagementApplication, ScheduleManagementApplication,
+  management_authorization_operations, router as management_routes,
 };
 pub use agent::*;
 pub use artifact::*;
@@ -44,6 +45,7 @@ pub use common::*;
 pub use configuration::*;
 pub use definition_discovery::*;
 pub use execution::*;
+pub use factory::*;
 pub use job_event::*;
 pub use log_search::*;
 pub use openapi::{MANAGEMENT_OPERATIONS, ManagementOperation, openapi_document};

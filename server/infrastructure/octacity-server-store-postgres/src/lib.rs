@@ -96,3 +96,5 @@ pub async fn health_check(pool: &PgPool) -> bool {
     .await
     .is_ok_and(|value| value == 1)
 }
+
+mod factory_flow_definition;

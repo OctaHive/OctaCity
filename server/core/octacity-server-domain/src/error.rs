@@ -11,6 +11,8 @@ pub enum EntityKind {
   Configuration,
   /// Versioned Dark Factory configuration.
   FactoryConfiguration,
+  /// Immutable Factory Flow Definition.
+  FlowDefinition,
   /// Immutable normalized Work admitted to the Dark Factory.
   WorkEnvelope,
   /// Durable Dark Factory lifecycle aggregate.
@@ -66,6 +68,7 @@ impl std::fmt::Display for EntityKind {
     formatter.write_str(match self {
       Self::Project => "project",
       Self::Configuration => "configuration",
+      Self::FlowDefinition => "flow_definition",
       Self::FactoryConfiguration => "factory_configuration",
       Self::WorkEnvelope => "work_envelope",
       Self::FactoryRun => "factory_run",

@@ -403,3 +403,61 @@ pub(crate) async fn selection_for_claim(
     })
     .transpose()
 }
+
+/// Management pagination never resolves a cursor anchor or scans hidden Run snapshots.
+pub(crate) async fn list_phase_ready_entries(
+  pool: &PgPool,
+  request: octacity_server_store::ListPhaseReadyEntries,
+) -> Result<octacity_server_store::PhaseReadyPage, StoreError> {
+  use octacity_server_store::{PhaseReadyPage, PhaseReadyPagePosition, ReadVisibilityKind};
+  if request.visibility().kind() == ReadVisibilityKind::None {
+    return Ok(PhaseReadyPage::default());
+  }
+  let mut tx = pool.begin().await.map_err(unavailable)?;
+  sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+    .execute(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+  let visibility = crate::read_visibility::sql_read_visibility(request.visibility().view(), |id| id.as_uuid());
+  // Each retained entry was derived against this exact Run version and node generation.
+  // These predicates remove changed/cancelled cycles and selected targets before pagination.
+  let total:i64=sqlx::query_scalar(
+    "SELECT COUNT(*) FROM factory_phase_pool_entries entry JOIN factory_runs run ON run.id=entry.run_id \
+     WHERE ($1 OR run.id=ANY($2::uuid[])) AND run.visible AND ($3::uuid IS NULL OR run.project_id=$3) AND entry.policy_id=$4 \
+       AND run.version=entry.run_version AND run.state NOT IN ('cancelled','completed') \
+       AND NOT EXISTS (SELECT 1 FROM factory_phase_pool_selections selected WHERE selected.run_id=entry.run_id AND selected.flow_run_id=entry.flow_run_id AND selected.cycle_id=entry.cycle_id AND selected.node_key=entry.node_key AND selected.generation=entry.generation) \
+       AND entry.generation=(SELECT count(*) FROM factory_node_attempts node WHERE node.run_id=entry.run_id AND node.workflow_cycle_id=entry.cycle_id AND node.node_key=entry.node_key)"
+  ).bind(visibility.all).bind(&visibility.identities).bind(request.project_id().map(|id|id.as_uuid())).bind(request.policy().as_bytes().as_slice()).fetch_one(&mut *tx).await.map_err(unavailable)?;
+  if total == 0 {
+    tx.commit().await.map_err(unavailable)?;
+    return Ok(PhaseReadyPage::default());
+  }
+  let policy = read_policy(&mut tx, request.policy()).await?;
+  let after = request.after();
+  let mut rows:Vec<Json<PhasePoolEntry>>=sqlx::query_scalar(
+    "SELECT entry.entry FROM factory_phase_pool_entries entry JOIN factory_runs run ON run.id=entry.run_id \
+     WHERE ($1 OR run.id=ANY($2::uuid[])) AND run.visible AND ($3::uuid IS NULL OR run.project_id=$3) AND entry.policy_id=$4 \
+       AND run.version=entry.run_version AND run.state NOT IN ('cancelled','completed') \
+       AND NOT EXISTS (SELECT 1 FROM factory_phase_pool_selections selected WHERE selected.run_id=entry.run_id AND selected.flow_run_id=entry.flow_run_id AND selected.cycle_id=entry.cycle_id AND selected.node_key=entry.node_key AND selected.generation=entry.generation) \
+       AND entry.generation=(SELECT count(*) FROM factory_node_attempts node WHERE node.run_id=entry.run_id AND node.workflow_cycle_id=entry.cycle_id AND node.node_key=entry.node_key) \
+       AND ($5::bigint IS NULL OR (entry.rank_one,entry.rank_two,entry.rank_three,entry.work_id,entry.run_id,entry.flow_run_id,entry.cycle_id,entry.node_key,entry.id)>($5,$6,$7,$8::uuid,$9::uuid,$10::uuid,$11::uuid,$12::text,$13::bytea)) \
+     ORDER BY entry.rank_one,entry.rank_two,entry.rank_three,entry.work_id,entry.run_id,entry.flow_run_id,entry.cycle_id,entry.node_key,entry.id LIMIT $14"
+  ).bind(visibility.all).bind(&visibility.identities).bind(request.project_id().map(|id|id.as_uuid())).bind(request.policy().as_bytes().as_slice())
+    .bind(after.map(|p|p.rank[0])).bind(after.map(|p|p.rank[1])).bind(after.map(|p|p.rank[2]))
+    .bind(after.map(|p|p.work_id.as_uuid())).bind(after.map(|p|p.run_id.as_uuid())).bind(after.map(|p|p.flow_run_id.as_uuid())).bind(after.map(|p|p.cycle_id.as_uuid())).bind(after.map(|p|p.node.as_str())).bind(after.map(|p|p.entry_id.as_bytes().to_vec())).bind(i64::from(request.limit())+1).fetch_all(&mut *tx).await.map_err(unavailable)?;
+  let more = rows.len() > usize::from(request.limit());
+  rows.truncate(usize::from(request.limit()));
+  let items = rows.into_iter().map(|Json(entry)| entry).collect::<Vec<_>>();
+  // Publication derived every entry under the Run lock. The exact retained Run
+  // version above proves that its graph, frozen input, cycle and lifecycle facts
+  // have not changed. Discovery needs no history reconstruction or worker locks.
+  tx.commit().await.map_err(unavailable)?;
+  let next_cursor = more
+    .then(|| items.last().map(|entry| PhaseReadyPagePosition::of(&policy, entry)))
+    .flatten();
+  Ok(PhaseReadyPage {
+    total: u64::try_from(total).map_err(|_| StoreError::Unavailable)?,
+    items,
+    next_cursor,
+  })
+}

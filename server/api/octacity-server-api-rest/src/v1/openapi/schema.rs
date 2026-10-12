@@ -5,6 +5,7 @@ mod cache;
 mod core;
 mod definition_discovery;
 mod execution;
+mod factory;
 mod log_search;
 mod operational;
 mod operator_attention;

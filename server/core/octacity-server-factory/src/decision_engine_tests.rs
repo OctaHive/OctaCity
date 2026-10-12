@@ -866,3 +866,31 @@ fn persisted_assessments_reapply_shape_and_exact_binding_invariants() {
   wrong_fingerprint["findings"][0]["fingerprint"] = serde_json::json!(digest(99));
   assert!(serde_json::from_value::<Assessment>(wrong_fingerprint).is_err());
 }
+
+#[test]
+fn a_decision_observation_cannot_promote_its_subject_to_the_current_candidate() {
+  let fixture = fixture();
+  let policy = policy(IndeterminatePolicy::RequiredOnly);
+  let assessments = [assessment(&fixture, "review-a", AssessmentOutcome::Satisfied, vec![])];
+  let decision = decide(&fixture, &policy, &assessments).unwrap();
+  let facts = FlowDiscoveryFacts::decision(&decision);
+  assert_eq!(facts.decision_summary(), Some((decision.id(), DecisionOutcome::Accept)));
+  assert!(facts.published_candidate().is_none());
+  assert_eq!(
+    FlowDiscoveryFacts::candidate(decision.subject().clone()).published_candidate(),
+    Some(decision.subject())
+  );
+}
+
+#[test]
+fn a_frozen_branch_context_cannot_replace_an_explicit_current_candidate() {
+  let fixture = fixture();
+  let old = fixture.evidence.subject();
+  let current = CandidateSubject::new(
+    old.exact().clone(),
+    octacity_server_domain::ImmutableRevision::new("current-candidate").unwrap(),
+    digest(99),
+  );
+  let declared = FlowDiscoveryFacts::candidate(current.clone());
+  assert_eq!(declared.select_current_candidate(Some(old)), Some(&current));
+}

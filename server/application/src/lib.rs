@@ -51,6 +51,7 @@ mod factory_codex_observation;
 mod factory_codex_observation_tests;
 #[cfg(test)]
 mod factory_codex_tests;
+mod factory_configuration_choices;
 mod factory_configuration_cqrs;
 #[cfg(test)]
 mod factory_configuration_cqrs_tests;
@@ -297,10 +298,18 @@ pub use factory_codex_observation::{
   FactoryCodexObservationStatus, FactoryCodexOutputDocument, FactoryCodexReviewerBinding,
   FactoryCodexTerminalObservation, FactoryImplementationReport, observe_codex_evaluation, observe_codex_implementation,
 };
+pub use factory_configuration_choices::{
+  FactoryChoiceIdentity, FactoryChoiceMetadata, FactoryChoiceReferenceProjection,
+  FactoryConfigurationChoicePageProjection, FactoryConfigurationChoiceProjection, FactoryConfigurationDocumentBounds,
+  ListFactoryConfigurationChoicesQuery, factory_configuration_choice_kinds, factory_configuration_document_bounds,
+  factory_flow_node_kinds, factory_permission_categories, factory_signal_purposes,
+};
 pub use factory_configuration_cqrs::{
   CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,
-  FactoryConfigurationProjection, FactoryConfigurationValidation, GetCurrentFactoryConfigurationQuery,
-  GetFactoryConfigurationQuery, ReplaceFactoryConfigurationCommand, ValidateFactoryConfigurationQuery,
+  FactoryConfigurationPagePosition, FactoryConfigurationPageProjection, FactoryConfigurationProjection,
+  FactoryConfigurationValidation, FactoryEffectiveNodePermissions, FactoryValidationDiagnostics,
+  FactoryValidationIssue, GetCurrentFactoryConfigurationQuery, GetFactoryConfigurationQuery,
+  ListProjectFactoryConfigurationsQuery, ReplaceFactoryConfigurationCommand, ValidateFactoryConfigurationQuery,
 };
 pub use factory_control::{
   CancelFactoryRunCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome, ResolveFactoryNodeCommand,
@@ -499,3 +508,35 @@ mod factory_flow;
 
 #[cfg(test)]
 mod factory_job_test_support;
+
+mod factory_flow_definition;
+pub use factory_flow_definition::{
+  FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers, FactoryFlowDefinitionValidation, FactoryFlowRootDraft,
+  ValidateFactoryFlowDefinitionQuery,
+};
+
+pub use factory_flow_definition::{
+  CreateFactoryFlowDefinitionCommand, FactoryFlowDefinitionCommandOutcome, GetFactoryFlowDefinitionQuery,
+  ListProjectFactoryFlowDefinitionsQuery, ReplaceFactoryFlowDefinitionCommand,
+};
+pub use octacity_server_store::{FactoryFlowDefinitionPage, PublishedFactoryFlowDefinition};
+
+/// Persistence mutation disposition used by exact Flow publication outcomes.
+pub use octacity_server_store::MutationDisposition as StoreMutationDisposition;
+
+pub use management_input::factory::ManualFactoryWorkInput;
+
+mod factory_discovery;
+pub use factory_discovery::{FactoryDiscoveryHandlers, ListFactoryRunsQuery};
+pub use management_input::factory::FactoryRunListInput;
+pub use octacity_server_store::{
+  FactoryRunPage as FactoryRunPageProjection, FactoryRunSummary as FactoryRunSummaryProjection,
+  MAX_FACTORY_RUN_SUMMARY_NODES,
+};
+
+pub use factory_discovery::ListFactoryPhaseReadyQuery;
+pub use octacity_server_store::PhaseReadyPage as FactoryPhaseReadyPageProjection;
+
+pub use factory_configuration_choices::{
+  factory_decision_outcomes, factory_delivery_states, factory_finding_severities,
+};

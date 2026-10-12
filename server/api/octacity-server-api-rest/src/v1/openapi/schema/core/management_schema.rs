@@ -19,6 +19,7 @@ pub(super) fn insert_common_schemas(schemas: &mut Map<String, Value>) {
         ("code", schema_ref("ErrorCode")),
         ("message", non_empty_string()),
         ("request_id", non_empty_string()),
+        ("diagnostics", schema_ref("FactoryValidationDiagnostics")),
       ],
       &["code", "message", "request_id"],
     ),

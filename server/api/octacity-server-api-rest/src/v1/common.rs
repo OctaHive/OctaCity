@@ -61,6 +61,9 @@ pub struct ErrorResponse {
   pub message: String,
   /// Correlation identity also returned in the `x-request-id` header.
   pub request_id: String,
+  /// Safe Factory validation diagnostics, present only for definition failures.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub diagnostics: Option<serde_json::Value>,
 }
 
 /// Whether a mutating response was newly applied or exactly replayed.

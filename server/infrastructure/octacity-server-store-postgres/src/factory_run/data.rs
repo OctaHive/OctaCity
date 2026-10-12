@@ -74,9 +74,9 @@ pub(super) async fn append(
     .map_err(unavailable)?;
   }
   for record in &data.records {
-    sqlx::query("INSERT INTO factory_flow_records (run_id,node_attempt_id,id,input_digest,schema_reference,document) VALUES ($1,$2,$3,$4,$5,$6)")
+    sqlx::query("INSERT INTO factory_flow_records (run_id,node_attempt_id,id,input_digest,schema_reference,document,discovery_facts,observed_at_millis) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
       .bind(run.as_uuid()).bind(record.node_attempt_id().as_uuid()).bind(record.digest().map_err(invalid)?.as_bytes().as_slice())
-      .bind(record.input().digest().map_err(invalid)?.as_bytes().as_slice()).bind(Json(record.payload().schema())).bind(bytes(record)?)
+      .bind(record.input().digest().map_err(invalid)?.as_bytes().as_slice()).bind(Json(record.payload().schema())).bind(bytes(record)?).bind(record.discovery().map(Json)).bind(record.observed_at().unix_millis())
       .execute(&mut **tx).await.map_err(unavailable)?;
     if let Some(provenance) = record.build_provenance() {
       for output in provenance.outputs() {

@@ -89,13 +89,28 @@ pub struct FactoryAdmissionOutcome {
 pub struct FactoryAdmissionHandlers<S> {
   store: Arc<S>,
   revisions: Arc<dyn RevisionResolver>,
+  policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
 }
 
 impl<S> FactoryAdmissionHandlers<S> {
+  /// Uses the same policy to authorize selected immutable dependencies before VCS access.
+  #[must_use]
+  pub fn with_policy(
+    store: Arc<S>,
+    revisions: Arc<dyn RevisionResolver>,
+    policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
+  ) -> Self {
+    Self {
+      store,
+      revisions,
+      policy,
+    }
+  }
+
   /// Creates handlers from backend-neutral admission and revision ports.
   #[must_use]
   pub fn new(store: Arc<S>, revisions: Arc<dyn RevisionResolver>) -> Self {
-    Self { store, revisions }
+    Self::with_policy(store, revisions, Arc::new(crate::TrustedNetworkManagementPolicy))
   }
 }
 
@@ -117,6 +132,32 @@ where
       return Ok(outcome.into());
     }
 
+    crate::factory_configuration_choices::require_visible_reference(
+      self.policy.as_ref(),
+      context,
+      ManagementResourceKind::FactoryConfiguration,
+      command.configuration_id,
+    )
+    .await?;
+    crate::factory_configuration_choices::require_visible_reference(
+      self.policy.as_ref(),
+      context,
+      ManagementResourceKind::Repository,
+      command.repository_id,
+    )
+    .await?;
+    for artifact in std::iter::once(command.artifacts.task())
+      .chain(std::iter::once(command.artifacts.acceptance()))
+      .chain(command.artifacts.specifications())
+    {
+      crate::factory_configuration_choices::require_visible_reference(
+        self.policy.as_ref(),
+        context,
+        ManagementResourceKind::Artifact,
+        artifact.artifact_id(),
+      )
+      .await?;
+    }
     let admission_context = self
       .store
       .factory_admission_context(ReadFactoryAdmissionContext {

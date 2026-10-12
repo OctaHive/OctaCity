@@ -77,6 +77,13 @@ impl FactoryAdmissionStore for PostgresStore {
 
 #[async_trait]
 impl FactoryDiscoveryStore for PostgresStore {
+  async fn list_phase_ready_entries(
+    &self,
+    request: octacity_server_store::ListPhaseReadyEntries,
+  ) -> Result<octacity_server_store::PhaseReadyPage, StoreError> {
+    crate::factory_run::list_phase_ready_entries(&self.pool, request).await
+  }
+
   async fn list_project_factory_configurations(
     &self,
     request: ListProjectFactoryConfigurations,
@@ -504,5 +511,37 @@ impl FactoryPhasePoolStore for PostgresStore {
   }
   async fn select_phase_ready(&self, request: SelectPhasePool) -> Result<Vec<PhasePoolSelection>, StoreError> {
     crate::factory_run::select_phase_ready(&self.pool, request).await
+  }
+}
+
+#[async_trait]
+impl octacity_server_store::FactoryFlowDefinitionStore for PostgresStore {
+  async fn replay_factory_flow_definition(
+    &self,
+    request: ManagementMutation<octacity_server_store::ReplayFactoryFlowDefinition>,
+  ) -> Result<Option<octacity_server_store::FactoryFlowDefinitionMutationOutcome>, StoreError> {
+    crate::factory_flow_definition::replay_mutation(&self.pool, request).await
+  }
+  async fn publish_factory_flow_definition(
+    &self,
+    request: ManagementMutation<octacity_server_store::PublishFactoryFlowDefinition>,
+  ) -> Result<octacity_server_store::FactoryFlowDefinitionMutationOutcome, ReplaceFactoryConfigurationError> {
+    crate::factory_flow_definition::publish(&self.pool, request).await
+  }
+  async fn factory_flow_definition(
+    &self,
+    id: octacity_server_factory::FlowDefinitionId,
+    version: Option<octacity_server_factory::FlowDefinitionVersion>,
+  ) -> Result<octacity_server_store::PublishedFactoryFlowDefinition, StoreError> {
+    crate::factory_flow_definition::read(&self.pool, id, version).await
+  }
+  async fn list_factory_flow_definitions(
+    &self,
+    project: ProjectId,
+    after: Option<octacity_server_store::FlowDefinitionPagePosition>,
+    limit: u16,
+    visibility: octacity_server_store::FlowDefinitionListVisibility,
+  ) -> Result<octacity_server_store::FactoryFlowDefinitionPage, StoreError> {
+    crate::factory_flow_definition::list(&self.pool, project, after, limit, visibility).await
   }
 }

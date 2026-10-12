@@ -28,6 +28,9 @@ pub enum ApplicationError {
   /// Typed application input violated a command-specific invariant.
   #[error("application input is invalid")]
   InvalidInput,
+  /// Safe field diagnostics from authoritative Factory validation.
+  #[error("factory definition failed validation")]
+  FactoryValidation(Box<crate::FactoryValidationDiagnostics>),
   /// A selected adapter does not implement an optional operation.
   #[error("application capability is unavailable")]
   CapabilityUnavailable,
@@ -68,7 +71,7 @@ impl ApplicationError {
   #[must_use]
   pub const fn classification(&self) -> ApplicationFailure {
     match self {
-      Self::InvalidInput => ApplicationFailure::Invalid,
+      Self::InvalidInput | Self::FactoryValidation(_) => ApplicationFailure::Invalid,
       Self::CapabilityUnavailable => ApplicationFailure::CapabilityUnavailable,
       Self::PreconditionFailed => ApplicationFailure::PreconditionFailed,
       Self::Store(StoreError::InvalidInput { .. }) => ApplicationFailure::Invalid,

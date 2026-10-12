@@ -83,6 +83,9 @@ pub(crate) enum ParameterProfile {
   None,
   ProjectList,
   CurrentDefinitionList,
+  FactoryConfigurationChoices,
+  FactoryRunList,
+  FactoryPhaseReady,
   AgentPoolList,
   AgentList,
   ProjectBuildList,
@@ -165,6 +168,7 @@ mod artifacts;
 mod builds;
 mod core;
 mod definitions;
+mod factory;
 mod search;
 mod triggers;
 
@@ -172,6 +176,7 @@ const GROUPS: &[&[ManagementOperation]] = &[
   core::OPERATIONS,
   search::OPERATIONS,
   definitions::OPERATIONS,
+  factory::OPERATIONS,
   triggers::OPERATIONS,
   builds::OPERATIONS,
   agents::OPERATIONS,
@@ -181,6 +186,7 @@ const GROUPS: &[&[ManagementOperation]] = &[
 const OPERATION_COUNT: usize = core::OPERATIONS.len()
   + search::OPERATIONS.len()
   + definitions::OPERATIONS.len()
+  + factory::OPERATIONS.len()
   + triggers::OPERATIONS.len()
   + builds::OPERATIONS.len()
   + agents::OPERATIONS.len()

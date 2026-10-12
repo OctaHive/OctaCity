@@ -382,6 +382,15 @@ fn generic_node_record_rejects_substituted_attempts_schemas_and_retained_bytes()
   assert_eq!(record.node_attempt_id(), attempt.id());
   assert_eq!(record.input(), &input);
   assert_eq!(record.payload().value()["count"], 1);
+  let candidate = CandidateSubject::new(
+    work.subject().clone(),
+    work.subject().base_revision().clone(),
+    FactoryDigest::from_bytes([91; 32]),
+  );
+  let record = record
+    .with_discovery(FlowDiscoveryFacts::candidate(candidate.clone()))
+    .unwrap();
+  assert_eq!(record.discovery().unwrap().candidate_subject(), Some(&candidate));
   let completion = record
     .completion(&attempt, definition, owner.clone(), BudgetUsage::default(), at)
     .unwrap();
