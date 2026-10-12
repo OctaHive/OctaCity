@@ -111,7 +111,9 @@ async fn delivery_cannot_resolve_credentials_outside_the_frozen_ceiling() {
   ));
 }
 
+#[cfg(unix)]
 struct Material(std::sync::atomic::AtomicUsize);
+#[cfg(unix)]
 #[async_trait::async_trait]
 impl FactoryDeliveryMaterializer for Material {
   async fn stage(
