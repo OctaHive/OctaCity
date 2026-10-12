@@ -9,8 +9,15 @@ mod admission;
 mod application;
 mod assembly;
 mod composition;
+mod delivery;
 mod error;
 mod factory;
+pub use delivery::{
+  FactoryDeliveryInputs, FactoryDeliveryMaterializer, FactoryDeliveryPolicy, FactoryDeliveryPolicyDraft,
+  FactoryDeliveryTargetPolicy, HostedFactoryCandidatePublisher,
+};
+#[cfg(test)]
+mod delivery_tests;
 pub use factory::{
   FactoryRuntimeInstallation, FactoryRuntimeInstallationError, FactoryRuntimeInstaller, FactoryRuntimeReadiness,
   FactoryRuntimeResources,

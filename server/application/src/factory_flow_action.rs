@@ -28,6 +28,10 @@ pub struct FactoryFlowActionRequest<'a> {
   pub budget: BudgetLimit,
   /// Authoritative stop deadline, never extended by a retry.
   pub deadline: Timestamp,
+  /// Persisted attempt start; retries do not reset elapsed accounting.
+  pub started_at: Timestamp,
+  /// Current fenced observer window, independent of the original hard deadline.
+  pub authority_expires_at: Timestamp,
   /// Trusted observation time used to enforce input validity before effects.
   pub observed_at: Timestamp,
 }
@@ -40,6 +44,8 @@ pub struct FactoryFlowActionObservation {
   pub payload: FlowPayload,
   /// Measured resources; attempt creation is charged by the Flow owner.
   pub usage: BudgetUsage,
+  /// Deferred effects; accepting the result never requires source availability.
+  pub outbox: Vec<crate::FactoryNodeOutboxEffect>,
 }
 
 /// Server-installed extension of `trusted_action`, never a new primitive kind.
@@ -129,6 +135,8 @@ impl FactoryFlowActionAdapter {
       permissions: node.permissions(),
       budget: node.budget(),
       deadline: request.attempt.deadline(),
+      started_at: request.attempt.started_at(),
+      authority_expires_at: request.ownership.claim().expires_at(),
       observed_at: request.observed_at,
     })
   }
@@ -191,6 +199,7 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
       execution: None,
       record: Box::new(record),
       usage: result.usage,
+      outbox: result.outbox,
     })
   }
 }
@@ -247,8 +256,31 @@ pub struct FactoryWorkStatusAction<P> {
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-struct StatusParameters {
-  status: FactorySafeText,
+pub(crate) struct StatusParameters {
+  pub(crate) status: FactorySafeText,
+  #[serde(default)]
+  pub(crate) outbox: Option<FactoryReporterRetryPolicy>,
+}
+/// Published bounded retry policy for non-authoritative source projection.
+#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryReporterRetryPolicy {
+  /// Maximum actual dispatches, including the first.
+  pub max_attempts: u16,
+  /// Delay between bounded dispatches; it cannot extend the original deadline.
+  pub retry_delay_millis: u64,
+}
+impl FactoryReporterRetryPolicy {
+  pub(crate) fn validate(self) -> Result<(), ApplicationError> {
+    if self.max_attempts == 0
+      || self.max_attempts > 1024
+      || self.retry_delay_millis == 0
+      || self.retry_delay_millis > 3_600_000
+    {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
 }
 impl<P> FactoryWorkStatusAction<P> {
   /// Binds an exact installed version, source connector and declared successful result.
@@ -270,8 +302,11 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
     if binding.action().as_str() != "set_status" || !outcomes.contains(&self.outcome) {
       return Err(ApplicationError::invalid());
     }
-    serde_json::from_value::<StatusParameters>(binding.parameters().clone())
+    let parameters = serde_json::from_value::<StatusParameters>(binding.parameters().clone())
       .map_err(|_| ApplicationError::invalid())?;
+    if let Some(policy) = parameters.outbox {
+      policy.validate()?;
+    }
     Ok(())
   }
   async fn cancel(
@@ -281,6 +316,9 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
   ) -> Result<Option<BudgetUsage>, ApplicationError> {
     let parameters: StatusParameters =
       serde_json::from_value(request.binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
+    if parameters.outbox.is_some() {
+      return Ok(Some(BudgetUsage::default()));
+    }
     self
       .projector
       .cancel_status(
@@ -304,6 +342,26 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
   ) -> Result<FactoryFlowActionObservation, ApplicationError> {
     let parameters: StatusParameters =
       serde_json::from_value(request.binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
+    if let Some(policy) = parameters.outbox {
+      policy.validate()?;
+      return Ok(FactoryFlowActionObservation {
+        outcome: self.outcome.key().clone(),
+        payload: FlowPayload::new(
+          request
+            .schemas
+            .iter()
+            .find(|schema| schema.reference() == self.outcome.schema())
+            .ok_or_else(ApplicationError::invalid)?,
+          serde_json::json!({"receipt":request.operation_id}),
+        )
+        .map_err(|_| ApplicationError::invalid())?,
+        usage: BudgetUsage::default(),
+        outbox: vec![crate::FactoryNodeOutboxEffect {
+          operation_id: request.operation_id,
+          kind: FactoryKey::new("work.status.projection").map_err(|_| ApplicationError::invalid())?,
+        }],
+      });
+    }
     let (digest, usage) = self
       .projector
       .set_status(FactoryWorkStatusRequest {
@@ -329,6 +387,7 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
       )
       .map_err(|_| ApplicationError::invalid())?,
       usage,
+      outbox: vec![],
     })
   }
 }

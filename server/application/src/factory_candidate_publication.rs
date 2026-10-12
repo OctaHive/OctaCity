@@ -14,6 +14,9 @@ pub struct FactoryCandidatePublicationRequest {
   pub work_id: WorkEnvelopeId,
   /// Exact cycle; receipts from a superseded cycle cannot authorize this action.
   pub cycle_id: WorkflowCycleId,
+  /// Complete frozen configured input and its trusted record provenance.
+  /// This proof binds the publication to the selected owner decisions.
+  pub accepted_input_digest: FactoryDigest,
   /// Captured source identity, including the original immutable base.
   pub candidate: CandidateSubject,
   /// Self-contained candidate bytes selected by the declared Context.
@@ -21,13 +24,17 @@ pub struct FactoryCandidatePublicationRequest {
   /// Exact capture manifest selected by the declared Context.
   pub manifest: FactoryArtifactReference,
   /// Operator-selected delivery policy; never a model-selected branch or merge.
-  pub target: FactoryKey,
+  pub target: ImmutableReference,
   /// Hard authority ceiling to enforce before credential resolution or effects.
   pub permissions: FactoryPermissionSet,
   /// Resource ceiling inherited from the action.
   pub budget: BudgetLimit,
   /// Original attempt deadline, unchanged on replay.
   pub deadline: Timestamp,
+  /// Original persisted attempt start, used for cumulative elapsed accounting.
+  pub started_at: Timestamp,
+  /// Current observer authority; a replacement observer cannot extend the hard deadline.
+  pub authority_expires_at: Timestamp,
 }
 /// Observed durable publication of the exact requested candidate.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -38,8 +45,57 @@ pub struct FactoryCandidatePublication {
   pub candidate: CandidateSubject,
   /// Retained connector receipt for the original operation.
   pub receipt: FactoryDigest,
+  /// Verified external identities retained in the common append-only node record.
+  pub facts: FactoryPublicationFacts,
   /// Measured usage, excluding the owner's attempt charge.
   pub usage: BudgetUsage,
+}
+/// External review facts are observations; they never authorize a Flow transition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryReviewState {
+  /// Candidate is available for review.
+  Open,
+  /// Externally closed without merge.
+  Closed,
+  /// The same candidate was merged externally; this action cannot merge it.
+  MergedExternally,
+}
+/// Bounded provider-neutral publication facts, with no provider URL or credential.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct FactoryPublicationFacts {
+  branch_reference: FactorySafeText,
+  remote_head: octacity_server_domain::ImmutableRevision,
+  review_identity: FactorySafeText,
+  review_state: FactoryReviewState,
+}
+impl FactoryPublicationFacts {
+  /// Accepts only bounded non-URL external identities and an exact immutable head.
+  pub fn new(
+    branch: String,
+    head: octacity_server_domain::ImmutableRevision,
+    review: String,
+    state: FactoryReviewState,
+  ) -> Result<Self, ApplicationError> {
+    if branch.is_empty()
+      || branch.len() > 1024
+      || branch.contains("://")
+      || branch.chars().any(char::is_control)
+      || review.is_empty()
+      || review.len() > 256
+      || !review
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b"-_.:".contains(&b))
+    {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(Self {
+      branch_reference: FactorySafeText::new(branch).map_err(|_| ApplicationError::invalid())?,
+      remote_head: head,
+      review_identity: FactorySafeText::new(review).map_err(|_| ApplicationError::invalid())?,
+      review_state: state,
+    })
+  }
 }
 /// Protected write boundary separate from read-only VCS and repository Jobs.
 /// Implementations verify bundle/manifest bytes, candidate digest and original
@@ -76,7 +132,7 @@ pub struct FactoryCandidatePublicationAction<P> {
 struct Parameters {
   bundle: FactoryKey,
   manifest: FactoryKey,
-  target: FactoryKey,
+  target: ImmutableReference,
   #[serde(default)]
   valid_until: Option<FlowDataMapping>,
 }
@@ -143,6 +199,7 @@ impl<P> FactoryCandidatePublicationAction<P> {
       operation_id: request.operation_id,
       work_id: request.work_id,
       cycle_id: request.input.cycle_id(),
+      accepted_input_digest: request.input.digest().map_err(|_| ApplicationError::invalid())?,
       candidate: candidate.clone(),
       bundle,
       manifest,
@@ -150,6 +207,8 @@ impl<P> FactoryCandidatePublicationAction<P> {
       permissions: request.permissions.clone(),
       budget: request.budget,
       deadline,
+      started_at: request.started_at,
+      authority_expires_at: request.authority_expires_at,
     })
   }
 }
@@ -190,23 +249,82 @@ impl<P: FactoryCandidatePublisher> FactoryFlowActionPlugin for FactoryCandidateP
     if observed_at >= intent.deadline {
       return Err(ApplicationError::invalid());
     }
-    // Validate the complete receipt shape before exposing authority to a connector.
-    FlowPayload::new(schema, serde_json::json!({"receipt":intent.operation_id,"candidate_revision":intent.candidate.candidate_revision(),"changeset_digest":intent.candidate.changeset_digest()})).map_err(|_| ApplicationError::invalid())?;
+    // Establish compatibility with the entire producer contract before effects.
+    if !schema.accepts_all(&publication_shape(&intent.candidate)?) {
+      return Err(ApplicationError::invalid());
+    }
     let publication = match self.publisher.observe(&intent).await? {
       Some(publication) => publication,
       None => self.publisher.publish(&intent).await?,
     };
     if publication.operation_id != intent.operation_id
       || publication.candidate != intent.candidate
+      || publication.facts.remote_head != *intent.candidate.candidate_revision()
+      || publication.facts.review_state == FactoryReviewState::Closed
       || publication.usage.attempts != 0
       || publication.usage.validate(intent.budget).is_err()
     {
       return Err(ApplicationError::invalid());
     }
     Ok(FactoryFlowActionObservation {
-      outcome:self.outcome.key().clone(),
-      payload:FlowPayload::new(schema, serde_json::json!({"receipt":publication.receipt,"candidate_revision":publication.candidate.candidate_revision(),"changeset_digest":publication.candidate.changeset_digest()})).map_err(|_| ApplicationError::invalid())?,
-      usage:publication.usage,
+      outcome: self.outcome.key().clone(),
+      payload: FlowPayload::new(
+        schema,
+        publication_payload(publication.receipt, &publication.candidate, &publication.facts),
+      )
+      .map_err(|_| ApplicationError::invalid())?,
+      usage: publication.usage,
+      outbox: vec![],
     })
   }
+}
+fn publication_payload(
+  receipt: FactoryDigest,
+  candidate: &CandidateSubject,
+  facts: &FactoryPublicationFacts,
+) -> serde_json::Value {
+  serde_json::json!({"receipt":receipt,"candidate_revision":candidate.candidate_revision(),"changeset_digest":candidate.changeset_digest(),"external":facts})
+}
+
+fn publication_shape(candidate: &CandidateSubject) -> Result<FlowValueSchema, ApplicationError> {
+  fn object<const N: usize>(fields: [(&str, FlowValueSchema); N]) -> Result<FlowValueSchema, ApplicationError> {
+    Ok(FlowValueSchema::Object {
+      fields: fields
+        .into_iter()
+        .map(|(name, shape)| {
+          Ok((
+            FactoryKey::new(name).map_err(|_| ApplicationError::invalid())?,
+            FlowFieldSchema::required(shape),
+          ))
+        })
+        .collect::<Result<_, ApplicationError>>()?,
+    })
+  }
+  let text = |min_bytes, max_bytes| FlowValueSchema::String { min_bytes, max_bytes };
+  let exact = |value| FlowValueSchema::Enum { values: vec![value] };
+  object([
+    ("receipt", text(64, 64)),
+    (
+      "candidate_revision",
+      exact(serde_json::json!(candidate.candidate_revision())),
+    ),
+    (
+      "changeset_digest",
+      exact(serde_json::json!(candidate.changeset_digest())),
+    ),
+    (
+      "external",
+      object([
+        ("branch_reference", text(1, 1024)),
+        ("remote_head", exact(serde_json::json!(candidate.candidate_revision()))),
+        ("review_identity", text(1, 256)),
+        (
+          "review_state",
+          FlowValueSchema::Enum {
+            values: vec![serde_json::json!("open"), serde_json::json!("merged_externally")],
+          },
+        ),
+      ])?,
+    ),
+  ])
 }

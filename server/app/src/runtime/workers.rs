@@ -137,13 +137,22 @@ pub(super) fn spawn_durable_workers(
       cancellation.child_token(),
     )
   });
-  let factory = workers.factory.map(|(worker, health)| {
-    spawn_factory_worker(
-      worker,
-      health,
-      config.factory().expect("validated enabled owner policy"),
-      cancellation.child_token(),
-    )
+  let mut factory_outbox = vec![];
+  let factory = workers.factory.map(|installed| {
+    let policy = config.factory().expect("validated enabled owner policy");
+    for dispatcher in installed.outbox {
+      factory_outbox.push(spawn_factory_outbox_worker(
+        dispatcher,
+        Arc::new(WorkerHealth::new(
+          "factory-outbox",
+          policy.poll_interval().saturating_add(policy.claim_lifetime()),
+        )),
+        policy.poll_interval(),
+        policy.claim_lifetime(),
+        cancellation.child_token(),
+      ));
+    }
+    spawn_factory_worker(installed.owner, installed.health, policy, cancellation.child_token())
   });
   let mut tasks = vec![
     (EXPIRY_WORKER_NAME, expiry),
@@ -155,6 +164,9 @@ pub(super) fn spawn_durable_workers(
   ];
   if let Some(task) = factory {
     tasks.push((FACTORY_WORKER_NAME, task));
+  }
+  for task in factory_outbox {
+    tasks.push(("factory-outbox", task));
   }
   if let Some(task) = webhook_deliveries {
     tasks.push((WEBHOOK_DELIVERY_WORKER_NAME, task));
@@ -633,9 +645,73 @@ fn spawn_factory_worker(
   )
 }
 
+fn spawn_factory_outbox_worker(
+  dispatcher: Arc<dyn octacity_server_application::FactoryOutboxDispatcher>,
+  health: Arc<WorkerHealth>,
+  poll_interval: Duration,
+  claim_lifetime: Duration,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  spawn_worker_loop(
+    WorkerIdentity::new("factory-outbox", WorkerKind::Factory),
+    health,
+    poll_interval,
+    claim_lifetime,
+    cancellation,
+    move |at, _| {
+      let dispatcher = dispatcher.clone();
+      async move { dispatcher.dispatch_once(at).await }
+    },
+    |_| {},
+  )
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test]
+  async fn configured_factory_outbox_dispatchers_run_without_invoking_the_flow_owner() {
+    struct Dispatcher(std::sync::atomic::AtomicUsize);
+    #[async_trait::async_trait]
+    impl octacity_server_application::FactoryOutboxDispatcher for Dispatcher {
+      async fn dispatch_once(
+        &self,
+        _: Timestamp,
+      ) -> Result<
+        octacity_server_application::FactoryOutboxDispatchSummary,
+        octacity_server_application::ApplicationError,
+      > {
+        self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        Ok(octacity_server_application::FactoryOutboxDispatchSummary {
+          failed: 1,
+          ..Default::default()
+        })
+      }
+    }
+    let dispatcher = Arc::new(Dispatcher(std::sync::atomic::AtomicUsize::new(0)));
+    let cancel = CancellationToken::new();
+    let health = Arc::new(WorkerHealth::new("factory-outbox", Duration::from_secs(1)));
+    let worker = spawn_factory_outbox_worker(
+      dispatcher.clone(),
+      health,
+      Duration::from_millis(10),
+      Duration::from_secs(1),
+      cancel.clone(),
+    );
+    tokio::time::timeout(Duration::from_secs(1), async {
+      while dispatcher.0.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+      }
+    })
+    .await
+    .expect("configured outbox dispatchers must be supervised independently");
+    cancel.cancel();
+    tokio::time::timeout(Duration::from_secs(1), worker)
+      .await
+      .unwrap()
+      .unwrap();
+  }
 
   #[tokio::test]
   async fn supervisor_propagates_the_first_worker_failure_and_stops_siblings() {

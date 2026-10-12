@@ -54,6 +54,23 @@ def package_fixture(
 
 
 class ArchitecturePolicyTests(unittest.TestCase):
+    def test_github_sdk_is_confined_to_the_single_provider_plugin(self):
+        from dataclasses import replace
+
+        plugin = replace(package_fixture(
+            "octacity-github",
+            REPOSITORY / "server/infrastructure/octacity-github/Cargo.toml",
+            external_dependencies=("octocrab", "http-body-util"),
+        ), role="infrastructure")
+        self.assertEqual(ARCHITECTURE.check(ARCHITECTURE.Graph(packages=(plugin,), edges=())), [])
+        for name, role in [("another-provider", "infrastructure"),
+                           ("octacity-server-application", "application"),
+                           ("octacity-delivery-protocol", "protocol")]:
+            with self.subTest(name=name):
+                forbidden = replace(plugin, name=name, role=role)
+                self.assertIn("ARCH011_DEFERRED_EXTENSION_SDK", [v.code for v in
+                    ARCHITECTURE.check(ARCHITECTURE.Graph(packages=(forbidden,), edges=()))])
+
     def test_configured_factory_runtime_rejects_phase_contracts_and_name_dispatch(self):
         for source in ["pub fn from_stage_projection() {}", "pub fn decide_next_action() {}", "fn allowed_state_successor() {}", "use crate::TriagePolicy;", "match node.as_str() { \"research\" => run_research(), _ => wait() }"]:
             with self.subTest(source=source), tempfile.TemporaryDirectory() as directory:

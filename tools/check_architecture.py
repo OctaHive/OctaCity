@@ -88,6 +88,9 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
 # package-specific so another core crate cannot acquire private-key handling by
 # depending on the same libraries.
 PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
+    # The single GitHub provider owns its SDK and bounded HTTP body handling.
+    # Delivery/Source/Reporter contracts and the general engine remain neutral.
+    "octacity-github": frozenset({"octocrab", "http-body-util"}),
     # Canonical Agent/server action bytes are hashed at their shared wire
     # contract boundary. Keep the cryptographic primitive package-specific so
     # other shared crates cannot acquire implementation dependencies by
@@ -621,6 +624,8 @@ def check(graph: Graph) -> list[Violation]:
         allowed_for_package = PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES.get(package.name, frozenset())
         deferred_dependencies: dict[str, list[str]] = {}
         for dependency in package.external_dependencies:
+            if dependency in allowed_for_package:
+                continue
             for extension, pattern in DEFERRED_EXTENSION_SDK_RULES:
                 if pattern.fullmatch(dependency):
                     deferred_dependencies.setdefault(extension, []).append(dependency)
@@ -641,6 +646,7 @@ def check(graph: Graph) -> list[Violation]:
             unreviewed_dependencies = sorted(
                 set(package.external_dependencies)
                 - V1_APPROVED_EXTERNAL_DEPENDENCIES
+                - allowed_for_package
                 - {
                     dependency
                     for dependencies in deferred_dependencies.values()

@@ -1,0 +1,15 @@
+[package]
+name = "octacity-delivery-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Bounded provider-neutral trusted Delivery process contract"
+
+[dependencies]
+octacity-adapter-protocol = { path = "../octacity-adapter-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true

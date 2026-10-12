@@ -56,6 +56,15 @@ pub struct FactoryNodeExecutionRequest<'a> {
 }
 /// Observations from a trusted execution adapter; routing remains in the definition.
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryNodeOutboxEffect {
+  /// Stable logical side-effect identity, reused by the selected dispatcher.
+  pub operation_id: FactoryDigest,
+  /// Registered technical effect family, independent of Flow and node names.
+  pub kind: FactoryKey,
+}
+
+/// Observations from a trusted execution adapter; routing remains in the definition.
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FactoryNodeExecutionStep {
   /// No terminal execution observation yet.
   Waiting {
@@ -70,6 +79,8 @@ pub enum FactoryNodeExecutionStep {
     record: Box<FlowNodeRecord>,
     /// Consumption of this execution; attempts are charged at creation.
     usage: BudgetUsage,
+    /// Deferred effects accepted atomically with this exact retained result.
+    outbox: Vec<FactoryNodeOutboxEffect>,
   },
   /// Execution failure stays distinct from a semantic configured outcome.
   ExecutionStopped {
@@ -280,6 +291,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       }
       attempt.verify_observer(&ownership, at).map_err(invalid)?;
       let mut append = FactoryRunHistoryAppend::default();
+      let mut effects = vec![];
       let (record, usage) = if node.kind() == FlowNodeKind::DeterministicGate {
         let program = FlowGateProgram::from_node(node).map_err(invalid)?;
         let outcome = program.select_at(frozen.payload(), at).map_err(invalid)?;
@@ -384,8 +396,10 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
             record,
             usage,
             execution,
+            outbox,
           } => {
             retain_execution(&snapshot, &mut append, execution);
+            effects = outbox;
             (record, usage)
           }
         }
@@ -395,7 +409,28 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         .map_err(invalid)?;
       append.flow.completions.push(completion);
       append.flow.data.records.push(*record.clone());
-      self.commit(&snapshot, append, at).await?;
+      if !effects.is_empty() && node.kind() != FlowNodeKind::TrustedAction || effects.len() > 16 {
+        return Err(ApplicationError::invalid());
+      }
+      let mut unique = std::collections::BTreeSet::new();
+      let input_digest = record.digest().map_err(invalid)?;
+      let mut outbox = vec![];
+      for effect in effects {
+        if !unique.insert(effect.operation_id) {
+          return Err(ApplicationError::invalid());
+        }
+        outbox.push(FactoryOutboxRecord::pending(
+          effect.operation_id,
+          snapshot.run.id(),
+          effect.kind,
+          input_digest,
+          at,
+          at,
+        ));
+      }
+      self
+        .commit_progress(&snapshot, append, at, GraphDisposition::Running, outbox)
+        .await?;
       return Ok(FactoryNodeStep::Completed(record));
     }
     let input = if let Some((_, expected)) = retry_input {
@@ -497,7 +532,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     at: Timestamp,
   ) -> Result<(), ApplicationError> {
     self
-      .commit_progress(snapshot, append, at, GraphDisposition::Running)
+      .commit_progress(snapshot, append, at, GraphDisposition::Running, vec![])
       .await
   }
   /// Completes only the root Flow; the store independently verifies its terminal proof.
@@ -513,6 +548,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         FactoryRunHistoryAppend::default(),
         at,
         GraphDisposition::Resolved(terminal),
+        vec![],
       )
       .await
   }
@@ -607,6 +643,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         FactoryRunHistoryAppend::default(),
         at,
         GraphDisposition::Cancelled,
+        vec![],
       )
       .await?;
     Ok(true)
@@ -617,6 +654,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     append: FactoryRunHistoryAppend,
     at: Timestamp,
     disposition: GraphDisposition,
+    outbox: Vec<FactoryOutboxRecord>,
   ) -> Result<(), ApplicationError> {
     let claim = snapshot.current_claim.as_ref().ok_or_else(ApplicationError::invalid)?;
     claim
@@ -713,7 +751,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         append,
         current,
         audit,
-        outbox: vec![],
+        outbox,
       })
       .await?;
     Ok(())

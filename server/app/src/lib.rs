@@ -18,8 +18,9 @@ mod runtime;
 
 pub use config::{FactoryRuntimeConfig, ServerConfig, ServerConfigError};
 pub use runtime::{
-  DurableWorkerError, FactoryRuntimeInstallation, FactoryRuntimeInstallationError, FactoryRuntimeInstaller,
-  FactoryRuntimeReadiness, FactoryRuntimeResources, LogSearchMaintenanceError, RestoreMaintenanceError,
-  RestoredStateSummary, RuntimeAssemblyError, ServerRuntime, ServerRuntimeError, rebuild_log_search,
-  reconcile_restored_state, validate_runtime_files,
+  DurableWorkerError, FactoryDeliveryInputs, FactoryDeliveryMaterializer, FactoryDeliveryPolicy,
+  FactoryDeliveryPolicyDraft, FactoryDeliveryTargetPolicy, FactoryRuntimeInstallation, FactoryRuntimeInstallationError,
+  FactoryRuntimeInstaller, FactoryRuntimeReadiness, FactoryRuntimeResources, HostedFactoryCandidatePublisher,
+  LogSearchMaintenanceError, RestoreMaintenanceError, RestoredStateSummary, RuntimeAssemblyError, ServerRuntime,
+  ServerRuntimeError, rebuild_log_search, reconcile_restored_state, validate_runtime_files,
 };

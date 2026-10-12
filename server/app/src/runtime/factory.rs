@@ -35,6 +35,8 @@ pub struct FactoryRuntimeInstallation {
   pub inputs: Arc<dyn FactoryFlowInputPreparer>,
   /// Availability of the dependencies required by this deployment.
   pub readiness: Arc<dyn FactoryRuntimeReadiness>,
+  /// Optional independent deferred-effect dispatchers; source failures cannot drive the owner.
+  pub outbox_dispatchers: Vec<Arc<dyn octacity_server_application::FactoryOutboxDispatcher>>,
 }
 
 /// Secret-safe deployment installation failure.
@@ -71,10 +73,11 @@ impl crate::readiness::ReadinessCheck for CapabilityReadiness {
 }
 
 /// Worker plus health tracked by the existing durable supervisor.
-pub(super) type InstalledFactoryWorker = (
-  octacity_server_application::FactoryReconciler<PostgresStore>,
-  Arc<crate::readiness::WorkerHealth>,
-);
+pub(super) struct InstalledFactoryWorker {
+  pub(super) owner: octacity_server_application::FactoryReconciler<PostgresStore>,
+  pub(super) health: Arc<crate::readiness::WorkerHealth>,
+  pub(super) outbox: Vec<Arc<dyn octacity_server_application::FactoryOutboxDispatcher>>,
+}
 
 pub(super) async fn assemble(
   config: &crate::ServerConfig,
@@ -140,7 +143,11 @@ pub(super) async fn assemble(
         flow,
       )
       .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?;
-      Some((worker, health))
+      Some(InstalledFactoryWorker {
+        owner: worker,
+        health,
+        outbox: installed.outbox_dispatchers,
+      })
     }
     (None, None) => None,
     _ => unreachable!("Factory policy and installation are paired"),

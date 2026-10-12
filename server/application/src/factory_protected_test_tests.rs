@@ -459,6 +459,7 @@ fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores
       record,
       execution: Some(execution),
       usage,
+      ..
     } = step
     else {
       panic!("author must complete through ordinary Build")

@@ -217,19 +217,47 @@ uses a native status. A research observation never automatically changes an
 external status. Operators insert a status action, notification or another
 plugin action on the desired outcome path. Connector credentials and SDK
 objects stay outside Flow contracts; exact host and credential grants are
-checked before effects. Projection failure cannot produce a successful node
-completion, and an external status cannot authorize a Factory transition.
+checked before effects. Inline projection failure cannot produce a successful
+node completion. Optional reporting instead declares `outbox` retry parameters:
+its receipt means a durable intent accepted atomically with the common node
+result. The independent `FactoryWorkStatusOutboxWorker` claims only its effect
+kind and resolves the original immutable record, parameters and exact installed
+projector. Retry budgets cannot extend the original deadline. Reporter success,
+failure and restart change only outbox state; external status cannot authorize a
+Factory transition or reconstruct authoritative state. Runtime installation can
+register independent dispatchers without changing the graph owner.
 
 `FactoryCandidatePublicationAction` selects a protected publisher through the
 same plugin execution boundary. Its frozen request includes the complete captured
 candidate, exact manifest/bundle, Work and cycle, operator target, permissions,
-budget and deadline. The connector verifies bytes and ancestry, deduplicates the
+budget, original start, current observer window and deadline. The complete selected
+input/provenance digest binds its control proof. The target is an immutable policy
+reference: mutable provider mappings cannot redirect the request. The connector
+verifies bytes and ancestry, deduplicates the
 whole request and observes the original operation before repeating an ambiguous
 write. Another operation or candidate cannot provide its receipt. Receipt-schema
-validation precedes effects, and review validity narrows the attempt deadline.
+validation proves structural compatibility with the complete producer contract
+before effects; probing a few sample payloads cannot establish it. Review validity
+narrows the attempt deadline. A reusable target declares the base and candidate
+reference prefix; the stable operation digest materializes the exact branch.
+Different operations do not share a candidate branch. The Delivery request carries
+an exact network ceiling checked against the provider's actual API/Git hosts before
+credential resolution. Observing an owned PR requiring metadata repair returns a
+separate typed outcome; observing an external merge does not require its current
+base to equal the original accepted base.
 Configured gates independently check exact receipt and review freshness before
 freezing readiness; publication alone is not acceptance. Provider SDKs and merge
 authority remain outside this port.
+
+`octacity-delivery-protocol` and `octacity-server-delivery` reuse common verified
+process mechanics and keep writes outside VCS and repository Jobs. The single
+[`octacity-github` provider plugin](../../server/infrastructure/octacity-github/README.md)
+uses Octocrab behind this boundary; future GitHub intake/read/reporting extend the
+same plugin with separate contracts and grant classes. Executable/configuration
+digests and exact Project/Repository, network and secret-profile ceilings are
+checked before protected handles. Tokens remain inside trusted provider processes.
+Common append-only results retain branch/review identities and verified remote
+heads; existing promotion records retain exact deployment observations.
 
 ### Supplied base Flow and Accepted Work
 

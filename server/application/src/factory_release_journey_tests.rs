@@ -351,7 +351,7 @@ fn configuration(specified: bool, human_disposition: bool) -> (FactoryFlowConfig
     FlowActionBinding::new(
       reference("fixture.publisher"),
       key("publish_candidate"),
-      json!({"bundle":"candidate_bundle","manifest":"candidate_manifest","target":"implementation.review"}),
+      json!({"bundle":"candidate_bundle","manifest":"candidate_manifest","target":reference("implementation.review")}),
     )
     .unwrap(),
   )

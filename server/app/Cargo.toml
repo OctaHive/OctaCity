@@ -30,6 +30,8 @@ octacity-server-store-postgres = { path = "../infrastructure/octacity-server-sto
 octacity-server-webhook = { path = "../infrastructure/octacity-server-webhook" }
 octacity-server-vcs = { path = "../infrastructure/octacity-server-vcs" }
 octacity-vcs-protocol = { path = "../protocols/octacity-vcs-protocol" }
+octacity-delivery-protocol = { path = "../protocols/octacity-delivery-protocol" }
+octacity-server-delivery = { path = "../infrastructure/octacity-server-delivery" }
 octacity-webhook-provider-protocol = { path = "../protocols/octacity-webhook-provider-protocol" }
 serde.workspace = true
 serde_json.workspace = true

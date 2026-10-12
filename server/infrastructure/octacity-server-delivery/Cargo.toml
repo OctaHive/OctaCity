@@ -1,0 +1,21 @@
+[package]
+name = "octacity-server-delivery"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Verified provider-neutral Delivery process host"
+
+[dependencies]
+octacity-delivery-protocol = { path = "../../protocols/octacity-delivery-protocol" }
+octacity-server-adapter-host = { path = "../octacity-server-adapter-host" }
+serde_json.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+hex.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

@@ -15,18 +15,20 @@ pub(crate) async fn claim_outbox(
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   let operation_ids: Vec<Vec<u8>> = sqlx::query_scalar(
     "WITH latest AS ( \
-       SELECT DISTINCT ON (operation_id) operation_id, state, available_at, claim_expires_at, recorded_at, id \
+       SELECT DISTINCT ON (operation_id) operation_id, kind, state, available_at, claim_expires_at, recorded_at, id \
        FROM factory_outbox_records \
        ORDER BY operation_id, attempt DESC, \
          CASE state WHEN 'pending' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END DESC, recorded_at DESC, id DESC \
      ) \
      SELECT operation_id FROM latest \
-     WHERE (state = 'pending' AND available_at <= to_timestamp($1::double precision / 1000.0)) \
-        OR (state = 'claimed' AND claim_expires_at <= to_timestamp($1::double precision / 1000.0)) \
+     WHERE ($3::text IS NULL OR kind = $3) AND ( \
+       (state = 'pending' AND available_at <= to_timestamp($1::double precision / 1000.0)) \
+        OR (state = 'claimed' AND claim_expires_at <= to_timestamp($1::double precision / 1000.0))) \
      ORDER BY available_at, operation_id LIMIT $2",
   )
   .bind(request.observed_at.unix_millis())
   .bind(i64::from(request.limit.get()))
+  .bind(request.kind.as_ref().map(FactoryKey::as_str))
   .fetch_all(&mut *transaction)
   .await
   .map_err(unavailable)?;

@@ -935,7 +935,9 @@ fn supplied_publication_requires_exact_receipt_before_implementation_readiness()
   let ready = definition.node(&key("specification_ready")).unwrap();
   assert_eq!(ready.accepted_work_outcomes(), &[key("implementation_ready")]);
   let summary = serde_json::json!({"work_kind":"feature_request","size":"large","risk":"low","admission_risk":"low","component":"api","severity":"low","dependencies":[],"recommended_route":"requirements","research_required":false,"research_accepted":false});
-  let input = serde_json::json!({"summary":summary,"publication":{"receipt":"a".repeat(64),"candidate_revision":"reviewed-candidate","changeset_digest":"b".repeat(64)},"expected_candidate":"reviewed-candidate","expected_digest":"b".repeat(64),"review_deadline":100});
+  let input = serde_json::json!({"summary":summary,"publication":{"receipt":"a".repeat(64),"candidate_revision":"reviewed-candidate","changeset_digest":"b".repeat(64),
+    "external":{"branch_reference":"refs/heads/reviewed-candidate","remote_head":"reviewed-candidate","review_identity":"23","review_state":"open"}},
+    "expected_candidate":"reviewed-candidate","expected_digest":"b".repeat(64),"review_deadline":100});
   assert_eq!(select("specification_ready", input.clone()), "implementation_ready");
   for (field, value) in [
     ("expected_candidate", serde_json::json!("other")),

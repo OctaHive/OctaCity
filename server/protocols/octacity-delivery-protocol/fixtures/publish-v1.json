@@ -1,0 +1,43 @@
+{
+  "protocol_version": 1,
+  "request_id": "request-1",
+  "command": {
+    "operation": "publish",
+    "payload": {
+      "delivery_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "repository": {
+        "repository_id": "repository-1",
+        "repository_locator": "repository:accepted-project",
+        "credential": {
+          "class": "delivery_write",
+          "handle": "protected-delivery-grant"
+        }
+      },
+      "base_revision": "1111111111111111111111111111111111111111",
+      "candidate_revision": "2222222222222222222222222222222222222222",
+      "changeset_digest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "decision_digest": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "network_hosts": ["forge.invalid"],
+      "target": {
+        "base_reference": "refs/heads/main",
+        "candidate_reference": "refs/heads/review/accepted-candidate"
+      },
+      "bundle": {
+        "handle": "protected-bundle",
+        "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
+        "size_bytes": 100
+      },
+      "manifest": {
+        "handle": "protected-manifest",
+        "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "size_bytes": 500
+      },
+      "review": {
+        "title": "Accepted candidate",
+        "summary": "Independent verification passed",
+        "draft": true
+      },
+      "configuration_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+    }
+  }
+}

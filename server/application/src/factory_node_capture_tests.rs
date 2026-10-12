@@ -604,6 +604,7 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
         execution: Some(execution),
         record,
         usage,
+        ..
       } = result
       else {
         panic!("trusted capture must publish a common result rather than a lifecycle checkpoint");

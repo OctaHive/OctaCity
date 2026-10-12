@@ -76,9 +76,13 @@ pub use factory_verification::{
   VerifiedFactoryVerificationCheck, evaluate_factory_verification, verify_factory_verification_check,
 };
 mod factory_flow_action;
+mod factory_work_status_outbox;
 pub use factory_candidate_publication::{
   FactoryCandidatePublication, FactoryCandidatePublicationAction, FactoryCandidatePublicationRequest,
-  FactoryCandidatePublisher,
+  FactoryCandidatePublisher, FactoryPublicationFacts, FactoryReviewState,
+};
+pub use factory_work_status_outbox::{
+  FactoryOutboxDispatchSummary, FactoryOutboxDispatcher, FactoryReporterWorkerSettings, FactoryWorkStatusOutboxWorker,
 };
 mod factory_candidate_deliverables;
 #[cfg(test)]
@@ -127,8 +131,8 @@ mod factory_node_build;
 mod factory_node_registry;
 pub use factory_node::{
   FactoryExecutionClock, FactoryFlowCoordinator, FactoryFlowStep, FactoryNodeCancellationStep,
-  FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor, FactoryNodeRunner, FactoryNodeStep,
-  FactoryNodeTarget, SystemFactoryExecutionClock,
+  FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor, FactoryNodeOutboxEffect,
+  FactoryNodeRunner, FactoryNodeStep, FactoryNodeTarget, SystemFactoryExecutionClock,
 };
 pub use factory_node_registry::{
   FactoryNodeExecutorBinding, FactoryNodeExecutorRegistry, MAX_FACTORY_EXECUTOR_BINDINGS,

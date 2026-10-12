@@ -592,6 +592,7 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
       .flat_map(|(run_id, stored)| {
         latest_outbox_records(stored)
           .into_iter()
+          .filter(|record| request.kind.as_ref().is_none_or(|kind| kind == &record.kind))
           .filter(|record| match record.state {
             crate::FactoryOutboxState::Pending => record.available_at <= request.observed_at,
             crate::FactoryOutboxState::Claimed => record
@@ -2446,6 +2447,50 @@ mod tests {
         assert!(claims.items.is_empty());
       },
       "Factory batch claim remains atomic",
+    );
+  }
+
+  #[test]
+  fn outbox_workers_claim_only_their_selected_effect_kind() {
+    run_ready(
+      async {
+        let fixture = fixture();
+        let before = fixture.store.factory_run_snapshot(fixture.run.id()).await.unwrap();
+        let unrelated = fixture
+          .store
+          .claim_factory_outbox(
+            ClaimFactoryOutbox::new(key("reporter"), time(10), time(20), 1)
+              .unwrap()
+              .only_kind(key("work.status.projection")),
+          )
+          .await
+          .unwrap();
+        assert!(
+          unrelated.is_empty(),
+          "a reporter cannot consume the admission worker's event"
+        );
+        assert_eq!(
+          fixture
+            .store
+            .factory_run_snapshot(fixture.run.id())
+            .await
+            .unwrap()
+            .outbox,
+          before.outbox
+        );
+        let matching = fixture
+          .store
+          .claim_factory_outbox(
+            ClaimFactoryOutbox::new(key("admission"), time(10), time(20), 1)
+              .unwrap()
+              .only_kind(before.outbox[0].kind.clone()),
+          )
+          .await
+          .unwrap();
+        assert_eq!(matching.len(), 1);
+        assert_eq!(matching[0].record.operation_id, before.outbox[0].operation_id);
+      },
+      "outbox kind selection is isolated",
     );
   }
 

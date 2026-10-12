@@ -1270,3 +1270,59 @@ fn a_predecessor_can_explicitly_select_the_frozen_input_without_trusting_its_res
     3,
   );
 }
+
+#[test]
+fn configured_schema_compatibility_covers_the_complete_producer_contract() {
+  let source = FlowValueSchema::Object {
+    fields: BTreeMap::from([
+      (
+        key("reference"),
+        FlowFieldSchema::required(FlowValueSchema::String {
+          min_bytes: 1,
+          max_bytes: 8,
+        }),
+      ),
+      (
+        key("state"),
+        FlowFieldSchema::required(FlowValueSchema::Enum {
+          values: vec![serde_json::json!("open"), serde_json::json!("merged")],
+        }),
+      ),
+    ]),
+  };
+  let target = FlowDataSchema::new(key("receiver"), key("v1"), source.clone()).unwrap();
+  assert!(target.accepts_all(&source));
+  for field in [
+    FlowValueSchema::Enum {
+      values: vec![serde_json::json!("x"), serde_json::json!("xxxxxxxx")],
+    },
+    FlowValueSchema::String {
+      min_bytes: 1,
+      max_bytes: 7,
+    },
+  ] {
+    let mut narrowed = source.clone();
+    let FlowValueSchema::Object { ref mut fields } = narrowed else {
+      unreachable!()
+    };
+    fields.insert(key("reference"), FlowFieldSchema::required(field));
+    let target = FlowDataSchema::new(key("receiver"), key("v1"), narrowed).unwrap();
+    assert!(
+      !target.accepts_all(&source),
+      "probe values cannot prove compatibility with all producer values"
+    );
+  }
+  let source_enum = FlowValueSchema::Enum {
+    values: vec![serde_json::json!("yes"), serde_json::json!("no")],
+  };
+  let target_text = FlowDataSchema::new(
+    key("text"),
+    key("v1"),
+    FlowValueSchema::String {
+      min_bytes: 1,
+      max_bytes: 3,
+    },
+  )
+  .unwrap();
+  assert!(target_text.accepts_all(&source_enum));
+}

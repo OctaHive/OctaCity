@@ -1245,6 +1245,33 @@ mod run_contract {
 
   #[tokio::test]
   #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+  async fn outbox_kind_selection_does_not_consume_another_workers_event() {
+    let setup = Setup::new().await;
+    let unrelated = setup
+      .postgres
+      .claim_factory_outbox(
+        ClaimFactoryOutbox::new(key("reporter"), time(10), time(20), 1)
+          .unwrap()
+          .only_kind(key("work.status.projection")),
+      )
+      .await
+      .unwrap();
+    assert!(unrelated.is_empty(), "a reporter must leave admission events pending");
+    let admission = setup
+      .postgres
+      .claim_factory_outbox(ClaimFactoryOutbox::new(key("admission"), time(10), time(20), 1).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(admission.len(), 1);
+    assert_eq!(
+      admission[0].record.attempt, 0,
+      "the admission worker's budget was not consumed by reporting"
+    );
+    setup.cleanup().await;
+  }
+
+  #[tokio::test]
+  #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
   async fn expired_outbox_work_is_retried_and_terminal_settlement_replays() {
     let setup = Setup::new().await;
     let first = setup

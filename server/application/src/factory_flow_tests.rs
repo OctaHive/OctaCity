@@ -2119,6 +2119,7 @@ fn every_ready_fanout_sibling_can_be_published_to_its_configured_pool() {
         execution: None,
         record: Box::new(record),
         usage: BudgetUsage::default(),
+        outbox: vec![],
       })
     }
   }

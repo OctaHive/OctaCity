@@ -123,6 +123,13 @@ impl FlowDataSchema {
     );
     Ok(Self { reference, shape })
   }
+  /// Proves that every value allowed by a producer shape fits this configured schema.
+  /// Invalid/unresolved producer shapes fail closed; finite alternatives are checked
+  /// individually, while objects and ranges are compared structurally.
+  #[must_use]
+  pub fn accepts_all(&self, producer: &FlowValueSchema) -> bool {
+    producer.validate(0).is_ok() && self.shape.covers(producer)
+  }
   /// Returns the exact contract name, version and content identity.
   #[must_use]
   pub const fn reference(&self) -> &ImmutableReference {
@@ -254,6 +261,47 @@ impl FlowValueSchema {
       _ => return Err(invalid()),
     }
     Ok(())
+  }
+  fn covers(&self, producer: &Self) -> bool {
+    if let Self::Enum { values } = producer {
+      return values.iter().all(|value| self.accepts(value));
+    }
+    match (self, producer) {
+      (
+        Self::String {
+          min_bytes: a,
+          max_bytes: b,
+        },
+        Self::String {
+          min_bytes: c,
+          max_bytes: d,
+        },
+      ) => a <= c && b >= d,
+      (Self::Integer { minimum: a, maximum: b }, Self::Integer { minimum: c, maximum: d }) => a <= c && b >= d,
+      (Self::Boolean, Self::Boolean) => true,
+      (
+        Self::Array {
+          item: a,
+          min_items: b,
+          max_items: c,
+        },
+        Self::Array {
+          item: d,
+          min_items: e,
+          max_items: f,
+        },
+      ) => b <= e && c >= f && a.covers(d),
+      (Self::Object { fields: target }, Self::Object { fields: source }) => {
+        source.iter().all(|(key, field)| {
+          target
+            .get(key)
+            .is_some_and(|expected| expected.value.covers(&field.value))
+        }) && target
+          .iter()
+          .all(|(key, field)| !field.required || source.get(key).is_some_and(|actual| actual.required))
+      }
+      _ => false,
+    }
   }
   fn accepts(&self, value: &Value) -> bool {
     match self {

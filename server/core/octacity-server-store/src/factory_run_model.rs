@@ -431,6 +431,8 @@ pub struct ClaimFactoryOutbox {
   pub claim_expires_at: Timestamp,
   /// Positive bounded batch size.
   pub limit: NonZeroU16,
+  /// Optional exact effect kind; workers never take another capability's events.
+  pub kind: Option<FactoryKey>,
 }
 
 impl ClaimFactoryOutbox {
@@ -460,7 +462,14 @@ impl ClaimFactoryOutbox {
       observed_at,
       claim_expires_at,
       limit,
+      kind: None,
     })
+  }
+  /// Narrows this bounded claim to one configured effect family.
+  #[must_use]
+  pub fn only_kind(mut self, kind: FactoryKey) -> Self {
+    self.kind = Some(kind);
+    self
   }
 }
 

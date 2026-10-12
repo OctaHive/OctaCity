@@ -213,6 +213,163 @@ fn reporter() -> Arc<Reporter> {
 }
 
 #[test]
+fn optional_status_reporting_is_queued_with_the_node_result_before_contacting_the_source() {
+  crate::factory_admission_tests::run_ready(async {
+    let h = harness(
+      binding(
+        "reporter",
+        "set_status",
+        serde_json::json!({"status":"needs-human-eyes","outbox":{"max_attempts":2,"retry_delay_millis":5}}),
+      ),
+      permissions("reporter"),
+    );
+    let unavailable_reporter = Arc::new(Reporter {
+      requests: Mutex::new(vec![]),
+      unavailable: true,
+      scoped: false,
+    });
+    let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
+      reference("reporter"),
+      unavailable_reporter.clone(),
+      h.outcome.clone(),
+    ))));
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      adapter.clone(),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input.clone()), at(11))
+      .await
+      .unwrap();
+    let FactoryNodeStep::Completed(record) = runner
+      .run_once(h.run, h.claim, h.target.clone(), None, at(12))
+      .await
+      .expect("reporter availability cannot block accepting the configured result")
+    else {
+      panic!("queued report must produce a retained result")
+    };
+    let snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert_eq!(snapshot.flow.data.records, vec![*record.clone()]);
+    let reports = snapshot
+      .outbox
+      .iter()
+      .filter(|row| row.kind == key("work.status.projection"))
+      .collect::<Vec<_>>();
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].input_digest, record.digest().unwrap());
+    assert_eq!(
+      record.payload().value()["receipt"],
+      serde_json::json!(reports[0].operation_id)
+    );
+    assert_eq!(reports[0].state, octacity_server_store::FactoryOutboxState::Pending);
+    assert!(unavailable_reporter.requests.lock().unwrap().is_empty());
+    assert_eq!(
+      runner.run_once(h.run, h.claim, h.target, None, at(13)).await.unwrap(),
+      FactoryNodeStep::Completed(record)
+    );
+    assert_eq!(
+      h.store.factory_run_snapshot(h.run).await.unwrap().outbox,
+      snapshot.outbox,
+      "owner replay cannot queue another report"
+    );
+    let settings = FactoryReporterWorkerSettings::new(key("reporter.worker"), 10, 10).unwrap();
+    let projectors = std::collections::BTreeMap::from([(
+      reference("reporter"),
+      unavailable_reporter.clone() as Arc<dyn FactoryWorkStatusProjector>,
+    )]);
+    let worker = FactoryWorkStatusOutboxWorker::new(
+      h.store.clone(),
+      projectors,
+      settings.clone(),
+      crate::factory_node_test_support::clock(),
+    )
+    .unwrap();
+    let first = worker.run_once(at(20)).await.unwrap();
+    assert_eq!(first.retrying, 1);
+    let after = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert_eq!(after.run, snapshot.run);
+    assert_eq!(after.current, snapshot.current);
+    assert_eq!(
+      after.flow, snapshot.flow,
+      "reporter failure cannot roll back or reconstruct authoritative flow data"
+    );
+    let success = reporter();
+    let replacement = FactoryWorkStatusOutboxWorker::new(
+      h.store.clone(),
+      std::collections::BTreeMap::from([(
+        reference("reporter"),
+        success.clone() as Arc<dyn FactoryWorkStatusProjector>,
+      )]),
+      settings,
+      crate::factory_node_test_support::clock(),
+    )
+    .unwrap();
+    assert_eq!(replacement.run_once(at(24)).await.unwrap().claimed, 0);
+    assert_eq!(replacement.run_once(at(25)).await.unwrap().delivered, 1);
+    {
+      let requests = success.requests.lock().unwrap();
+      assert_eq!(requests.len(), 1);
+      assert_eq!(requests[0].operation_id, reports[0].operation_id);
+      assert_eq!(requests[0].status.as_str(), "needs-human-eyes");
+    }
+    let final_snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert_eq!(final_snapshot.run, snapshot.run);
+    assert_eq!(final_snapshot.flow, snapshot.flow);
+  });
+}
+
+#[test]
+fn a_reporter_exhausts_only_its_published_retry_budget_without_reopening_the_node() {
+  crate::factory_admission_tests::run_ready(async {
+    let h = harness(
+      binding(
+        "reporter",
+        "set_status",
+        serde_json::json!({"status":"any-status","outbox":{"max_attempts":1,"retry_delay_millis":5}}),
+      ),
+      permissions("reporter"),
+    );
+    let unavailable = Arc::new(Reporter {
+      requests: Mutex::new(vec![]),
+      unavailable: true,
+      scoped: false,
+    });
+    let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
+      reference("reporter"),
+      unavailable.clone(),
+      h.outcome.clone(),
+    ))));
+    let runner = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(matches!(
+      runner.run_once(h.run, h.claim, h.target, None, at(12)).await.unwrap(),
+      FactoryNodeStep::Completed(_)
+    ));
+    let before = h.store.factory_run_snapshot(h.run).await.unwrap();
+    let worker = FactoryWorkStatusOutboxWorker::new(
+      h.store.clone(),
+      std::collections::BTreeMap::from([(
+        reference("reporter"),
+        unavailable as Arc<dyn FactoryWorkStatusProjector>,
+      )]),
+      FactoryReporterWorkerSettings::new(key("reporter.worker"), 10, 10).unwrap(),
+      crate::factory_node_test_support::clock(),
+    )
+    .unwrap();
+    assert_eq!(worker.run_once(at(20)).await.unwrap().failed, 1);
+    assert_eq!(worker.run_once(at(30)).await.unwrap().claimed, 0);
+    let after = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert_eq!(after.run, before.run);
+    assert_eq!(after.flow, before.flow);
+    assert_eq!(after.current, before.current);
+  });
+}
+
+#[test]
 fn actions_commit_common_typed_results_and_arbitrary_status_once_across_owner_restart() {
   let h = harness(
     binding(
@@ -549,6 +706,7 @@ impl FactoryFlowActionPlugin for Notification {
       outcome: key("done"),
       payload: FlowPayload::new(schema, serde_json::json!({"receipt":FactoryDigest::from_bytes([8;32])})).unwrap(),
       usage: BudgetUsage::default(),
+      outbox: vec![],
     })
   }
 }
@@ -712,6 +870,13 @@ impl FactoryCandidatePublisher for Publisher {
       operation_id: request.operation_id,
       candidate: request.candidate.clone(),
       receipt: FactoryDigest::from_bytes([88; 32]),
+      facts: FactoryPublicationFacts::new(
+        "refs/heads/reviewed-candidate".into(),
+        request.candidate.candidate_revision().clone(),
+        "23".into(),
+        FactoryReviewState::Open,
+      )
+      .unwrap(),
       usage: BudgetUsage::default(),
     };
     *self.published.lock().unwrap() = Some(publication.clone());
@@ -734,6 +899,46 @@ fn publication_schema() -> FlowDataSchema {
     key("v1"),
     FlowValueSchema::Object {
       fields: [
+        (
+          key("external"),
+          FlowFieldSchema::required(FlowValueSchema::Object {
+            fields: [
+              (
+                key("branch_reference"),
+                FlowFieldSchema::required(FlowValueSchema::String {
+                  min_bytes: 1,
+                  max_bytes: 1024,
+                }),
+              ),
+              (
+                key("remote_head"),
+                FlowFieldSchema::required(FlowValueSchema::String {
+                  min_bytes: 1,
+                  max_bytes: 256,
+                }),
+              ),
+              (
+                key("review_identity"),
+                FlowFieldSchema::required(FlowValueSchema::String {
+                  min_bytes: 1,
+                  max_bytes: 256,
+                }),
+              ),
+              (
+                key("review_state"),
+                FlowFieldSchema::required(FlowValueSchema::Enum {
+                  values: vec![
+                    serde_json::json!("open"),
+                    serde_json::json!("closed"),
+                    serde_json::json!("merged_externally"),
+                  ],
+                }),
+              ),
+            ]
+            .into_iter()
+            .collect(),
+          }),
+        ),
         (
           key("receipt"),
           FlowFieldSchema::required(FlowValueSchema::String {
@@ -815,7 +1020,7 @@ fn exact_candidate_publication_recovers_a_lost_response_without_another_write() 
       binding(
         "publisher",
         "publish_candidate",
-        serde_json::json!({"bundle":"candidate_bytes", "manifest":"candidate_manifest", "target":"review_branch"}),
+        serde_json::json!({"bundle":"candidate_bytes", "manifest":"candidate_manifest", "target":reference("review_branch")}),
       ),
       permissions("publisher"),
       schema,
@@ -864,13 +1069,54 @@ fn exact_candidate_publication_recovers_a_lost_response_without_another_write() 
     };
     assert_eq!(
       record.payload().value(),
-      &serde_json::json!({"receipt":FactoryDigest::from_bytes([88;32]),"candidate_revision":"reviewed-candidate","changeset_digest":FactoryDigest::from_bytes([77;32])})
+      &serde_json::json!({"receipt":FactoryDigest::from_bytes([88;32]),"candidate_revision":"reviewed-candidate","changeset_digest":FactoryDigest::from_bytes([77;32]),
+        "external":{"branch_reference":"refs/heads/reviewed-candidate","remote_head":"reviewed-candidate","review_identity":"23","review_state":"open"}})
     );
     let requests = publisher.requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0].candidate, candidate);
     assert_eq!(requests[0].cycle_id, h.input.cycle_id());
+    assert_eq!(requests[0].accepted_input_digest, h.input.digest().unwrap());
     assert_eq!(requests[0].deadline, at(511));
+    assert_eq!(requests[0].started_at, at(11));
+    assert_eq!(requests[0].authority_expires_at, at(100));
+  });
+}
+
+#[test]
+fn publication_rejects_an_unversioned_target_policy_before_external_effects() {
+  crate::factory_admission_tests::run_ready(async {
+    let mut h = harness_with_result(
+      binding(
+        "publisher",
+        "publish_candidate",
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":"mutable-alias"}),
+      ),
+      permissions("publisher"),
+      publication_schema(),
+    );
+    attach_candidate(&mut h);
+    let publisher = Arc::new(Publisher {
+      requests: Mutex::new(vec![]),
+      published: Mutex::new(None),
+      lose_response: std::sync::atomic::AtomicBool::new(false),
+    });
+    let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(
+      FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome.clone()),
+    )));
+    let runner = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input.clone()), at(11))
+      .await
+      .unwrap();
+    assert!(
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), None, at(12))
+        .await
+        .is_err(),
+      "mutable target aliases cannot redirect frozen publication requests"
+    );
+    assert!(publisher.requests.lock().unwrap().is_empty());
   });
 }
 
@@ -881,7 +1127,7 @@ fn publication_rejects_an_incompatible_receipt_contract_before_any_external_writ
       binding(
         "publisher",
         "publish_candidate",
-        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":"review_branch"}),
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":reference("review_branch")}),
       ),
       permissions("publisher"),
     );
@@ -917,7 +1163,7 @@ fn lost_publication_cannot_be_accepted_after_the_declared_review_expiry() {
       binding(
         "publisher",
         "publish_candidate",
-        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":"review_branch","valid_until":{"value":{"mapping":"constant","value":14}}}),
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":reference("review_branch"),"valid_until":{"value":{"mapping":"constant","value":14}}}),
       ),
       permissions("publisher"),
       publication_schema(),
@@ -979,7 +1225,7 @@ fn a_receipt_for_another_publication_cannot_authorize_the_same_candidate() {
       binding(
         "publisher",
         "publish_candidate",
-        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":"review_branch"}),
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":reference("review_branch")}),
       ),
       permissions("publisher"),
       publication_schema(),
@@ -1017,5 +1263,52 @@ fn a_receipt_for_another_publication_cannot_authorize_the_same_candidate() {
         .is_empty()
     );
     assert_eq!(publisher.requests.lock().unwrap().len(), 1);
+  });
+}
+
+#[test]
+fn publication_rejects_a_probe_only_receipt_schema_before_any_external_write() {
+  crate::factory_admission_tests::run_ready(async {
+    let mut wire = serde_json::to_value(publication_schema()).unwrap();
+    wire["shape"]["fields"]["external"]["value"]["fields"]["branch_reference"]["value"] =
+      serde_json::json!({"type":"enum","values":["x","x".repeat(1024)]});
+    let schema = FlowDataSchema::new(
+      key("probe.only.receipt"),
+      key("v1"),
+      serde_json::from_value(wire["shape"].clone()).unwrap(),
+    )
+    .unwrap();
+    let mut h = harness_with_result(
+      binding(
+        "publisher",
+        "publish_candidate",
+        serde_json::json!({"bundle":"candidate_bytes","manifest":"candidate_manifest","target":reference("review_branch")}),
+      ),
+      permissions("publisher"),
+      schema,
+    );
+    attach_candidate(&mut h);
+    let publisher = Arc::new(Publisher {
+      requests: Mutex::new(vec![]),
+      published: Mutex::new(None),
+      lose_response: std::sync::atomic::AtomicBool::new(false),
+    });
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(
+        FactoryCandidatePublicationAction::new(reference("publisher"), publisher.clone(), h.outcome.clone()),
+      ))),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input.clone()), at(11))
+      .await
+      .unwrap();
+    assert!(runner.run_once(h.run, h.claim, h.target, None, at(12)).await.is_err());
+    assert!(
+      publisher.requests.lock().unwrap().is_empty(),
+      "receipt compatibility must be established before exposing write authority"
+    );
+    assert!(publisher.published.lock().unwrap().is_none());
   });
 }

@@ -929,6 +929,7 @@ where
         execution: Some(Box::new(done.execution)),
         record: Box::new(done.record),
         usage: done.completion.usage(),
+        outbox: vec![],
       }),
     }
   }

@@ -3,6 +3,8 @@
 ### Requirement: Separate write-capable delivery protocol
 Write-capable Git publication and forge review operations SHALL use a bounded versioned Delivery adapter protocol separate from read-only VCS and webhook protocols. A Delivery adapter SHALL declare supported publication and review operations, identity, protocol range, executable digest, credential class, idempotency behavior, and observation capabilities before selection. Read-only VCS callers and repository-controlled Jobs SHALL NOT obtain a Delivery adapter credential or invoke its write operations.
 
+Provider integration SHALL be organized as one plugin per provider rather than one plugin per lifecycle stage. GitHub Delivery and future GitHub Work Source, repository-read and Work Reporter capabilities SHALL use the same `octacity-github` plugin and shared provider transport, installation and operator configuration. Sharing a plugin SHALL NOT merge protocol contracts, grant write credentials to a read/reporting caller, or make provider state authoritative for a Factory transition. Concrete external intake and reporter adapters remain independently scoped follow-up work.
+
 #### Scenario: Read-only VCS adapter is selected
 - **WHEN** the server resolves or browses source for a Build or Factory Run
 - **THEN** it uses only read capabilities and cannot publish a branch, create a review, or merge a candidate

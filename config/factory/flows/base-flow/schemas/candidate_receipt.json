@@ -29,6 +29,49 @@
               "min_bytes": 64,
               "max_bytes": 64
             }
+          },
+          "external": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "branch_reference": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 1024
+                  }
+                },
+                "remote_head": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 256
+                  }
+                },
+                "review_identity": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 256
+                  }
+                },
+                "review_state": {
+                  "required": true,
+                  "value": {
+                    "type": "enum",
+                    "values": [
+                      "open",
+                      "closed",
+                      "merged_externally"
+                    ]
+                  }
+                }
+              }
+            }
           }
         }
       }

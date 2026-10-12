@@ -260,6 +260,13 @@ impl FactoryCandidatePublisher for Publisher {
       operation_id: request.operation_id,
       candidate: request.candidate.clone(),
       receipt: request.operation_id,
+      facts: crate::FactoryPublicationFacts::new(
+        "refs/heads/reviewed-candidate".into(),
+        request.candidate.candidate_revision().clone(),
+        "23".into(),
+        crate::FactoryReviewState::Open,
+      )
+      .unwrap(),
       usage: BudgetUsage::default(),
     };
     self.requests.lock().unwrap().push(request.clone());

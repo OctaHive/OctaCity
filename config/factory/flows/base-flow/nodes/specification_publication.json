@@ -59,7 +59,11 @@
         "parameters": {
           "bundle": "candidate_bundle",
           "manifest": "candidate_manifest",
-          "target": "specification.review",
+          "target": {
+            "identity": "specification.review",
+            "version": "v1",
+            "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
           "valid_until": {
             "value": {
               "mapping": "pointer",

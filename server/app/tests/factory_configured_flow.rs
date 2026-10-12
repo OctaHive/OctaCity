@@ -1576,6 +1576,7 @@ impl octacity_server::FactoryRuntimeInstaller for RuntimeInstaller {
       inputs: Arc::new(flow_contract::Inputs),
       capabilities: self.capabilities.clone(),
       readiness: self.health.clone(),
+      outbox_dispatchers: vec![],
     })
   }
 }
