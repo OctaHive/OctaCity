@@ -17,12 +17,14 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 27] = [
+const FACTORY_TABLES: [&str; 29] = [
   "factory_audit_links",
   "factory_configuration_versions",
   "factory_configuration_flow_definitions",
   "factory_configurations",
   "factory_flow_definition_versions",
+  "factory_flow_definitions",
+  "factory_flow_publications",
   "factory_flow_runs",
   "factory_flow_incoming",
   "factory_flow_inputs",
@@ -66,6 +68,56 @@ async fn migrates_an_empty_database_and_is_reentrant() {
   let result = verify_migration(&database.pool).await;
   database.cleanup().await;
   result.unwrap();
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn flow_publication_schema_rejects_oversized_and_non_object_documents() {
+  let database = TestDatabase::migrated().await;
+  let flow_id = uuid::Uuid::new_v4();
+  sqlx::query(
+    "WITH project AS (\
+       INSERT INTO projects (id, name, version, created_at, updated_at) \
+       VALUES ($1, 'publication bounds', 1, now(), now()) RETURNING id\
+     ), owner AS (\
+       INSERT INTO factory_flow_definitions (id, project_id, current_version, created_at, updated_at) \
+       SELECT $2, id, 1, now(), now() FROM project RETURNING id\
+     ), definition AS (\
+       INSERT INTO factory_flow_definition_versions (id, version, definition_digest, definition) \
+       SELECT id, 1, $3, '{}'::jsonb FROM owner RETURNING id\
+     ) \
+     INSERT INTO factory_flow_publications (id, version, publication) \
+     SELECT id, 1, '{}'::jsonb FROM definition",
+  )
+  .bind(uuid::Uuid::new_v4())
+  .bind(flow_id)
+  .bind(vec![1_u8; 32])
+  .execute(&database.pool)
+  .await
+  .unwrap();
+  for publication in [
+    serde_json::json!({"payload": "x".repeat(16 * 1024 * 1024 + 1)}),
+    serde_json::json!([]),
+  ] {
+    let error = sqlx::query("UPDATE factory_flow_publications SET publication = $1 WHERE id = $2")
+      .bind(sqlx::types::Json(publication))
+      .bind(flow_id)
+      .execute(&database.pool)
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.as_database_error().and_then(|error| error.code()).as_deref(),
+      Some("23514")
+    );
+  }
+  let publication: sqlx::types::Json<serde_json::Value> =
+    sqlx::query_scalar("SELECT publication FROM factory_flow_publications WHERE id = $1")
+      .bind(flow_id)
+      .fetch_one(&database.pool)
+      .await
+      .unwrap();
+  assert_eq!(publication.0, serde_json::json!({}));
+  database.cleanup().await;
 }
 
 #[tokio::test]
@@ -390,35 +442,6 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "builds",
     "build_result_retention_holds",
     "cache_sessions",
-    "factory_artifact_references",
-    "factory_audit_links",
-    "factory_configuration_versions",
-    "factory_configuration_flow_definitions",
-    "factory_configurations",
-    "factory_flow_definition_versions",
-    "factory_flow_runs",
-    "factory_flow_incoming",
-    "factory_flow_inputs",
-    "factory_flow_records",
-    "factory_flow_build_intents",
-    "factory_flow_build_executions",
-    "factory_lifecycle_checkpoints",
-    "factory_node_attempts",
-    "factory_node_attempt_completions",
-    "factory_node_stops",
-    "factory_outbox_records",
-    "factory_phase_pool_policies",
-    "factory_phase_pool_entries",
-    "factory_phase_pool_passes",
-    "factory_phase_pool_selections",
-    "factory_retention_work",
-    "factory_run_budgets",
-    "factory_run_claims",
-    "factory_run_controls",
-    "factory_run_current",
-    "factory_runs",
-    "factory_work_envelopes",
-    "factory_workflow_cycles",
     "cache_actions",
     "cache_blobs",
     "idempotency_records",
@@ -457,6 +480,8 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
     "worker_claims",
   ]
   .into_iter()
+  .chain(FACTORY_TABLES)
+  .chain(FACTORY_RETENTION_TABLES)
   .map(str::to_owned)
   .collect();
   if actual != expected {
@@ -716,9 +741,13 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
     "immutable Factory history must never cascade updates or deletes"
   );
 
+  // Views derive projections and have no column constraints. Retained documents
+  // may bound serialized text bytes or PostgreSQL's JSONB representation.
   let unbounded_documents: i64 = sqlx::query_scalar(
     "SELECT COUNT(*) FROM information_schema.columns AS column_definition \
-     WHERE column_definition.table_schema = 'public' \
+     JOIN information_schema.tables AS table_definition USING (table_schema, table_name) \
+     WHERE table_definition.table_type = 'BASE TABLE' \
+       AND column_definition.table_schema = 'public' \
        AND column_definition.table_name LIKE 'factory_%' \
        AND column_definition.data_type = 'jsonb' \
        AND NOT EXISTS (\
@@ -727,7 +756,8 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
            AND table_constraint.contype = 'c' \
            AND pg_get_constraintdef(table_constraint.oid) LIKE '%' || column_definition.column_name || '%' \
            AND pg_get_constraintdef(table_constraint.oid) LIKE '%jsonb_typeof%' \
-           AND pg_get_constraintdef(table_constraint.oid) LIKE '%octet_length%'\
+           AND (pg_get_constraintdef(table_constraint.oid) LIKE '%octet_length%' \
+             OR pg_get_constraintdef(table_constraint.oid) LIKE '%pg_column_size%')\
        )",
   )
   .fetch_one(pool)
