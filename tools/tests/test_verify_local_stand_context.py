@@ -138,6 +138,9 @@ import { factoryAuthoringSchemas } from './ui/scripts/factory-authoring-schemas.
 console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
   FactoryConfigurationDefinition: {type: 'object'},
   FactoryFlowDefinitionDraft: {type: 'object'},
+  AdmitManualFactoryWorkRequest: {type: 'object'},
+  FactoryNodeOperationRequest: {type: 'object'},
+  FactoryNodeResponseRequest: {type: 'object'},
 }}})));
 """],
                 cwd=root, capture_output=True, text=True, timeout=15,
@@ -146,6 +149,9 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
             self.assertEqual(json.loads(result.stdout), {
                 "FactoryConfigurationDefinition": {"type": "object"},
                 "FactoryFlowDefinitionDraft": {"type": "object"},
+                "AdmitManualFactoryWorkRequest": {"type": "object"},
+                "FactoryNodeOperationRequest": {"type": "object"},
+                "FactoryNodeResponseRequest": {"type": "object"},
             })
 
     def test_console_proxy_contract_is_included_in_the_build_context(self):
