@@ -7,6 +7,8 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import shutil
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -88,6 +90,19 @@ class LocalStandContextTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(VERIFY.docker_path_included(path, rules))
 
+    def test_repository_verification_rejects_a_missing_factory_generator_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
+            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                if relative == "ui/scripts/factory-authoring-schemas.mjs":
+                    continue
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPOSITORY / relative, destination)
+            with self.assertRaisesRegex(VERIFY.ContextError, "factory-authoring-schemas"):
+                VERIFY.validate_repository(root)
+
     def test_ui_api_contract_is_generated_inside_the_builder(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
         for path in (
@@ -103,6 +118,35 @@ class LocalStandContextTests(unittest.TestCase):
         self.assertFalse(
             VERIFY.docker_path_included("ui/.generated/api/constraints.ts", rules)
         )
+
+    def test_factory_schema_generator_loads_from_the_filtered_docker_context(self):
+        node = shutil.which("node")
+        if node is None:
+            self.skipTest("Node is required for the UI generator smoke test")
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for source in (REPOSITORY / "ui/scripts").rglob("*.mjs"):
+                relative = source.relative_to(REPOSITORY)
+                if VERIFY.docker_path_included(relative.as_posix(), rules):
+                    destination = root / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(source, destination)
+            result = subprocess.run(
+                [node, "--input-type=module", "--eval", """
+import { factoryAuthoringSchemas } from './ui/scripts/factory-authoring-schemas.mjs';
+console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
+  FactoryConfigurationDefinition: {type: 'object'},
+  FactoryFlowDefinitionDraft: {type: 'object'},
+}}})));
+"""],
+                cwd=root, capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(result.stdout), {
+                "FactoryConfigurationDefinition": {"type": "object"},
+                "FactoryFlowDefinitionDraft": {"type": "object"},
+            })
 
     def test_console_proxy_contract_is_included_in_the_build_context(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
