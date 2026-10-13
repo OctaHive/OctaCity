@@ -22,6 +22,16 @@ import {
 afterEach(cleanup);
 
 describe('Project Builds', () => {
+  it('allows delayed authoritative reads without a one-second harness deadline', async () => {
+    const api = fakeProjectsApi();
+    api.getProject.mockImplementation(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 1_200));
+      return { ancestors: [], project: project('delivery', 'Delayed project') };
+    });
+    renderProjects('/projects/delivery', api);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Delayed project' })).toBeTruthy();
+  });
+
   it('shows an ordinary Factory Build without inventing a Trigger cause', async () => {
     const api = fakeProjectsApi();
     api.getProject.mockResolvedValue({ ancestors: [], project: project('delivery', 'Delivery') });

@@ -80,6 +80,8 @@ pub(crate) async fn verify_confirmed_node_retry<
   let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
   let handlers = FactoryControlHandlers::new(store.clone());
   let grant = ManagementAuthorizationGrant::new(ManagementVisibility::all());
+  let eligible = FactoryNodeAttemptProjection::from_snapshot(original, &stopped);
+  assert_eq!(serde_json::to_value(eligible).unwrap()["retryable"], true);
   let command = RetryFactoryNodeCommand {
     run_id: stopped.run.id(),
     node_attempt_id: original.id(),
@@ -93,6 +95,8 @@ pub(crate) async fn verify_confirmed_node_retry<
     .unwrap();
   assert_eq!(accepted.disposition, MutationDisposition::Applied);
   let requested = store.factory_run_snapshot(stopped.run.id()).await.unwrap();
+  let requested_projection = FactoryNodeAttemptProjection::from_snapshot(&requested.flow.attempts[0], &requested);
+  assert_eq!(serde_json::to_value(requested_projection).unwrap()["retryable"], false);
   let successor = FactoryRunClaimRecord::new(
     stopped.run.id(),
     claim.owner.clone(),
@@ -281,6 +285,15 @@ pub(crate) async fn verify_failed_node_owner<S: FactoryRunStore + 'static>(
       .unwrap(),
     FactoryNodeStep::Advanced
   );
+  let running = store.factory_run_snapshot(run.id()).await.unwrap();
+  assert_eq!(
+    serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
+      &running.flow.attempts[0],
+      &running
+    ))
+    .unwrap()["active"],
+    true
+  );
   assert_eq!(
     runner
       .run_once(run.id(), claim.id, target.clone(), None, at(12))
@@ -289,6 +302,14 @@ pub(crate) async fn verify_failed_node_owner<S: FactoryRunStore + 'static>(
     FactoryNodeStep::ExecutionStopped
   );
   let stopped = store.factory_run_snapshot(run.id()).await.unwrap();
+  assert_eq!(
+    serde_json::to_value(FactoryNodeAttemptProjection::from_snapshot(
+      &stopped.flow.attempts[0],
+      &stopped
+    ))
+    .unwrap()["active"],
+    false
+  );
   assert_eq!(stopped.flow.data.stops.len(), 1);
   assert_eq!(stopped.flow.data.stops[0].reason(), FlowNodeStopReason::ExecutionFailed);
   assert_eq!(stopped.flow.data.build_executions[0].build_id(), ids.0);

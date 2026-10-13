@@ -1,0 +1,65 @@
+import { usePresentation } from '../../app/presentation/PresentationProvider';
+import type { FactoryRun } from './api';
+import styles from './Factory.module.css';
+
+const metrics = [
+  ['attempts', 'max_attempts', 'factory.budgetAttempts'],
+  ['tokens', 'max_tokens', 'factory.budgetTokens'],
+  ['cost_micro_units', 'max_cost_micro_units', 'factory.budgetCost'],
+  ['elapsed_millis', 'max_elapsed_millis', 'factory.budgetTime'],
+  ['output_bytes', 'max_output_bytes', 'factory.budgetOutput'],
+] as const;
+
+/** Summarises recorded facts without reconstructing decisions or execution policy in the browser. */
+export function FactoryRunSummary({ run }: { run: FactoryRun }) {
+  const { t } = usePresentation();
+  const { diagnostics } = run;
+  return (
+    <section className={styles.panel} aria-label={t('factory.runOverview')}>
+      <h2>{t('factory.runOverview')}</h2>
+      <p className={styles.supportingText}>{t('factory.authoritativeRun')}</p>
+      <dl className={styles.runFacts}>
+        <div>
+          <dt>{t('factory.state')}</dt>
+          <dd>
+            {run.state} · v{run.version}
+          </dd>
+        </div>
+        <div>
+          <dt>{t('factory.currentActiveAttempts')}</dt>
+          <dd>{diagnostics.active_node_count}</dd>
+        </div>
+        <div>
+          <dt>{t('factory.baseRevision')}</dt>
+          <dd className={styles.identity}>{diagnostics.base_revision}</dd>
+        </div>
+        <div>
+          <dt>{t('factory.candidate')}</dt>
+          <dd className={styles.identity}>
+            {diagnostics.candidate?.candidate_revision ?? t('factory.noCandidate')}
+          </dd>
+        </div>
+        <div>
+          <dt>{t('factory.decision')}</dt>
+          <dd>{diagnostics.latest_decision?.outcome ?? t('factory.noDecision')}</dd>
+        </div>
+        <div>
+          <dt>{t('factory.delivery')}</dt>
+          <dd>{diagnostics.delivery?.state ?? t('factory.noDelivery')}</dd>
+        </div>
+      </dl>
+      <h3>{t('factory.diag.budgets')}</h3>
+      <p className={styles.supportingText}>{t('factory.budgetUsageLimit')}</p>
+      <dl className={styles.budgetMetrics}>
+        {metrics.map(([used, limit, label]) => (
+          <div key={used}>
+            <dt>{t(label)}</dt>
+            <dd>
+              {diagnostics.budget.usage[used]} <span>/ {diagnostics.budget.limit[limit]}</span>
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
+  );
+}

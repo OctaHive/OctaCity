@@ -304,7 +304,8 @@ pub use factory_configuration_choices::{
   FactoryChoiceIdentity, FactoryChoiceMetadata, FactoryChoiceReferenceProjection,
   FactoryConfigurationChoicePageProjection, FactoryConfigurationChoiceProjection, FactoryConfigurationDocumentBounds,
   ListFactoryConfigurationChoicesQuery, factory_configuration_choice_kinds, factory_configuration_document_bounds,
-  factory_flow_node_kinds, factory_permission_categories, factory_signal_purposes,
+  factory_flow_node_kinds, factory_permission_categories, factory_signal_fallbacks, factory_signal_modes,
+  factory_signal_purposes,
 };
 pub use factory_configuration_cqrs::{
   CreateFactoryConfigurationCommand, FactoryConfigurationCommandOutcome, FactoryConfigurationHandlers,

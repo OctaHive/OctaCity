@@ -58,7 +58,8 @@ pub fn factory_node_journal_contract_fixture_with_large_signal() -> FactoryNodeJ
       "id":"00000000-0000-0000-0000-000000000003", "request_id":"00000000-0000-0000-0000-000000000004",
       "receipt_digest":digest(9), "input_digest":digest(9), "frozen_input_digest":digest(9),
       "question_set":reference, "probability_semantics":reference, "provider":reference,
-      "adapter":reference, "model":reference, "policy":reference, "state":"completed",
+      "adapter":reference, "model":reference, "policy":reference, "purpose":"routing", "mode":"bounded_control", "fallback":"escalate",
+      "answers":vec![serde_json::json!({"question":reference,"value":{"FiniteChoice":{"selected":"r".repeat(MAX_FACTORY_KEY_BYTES),"selected_probability":1_000_000,"runner_up_probability":0}}});octacity_server_factory::MAX_DECISION_SIGNAL_QUESTIONS], "state":"completed",
       "consumption":{"baseline":route,"recommendation":route,"final_disposition":route,"kind":"BoundedControl"}
     }))
     .unwrap(),

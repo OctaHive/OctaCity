@@ -6,6 +6,115 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+it('addresses guarded Run and node commands with exact targets, replay identities and strong preconditions', async () => {
+  const requests: Request[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: Request) => {
+      requests.push(request);
+      return Response.json({
+        run_id: 'run',
+        version: 8,
+        state: 'waiting',
+        disposition: 'applied',
+        cancellation_requested: false,
+      });
+    }),
+  );
+  const { factoryApi } = await import('./api');
+  const headers = { 'Idempotency-Key': 'intent', 'If-Match': '"7"' };
+  await factoryApi.cancelRun('run', headers);
+  await factoryApi.retryNode('run', 'attempt', headers);
+  await factoryApi.respondNode(
+    'run',
+    'attempt',
+    { outcome: 'operator_selected', value: { observed: true } },
+    headers,
+  );
+  await factoryApi.requestNodeOperation(
+    'run',
+    'attempt',
+    { operation: 'promotion', disposition: 'confirm', reason: 'operator reason' },
+    headers,
+  );
+  expect(
+    requests.map((request) => [
+      new URL(request.url).pathname,
+      request.method,
+      request.headers.get('If-Match'),
+      request.headers.get('Idempotency-Key'),
+    ]),
+  ).toEqual([
+    ['/api/v1/factory-runs/run/cancellations', 'POST', '"7"', 'intent'],
+    ['/api/v1/factory-runs/run/nodes/attempt/retries', 'POST', '"7"', 'intent'],
+    ['/api/v1/factory-runs/run/nodes/attempt/responses', 'POST', '"7"', 'intent'],
+    ['/api/v1/factory-runs/run/nodes/attempt/requests', 'POST', '"7"', 'intent'],
+  ]);
+  expect(await requests[1]!.json()).toEqual({});
+  expect(await requests[2]!.json()).toEqual({
+    outcome: 'operator_selected',
+    value: { observed: true },
+  });
+  expect(await requests[3]!.json()).toEqual({
+    operation: 'promotion',
+    disposition: 'confirm',
+    reason: 'operator reason',
+  });
+});
+
+it('pages exact Run diagnostic collections without fetching provider payloads or transfer URLs', async () => {
+  const requests: Request[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: Request) => {
+      requests.push(request);
+      return Response.json({ items: [], next_cursor: null });
+    }),
+  );
+  const { factoryApi } = await import('./api');
+  await factoryApi.listDiagnostics('exact-run', 'decision-signals', 'exclusive-cursor');
+  const url = new URL(requests[0]!.url);
+  expect(url.pathname).toBe('/api/v1/factory-runs/exact-run/decision-signals');
+  expect([...url.searchParams.entries()]).toEqual([
+    ['limit', '25'],
+    ['after', 'exclusive-cursor'],
+  ]);
+  expect(requests[0]!.method).toBe('GET');
+});
+
+it('admits manual Work with the exact selected artifact references and one replay identity', async () => {
+  const requests: Request[] = [];
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(async (request: Request) => {
+      requests.push(request);
+      return Response.json({ factory_run_id: 'returned-run', disposition: 'applied' });
+    }),
+  );
+  const { factoryApi } = await import('./api');
+  const body = {
+    configuration_id: 'configuration',
+    configuration_version: 3,
+    repository_id: 'repository',
+    repository_version: 4,
+    external_identity: 'operator work',
+    source: { kind: 'default_reference' as const },
+    artifacts: {
+      task: { artifact_id: 'task', content_digest: 'a'.repeat(64), encoded_size: 20 },
+      acceptance: { artifact_id: 'acceptance', content_digest: 'b'.repeat(64), encoded_size: 12 },
+      specifications: [],
+    },
+    classification: { priority: 1, risk: 'low' as const, metadata: {} },
+  };
+  expect(
+    await factoryApi.admitWork('owning-project', body, { 'Idempotency-Key': 'intent' }),
+  ).toEqual({ factory_run_id: 'returned-run', disposition: 'applied' });
+  expect(new URL(requests[0]!.url).pathname).toBe('/api/v1/projects/owning-project/factory-work');
+  expect(requests[0]!.method).toBe('POST');
+  expect(requests[0]!.headers.get('Idempotency-Key')).toBe('intent');
+  expect(await requests[0]!.json()).toEqual(body);
+});
+
 it('sends bounded Factory filters and exclusive continuation through the typed REST client', async () => {
   const requests: Request[] = [];
   const fetch = vi.fn(async (request: Request) => {

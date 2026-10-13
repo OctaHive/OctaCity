@@ -38,6 +38,7 @@ interface PagedBranchProps<T extends { id: string }> {
 
 interface CursorPageOptions {
   enabled?: boolean;
+  initialCursor?: string | null;
   refetchStaleOnMount?: boolean;
 }
 
@@ -94,7 +95,7 @@ export function PagedExplorerBranch<T extends { id: string }>({
 export function useCursorPage<T, TQueryKey extends QueryKey>(
   queryKey: TQueryKey,
   read: (cursor: string | null, signal: AbortSignal) => Promise<CursorPage<T>>,
-  { enabled = true, refetchStaleOnMount = true }: CursorPageOptions = {},
+  { enabled = true, refetchStaleOnMount = true, initialCursor = null }: CursorPageOptions = {},
 ) {
   return useInfiniteQuery<
     CursorPage<T>,
@@ -105,7 +106,7 @@ export function useCursorPage<T, TQueryKey extends QueryKey>(
   >({
     enabled,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
-    initialPageParam: null,
+    initialPageParam: initialCursor,
     queryFn: ({ pageParam, signal }) => read(pageParam, signal),
     queryKey,
     refetchOnMount: refetchStaleOnMount ? true : (query) => query.state.isInvalidated,

@@ -323,6 +323,12 @@ pub struct FactoryNodeAttemptProjection {
   pub deadline: octacity_server_domain::Timestamp,
   /// Exact failed execution that an eligible retry replaces.
   pub retry_of: Option<octacity_server_factory::NodeAttemptId>,
+  /// Current eligibility, present only in NodeAttempts reads backed by a snapshot.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub retryable: Option<bool>,
+  /// Current activity, absent from immutable Call identities rather than guessed.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub active: Option<bool>,
 }
 impl From<&octacity_server_factory::NodeAttempt> for FactoryNodeAttemptProjection {
   fn from(node: &octacity_server_factory::NodeAttempt) -> Self {
@@ -339,9 +345,37 @@ impl From<&octacity_server_factory::NodeAttempt> for FactoryNodeAttemptProjectio
       started_at: node.started_at(),
       deadline: node.deadline(),
       retry_of: node.retry_of(),
+      retryable: None,
+      active: None,
     }
   }
 }
+impl FactoryNodeAttemptProjection {
+  /// Projects immutable facts and derives retry eligibility through the common control validator.
+  pub fn from_snapshot(
+    node: &octacity_server_factory::NodeAttempt,
+    snapshot: &octacity_server_store::FactoryRunSnapshot,
+  ) -> Self {
+    let mut projection = Self::from(node);
+    let history = snapshot.flow.runtime();
+    projection.active = Some(
+      !snapshot.run.state().is_terminal()
+        && history.is_current_cycle(node.workflow_cycle_id())
+        && history.active_nodes().any(|attempt| attempt.id() == node.id()),
+    );
+    projection.retryable = Some(
+      snapshot
+        .budgets
+        .iter()
+        .find(|budget| budget.id == snapshot.current.budget_id)
+        .is_some_and(|budget| {
+          octacity_server_store::validate_factory_node_retry(snapshot, node.id(), budget.recorded_at).is_ok()
+        }),
+    );
+    projection
+  }
+}
+
 /// Safe immutable request correlation, excluding raw actor identifiers and prose.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -464,11 +498,25 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
       .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?;
     self.visible_run_summary(context, query.run_id(), visibility).await?;
     let page = self.store.list_factory_run_diagnostics(query.page.clone()).await?;
-    let items = page
+    let mut items: Vec<FactoryDiagnosticRecord> = page
       .items
       .into_iter()
       .map(FactoryDiagnosticRecord::try_from)
       .collect::<Result<_, _>>()?;
+    if query.collection() == FactoryDiagnosticCollection::NodeAttempts {
+      let snapshot = self.store.factory_run_snapshot(query.run_id()).await?;
+      for item in &mut items {
+        if let FactoryDiagnosticRecord::NodeAttempt(projection) = item {
+          let node = snapshot
+            .flow
+            .attempts
+            .iter()
+            .find(|node| node.id() == projection.id)
+            .ok_or(ApplicationError::Store(octacity_server_store::StoreError::Unavailable))?;
+          *projection = FactoryNodeAttemptProjection::from_snapshot(node, &snapshot);
+        }
+      }
+    }
     Ok(FactoryDiagnosticPage {
       items,
       next_cursor: page
@@ -591,6 +639,12 @@ mod tests {
       let call = serde_json::to_value(call).unwrap();
       assert_eq!(call["kind"], "call");
       assert_eq!(call["record"]["node"]["id"], fixture.attempt.id().to_string());
+      for current_state in ["active", "retryable"] {
+        assert!(
+          call["record"]["node"].get(current_state).is_none(),
+          "Calls publish immutable node identity, not invented {current_state}"
+        );
+      }
       assert_eq!(
         call["record"]["profile"]["context_digest"],
         fixture.input.context().unwrap().digest().unwrap().to_string()

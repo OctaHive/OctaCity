@@ -13,6 +13,7 @@ export type DraftIssue = {
 };
 type Draft = components['schemas']['FactoryFlowDefinitionDraft'];
 type Contract = {
+  readonly description?: string;
   readonly $ref?: string;
   readonly type?: string | readonly string[];
   readonly const?: unknown;

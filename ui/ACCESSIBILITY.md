@@ -31,7 +31,7 @@ enable the operating system's reduced-motion preference for one pass. Do not use
 
 1. Load `/projects`, press `Tab`, and verify the skip link is visibly focused and moves focus to the
    primary content.
-2. Continue through global search, readiness, theme, notifications, operator menu, and the four
+2. Continue through global search, readiness, theme, notifications, operator menu, and the five
    large section controls. Verify every focus indicator remains visible and follows visual order.
 3. Press `Control+K` or `Command+K`; verify focus enters Search query, cycles within the command
    center, and returns to the invoking control after `Escape`.
@@ -64,6 +64,22 @@ enable the operating system's reduced-motion preference for one pass. Do not use
    Confirm that online/offline, drain, and idle states remain understandable without color.
 3. Open drain and pool-reassignment confirmations, cancel them, and verify focus returns to the
    invoking controls. Navigate directly to the Agent Pool detail route and back to the hierarchy.
+
+### Factory: `/factory` and `/factory/:factoryRunId`
+
+1. Open a visible Project workbench, activate Admit Work and select named immutable input Artifacts.
+   Review with the keyboard, abandon with Escape, and verify focus returns to Review Work admission.
+   Verify leaving or reloading discards unfinished input; disable browser traces, videos and screenshots
+   for scenarios that enter private content.
+2. Open a Run. Read the overview and budget usage/limits independently of commands and journal records.
+   Select a journal collection and inspect an exact record; copy its diagnostic link and reopen it.
+3. Expand the pinned configuration, select a Graph node and Connection type, and compare labeled
+   transitions with the route table, including repeat bounds and exhaustion terminals. The execution
+   hierarchy graph and table must expose the same loaded parent/child relationships.
+4. Open an eligible command, traverse the confirmation, abandon it, and verify focus restoration.
+   After a stale conflict, refresh explicitly and review the new version before confirming again.
+5. Repeat at 640 pixels in Russian and both themes with reduced motion. Simulate a Factory provider
+   failure and verify that scoped error correlation and ordinary Builds navigation remain usable.
 
 ### Audit: `/audit`
 

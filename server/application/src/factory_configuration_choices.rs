@@ -22,6 +22,20 @@ pub fn factory_signal_purposes() -> impl Iterator<Item = &'static str> {
     .map(|purpose| purpose.as_str())
 }
 
+/// Closed rollout modes published by installed Decision Signal capabilities.
+pub fn factory_signal_modes() -> impl Iterator<Item = &'static str> {
+  octacity_server_factory::DecisionSignalMode::VALUES
+    .iter()
+    .map(|mode| mode.as_str())
+}
+
+/// Closed fail-closed fallbacks published by installed Decision Signal capabilities.
+pub fn factory_signal_fallbacks() -> impl Iterator<Item = &'static str> {
+  octacity_server_factory::DecisionSignalFallback::VALUES
+    .iter()
+    .map(|fallback| fallback.as_str())
+}
+
 /// Closed enforcement categories published by installed capabilities.
 pub fn factory_permission_categories() -> impl Iterator<Item = &'static str> {
   octacity_server_factory::PermissionCategory::ALL
@@ -32,6 +46,10 @@ pub fn factory_permission_categories() -> impl Iterator<Item = &'static str> {
 /// Domain-owned cardinality and budget bounds used by management schemas.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FactoryConfigurationDocumentBounds {
+  /// Maximum typed questions and answers retained by one Decision Signal.
+  pub signal_questions: usize,
+  /// Fixed-point denominator for probability and confidence values.
+  pub signal_probability_scale: u32,
   /// Maximum aliases or compatibility relationships in one technical category.
   pub choice_entries: usize,
   /// Maximum safe Work metadata entries.
@@ -104,6 +122,8 @@ pub struct FactoryConfigurationDocumentBounds {
 pub const fn factory_configuration_document_bounds() -> FactoryConfigurationDocumentBounds {
   use octacity_server_factory as factory;
   FactoryConfigurationDocumentBounds {
+    signal_questions: factory::MAX_DECISION_SIGNAL_QUESTIONS,
+    signal_probability_scale: factory::DECISION_SIGNAL_PROBABILITY_SCALE,
     choice_entries: factory::MAX_CONFIGURATION_CHOICES_PER_KIND,
     work_metadata_entries: factory::MAX_FACTORY_METADATA_ENTRIES,
     work_metadata_key_bytes: factory::MAX_FACTORY_METADATA_KEY_BYTES,

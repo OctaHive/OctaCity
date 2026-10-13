@@ -222,7 +222,7 @@ test('keeps the ordinary entry bounded while admitting the measured optional Fac
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
   await write(root, 'dist/assets/index.js', 'x'.repeat(420_000));
-  await write(root, 'dist/assets/activities.js', 'x'.repeat(342_000));
+  await write(root, 'dist/assets/activities.js', 'x'.repeat(410_000));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(76_000));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
@@ -230,6 +230,24 @@ test('keeps the ordinary entry bounded while admitting the measured optional Fac
   assert.ok(
     (await verifyArchitecture(root, { distDirectory: 'dist' })).some((message) =>
       message.includes('entry JavaScript'),
+    ),
+  );
+});
+
+test('retains a tight asset count for the complete console with Factory diagnostics and commands', async (context) => {
+  const policy = JSON.parse(
+    await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
+  );
+  const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
+  await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
+  await write(root, 'dist/assets/index.js', 'x');
+  for (let index = 0; index < 40; index += 1)
+    await write(root, `dist/assets/part-${index}.js`, 'x');
+  assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
+  await write(root, 'dist/assets/extra.js', 'x');
+  assert.ok(
+    (await verifyArchitecture(root, { distDirectory: 'dist' })).some((message) =>
+      message.includes('asset count'),
     ),
   );
 });

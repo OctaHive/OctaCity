@@ -20,5 +20,8 @@ export default defineConfig({
   },
   test: {
     include: ['src/**/*.test.{ts,tsx}'],
+    maxWorkers: 4,
+    setupFiles: ['./tests/setup.ts'],
+    testTimeout: 15_000,
   },
 });

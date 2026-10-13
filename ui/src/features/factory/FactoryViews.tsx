@@ -1,15 +1,27 @@
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
+import type { FactoryWorkSources } from './FactoryWorkForm';
 import { FactoryDefinitions } from './FactoryDefinitions';
+import { FactoryRunDiagnostics } from './FactoryRunDiagnostics';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
-import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateNotice';
+import {
+  QueryBackgroundNotice,
+  QueryFailureNotice,
+  QueryLoadingNotice,
+} from '../../shared/QueryStateNotice';
 import type { FactoryApi } from './api';
 import { factorySearch, readFactoryFilters, readFactoryProjectId } from './filters';
 import styles from './Factory.module.css';
 
-export function FactoryLandingView({ api }: { api: FactoryApi }) {
+export function FactoryLandingView({
+  api,
+  workSources,
+}: {
+  api: FactoryApi;
+  workSources?: FactoryWorkSources | undefined;
+}) {
   const { t } = usePresentation();
   const [params] = useSearchParams();
   const filters = readFactoryFilters(params);
@@ -21,7 +33,14 @@ export function FactoryLandingView({ api }: { api: FactoryApi }) {
     <section className={styles.workspace}>
       <h1>{t('section.factory')}</h1>
       <p>{t('factory.introduction')}</p>
-      {projectId ? <FactoryDefinitions key={projectId} api={api} projectId={projectId} /> : null}
+      {projectId ? (
+        <FactoryDefinitions
+          key={projectId}
+          api={api}
+          workSources={workSources}
+          projectId={projectId}
+        />
+      ) : null}
       <PagedExplorerBranch
         query={query}
         empty={t('factory.noRuns')}
@@ -75,17 +94,29 @@ export function FactoryRunView({ api }: { api: FactoryApi }) {
   );
   return (
     <section className={styles.workspace}>
-      <h1>{t('factory.run')}</h1>
-      <button
-        type="button"
-        aria-pressed={favorite}
-        onClick={() => toggleFavorite({ kind: 'factory_run', id: query.data.id })}
-      >
-        {t(favorite ? 'factory.removeFavorite' : 'factory.addFavorite')}
-      </button>
-      <Link to={`/factory?${ownerParams.toString()}`}>{t('factory.openProject')}</Link>
-      <h2>{query.data.external_identity}</h2>
-      <p>{query.data.state}</p>
+      <header className={styles.runHeader}>
+        <div>
+          <h1>{t('factory.run')}</h1>
+          <h2>{query.data.external_identity}</h2>
+        </div>
+        <div className={styles.runToolbar}>
+          <button
+            type="button"
+            aria-pressed={favorite}
+            onClick={() => toggleFavorite({ kind: 'factory_run', id: query.data.id })}
+          >
+            {t(favorite ? 'factory.removeFavorite' : 'factory.addFavorite')}
+          </button>
+          <Link to={`/factory?${ownerParams.toString()}`}>{t('factory.openProject')}</Link>
+        </div>
+      </header>
+      <QueryBackgroundNotice
+        label={t('factory.run')}
+        error={query.error}
+        fetching={query.isFetching}
+        onRetry={query.refetch}
+      />
+      <FactoryRunDiagnostics key={query.data.id} api={api} run={query.data} />
     </section>
   );
 }

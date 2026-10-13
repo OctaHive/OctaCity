@@ -12,6 +12,7 @@ export default defineConfig({
   },
   forbidOnly: process.env.CI === 'true',
   fullyParallel: true,
+  workers: 2,
   reporter: 'list',
   testDir: './tests/browser',
   use: {

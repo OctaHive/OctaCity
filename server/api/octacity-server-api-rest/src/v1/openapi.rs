@@ -210,7 +210,7 @@ fn mutation_response(resource_schema: &str) -> Value {
   )
 }
 
-fn object<const N: usize>(properties: [(&str, Value); N], required: &[&str]) -> Value {
+fn object<'a>(properties: impl IntoIterator<Item = (&'a str, Value)>, required: &[&str]) -> Value {
   let properties = Map::from_iter(properties.into_iter().map(|(name, schema)| (name.to_owned(), schema)));
   json!({
     "type": "object",

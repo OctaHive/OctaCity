@@ -15,6 +15,25 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 #[test]
+fn signal_diagnostics_publish_bounded_typed_answers_without_provider_input() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let signal = document["components"]["schemas"]["FactoryDomainFacts"]["oneOf"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|schema| schema["properties"]["kind"]["const"] == "decision_signal")
+    .unwrap();
+  assert_eq!(signal["properties"]["purpose"]["enum"], json!(["routing", "tool_risk"]));
+  assert_eq!(signal["properties"]["answers"]["maxItems"], 32);
+  assert_eq!(
+    signal["properties"]["answers"]["items"]["$ref"],
+    "#/components/schemas/FactorySignalAnswer"
+  );
+  assert!(signal["properties"].get("request").is_none());
+  assert!(signal["properties"].get("provider_payload").is_none());
+}
+
+#[test]
 fn factory_authoring_contract_exposes_schema_and_mapping_nesting_limits() {
   let document = octacity_server_api_rest::v1::openapi_document();
   let schemas = &document["components"]["schemas"];

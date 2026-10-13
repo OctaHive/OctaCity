@@ -174,3 +174,145 @@
   stroke: var(--color-brand-action);
   stroke-width: 3;
 }
+
+.workspace dd {
+  margin-inline-start: var(--space-md);
+  overflow-wrap: anywhere;
+}
+.workspace dt,
+.workspace p,
+.workspace th,
+.workspace td,
+.workspace button {
+  overflow-wrap: anywhere;
+}
+.workspace button {
+  max-width: 100%;
+}
+.workspace table {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+.workspace th,
+.workspace td {
+  text-align: start;
+  vertical-align: top;
+  padding: var(--space-sm);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.graphControls {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-md);
+  margin-bottom: var(--space-md);
+}
+.graphOverview rect.edgeLabel {
+  fill: var(--color-surface);
+  stroke: none;
+}
+.graphOverview text.graphSecondary {
+  fill: var(--color-text-muted);
+  font-size: 13px;
+}
+.diagnosticDetails {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  padding: var(--space-md);
+}
+.diagnosticDetails summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.diagnosticDetails > section {
+  margin-top: var(--space-lg);
+}
+
+.runHeader,
+.runToolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-md);
+}
+.runHeader h2 {
+  margin-top: var(--space-sm);
+  color: var(--color-text-muted);
+  font-size: 1rem;
+  font-weight: 500;
+}
+.runSections {
+  display: grid;
+  gap: var(--space-lg);
+}
+.panel {
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+}
+.panel > h2 {
+  font-size: 1.1rem;
+  margin-bottom: var(--space-sm);
+}
+.panel > h3 {
+  font-size: 0.95rem;
+  margin-top: var(--space-lg);
+  margin-bottom: var(--space-sm);
+}
+.supportingText {
+  color: var(--color-text-muted);
+  font-size: 0.85rem;
+  line-height: 1.5;
+  margin-bottom: var(--space-md);
+}
+.runFacts,
+.budgetMetrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-lg);
+  margin: var(--space-lg) 0;
+}
+.runFacts dt,
+.budgetMetrics dt {
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  margin-bottom: var(--space-xs);
+}
+.runFacts dd,
+.budgetMetrics dd {
+  margin: 0;
+  font-weight: 600;
+}
+.budgetMetrics {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
+}
+.budgetMetrics dd span {
+  color: var(--color-text-muted);
+  font-weight: 400;
+}
+.identity {
+  font-size: 0.9rem;
+}
+.recordCard {
+  padding: var(--space-md) 0;
+  border-bottom: 1px solid var(--color-border);
+}
+.recordCard dl > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 2fr);
+  padding: var(--space-xs) 0;
+  gap: var(--space-sm);
+}
+.recordCard dt {
+  color: var(--color-text-muted);
+}
+.recordCard dd {
+  margin: 0;
+}
+.recordCard dl > div:has(> dd > dl),
+.recordCard dl > div:has(> dd > ul) {
+  display: block;
+}

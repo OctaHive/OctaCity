@@ -1,6 +1,10 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { FactoryConfigurationDetails, FactoryRun } from '../../src/features/factory/api';
+import type {
+  FactoryConfigurationDetails,
+  FactoryRun,
+  FactoryDiagnostic,
+} from '../../src/features/factory/api';
 
 /** Uses the canonical management fixture verified by the server's OpenAPI tests. */
 export function configurationFixture(): FactoryConfigurationDetails {
@@ -56,4 +60,56 @@ export function runFixture(): FactoryRun {
       },
     },
   };
+}
+
+/** Published metadata only; logical keys and references come from the canonical pinned closure. */
+export function diagnosticFixture(collection: string): FactoryDiagnostic[] {
+  const run = runFixture();
+  const root = configurationFixture().configuration.flow.closure.definitions[0]!;
+  if (collection === 'flow-runs')
+    return [
+      {
+        kind: 'flow_run',
+        record: { id: 'flow-a', factory_run_id: run.id, definition: root.reference, parent: null },
+      },
+    ];
+  if (collection === 'node-attempts')
+    return [
+      {
+        kind: 'node_attempt',
+        record: {
+          id: 'node-a',
+          factory_run_id: run.id,
+          flow_run_id: 'flow-a',
+          cycle_id: 'cycle-a',
+          node_key: root.nodes[0]!.key,
+          node_kind: root.nodes[0]!.kind,
+          number: 1,
+          input_digest: 'a'.repeat(64),
+          execution: { kind: 'built_in' },
+          started_at: 1,
+          deadline: 100,
+          retry_of: null,
+          retryable: false,
+          active: true,
+        },
+      },
+    ];
+  if (collection === 'audit')
+    return [
+      {
+        kind: 'audit',
+        record: {
+          id: 'b'.repeat(64),
+          run_id: run.id,
+          actor_kind: 'authenticated_management',
+          actor_identity_digest: 'c'.repeat(64),
+          operation: 'factory.cancel',
+          request_identity_digest: 'd'.repeat(64),
+          outcome: 'accepted',
+          recorded_at: 2,
+        },
+      },
+    ];
+  return [];
 }

@@ -115,6 +115,18 @@ enum DiscoveryFact {
     adapter: Box<ImmutableReference>,
     model: Box<ImmutableReference>,
     policy: Box<ImmutableReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    purpose: Option<DecisionSignalPurpose>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mode: Option<DecisionSignalMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    fallback: Option<DecisionSignalFallback>,
+    #[serde(
+      default,
+      skip_serializing_if = "Vec::is_empty",
+      deserialize_with = "bounded_list::<_, _, 0, MAX_DECISION_SIGNAL_QUESTIONS>"
+    )]
+    answers: Vec<DecisionSignalAnswer>,
     state: DecisionSignalState,
     consumption: DecisionSignalConsumption,
   },
@@ -272,6 +284,12 @@ impl FlowDiscoveryFacts {
       adapter: Box::new(receipt.adapter().clone()),
       model: Box::new(receipt.model().clone()),
       policy: Box::new(receipt.policy().clone()),
+      purpose: Some(receipt.request().request().purpose()),
+      mode: Some(receipt.mode()),
+      fallback: Some(receipt.fallback()),
+      answers: receipt
+        .result()
+        .map_or_else(Vec::new, |result| result.answers().to_vec()),
       state: receipt.state(),
       consumption: receipt.consumption().clone(),
     })

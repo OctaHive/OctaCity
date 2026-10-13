@@ -1,6 +1,7 @@
 import { factoryResourceId } from './filters';
 import { useState } from 'react';
 import { FactoryAuthoring } from './FactoryAuthoring';
+import { FactoryWorkForm, type FactoryWorkSources } from './FactoryWorkForm';
 import { useQuery } from '@tanstack/react-query';
 import { useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
@@ -15,10 +16,18 @@ import { useFactoryChoices } from './useFactoryChoices';
 import styles from './Factory.module.css';
 
 /** Published identities are selected from visible bounded pages; edits use separate drafts. */
-export function FactoryDefinitions({ api, projectId }: { api: FactoryApi; projectId: string }) {
+export function FactoryDefinitions({
+  api,
+  projectId,
+  workSources,
+}: {
+  api: FactoryApi;
+  projectId: string;
+  workSources?: FactoryWorkSources | undefined;
+}) {
   const { t } = usePresentation();
   const [authoring, setAuthoring] = useState<{
-    kind: 'flow' | 'configuration';
+    kind: 'flow' | 'configuration' | 'work';
     id: string | null;
     version: number | null;
   } | null>(null);
@@ -113,7 +122,21 @@ export function FactoryDefinitions({ api, projectId }: { api: FactoryApi; projec
       >
         {t('factory.createFlow')}
       </button>
-      {authoring?.id === null ? (
+      <button
+        type="button"
+        disabled={!canAuthor || authoring !== null || workSources === undefined}
+        onClick={() => setAuthoring({ kind: 'work', id: null, version: null })}
+      >
+        {t('factory.admitWork')}
+      </button>
+      {authoring?.kind === 'work' && workSources ? (
+        <FactoryWorkForm
+          api={api}
+          sources={workSources}
+          projectId={projectId}
+          onDiscard={() => setAuthoring(null)}
+        />
+      ) : authoring?.kind !== 'work' && authoring?.id === null ? (
         <FactoryAuthoring
           key={authoring.kind}
           api={api}

@@ -287,7 +287,7 @@ pub use factory_retention_port::FactoryRetentionStore;
 pub use factory_run_control::{
   ApplyFactoryRunControl, FactoryRunControlChange, FactoryRunControlIntent, FactoryRunControlOutcome,
   FactoryRunControlRecord, prepare_factory_run_control, validate_factory_node_control_history,
-  validate_factory_node_response,
+  validate_factory_node_response, validate_factory_node_retry,
 };
 pub use factory_run_control_port::FactoryRunControlStore;
 pub use factory_run_model::{

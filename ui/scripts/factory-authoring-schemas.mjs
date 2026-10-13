@@ -1,7 +1,13 @@
-/** Retains the authoritative bounds for the two editable Factory documents and their references. */
+/** Retains authoritative bounds for Factory documents, Work and operator commands. */
 export function factoryAuthoringSchemas(document) {
   const source = document.components?.schemas ?? {};
-  const pending = ['FactoryConfigurationDefinition', 'FactoryFlowDefinitionDraft'];
+  const pending = [
+    'FactoryConfigurationDefinition',
+    'FactoryFlowDefinitionDraft',
+    'AdmitManualFactoryWorkRequest',
+    'FactoryNodeOperationRequest',
+    'FactoryNodeResponseRequest',
+  ];
   const result = {};
   function references(value) {
     if (value === null || typeof value !== 'object') return;
@@ -18,8 +24,30 @@ export function factoryAuthoringSchemas(document) {
     if (Object.hasOwn(result, name)) continue;
     const schema = source[name];
     if (!schema) throw new Error(`Factory authoring schema ${name} is missing.`);
-    result[name] = schema;
+    result[name] = validationSchema(schema);
     references(schema);
   }
   return result;
+}
+
+/** Documentation is retained in OpenAPI; the browser needs only executable validation facts. */
+function validationSchema(schema) {
+  if (schema === null || typeof schema !== 'object') return schema;
+  return Object.fromEntries(
+    Object.entries(schema)
+      .filter(([key]) => key !== 'description')
+      .map(([key, value]) => {
+        if (key === 'properties')
+          return [
+            key,
+            Object.fromEntries(
+              Object.entries(value).map(([name, child]) => [name, validationSchema(child)]),
+            ),
+          ];
+        if (['oneOf', 'anyOf', 'allOf'].includes(key)) return [key, value.map(validationSchema)];
+        if (['items', 'additionalProperties', 'propertyNames'].includes(key))
+          return [key, validationSchema(value)];
+        return [key, value];
+      }),
+  );
 }

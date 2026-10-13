@@ -155,7 +155,18 @@ export function createConsoleRoutes(
       children: [
         {
           path: childPath(CONSOLE_PATHS.factory),
-          element: defer(<FactoryLandingView api={dependencies.factoryApi} />),
+          element: defer(
+            <FactoryLandingView
+              api={dependencies.factoryApi}
+              workSources={{
+                getProject: dependencies.projectsApi.getProject,
+                getRepository: dependencies.projectsApi.getRepository,
+                listRepositories: dependencies.projectsApi.listRepositories,
+                listBuilds: dependencies.projectsApi.listBuilds,
+                listBuildArtifacts: dependencies.buildApi.listBuildArtifacts,
+              }}
+            />,
+          ),
         },
         {
           path: childPath(CONSOLE_PATHS.factoryRun),

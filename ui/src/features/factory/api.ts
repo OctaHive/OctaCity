@@ -4,6 +4,9 @@ import type { VersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { managementApi, requireManagementResponse } from '../../api/client';
 
 export type FactoryRun = components['schemas']['FactoryRunSummaryResource'];
+export type FactoryDiagnosticCollection =
+  operations['listFactoryDiagnostics']['parameters']['path']['collection'];
+export type FactoryDiagnostic = components['schemas']['FactoryDiagnosticPage']['items'][number];
 export type FactoryConfiguration = components['schemas']['FactoryConfigurationSummaryResource'];
 export type FactoryConfigurationDetails = components['schemas']['FactoryConfigurationDetails'];
 export type FactoryFlowDetails = components['schemas']['FactoryFlowDefinitionDetails'];
@@ -12,6 +15,38 @@ export type FactoryFilters = Omit<
   'after' | 'limit'
 >;
 export interface FactoryApi {
+  cancelRun(
+    runId: string,
+    headers: VersionedMutationHeaders,
+  ): Promise<components['schemas']['FactoryRunControlResponse']>;
+  retryNode(
+    runId: string,
+    nodeId: string,
+    headers: VersionedMutationHeaders,
+  ): Promise<components['schemas']['FactoryRunControlResponse']>;
+  respondNode(
+    runId: string,
+    nodeId: string,
+    request: components['schemas']['FactoryNodeResponseRequest'],
+    headers: VersionedMutationHeaders,
+  ): Promise<components['schemas']['FactoryRunControlResponse']>;
+  requestNodeOperation(
+    runId: string,
+    nodeId: string,
+    request: components['schemas']['FactoryNodeOperationRequest'],
+    headers: VersionedMutationHeaders,
+  ): Promise<components['schemas']['FactoryRunControlResponse']>;
+  listDiagnostics(
+    runId: string,
+    collection: FactoryDiagnosticCollection,
+    cursor: string | null,
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryDiagnosticPage']>;
+  admitWork(
+    projectId: string,
+    request: components['schemas']['AdmitManualFactoryWorkRequest'],
+    headers: IdempotencyRequestHeaders,
+  ): Promise<components['schemas']['FactoryAdmissionResponse']>;
   validateConfiguration(
     request: components['schemas']['CreateFactoryConfigurationRequest'],
     signal?: AbortSignal,
@@ -82,6 +117,60 @@ export interface FactoryApi {
 
 /** Authorization-filtered, bounded same-origin Factory reads. */
 export const factoryApi: FactoryApi = {
+  async cancelRun(runId, headers) {
+    const { data } = await managementApi.POST(
+      '/api/v1/factory-runs/{factory_run_id}/cancellations',
+      { body: {}, params: { path: { factory_run_id: runId }, header: headers } },
+    );
+    return requireManagementResponse(data);
+  },
+  async retryNode(runId, nodeId, headers) {
+    const { data } = await managementApi.POST(
+      '/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/retries',
+      {
+        body: {},
+        params: { path: { factory_run_id: runId, node_attempt_id: nodeId }, header: headers },
+      },
+    );
+    return requireManagementResponse(data);
+  },
+  async respondNode(runId, nodeId, body, headers) {
+    const { data } = await managementApi.POST(
+      '/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/responses',
+      {
+        body,
+        params: { path: { factory_run_id: runId, node_attempt_id: nodeId }, header: headers },
+      },
+    );
+    return requireManagementResponse(data);
+  },
+  async requestNodeOperation(runId, nodeId, body, headers) {
+    const { data } = await managementApi.POST(
+      '/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/requests',
+      {
+        body,
+        params: { path: { factory_run_id: runId, node_attempt_id: nodeId }, header: headers },
+      },
+    );
+    return requireManagementResponse(data);
+  },
+  async listDiagnostics(runId, collection, cursor, signal) {
+    const { data } = await managementApi.GET('/api/v1/factory-runs/{factory_run_id}/{collection}', {
+      params: {
+        path: { factory_run_id: runId, collection },
+        query: { limit: 25, ...(cursor === null ? {} : { after: cursor }) },
+      },
+      signal: signal ?? null,
+    });
+    return requireManagementResponse(data);
+  },
+  async admitWork(projectId, body, headers) {
+    const { data } = await managementApi.POST('/api/v1/projects/{project_id}/factory-work', {
+      body,
+      params: { path: { project_id: projectId }, header: headers },
+    });
+    return requireManagementResponse(data);
+  },
   async validateConfiguration(body, signal) {
     const { data } = await managementApi.POST('/api/v1/factory-configurations/validate', {
       body,

@@ -277,8 +277,71 @@ reads and audit projection. Existing Runs keep their pinned definitions.
 
 The Factory authoring schemas load with the Factory views. The initial bundle
 retains its 450 KiB limit. The complete console, including the optional workbench,
-has a 768 KiB JavaScript and 896 KiB static-output limit; runtime dependencies and
-product-asset allowances are unchanged.
+has an 832 KiB JavaScript and 896 KiB static-output limit; runtime dependencies and
+product-asset allowances are unchanged. The complete 15.5–15.8 build measured
+about 803 KiB of JavaScript, including the safe Run journal, typed command editors
+and bilingual labels. The 832 KiB aggregate ceiling and 42-file cap bound that
+measured feature growth; the ordinary entry and static-output ceilings remain
+unchanged. Generated validation contracts omit documentation strings while the
+OpenAPI document retains them.
+
+### Manual Work and Run investigation
+
+Select a visible Project and **Admit Work**. Choose an enabled immutable Factory
+Configuration, a versioned Repository and its permitted source selection. Task,
+acceptance criteria and optional specifications are selected by name from the
+Artifacts of a visible input Build. Prepare those immutable inputs through the
+existing Build/Artifact workflow; the form sends their exact references and never
+fetches their bodies. Specification counts and Work classification use generated
+API bounds. Review shows the selected configuration identity, Repository version and exact revision
+or permitted reference from the frozen request. Review freezes the selected versions and inputs; confirmation opens
+the Run identity returned by the server. Discard, leaving the workbench or reloading
+removes unsubmitted values. Inputs and confirmation bodies remain in memory.
+
+A Run separates its recorded overview and budget consumption, available commands,
+execution journal, Flow hierarchy and pinned configuration. Exact identities and
+configuration details are disclosures. Choose a node in the pinned graph to see
+its outgoing transitions and bounded repeats. Context and data connections have
+separate views; the adjacent table preserves full outcomes, targets and bounds.
+This is configuration, not inferred execution history. The Flow hierarchy graph
+and table show relationships from loaded journal pages only. The tree groups loaded
+children under their parents and routes links outside neighboring cards. Missing
+parents on a bounded page are not reconstructed.
+
+Choose a journal collection and inspect a record to open its exact safe metadata.
+`diagnostic`, `diagnostic_id`, `diagnostic_after`, `flow_run_id`, `cycle_id` and `node_attempt_id` support
+copied diagnostic links. Missing rows on a bounded page do not prove missing work.
+Accepted completions, confirmed stops, active attempts and retry eligibility are
+identified from server facts. Signals expose typed answers, purpose, mode,
+fallback, exact provenance, deterministic baseline and final disposition. Their
+recommendations and probabilities never become Decisions or delivery success.
+Historical signal records retain their original representation; unavailable new
+metadata is not reconstructed. Calls show immutable node identities and frozen
+Task/Context provenance; current `active` and `retryable` flags belong to the
+snapshot-backed Node Attempts projection and are absent from Calls. Unavailable
+completion/stop details are labeled explicitly. Supporting diagnostic requests
+retain their own loading, stale, failure and retry presentations even when another
+journal collection is selected. Payloads, prompts, traces, findings,
+credentials and transfer URLs have no renderer.
+
+Cancellation, eligible retry, declared HumanGate responses and configured
+escalation/delivery/promotion requests share the confirmed-intent dialog. A
+HumanGate editor follows the exact pinned outcome schema; operator dispositions
+follow the pinned closed binding. Delivery and promotion require a recorded
+accepted candidate. Confirmation captures the Run version and exact node/cycle
+and candidate context. The server rechecks authority. Transport replay retains
+the same body, idempotency key and strong precondition. A stale version or state
+conflict offers explicit refresh and requires a new confirmation. No command
+claims a merge or manufactures a Decision. Accepted commands invalidate only the
+owning Run, diagnostics, relevant Run/pool collections and audit projection;
+the result links to the Run's audit journal.
+
+Factory errors retain scoped request correlation and loaded data with explicit
+stale notices. Ordinary CI/CD navigation remains available when Factory providers
+fail. Keyboard confirmations contain focus, Escape abandons before submission,
+and dismissal restores the invoking control. Read-only, secret-free fixtures
+supply theme/language/narrow visual snapshots. Browser scenarios that type
+unsubmitted content disable screenshots, videos and traces.
 
 ## Verification
 

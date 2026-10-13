@@ -1,4 +1,4 @@
-import { configurationFixture, runFixture } from '../fixtures/factory';
+import { configurationFixture, runFixture, diagnosticFixture } from '../fixtures/factory';
 import type { Page, Route } from '@playwright/test';
 
 export const FIXTURE_IDS = {
@@ -29,6 +29,104 @@ export async function installOperatorFixture(page: Page) {
     }
     if (url.pathname === `/api/v1/factory-runs/${FIXTURE_IDS.factoryRun}`) {
       await fulfill(route, run);
+      return;
+    }
+    if (url.pathname.startsWith(`/api/v1/factory-runs/${FIXTURE_IDS.factoryRun}/`)) {
+      const collection = url.pathname.split('/').at(-1)!;
+      if (route.request().method() === 'POST') {
+        await fulfill(route, {
+          run_id: run.id,
+          version: run.version + 1,
+          state: run.state,
+          cancellation_requested: true,
+          disposition: 'applied',
+        });
+      } else await fulfill(route, { items: diagnosticFixture(collection), next_cursor: null });
+      return;
+    }
+    const repositoryId = '66666666-6666-4666-8666-666666666666';
+    if (url.pathname === `/api/v1/projects/${owner}/repositories`) {
+      await fulfill(
+        route,
+        pageOf([
+          {
+            id: repositoryId,
+            name: 'Factory source',
+            project_id: owner,
+            version: 1,
+            published_at_unix_ms: 1,
+          },
+        ]),
+      );
+      return;
+    }
+    if (url.pathname === `/api/v1/repositories/${repositoryId}/versions/1`) {
+      await fulfill(route, {
+        id: repositoryId,
+        name: 'Factory source',
+        project_id: owner,
+        version: 1,
+        published_at_unix_ms: 1,
+        definition: {
+          repository_locator: 'fixture',
+          vcs_integration_id: 'visible-vcs',
+          selection: {
+            default_reference: 'main',
+            allowed_references: ['main'],
+            allow_exact_revision: false,
+          },
+        },
+      });
+      return;
+    }
+    if (url.pathname === `/api/v1/projects/${owner}/builds`) {
+      await fulfill(
+        route,
+        pageOf([
+          {
+            ...buildResource(),
+            id: '77777777-7777-4777-8777-777777777777',
+            project_id: owner,
+            cause: null,
+            current_attempt_id: FIXTURE_IDS.attempt,
+            current_attempt_number: 1,
+            current_attempt_state: 'succeeded',
+            terminal_at_unix_ms: 2,
+          },
+        ]),
+      );
+      return;
+    }
+    if (url.pathname === '/api/v1/builds/77777777-7777-4777-8777-777777777777/artifacts') {
+      await fulfill(route, {
+        items: ['Task input', 'Acceptance input', 'Specification input'].map((name, index) => ({
+          id: `88888888-8888-4888-8888-${String(index + 1).padStart(12, '0')}`,
+          name,
+          build_id: '77777777-7777-4777-8777-777777777777',
+          attempt_id: FIXTURE_IDS.attempt,
+          job_id: 'fixture-job',
+          media_type: 'text/plain',
+          output_type: { kind: 'artifact' },
+          published_at_unix_ms: 1,
+          sha256: 'a'.repeat(64),
+          size_bytes: 20,
+        })),
+      });
+      return;
+    }
+    if (url.pathname === `/api/v1/projects/${owner}/factory-work`) {
+      await fulfill(route, {
+        disposition: 'applied',
+        factory_run_id: run.id,
+        work_envelope_id: run.work_id,
+        base_revision: run.diagnostics.base_revision,
+        state: 'admitted',
+        admitted_at_unix_ms: 1,
+      });
+      return;
+    }
+    if (url.pathname === `/api/v1/projects/${owner}/factory-phase-ready`) {
+      await fulfill(route, { items: [], next_cursor: null });
       return;
     }
     if (url.pathname === `/api/v1/projects/${owner}`) {

@@ -112,7 +112,9 @@ export function ConfirmedCommand<Request, Result>({
     }
   };
   const retryable = intentRef.current?.state === 'retryable';
-  const staleVersion = error instanceof ManagementApiError && error.code === 'precondition_failed';
+  const staleVersion =
+    error instanceof ManagementApiError &&
+    (error.code === 'precondition_failed' || error.code === 'conflict');
 
   useEffect(() => {
     if (phase.kind === 'succeeded' || (phase.kind === 'error' && !retryable)) {

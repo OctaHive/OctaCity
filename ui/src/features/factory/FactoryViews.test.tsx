@@ -4,12 +4,46 @@ import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
-import { createConsoleQueryClient } from '../../app/query';
+import { createConsoleQueryClient, queryKeys } from '../../app/query';
 import { PresentationProvider } from '../../app/presentation/PresentationProvider';
 import { FactoryLandingView, FactoryRunView } from './FactoryViews';
 import { factoryApi } from './api';
+import { ManagementApiError } from '../../api/client';
 import { configurationFixture, runFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
+
+it('keeps Run cancellation usable when provider-scoped diagnostics are unavailable', async () => {
+  const run = runFixture();
+  const failure = new ManagementApiError({
+    code: 'unavailable',
+    message: 'safe provider unavailable',
+    requestId: 'diagnostic-request',
+    retryAfterMilliseconds: null,
+    status: 503,
+  });
+  const api = {
+    ...factoryApi,
+    getRun: vi.fn(async () => run),
+    getConfiguration: vi.fn(async () => {
+      throw failure;
+    }),
+    listDiagnostics: vi.fn(async () => {
+      throw failure;
+    }),
+  };
+  const router = createMemoryRouter(
+    [{ path: '/factory/:factoryRunId', element: <FactoryRunView api={api} /> }],
+    { initialEntries: [`/factory/${run.id}`] },
+  );
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Request cancellation' }));
+  expect(await screen.findByRole('dialog', { name: 'Confirm Run command?' })).toBeTruthy();
+  expect(screen.getAllByText('safe provider unavailable').length).toBeGreaterThan(0);
+});
 it('opens the selected Project workbench from a copied link and exposes visible configuration versions', async () => {
   const configuration = configurationFixture();
   const projectId = configuration.configuration.reference.project_id;
@@ -79,4 +113,35 @@ it('favorites an exact Run identity without persisting its task or displayed dia
   expect(ownerUrl.searchParams.get('state')).toBe('waiting');
   expect(ownerUrl.searchParams.get('source')).toBe('manual');
   expect(screen.getByRole('button', { name: 'Remove from Favorites' })).toBeTruthy();
+});
+
+it('retains a Run but marks it stale when its authoritative refresh fails', async () => {
+  const run = runFixture();
+  const failure = new ManagementApiError({
+    code: 'unavailable',
+    message: 'safe run refresh failure',
+    requestId: 'run-refresh',
+    retryAfterMilliseconds: null,
+    status: 503,
+  });
+  const api = {
+    ...factoryApi,
+    getRun: vi.fn().mockResolvedValueOnce(run).mockRejectedValue(failure),
+    getConfiguration: vi.fn(async () => configurationFixture()),
+    listDiagnostics: vi.fn(async () => ({ items: [], next_cursor: null })),
+  };
+  const client = createConsoleQueryClient();
+  const router = createMemoryRouter(
+    [{ path: '/factory/:factoryRunId', element: <FactoryRunView api={api} /> }],
+    { initialEntries: [`/factory/${run.id}`] },
+  );
+  render(
+    <QueryClientProvider client={client}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  await screen.findByRole('heading', { name: run.external_identity });
+  await client.invalidateQueries({ queryKey: queryKeys.factoryRun(run.id) });
+  expect(await screen.findByText('safe run refresh failure')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: run.external_identity })).toBeTruthy();
 });

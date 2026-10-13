@@ -1392,7 +1392,7 @@ impl ManagementQueryUseCase<octacity_server_application::ListFactoryDiagnosticsQ
             "id":"44444444-4444-4444-8444-444444444444","factory_run_id":"22222222-2222-4222-8222-222222222222",
             "flow_run_id":"22222222-2222-4222-8222-222222222222","cycle_id":"22222222-2222-4222-8222-222222222222",
             "node_key":"arbitrary","node_kind":"human_gate","number":1,"input_digest":"ab".repeat(32),
-            "execution":{"kind":"built_in"},"started_at":1,"deadline":10000,"retry_of":null
+            "execution":{"kind":"built_in"},"started_at":1,"deadline":10000,"retry_of":null,"retryable":false,"active":true
           }}))
           .unwrap(),
         ],
@@ -1524,7 +1524,7 @@ fn factory_domain_fact_fixture(
       serde_json::json!({"kind":"promotion","subject":candidate,"plan_digest":"ab".repeat(32),"input_digest":"ac".repeat(32),"environment_contract":reference,"deployment":reference,"outcome":"passed","started_at":1,"finished_at":100})
     }
     DecisionSignals => {
-      serde_json::json!({"kind":"decision_signal","subject":exact,"id":id,"request_id":id,"receipt_digest":"ab".repeat(32),"input_digest":"ac".repeat(32),"frozen_input_digest":"ad".repeat(32),"question_set":reference,"probability_semantics":reference,"provider":reference,"adapter":reference,"model":reference,"policy":reference,"state":"completed",
+      serde_json::json!({"kind":"decision_signal","subject":exact,"id":id,"request_id":id,"receipt_digest":"ab".repeat(32),"input_digest":"ac".repeat(32),"frozen_input_digest":"ad".repeat(32),"question_set":reference,"probability_semantics":reference,"provider":reference,"adapter":reference,"model":reference,"policy":reference,"purpose":"routing","mode":"advisory","fallback":"escalate","answers":[{"question":reference,"value":{"FiniteChoice":{"selected":"fast","selected_probability":900000,"runner_up_probability":100000}}}],"state":"completed",
       "consumption":{"baseline":{"Route":"baseline"},"recommendation":{"Route":"fast"},"final_disposition":{"Route":"baseline"},"kind":"Advisory"}})
     }
     _ => return None,

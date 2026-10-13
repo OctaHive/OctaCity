@@ -1,9 +1,37 @@
 import { expect, test, type Page } from '@playwright/test';
 
+import { configurationFixture } from '../fixtures/factory';
 import { installOperatorFixture } from './operatorFixture';
 import { primaryRoute } from './primaryRoutes';
 
 const visualCases = [
+  {
+    ...primaryRoute('factory-run'),
+    name: 'factory-run-graph-desktop-light.png',
+    theme: 'light',
+    openPinnedClosure: true,
+    viewport: { height: 900, width: 1_440 },
+  },
+  {
+    ...primaryRoute('factory'),
+    path: `/factory?project_id=${configurationFixture().configuration.reference.project_id}`,
+    name: 'factory-desktop-light.png',
+    theme: 'light',
+    viewport: { height: 900, width: 1_440 },
+  },
+  {
+    ...primaryRoute('factory-run'),
+    name: 'factory-run-desktop-dark.png',
+    theme: 'dark',
+    viewport: { height: 900, width: 1_440 },
+  },
+  {
+    ...primaryRoute('factory-run'),
+    language: 'ru',
+    name: 'factory-run-narrow-russian-light.png',
+    theme: 'light',
+    viewport: { height: 900, width: 640 },
+  },
   {
     ...primaryRoute('projects'),
     illustrationLabel: 'Project workspace illustration',
@@ -124,6 +152,10 @@ for (const visual of visualCases) {
       await expect(explorer).toBeVisible();
       await expect(explorer.getByText(visual.retainedText, { exact: false }).first()).toBeVisible();
     }
+    if ('openPinnedClosure' in visual) {
+      await page.locator('summary').filter({ hasText: 'Pinned definition closure' }).click();
+      await expect(page.getByRole('img', { name: 'Flow graph', exact: true })).toBeVisible();
+    }
     if ('language' in visual) await selectRussian(page);
     await expect(page.locator('body')).toHaveCSS('font-family', /ui-sans-serif/u);
 
@@ -134,6 +166,8 @@ for (const visual of visualCases) {
         .getByRole('status')
         .filter({ hasText: /^(Loading |Refreshing |Загрузка: |Обновление: )/u }),
     ).toHaveCount(0);
+    await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' }));
+    await expect.poll(() => page.evaluate(() => window.scrollY)).toBe(0);
     await expect(page).toHaveScreenshot(visual.name, { fullPage: true });
   });
 }

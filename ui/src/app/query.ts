@@ -1,6 +1,18 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factoryDiagnosticRoot: (runId: string) => ['factory', 'diagnostics', runId] as const,
+  factoryPoolRoot: (projectId: string) => ['factory', 'pool', projectId] as const,
+  factoryDiagnostics: (runId: string, collection: string, initialCursor: string | null = null) =>
+    [
+      'factory',
+      'diagnostics',
+      runId,
+      collection,
+      ...(initialCursor === null ? [] : [initialCursor]),
+    ] as const,
+  factoryWorkSources: (projectId: string, kind: 'repositories' | 'builds') =>
+    ['factory', 'work-sources', projectId, kind] as const,
   factoryCurrent: (kind: string, id: string) => ['factory', 'current', kind, id] as const,
   factoryFlowVersions: (id: string) => ['factory', 'flow', id] as const,
   factoryConfigurationVersions: (id: string) => ['factory', 'configuration', id] as const,

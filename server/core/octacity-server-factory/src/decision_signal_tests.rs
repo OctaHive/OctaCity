@@ -795,6 +795,28 @@ fn rollout_modes_never_give_shadow_or_advisory_authority() {
     .expect("signal is consumed");
     let projection = serde_json::to_value(crate::FlowDiscoveryFacts::decision_signal(&receipt)).unwrap();
     assert_eq!(projection["kind"], "decision_signal");
+    assert_eq!(projection["purpose"], "routing");
+    assert_eq!(projection["mode"], mode.as_str());
+    assert_eq!(projection["fallback"], "escalate");
+    assert_eq!(projection["answers"][0]["value"]["FiniteChoice"]["selected"], "fast");
+    assert_eq!(
+      projection["answers"][0]["value"]["FiniteChoice"]["selected_probability"],
+      900_000
+    );
+    let mut legacy = projection.clone();
+    for added in ["purpose", "mode", "fallback", "answers"] {
+      legacy.as_object_mut().unwrap().remove(added);
+    }
+    let restored: crate::FlowDiscoveryFacts =
+      serde_json::from_value(legacy.clone()).expect("historical signal facts remain readable");
+    assert_eq!(
+      serde_json::to_value(restored).unwrap(),
+      legacy,
+      "restoration must not invent historical signal metadata"
+    );
+    let mut oversized = projection.clone();
+    oversized["answers"] = serde_json::json!(vec![projection["answers"][0].clone(); 33]);
+    assert!(serde_json::from_value::<crate::FlowDiscoveryFacts>(oversized).is_err());
     assert_eq!(projection["id"], receipt.id().to_string());
     assert_eq!(projection["request_id"], request.id().to_string());
     assert_eq!(
@@ -823,7 +845,7 @@ fn rollout_modes_never_give_shadow_or_advisory_authority() {
       projection["consumption"],
       serde_json::to_value(receipt.consumption()).unwrap()
     );
-    for private in ["state_document", "request", "result", "answers", "reasoning"] {
+    for private in ["state_document", "request", "result", "reasoning"] {
       assert!(projection.get(private).is_none(), "{private}");
     }
     assert_eq!(receipt.consumption().kind(), expected_kind);

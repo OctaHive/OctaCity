@@ -2,6 +2,30 @@
 use super::*;
 
 pub(super) fn insert(schemas: &mut Map<String, Value>) {
+  let bounds = octacity_server_application::factory_configuration_document_bounds();
+  schemas.insert(
+    "FactorySignalAnswer".to_owned(),
+    object(
+      [
+        ("question", schema_ref("FactoryImmutableReferenceResource")),
+        (
+          "value",
+          json!({"oneOf":[
+            object([("FiniteChoice", object([
+              ("selected", non_empty_string()),
+              ("selected_probability", bounded_integer(0, u64::from(bounds.signal_probability_scale))),
+              ("runner_up_probability", bounded_integer(0, u64::from(bounds.signal_probability_scale)))
+            ], &["selected","selected_probability","runner_up_probability"]))], &["FiniteChoice"]),
+            object([("BoundedScore", object([
+              ("score", json!({"type":"integer","minimum":i32::MIN,"maximum":i32::MAX})),
+              ("confidence", bounded_integer(0, u64::from(bounds.signal_probability_scale)))
+            ], &["score","confidence"]))], &["BoundedScore"])
+          ]}),
+        ),
+      ],
+      &["question", "value"],
+    ),
+  );
   schemas.insert(
     "FactoryWorkDiagnostic".to_owned(),
     object(
@@ -73,14 +97,55 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["id", "node_attempt_id", "reason", "usage", "execution", "observed_at"],
     ),
   );
-  schemas.insert("FactoryNodeAttemptDiagnostic".to_owned(), object([
-              ("id",non_empty_string()), ("factory_run_id",non_empty_string()), ("flow_run_id",non_empty_string()),
-              ("cycle_id",non_empty_string()), ("node_key",key()), ("node_kind",schema_ref("FactoryFlowNodeKind")),
-              ("number",positive_integer()), ("input_digest",non_empty_string()),
-              ("execution",json!({"oneOf":[tagged("kind","built_in", [], &[]),
-                tagged("kind","external",[("identity",schema_ref("FactoryImmutableReferenceResource"))], &["identity"])]})),
-              ("started_at",integer()), ("deadline",integer()), ("retry_of",nullable(non_empty_string())),
-            ], &["id","factory_run_id","flow_run_id","cycle_id","node_key","node_kind","number","input_digest","execution","started_at","deadline","retry_of"]));
+  let node_fields = [
+    ("id", non_empty_string()),
+    ("factory_run_id", non_empty_string()),
+    ("flow_run_id", non_empty_string()),
+    ("cycle_id", non_empty_string()),
+    ("node_key", key()),
+    ("node_kind", schema_ref("FactoryFlowNodeKind")),
+    ("number", positive_integer()),
+    ("input_digest", non_empty_string()),
+    (
+      "execution",
+      json!({"oneOf":[tagged("kind","built_in", [], &[]),
+      tagged("kind","external",[("identity",schema_ref("FactoryImmutableReferenceResource"))], &["identity"])]}),
+    ),
+    ("started_at", integer()),
+    ("deadline", integer()),
+    ("retry_of", nullable(non_empty_string())),
+  ];
+  let node_required = [
+    "id",
+    "factory_run_id",
+    "flow_run_id",
+    "cycle_id",
+    "node_key",
+    "node_kind",
+    "number",
+    "input_digest",
+    "execution",
+    "started_at",
+    "deadline",
+    "retry_of",
+  ];
+  schemas.insert(
+    "FactoryNodeIdentityDiagnostic".to_owned(),
+    object(node_fields.clone(), &node_required),
+  );
+  schemas.insert(
+    "FactoryNodeAttemptDiagnostic".to_owned(),
+    object(
+      node_fields.into_iter().chain([
+        ("retryable", json!({"type":"boolean"})),
+        ("active", json!({"type":"boolean"})),
+      ]),
+      &node_required
+        .into_iter()
+        .chain(["retryable", "active"])
+        .collect::<Vec<_>>(),
+    ),
+  );
   schemas.insert(
     "FactoryDomainDiagnostic".to_owned(),
     object(
@@ -108,7 +173,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "FactoryCallDiagnostic".to_owned(),
     object(
       [
-        ("node", schema_ref("FactoryNodeAttemptDiagnostic")),
+        ("node", schema_ref("FactoryNodeIdentityDiagnostic")),
         (
           "profile",
           nullable(object(
@@ -202,6 +267,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     tagged("kind","decision_signal",[("subject",exact()),("id",id()),("request_id",id()),("receipt_digest",digest()),("input_digest",digest()),
       ("provider",reference()),("adapter",reference()),("model",reference()),("policy",reference()),
       ("frozen_input_digest",digest()),("question_set",reference()),("probability_semantics",reference()),
+      ("purpose",json!({"type":"string","enum":octacity_server_application::factory_signal_purposes().collect::<Vec<_>>()})),
+      ("mode",json!({"type":"string","enum":octacity_server_application::factory_signal_modes().collect::<Vec<_>>()})),
+      ("fallback",json!({"type":"string","enum":octacity_server_application::factory_signal_fallbacks().collect::<Vec<_>>()})),
+      ("answers",bounded_array(schema_ref("FactorySignalAnswer"),bounds.signal_questions)),
       ("state",json!({"type":"string","enum":["completed","timed_out","invalid","unavailable","cancelled"]})),
       ("consumption",consumption)], &["subject","id","request_id","receipt_digest","input_digest","provider","adapter","model","policy","frozen_input_digest","question_set","probability_semantics","state","consumption"]),
   ]}));
