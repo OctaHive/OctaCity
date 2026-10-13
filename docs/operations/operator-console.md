@@ -217,6 +217,14 @@ choices per window. Named phase-ready queues use the policy identities returned
 by the configuration detail endpoint. An empty configuration collection describes
 Factory as optional and keeps ordinary CI/CD available.
 
+Draft actions become available after the Project's configuration-choice request
+succeeds, including an available catalog with no visible choices. A
+`capability_unavailable` response disables creation and editing, explains that
+Factory authoring is unavailable on this server, and retains access to published
+definitions. Retry rechecks availability. The default server binary and local
+stand keep Factory disabled; enabling it requires the explicit runtime
+installation described in the [server architecture](../architecture/server.md#optional-factory-runtime-installation).
+
 Create a draft or edit an existing publication. The workbench owns one draft at a
 time and discards it when selecting another resource or leaving the page. Drafts,
 validation previews and confirmed intents never enter browser persistence or

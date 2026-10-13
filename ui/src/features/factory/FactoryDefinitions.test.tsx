@@ -8,9 +8,57 @@ import { createConsoleQueryClient } from '../../app/query';
 import { FactoryDefinitions } from './FactoryDefinitions';
 import type { FactoryApi } from './api';
 import { factoryApi } from './api';
+import { ManagementApiError } from '../../api/client';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 
 afterEach(cleanup);
+
+it('blocks draft creation when the server has no Factory capabilities while keeping published Flows readable', async () => {
+  const configuration = configurationFixture().configuration;
+  const projectId = configuration.reference.project_id;
+  const flow = { flow: configuration.flow, project_id: projectId, published_at_unix_ms: 1 };
+  const api: FactoryApi = {
+    ...factoryApi,
+    listConfigurations: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listFlows: vi.fn(async () => ({ items: [flow], total: 1, next_cursor: null })),
+    getFlow: vi.fn(async () => flow),
+    listChoices: vi.fn(async () => {
+      throw new ManagementApiError({
+        code: 'capability_unavailable',
+        message: 'the selected adapter does not support this operation',
+        status: 422,
+        requestId: 'factory-disabled-request',
+        retryAfterMilliseconds: null,
+      });
+    }),
+  };
+  const router = createMemoryRouter([
+    { path: '*', element: <FactoryDefinitions api={api} projectId={projectId} /> },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  expect(
+    await screen.findByText(
+      'Factory authoring is unavailable on this server. Ordinary CI/CD remains available.',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Create configuration draft' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  expect(screen.getByRole('button', { name: 'Create Flow draft' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Create configuration draft' }));
+  expect(screen.queryByRole('button', { name: 'Discard draft' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Inspect Flow Definition · v1' }));
+  expect(await screen.findByRole('heading', { name: 'Immutable Flow Definition' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Edit Flow draft' })).toHaveProperty('disabled', true);
+});
 
 it('discovers visible configurations and Flows, then reads exact immutable versions without typing identifiers', async () => {
   const configuration = configurationFixture();

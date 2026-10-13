@@ -10,6 +10,8 @@ import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateN
 import { SelectMenu } from '../../shared/SelectMenu';
 import type { FactoryApi, FactoryConfiguration, FactoryFlowDetails } from './api';
 import { FactoryPools } from './FactoryPools';
+import { ManagementApiError } from '../../api/client';
+import { useFactoryChoices } from './useFactoryChoices';
 import styles from './Factory.module.css';
 
 /** Published identities are selected from visible bounded pages; edits use separate drafts. */
@@ -21,6 +23,8 @@ export function FactoryDefinitions({ api, projectId }: { api: FactoryApi; projec
     version: number | null;
   } | null>(null);
   const [params, setParams] = useSearchParams();
+  const choices = useFactoryChoices(api, projectId);
+  const canAuthor = choices.data !== undefined && choices.error === null;
   const configurations = useCursorPage(
     queryKeys.factoryConfigurations(projectId),
     (cursor, signal) => api.listConfigurations(projectId, cursor, signal),
@@ -82,16 +86,29 @@ export function FactoryDefinitions({ api, projectId }: { api: FactoryApi; projec
   };
   return (
     <section className={styles.definitions}>
+      {choices.isPending ? <QueryLoadingNotice label={t('factory.choices')} /> : null}
+      {choices.error !== null ? (
+        <QueryFailureNotice
+          title={
+            choices.error instanceof ManagementApiError &&
+            choices.error.code === 'capability_unavailable'
+              ? t('factory.authoringUnavailable')
+              : t('factory.choices')
+          }
+          error={choices.error}
+          onRetry={choices.refetch}
+        />
+      ) : null}
       <button
         type="button"
-        disabled={authoring !== null}
+        disabled={!canAuthor || authoring !== null}
         onClick={() => setAuthoring({ kind: 'configuration', id: null, version: null })}
       >
         {t('factory.createConfiguration')}
       </button>
       <button
         type="button"
-        disabled={authoring !== null}
+        disabled={!canAuthor || authoring !== null}
         onClick={() => setAuthoring({ kind: 'flow', id: null, version: null })}
       >
         {t('factory.createFlow')}
@@ -134,6 +151,7 @@ export function FactoryDefinitions({ api, projectId }: { api: FactoryApi; projec
                     key={`${item.id}:${params.get('configuration_version')}`}
                     api={api}
                     summary={item}
+                    canAuthor={canAuthor}
                     editing={
                       authoring?.kind === 'configuration' &&
                       authoring.id === item.id &&
@@ -186,6 +204,7 @@ export function FactoryDefinitions({ api, projectId }: { api: FactoryApi; projec
                     key={`${item.id}:${params.get('flow_version')}`}
                     api={api}
                     summary={item}
+                    canAuthor={canAuthor}
                     editing={
                       authoring?.kind === 'flow' &&
                       authoring.id === item.id &&
@@ -227,6 +246,7 @@ function ConfigurationDetails({
   editing,
   onEdit,
   onDiscard,
+  canAuthor,
 }: {
   api: FactoryApi;
   summary: FactoryConfiguration;
@@ -235,6 +255,7 @@ function ConfigurationDetails({
   editing: boolean;
   onEdit: () => void;
   onDiscard: () => void;
+  canAuthor: boolean;
 }) {
   const { t } = usePresentation();
   const query = useQuery({
@@ -276,7 +297,7 @@ function ConfigurationDetails({
           onDiscard={onDiscard}
         />
       ) : (
-        <button type="button" onClick={onEdit}>
+        <button type="button" disabled={!canAuthor} onClick={onEdit}>
           {t('factory.editConfiguration')}
         </button>
       )}
@@ -293,6 +314,7 @@ function FlowDetails({
   editing,
   onEdit,
   onDiscard,
+  canAuthor,
 }: {
   api: FactoryApi;
   summary: FactoryFlowDetails;
@@ -301,6 +323,7 @@ function FlowDetails({
   editing: boolean;
   onEdit: () => void;
   onDiscard: () => void;
+  canAuthor: boolean;
 }) {
   const { t } = usePresentation();
   const query = useQuery({
@@ -328,7 +351,7 @@ function FlowDetails({
           onDiscard={onDiscard}
         />
       ) : (
-        <button type="button" onClick={onEdit}>
+        <button type="button" disabled={!canAuthor} onClick={onEdit}>
           {t('factory.editFlow')}
         </button>
       )}

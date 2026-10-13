@@ -24,6 +24,8 @@ export const ruMessages = {
 
   'factory.createConfiguration': 'Создать черновик конфигурации',
   'factory.createFlow': 'Создать черновик Flow',
+  'factory.authoringUnavailable':
+    'Создание и редактирование черновиков фабрики недоступно на этом сервере. Обычный CI/CD доступен.',
 
   'factory.invalidContract': 'Некорректный контракт',
   'factory.unavailableReference': 'Недоступная ссылка',

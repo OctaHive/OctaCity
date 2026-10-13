@@ -9,6 +9,7 @@ import type { FactoryApi, FactoryConfigurationDetails, FactoryFlowDetails } from
 import { ConfigurationEditor } from './ConfigurationEditor';
 import { SchemaEditor } from './SchemaEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
+import { useFactoryChoices } from './useFactoryChoices';
 
 type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
 /** Entire editor state is owned here and discarded when its immutable baseline or Project changes. */
@@ -54,13 +55,7 @@ export function FactoryAuthoring({
       });
     },
   );
-  const choices = useCursorPage(queryKeys.factoryChoices(projectId), async (cursor, signal) => {
-    const page = await api.listChoices(projectId, cursor, signal);
-    return {
-      ...page,
-      items: page.items.map((choice) => ({ ...choice, id: `${choice.kind}:${choice.alias}` })),
-    };
-  });
+  const choices = useFactoryChoices(api, projectId);
   const flows = useCursorPage(queryKeys.factoryFlows(projectId), async (cursor, signal) => {
     const page = await api.listFlows(projectId, cursor, signal);
     return {

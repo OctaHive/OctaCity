@@ -22,6 +22,8 @@ export const enMessages = {
 
   'factory.createConfiguration': 'Create configuration draft',
   'factory.createFlow': 'Create Flow draft',
+  'factory.authoringUnavailable':
+    'Factory authoring is unavailable on this server. Ordinary CI/CD remains available.',
 
   'factory.invalidContract': 'Invalid contract',
   'factory.unavailableReference': 'Unavailable reference',
