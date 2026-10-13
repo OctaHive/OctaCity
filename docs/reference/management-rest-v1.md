@@ -742,6 +742,7 @@ catalogue or mutable source state again.
 | Method | Path under `/api/v1` | Purpose |
 | --- | --- | --- |
 | GET | `/projects/{project_id}/factory-configuration-choices` | Bounded visible choices; optional `kind`, `after`, `limit` |
+| POST | `/flow-data-schemas/validate` | Normalize a Project-scoped bounded data schema without publication |
 | POST | `/flow-definitions/validate` | Validate a typed root and resolve exact published subflows |
 | POST | `/flow-definitions` | Publish version one of an immutable Flow root |
 | POST | `/flow-definitions/{id}/versions` | Publish the next Flow version with `If-Match` |
@@ -786,6 +787,20 @@ never credential values. Plugin/policy parameters are bounded extension data;
 objects resembling an immutable reference do not acquire authority from their
 field names. Their selected adapter validates the parameter contract before effects.
 
+`POST /flow-data-schemas/validate` accepts `project_id`, a logical `identity`,
+`version` and the closed `shape` grammar. It returns `FactoryFlowDataSchema`,
+including the content-derived reference. It uses Flow-authoring authorization,
+checks Project visibility, allocates no publication/version and writes no audit
+or lifecycle fact. Callers supply no digest.
+
+Flow validation preserves its normalized `closure`, `limits`, `data_schemas` and
+optional `pools`, and adds optional `diagnostics` in the
+`FactoryFlowDefinitionValidation` response. Diagnostics are computed by the
+application from the resolved graph; remove them when composing a
+`FactoryFlowConfiguration` input. Configuration details additionally expose
+optional `pool_policy_digests`, keyed by the declared pool name. These identities
+come from the server-owned policy; clients must not reconstruct policy hashes.
+
 Configuration validation returns `configuration` and `diagnostics`. Diagnostics
 contain `errors`, `unavailable_references` (field pointers only), required node and
 Agent capabilities, required backend enforcement categories, `effective_permissions`
@@ -800,10 +815,23 @@ is relative to that binding, so canonical sorting never changes the editor targe
 
 Choices may include deployment-declared `metadata`: supported `node_kinds`,
 `signal_purposes`, `enforcement` categories and typed `compatible_choices` aliases.
+Permission-ceiling choices can additionally declare a bounded
+`permission_declarations` set for guided selection of hosts, mounts, exact
+commands and output kinds. The set is omitted when any capability or credential
+reference is unavailable under the reader's choice visibility; a visible preset
+cannot disclose a hidden dependency. Selecting these declarations requests
+permissions and never grants execution authority.
 Every compatibility alias is filtered through the same Project visibility before
 publication. Missing metadata means compatibility is undeclared. These bounded
 hints never grant permissions or replace server-side exact contract validation;
 provider options, credentials and raw payloads are absent.
+
+Flow Definition details may include `native_gate_policies`: exact immutable
+references recognized by the server's built-in gate contract in that published
+closure. Native gates require no deployment alias. Clients must match the whole
+reference and must not infer native support from a policy or node name. The
+`FactoryFlowValueSchema` and `FactoryFlowValueMapping` schemas publish their
+core-owned nesting limits as `x-max-depth` for bounded generated editors.
 
 Run filters are `configuration_id`, `source`, `state`, `decision`, `delivery_state`,
 `admitted_from_unix_ms` (inclusive) and `admitted_before_unix_ms` (exclusive).

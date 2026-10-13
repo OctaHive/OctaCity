@@ -495,6 +495,19 @@ where
       return Err(ApplicationError::capability_unavailable());
     };
     let entries = choices.entries();
+    let visible_references = entries
+      .references
+      .iter()
+      .filter(|entry| {
+        visibility.allows(&FactoryChoiceIdentity {
+          project_id: query.project_id(),
+          kind: entry.kind,
+          alias: entry.alias.clone(),
+        })
+      })
+      .cloned()
+      .collect::<Vec<_>>();
+
     let mut items = entries
       .references
       .into_iter()
@@ -529,6 +542,12 @@ where
       .collect::<Vec<_>>();
     for item in &mut items {
       if let Some(metadata) = &mut item.metadata {
+        if metadata.permission_declarations.as_ref().is_some_and(|permissions| {
+          !crate::factory_configuration_choices::permissions_selectable(permissions, &visible_references)
+        }) {
+          metadata.permission_declarations = None;
+        }
+
         metadata.compatible_choices.retain(|choice| {
           (choice.kind != octacity_server_factory::FactoryChoiceKind::BuildConfiguration
             || choices

@@ -1,5 +1,6 @@
+import { URL } from 'node:url';
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -213,3 +214,22 @@ async function write(root, relativePath, contents) {
   await mkdir(path.dirname(target), { recursive: true });
   await writeFile(target, contents, 'utf8');
 }
+
+test('keeps the ordinary entry bounded while admitting the measured optional Factory workbench', async (context) => {
+  const policy = JSON.parse(
+    await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
+  );
+  const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
+  await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
+  await write(root, 'dist/assets/index.js', 'x'.repeat(420_000));
+  await write(root, 'dist/assets/activities.js', 'x'.repeat(342_000));
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(76_000));
+  assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
+  assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
+  await write(root, 'dist/assets/index.js', 'x'.repeat(470_000));
+  assert.ok(
+    (await verifyArchitecture(root, { distDirectory: 'dist' })).some((message) =>
+      message.includes('entry JavaScript'),
+    ),
+  );
+});

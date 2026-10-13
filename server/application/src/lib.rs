@@ -515,7 +515,7 @@ mod factory_job_test_support;
 mod factory_flow_definition;
 pub use factory_flow_definition::{
   FactoryFlowDefinitionDraft, FactoryFlowDefinitionHandlers, FactoryFlowDefinitionValidation, FactoryFlowRootDraft,
-  ValidateFactoryFlowDefinitionQuery,
+  ValidateFactoryFlowDataSchemaQuery, ValidateFactoryFlowDefinitionQuery, factory_native_gate_policies,
 };
 
 pub use factory_flow_definition::{

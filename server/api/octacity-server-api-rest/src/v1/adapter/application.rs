@@ -562,6 +562,12 @@ impl CacheManagementApplication {
 
 /// Authorization-decorated Factory management queries supplied by the composition root.
 pub struct FactoryManagementApplication {
+  pub(super) validate_schema: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::ValidateFactoryFlowDataSchemaQuery,
+        Error = ApplicationError,
+      >,
+  >,
   pub(super) confirm_node: Arc<
     dyn AuthorizedManagementCommandHandler<
         octacity_server_application::ConfirmFactoryNodeOperationCommand,
@@ -746,6 +752,9 @@ impl FactoryManagementApplication {
         octacity_server_application::ValidateFactoryFlowDefinitionQuery,
         Error = ApplicationError,
       > + AuthorizedManagementQueryHandler<
+        octacity_server_application::ValidateFactoryFlowDataSchemaQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<
         octacity_server_application::GetFactoryFlowDefinitionQuery,
         Error = ApplicationError,
       > + AuthorizedManagementQueryHandler<
@@ -767,6 +776,7 @@ impl FactoryManagementApplication {
       replace_flow: flow_commands,
       get_flow: flows.clone(),
       list_flows: flows.clone(),
+      validate_schema: flows.clone(),
       validate_flow: flows,
       validate_configuration: queries.clone(),
       replace_configuration: commands.clone(),

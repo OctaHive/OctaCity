@@ -101,7 +101,7 @@ use factory::{
   list_factory_diagnostics, list_factory_phase_ready, list_factory_runs, list_project_factory_configurations,
   list_project_factory_flow_definitions, list_project_factory_phase_ready, list_project_factory_runs,
   replace_factory_configuration, replace_factory_flow_definition, retry_factory_node, submit_factory_node_response,
-  validate_factory_configuration, validate_factory_flow_definition,
+  validate_factory_configuration, validate_factory_flow_data_schema, validate_factory_flow_definition,
 };
 
 pub(crate) use artifact::DEFAULT_ARTIFACT_LIMIT;

@@ -5,6 +5,7 @@ import { fetchReadiness, type ReadinessProbe } from '../api/readiness';
 import { resourceSearchApi, type ResourceSearchApi } from '../api/resourceSearch';
 import { operatorAttentionApi, type OperatorAttentionApi } from '../api/operatorAttention';
 import { auditApi, type AuditApi } from '../features/audit/api';
+import { factoryApi, type FactoryApi } from '../features/factory/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
@@ -21,6 +22,15 @@ const AuditView = lazy(async () => {
   const module = await import('../features/audit/AuditView');
   return { default: module.AuditView };
 });
+const FactoryExplorer = lazy(async () => ({
+  default: (await import('../features/factory/FactoryExplorer')).FactoryExplorer,
+}));
+const FactoryLandingView = lazy(async () => ({
+  default: (await import('../features/factory/FactoryViews')).FactoryLandingView,
+}));
+const FactoryRunView = lazy(async () => ({
+  default: (await import('../features/factory/FactoryViews')).FactoryRunView,
+}));
 const AuditFilterPanel = lazy(async () => {
   const module = await import('../features/audit/AuditView');
   return { default: module.AuditFilterPanel };
@@ -88,6 +98,7 @@ function WorkspaceLandingView({
 }
 
 export interface ConsoleRouteDependencies {
+  readonly factoryApi: FactoryApi;
   readonly attentionApi: OperatorAttentionApi;
   readonly auditApi: AuditApi;
   readonly buildApi: BuildDiagnosticsApi;
@@ -98,6 +109,7 @@ export interface ConsoleRouteDependencies {
 }
 
 const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
+  factoryApi,
   attentionApi: operatorAttentionApi,
   auditApi,
   buildApi: buildDiagnosticsApi,
@@ -126,6 +138,9 @@ export function createConsoleRoutes(
       element: (
         <AppShell
           explorerContent={{
+            factory: defer(
+              <FactoryExplorer api={dependencies.factoryApi} projects={dependencies.projectsApi} />,
+            ),
             audit: defer(<AuditFilterPanel />),
             builds: defer(<BuildExplorer api={buildExplorerApi} />),
             agents: defer(<CapacityExplorer api={dependencies.capacityApi} />),
@@ -138,6 +153,14 @@ export function createConsoleRoutes(
       ),
       errorElement: <RouteErrorBoundary />,
       children: [
+        {
+          path: childPath(CONSOLE_PATHS.factory),
+          element: defer(<FactoryLandingView api={dependencies.factoryApi} />),
+        },
+        {
+          path: childPath(CONSOLE_PATHS.factoryRun),
+          element: defer(<FactoryRunView api={dependencies.factoryApi} />),
+        },
         { index: true, element: <Navigate replace to={CONSOLE_PATHS.projects} /> },
         {
           path: childPath(CONSOLE_PATHS.projects),

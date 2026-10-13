@@ -16,6 +16,21 @@ pub struct FactoryNodeControlInput<'a> {
 }
 
 impl ManagementInputFactory {
+  /// Decodes a Project-owned schema shape while leaving its content identity to the core.
+  pub fn validate_factory_flow_data_schema(
+    &self,
+    project: &str,
+    identity: &str,
+    version: &str,
+    shape: Value,
+  ) -> Result<crate::ValidateFactoryFlowDataSchemaQuery, ManagementInputError> {
+    Ok(crate::ValidateFactoryFlowDataSchemaQuery {
+      project_id: parse(project, "project id")?,
+      identity: factory_decode(Value::String(identity.to_owned()))?,
+      version: factory_decode(Value::String(version.to_owned()))?,
+      shape: factory_decode(shape)?,
+    })
+  }
   /// Parses closed operator choices without accepting caller lifecycle data.
   pub fn confirm_factory_node_operation(
     &self,

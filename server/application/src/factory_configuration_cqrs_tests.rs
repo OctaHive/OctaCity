@@ -31,6 +31,44 @@ struct Fixture {
   draft: FactoryConfigurationDraft,
 }
 
+#[test]
+fn data_schema_normalization_returns_the_exact_content_identity_without_publishing_a_version() {
+  run_ready(async {
+    let project_id = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project_id).unwrap();
+    store.enable_project(project_id, fixture(project_id).choices).unwrap();
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let handlers = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryFlowDefinitionHandlers::new(store.clone(), policy)),
+    );
+    let schema = handlers
+      .handle_query(
+        &context(),
+        crate::ValidateFactoryFlowDataSchemaQuery {
+          project_id,
+          identity: key("operator.boolean"),
+          version: key("v1"),
+          shape: octacity_server_factory::FlowValueSchema::Boolean,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(schema.reference().identity().as_str(), "operator.boolean");
+    assert_eq!(schema.reference().version().as_str(), "v1");
+    assert_eq!(
+      schema.reference().digest().to_string(),
+      "843fd3f60f5da95afe13dac9521ccdc83dbda0c664d61917c1b2dd321b350fc3"
+    );
+    assert_eq!(
+      serde_json::to_value(&schema).unwrap()["shape"],
+      serde_json::json!({"type":"boolean"})
+    );
+    assert!(store.management_audit_facts().await.is_empty());
+  });
+}
+
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).expect("fixture key is valid")
 }
@@ -496,6 +534,7 @@ fn configuration_choices_apply_reference_visibility_before_filter_count_and_curs
         FactoryChoiceKind::CriterionPack,
         key("criteria"),
         octacity_server_factory::FactoryChoiceMetadata {
+          permission_declarations: None,
           node_kinds: vec![octacity_server_factory::FlowNodeKind::Reasoning],
           signal_purposes: vec![],
           enforcement: vec![],
@@ -592,6 +631,139 @@ fn configuration_choices_apply_reference_visibility_before_filter_count_and_curs
     assert!(crate::ListFactoryConfigurationChoicesQuery::try_new(project_id, None, None, 0).is_err());
     assert!(crate::ListFactoryConfigurationChoicesQuery::try_new(project_id, None, None, 201).is_err());
   });
+}
+
+#[test]
+fn permission_choice_declarations_are_visible_only_with_their_exact_dependencies() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let mut fixture = fixture(project);
+    let executable = fixture
+      .choices
+      .entries()
+      .references
+      .into_iter()
+      .find(|entry| entry.kind == FactoryChoiceKind::NodeCapability)
+      .unwrap()
+      .reference;
+    let mut permissions = serde_json::to_value(fixture.draft.flow.as_ref().unwrap().limits.permissions()).unwrap();
+    permissions["network_hosts"] = serde_json::json!(["api.allowed.example"]);
+    permissions["mounts"] = serde_json::json!([{"root":"/workspace","mode":"read_only"}]);
+    permissions["outputs"]["kinds"] = serde_json::json!(["report"]);
+    permissions["executables"] = serde_json::json!([executable]);
+    permissions["commands"] =
+      serde_json::json!([{"executable":executable,"arguments":[{"kind":"exact","value":"--verify"}]}]);
+    let metadata = serde_json::from_value(serde_json::json!({
+      "node_kinds":[], "signal_purposes":[], "enforcement":[], "compatible_choices":[],
+      "permission_declarations":permissions
+    }))
+    .expect("typed permission declarations are supported");
+    fixture.choices = fixture
+      .choices
+      .with_choice_metadata(FactoryChoiceKind::PermissionCeiling, key("permissions"), metadata)
+      .unwrap();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices).unwrap();
+    let handlers = FactoryConfigurationHandlers::new(store);
+    let all = query(
+      &handlers,
+      crate::ListFactoryConfigurationChoicesQuery::try_new(
+        project,
+        Some(FactoryChoiceKind::PermissionCeiling),
+        None,
+        25,
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+    let declaration = serde_json::to_value(all.items[0].metadata.as_ref().unwrap()).unwrap();
+    assert_eq!(
+      declaration["permission_declarations"]["network_hosts"],
+      serde_json::json!(["api.allowed.example"])
+    );
+    assert_eq!(
+      declaration["permission_declarations"]["commands"]
+        .as_array()
+        .unwrap()
+        .len(),
+      1
+    );
+    let restricted = ManagementAuthorizationGrant::new(
+      ManagementVisibility::restricted([ManagementResource::instance(
+        crate::ManagementResourceKind::FactoryChoice,
+        crate::ManagementResourceIdentity::new(format!("{project}:permission_ceiling:permissions")).unwrap(),
+      )
+      .unwrap()])
+      .unwrap(),
+    );
+    let hidden = handlers
+      .execute_management_query(
+        &context(),
+        &restricted,
+        crate::ListFactoryConfigurationChoicesQuery::try_new(
+          project,
+          Some(FactoryChoiceKind::PermissionCeiling),
+          None,
+          25,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    let declaration = serde_json::to_value(hidden.items[0].metadata.as_ref().unwrap()).unwrap();
+    assert!(declaration.get("permission_declarations").is_none());
+    assert!(!declaration.to_string().contains("contract.capability"));
+  });
+}
+
+#[test]
+fn published_flow_discovery_identifies_native_gate_policies_without_catalog_aliases() {
+  use octacity_server_factory::*;
+  let project = ProjectId::generate();
+  let flow = fixture(project).draft.flow.unwrap();
+  let original = flow.closure.definition(flow.closure.root()).unwrap();
+  let program = FlowGateProgram::new(vec![], key("succeeded"))
+    .unwrap()
+    .with_default_output_mapping(
+      FlowDataMapping::new(FlowValueMapping::Constant {
+        value: serde_json::json!(true),
+      })
+      .unwrap(),
+    )
+    .unwrap();
+  let binding = program.binding().unwrap();
+  let mut nodes = original.nodes().to_vec();
+  let mut node = serde_json::to_value(&nodes[0]).unwrap();
+  node["kind"] = serde_json::json!("deterministic_gate");
+  node["action"] = serde_json::Value::Null;
+  node["gate"] = serde_json::to_value(&binding).unwrap();
+  nodes[0] = serde_json::from_value(node).unwrap();
+  let root = FlowDefinition::new(FlowDefinitionInput {
+    id: original.reference().id(),
+    version: original.reference().version(),
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes,
+    transitions: original.transitions().to_vec(),
+    terminals: original.terminals().to_vec(),
+    context_projections: original.context_projections().to_vec(),
+    data_projections: original.data_projections().to_vec(),
+    execution: original.execution().clone(),
+  })
+  .unwrap();
+  let flow = FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(root.reference(), vec![root]).unwrap(),
+    flow.limits,
+    flow.data_schemas,
+    flow.pools,
+  )
+  .unwrap();
+  assert_eq!(
+    crate::factory_native_gate_policies(&flow),
+    vec![binding.policy().clone()]
+  );
 }
 
 #[test]
@@ -1067,5 +1239,44 @@ fn configuration_validation_rejects_an_unavailable_typed_data_handling_policy() 
       panic!("expected policy diagnostics")
     };
     assert_eq!(report.errors[0].field, "/execution/verification/data_handling");
+  });
+}
+
+#[test]
+fn schema_normalization_rejects_hidden_owners_and_unbounded_shapes_without_writes() {
+  run_ready(async {
+    let project_id = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project_id).unwrap();
+    store.enable_project(project_id, fixture(project_id).choices).unwrap();
+    let policy = Arc::new(HideFactoryResources);
+    let hidden = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryFlowDefinitionHandlers::new(store.clone(), policy)),
+    );
+    let query = crate::ValidateFactoryFlowDataSchemaQuery {
+      project_id,
+      identity: key("operator.boolean"),
+      version: key("v1"),
+      shape: octacity_server_factory::FlowValueSchema::Boolean,
+    };
+    assert!(matches!(
+      hidden.handle_query(&context(), query.clone()).await,
+      Err(ManagementHandlerError::Forbidden(_))
+    ));
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let visible = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryFlowDefinitionHandlers::new(store.clone(), policy)),
+    );
+    let oversized = crate::ValidateFactoryFlowDataSchemaQuery {
+      shape: octacity_server_factory::FlowValueSchema::String {
+        min_bytes: 0,
+        max_bytes: usize::MAX,
+      },
+      ..query
+    };
+    assert!(visible.handle_query(&context(), oversized).await.is_err());
+    assert!(store.management_audit_facts().await.is_empty());
   });
 }

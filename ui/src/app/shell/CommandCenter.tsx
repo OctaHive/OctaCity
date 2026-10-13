@@ -553,6 +553,8 @@ function searchableIdentities(
   return identities.filter(
     (identity): identity is SearchableIdentity =>
       identity.kind !== 'build_configuration' &&
+      identity.kind !== 'factory_configuration' &&
+      identity.kind !== 'factory_run' &&
       (scope.length === 0 || scope.includes(identity.kind)),
   );
 }

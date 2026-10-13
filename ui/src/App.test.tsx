@@ -48,6 +48,24 @@ function renderConsole(path: string, readinessProbe: ReadinessProbe = async () =
 }
 
 describe('App', () => {
+  it('opens the optional Factory activity with Favorites and URL-backed filters', async () => {
+    renderConsole('/factory?state=waiting');
+    expect(await screen.findByRole('heading', { level: 1, name: 'Factory' })).toBeTruthy();
+    expect(screen.getByRole('link', { current: 'page', name: 'Factory' })).toBeTruthy();
+    const explorer = screen.getByRole('complementary', { name: 'Factory explorer' });
+    expect(within(explorer).getByRole('heading', { name: 'Favorites' })).toBeTruthy();
+    expect(
+      (await within(explorer).findByRole('combobox', { name: 'Lifecycle state' })).textContent,
+    ).toContain('Waiting');
+    await userEvent.click(within(explorer).getByRole('button', { name: 'Search Factory' }));
+    expect(screen.queryByRole('dialog', { name: 'Command center' })).toBeNull();
+    expect(document.activeElement?.getAttribute('data-factory-filters')).not.toBeNull();
+    await userEvent.click(
+      within(explorer).getByRole('button', { name: 'Collapse Factory explorer' }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: 'Open Factory explorer' }));
+    expect(await screen.findByRole('combobox', { name: 'Lifecycle state' })).toBeTruthy();
+  });
   it('redirects the root into the Project workbench', async () => {
     const { router } = renderConsole('/');
 

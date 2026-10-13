@@ -228,7 +228,7 @@ const fn collect_operations() -> [ManagementOperation; OPERATION_COUNT] {
   operations
 }
 
-const OPERATIONS: [ManagementOperation; OPERATION_COUNT] = collect_operations();
+static OPERATIONS: [ManagementOperation; OPERATION_COUNT] = collect_operations();
 
 /// Complete inventory of registered management operations.
 pub const MANAGEMENT_OPERATIONS: &[ManagementOperation] = &OPERATIONS;

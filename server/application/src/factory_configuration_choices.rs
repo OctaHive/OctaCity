@@ -69,6 +69,8 @@ pub struct FactoryConfigurationDocumentBounds {
   pub schema_entries: usize,
   /// Maximum declared schema array items.
   pub schema_items: u16,
+  /// Maximum configured data schema and mapping nesting depth.
+  pub schema_depth: usize,
   /// Maximum retained string value bytes.
   pub value_bytes: usize,
   /// Maximum stable key bytes.
@@ -121,6 +123,7 @@ pub const fn factory_configuration_document_bounds() -> FactoryConfigurationDocu
     definitions: factory::MAX_FLOW_DEFINITION_CLOSURE,
     schema_entries: factory::MAX_FLOW_SCHEMA_ENTRIES,
     schema_items: factory::MAX_FLOW_SCHEMA_ITEMS,
+    schema_depth: factory::MAX_FLOW_SCHEMA_DEPTH,
     value_bytes: factory::MAX_FLOW_DATA_BYTES,
     key_bytes: factory::MAX_FACTORY_KEY_BYTES,
     depth: factory::MAX_FLOW_NESTING_DEPTH,
@@ -300,6 +303,40 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
   .map_err(|_| ApplicationError::invalid())
 }
 
+/// Exact capability and credential references selectable in a permission declaration.
+pub(super) fn permissions_selectable(
+  permissions: &octacity_server_factory::FactoryPermissionSet,
+  references: &[octacity_server_factory::FactoryReferenceChoice],
+) -> bool {
+  permissions
+    .plugins()
+    .chain(permissions.executables())
+    .chain(permissions.tools())
+    .all(|reference| {
+      references
+        .iter()
+        .any(|entry| entry.kind == FactoryChoiceKind::NodeCapability && &entry.reference == reference)
+    })
+    && [
+      (
+        FactoryChoiceKind::SecretProfile,
+        permissions.secret_profiles().collect::<Vec<_>>(),
+      ),
+      (
+        FactoryChoiceKind::WorkloadIdentityProfile,
+        permissions.workload_identity_profiles().collect(),
+      ),
+    ]
+    .into_iter()
+    .all(|(kind, names)| {
+      names.into_iter().all(|name| {
+        references
+          .iter()
+          .any(|entry| entry.kind == kind && (&entry.alias == name || entry.reference.identity() == name))
+      })
+    })
+}
+
 /// Checks installed identities throughout a caller-owned graph without interpreting logical stages.
 pub(super) fn validate_flow_choices(
   flow: &octacity_server_factory::FactoryFlowConfiguration,
@@ -314,33 +351,7 @@ pub(super) fn validate_flow_choices(
       .iter()
       .any(|entry| entry.kind == kind && &entry.reference == reference)
   };
-  let permissions_allowed = |permissions: &octacity_server_factory::FactoryPermissionSet| {
-    permissions
-      .plugins()
-      .chain(permissions.executables())
-      .chain(permissions.tools())
-      .all(|reference| selectable(FactoryChoiceKind::NodeCapability, reference))
-      && [
-        (
-          FactoryChoiceKind::SecretProfile,
-          permissions.secret_profiles().collect::<Vec<_>>(),
-        ),
-        (
-          FactoryChoiceKind::WorkloadIdentityProfile,
-          permissions.workload_identity_profiles().collect(),
-        ),
-      ]
-      .into_iter()
-      .all(|(kind, names)| {
-        names.into_iter().all(|name| {
-          entries
-            .references
-            .iter()
-            .any(|entry| entry.kind == kind && (&entry.alias == name || entry.reference.identity() == name))
-        })
-      })
-  };
-  if !permissions_allowed(flow.limits.permissions()) {
+  if !permissions_selectable(flow.limits.permissions(), &entries.references) {
     return Err(crate::FactoryValidationDiagnostics::unavailable(format!(
       "{prefix}/limits/permissions"
     )));
@@ -357,7 +368,7 @@ pub(super) fn validate_flow_choices(
         "/execution/verification/data_handling",
       ));
     }
-    if !permissions_allowed(definition.execution().permissions()) {
+    if !permissions_selectable(definition.execution().permissions(), &entries.references) {
       return Err(crate::FactoryValidationDiagnostics::unavailable_binding(
         definition.reference(),
         None,
@@ -365,7 +376,7 @@ pub(super) fn validate_flow_choices(
       ));
     }
     for node in definition.nodes() {
-      if !permissions_allowed(node.permissions()) {
+      if !permissions_selectable(node.permissions(), &entries.references) {
         return Err(crate::FactoryValidationDiagnostics::unavailable_binding(
           definition.reference(),
           Some(node.key()),

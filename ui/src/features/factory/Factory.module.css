@@ -1,0 +1,176 @@
+.workspace {
+  display: grid;
+  gap: var(--space-lg);
+  min-width: 0;
+  padding: var(--space-xl);
+}
+.workspace h1,
+.workspace h2,
+.workspace h3,
+.workspace p {
+  margin: 0;
+}
+.workspace section,
+.workspace fieldset {
+  min-width: 0;
+}
+.workspace fieldset {
+  margin: var(--space-md) 0;
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+}
+.workspace legend {
+  color: var(--color-text-muted);
+  padding: 0 var(--space-xs);
+}
+.workspace label,
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  font-size: 0.82rem;
+  margin: var(--space-sm) 0;
+}
+.workspace label:has(input[type='checkbox']) {
+  flex-direction: row;
+  align-items: center;
+}
+.workspace input,
+.filters input,
+.workspace textarea {
+  max-width: 100%;
+  min-width: 0;
+  padding: var(--space-sm);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  font: inherit;
+}
+.workspace button,
+.filters button {
+  padding: var(--space-sm) var(--space-md);
+  color: var(--color-text-primary);
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  cursor: pointer;
+}
+.workspace button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.workspace button[aria-pressed='true'] {
+  border-color: var(--color-brand-action);
+  background: var(--color-brand-soft);
+}
+.workspace ul {
+  padding-left: var(--space-xl);
+}
+.workspace li {
+  margin: var(--space-sm) 0;
+  overflow-wrap: anywhere;
+}
+.definitions {
+  display: grid;
+  gap: var(--space-lg);
+}
+.definitions > ul {
+  list-style: none;
+  padding: 0;
+}
+.editor {
+  display: grid;
+  gap: var(--space-md);
+}
+.nodeList,
+.numericGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-sm);
+}
+.filters {
+  display: grid;
+  gap: var(--space-sm);
+  padding-bottom: var(--space-lg);
+  border-bottom: 1px solid var(--color-border);
+  margin-bottom: var(--space-lg);
+}
+.filters h3 {
+  margin: 0;
+  font-size: 0.82rem;
+}
+.tree ul {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.child {
+  margin-left: 0.7rem;
+  padding-left: 0.65rem;
+  border-left: 1px solid var(--color-border);
+}
+.branch {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.2rem;
+}
+.branch button {
+  border: 0;
+  background: transparent;
+  color: var(--color-text-muted);
+  cursor: pointer;
+}
+.branch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 0.76rem;
+}
+.tree a {
+  font-size: 0.8rem;
+  overflow-wrap: anywhere;
+}
+.run {
+  display: grid;
+  gap: 0.2rem;
+  padding: 0.45rem;
+}
+.run a {
+  color: var(--color-text-primary);
+  overflow-wrap: anywhere;
+}
+.run small {
+  color: var(--color-text-muted);
+}
+.graphOverview svg {
+  display: block;
+  width: 100%;
+  max-height: 60rem;
+}
+.graphOverview rect {
+  fill: var(--color-surface-subtle);
+  stroke: var(--color-border);
+}
+.graphOverview text {
+  fill: var(--color-text-primary);
+  font: 15px var(--font-sans);
+}
+.graphOverview path {
+  stroke: var(--color-brand-action);
+  stroke-width: 2;
+}
+.graphOverview marker path {
+  fill: var(--color-brand-action);
+}
+.graphOverview path[data-edge-kind='context'] {
+  stroke-dasharray: 8 4;
+}
+.graphOverview path[data-edge-kind='data'] {
+  stroke-dasharray: 2 4;
+}
+.graphOverview rect.entryVertex {
+  stroke: var(--color-brand-action);
+  stroke-width: 3;
+}

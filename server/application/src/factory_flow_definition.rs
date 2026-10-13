@@ -18,6 +18,26 @@ use std::{
   sync::Arc,
 };
 
+/// Exact native gate policies recognized in an already validated published closure.
+/// This discovery fact grants no execution authority and requires no deployment alias.
+#[must_use]
+pub fn factory_native_gate_policies(flow: &FactoryFlowConfiguration) -> Vec<ImmutableReference> {
+  let mut policies = BTreeSet::new();
+  for node in flow
+    .closure
+    .definitions()
+    .iter()
+    .flat_map(|definition| definition.nodes())
+  {
+    if octacity_server_factory::FlowGateProgram::from_node(node).is_ok()
+      && let Some(gate) = node.gate()
+    {
+      policies.insert(gate.policy().clone());
+    }
+  }
+  policies.into_iter().collect()
+}
+
 /// Typed root authoring grammar. Identity, version and digest are server-owned.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -52,6 +72,55 @@ pub struct FactoryFlowDefinitionDraft {
   /// Named phase policies; node names carry no runtime meaning.
   #[serde(default)]
   pub pools: BTreeMap<FactoryKey, FlowPoolSettings>,
+}
+
+/// Non-mutating schema normalization with the same Project-scoped authoring authority.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ValidateFactoryFlowDataSchemaQuery {
+  /// Owning visible Project.
+  pub project_id: ProjectId,
+  /// Operator-owned logical contract name.
+  pub identity: FactoryKey,
+  /// Explicit immutable contract version.
+  pub version: FactoryKey,
+  /// Closed bounded data grammar, without a caller-computed digest.
+  pub shape: octacity_server_factory::FlowValueSchema,
+}
+impl Query for ValidateFactoryFlowDataSchemaQuery {
+  type Outcome = FlowDataSchema;
+}
+impl ManagementAuthorizationTarget for ValidateFactoryFlowDataSchemaQuery {
+  const AUTHORIZATION: ManagementAuthorizationMapping = ValidateFactoryFlowDefinitionQuery::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    owned_collection_resource(
+      ManagementResourceKind::FlowDefinition,
+      ManagementResourceKind::Project,
+      self.project_id,
+    )
+  }
+}
+
+#[async_trait]
+impl<S: octacity_server_store::FactoryConfigurationStore + 'static>
+  crate::ManagementQueryUseCase<ValidateFactoryFlowDataSchemaQuery> for FactoryFlowDefinitionHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    query: ValidateFactoryFlowDataSchemaQuery,
+  ) -> Result<FlowDataSchema, ApplicationError> {
+    crate::factory_configuration_choices::visible_factory_choices(
+      self.store.as_ref(),
+      self.policy.as_ref(),
+      context,
+      query.project_id,
+    )
+    .await?;
+    FlowDataSchema::new(query.identity, query.version, query.shape)
+      .map_err(|_| crate::FactoryValidationDiagnostics::invalid("/shape"))
+  }
 }
 impl FactoryFlowDefinitionDraft {
   fn root(&self, id: FlowDefinitionId, version: FlowDefinitionVersion) -> Result<FlowDefinition, ApplicationError> {

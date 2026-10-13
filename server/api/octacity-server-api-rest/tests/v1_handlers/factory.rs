@@ -1,5 +1,45 @@
 use super::*;
 use octacity_server_application::{FactoryConfigurationPageProjection, ListProjectFactoryConfigurationsQuery};
+
+#[async_trait]
+impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryFlowDataSchemaQuery> for RecordingApplication {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    query: octacity_server_application::ValidateFactoryFlowDataSchemaQuery,
+  ) -> Result<
+    <octacity_server_application::ValidateFactoryFlowDataSchemaQuery as octacity_server_application::Query>::Outcome,
+    Self::Error,
+  > {
+    self.record("validate_factory_data_schema");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    assert_eq!(query.identity.as_str(), "operator.boolean");
+    Ok(serde_json::from_value(serde_json::json!({"reference":{"identity":"operator.boolean","version":"v1","digest":"843fd3f60f5da95afe13dac9521ccdc83dbda0c664d61917c1b2dd321b350fc3"}, "shape":{"type":"boolean"}})).unwrap())
+  }
+}
+
+#[tokio::test]
+async fn normalizes_a_project_scoped_data_schema_without_a_caller_digest_or_publication() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let response = routes.oneshot(json_request("POST", "/api/v1/flow-data-schemas/validate", "unused-validation-key", None, r#"{"project_id":"11111111-1111-4111-8111-111111111111","identity":"operator.boolean","version":"v1","shape":{"type":"boolean"}}"#)).await.unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(
+    body["reference"]["digest"],
+    "843fd3f60f5da95afe13dac9521ccdc83dbda0c664d61917c1b2dd321b350fc3"
+  );
+  assert_eq!(*application.calls.lock().unwrap(), ["validate_factory_data_schema"]);
+  assert_json_matches_component(&openapi_document(), "FactoryFlowDataSchema", &body);
+}
 #[async_trait]
 impl ManagementCommandUseCase<octacity_server_application::ConfirmFactoryNodeOperationCommand>
   for RecordingApplication
@@ -202,8 +242,45 @@ impl ManagementQueryUseCase<octacity_server_application::GetCurrentFactoryConfig
     _query: octacity_server_application::GetCurrentFactoryConfigurationQuery,
   ) -> Result<octacity_server_application::FactoryConfigurationProjection, Self::Error> {
     self.record("get_current_factory_configuration");
-    Err(ApplicationError::unavailable())
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    let mut details: serde_json::Value = serde_json::from_str(CONFIGURATION_DETAILS).unwrap();
+    details["configuration"]["flow"]["pools"] = serde_json::json!({"operator-chosen-queue": {
+      "policy": {"phase":"operator-chosen-queue", "order":["severity","project_priority","age"], "max_wip":2, "max_project_wip":1, "budget":details["configuration"]["flow"]["limits"]["budget"]},
+      "project_priority":0, "capabilities":[], "selection":{"value":{"mapping":"constant","value":{}}}
+    }});
+    Ok(octacity_server_application::FactoryConfigurationProjection {
+      configuration: serde_json::from_value(details["configuration"].clone()).unwrap(),
+      published_at: Timestamp::from_unix_millis(1).unwrap(),
+    })
   }
+}
+
+#[tokio::test]
+async fn factory_configuration_detail_exposes_server_owned_named_pool_identities() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let response = routes
+    .oneshot(empty_request(
+      "GET",
+      "/api/v1/factory-configurations/22222222-2222-4222-8222-222222222222",
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert_eq!(body["pool_policy_digests"].as_object().unwrap().len(), 1);
+  assert_eq!(
+    body["pool_policy_digests"]["operator-chosen-queue"],
+    "a053c331ce602228de4bcae35cfe895f350210f15404976dedac9c30446fe7fb"
+  );
+  assert_json_matches_component(&openapi_document(), "FactoryConfigurationDetails", &body);
 }
 
 #[async_trait]
@@ -579,7 +656,8 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryFlowDefi
     if !self.successful_workflow {
       return Err(ApplicationError::unavailable());
     }
-    Err(ApplicationError::unavailable())
+    let configuration: serde_json::Value = serde_json::from_str(CREATE_CONFIGURATION).unwrap();
+    Ok(serde_json::from_value(configuration["definition"]["flow"].clone()).unwrap())
   }
 }
 
@@ -1750,4 +1828,38 @@ fn operator_gate_bindings_are_part_of_the_closed_flow_authoring_grammar() {
       serde_json::json!({"operation":operation,"outcomes":{disposition:"caller-selected-result"}});
     assert_json_matches_component(&openapi_document(), "FactoryFlowNodeDefinition", &node);
   }
+}
+
+#[tokio::test]
+async fn flow_validation_adds_safe_capability_and_permission_diagnostics_without_publishing() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-definitions/validate",
+      "validation-only",
+      None,
+      &flow_draft_request().to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: serde_json::Value =
+    serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
+  assert!(body["closure"]["root"].is_object());
+  assert_eq!(body["diagnostics"]["errors"], serde_json::json!([]));
+  assert_eq!(
+    body["diagnostics"]["required_node_capabilities"][0]["identity"],
+    "contract.capability"
+  );
+  assert_eq!(
+    body["diagnostics"]["effective_permissions"][0]["permissions"]["resources"]["cpu_millis"],
+    0
+  );
+  assert_eq!(*application.calls.lock().unwrap(), ["validate_factory_flow_definition"]);
+  assert_json_matches_component(&openapi_document(), "FactoryFlowDefinitionValidation", &body);
 }

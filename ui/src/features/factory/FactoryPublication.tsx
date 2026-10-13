@@ -1,0 +1,277 @@
+import { focusFactoryField } from './fieldFocus';
+import { useRef, useState } from 'react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
+import type { components } from '../../../.generated/api/schema';
+import { ManagementApiError } from '../../api/client';
+import { queryKeys } from '../../app/query';
+import { usePresentation } from '../../app/presentation/PresentationProvider';
+import type { MessageKey } from '../../app/presentation/messages';
+import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
+import {
+  requireVersionedMutationHeaders,
+  type ConfirmedMutationAttempt,
+} from '../../shared/confirmedIntent';
+import { QueryFailureNotice } from '../../shared/QueryStateNotice';
+import { validateFlowDraft, validateConfigurationDraft, type DraftIssue } from './validateDraft';
+import type { FactoryApi } from './api';
+
+type Subject =
+  | { kind: 'flow'; request: components['schemas']['CreateFactoryFlowDefinitionRequest'] }
+  | { kind: 'configuration'; request: components['schemas']['CreateFactoryConfigurationRequest'] };
+type Result =
+  | components['schemas']['FactoryFlowDefinitionMutationResponse']
+  | components['schemas']['FactoryConfigurationMutationResponse'];
+type Preview =
+  | { kind: 'flow'; value: components['schemas']['FactoryFlowDefinitionValidation'] }
+  | { kind: 'configuration'; value: components['schemas']['FactoryConfigurationValidation'] };
+export type FactoryPublicationProps = { api: FactoryApi; subject: Subject; version?: number };
+const ISSUE_LABELS = {
+  invalid_contract: 'factory.invalidContract',
+  unavailable_reference: 'factory.unavailableReference',
+  unbounded_cycle: 'factory.unboundedCycle',
+  unreachable_node: 'factory.unreachableNode',
+  incompatible_schema: 'factory.incompatibleSchema',
+  budget_exceeded: 'factory.budgetExceeded',
+} satisfies Record<DraftIssue['code'], MessageKey>;
+
+/** A validation proof belongs to one exact in-memory draft; the shared helper owns confirmed replay. */
+export function FactoryPublication({ api, subject, version }: FactoryPublicationProps) {
+  const { t } = usePresentation();
+  const queryClient = useQueryClient();
+  const regionId = 'factory-validation';
+  const [currentVersion, setCurrentVersion] = useState(version);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+  const [proof, setProof] = useState<{ signature: string; preview: Preview } | null>(null);
+  const [review, setReview] = useState<{ subject: Subject; returnFocus: HTMLElement } | null>(null);
+  const latestSignatureRef = useRef('');
+  const signature = JSON.stringify(subject);
+  latestSignatureRef.current = signature;
+  const local =
+    subject.kind === 'flow'
+      ? validateFlowDraft(subject.request.definition)
+      : validateConfigurationDraft(subject.request.definition);
+  const server = error instanceof ManagementApiError ? error.validationIssues : [];
+  const issues = [...local, ...server];
+  const valid = proof?.signature === signature && issues.length === 0;
+  async function validate() {
+    if (local.length) return;
+    setPending(true);
+    setError(null);
+    setProof(null);
+    const captured = signature;
+    try {
+      const preview: Preview =
+        subject.kind === 'flow'
+          ? { kind: 'flow', value: await api.validateFlow(subject.request) }
+          : { kind: 'configuration', value: await api.validateConfiguration(subject.request) };
+      if (latestSignatureRef.current === captured) setProof({ signature: captured, preview });
+    } catch (failure) {
+      if (latestSignatureRef.current === captured)
+        setError(failure instanceof Error ? failure : new Error('Validation failed'));
+    } finally {
+      setPending(false);
+    }
+  }
+  async function execute(attempt: ConfirmedMutationAttempt<Subject>): Promise<Result> {
+    // The transport serializes a mutable copy; the helper's frozen snapshot remains untouched.
+    const captured = structuredClone(attempt.request) as Subject;
+    try {
+      if (captured.kind === 'flow')
+        return currentVersion === undefined
+          ? await api.createFlow(captured.request, attempt.headers)
+          : await api.replaceFlow(
+              captured.request.id,
+              { definition: captured.request.definition },
+              requireVersionedMutationHeaders(attempt.headers),
+            );
+      return currentVersion === undefined
+        ? await api.createConfiguration(captured.request, attempt.headers)
+        : await api.replaceConfiguration(
+            captured.request.id,
+            { definition: captured.request.definition },
+            requireVersionedMutationHeaders(attempt.headers),
+          );
+    } catch (failure) {
+      if (failure instanceof ManagementApiError && failure.validationIssues.length) {
+        setError(failure);
+        setProof(null);
+      }
+      throw failure;
+    }
+  }
+  async function refresh() {
+    setProof(null);
+    setError(null);
+    try {
+      const current =
+        subject.kind === 'flow'
+          ? await api.currentFlow(subject.request.id)
+          : await api.currentConfiguration(subject.request.id);
+      setCurrentVersion(
+        'configuration' in current
+          ? current.configuration.reference.version
+          : current.flow.closure.root.version,
+      );
+    } catch (failure) {
+      setError(failure instanceof Error ? failure : new Error('Baseline refresh failed'));
+    }
+  }
+  const returnedErrors = proof?.preview.value.diagnostics?.errors ?? [];
+  const displayedIssues = [
+    ...new Map(
+      [...issues, ...returnedErrors].map((issue) => [`${issue.field}:${issue.code}`, issue]),
+    ).values(),
+  ];
+  return (
+    <section aria-labelledby={`${regionId}-heading`}>
+      <h3 id={`${regionId}-heading`}>{t('factory.validation')}</h3>
+      {issues.length || returnedErrors.length ? (
+        <ul role="alert">
+          {displayedIssues.map((issue) => (
+            <li key={`${issue.field}:${issue.code}`}>
+              <button type="button" onClick={() => focusFactoryField(issue.field)}>
+                {issue.field}
+              </button>{' '}
+              · {t(ISSUE_LABELS[issue.code])}
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {error ? (
+        <QueryFailureNotice title={t('factory.validation')} error={error} onRetry={validate} />
+      ) : null}
+      <button
+        type="button"
+        disabled={pending || local.length > 0 || review !== null}
+        onClick={() => void validate()}
+      >
+        {t('factory.validateDraft')}
+      </button>
+      <button
+        type="button"
+        disabled={!valid || returnedErrors.length > 0 || review !== null}
+        onClick={(event) =>
+          setReview({ subject: structuredClone(subject), returnFocus: event.currentTarget })
+        }
+      >
+        {t('factory.reviewPublication')}
+      </button>
+      {valid && proof ? (
+        <>
+          <p>{t('factory.validationPassed')}</p>
+          <ValidationPreview preview={proof.preview} />
+        </>
+      ) : null}
+      {review ? (
+        <ConfirmedCommand
+          title={t(
+            subject.kind === 'flow'
+              ? 'factory.publishFlowTitle'
+              : 'factory.publishConfigurationTitle',
+          )}
+          consequence={t('factory.publishConsequence')}
+          confirmLabel={t('factory.confirmPublish')}
+          request={review.subject}
+          execute={execute}
+          queryClient={queryClient}
+          invalidations={[
+            {
+              queryKey:
+                subject.kind === 'flow'
+                  ? queryKeys.factoryFlows(subject.request.project_id)
+                  : queryKeys.factoryConfigurations(subject.request.project_id),
+            },
+            { queryKey: queryKeys.factoryCurrent(subject.kind, subject.request.id) },
+            {
+              queryKey:
+                subject.kind === 'flow'
+                  ? queryKeys.factoryFlowVersions(subject.request.id)
+                  : queryKeys.factoryConfigurationVersions(subject.request.id),
+            },
+            { queryKey: queryKeys.audit },
+          ]}
+          {...(currentVersion === undefined ? {} : { version: currentVersion, onRefresh: refresh })}
+          onClose={() => setReview(null)}
+          returnFocus={review.returnFocus}
+          renderSuccess={(result) => {
+            const reference =
+              'configuration' in result.resource
+                ? result.resource.configuration.reference
+                : result.resource.flow.closure.root;
+            return (
+              <>
+                <p>{t('factory.published')}</p>
+                <Link
+                  to={`/factory?project_id=${encodeURIComponent(subject.request.project_id)}&${subject.kind === 'flow' ? 'flow_definition_id' : 'configuration_id'}=${encodeURIComponent(reference.id)}&${subject.kind}_version=${reference.version}`}
+                >
+                  {t('factory.openPublished')}
+                </Link>
+              </>
+            );
+          }}
+        />
+      ) : null}
+    </section>
+  );
+}
+function ValidationPreview({ preview }: { preview: Preview }) {
+  const { t } = usePresentation();
+  const flow = preview.kind === 'flow' ? preview.value : preview.value.configuration.flow;
+  const diagnostics = preview.value.diagnostics;
+  return (
+    <section>
+      <h4>{t('factory.normalized')}</h4>
+      <p>{t('factory.definitionCount', { count: flow.closure.definitions.length })}</p>
+      <dl>
+        {Object.entries(flow.limits.budget).map(([key, value]) => (
+          <div key={key}>
+            <dt>{key}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      <p>{t('factory.authorityNarrowing')}</p>
+      {diagnostics ? (
+        <>
+          <h4>{t('factory.requiredCapabilities')}</h4>
+          <ul>
+            {[
+              ...diagnostics.required_node_capabilities,
+              ...diagnostics.required_agent_capabilities,
+            ].map((reference) => (
+              <li key={`${reference.identity}:${reference.version}:${reference.digest}`}>
+                {reference.identity} · {reference.version}
+              </li>
+            ))}
+            {diagnostics.required_backend_capabilities.map((capability) => (
+              <li key={capability}>{capability}</li>
+            ))}
+          </ul>
+          <h4>{t('factory.effectivePermissions')}</h4>
+          {diagnostics.effective_permissions.map((item) => (
+            <section key={`${item.definition.id}:${item.node}`}>
+              <h5>{item.node}</h5>
+              <dl>
+                {Object.entries(item.permissions.resources).map(([key, value]) => (
+                  <div key={key}>
+                    <dt>{key}</dt>
+                    <dd>{value}</dd>
+                  </div>
+                ))}
+              </dl>
+              <p>
+                {t('factory.permissionCounts', {
+                  plugins: item.permissions.plugins.length,
+                  tools: item.permissions.tools.length,
+                  hosts: item.permissions.network_hosts.length,
+                })}
+              </p>
+            </section>
+          ))}
+        </>
+      ) : null}
+    </section>
+  );
+}

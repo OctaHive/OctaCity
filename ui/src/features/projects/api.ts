@@ -1,13 +1,17 @@
+import type { ProjectHierarchyApi } from '../../shared/projectHierarchy';
+export type {
+  ProjectHierarchyApi,
+  ProjectDetails,
+  ProjectPage,
+  ProjectResource,
+  ProjectSummary,
+} from '../../shared/projectHierarchy';
 import type { components } from '../../../.generated/api/schema';
 import type { IdempotencyRequestHeaders } from '../../api/client';
 import { managementApi, requireManagementResponse } from '../../api/client';
 
 export const PROJECT_PAGE_SIZE = 25;
 
-export type ProjectDetails = components['schemas']['ProjectDetails'];
-export type ProjectPage = components['schemas']['ProjectPage'];
-export type ProjectResource = components['schemas']['ProjectResource'];
-export type ProjectSummary = components['schemas']['ProjectSummaryResource'];
 export type BuildState = components['schemas']['BuildState'];
 export type BuildSummaryPage = components['schemas']['BuildSummaryPage'];
 export type BuildSummary = components['schemas']['BuildSummaryResource'];
@@ -46,16 +50,6 @@ export type TriggerDefinitionDetails =
       kind: 'scheduled';
       resource: components['schemas']['ScheduleResource'];
     };
-
-/** Project hierarchy reads consumed by Project navigation. */
-export interface ProjectHierarchyApi {
-  getProject(projectId: string, signal?: AbortSignal): Promise<ProjectDetails>;
-  listProjects(
-    parentId: string | null,
-    cursor: string | null,
-    signal?: AbortSignal,
-  ): Promise<ProjectPage>;
-}
 
 /** Current-definition reads consumed by the Project workspace. */
 export interface ProjectDefinitionReadsApi {

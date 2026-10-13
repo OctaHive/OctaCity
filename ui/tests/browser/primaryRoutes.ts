@@ -16,6 +16,18 @@ export interface PrimaryRoute {
 }
 
 const routesByTemplate = {
+  [CONSOLE_PATHS.factory]: {
+    heading: 'Factory',
+    id: 'factory',
+    path: CONSOLE_PATHS.factory,
+    retainedText: 'Requested change',
+  },
+  [CONSOLE_PATHS.factoryRun]: {
+    heading: 'Factory Run',
+    id: 'factory-run',
+    path: `/factory/${FIXTURE_IDS.factoryRun}`,
+    retainedText: 'Requested change',
+  },
   [CONSOLE_PATHS.projects]: {
     heading: 'Projects',
     id: 'projects',

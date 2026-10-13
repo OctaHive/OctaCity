@@ -1,6 +1,6 @@
 use octacity_server_application::{
   CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand, ListFactoryDiagnosticsQuery, RetryFactoryNodeCommand,
-  SubmitFactoryNodeResponseCommand,
+  SubmitFactoryNodeResponseCommand, ValidateFactoryFlowDataSchemaQuery,
 };
 use std::{any::TypeId, collections::BTreeSet, sync::Arc};
 
@@ -53,7 +53,8 @@ use super::{
   publish_build_configuration, publish_internal_trigger, publish_pipeline, publish_project_policy, publish_repository,
   read_job_events, reassign_agent_pool, release_build_result_hold, rename_project, replace_factory_configuration,
   replace_factory_flow_definition, retry_build, retry_factory_node, rotate_managed_webhook, search_build_logs,
-  search_resources, submit_factory_node_response, validate_factory_configuration, validate_factory_flow_definition,
+  search_resources, submit_factory_node_response, validate_factory_configuration, validate_factory_flow_data_schema,
+  validate_factory_flow_definition,
 };
 use crate::v1::{API_PREFIX, MANAGEMENT_OPERATIONS, ManagementOperation};
 
@@ -305,6 +306,10 @@ fn registered_routes() -> ManagementRoutes {
       list_project_factory_flow_definitions,
     )
     .post::<ValidateFactoryFlowDefinitionQuery, _, _>("validateFactoryFlowDefinition", validate_factory_flow_definition)
+    .post::<ValidateFactoryFlowDataSchemaQuery, _, _>(
+      "validateFactoryFlowDataSchema",
+      validate_factory_flow_data_schema,
+    )
     .post::<ValidateFactoryConfigurationQuery, _, _>("validateFactoryConfiguration", validate_factory_configuration)
     .post::<ReplaceFactoryConfigurationCommand, _, _>("replaceFactoryConfiguration", replace_factory_configuration)
     .post::<CreateFactoryConfigurationCommand, _, _>("createFactoryConfiguration", create_factory_configuration)

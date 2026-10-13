@@ -1,5 +1,12 @@
 import { useQuery } from '@tanstack/react-query';
-import { ClipboardList, FolderKanban, Hammer, PanelLeftOpen, ServerCog } from 'lucide-react';
+import {
+  ClipboardList,
+  Factory,
+  FolderKanban,
+  Hammer,
+  PanelLeftOpen,
+  ServerCog,
+} from 'lucide-react';
 import {
   useCallback,
   useEffect,
@@ -37,6 +44,7 @@ const sectionIcons = {
   agents: ServerCog,
   audit: ClipboardList,
   builds: Hammer,
+  factory: Factory,
   projects: FolderKanban,
 } satisfies Record<ConsoleSectionId, typeof FolderKanban>;
 

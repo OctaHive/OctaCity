@@ -19,7 +19,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["required", "value"],
     ),
   );
-  schemas.insert("FactoryFlowValueSchema".to_owned(),json!({"oneOf":[
+  schemas.insert("FactoryFlowValueSchema".to_owned(),json!({"x-max-depth":bounds.schema_depth,"oneOf":[
     tagged("type","boolean",[],&[]),
     tagged("type","string",[("min_bytes",non_negative_integer()),("max_bytes",bounded_integer(0,bounds.value_bytes as u64))],&["min_bytes","max_bytes"]),
     tagged("type","integer",[("minimum",integer()),("maximum",integer())],&["minimum","maximum"]),
@@ -31,7 +31,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "FactoryFlowDataMapping".to_owned(),
     object([("value", schema_ref("FactoryFlowValueMapping"))], &["value"]),
   );
-  schemas.insert("FactoryFlowValueMapping".to_owned(),json!({"oneOf":[
+  schemas.insert("FactoryFlowValueMapping".to_owned(),json!({"x-max-depth":bounds.schema_depth,"oneOf":[
     tagged("mapping","pointer",[("path",json!({"type":"string"}))],&["path"]),
     tagged("mapping","constant",[("value",json!({}))],&["value"]),
     tagged("mapping","object",[("fields",bounded_map(schema_ref("FactoryFlowValueMapping"),bounds.schema_entries))],&["fields"]),

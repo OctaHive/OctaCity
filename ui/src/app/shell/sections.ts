@@ -1,7 +1,7 @@
 import { CONSOLE_PATHS } from '../routes';
 import type { MessageKey } from '../presentation/messages';
 
-export type ConsoleSectionId = 'projects' | 'builds' | 'agents' | 'audit';
+export type ConsoleSectionId = 'projects' | 'builds' | 'factory' | 'agents' | 'audit';
 export type ContextExplorerMode = 'navigation' | 'tools';
 
 export interface ConsoleSection {
@@ -27,20 +27,23 @@ const projectsSection: ConsoleSection = {
 export const consoleSections: readonly ConsoleSection[] = [
   projectsSection,
   { explorerMode: 'navigation', id: 'builds', label: 'Builds', path: CONSOLE_PATHS.builds },
+  { explorerMode: 'navigation', id: 'factory', label: 'Factory', path: CONSOLE_PATHS.factory },
   { explorerMode: 'navigation', id: 'agents', label: 'Agents', path: CONSOLE_PATHS.agents },
   { explorerMode: 'tools', id: 'audit', label: 'Audit', path: CONSOLE_PATHS.audit },
 ];
 
 /** Maps every stable resource deep link to its contextual workbench section. */
 export function sectionForPath(pathname: string): ConsoleSection {
-  const sectionId: ConsoleSectionId = matchesPathSegment(pathname, CONSOLE_PATHS.builds)
-    ? 'builds'
-    : matchesPathSegment(pathname, CONSOLE_PATHS.agents) ||
-        matchesPathSegment(pathname, CONSOLE_PATHS.agentPools)
-      ? 'agents'
-      : matchesPathSegment(pathname, CONSOLE_PATHS.audit)
-        ? 'audit'
-        : 'projects';
+  const sectionId: ConsoleSectionId = matchesPathSegment(pathname, CONSOLE_PATHS.factory)
+    ? 'factory'
+    : matchesPathSegment(pathname, CONSOLE_PATHS.builds)
+      ? 'builds'
+      : matchesPathSegment(pathname, CONSOLE_PATHS.agents) ||
+          matchesPathSegment(pathname, CONSOLE_PATHS.agentPools)
+        ? 'agents'
+        : matchesPathSegment(pathname, CONSOLE_PATHS.audit)
+          ? 'audit'
+          : 'projects';
   return consoleSections.find(({ id }) => id === sectionId) ?? projectsSection;
 }
 

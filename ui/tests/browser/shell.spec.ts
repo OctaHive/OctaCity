@@ -48,7 +48,7 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   await expect(page.getByLabel('Operator menu')).toBeVisible();
 
   const sectionNavigation = page.getByRole('navigation', { name: 'Primary sections' });
-  await expect(sectionNavigation.getByRole('link')).toHaveCount(4);
+  await expect(sectionNavigation.getByRole('link')).toHaveCount(5);
   await expect(sectionNavigation.getByRole('link', { name: 'Projects' })).toHaveAttribute(
     'aria-current',
     'page',
@@ -87,6 +87,7 @@ test('switches every large section rail control and restores a deep-linked resou
 
   const sections = page.getByRole('navigation', { name: 'Primary sections' });
   const journey = [
+    { explorer: 'Factory explorer', heading: 'Factory', label: 'Factory', path: '/factory' },
     { explorer: 'Builds explorer', heading: 'Builds', label: 'Builds', path: '/builds' },
     { explorer: 'Agents explorer', heading: 'Agents', label: 'Agents', path: '/agents' },
     { explorer: 'Audit explorer', heading: 'Audit', label: 'Audit', path: '/audit' },

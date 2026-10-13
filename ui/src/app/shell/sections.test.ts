@@ -6,6 +6,8 @@ describe('sectionForPath', () => {
   it.each([
     ['/builds', 'builds'],
     ['/builds/build-01', 'builds'],
+    ['/factory', 'factory'],
+    ['/factory/run-01', 'factory'],
     ['/agents', 'agents'],
     ['/agents/agent-01', 'agents'],
     ['/agent-pools/pool-01', 'agents'],
@@ -15,7 +17,7 @@ describe('sectionForPath', () => {
     expect(sectionForPath(path).id).toBe(expected);
   });
 
-  it.each(['/builds-old', '/agents-archive', '/agent-pools-old', '/audit-log'])(
+  it.each(['/builds-old', '/factory-old', '/agents-archive', '/agent-pools-old', '/audit-log'])(
     'does not treat a lookalike prefix as a stable section path: %s',
     (path) => {
       expect(sectionForPath(path).id).toBe('projects');

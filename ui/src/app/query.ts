@@ -1,6 +1,20 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factoryCurrent: (kind: string, id: string) => ['factory', 'current', kind, id] as const,
+  factoryFlowVersions: (id: string) => ['factory', 'flow', id] as const,
+  factoryConfigurationVersions: (id: string) => ['factory', 'configuration', id] as const,
+  factoryChoices: (projectId: string) => ['factory', 'choices', projectId] as const,
+  factoryConfigurations: (projectId: string) => ['factory', 'configurations', projectId] as const,
+  factoryFlows: (projectId: string) => ['factory', 'flows', projectId] as const,
+  factoryFlow: (id: string, version: number) => ['factory', 'flow', id, version] as const,
+  factoryRun: (id: string | null) => ['factory', 'run', id] as const,
+  factoryPool: (projectId: string, digest: string) =>
+    ['factory', 'pool', projectId, digest] as const,
+  factoryConfiguration: (id: string | null, version: number | null) =>
+    ['factory', 'configuration', id, version] as const,
+  factoryRuns: (projectId: string | null, filters: object) =>
+    ['factory', 'runs', projectId, filters] as const,
   agent: (agentId: string) => ['agents', agentId] as const,
   agentPool: (poolId: string) => ['agent-pools', poolId] as const,
   agentPoolAgents: (poolId: string) => ['agent-pools', poolId, 'agents'] as const,

@@ -1,6 +1,8 @@
+import { configurationFixture, runFixture } from '../fixtures/factory';
 import type { Page, Route } from '@playwright/test';
 
 export const FIXTURE_IDS = {
+  factoryRun: '44444444-4444-4444-8444-444444444444',
   agent: 'agent-accessible',
   attempt: 'attempt-accessible',
   build: 'build-accessible',
@@ -18,11 +20,85 @@ export async function installOperatorFixture(page: Page) {
       return;
     }
     const url = new URL(route.request().url());
+    const configuration = configurationFixture();
+    const run = runFixture();
+    const owner = configuration.configuration.reference.project_id;
+    if (url.pathname === '/api/v1/factory-runs') {
+      await fulfill(route, { items: [run], total: 1, next_cursor: null });
+      return;
+    }
+    if (url.pathname === `/api/v1/factory-runs/${FIXTURE_IDS.factoryRun}`) {
+      await fulfill(route, run);
+      return;
+    }
+    if (url.pathname === `/api/v1/projects/${owner}`) {
+      await fulfill(route, {
+        ancestors: [],
+        project: { ...projectResource(), id: owner, name: 'Factory Project' },
+      });
+      return;
+    }
+    if (url.pathname === `/api/v1/projects/${owner}/factory-configurations`) {
+      await fulfill(route, {
+        items: [
+          {
+            ...configuration.configuration.reference,
+            enabled: true,
+            created_at_unix_ms: 1,
+            published_at_unix_ms: 1,
+          },
+        ],
+        total: 1,
+        next_cursor: null,
+      });
+      return;
+    }
+    if (url.pathname === `/api/v1/projects/${owner}/factory-runs`) {
+      await fulfill(route, { items: [run], total: 1, next_cursor: null });
+      return;
+    }
+    if (
+      url.pathname.startsWith(
+        `/api/v1/factory-configurations/${configuration.configuration.reference.id}/versions/`,
+      )
+    ) {
+      await fulfill(route, configuration);
+      return;
+    }
+    if (url.pathname === `/api/v1/projects/${owner}/flow-definitions`) {
+      await fulfill(route, {
+        items: [
+          { flow: configuration.configuration.flow, project_id: owner, published_at_unix_ms: 1 },
+        ],
+        total: 1,
+        next_cursor: null,
+      });
+      return;
+    }
+    if (
+      url.pathname.startsWith(
+        `/api/v1/flow-definitions/${configuration.configuration.flow.closure.root.id}/versions/`,
+      )
+    ) {
+      await fulfill(route, {
+        flow: configuration.configuration.flow,
+        project_id: owner,
+        published_at_unix_ms: 1,
+      });
+      return;
+    }
+    if (
+      url.pathname === `/api/v1/projects/${owner}/factory-configuration-choices` ||
+      url.pathname === `/api/v1/projects/${FIXTURE_IDS.project}/factory-configurations`
+    ) {
+      await fulfill(route, { items: [], total: 0, next_cursor: null });
+      return;
+    }
     const projectPath = `/api/v1/projects/${FIXTURE_IDS.project}`;
     const buildPath = `/api/v1/builds/${FIXTURE_IDS.build}`;
 
     if (url.pathname === '/api/v1/projects') {
-      await fulfill(route, pageOf([projectSummary()]));
+      await fulfill(route, pageOf(url.searchParams.has('parent_id') ? [] : [projectSummary()]));
       return;
     }
     if (url.pathname === projectPath) {

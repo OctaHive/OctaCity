@@ -193,6 +193,11 @@ pub struct FactoryChoiceMetadata {
   pub enforcement: Vec<crate::PermissionCategory>,
   /// Compatible aliases in the same Project catalog, filtered again for the reader.
   pub compatible_choices: Vec<FactoryChoiceCompatibility>,
+  /// Bounded deployment-provided declarations for guided permission authoring.
+  /// These selectable values are not an execution grant; publication and admission
+  /// still validate exact references and intersect authoritative policy.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub permission_declarations: Option<crate::FactoryPermissionSet>,
 }
 
 /// One typed compatibility relationship within a Project choice catalog.

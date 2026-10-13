@@ -65,6 +65,23 @@ pub struct FactoryConfigurationDetails {
   pub configuration: serde_json::Value,
   /// Authoritative publication time as Unix milliseconds.
   pub published_at_unix_ms: i64,
+  /// Exact server-owned selection identities for the configuration's named pools.
+  #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pub pool_policy_digests: std::collections::BTreeMap<String, String>,
+}
+
+/// Non-mutating authoring request; the server computes canonical schema provenance.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidateFactoryFlowDataSchemaRequest {
+  /// Owning visible Project.
+  pub project_id: String,
+  /// Logical schema name.
+  pub identity: String,
+  /// Explicit schema version.
+  pub version: String,
+  /// Closed bounded data grammar documented by FactoryFlowValueSchema.
+  pub shape: serde_json::Value,
 }
 
 /// Durable publication result; an exact replay returns the original resource.
@@ -217,6 +234,9 @@ pub struct FactoryFlowDefinitionDetails {
   pub flow: serde_json::Value,
   /// Original publication time.
   pub published_at_unix_ms: i64,
+  /// Exact native gate policies recognized by the server in this published closure.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub native_gate_policies: Vec<FactoryImmutableReferenceResource>,
 }
 /// Idempotent immutable Flow publication result.
 pub type FactoryFlowDefinitionMutationResponse = super::MutationResponse<FactoryFlowDefinitionDetails>;

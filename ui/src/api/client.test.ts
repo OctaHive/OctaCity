@@ -220,3 +220,24 @@ describe('management API request metadata', () => {
     expect(requests[1]?.headers.get('if-match')).toBe('"7"');
   });
 });
+
+it('retains only bounded public validation field codes from an error without exposing arbitrary diagnostics', async () => {
+  const client = createManagementApiClient(async () =>
+    jsonResponse(
+      {
+        code: 'invalid_request',
+        message: 'The definition is invalid.',
+        request_id: REQUEST_ID,
+        diagnostics: {
+          errors: [{ field: '/root/entry', code: 'invalid_contract', node: 'private-node' }],
+          unavailable_references: ['private-resource'],
+          provider_payload: 'secret',
+        },
+      },
+      400,
+    ),
+  );
+  const error = await captureApiError(client.GET(OPENAPI_PATH));
+  expect(error.validationIssues).toEqual([{ field: '/root/entry', code: 'invalid_contract' }]);
+  expect(JSON.stringify(error.validationIssues)).not.toContain('private');
+});

@@ -13,7 +13,13 @@ export const MAX_FAVORITE_IDENTITIES = 50;
 export type Language = 'en' | 'ru';
 export type ThemeMode = 'system' | 'light' | 'dark';
 export type PreferenceResourceKind =
-  'project' | 'build_configuration' | 'build' | 'agent' | 'agent_pool';
+  | 'project'
+  | 'build_configuration'
+  | 'build'
+  | 'agent'
+  | 'agent_pool'
+  | 'factory_configuration'
+  | 'factory_run';
 
 export interface PreferenceIdentity {
   readonly id: string;
@@ -54,6 +60,8 @@ const RESOURCE_KINDS: readonly PreferenceResourceKind[] = [
   'build',
   'agent',
   'agent_pool',
+  'factory_configuration',
+  'factory_run',
 ];
 const RECORD_KEYS = [
   'expanded',

@@ -419,6 +419,9 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   flow::insert(schemas);
+  let mut validation = schemas["FactoryFlowConfiguration"].clone();
+  validation["properties"]["diagnostics"] = schema_ref("FactoryValidationDiagnostics");
+  schemas.insert("FactoryFlowDefinitionValidation".to_owned(), validation);
   let mut root = schemas["FactoryFlowDefinition"].clone();
   root["properties"].as_object_mut().unwrap().remove("reference");
   root["required"]
@@ -469,6 +472,13 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
         ("project_id", non_empty_string()),
         ("flow", schema_ref("FactoryFlowConfiguration")),
         ("published_at_unix_ms", integer()),
+        (
+          "native_gate_policies",
+          bounded_array(
+            schema_ref("FactoryImmutableReferenceResource"),
+            bounds.nodes * bounds.definitions,
+          ),
+        ),
       ],
       &["project_id", "flow", "published_at_unix_ms"],
     ),
@@ -648,6 +658,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert("FactoryChoiceMetadata".to_owned(), object([
+    ("permission_declarations", schema_ref("FactoryPermissions")),
     ("node_kinds", bounded_array(schema_ref("FactoryFlowNodeKind"),octacity_server_application::factory_flow_node_kinds().count())),
     ("signal_purposes", bounded_array(json!({"type":"string","enum":octacity_server_application::factory_signal_purposes().collect::<Vec<_>>()}),octacity_server_application::factory_signal_purposes().count())),
     ("enforcement", bounded_array(json!({"type":"string","enum":octacity_server_application::factory_permission_categories().collect::<Vec<_>>()}),octacity_server_application::factory_permission_categories().count())),
@@ -675,8 +686,24 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
       [
         ("configuration", schema_ref("FactoryConfigurationDocument")),
         ("published_at_unix_ms", integer()),
+        (
+          "pool_policy_digests",
+          json!({"type":"object", "additionalProperties":schema_ref("FactoryDigest")}),
+        ),
       ],
       &["configuration", "published_at_unix_ms"],
+    ),
+  );
+  schemas.insert(
+    "ValidateFactoryFlowDataSchemaRequest".to_owned(),
+    object(
+      [
+        ("project_id", non_empty_string()),
+        ("identity", non_empty_string()),
+        ("version", non_empty_string()),
+        ("shape", schema_ref("FactoryFlowValueSchema")),
+      ],
+      &["project_id", "identity", "version", "shape"],
     ),
   );
   schemas.insert(

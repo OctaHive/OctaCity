@@ -17,6 +17,7 @@ const sectionScopes = {
   agents: ['agent', 'agent_pool'],
   audit: [],
   builds: ['build'],
+  factory: [],
   projects: ['project'],
 } as const satisfies Record<ConsoleSectionId, ResourceSearchScope>;
 

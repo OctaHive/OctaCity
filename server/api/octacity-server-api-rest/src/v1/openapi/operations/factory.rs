@@ -5,12 +5,25 @@ use octacity_server_application::{
   ListFactoryConfigurationChoicesQuery, ListFactoryDiagnosticsQuery, ListFactoryPhaseReadyQuery, ListFactoryRunsQuery,
   ListProjectFactoryConfigurationsQuery, ListProjectFactoryFlowDefinitionsQuery, ReplaceFactoryConfigurationCommand,
   ReplaceFactoryFlowDefinitionCommand, RetryFactoryNodeCommand, SubmitFactoryNodeResponseCommand,
-  ValidateFactoryConfigurationQuery, ValidateFactoryFlowDefinitionQuery,
+  ValidateFactoryConfigurationQuery, ValidateFactoryFlowDataSchemaQuery, ValidateFactoryFlowDefinitionQuery,
 };
 
 use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
+  operation!(
+    ValidateFactoryFlowDataSchemaQuery,
+    "POST",
+    "/api/v1/flow-data-schemas/validate",
+    "validateFactoryFlowDataSchema",
+    "Factory",
+    "Normalize a bounded Project-owned data schema without publishing",
+    Some("ValidateFactoryFlowDataSchemaRequest"),
+    "FactoryFlowDataSchema",
+    "200",
+    false,
+    false
+  ),
   operation!(
     ConfirmFactoryNodeOperationCommand,
     "POST",
@@ -240,7 +253,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "Factory",
     "Validate an exact reachable Flow graph",
     Some("CreateFactoryFlowDefinitionRequest"),
-    "FactoryFlowConfiguration",
+    "FactoryFlowDefinitionValidation",
     "200",
     false,
     false

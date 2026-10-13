@@ -99,10 +99,12 @@ bounds numeric `Retry-After` delays through one console retry-safety policy.
 
 ## Application shell
 
-The root route redirects to `/projects`. The first-release shell declares deep links for:
+The root route redirects to `/projects`. The shell declares deep links for:
 
 - `/projects` and `/projects/:projectId`;
 - `/builds` and `/builds/:buildId`;
+- `/factory` and `/factory/:factoryRunId`, including URL-backed Project, configuration,
+  immutable Flow version, and Run filters;
 - `/agents` and `/agents/:agentId`;
 - `/agent-pools` and `/agent-pools/:poolId`;
 - `/audit`.

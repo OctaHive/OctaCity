@@ -112,9 +112,13 @@ export function ContextExplorer({
         </div>
         <div className={styles.explorerActions}>
           <button
-            aria-haspopup="dialog"
+            aria-haspopup={section.id === 'factory' ? undefined : 'dialog'}
             aria-label={t('shell.searchSection', { section: localizedSection })}
-            onClick={(event) => onOpenSearch(event.currentTarget)}
+            onClick={(event) =>
+              section.id === 'factory'
+                ? explorerRef.current?.querySelector<HTMLElement>('[data-factory-filters]')?.focus()
+                : onOpenSearch(event.currentTarget)
+            }
             title={t('shell.searchSection', { section: localizedSection })}
             type="button"
           >
@@ -194,14 +198,31 @@ function FavoriteLinks({
 }) {
   const { t } = usePresentation();
   const scope = searchScopeForSection(section.id);
-  const visible = favorites.filter(
-    (identity) => identity.kind !== 'build_configuration' && scope.includes(identity.kind),
+  const visible = favorites.filter((identity) =>
+    section.id === 'factory'
+      ? identity.kind === 'factory_run'
+      : identity.kind !== 'build_configuration' &&
+        identity.kind !== 'factory_configuration' &&
+        identity.kind !== 'factory_run' &&
+        scope.includes(identity.kind),
   );
   if (visible.length === 0) return <p>{t('common.noFavorites')}</p>;
   return (
     <ul>
       {visible.map((identity) => {
-        if (identity.kind === 'build_configuration') return null;
+        if (identity.kind === 'build_configuration' || identity.kind === 'factory_configuration')
+          return null;
+        if (identity.kind === 'factory_run')
+          return (
+            <li key={identity.id}>
+              <Link
+                to={`/factory/${encodeURIComponent(identity.id)}`}
+                onClick={() => onOpen(identity)}
+              >
+                {t('factory.run')} {identity.id}
+              </Link>
+            </li>
+          );
         return (
           <li key={`${identity.kind}:${identity.id}`}>
             <Link
@@ -225,6 +246,8 @@ function FavoriteLinks({
 function ExplorerLinks({ section }: { section: ConsoleSection }) {
   const { t } = usePresentation();
   switch (section.id) {
+    case 'factory':
+      return <Link to={CONSOLE_PATHS.factory}>{t('section.factory')}</Link>;
     case 'agents':
       return (
         <ul>

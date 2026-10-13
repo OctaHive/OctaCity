@@ -7,6 +7,8 @@ export const CONSOLE_PATHS = {
   audit: '/audit',
   build: '/builds/:buildId',
   builds: '/builds',
+  factory: '/factory',
+  factoryRun: '/factory/:factoryRunId',
   project: '/projects/:projectId',
   projects: '/projects',
 } as const;

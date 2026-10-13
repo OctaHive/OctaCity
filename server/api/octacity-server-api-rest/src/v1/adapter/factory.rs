@@ -1,4 +1,22 @@
 use super::*;
+pub(super) async fn validate_factory_flow_data_schema(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  payload: Result<Json<crate::v1::ValidateFactoryFlowDataSchemaRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let body = body(payload, &request_id)?;
+  let query = application
+    .inputs
+    .validate_factory_flow_data_schema(&body.project_id, &body.identity, &body.version, body.shape)
+    .map_err(|error| invalid_input(error, &request_id))?;
+  let schema = application
+    .factory
+    .validate_schema
+    .handle_authorized_query(&context, query)
+    .await
+    .map_err(|error| authorized_handler_error(error, &request_id))?;
+  Ok(Json(encode(schema, &request_id)?))
+}
 pub(super) async fn confirm_factory_node_operation(
   State(application): State<Arc<ManagementApplication>>,
   Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
@@ -343,6 +361,13 @@ fn factory_configuration_resource(
   request_id: &RequestId,
 ) -> Result<FactoryConfigurationDetails, ApiError> {
   Ok(FactoryConfigurationDetails {
+    pool_policy_digests: projection
+      .configuration
+      .flow()
+      .pools
+      .iter()
+      .map(|(name, pool)| (name.to_string(), pool.policy.digest().to_string()))
+      .collect(),
     configuration: encode(projection.configuration, request_id)?,
     published_at_unix_ms: projection.published_at.unix_millis(),
   })
@@ -442,7 +467,10 @@ pub(super) async fn validate_factory_flow_definition(
     .handle_authorized_query(&context, query)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok(Json(encode(flow, &request_id)?))
+  let diagnostics = octacity_server_application::FactoryValidationDiagnostics::for_flow(&flow);
+  let mut document = encode(flow, &request_id)?;
+  document["diagnostics"] = encode(diagnostics, &request_id)?;
+  Ok(Json(document))
 }
 
 fn flow_details(
@@ -450,6 +478,14 @@ fn flow_details(
   request_id: &RequestId,
 ) -> Result<FactoryFlowDefinitionDetails, ApiError> {
   Ok(FactoryFlowDefinitionDetails {
+    native_gate_policies: octacity_server_application::factory_native_gate_policies(&publication.flow)
+      .into_iter()
+      .map(|reference| FactoryImmutableReferenceResource {
+        identity: reference.identity().to_string(),
+        version: reference.version().to_string(),
+        digest: reference.digest().to_string(),
+      })
+      .collect(),
     project_id: publication.project_id.to_string(),
     flow: encode(publication.flow, request_id)?,
     published_at_unix_ms: publication.published_at.unix_millis(),

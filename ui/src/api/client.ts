@@ -33,7 +33,13 @@ export const MANAGEMENT_ERROR_CODES = {
 export type ManagementApiFailureCode =
   ManagementErrorCode | 'invalid_response' | 'transport_failure';
 
+export interface ManagementValidationIssue {
+  readonly field: string;
+  readonly code: 'invalid_contract' | 'unavailable_reference';
+}
+
 interface ManagementApiErrorOptions {
+  validationIssues?: readonly ManagementValidationIssue[];
   code: ManagementApiFailureCode;
   message: string;
   requestId: string | null;
@@ -43,6 +49,7 @@ interface ManagementApiErrorOptions {
 
 /** Safe, normalized failure exposed by the management API boundary. */
 export class ManagementApiError extends Error {
+  readonly validationIssues: readonly ManagementValidationIssue[];
   readonly code: ManagementApiFailureCode;
   readonly requestId: string | null;
   readonly retryAfterMilliseconds: number | null;
@@ -51,6 +58,7 @@ export class ManagementApiError extends Error {
   constructor(options: ManagementApiErrorOptions) {
     super(options.message);
     this.name = 'ManagementApiError';
+    this.validationIssues = options.validationIssues ?? [];
     this.code = options.code;
     this.requestId = options.requestId;
     this.retryAfterMilliseconds = options.retryAfterMilliseconds;
@@ -191,6 +199,7 @@ async function normalizeErrorResponse(response: Response): Promise<ManagementApi
   }
 
   return new ManagementApiError({
+    validationIssues: publicValidationIssues('diagnostics' in body ? body.diagnostics : null),
     code: body.code,
     message: body.message,
     requestId: body.request_id,
@@ -199,6 +208,29 @@ async function normalizeErrorResponse(response: Response): Promise<ManagementApi
         ? retryAfterMilliseconds(response.headers.get('retry-after'))
         : null,
     status: response.status,
+  });
+}
+
+function publicValidationIssues(value: unknown): readonly ManagementValidationIssue[] {
+  if (
+    value === null ||
+    typeof value !== 'object' ||
+    !('errors' in value) ||
+    !Array.isArray(value.errors)
+  )
+    return [];
+  return value.errors.slice(0, 64).flatMap((issue: unknown) => {
+    if (
+      issue === null ||
+      typeof issue !== 'object' ||
+      !('field' in issue) ||
+      !('code' in issue) ||
+      typeof issue.field !== 'string' ||
+      !/^\/[a-zA-Z0-9_.~/-]{1,512}$/u.test(issue.field) ||
+      (issue.code !== 'invalid_contract' && issue.code !== 'unavailable_reference')
+    )
+      return [];
+    return [{ field: issue.field, code: issue.code }];
   });
 }
 

@@ -156,13 +156,13 @@ certificate keys in the static root or console archive.
 
 The proxy applies these mutually exclusive rules:
 
-| Request | Result |
-| --- | --- |
-| `/api/v1` and `/api/v1/*` | Proxied to management, including upstream 4xx/5xx responses |
-| `/health` and `/health/*` | Proxied to management, including upstream 4xx/5xx responses |
-| Existing `/assets/<content-hashed-name>` | Served with its registered MIME type and immutable caching |
-| Missing asset or any other missing file-like path | Static `404`; never `index.html` |
-| `/`, `index.html`, or an extension-free UI deep link | SPA entry point |
+| Request                                              | Result                                                      |
+| ---------------------------------------------------- | ----------------------------------------------------------- |
+| `/api/v1` and `/api/v1/*`                            | Proxied to management, including upstream 4xx/5xx responses |
+| `/health` and `/health/*`                            | Proxied to management, including upstream 4xx/5xx responses |
+| Existing `/assets/<content-hashed-name>`             | Served with its registered MIME type and immutable caching  |
+| Missing asset or any other missing file-like path    | Static `404`; never `index.html`                            |
+| `/`, `index.html`, or an extension-free UI deep link | SPA entry point                                             |
 
 Do not replace the exact and `^~` API/health locations with a catch-all proxy
 or an error-page rewrite. In particular, upstream `404`, `429`, and `503`
@@ -200,6 +200,77 @@ Serve this origin only over HTTPS. The fixture permits TLS 1.2 and TLS 1.3.
 Use a certificate trusted by operator browsers and complete certificate
 rotation before retiring the previous chain. Do not enable HSTS on a shared
 hostname whose other applications are not ready for HTTPS-only operation.
+
+## Factory workbench
+
+Open `/factory` from the Factory activity. Its explorer lazily loads visible
+Projects, Factory Configurations and Runs in bounded pages. Run links remain
+stable at `/factory/:factoryRunId`; lifecycle, configuration, source, decision,
+delivery and admission-time filters can be shared in the query string. Search
+Factory focuses these server-supported filters. Collapse and resize preserve
+loaded branches. Favorites persist only the Run kind and identity.
+
+A Project link opens its Factory workbench. Configuration and Flow lists expose
+current publications and exact immutable versions, including copied links to
+versions outside the first page. History controls load at most 100 version
+choices per window. Named phase-ready queues use the policy identities returned
+by the configuration detail endpoint. An empty configuration collection describes
+Factory as optional and keeps ordinary CI/CD available.
+
+Create a draft or edit an existing publication. The workbench owns one draft at a
+time and discards it when selecting another resource or leaving the page. Drafts,
+validation previews and confirmed intents never enter browser persistence or
+query strings. New configurations start disabled. New Flows contain no invented
+logical nodes and request no execution permissions; operators choose names,
+contracts, resource limits and routes through the forms.
+
+The editor covers the closed technical node grammar, typed outcomes and
+terminals, bounded control repeats, nested immutable subflows, independent
+Context/data projections, input mappings, budgets and permission choices.
+Logical Flow/node names have no special meaning. Execution, model and gate
+bindings come from compatible published Flow profiles and visible exact resource
+choices. Missing dependencies leave a profile unavailable. The editor preserves
+frozen adapter parameters and task provenance instead of asking for provider
+payloads, digests, scripts or mutable model aliases. Data-schema normalization
+returns a server-computed exact reference without publishing a document.
+
+Admission permission presets come from visible `permission_ceiling` choices with
+deployment-declared `metadata.permission_declarations`. Selecting a preset only
+offers bounded hosts, mounts, exact command patterns and output kinds; it does
+not copy grants into the draft. Each requested value still needs an explicit
+selection, and execution/node requests remain separate. A command selection also
+requests its exact executable identity. Presets containing hidden or unavailable
+capability/credential references are omitted from the declarations. Without a
+declared preset, an existing immutable baseline supplies its own declarations;
+an empty draft has none. The preset and baseline survive closing Flow settings.
+
+Subflow selection imports the exact schemas of its published closure without
+replacing the parent's existing catalogue or granting input/context access.
+Native gate profiles use the server's `native_gate_policies` discovery facts;
+the browser does not recognize native evaluators by their logical names. Schema
+and mapping depth limits come from the generated OpenAPI `x-max-depth` contract,
+and enum alternatives retain their selected string, integer, boolean or null type.
+
+Validate the draft before review. Generated OpenAPI constraints and local graph
+checks give early field feedback; server validation remains authoritative.
+Normalized values, required capabilities and effective Flow permission narrowing
+appear in the review area. Project, configuration, task and Agent policy may
+narrow these ceilings again. Field-error buttons focus the affected control or
+section without modifying the URL or unrelated draft values.
+
+Review opens the shared confirmed-intent dialog. Confirmation publishes one
+immutable version with one idempotency key and, for replacement, the discovered
+current-version precondition. A historical version may supply the draft while the
+precondition still names the current publication. A safe transport retry reuses
+the frozen request and key. A stale baseline requires explicit refresh and a new
+validation; refresh keeps the draft values. Abandoning closes the intent.
+Successful publication invalidates only the owning collections, version/current
+reads and audit projection. Existing Runs keep their pinned definitions.
+
+The Factory authoring schemas load with the Factory views. The initial bundle
+retains its 450 KiB limit. The complete console, including the optional workbench,
+has a 768 KiB JavaScript and 896 KiB static-output limit; runtime dependencies and
+product-asset allowances are unchanged.
 
 ## Verification
 

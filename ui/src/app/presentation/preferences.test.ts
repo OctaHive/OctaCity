@@ -16,6 +16,23 @@ import {
   type ConsolePreferences,
 } from './preferences';
 
+it('persists only bounded Factory identities while retaining ordinary favorites', () => {
+  const favorite = { kind: 'factory_run', id: '11111111-1111-4111-8111-111111111111' } as const;
+  const configuration = {
+    kind: 'factory_configuration',
+    id: '22222222-2222-4222-8222-222222222222',
+  } as const;
+  const project = { kind: 'project', id: '33333333-3333-4333-8333-333333333333' } as const;
+  const storage = new MemoryStorage();
+  savePreferences(
+    { ...DEFAULT_PREFERENCES, favorites: [favorite, project], expanded: [configuration] },
+    storage,
+  );
+  expect(loadPreferences(storage).favorites).toEqual([favorite, project]);
+  expect(loadPreferences(storage).expanded).toEqual([configuration]);
+  expect(Object.keys(JSON.parse(storage.record ?? '{}').favorites[0])).toEqual(['id', 'kind']);
+});
+
 class MemoryStorage {
   record: string | null;
 

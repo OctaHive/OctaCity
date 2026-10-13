@@ -15,6 +15,14 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 #[test]
+fn factory_authoring_contract_exposes_schema_and_mapping_nesting_limits() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let schemas = &document["components"]["schemas"];
+  assert_eq!(schemas["FactoryFlowValueSchema"]["x-max-depth"], 16);
+  assert_eq!(schemas["FactoryFlowValueMapping"]["x-max-depth"], 16);
+}
+
+#[test]
 fn factory_build_summary_preserves_its_operation_without_a_trigger_cause() {
   let document = json!({
     "id":"build-1", "project_id":"project-1", "configuration_id":"configuration-1",
