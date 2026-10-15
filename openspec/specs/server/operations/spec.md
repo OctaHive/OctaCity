@@ -101,11 +101,19 @@ The server SHALL accept bounded protocol-defined agent telemetry and collect ser
 - **THEN** build coordination continues, bounded telemetry loss is reported, and memory usage remains limited
 
 ### Requirement: Durable restart recovery
-After restart, the server SHALL reconstruct schedules, trigger work, pipeline state, queued jobs, builds and attempts, current leases, event cursors, log-chunk manifests, pending uploads, cache sessions, drain state, idempotency outcomes, and outbox records from the authoritative store and SHALL fence or expire ambiguous ownership before reassignment.
+After restart, the server SHALL reconstruct schedules, trigger work, pipeline state, queued jobs, builds and attempts, Factory Configurations, Work Envelopes, Factory Runs, Stage Attempts, current stage claims and budgets, Decision Signal Requests and Receipts, ChangeSets, Evidence Manifests, Evaluation Plans, Assessments, Decisions, delivery and reporting work, current leases, event cursors, log-chunk manifests, pending uploads, cache sessions, drain state, idempotency outcomes, and outbox records from the authoritative store and SHALL fence or expire ambiguous ownership before reassignment. Recovery SHALL require no worktree, model session, in-memory transcript, process-local timer, or provider-local hidden state.
 
 #### Scenario: Server restarts during a running job
 - **WHEN** the agent reconnects with the current registration and fence before lease expiry
 - **THEN** the server resumes heartbeat, event, and completion handling without duplicating the job or attempt
+
+#### Scenario: Server restarts between Factory stages
+- **WHEN** a server replica stops after committing a Stage Attempt result but before dispatching the next stage
+- **THEN** a later reconciler derives exactly one permitted next action from persisted Factory state and input digests
+
+#### Scenario: Model session disappears
+- **WHEN** an implementation or evaluator process and resumable provider session are lost after a typed result was committed
+- **THEN** recovery continues or retries from exact revisions, immutable task inputs, typed results, budgets, and artifact references without treating session loss as lost authoritative state
 
 ### Requirement: Rebuildable log-search projection
 Build-log search SHALL be a derived projection behind a backend-neutral `LogSearchIndex` port. The initial PostgreSQL adapter SHALL provide full-text search using the `simple` text-search configuration and GIN indexing plus bounded literal-fragment search suitable for error codes, paths, and hashes. Indexing SHALL consume durable project-local contiguous work positions, expose both indexed and committed watermarks, retry idempotently, preserve deletion tombstones, and rebuild from committed visible redacted chunks without blocking coordination when the projection is unavailable. The application SHALL obtain the committed watermark from the authoritative `LogIndexWorkStore`; external search DTOs SHALL NOT supply or override it.
@@ -157,3 +165,40 @@ The release SHALL document and test a consistent backup and restore procedure co
 #### Scenario: Restored deployment starts
 - **WHEN** an operator restores a matched database and object-store snapshot using the documented procedure
 - **THEN** the server validates consistency before becoming ready and does not revive expired leases as current
+
+### Requirement: Factory reconciliation is supervised and bounded
+Factory admission, reconciliation, evaluation planning, decision, delivery, and reporting workers SHALL be supervised dependencies with configurable bounded concurrency, claim duration, retry delay, batch size, WIP, and shutdown behavior. Process-local wakeups and circuit breakers MAY control load but SHALL NOT authorize or reconstruct a Factory transition. Readiness SHALL distinguish mandatory factory dependencies from optional disabled Factory mode.
+
+#### Scenario: Factory mode is disabled
+- **WHEN** a deployment has no enabled Factory Configuration or factory worker requirement
+- **THEN** unavailable model, evaluator, and delivery providers do not make ordinary CI/CD readiness fail
+
+#### Scenario: Required factory worker repeatedly fails
+- **WHEN** an enabled deployment cannot safely progress admitted Factory Runs because a mandatory supervised factory worker is unavailable
+- **THEN** readiness and operator diagnostics report the degraded factory capability while liveness and already-safe CI/CD observation remain honest
+
+### Requirement: Factory audit and secret-safe observability
+Every accepted Work admission, Factory claim, Stage Attempt, Build linkage, Decision Signal request, receipt, rollout comparison and consuming disposition, candidate capture, evidence publication, evaluation plan, Assessment receipt, Decision, rework, escalation, cancellation, delivery, and reporting mutation SHALL append an immutable audit fact in the same authoritative transaction as its state change. Structured logs, metrics, and traces SHALL expose bounded lifecycle state, latency, usage, retries, budget, fences, exact connector/model/policy digests, rollout mode, calibrated outcome class, and failure classifications while excluding task bodies, prompts, raw command text, raw provider payloads, raw findings, paths of unbounded cardinality, provider credentials, secrets, private delivery capabilities, and hidden model reasoning.
+
+#### Scenario: Factory decision is committed
+- **WHEN** the Decision Engine accepts, reworks, escalates, rejects, or cancels a candidate
+- **THEN** the transaction records the actor, Factory Run, Stage Attempt, exact subject and evidence digests, policy version, reasons, request identity, and outcome without storing a secret or raw model transcript in audit
+
+#### Scenario: Provider error contains sensitive material
+- **WHEN** a model, evaluator, source, or delivery adapter returns an error containing a credential, private URL, prompt fragment, or repository-sensitive text
+- **THEN** operational logs and metrics contain only the redacted stable classification and safe correlation identity
+
+#### Scenario: Decision Signal policy runs in shadow mode
+- **WHEN** a shadow routing or tool-risk assessment completes
+- **THEN** audit records its exact provider/model/policy identities, typed result, baseline disposition, latency, and safe comparison outcome while metrics use bounded labels and execution remains unchanged
+
+#### Scenario: Decision Signal model drifts beyond policy
+- **WHEN** monitored disagreement, calibration, invalid-result, latency, or failure bounds exceed the immutable promotion policy
+- **THEN** the provider/model policy is prevented from entering or remaining in bounded control and affected decisions use the configured deterministic fallback
+
+### Requirement: Factory state participates in backup and retention
+Backup and restore procedures SHALL cover Factory Configurations, Work Envelopes, Factory Runs, Stage Attempts, claims, budgets, Decision Signal Requests and Receipts, ChangeSets, evidence, Assessments, Decisions, delivery identities, audit facts, and referenced retained objects consistently with the Build and Artifact stores. Retention SHALL preserve the exact routing and tool-risk receipts, candidate, evidence, decision, and delivery provenance required by any visible non-terminal, escalated, or held Factory Run and SHALL safely retry partial cleanup.
+
+#### Scenario: Deployment is restored with active Factory Runs
+- **WHEN** matched authoritative metadata and object snapshots are restored
+- **THEN** the server validates their referenced digests, expires ambiguous ownership, and can reconcile each non-terminal run without reviving an obsolete claim
