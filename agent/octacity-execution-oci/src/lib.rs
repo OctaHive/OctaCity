@@ -498,6 +498,7 @@ mod controlled_projection_tests {
   struct ReaderEngine {
     platform: ExecutionPlatform,
     enabled: bool,
+    projection_root: PathBuf,
   }
   #[async_trait]
   impl OciEngine for ReaderEngine {
@@ -514,7 +515,7 @@ mod controlled_projection_tests {
       self.enabled
     }
     fn factory_tool_projection_root(&self) -> Option<PathBuf> {
-      Some(PathBuf::from("/installed/readonly-tools"))
+      Some(self.projection_root.clone())
     }
     async fn start(
       &self,
@@ -530,6 +531,9 @@ mod controlled_projection_tests {
   }
   #[test]
   fn controlled_tool_projection_requires_the_exact_selected_route_and_all_physical_controls() {
+    let temporary = tempfile::tempdir().unwrap();
+    let projection_root = temporary.path().join("readonly-tools");
+    assert!(projection_root.is_absolute());
     let qualified = ExecutionPlatform {
       os: ExecutionOs::Linux,
       architecture: ExecutionArchitecture::Arm64,
@@ -542,10 +546,12 @@ mod controlled_projection_tests {
       Arc::new(ReaderEngine {
         platform: qualified,
         enabled: true,
+        projection_root: projection_root.clone(),
       }),
       Arc::new(ReaderEngine {
         platform: unqualified,
         enabled: false,
+        projection_root: projection_root.clone(),
       }),
     ])
     .unwrap();
@@ -556,7 +562,7 @@ mod controlled_projection_tests {
     };
     assert_eq!(
       backend.factory_tool_projection(&target(qualified, OciIsolation::Hypervisor)),
-      Some(PathBuf::from("/installed/readonly-tools"))
+      Some(projection_root)
     );
     assert_eq!(
       backend.factory_tool_projection(&target(unqualified, OciIsolation::Hypervisor)),

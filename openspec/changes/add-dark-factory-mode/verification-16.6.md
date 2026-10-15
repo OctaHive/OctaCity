@@ -112,6 +112,14 @@ These are compilation-scope corrections without new executable behavior;
 existing behavioral tests are retained. Final Windows verification requires
 Actions on the follow-up revision.
 
+The follow-up Windows job passed strict workspace Clippy and rustdoc, then
+exposed a Unix path literal in the OCI projection test. `/installed/readonly-tools`
+is not an absolute Windows host path, so the existing production absolute-path
+guard correctly rejected it. The fixture now supplies a temporary host-absolute
+root to the engine and expected result. No production path check or backend
+qualification changes. The original test passed on macOS before the fixture
+refactoring; the full OCI library suite is rerun afterward.
+
 ### Release fixture TLS provider
 
 A new HTTPS round-trip test first reproduced a panic when both Rustls crypto
