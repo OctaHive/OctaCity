@@ -761,6 +761,43 @@ fn digest(path: &Path) -> String {
 }
 
 #[tokio::test]
+async fn captures_changes_from_canonical_host_paths() {
+  let fixture = CaptureFixture::new();
+  fs::write(fixture.workspace.join("existing.txt"), "candidate\n").unwrap();
+  let destination = fixture._root.path().join("canonical capture");
+  fs::create_dir(&destination).unwrap();
+  let destination = destination.canonicalize().unwrap();
+  let captured = fixture
+    .capturer
+    .capture(
+      CaptureRequest {
+        workspace: fixture.workspace.canonicalize().unwrap(),
+        destination: destination.clone(),
+        base_revision: fixture.base.clone(),
+        bundle_base_revision: fixture.base.clone(),
+        node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
+        instruction: ChangeSetCaptureV3 {
+          author_name: "Operator".to_owned(),
+          author_email: "operator@example.test".to_owned(),
+          committed_at: 1,
+          patch_max_bytes: Some(64 * 1024),
+          policy: policy(),
+          observation: None,
+        },
+        observation: None,
+      },
+      CancellationToken::new(),
+    )
+    .await
+    .expect("capture must accept canonical host paths, including Windows verbatim paths");
+  assert_eq!(captured.manifest.base_revision, fixture.base);
+  assert_ne!(captured.manifest.candidate_revision, fixture.base);
+  assert_eq!(captured.manifest.changed_paths.len(), 1);
+  assert_eq!(captured.manifest.changed_paths[0].path, "existing.txt");
+  assert!(destination.join(&captured.manifest.bundle.name).is_file());
+}
+
+#[tokio::test]
 async fn produces_closed_capture_observations_from_the_actual_trusted_commit() {
   let fixture = CaptureFixture::new();
   fs::write(fixture.workspace.join("existing.txt"), "PRIVATE_CANDIDATE_BODY\n").unwrap();
