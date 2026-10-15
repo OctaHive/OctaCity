@@ -1,0 +1,441 @@
+{
+  "version": 1,
+  "references": [
+    {
+      "kind": "admission_policy",
+      "alias": "demo-admission",
+      "reference": {
+        "identity": "demo-admission",
+        "version": "v1",
+        "digest": "026ce2e6d0e68ec81f6541656706f2f246ac16c5caf49e1daa4f7f106417b784"
+      }
+    },
+    {
+      "kind": "permission_ceiling",
+      "alias": "demo-ceiling",
+      "reference": {
+        "identity": "demo-ceiling",
+        "version": "v1",
+        "digest": "a7e8107bdbe6089ac3440b1984bf3220beca0087987e424e901c25f4d0fc2bc6"
+      }
+    }
+  ],
+  "schemas": {
+    "risk": {
+      "identity": "demo-risk",
+      "version": "v1",
+      "shape": {
+        "type": "enum",
+        "values": [
+          "low",
+          "medium",
+          "high"
+        ]
+      }
+    }
+  },
+  "flows": [
+    {
+      "key": "risk-routing",
+      "definition": {
+        "root": {
+          "input_schema": {
+            "$fixture": "schemas.risk.reference"
+          },
+          "entry": "risk-rule",
+          "nodes": [
+            {
+              "key": "risk-rule",
+              "kind": "deterministic_gate",
+              "input_schema": {
+                "$fixture": "schemas.risk.reference"
+              },
+              "outcomes": [
+                {
+                  "key": "automatic",
+                  "kind": "success",
+                  "schema": {
+                    "$fixture": "schemas.risk.reference"
+                  }
+                },
+                {
+                  "key": "review",
+                  "kind": "success",
+                  "schema": {
+                    "$fixture": "schemas.risk.reference"
+                  }
+                }
+              ],
+              "budget": {
+                "$fixture": "settings.budget"
+              },
+              "permissions": {
+                "$fixture": "settings.permissions"
+              },
+              "required": true,
+              "subflow": null,
+              "input_binding": {
+                "sources": {
+                  "risk": {
+                    "source": "work",
+                    "path": "/risk"
+                  }
+                },
+                "mapping": {
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/risk"
+                  }
+                }
+              },
+              "gate": {
+                "policy": {
+                  "identity": "factory.declarative-gate",
+                  "version": "v1",
+                  "digest": "0e47afe52be45a99fdcdb181b64408d1fa1139e7a06f49fe77cfbf466c44d13c"
+                },
+                "parameters": {
+                  "rules": [
+                    {
+                      "when": {
+                        "operation": "compare",
+                        "left": {
+                          "source": "path",
+                          "path": ""
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "low"
+                        }
+                      },
+                      "outcome": "automatic"
+                    }
+                  ],
+                  "fallback": "review",
+                  "default_output": {
+                    "value": {
+                      "mapping": "pointer",
+                      "path": ""
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "transitions": [
+            {
+              "predecessor": "risk-rule",
+              "outcome": "automatic",
+              "target": {
+                "kind": "terminal",
+                "key": "automatic"
+              },
+              "max_repeats": 0,
+              "exhausted_terminal": null,
+              "starts_cycle": false
+            },
+            {
+              "predecessor": "risk-rule",
+              "outcome": "review",
+              "target": {
+                "kind": "terminal",
+                "key": "review"
+              },
+              "max_repeats": 0,
+              "exhausted_terminal": null,
+              "starts_cycle": false
+            }
+          ],
+          "terminals": [
+            {
+              "key": "automatic",
+              "schema": {
+                "$fixture": "schemas.risk.reference"
+              }
+            },
+            {
+              "key": "review",
+              "schema": {
+                "$fixture": "schemas.risk.reference"
+              }
+            }
+          ],
+          "context_projections": [],
+          "data_projections": [],
+          "execution": {
+            "budget": {
+              "$fixture": "settings.budget"
+            },
+            "permissions": {
+              "$fixture": "settings.permissions"
+            },
+            "max_active_nodes": 4
+          }
+        },
+        "limits": {
+          "max_depth": 4,
+          "max_expanded_nodes": 16,
+          "max_repeat_count": 1,
+          "max_fan_out": 4,
+          "max_wip": 4,
+          "budget": {
+            "$fixture": "settings.budget"
+          },
+          "permissions": {
+            "$fixture": "settings.permissions"
+          }
+        },
+        "data_schemas": [
+          {
+            "$fixture": "schemas.risk"
+          }
+        ],
+        "pools": {}
+      },
+      "configuration": {
+        "admission_policy": "demo-admission",
+        "permission_ceiling": "demo-ceiling",
+        "hard_budget": {
+          "$fixture": "settings.budget"
+        },
+        "wip_limits": {
+          "max_active_runs": 4,
+          "max_active_nodes": 4
+        },
+        "enabled": true
+      }
+    },
+    {
+      "key": "operator-review",
+      "definition": {
+        "root": {
+          "input_schema": {
+            "$fixture": "schemas.risk.reference"
+          },
+          "entry": "classify-risk",
+          "nodes": [
+            {
+              "key": "classify-risk",
+              "kind": "subflow_call",
+              "input_schema": {
+                "$fixture": "schemas.risk.reference"
+              },
+              "outcomes": [
+                {
+                  "key": "automatic",
+                  "kind": "success",
+                  "schema": {
+                    "$fixture": "schemas.risk.reference"
+                  }
+                },
+                {
+                  "key": "review",
+                  "kind": "success",
+                  "schema": {
+                    "$fixture": "schemas.risk.reference"
+                  }
+                }
+              ],
+              "budget": {
+                "$fixture": "settings.budget"
+              },
+              "permissions": {
+                "$fixture": "settings.permissions"
+              },
+              "required": true,
+              "subflow": {
+                "$fixture": "flows.risk-routing.closure.root"
+              },
+              "input_binding": {
+                "sources": {
+                  "risk": {
+                    "source": "work",
+                    "path": "/risk"
+                  }
+                },
+                "mapping": {
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/risk"
+                  }
+                }
+              }
+            },
+            {
+              "key": "operator-approval",
+              "kind": "human_gate",
+              "input_schema": {
+                "$fixture": "schemas.risk.reference"
+              },
+              "outcomes": [
+                {
+                  "key": "approved",
+                  "kind": "success",
+                  "schema": {
+                    "$fixture": "schemas.risk.reference"
+                  }
+                }
+              ],
+              "budget": {
+                "$fixture": "settings.budget"
+              },
+              "permissions": {
+                "$fixture": "settings.permissions"
+              },
+              "required": true,
+              "subflow": null,
+              "input_binding": {
+                "sources": {
+                  "risk": {
+                    "source": "work",
+                    "path": "/risk"
+                  }
+                },
+                "mapping": {
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/risk"
+                  }
+                }
+              }
+            }
+          ],
+          "transitions": [
+            {
+              "predecessor": "classify-risk",
+              "outcome": "automatic",
+              "target": {
+                "kind": "terminal",
+                "key": "finished"
+              },
+              "max_repeats": 0,
+              "exhausted_terminal": null,
+              "starts_cycle": false
+            },
+            {
+              "predecessor": "classify-risk",
+              "outcome": "review",
+              "target": {
+                "kind": "node",
+                "key": "operator-approval"
+              },
+              "max_repeats": 0,
+              "exhausted_terminal": null,
+              "starts_cycle": false
+            },
+            {
+              "predecessor": "operator-approval",
+              "outcome": "approved",
+              "target": {
+                "kind": "terminal",
+                "key": "finished"
+              },
+              "max_repeats": 0,
+              "exhausted_terminal": null,
+              "starts_cycle": false
+            }
+          ],
+          "terminals": [
+            {
+              "key": "finished",
+              "schema": {
+                "$fixture": "schemas.risk.reference"
+              }
+            }
+          ],
+          "context_projections": [],
+          "data_projections": [],
+          "execution": {
+            "budget": {
+              "$fixture": "settings.budget"
+            },
+            "permissions": {
+              "$fixture": "settings.permissions"
+            },
+            "max_active_nodes": 4
+          }
+        },
+        "limits": {
+          "max_depth": 4,
+          "max_expanded_nodes": 16,
+          "max_repeat_count": 1,
+          "max_fan_out": 4,
+          "max_wip": 4,
+          "budget": {
+            "$fixture": "settings.budget"
+          },
+          "permissions": {
+            "$fixture": "settings.permissions"
+          }
+        },
+        "data_schemas": [
+          {
+            "$fixture": "schemas.risk"
+          }
+        ],
+        "pools": {}
+      },
+      "configuration": {
+        "admission_policy": "demo-admission",
+        "permission_ceiling": "demo-ceiling",
+        "hard_budget": {
+          "$fixture": "settings.budget"
+        },
+        "wip_limits": {
+          "max_active_runs": 4,
+          "max_active_nodes": 4
+        },
+        "enabled": true
+      }
+    }
+  ],
+  "cases": [
+    {
+      "key": "automatic",
+      "flow": "operator-review",
+      "risk": "low",
+      "expect": "completed"
+    },
+    {
+      "key": "manual",
+      "flow": "operator-review",
+      "risk": "high",
+      "expect": "human_gate"
+    }
+  ],
+  "settings": {
+    "budget": {
+      "max_attempts": 16,
+      "max_elapsed_millis": 86400000,
+      "max_tokens": 1000,
+      "max_cost_micro_units": 1000,
+      "max_output_bytes": 1048576
+    },
+    "permissions": {
+      "plugins": [],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "max_descendants": 0,
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0,
+        "kinds": []
+      }
+    }
+  }
+}

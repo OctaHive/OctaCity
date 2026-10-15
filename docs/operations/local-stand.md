@@ -187,11 +187,71 @@ unset CA_SHA256
 Keychain commands may prompt for the current user's approval. Restart an open
 browser if it does not notice a trust change immediately.
 
+## Factory demonstration in one command
+
+To start a disposable stand with Factory enabled and retained demonstration
+data, run from the repository root:
+
+```shell
+tools/factory-stand
+```
+
+The command prepares the same verified native installation, images, TLS,
+PostgreSQL, MinIO, and Agent as `tools/local-stand up`. It creates the owning
+Project through a temporary loopback-only bootstrap API, installs a private
+Factory catalog, and publishes two Flow definitions and configurations through
+the management API. Two ordinary Builds produce distinct retained input
+Artifacts. The resulting Factory Runs demonstrate:
+
+- automatic completion through a nested Flow and a deterministic risk rule;
+- a higher-risk Work item waiting at a human gate for an operator response.
+
+No external model or decision-service credentials are needed. This demonstration
+uses native control nodes; it does not run model authoring, repository changes,
+or delivery. The graphs, risk condition, budgets, and cases are declared in
+[`factory-demo.json`](../../deployment/local-stand/fixtures/factory-demo.json).
+The script binds server-generated references without dispatching by Flow or
+node name.
+
+Open `https://octacity.localhost:8443/` and select **Factory**. The command prints
+the Project, Flow, configuration, and Run IDs and retains them in
+`evidence/factory-demo.json` under the private stand root. Local CA trust is
+configured as described below.
+
+The default root and `OCTACITY_LOCAL_STAND_ROOT` match the ordinary launcher;
+`--root` overrides them. By default, the input repository is the public
+`OctaHive/OctaCity` repository and its current remote `HEAD` is frozen on first
+use. To select another published revision explicitly:
+
+```shell
+tools/factory-stand \
+  --source-repository https://github.com/OctaHive/OctaCity \
+  --source-revision <published-40-character-commit>
+```
+
+Repeating the same command reuses the frozen source, immutable installation,
+resources, Builds, and Runs through stable replay identities. It neither resets
+the database nor creates another demonstration. Do not run two lifecycle or
+demonstration commands concurrently. The stand still uses the single ordinary
+Compose project and fixed port `8443`.
+
+An already installed ordinary stand cannot be converted silently: the command
+refuses to replace a server bundle it did not prepare. Preserve any needed data
+and deliberately reset a disposable installation using the reset procedure
+below before its first Factory demonstration. Choosing another root does not
+create a second independent Compose project.
+
+Use `tools/local-stand status`, `logs`, and `down` to operate the resulting
+stand. Restart and refill it with `tools/factory-stand`; no profile files need
+to be prepared by hand. The separate integration verifier remains available
+for its wider ordinary CI/CD checks.
+
 ## Verify readiness and a real job
 
 ### Optional Factory installation
 
-Factory remains disabled on the default stand. To opt in, supply an operator
+Ordinary `tools/local-stand up` keeps Factory disabled without an installed
+catalog. To opt in manually, supply an operator
 owned native profile catalog with mode `0600`:
 
 ```shell
@@ -664,6 +724,22 @@ tools/local-stand up
 The launcher repairs stale ownership records without signalling an unrelated
 process. Do not manually delete PID files or named volumes. Use confirmed
 `reset` only when loss of all local stand data is intended.
+
+### Agent registration fails after Docker volumes were recreated
+
+If Compose reports newly created PostgreSQL/MinIO volumes while the private
+stand root still exists, the server and host state belong to different
+installations. The Agent can exit before readiness with `HTTP 401:
+credential_rejected` in `logs/agent.log`: its retained registration credential
+is unknown to the new database. Factory resource and Run receipts are also
+stale. Increasing readiness timeouts or deleting only the credential cannot
+restore the original installation.
+
+Restore the matching database and object-store backups if those data are
+needed. For a disposable stand, use the confirmed reset procedure above to
+clear both host and server state together, then run `tools/factory-stand` to
+create a fresh Factory demonstration. The launcher does not reset data or
+replace a rejected credential automatically.
 
 ### Browser reports an untrusted certificate
 
