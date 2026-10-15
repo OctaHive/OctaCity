@@ -278,6 +278,32 @@ where
     store
       .list_published_artifacts(ListPublishedArtifacts {
         build_id: fixture.build_id,
+        attempt_id: Some(published.artifact.identity().attempt_id),
+        limit: 1,
+        visibility: crate::ArtifactListVisibility::all(),
+      })
+      .await
+      .unwrap(),
+    vec![published.clone()]
+  );
+  assert!(
+    store
+      .list_published_artifacts(ListPublishedArtifacts {
+        build_id: fixture.build_id,
+        attempt_id: Some(octacity_server_domain::AttemptId::generate()),
+        limit: 1,
+        visibility: crate::ArtifactListVisibility::all(),
+      })
+      .await
+      .unwrap()
+      .is_empty(),
+    "another Attempt cannot contribute outputs before the result limit"
+  );
+  assert_eq!(
+    store
+      .list_published_artifacts(ListPublishedArtifacts {
+        attempt_id: None,
+        build_id: fixture.build_id,
         limit: 10,
         visibility: crate::ArtifactListVisibility::all(),
       })

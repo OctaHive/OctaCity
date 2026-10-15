@@ -334,6 +334,7 @@ impl ArtifactStore for S3ArtifactStore {
           .get_object()
           .bucket(&self.bucket)
           .key(self.published_key(object))
+          .response_content_type(object.content_type())
           .presigned(presigning(expires_in, ArtifactStoreOperation::AuthorizeDownload)?)
           .await
           .map_err(|source| backend(ArtifactStoreOperation::AuthorizeDownload, source))?;
@@ -359,6 +360,43 @@ impl ArtifactStore for S3ArtifactStore {
           .await
           .map_err(|source| backend(ArtifactStoreOperation::Delete, source))?;
         Ok(())
+      })
+      .await
+  }
+}
+
+#[async_trait]
+impl octacity_artifact_store::ArtifactByteReader for S3ArtifactStore {
+  async fn read_published(&self, object: &ArtifactObject, maximum_bytes: u64) -> Result<Vec<u8>, ArtifactStoreError> {
+    if maximum_bytes > octacity_artifact_store::MAX_ARTIFACT_READ_BYTES || object.size_bytes() > maximum_bytes {
+      return Err(ArtifactStoreError::Invalid {
+        reason: InvalidArtifactStoreRequest::UnsupportedObjectSize,
+      });
+    }
+    let operation = ArtifactStoreOperation::ReadPublished;
+    self
+      .within_operation(operation, async {
+        let key = self.published_key(object);
+        let generation = self.verified_etag(&key, object, operation).await?;
+        let response = self
+          .client
+          .get_object()
+          .bucket(&self.bucket)
+          .key(key)
+          .if_match(generation)
+          .send()
+          .await
+          .map_err(|error| backend(operation, error))?;
+        let mut body = response.body;
+        let mut verifier = BodyVerifier::new(object);
+        let mut bytes = Vec::new();
+        while let Some(chunk) = body.next().await {
+          let chunk = chunk.map_err(|error| backend(operation, error))?;
+          verifier.update(&chunk)?;
+          bytes.extend_from_slice(&chunk);
+        }
+        verifier.finish()?;
+        Ok(bytes)
       })
       .await
   }
@@ -392,4 +430,50 @@ fn map_head_error(error: SdkError<HeadObjectError>, operation: ArtifactStoreOper
 
 pub(super) fn backend(operation: ArtifactStoreOperation, _source: impl std::error::Error) -> ArtifactStoreError {
   ArtifactStoreError::Backend { operation }
+}
+
+#[async_trait]
+impl octacity_artifact_store::ArtifactBytePublisher for S3ArtifactStore {
+  async fn publish_verified(&self, object: &ArtifactObject, bytes: Vec<u8>) -> Result<(), ArtifactStoreError> {
+    let operation = ArtifactStoreOperation::PublishVerified;
+    if object.size_bytes() > octacity_artifact_store::MAX_ARTIFACT_READ_BYTES {
+      return Err(ArtifactStoreError::Invalid {
+        reason: InvalidArtifactStoreRequest::UnsupportedObjectSize,
+      });
+    }
+    let mut verifier = BodyVerifier::new(object);
+    verifier.update(&bytes)?;
+    verifier.finish()?;
+    self
+      .within_operation(operation, async {
+        match self.verified_etag(&self.published_key(object), object, operation).await {
+          Ok(_) => return Ok(()),
+          Err(ArtifactStoreError::NotFound) => {}
+          Err(error) => return Err(error),
+        }
+        let result = self
+          .client
+          .put_object()
+          .bucket(&self.bucket)
+          .key(self.pending_key(object))
+          .if_none_match("*")
+          .content_length(object.size_bytes() as i64)
+          .content_type(object.content_type())
+          .checksum_sha256(STANDARD.encode(object.sha256_bytes()))
+          .metadata(SHA256_METADATA, object.sha256())
+          .metadata(SIZE_METADATA, object.size_bytes().to_string())
+          .body(aws_sdk_s3::primitives::ByteStream::from(bytes))
+          .send()
+          .await;
+        match result {
+          Ok(_) => {}
+          Err(error) if super::immutable::is_conditional_conflict(&error) => {}
+          Err(error) => return Err(backend(operation, error)),
+        }
+        // Both a fresh PUT and an ambiguous/competing PUT are verified against
+        // one frozen generation by the existing idempotent publication boundary.
+        self.complete_upload(object).await
+      })
+      .await
+  }
 }

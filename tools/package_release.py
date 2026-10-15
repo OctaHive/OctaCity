@@ -73,10 +73,17 @@ PLATFORMS = {
     ),
 }
 LINUX_RUNTIME_ASSETS = ("native-runtime.conf", "containerd-runtime.conf", "microsandbox-runtime.conf")
+PROTECTED_READER_PLATFORMS = ("linux-x86_64", "linux-aarch64")
+
+
+def protected_reader_path(platform: str) -> str:
+    """Keep the standalone worker in its own guest-platform distribution root."""
+
+    return f"workers/protected-reader/{platform}/octacity-protected-reader"
 
 
 def release_executable_files(
-    platform: str, *, include_codex_fixture: bool
+    platform: str, *, include_codex_fixture: bool, protected_reader_platform: str | None = None
 ) -> frozenset[str]:
     """Returns the portable executable-mode inventory for one Agent archive."""
 
@@ -91,6 +98,8 @@ def release_executable_files(
         files.add("share/windows/uninstall-service.ps1")
     if include_codex_fixture:
         files.add("share/local-stand-codex-fixture")
+    if protected_reader_platform is not None:
+        files.add(protected_reader_path(protected_reader_platform))
     return frozenset(files)
 
 
@@ -126,10 +135,13 @@ def stage_release(
     octacity_revision: str,
     octa_revision: str,
     codex_fixture: Path | None = None,
+    protected_reader: Path | None = None,
+    protected_reader_platform: str | None = None,
 ) -> None:
     layout = PLATFORMS[platform]
     executable_files = release_executable_files(
-        platform, include_codex_fixture=codex_fixture is not None
+        platform, include_codex_fixture=codex_fixture is not None,
+        protected_reader_platform=protected_reader_platform,
     )
     contract_path, product_contract = load_release_contract(repository, "octacity-agent")
     source_protocol = product_contract["protocols"]["source_plugin"]
@@ -215,6 +227,23 @@ def stage_release(
             "source_git": {"path": f"source-plugins/git/{plugin_name}", "sha256": plugin_digest},
         },
     }
+    if protected_reader is not None:
+        worker_path = protected_reader_path(protected_reader_platform)
+        copy_file(
+            protected_reader,
+            root / worker_path,
+            executable=worker_path in executable_files,
+        )
+        worker_manifest = {
+            "format_version": 1,
+            "executable": "octacity-protected-reader",
+            "platform": protected_reader_platform,
+            "sha256": sha256(root / worker_path),
+        }
+        write_text(
+            (root / worker_path).parent / "manifest.json",
+            json.dumps(worker_manifest, indent=2, sort_keys=True) + "\n",
+        )
     write_text(root / "release-manifest.json", json.dumps(manifest, indent=2, sort_keys=True) + "\n")
     write_text(root / "SHA256SUMS", checksum_lines(root, {"SHA256SUMS"}))
 
@@ -231,6 +260,14 @@ def package(args: argparse.Namespace) -> Path:
     source_platform = PLATFORMS[args.platform].source_platform
     source_metadata = load_source_metadata(args.source_metadata, version, source_platform)
     codex_fixture = getattr(args, "codex_fixture", None)
+    protected_reader = getattr(args, "protected_reader", None)
+    protected_reader_platform = getattr(args, "protected_reader_platform", None)
+    if (protected_reader is None) != (protected_reader_platform is None):
+        raise ValueError("protected reader executable and guest platform must be supplied together")
+    if protected_reader is not None:
+        if protected_reader_platform not in PROTECTED_READER_PLATFORMS:
+            raise ValueError("unsupported protected reader platform")
+        protected_reader = require_file("protected reader executable", protected_reader)
     def stage(root: Path) -> None:
         stage_release(
             root,
@@ -244,6 +281,8 @@ def package(args: argparse.Namespace) -> Path:
             octacity_revision,
             octa_revision,
             codex_fixture,
+            protected_reader,
+            protected_reader_platform,
         )
 
     return archive_release(
@@ -253,7 +292,8 @@ def package(args: argparse.Namespace) -> Path:
         "octacity",
         stage,
         executable_files=release_executable_files(
-            args.platform, include_codex_fixture=codex_fixture is not None
+            args.platform, include_codex_fixture=codex_fixture is not None,
+            protected_reader_platform=protected_reader_platform,
         ),
     )
 
@@ -274,6 +314,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--octacity-revision", required=True)
     parser.add_argument("--octa-revision", required=True)
     parser.add_argument("--codex-fixture", type=Path)
+    parser.add_argument("--protected-reader", type=Path)
+    parser.add_argument("--protected-reader-platform", choices=PROTECTED_READER_PLATFORMS)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 

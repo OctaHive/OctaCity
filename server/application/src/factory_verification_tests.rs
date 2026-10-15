@@ -226,6 +226,7 @@ fn check_composition(own_evidence: bool) {
         };
         let bytes = serde_json::to_vec(&report).unwrap();
         let builds = Arc::new(Builds::new());
+        crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &output_schema).await;
         *builds.state.lock().unwrap() = BuildState::Succeeded;
         let mut document = crate::factory_node_test_support::document(
           &builds,

@@ -99,9 +99,10 @@ impl ArtifactStore for ByteStoreStub {
 
   async fn authorize_download(
     &self,
-    _object: &ArtifactObject,
+    object: &ArtifactObject,
     expires_in: Duration,
   ) -> Result<DownloadAuthorization, ArtifactStoreError> {
+    self.authorized.lock().unwrap().push(object.clone());
     Ok(DownloadAuthorization {
       url: "https://objects.example/download?signature=secret".to_owned(),
       expires_in,
@@ -229,6 +230,58 @@ fn protected_downloads_match_published_identity_and_never_outlive_the_lease() {
 }
 
 #[test]
+fn protected_download_preserves_signed_logical_media_over_generic_upload_transport() {
+  let (store, service, _, bytes) = service_with_bytes(false);
+  let mut request = begin_input("captured-private-input");
+  request.request.output.kind = OutputKind::Artifact;
+  request.request.output.report_format = None;
+  request.request.output.content_type = Some("application/vnd.example.protected+json".into());
+  request.request.output.transport_content_type = "application/octet-stream".into();
+  let begun = run_ready(service.begin_upload(request)).unwrap();
+  run_ready(service.complete_upload(complete_input("publish-captured", &begun.upload_id))).unwrap();
+  let upload = run_ready(store.artifact_upload(begun.upload_id.parse().unwrap())).unwrap();
+  let identity = upload.artifact.identity();
+  let manifest = ProtectedInputManifestV3 {
+    inputs: vec![ProtectedInputV3 {
+      artifact_id: identity.artifact_id.to_string(),
+      size_bytes: 42,
+      sha256: "42".repeat(32),
+      media_type: "application/vnd.example.protected+json".into(),
+      destination: "/octacity/protected/selected.json".into(),
+    }],
+  };
+  let authorize = |manifest| {
+    run_ready(service.authorize_protected_inputs(AuthorizeProtectedInputsInput {
+      manifest,
+      observed_at_unix_ms: 3000,
+      lease_expires_at: time(8000),
+    }))
+  };
+  let transfers = authorize(manifest.clone()).unwrap();
+  assert_eq!(transfers[0].input, manifest.inputs[0]);
+  let downloads = bytes.authorized.lock().unwrap();
+  let requested = downloads.last().unwrap();
+  assert_eq!(requested.content_type(), "application/vnd.example.protected+json");
+  assert_eq!(requested.artifact_id(), identity.artifact_id);
+  assert_eq!(requested.sha256(), "42".repeat(32));
+  assert_eq!(requested.size_bytes(), 42);
+  drop(downloads);
+  for forged in 0..3 {
+    let mut changed = manifest.clone();
+    match forged {
+      0 => changed.inputs[0].media_type = "application/octet-stream".into(),
+      1 => changed.inputs[0].sha256 = "43".repeat(32),
+      _ => changed.inputs[0].size_bytes = 43,
+    }
+    assert_eq!(
+      authorize(changed),
+      Err(AgentArtifactError::Integrity),
+      "physical HTTP metadata cannot replace the signed logical byte identity"
+    );
+  }
+}
+
+#[test]
 fn protected_grants_do_not_include_an_unselected_published_author_artifact() {
   let (store, service) = service(false);
   let mut private = begin_input("private-upload");
@@ -284,6 +337,18 @@ fn service_with_integrity_gate(
   ArtifactHandlers<InMemoryArtifactRecordStore, ByteStoreStub>,
   Arc<AtomicBool>,
 ) {
+  let (store, service, reject_integrity, _) = service_with_bytes(reject_integrity);
+  (store, service, reject_integrity)
+}
+
+fn service_with_bytes(
+  reject_integrity: bool,
+) -> (
+  Arc<InMemoryArtifactRecordStore>,
+  ArtifactHandlers<InMemoryArtifactRecordStore, ByteStoreStub>,
+  Arc<AtomicBool>,
+  Arc<ByteStoreStub>,
+) {
   let access = lease_access();
   let store = Arc::new(InMemoryArtifactRecordStore::new(ArtifactLeaseFixture {
     access,
@@ -294,18 +359,19 @@ fn service_with_integrity_gate(
     expires_at: time(10_000),
   }));
   let reject_integrity = Arc::new(AtomicBool::new(reject_integrity));
+  let bytes = Arc::new(ByteStoreStub {
+    reject_integrity: reject_integrity.clone(),
+    authorized: Mutex::default(),
+  });
   let service = ArtifactHandlers::new(
     Arc::new(RegistrationStub),
     store.clone(),
-    Arc::new(ByteStoreStub {
-      reject_integrity: reject_integrity.clone(),
-      authorized: Mutex::default(),
-    }),
+    bytes.clone(),
     Duration::from_secs(60),
     Duration::from_secs(30),
   )
   .unwrap();
-  (store, service, reject_integrity)
+  (store, service, reject_integrity, bytes)
 }
 
 fn begin_input(request_id: &str) -> BeginAgentArtifactUploadInput {

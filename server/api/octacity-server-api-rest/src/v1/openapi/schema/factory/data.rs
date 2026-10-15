@@ -26,6 +26,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     tagged("type","object",[("fields",bounded_map(schema_ref("FactoryFlowFieldSchema"),bounds.schema_entries))],&["fields"]),
     tagged("type","array",[("item",schema_ref("FactoryFlowValueSchema")),("min_items",non_negative_integer()),("max_items",bounded_integer(0,bounds.schema_items.into()))],&["item","min_items","max_items"]),
     tagged("type","enum",[("values",bounded_array(json!({"type":["string","integer","boolean","null"]}),bounds.schema_entries))],&["values"]),
+    tagged("type","externally_tagged",[("variants",json!({
+      "type":"object","minProperties":1,"maxProperties":bounds.schema_entries,
+      "propertyNames":{"type":"string","minLength":1,"maxLength":bounds.schema_variant_name_bytes,"x-max-utf8-bytes":bounds.schema_variant_name_bytes},
+      "additionalProperties":{"oneOf":[{"type":"null"},schema_ref("FactoryFlowValueSchema")]}
+    }))],&["variants"]),
   ]}));
   schemas.insert(
     "FactoryFlowDataMapping".to_owned(),

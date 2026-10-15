@@ -130,6 +130,144 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertEqual(receipt["state"], "running")
         self.assertEqual(receipt["agent_pid"], 4242)
 
+    def test_connector_without_factory_profile_fails_before_creating_stand_state(self):
+        connectors = self.root.parent / "connectors.json"
+        with mock.patch.object(
+            launcher.initializer, "initialize", side_effect=RuntimeError("stand state was mutated")
+        ) as initialize:
+            with self.assertRaisesRegex(launcher.LocalStandError, "connectors require.*profile"):
+                launcher.run(self.arguments("up", "--factory-signal-connectors", str(connectors)))
+        initialize.assert_not_called()
+        self.assertFalse(self.root.exists())
+
+    def test_explicit_factory_profiles_reach_server_configuration(self):
+        profiles = self.root.parent / "profiles.json"
+        connectors = self.root.parent / "connectors.json"
+        delivery = self.root.parent / "delivery-installation"
+        arguments = self.arguments("up", "--factory-profiles", str(profiles),
+                                   "--factory-signal-connectors", str(connectors),
+                                   "--factory-delivery-bundle", str(delivery))
+        native = launcher.NativeInstallation(Path("/verified/native"), {"sources": {}})
+        with (
+            mock.patch.object(launcher.initializer, "initialize"),
+            mock.patch.object(launcher.lifecycle, "LifecycleState", return_value=FakeOwner(self.root)),
+            mock.patch.object(launcher, "_prepare_native_installation", return_value=native),
+            mock.patch.object(launcher.server_configurator, "generate_server_configuration") as configure,
+            mock.patch.object(launcher, "_build_images"),
+            mock.patch.object(launcher, "_run_compose"),
+            mock.patch.object(launcher.bootstrapper, "bootstrap", return_value=types.SimpleNamespace(state="enrolled")),
+            mock.patch.object(launcher.agent_starter, "start_agent", return_value=types.SimpleNamespace(state="registered", pid=42)),
+        ):
+            launcher.run(arguments)
+        self.assertEqual(configure.call_args.kwargs["factory_profiles"], profiles)
+        self.assertEqual(configure.call_args.kwargs["factory_signal_connectors"], connectors)
+        self.assertEqual(configure.call_args.kwargs["factory_delivery_bundle"], delivery)
+
+    def test_running_default_stand_does_not_ignore_requested_factory_installation(self):
+        profiles = self.root.parent / "profiles.json"
+        native = launcher.NativeInstallation(Path("/verified/native"), {"sources": {}})
+        with (
+            mock.patch.object(launcher.initializer, "initialize"),
+            mock.patch.object(launcher.lifecycle, "LifecycleState", return_value=FakeOwner(self.root, lifecycle.StartDisposition.ALREADY_RUNNING)),
+            mock.patch.object(launcher, "_prepare_native_installation", return_value=native),
+            mock.patch.object(
+                launcher.server_configurator, "generate_server_configuration",
+                side_effect=launcher.server_configurator.ServerConfigurationError("Factory mode change requires reset"),
+            ) as configure,
+            mock.patch.object(launcher, "_run_compose") as compose,
+            mock.patch.object(launcher, "_build_images") as build,
+            mock.patch.object(launcher.agent_starter, "start_agent") as start,
+        ):
+            with self.assertRaisesRegex(launcher.server_configurator.ServerConfigurationError, "Factory.*reset"):
+                launcher.run(self.arguments("up", "--factory-profiles", str(profiles)))
+        self.assertEqual(configure.call_args.kwargs["factory_profiles"], profiles)
+        compose.assert_not_called()
+        build.assert_not_called()
+        start.assert_not_called()
+
+    def test_invalid_factory_agent_profile_fails_before_any_lifecycle_mutation(self):
+        policy = self.root.parent / "invalid-agent-policy.toml"
+        policy.write_text('version = 1\nprivate_canary = "do-not-disclose"\n')
+        policy.chmod(0o600)
+        with (
+            mock.patch.object(launcher.initializer, "initialize") as initialize,
+            mock.patch.object(launcher, "_prepare_native_installation") as native,
+            mock.patch.object(launcher, "_run_compose") as compose,
+            mock.patch.object(launcher.agent_starter, "start_agent") as start,
+        ):
+            with self.assertRaisesRegex(launcher.LocalStandError, "Factory Agent profile is invalid") as error:
+                launcher.run(self.arguments("up", "--factory-agent-profile", str(policy)))
+        self.assertNotIn("do-not-disclose", str(error.exception))
+        initialize.assert_not_called()
+        native.assert_not_called()
+        compose.assert_not_called()
+        start.assert_not_called()
+
+    def test_factory_agent_preflight_failure_prevents_compose_enrollment_and_agent_start(self):
+        policy = self.root.parent / "policy.toml"
+        native = launcher.NativeInstallation(Path("/verified/native"), {"sources": {}})
+        with (
+            mock.patch.object(launcher.agent_configurator, "read_factory_agent_profile", return_value={}),
+            mock.patch.object(launcher.initializer, "initialize"),
+            mock.patch.object(launcher.lifecycle, "LifecycleState", return_value=FakeOwner(self.root)),
+            mock.patch.object(launcher, "_prepare_native_installation", return_value=native),
+            mock.patch.object(launcher.agent_configurator, "preflight_factory_agent_profile", create=True,
+                              side_effect=launcher.agent_configurator.AgentConfigurationError("Factory Agent preflight failed")) as preflight,
+            mock.patch.object(launcher, "_build_images") as build,
+            mock.patch.object(launcher, "_run_compose") as compose,
+            mock.patch.object(launcher.bootstrapper, "bootstrap") as bootstrap,
+            mock.patch.object(launcher.agent_starter, "start_agent") as start,
+            mock.patch.object(launcher.server_configurator, "generate_server_configuration"),
+        ):
+            with self.assertRaisesRegex(launcher.LocalStandError, "Factory Agent preflight failed"):
+                launcher.run(self.arguments("up", "--factory-agent-profile", str(policy)))
+        preflight.assert_called_once()
+        build.assert_not_called()
+        compose.assert_not_called()
+        bootstrap.assert_not_called()
+        start.assert_not_called()
+
+    def test_installed_factory_agent_requires_explicit_policy_on_repeated_up(self):
+        installed = self.root / "config/factory-agent-profile.toml"
+        installed.parent.mkdir(parents=True)
+        installed.write_text("version = 1\n")
+        installed.chmod(0o600)
+        with (
+            mock.patch.object(launcher.initializer, "initialize") as initialize,
+            mock.patch.object(launcher.lifecycle, "LifecycleState", return_value=FakeOwner(self.root)),
+            mock.patch.object(launcher, "_prepare_native_installation"),
+            mock.patch.object(launcher, "_run_compose") as compose,
+            mock.patch.object(launcher.bootstrapper, "bootstrap"),
+            mock.patch.object(launcher.agent_starter, "start_agent"),
+            mock.patch.object(launcher.server_configurator, "generate_server_configuration"),
+            mock.patch.object(launcher, "_build_images"),
+        ):
+            with self.assertRaisesRegex(launcher.LocalStandError, "factory-agent-profile"):
+                launcher.run(self.arguments("up"))
+        initialize.assert_not_called()
+        compose.assert_not_called()
+
+    def test_all_compose_operations_reuse_only_an_installed_private_factory_bundle(self):
+        profile = self.root / "config/server/factory-profiles.json"
+        profile.parent.mkdir(parents=True)
+        with mock.patch.object(launcher.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            launcher._run_compose(self.root, 8443, ("status",))
+        self.assertEqual(run.call_args.args[0].count("--file"), 1)
+        profile.write_text('{"version":1}\n')
+        profile.chmod(0o600)
+        for operation in ("up", "down", "ps", "logs"):
+            with self.subTest(operation=operation):
+                with mock.patch.object(launcher.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+                    launcher._run_compose(self.root, 8443, (operation,))
+                command = run.call_args.args[0]
+                self.assertEqual(command.count("--file"), 2)
+                self.assertIn(str(REPOSITORY / "deployment/local-stand/factory.compose.yaml"), command)
+        profile.chmod(0o644)
+        with mock.patch.object(launcher.subprocess, "run") as run:
+            with self.assertRaises(launcher.LocalStandError):
+                launcher._run_compose(self.root, 8443, ("up",))
+        run.assert_not_called()
+
     def test_image_build_stages_each_shared_context_once(self):
         document = json.loads(launcher.MANIFEST.read_text(encoding="utf-8"))
         native = launcher.NativeInstallation(Path("/verified/native"), document)

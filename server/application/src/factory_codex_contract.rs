@@ -1,6 +1,7 @@
 //! Private compatibility contract shared by Codex compilation and observation.
 
 pub(super) const CODEX_PLUGIN_IDENTITY: &str = "codex";
+pub(super) const CODEX_TOOL_AUTHORIZATION_CAPABILITY: &str = "codex.blocking-pre-tool-authorization.v1";
 pub(super) const CODEX_PLUGIN_PROVENANCE_IDENTITY: &str = "octa_plugin_codex";
 pub(super) const CODEX_EXECUTABLE_IDENTITY: &str = "codex-cli";
 pub(super) const CODEX_RESULT_FORMAT: &str = "octa.codex.result.v1";

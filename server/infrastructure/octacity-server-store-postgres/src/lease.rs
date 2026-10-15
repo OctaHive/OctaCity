@@ -91,6 +91,54 @@ pub(crate) async fn authorize_tool_action(
   transaction.commit().await.map_err(unavailable)
 }
 
+/// Keeps registration revocation and ordinary lease completion serialized with
+/// a caller's existing transaction. No independent connection or earlier read
+/// can act as the authority for the transaction's external dispatch reservation.
+pub(crate) async fn authorize_tool_action_in_transaction(
+  transaction: &mut Transaction<'_, Postgres>,
+  access: LeaseAccess,
+  job_id: JobId,
+  attempt: AttemptNumber,
+  observed_at: Timestamp,
+) -> Result<LeaseRow, StoreError> {
+  // Registration operations take the registration before changing its epoch.
+  // Acquire that row before lease/job rows and retain every lock until commit.
+  let registration: Option<Uuid> = sqlx::query_scalar(
+    "SELECT registration.id FROM agent_registrations registration \
+     JOIN leases lease ON lease.registration_id=registration.id \
+     WHERE lease.id=$1 FOR UPDATE OF registration",
+  )
+  .bind(access.lease_id.as_uuid())
+  .fetch_optional(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  if registration.is_none() {
+    return Err(StoreError::Fenced { lease: access.lease_id });
+  }
+  let row = load(transaction, access, StoreOperation::AuthorizeToolAction).await?;
+  require_current(&row, access, observed_at)?;
+  // now() is frozen at transaction start. Read live time only after all rows
+  // are locked, since waiting on the Run or ordinary Lease can consume the
+  // entire ownership window without changing those rows.
+  let current_millis: i64 = sqlx::query_scalar("SELECT FLOOR(EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::BIGINT")
+    .fetch_one(&mut **transaction)
+    .await
+    .map_err(unavailable)?;
+  if current_millis >= row.expires_at_millis {
+    return Err(StoreError::Expired { lease: access.lease_id });
+  }
+  if current_millis >= row.registration_expires_at_millis {
+    return Err(StoreError::Fenced { lease: access.lease_id });
+  }
+  if row.state == "cancellation_requested"
+    || row.job_id != job_id.as_uuid()
+    || row.attempt_number != number(attempt.get(), StoreOperation::AuthorizeToolAction)?
+  {
+    return Err(StoreError::Fenced { lease: access.lease_id });
+  }
+  Ok(row)
+}
+
 pub(crate) fn fence_hash(fence: LeaseFence) -> Vec<u8> {
   Sha256::digest(fence.expose()).to_vec()
 }

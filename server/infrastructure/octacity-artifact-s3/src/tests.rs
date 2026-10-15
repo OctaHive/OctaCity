@@ -34,6 +34,39 @@ fn object_for_body(body: &[u8]) -> ArtifactObject {
   .unwrap()
 }
 
+#[tokio::test]
+async fn trusted_artifact_reader_returns_verified_bytes_from_one_frozen_generation() {
+  use base64::Engine as _;
+  use octacity_artifact_store::ArtifactByteReader as _;
+  let body = b"exact protected artifact";
+  let object = object_for_body(body);
+  let checksum = base64::engine::general_purpose::STANDARD.encode(object.sha256_bytes());
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let store = S3ArtifactStore::new(configuration(&format!("http://{}", listener.local_addr().unwrap()))).unwrap();
+  let server = tokio::spawn(async move {
+    let (mut head, _) = listener.accept().await.unwrap();
+    assert!(read_request(&mut head).await.starts_with("HEAD "));
+    head.write_all(format!("HTTP/1.1 200 OK\r\ncontent-length: {}\r\nx-amz-checksum-sha256: {checksum}\r\netag: \"frozen-generation\"\r\nconnection: close\r\n\r\n", body.len()).as_bytes()).await.unwrap();
+    let (mut get, _) = listener.accept().await.unwrap();
+    let request = read_request(&mut get).await.to_ascii_lowercase();
+    assert!(request.starts_with("get "));
+    assert!(request.contains("\r\nif-match: \"frozen-generation\"\r\n"));
+    get
+      .write_all(
+        format!(
+          "HTTP/1.1 200 OK\r\ncontent-length: {}\r\nconnection: close\r\n\r\n",
+          body.len()
+        )
+        .as_bytes(),
+      )
+      .await
+      .unwrap();
+    get.write_all(body).await.unwrap();
+  });
+  assert_eq!(store.read_published(&object, 64).await.unwrap(), body);
+  server.await.unwrap();
+}
+
 async fn read_request(socket: &mut tokio::net::TcpStream) -> String {
   let mut request = Vec::new();
   let mut chunk = [0_u8; 1024];

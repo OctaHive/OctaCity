@@ -320,9 +320,10 @@ impl FlowNodeDefinition {
     self.operator_requests.as_ref()
   }
 
-  /// Binds a plugin action without adding a new Flow primitive or implicit route.
+  /// Binds a trusted action or Decision Signal to an exact installed operation,
+  /// without adding an implicit route or selecting by logical node name.
   pub fn with_action(mut self, binding: crate::FlowActionBinding) -> Result<Self, FactoryError> {
-    if self.kind != FlowNodeKind::TrustedAction {
+    if !matches!(self.kind, FlowNodeKind::TrustedAction | FlowNodeKind::DecisionSignal) {
       return Err(FactoryError::InvalidConfiguration {
         field: "Flow action node kind",
       });
@@ -331,7 +332,7 @@ impl FlowNodeDefinition {
     Ok(self)
   }
 
-  /// Returns an exact plugin binding for an externally executed trusted action.
+  /// Returns the exact installed operation for a trusted action or Decision Signal.
   #[must_use]
   pub const fn action(&self) -> Option<&crate::FlowActionBinding> {
     self.action.as_ref()
@@ -658,10 +659,9 @@ fn validate_bindings(nodes: &[FlowNodeDefinition]) -> Result<(), FactoryError> {
     });
   }
 
-  if nodes
-    .iter()
-    .any(|node| node.action.is_some() && node.kind != FlowNodeKind::TrustedAction)
-  {
+  if nodes.iter().any(|node| {
+    node.action.is_some() && !matches!(node.kind, FlowNodeKind::TrustedAction | FlowNodeKind::DecisionSignal)
+  }) {
     return Err(FactoryError::InvalidConfiguration {
       field: "Flow action node kind",
     });

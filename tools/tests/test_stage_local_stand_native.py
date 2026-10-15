@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 import hashlib
+import io
 import importlib.util
 import json
 import os
@@ -353,6 +354,125 @@ class NativeStandStagingTests(unittest.TestCase):
                     ),
                     installed,
                 )
+
+    def reader_cli_fixture(self, root: Path):
+        cache = root / "cache"
+        inputs_root = cache / STAGER.input_set_name(self.document, REVISION)
+        inputs_root.mkdir(parents=True)
+        document = self.create_inputs(inputs_root)
+        manifest = root / "inputs.json"
+        manifest.write_text(json.dumps(document), encoding="utf-8")
+        reader = root / "reader"
+        reader.mkdir()
+        executable = reader / "octacity-protected-reader"
+        # Opaque fixture bytes prove only staging/pinning, not execution.
+        write_executable(executable, "independently-pinned-guest-reader")
+        pin = digest(executable)
+        (reader / "manifest.json").write_text(json.dumps({
+            "format_version": 1, "executable": executable.name,
+            "platform": "linux-aarch64", "sha256": pin,
+        }), encoding="utf-8")
+        arguments = [
+            "stage_local_stand_native.py", "install", "--cache-root", str(cache),
+            "--install-root", str(root / "install"), "--manifest", str(manifest),
+            "--agent-revision", REVISION, "--protected-reader-root", str(reader),
+        ]
+        return document, reader, executable, pin, arguments
+
+    def test_public_install_cli_stages_a_separate_pinned_guest_reader(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            document, reader, executable, pin, arguments = self.reader_cli_fixture(root)
+            outputs = []
+            with (
+                self.native_processes(),
+                mock.patch.object(STAGER, "require_native_host"),
+                mock.patch.object(STAGER, "download", side_effect=AssertionError("network used")),
+                mock.patch.object(STAGER, "_build_agent_archive", side_effect=AssertionError("build used")),
+                mock.patch.object(sys, "argv", arguments),
+            ):
+                for _ in range(2):
+                    stdout = io.StringIO()
+                    with mock.patch.object(sys, "stdout", stdout):
+                        self.assertEqual(STAGER.main(), 0)
+                    outputs.append(Path(stdout.getvalue().strip()))
+            self.assertEqual(outputs[0], outputs[1])
+            installed = outputs[0]
+            self.assertEqual(installed.name, STAGER.installation_name(document, REVISION) + "-reader-" + pin[:12])
+            copied = installed / "workers/protected-reader/linux-aarch64"
+            self.assertEqual((copied / executable.name).read_bytes(), executable.read_bytes())
+            self.assertEqual((copied / "manifest.json").read_bytes(), (reader / "manifest.json").read_bytes())
+            inventory = json.loads((installed / "installation-manifest.json").read_text())
+            self.assertEqual(inventory["protected_reader"], {
+                "root": "workers/protected-reader/linux-aarch64",
+                "platform": "linux-aarch64", "sha256": pin,
+            })
+            for name in ("manifest.json", executable.name):
+                relative = (copied / name).relative_to(installed).as_posix()
+                self.assertEqual(inventory["files"][relative], digest(copied / name))
+            self.assertFalse((root / "install" / STAGER.installation_name(document, REVISION)).exists())
+
+    def test_invalid_reader_distributions_stop_before_build_validation_or_publication(self):
+        for case in ("platform", "digest", "extra", "symlink", "oversized-manifest"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                _, reader, executable, _, arguments = self.reader_cli_fixture(root)
+                manifest = reader / "manifest.json"
+                if case in {"platform", "digest"}:
+                    document = json.loads(manifest.read_text())
+                    document["platform" if case == "platform" else "sha256"] = "linux-x86_64" if case == "platform" else "0" * 64
+                    manifest.write_text(json.dumps(document))
+                elif case == "extra":
+                    (reader / "unlisted").write_text("must-not-be-installed")
+                elif case == "symlink":
+                    outside = root / "outside-reader"
+                    executable.rename(outside)
+                    executable.symlink_to(outside)
+                else:
+                    manifest.write_bytes(b"x" * 16385)
+                stderr = io.StringIO()
+                with (
+                    mock.patch.object(STAGER, "require_native_host"),
+                    mock.patch.object(STAGER.subprocess, "run") as run,
+                    mock.patch.object(STAGER, "prepare_inputs") as prepare,
+                    mock.patch.object(sys, "argv", arguments),
+                    mock.patch.object(sys, "stderr", stderr),
+                    self.assertRaises(SystemExit),
+                ):
+                    STAGER.main()
+                run.assert_not_called()
+                prepare.assert_not_called()
+                self.assertIn("protected reader distribution is invalid", stderr.getvalue())
+                self.assertFalse((root / "install").exists())
+
+    @unittest.skipUnless(os.name == "posix", "link and executable mode contract")
+    def test_reader_replaced_by_a_link_cannot_change_an_outside_file_before_failure(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            _, _, executable, _, arguments = self.reader_cli_fixture(root)
+            outside = root / "outside"
+            outside.write_text("outside-permissions-canary", encoding="utf-8")
+            outside.chmod(0o600)
+            with (
+                self.native_processes() as run,
+                mock.patch.object(STAGER, "require_native_host"),
+                mock.patch.object(sys, "argv", arguments),
+                mock.patch.object(sys, "stderr", io.StringIO()),
+            ):
+                native = run.side_effect
+                def replace_reader_during_native_validation(command, **kwargs):
+                    result = native(command, **kwargs)
+                    if Path(command[0]).name.startswith("octacity-release-harness-"):
+                        executable.unlink()
+                        executable.symlink_to(outside)
+                    return result
+                run.side_effect = replace_reader_during_native_validation
+                with self.assertRaises(SystemExit):
+                    STAGER.main()
+            self.assertEqual(outside.stat().st_mode & 0o777, 0o600,
+                             "an input replacement must not turn a private outside file into an executable")
+            self.assertEqual(outside.read_text(), "outside-permissions-canary")
+            self.assertEqual(list((root / "install").iterdir()), [])
 
     def test_failed_validation_never_publishes_a_partial_installation(self):
         with tempfile.TemporaryDirectory() as temporary:

@@ -18,7 +18,8 @@ use std::{
 use tokio_util::sync::CancellationToken;
 
 /// Reusable operator-owned branch policy; exact references are frozen per operation.
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryDeliveryTargetPolicy {
   /// Operator-selected base reference, unchanged across replay.
   pub base_reference: String,
@@ -36,7 +37,8 @@ impl FactoryDeliveryTargetPolicy {
 }
 /// Operator-owned provider policy. This draft has no Debug implementation:
 /// locators and protected credential handles are confined to the trusted host.
-#[derive(serde::Serialize)]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryDeliveryPolicyDraft {
   /// Exact installed provider plugin, not a Flow or node identity.
   pub plugin: ImmutableReference,
@@ -53,7 +55,7 @@ pub struct FactoryDeliveryPolicyDraft {
   /// Opaque installed handle; the server never resolves the token.
   pub credential_handle: String,
   /// Provider profile's declared exact network hosts.
-  #[serde(serialize_with = "serialize_hosts")]
+  #[serde(serialize_with = "serialize_hosts", deserialize_with = "deserialize_hosts")]
   pub network_hosts: Vec<NetworkHost>,
   /// Reusable operator-selected branch strategy.
   pub target: FactoryDeliveryTargetPolicy,
@@ -62,6 +64,13 @@ pub struct FactoryDeliveryPolicyDraft {
 }
 fn serialize_hosts<S: serde::Serializer>(hosts: &[NetworkHost], serializer: S) -> Result<S::Ok, S::Error> {
   serde::Serialize::serialize(&hosts.iter().map(NetworkHost::as_str).collect::<Vec<_>>(), serializer)
+}
+fn deserialize_hosts<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<NetworkHost>, D::Error> {
+  use serde::Deserialize as _;
+  Vec::<String>::deserialize(deserializer)?
+    .into_iter()
+    .map(|host| NetworkHost::new(host).map_err(|_| serde::de::Error::custom("invalid Delivery host")))
+    .collect()
 }
 /// Immutable, scope-bound provider policy selected by action parameters.
 pub struct FactoryDeliveryPolicy {
@@ -113,6 +122,17 @@ pub struct FactoryDeliveryInputs {
   pub bundle: ArtifactInput,
   /// Exact authorized manifest handle and integrity metadata.
   pub manifest: ArtifactInput,
+}
+pub(super) fn delivery_artifact_input(
+  operation: FactoryDigest,
+  role: &str,
+  artifact: &FactoryArtifactReference,
+) -> ArtifactInput {
+  ArtifactInput {
+    handle: format!("factory.delivery:{operation}:{role}"),
+    sha256: artifact.content_digest().to_string(),
+    size_bytes: artifact.encoded_size(),
+  }
 }
 /// Deployment materializer for already-authorized immutable capture artifacts.
 /// Implementations verify Artifact ownership and bytes before staging them in
@@ -204,11 +224,8 @@ impl HostedFactoryCandidatePublisher {
     Ok(policy)
   }
   fn intent(&self, request: &FactoryCandidatePublicationRequest, policy: &FactoryDeliveryPolicy) -> DeliveryIntent {
-    let input = |role: &str, artifact: &FactoryArtifactReference| ArtifactInput {
-      handle: format!("factory.delivery:{}:{role}", request.operation_id),
-      sha256: artifact.content_digest().to_string(),
-      size_bytes: artifact.encoded_size(),
-    };
+    let input =
+      |role: &str, artifact: &FactoryArtifactReference| delivery_artifact_input(request.operation_id, role, artifact);
     DeliveryIntent {
       delivery_id: request.operation_id.to_string(),
       repository: RepositoryAccess {
@@ -221,7 +238,9 @@ impl HostedFactoryCandidatePublisher {
       },
       base_revision: request.candidate.exact().base_revision().to_string(),
       candidate_revision: request.candidate.candidate_revision().to_string(),
-      changeset_digest: request.candidate.changeset_digest().to_string(),
+      // Delivery v1 names the retained manifest SHA here. The domain candidate
+      // keeps its separate composite identity, verified before staging bytes.
+      changeset_digest: request.manifest.content_digest().to_string(),
       decision_digest: request.accepted_input_digest.to_string(),
       configuration_digest: policy.draft.configuration_digest.to_string(),
       network_hosts: policy

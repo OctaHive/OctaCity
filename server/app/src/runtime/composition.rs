@@ -36,7 +36,23 @@ use crate::{ServerConfig, readiness::WorkerHealth};
 impl ServerRuntime {
   /// Binds the listener and starts supervised work from validated configuration.
   pub async fn start(config: ServerConfig) -> Result<Self, ServerRuntimeError> {
-    Self::start_configured(config, None).await
+    let installer = match config.factory_profiles_file() {
+      Some(path) => {
+        let providers = match config.factory_signal_connectors_file() {
+          Some(connectors) => super::load_factory_signal_connectors(connectors)
+            .await
+            .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
+          None => vec![],
+        };
+        Some(Arc::new(
+          super::factory_profile_file::FileProfileInstaller::load(path, &providers)
+            .await
+            .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
+        ) as Arc<dyn super::FactoryRuntimeInstaller>)
+      }
+      None => None,
+    };
+    Self::start_configured(config, installer).await
   }
 
   /// Starts the optional common Flow owner using explicitly installed capability bindings.
@@ -223,6 +239,20 @@ impl ServerRuntime {
         .saturating_add(config.readiness_check_interval()),
     ));
     resources.readiness.push(retention_health.clone());
+    let maintenance = retention_policy.retrying().worker();
+    let input_retention_health = Arc::new(WorkerHealth::new(
+      super::workers::INPUT_RETENTION_WORKER_NAME,
+      config
+        .factory()
+        .map_or(
+          maintenance.poll_interval().saturating_add(maintenance.claim_lifetime()),
+          |policy| policy.poll_interval().saturating_add(policy.claim_lifetime()),
+        )
+        .saturating_add(config.readiness_check_interval()),
+    ));
+    if config.factory().is_some() {
+      resources.readiness.push_factory(input_retention_health.clone());
+    }
     let manual_trigger_retry_health = Arc::new(WorkerHealth::new(
       MANUAL_TRIGGER_RETRY_WORKER_NAME,
       trigger_evaluation_policy
@@ -249,11 +279,15 @@ impl ServerRuntime {
     .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?;
     let execution_service = AgentExecutionService::with_log_archive(
       registration_service.clone(),
-      placement_store,
+      placement_store.clone(),
       resources.object_storage.clone(),
       resources.log_redactor.clone(),
       config.orphan_log_cleanup_grace(),
     );
+    let execution_service = match factory.as_ref().and_then(|worker| worker.output_finalizer.clone()) {
+      Some(finalizer) => execution_service.with_output_finalizer(finalizer),
+      None => execution_service,
+    };
     let heartbeat_service = AgentHeartbeatService::new(
       registration_service.clone(),
       registration_store.clone(),
@@ -271,6 +305,13 @@ impl ServerRuntime {
     );
     let api_config =
       AgentApiConfig::new(config.agent_max_retry_delay_milliseconds()).ok_or(ServerRuntimeError::InvalidAgentPolicy)?;
+    let tool_actions = factory.as_ref().map(|worker| {
+      Arc::new(octacity_server_application::AgentToolActionService::new(
+        registration_service.clone(),
+        placement_store.clone(),
+        worker.tool_authorizer.clone(),
+      )) as Arc<dyn octacity_server_application::AgentToolActionUseCases>
+    });
     let webhook_deliveries = if config.webhook_bind().is_some() {
       let health = Arc::new(WorkerHealth::new(
         WEBHOOK_DELIVERY_WORKER_NAME,
@@ -335,15 +376,21 @@ impl ServerRuntime {
       resources.readiness,
       RuntimeComponents {
         agent_router: agent_router(
-          AgentRouterDependencies::new(
-            registration_service,
-            Arc::new(lease_service),
-            Arc::new(heartbeat_service),
-            telemetry_service,
-            Arc::new(execution_service),
-            artifact_service,
-            cache_service,
-          ),
+          {
+            let dependencies = AgentRouterDependencies::new(
+              registration_service,
+              Arc::new(lease_service),
+              Arc::new(heartbeat_service),
+              telemetry_service,
+              Arc::new(execution_service),
+              artifact_service,
+              cache_service,
+            );
+            match tool_actions {
+              Some(actions) => dependencies.with_tool_actions(actions),
+              None => dependencies,
+            }
+          },
           api_config,
         ),
         cache_router,
@@ -380,6 +427,11 @@ impl ServerRuntime {
           retention_owner: WorkerOwner::new(format!("retention:{}", uuid::Uuid::new_v4()))
             .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
           retention_health,
+          input_retention: octacity_server_application::FactoryExecutionInputRetentionWorker::new(
+            registration_store.clone(),
+            resources.object_storage.clone(),
+          ),
+          input_retention_health,
           manual_trigger_retries,
           manual_trigger_retry_owner: WorkerOwner::new(format!("manual-trigger:worker:{}", uuid::Uuid::new_v4()))
             .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,

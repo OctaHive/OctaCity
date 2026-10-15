@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -20,22 +19,8 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tools"))
 
 
-def load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-INITIALIZER = load_module(
-    "init_local_stand", REPOSITORY / "tools/init_local_stand.py"
-)
-CONFIGURATOR = load_module(
-    "configure_local_stand_server",
-    REPOSITORY / "tools/configure_local_stand_server.py",
-)
+import init_local_stand as INITIALIZER  # noqa: E402
+import configure_local_stand_server as CONFIGURATOR  # noqa: E402
 
 
 @unittest.skipUnless(os.name == "posix", "local stand host state requires POSIX permissions")
@@ -187,6 +172,233 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
                 for path in files.values()
             },
         )
+
+    def test_factory_delivery_installation_is_private_immutable_and_separate_from_agent(self):
+        profiles = Path(self.temporary.name) / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[]}')
+        profiles.chmod(0o600)
+        adapters = Path(self.temporary.name) / "operator-delivery"
+        provider = adapters / "arbitrary-provider"
+        provider.mkdir(parents=True, mode=0o700)
+        adapters.chmod(0o700)
+        (provider / "inputs").mkdir(mode=0o700)
+        executable = provider / "plugin"
+        executable.write_bytes(b"#!/bin/sh\nexit 0\n")
+        executable.chmod(0o700)
+        secret = provider / "credential.json"
+        secret.write_bytes(b"private-delivery-canary")
+        secret.chmod(0o600)
+        arguments = dict(repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+                         factory_profiles=profiles, factory_delivery_bundle=adapters)
+        receipt = CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments)
+        installed = Path(receipt["factory_delivery_bundle"])
+        self.assertEqual((installed / "arbitrary-provider/plugin").read_bytes(), executable.read_bytes())
+        self.assertEqual(stat.S_IMODE((installed / "arbitrary-provider/plugin").stat().st_mode), 0o700)
+        self.assertEqual((installed / "arbitrary-provider/credential.json").read_bytes(), secret.read_bytes())
+        self.assertEqual(stat.S_IMODE((installed / "arbitrary-provider/credential.json").stat().st_mode), 0o600)
+        self.assertTrue((installed / "arbitrary-provider/inputs").is_dir())
+        self.assertNotIn("private-delivery-canary", json.dumps(receipt))
+        self.assertNotIn(b"private-delivery-canary", Path(receipt["config"]).read_bytes())
+        self.assertFalse((self.root / "config/agent.toml").exists())
+        self.assertEqual(receipt, CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments))
+        secret.write_bytes(b"rotated-delivery-canary")
+        with self.assertRaises(CONFIGURATOR.ServerConfigurationError):
+            CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments)
+        self.assertEqual((installed / "arbitrary-provider/credential.json").read_bytes(), b"private-delivery-canary")
+
+    def test_factory_is_explicit_and_copies_the_private_profile_without_interpreting_flow(self):
+        profiles = Path(self.temporary.name) / "operator-profiles.json"
+        contents = b'{"version":1,"projects":[],"codex":[],"signals":[]}\n'
+        profiles.write_bytes(contents)
+        profiles.chmod(0o600)
+        receipt = CONFIGURATOR.generate_server_configuration(
+            self.root,
+            self.installation,
+            repository=REPOSITORY,
+            home=Path.home(),
+            openssl=self.openssl,
+            factory_profiles=profiles,
+        )
+        configuration = tomllib.loads(Path(receipt["config"]).read_text())
+        self.assertEqual(
+            configuration["factory_profiles_file"],
+            "/run/octacity-secrets/factory-profiles.json",
+        )
+        self.assertEqual(configuration["factory"]["concurrency"], 2)
+        copied = Path(receipt["factory_profiles"])
+        self.assertEqual(copied.read_bytes(), contents)
+        self.assertEqual(stat.S_IMODE(copied.stat().st_mode), 0o600)
+        if shutil.which("docker"):
+            rendered = subprocess.run(
+                ["docker", "compose", "--file", str(REPOSITORY / "compose.yaml"),
+                 "--file", str(REPOSITORY / "deployment/local-stand/factory.compose.yaml"),
+                 "config", "--format", "json"],
+                env={**os.environ, "OCTACITY_LOCAL_STAND_ROOT": str(self.root)},
+                capture_output=True, text=True, check=False,
+            )
+            self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            compose = json.loads(rendered.stdout)
+            runtime_mounts = compose["services"]["server"]["tmpfs"]
+            self.assertIn("/run/octacity-delivery:exec,size=512m,mode=0700", runtime_mounts)
+            self.assertIn("/run/octacity-secrets:size=320m,mode=0700", runtime_mounts)
+            self.assertEqual(sum(mount.startswith("/run/octacity-secrets:") for mount in runtime_mounts), 1)
+            self.assertEqual(set(compose["services"]), {"server", "gateway", "postgres", "minio", "minio-init"})
+            self.assertEqual(Path(compose["secrets"]["factory-profiles"]["file"]).resolve(), copied.resolve())
+            self.assertIn(
+                {"source": "factory-profiles", "target": "factory-profiles.json"},
+                compose["services"]["server"]["secrets"],
+            )
+        self.assertEqual(
+            CONFIGURATOR.generate_server_configuration(
+                self.root, self.installation, repository=REPOSITORY,
+                home=Path.home(), openssl=self.openssl, factory_profiles=profiles,
+            ),
+            receipt,
+        )
+        profiles.write_bytes(b'{"version":1,"projects":[{}]}\n')
+        with self.assertRaises(CONFIGURATOR.ServerConfigurationError):
+            CONFIGURATOR.generate_server_configuration(
+                self.root, self.installation, repository=REPOSITORY,
+                home=Path.home(), openssl=self.openssl, factory_profiles=profiles,
+            )
+
+    def test_factory_opt_in_cannot_silently_replace_an_existing_default_bundle(self):
+        ordinary = self.generate()
+        original = Path(ordinary["config"]).read_bytes()
+        profiles = Path(self.temporary.name) / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[]}\n')
+        profiles.chmod(0o600)
+        with self.assertRaisesRegex(CONFIGURATOR.ServerConfigurationError, "Factory.*reset"):
+            CONFIGURATOR.generate_server_configuration(
+                self.root, self.installation, repository=REPOSITORY,
+                home=Path.home(), openssl=self.openssl, factory_profiles=profiles,
+            )
+        self.assertEqual(Path(ordinary["config"]).read_bytes(), original)
+        self.assertFalse((Path(ordinary["config"]).parent / "factory-profiles.json").exists())
+
+    def test_separate_connector_bundle_copies_opaque_config_and_private_credentials(self):
+        directory = Path(self.temporary.name)
+        profiles = directory / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[],"signals":[]}\n')
+        configuration = directory / "provider-settings.json"
+        opaque = b'{"adapter_owned":"private-endpoint-canary"}\n'
+        configuration.write_bytes(opaque)
+        credential = directory / "provider-key"
+        secret = b"private-provider-credential-canary\n"
+        credential.write_bytes(secret)
+        connectors = directory / "connectors.json"
+        connectors.write_text(json.dumps({"version": 1, "connectors": [{
+            "kind": "operator-adapter", "credential_profile": "routing-key", "configuration_file": str(configuration),
+            "credential_file": str(credential),
+        }]}))
+        for path in (profiles, configuration, credential, connectors):
+            path.chmod(0o600)
+        arguments = dict(
+            repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            factory_profiles=profiles, factory_signal_connectors=connectors,
+        )
+        receipt = CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments)
+        registry = Path(receipt["factory_signal_connectors"])
+        copied = json.loads(registry.read_bytes())
+        self.assertEqual(copied, {"version": 1, "connectors": [{
+            "kind": "operator-adapter",
+            "credential_profile": "routing-key",
+            "configuration_file": "/run/octacity-secrets/factory-signal-0000-configuration",
+            "credential_file": "/run/octacity-secrets/factory-signal-0000-credential",
+        }]})
+        self.assertEqual((registry.parent / "factory-signal-0000-configuration").read_bytes(), opaque)
+        self.assertEqual((registry.parent / "factory-signal-0000-credential").read_bytes(), secret)
+        toml = Path(receipt["config"]).read_text()
+        self.assertEqual(tomllib.loads(toml)["factory_signal_connectors_file"],
+                         "/run/octacity-secrets/factory-signal-connectors.json")
+        self.assertNotIn("canary", toml)
+        self.assertNotIn("canary", json.dumps(receipt))
+        if shutil.which("docker"):
+            rendered = subprocess.run([
+                "docker", "compose", "--file", str(REPOSITORY / "compose.yaml"),
+                "--file", str(REPOSITORY / "deployment/local-stand/factory.compose.yaml"),
+                "config", "--format", "json",
+            ], env={**os.environ, "OCTACITY_LOCAL_STAND_ROOT": str(self.root)},
+               capture_output=True, text=True, check=False)
+            self.assertEqual(rendered.returncode, 0, rendered.stderr)
+            volumes = json.loads(rendered.stdout)["services"]["server"]["volumes"]
+            mounted = [volume for volume in volumes if volume["target"] == "/run/octacity-factory-connectors"]
+            self.assertEqual(len(mounted), 1)
+            self.assertEqual(Path(mounted[0]["source"]).resolve(), registry.parent.resolve())
+            self.assertIs(mounted[0]["read_only"], True)
+        for path in registry.parent.iterdir():
+            self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        self.assertEqual(CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments), receipt)
+        cli = subprocess.run([
+            sys.executable, str(REPOSITORY / "tools/configure_local_stand_server.py"),
+            "--root", str(self.root), "--native-installation", str(self.installation),
+            "--openssl", self.openssl, "--factory-profiles", str(profiles),
+            "--factory-signal-connectors", str(connectors),
+        ], capture_output=True, text=True, check=False)
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        self.assertEqual(json.loads(cli.stdout), receipt)
+        self.assertNotIn("canary", cli.stdout)
+        credential.write_bytes(b"changed-private-credential-canary\n")
+        with self.assertRaises(CONFIGURATOR.ServerConfigurationError):
+            CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments)
+        self.assertEqual((registry.parent / "factory-signal-0000-credential").read_bytes(), secret)
+
+    def test_connector_rejects_unsafe_private_inputs_without_publishing_a_bundle(self):
+        directory = Path(self.temporary.name)
+        profiles = directory / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[],"signals":[]}\n')
+        profiles.chmod(0o600)
+        configuration = directory / "adapter-settings"
+        credential = directory / "private-key"
+        connectors = directory / "connectors.json"
+        connectors.write_text(json.dumps({"version": 1, "connectors": [{
+            "kind": "operator-adapter", "credential_profile": "routing-key", "configuration_file": str(configuration),
+            "credential_file": str(credential),
+        }]}))
+        connectors.chmod(0o600)
+        for case in ("public-key", "symlink-key", "oversized-key", "oversized-config"):
+            with self.subTest(case=case):
+                credential.unlink(missing_ok=True)
+                credential.write_bytes(b"private-credential-canary")
+                configuration.write_bytes(b"private-configuration-canary")
+                credential.chmod(0o600)
+                configuration.chmod(0o600)
+                if case == "public-key":
+                    credential.chmod(0o644)
+                elif case == "symlink-key":
+                    credential.unlink()
+                    credential.symlink_to(configuration)
+                elif case == "oversized-key":
+                    credential.write_bytes(b"x" * (65536 + 1))
+                else:
+                    configuration.write_bytes(b"x" * (4194304 + 1))
+                with self.assertRaises(CONFIGURATOR.ServerConfigurationError) as error:
+                    CONFIGURATOR.generate_server_configuration(
+                        self.root, self.installation, repository=REPOSITORY,
+                        home=Path.home(), openssl=self.openssl, factory_profiles=profiles,
+                        factory_signal_connectors=connectors,
+                    )
+                self.assertEqual(str(error.exception), "Factory connector inputs are invalid")
+                self.assertFalse((self.root / "config/server").exists())
+
+    def test_factory_rejects_legacy_or_malformed_version_without_disclosing_body(self):
+        profiles = Path(self.temporary.name) / "profiles.json"
+        for contents in (
+            '{"schema_version":1,"private_canary":"do-not-disclose"}',
+            '{"version":true,"private_canary":"do-not-disclose"}',
+            '{"version":2,"private_canary":"do-not-disclose"}',
+            'do-not-disclose-invalid-json',
+        ):
+            with self.subTest(contents=contents):
+                profiles.write_text(contents)
+                profiles.chmod(0o600)
+                with self.assertRaises(CONFIGURATOR.ServerConfigurationError) as error:
+                    CONFIGURATOR.generate_server_configuration(
+                        self.root, self.installation, repository=REPOSITORY,
+                        home=Path.home(), openssl=self.openssl, factory_profiles=profiles,
+                    )
+                self.assertNotIn("do-not-disclose", str(error.exception))
+                self.assertFalse((self.root / "config/server").exists())
 
     def test_real_server_accepts_generated_config_and_rejects_removed_acknowledgement(self):
         receipt = self.generate()

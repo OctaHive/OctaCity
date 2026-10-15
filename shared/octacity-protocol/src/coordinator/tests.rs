@@ -124,6 +124,8 @@ fn factory_execution_capabilities_are_bound_to_v3_isolated_routes() {
   };
   inventory.executions.push(execution.clone());
   inventory.factory_executions.push(FactoryExecutionCapabilityV3 {
+    workspace_anchor: false,
+    controlled_tools: false,
     execution: execution.clone(),
     enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
   });
@@ -142,6 +144,8 @@ fn factory_execution_capabilities_are_bound_to_v3_isolated_routes() {
   assert!(inventory.validate().is_err());
 
   inventory.factory_executions[0] = FactoryExecutionCapabilityV3 {
+    workspace_anchor: false,
+    controlled_tools: false,
     execution,
     enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
   };
@@ -965,4 +969,28 @@ fn cache_session_values_validate_fencing_expiry_and_secret_redaction() {
   }
   .validate(&revoke.request_id, &revoke.session_id)
   .unwrap();
+}
+#[test]
+fn controlled_tool_routes_default_to_unqualified_in_older_inventory() {
+  let inventory = inventory();
+  let execution = ExecutionCapabilityV2 {
+    provider: ExecutionProviderId::new("installed-route").unwrap(),
+    mode: ExecutionMode::Isolation,
+    host_platform: inventory.host_platform,
+    target_platform: inventory.host_platform,
+    guarantees: guarantees_for(ExecutionMode::Isolation),
+    immutable_images: true,
+  };
+  let old = serde_json::json!({"execution":execution,"enforcement":FactoryEnforcementCapabilityV3::ALL.to_vec()});
+  let mut decoded: FactoryExecutionCapabilityV3 = serde_json::from_value(old).unwrap();
+  assert!(!decoded.controlled_tools);
+  assert!(
+    serde_json::to_value(&decoded)
+      .unwrap()
+      .get("controlled_tools")
+      .is_none()
+  );
+  decoded.controlled_tools = true;
+  let roundtrip: FactoryExecutionCapabilityV3 = serde_json::from_value(serde_json::to_value(decoded).unwrap()).unwrap();
+  assert!(roundtrip.controlled_tools);
 }

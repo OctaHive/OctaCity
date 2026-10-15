@@ -9,7 +9,7 @@ use crate::{
 use async_trait::async_trait;
 use octacity_protocol::{CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT};
 use octacity_server_domain::Timestamp;
-use octacity_server_factory::{EvidenceOutputKind, FlowBuildExecution, ImmutableReference};
+use octacity_server_factory::{EvidenceOutputKind, FlowBuildExecution, FlowDiscoveryFacts, ImmutableReference};
 use octacity_server_store::BuildQueryStore;
 use std::sync::Arc;
 
@@ -69,17 +69,46 @@ impl<B: OrdinaryBuildCancellationApplication + BuildQueryStore, O: FactoryNodeBu
       return Err(ApplicationError::invalid());
     }
     let observed_at = request.observed_at;
+    let candidate = std::sync::Mutex::new(None);
     let outputs = Arc::new(crate::factory_verified_build_outputs::VerifiedNodeBuildOutputs {
       builds: self.builds.as_ref(),
       source: self.outputs.as_ref(),
       intent,
       verify: |execution: &FlowBuildExecution, outputs: &FactoryNodeBuildOutputs| {
-        verify_factory_node_change_set(intent, execution, outputs, &self.capture_tool, observed_at)
-          .map(|_| ())
-          .map_err(|_| ApplicationError::invalid())
+        let verified = verify_factory_node_change_set(intent, execution, outputs, &self.capture_tool, observed_at)
+          .map_err(|_| ApplicationError::invalid())?;
+        *candidate.lock().map_err(|_| ApplicationError::invalid())? = Some(verified.subject().clone());
+        Ok(())
       },
     });
-    FactoryNodeExecutor::observe(&FactoryNodeBuildAdapter::new(self.builds.clone(), outputs), request).await
+    let step =
+      FactoryNodeExecutor::observe(&FactoryNodeBuildAdapter::new(self.builds.clone(), outputs), request).await?;
+    match step {
+      FactoryNodeExecutionStep::Completed {
+        execution,
+        record,
+        usage,
+        outbox,
+      } => {
+        // This subject comes from the complete trusted capture verification in
+        // this observation, never from a model payload or a predecessor guess.
+        let subject = candidate
+          .lock()
+          .map_err(|_| ApplicationError::invalid())?
+          .clone()
+          .ok_or_else(ApplicationError::invalid)?;
+        let record = (*record)
+          .with_discovery(FlowDiscoveryFacts::candidate(subject))
+          .map_err(|_| ApplicationError::invalid())?;
+        Ok(FactoryNodeExecutionStep::Completed {
+          execution,
+          record: Box::new(record),
+          usage,
+          outbox,
+        })
+      }
+      pending => Ok(pending),
+    }
   }
   async fn cancel(
     &self,

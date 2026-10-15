@@ -38,10 +38,11 @@ pub(crate) use diagnostics::list_diagnostics;
 pub(crate) use history::{append_history, history_rows};
 pub(crate) use outbox::{claim_outbox, settle_outbox};
 pub(crate) use phase_pool::{
-  list_phase_ready_entries, phase_ready_entries, publish_phase_ready, select_phase_ready, selection_for_claim,
+  list_phase_ready_entries, phase_ready_entries, publish_phase_ready, ready_phase_policies, select_phase_ready,
+  selection_for_claim,
 };
 pub(crate) use recovery::recover_restored_ownership;
-pub(crate) use snapshot::read_snapshot;
+pub(crate) use snapshot::{read_snapshot, read_snapshot_in_transaction};
 pub(crate) use transition::commit_transition;
 
 pub(crate) async fn verify_cancellation_owner(
@@ -67,7 +68,16 @@ pub(crate) async fn verify_build_dispatch(
   transaction: &mut Transaction<'_, Postgres>,
   request: &octacity_server_store::AcceptFactoryBuild,
 ) -> Result<(), StoreError> {
-  let run_id = request.intent.input().factory_run_id();
+  verify_node_dispatch(transaction, &request.intent, &request.ownership, request.accepted_at).await
+}
+
+pub(crate) async fn verify_node_dispatch(
+  transaction: &mut Transaction<'_, Postgres>,
+  intent: &octacity_server_factory::FlowBuildIntent,
+  ownership: &octacity_server_factory::FactoryClaimOwnership,
+  observed_at: Timestamp,
+) -> Result<(), StoreError> {
+  let run_id = intent.input().factory_run_id();
   let locked = lock_run(transaction, run_id).await?;
   let claim_id = locked.claim_id.ok_or_else(conflict)?;
   let claim = read_claim(transaction, claim_id)
@@ -75,16 +85,12 @@ pub(crate) async fn verify_build_dispatch(
     .ok_or(StoreError::Unavailable)?;
   if locked.lifecycle.cancellation_requested
     || locked.run.state().is_terminal()
-    || claim.owner != *request.ownership.owner()
-    || claim.claim != request.ownership.claim()
-    || request.accepted_at < claim.claim.claimed_at()
-    || request.accepted_at >= claim.claim.expires_at()
-    || request.accepted_at >= request.intent.node().deadline()
-    || request
-      .intent
-      .node()
-      .verify_observer(&request.ownership, request.accepted_at)
-      .is_err()
+    || claim.owner != *ownership.owner()
+    || claim.claim != ownership.claim()
+    || observed_at < claim.claim.claimed_at()
+    || observed_at >= claim.claim.expires_at()
+    || observed_at >= intent.node().deadline()
+    || intent.node().verify_observer(ownership, observed_at).is_err()
   {
     return Err(conflict());
   }
@@ -93,10 +99,10 @@ pub(crate) async fn verify_build_dispatch(
      WHERE intent.run_id=$1 AND intent.node_attempt_id=$2 AND intent.operation_id=$3 \
        AND NOT EXISTS (SELECT 1 FROM factory_node_stops stop WHERE stop.node_attempt_id=intent.node_attempt_id) \
        AND NOT EXISTS (SELECT 1 FROM factory_node_attempt_completions completion WHERE completion.node_attempt_id=intent.node_attempt_id)",
-  ).bind(run_id.as_uuid()).bind(request.intent.node().id().as_uuid())
-    .bind(request.intent.operation_id().map_err(|_| conflict())?.as_bytes().as_slice())
+  ).bind(run_id.as_uuid()).bind(intent.node().id().as_uuid())
+    .bind(intent.operation_id().map_err(|_| conflict())?.as_bytes().as_slice())
     .fetch_optional(&mut **transaction).await.map_err(unavailable)?;
-  let expected = serde_json::to_vec(&request.intent).map_err(|_| conflict())?;
+  let expected = serde_json::to_vec(intent).map_err(|_| conflict())?;
   if document.as_ref() != Some(&expected) {
     return Err(conflict());
   }
@@ -165,6 +171,18 @@ struct FactoryAuditRow {
 }
 
 async fn lock_run(transaction: &mut Transaction<'_, Postgres>, run_id: FactoryRunId) -> Result<LockedRun, StoreError> {
+  // Lock the stable aggregate before reading mutable current pointers. A joined
+  // SELECT FOR UPDATE can wait on an older tuple, then PostgreSQL's row recheck
+  // sees the new pointer against its old joined budget/lifecycle row and drops
+  // an existing Run. The next statement gets a fresh snapshot under this lock.
+  sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM factory_runs WHERE id=$1 AND visible FOR UPDATE")
+    .bind(run_id.as_uuid())
+    .fetch_optional(&mut **transaction)
+    .await
+    .map_err(unavailable)?
+    .ok_or(StoreError::NotFound {
+      entity: EntityKind::FactoryRun,
+    })?;
   let row = sqlx::query_as::<_, LockedRunRow>(
     "SELECT work.envelope, run.state, run.version, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis, \
@@ -286,7 +304,10 @@ async fn insert_claim(
   Ok(())
 }
 
-async fn insert_audit(transaction: &mut Transaction<'_, Postgres>, fact: &FactoryAuditFact) -> Result<(), StoreError> {
+pub(crate) async fn insert_audit(
+  transaction: &mut Transaction<'_, Postgres>,
+  fact: &FactoryAuditFact,
+) -> Result<(), StoreError> {
   let audit_id = uuid_from_digest(fact.id);
   sqlx::query(
     "INSERT INTO audit_facts \

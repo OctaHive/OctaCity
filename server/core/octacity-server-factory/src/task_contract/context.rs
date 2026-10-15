@@ -157,20 +157,22 @@ pub struct ContextManifest {
 }
 
 impl ContextManifest {
-  /// Constructs a non-empty subject-consistent manifest in canonical entry order.
+  /// Constructs a subject-consistent manifest in canonical entry order. Empty
+  /// selection explicitly grants no context to a configured data-only call.
   pub fn new(
     id: ContextManifestId,
     subject: FactoryTaskSubject,
     construction_policy_digest: FactoryDigest,
     entries: Vec<ContextManifestEntry>,
   ) -> Result<Self, FactoryError> {
-    validate_count(&entries, 1, MAX_CONTEXT_MANIFEST_ENTRIES, "context manifest entries")?;
+    validate_count(&entries, 0, MAX_CONTEXT_MANIFEST_ENTRIES, "context manifest entries")?;
     if entries.iter().any(|entry| entry.subject != subject) {
       return Err(FactoryError::InconsistentSubject);
     }
-    if entries
-      .iter()
-      .all(|entry| entry.source_kind == ContextSourceKind::RepositoryFragment)
+    if !entries.is_empty()
+      && entries
+        .iter()
+        .all(|entry| entry.source_kind == ContextSourceKind::RepositoryFragment)
     {
       return Err(invalid("context mandatory entries"));
     }

@@ -104,3 +104,87 @@ it('rejects an incompatible projected schema and a widened node budget while pre
   );
   expect(value.root.context_projections).toEqual([]);
 });
+
+it('checks every declared tag and payload range when projecting externally tagged values', () => {
+  const value = draft();
+  const predecessor = value.root.nodes[0]!;
+  const successor = value.root.nodes[1]!;
+  const source: components['schemas']['FactoryFlowDataSchema'] = {
+    reference: { identity: 'operator.source-tags', version: 'v1', digest: '1'.repeat(64) },
+    shape: {
+      type: 'externally_tagged',
+      variants: { Ready: null, RetryAfter: { type: 'integer', minimum: 1, maximum: 3 } },
+    },
+  };
+  const target: components['schemas']['FactoryFlowDataSchema'] = {
+    reference: { identity: 'operator.target-tags', version: 'v1', digest: '2'.repeat(64) },
+    shape: {
+      type: 'externally_tagged',
+      variants: { Ready: null, RetryAfter: { type: 'integer', minimum: 1, maximum: 10 } },
+    },
+  };
+  value.data_schemas.push(source, target);
+  predecessor.outcomes[0]!.schema = source.reference;
+  successor.input_schema = target.reference;
+  successor.input_binding = null;
+  value.root.data_projections = [
+    {
+      predecessor: predecessor.key,
+      outcome: predecessor.outcomes[0]!.key,
+      successor: successor.key,
+      schema: source.reference,
+    },
+  ];
+  expect(validateFlowDraft(value)).toEqual([]);
+  const incompatible = { field: '/root/data_projections/0/schema', code: 'incompatible_schema' };
+  for (const shape of [
+    { type: 'externally_tagged' as const, variants: { RetryAfter: null } },
+    { type: 'externally_tagged' as const, variants: { Ready: { type: 'boolean' as const } } },
+    {
+      type: 'externally_tagged' as const,
+      variants: { RetryAfter: { type: 'integer' as const, minimum: 1, maximum: 11 } },
+    },
+    { type: 'externally_tagged' as const, variants: { ready: null } },
+  ]) {
+    source.shape = shape;
+    expect(validateFlowDraft(value)).toContainEqual(incompatible);
+  }
+  source.shape = { type: 'enum', values: ['Ready'] };
+  expect(validateFlowDraft(value)).toEqual([]);
+  source.shape = {
+    type: 'externally_tagged',
+    variants: Object.fromEntries([
+      ['__proto__', null],
+      ['constructor', null],
+    ]),
+  };
+  target.shape = {
+    type: 'externally_tagged',
+    variants: Object.fromEntries([
+      ['__proto__', null],
+      ['constructor', null],
+    ]),
+  };
+  expect(validateFlowDraft(value)).toEqual([]);
+  target.shape = { type: 'externally_tagged', variants: { Ready: null } };
+  expect(validateFlowDraft(value)).toContainEqual(incompatible);
+  source.shape = {
+    type: 'externally_tagged',
+    variants: { Wrapped: { type: 'object', fields: {} } },
+  };
+  target.shape = {
+    type: 'externally_tagged',
+    variants: {
+      Wrapped: {
+        type: 'object',
+        fields: Object.fromEntries(
+          ['constructor'].map((name) => [
+            name,
+            { required: false, value: { type: 'boolean' as const } },
+          ]),
+        ),
+      },
+    },
+  };
+  expect(validateFlowDraft(value)).toEqual([]);
+});

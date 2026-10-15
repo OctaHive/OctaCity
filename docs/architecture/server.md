@@ -148,11 +148,24 @@ poll_interval_milliseconds = 1000
 claim_lifetime_milliseconds = 30000
 batch_size = 16
 concurrency = 4
+
+[factory.retry]
+max_backoff_milliseconds = 5000
+consecutive_failure_limit = 3
+circuit_open_milliseconds = 30000
 ```
 
 Intervals must be positive and at most five minutes, the batch must fit the
 store's reconciliation bound, and concurrency must be positive and no greater
 than the batch. These are technical resource bounds, not logical flow defaults.
+The optional retry policy bounds exponential delays and opens a circuit after
+the configured consecutive failures. One recovery probe runs after the cooldown;
+success resets the ordinary poll interval. Delay and cooldown must be at least
+the poll interval and at most five minutes; the failure limit is 1–100. Omitting
+the retry section uses a three-failure circuit with the larger of the claim
+window and poll interval as its maximum delay and cooldown. Each installed
+outbox dispatcher has independent retry state. Cancellation interrupts a
+cooldown immediately and drains an already running owner pass.
 
 `ServerRuntime::start_with_factory` accepts a trusted `FactoryRuntimeInstaller`.
 The installer receives runtime-owned PostgreSQL journals, ordinary Build storage,
@@ -163,13 +176,134 @@ logical node names never select an executor. Installation is bounded by the
 configured readiness timeout. Provider-specific context selection, protected task
 compilation and output verification belong to the installed adapters.
 
-`ServerRuntime::start`, including the default binary, rejects enabled Factory
-configuration without an installer before loading resources or opening listeners.
-It does not supply implicit providers or a default business flow. A deployment
-using Factory must install the capabilities required by its published definitions.
+`FactoryProfileRuntimeInstaller` composes native retained-Artifact input preparation,
+qualified Codex compilers/output readers, routing Signal journals and other exact
+installed technical executors. It groups Codex profiles by executable identity
+and rejects duplicate executor selections before exposing a capability catalog.
+Choices are Project-scoped: foreign Build Configuration references and profiles
+missing their exact installed choice are rejected. Unknown Projects report Factory
+disabled. Profile construction performs no provider or storage I/O; dependency
+availability remains a separately supervised readiness check.
+Build-backed nodes without selected Artifact context receive an explicit empty
+manifest. This grants no additional data and makes data-only execution compatible
+with the same frozen input contract. Manifest identities are derived from exact
+input, subject, construction policy and selected entries; repeated preparation
+therefore produces identical bytes, and restart uses the retained input.
+
+`ServerRuntime::start`, including the default binary, can load an explicitly
+configured top-level `factory_profiles_file`. The strict version-1 JSON catalog
+contains Project-owned `projects` choices and exact `codex` profiles. It is limited
+to 4 MiB and must be a stable owner-only regular file; parse and filesystem errors
+produce fixed diagnostics without private instructions or file paths. Offline
+configuration rebasing also relocates this path. Codex entries distinguish
+read-only evaluator profiles from coding profiles with an explicit trusted capture
+policy; their credential purposes and source authority cannot be exchanged.
+Native readiness checks installed Projects and retained object storage
+independently of ordinary CI/CD readiness.
+
+`FileProfileInstaller` preserves separately typed deployment bindings until native
+resources are available. `review_planning` selects exact immutable review policies;
+`protected_validation_evidence` reconstructs the original retained inputs and
+publishes verified evidence through the existing native adapter. `delivery`
+installs a verified process registry and private Artifact materializer, with exact
+content-derived target policies. Neither installation nor discovery performs a
+publication. Provider configuration and credentials remain outside Agent tasks.
+The public metadata-only `FactoryRuntimeProfileCatalog::parse_json` refuses a
+catalog containing deferred resource bindings, so callers cannot silently drop
+an installed capability. Binary startup uses the complete file installer.
+
+Installed command programs use the ordinary managed Job path independently of
+model execution. Their exact Octafile bytes, finite task selection, protected
+input destination, output contracts, permission ceilings and candidate capture
+pin participate in the task digest. The compiler publishes canonical frozen
+input JSON and the installed program as separate protected documents. Flow
+data cannot replace executable instructions. A command profile's `executor`
+identifies the installed native capability; it is not a claim that a provider
+external executable exists on an Agent. Built-in plugin programs carry an
+opaque `FactoryManagedCommandProof` binding the exact intent and published
+program. The common assembler retains the external-executable requirement
+when that proof is absent. This changes neither Octa nor the Agent protocol.
+
+Native command qualification requires the approved plugin digest, readonly
+source/protected roots, explicit scratch/output authority and no model,
+network, secret, external-tool or workload-identity grants. The same immutable
+profile drives retained-result verification. JSON schemas come from the
+installed output contract and admitted schema catalog, never from a report's
+own provenance fields. Ordinary reports may use the Agent's binary transport
+media type; their verified bytes must still satisfy the installed JSON schema.
+This does not permit binary Artifact results to bypass the JSON contract.
+Command consumption uses a conservative authoritative
+server wall-time bound, including queueing and cleanup, summed across retries;
+it does not treat a periodic Agent metric as a final sample or invent model
+tokens/cost. Existing promotion and protected-validation adapters apply their
+additional exact-candidate, retained-test and observation contracts around the
+ordinary Build ports.
+Retained candidate results reconstruct the original opaque source proof and
+require the exact complete signed input manifest. Compiler-supplied candidate
+inputs are reused only when every field matches the independently verified
+selection; conflicting metadata still fails validation. Cancellation prevents
+semantic completion while preserving consumption already recorded by ordinary
+Job timestamps. Recovering that consumption grants no new Artifact access.
+Protected validation uses the same original input source for compilation and
+observation. A third protected document supplies the exact candidate identity,
+test inventory, report input digest and ordered class keys. Those facts cannot
+be reconstructed from arbitrary Flow payloads or inferred from private test
+contents. It carries no test bodies. The compiler and observer both use the
+typed materialization to verify the complete candidate, private inputs and
+compiler document set; neither removes unknown inputs to make a manifest fit.
+The ordinary Build service also compares action data against the installed
+compiler's deterministic `action_input` projection before dispatch or replay.
+The default projection is absent. Request JSON cannot introduce an action
+capability or replace a trusted plan; a mismatch fails before Build recovery
+or new materialization. This port performs no provider I/O and resolves no
+credentials.
+Promotion command bindings explicitly select a separate compiler/observer
+role. It publishes the independently frozen plan and digest in a third
+protected document and verifies that document together with the retained
+candidate inputs. A plain command observer rejects those extra inputs. This
+role is never inferred from a generic trusted-action node and cannot be
+combined with private test validation. The same frozen plan supplies the
+compiler's action projection; the common Build service contains no promotion
+or provider-specific request logic.
+
+Enabled configuration without this file or an explicit installer is rejected
+before loading resources or opening listeners. No providers or business Flow are
+implicitly supplied. A deployment must install the capabilities required by its
+published definitions. Provider API shapes remain inside their adapters behind
+`DecisionSignalProvider`; a file catalog does not select a provider-specific API
+inside the common Flow interpreter.
+`parse_json_with_signal_providers` can bind routing metadata to already installed
+connectors with exactly matching immutable capabilities. Missing or ambiguous
+connectors fail closed. This parser performs no provider I/O and accepts no
+provider API URL, key, HTTP payload or SDK configuration.
+An unavailable installation or installation timeout keeps ordinary server startup
+working and reports Factory unavailable, without starting a partially installed
+owner. Invalid installation/configuration still fails startup. Installing missing
+material in this initial-degradation state currently requires a server restart.
 Disabled mode neither invokes installation nor probes its dependency readiness.
 Enabled mode tracks both the supervised owner's health and installed capability
-readiness. Shutdown drains the in-flight bounded pass before stopping the owner.
+readiness, including every installed outbox dispatcher's health. The
+`/health/factory` endpoint reports `disabled` (200), `ready` (200), or
+`unavailable` (503). Factory dependency failures leave ordinary `/health/ready`
+independent; failures of shared server dependencies still make Factory
+unavailable. Critical conditions for the two readiness scopes have disjoint
+identities, even when a dependency name is shared.
+
+Owner transition audit facts are committed with the journal, budget and outbox
+under the current fence. Their request digest binds the complete accepted
+append, frozen contexts, execution provenance and budget usage. Structured
+transition events are emitted only after successful persistence and correlate
+to that audit fact. They contain UUIDs, immutable digests, versions and numeric
+usage. Operator-defined node names are hashed; context bodies, prompts, findings,
+commands, paths and provider diagnostics are excluded. Worker failures record
+only a closed classification, retry delay and circuit state. Native pool selection
+events are emitted after commit and bind the exact pool policy, selected input,
+claim fence and same-transaction audit identity. Replay emits no new selection
+event; pool names, node names and worker aliases are excluded. Node-start events
+correlate the committed attempt UUID, number, primitive, original deadline, fence
+and hard budget limits. Committed node completions include hashed outcome/output
+identities, latency from the persisted start, and measured usage; they never log
+the attempt, input or provider result as a debug object.
 
 ### Ordinary Build nodes and extensible actions
 
@@ -182,11 +316,155 @@ the Node Attempt; a restart cannot rediscover or replace those choices.
 installed `FactoryBuildMaterializer`. The Codex compilation boundary
 `compile_codex_node_task` verifies the envelope against the intent, including the
 exact task Artifact selected in its frozen Context, before producing protected
-documents. Ordinary acceptance independently checks managed v3 Job causality,
+documents. `compile_codex_flow_task` separately compiles read-only observations
+from the admitted node's exact configured schema, frozen input and installed
+instruction digest, without a business-stage enum. It selects one authorized
+review credential and rejects writable source, arbitrary tools, capture authority
+and substituted instructions. JSON Schema text lengths conservatively approximate
+UTF-8 byte bounds; authoritative Flow payload validation still enforces the exact
+byte contract. `compile_codex_flow_task_with_context` additionally requires the
+complete explicit Artifact selection, verifies content identities and renders
+bounded UTF-8 context as JSON data. Missing, substituted, non-text or undeclared
+bytes fail closed. `FactoryArtifactReader` establishes Project ownership and
+retention through the original execution deadline before supplying those bytes.
+Neither compiler creates a Build. `CompiledCodexTask::managed_program` binds its generated documents
+to the exact published manifest before passing an ordinary managed program to
+DAG assembly. Document debug output contains only kind, size and digest.
+Ordinary acceptance independently checks managed v3 Job causality,
 source revision, permissions, allowed pools and the original execution deadline.
+Admission and observation use separate fenced owner passes. After a successful
+creation, the adapter validates and retains the exact acceptance receipt and
+returns `Waiting`. The next pass reads the Build with its fresh observation time;
+compiler and persistence I/O cannot make the accepted timestamp appear to come
+from the future. Existing Build observation still rejects future timestamps,
+foreign origins and substituted configuration or permission pins.
 The atomic store transaction rechecks current ownership, cancellation and time
 after compilation. Creation replays retain the original Build without renewed
 authority or a fabricated Trigger.
+Acceptance records `factory.build.accepted` in the same transaction as the Build,
+first Attempt, complete Job DAG and signed root queue entries, before later
+owner linkage. The fact binds the immutable intent operation, worker identity
+digest and original acceptance time. Restart and lost-response replay retain
+that fact without duplicating it or renewing dispatch authority.
+
+`StoreBackedBuildExecutionContext` loads exact Configuration, Repository and
+Pipeline versions plus inherited Project policy through the existing ordinary
+read ports. Manual Triggers share this loader. Installed managed task compilers
+use `materialize_factory_managed_build` to assemble the complete published DAG
+from explicit generated programs. It shares runtime policy and placement
+derivation with ordinary CI/CD, derives stable Build/Attempt/Job identities from
+the persisted operation, preserves dependency policies and freezes retention,
+permissions and the node deadline. Missing programs, ungranted tool/plugin
+identities and substituted plugin digests fail before signing. Managed programs
+own their generated execution variables and credential selection; ordinary Build
+parameters and legacy secret files are not implicitly forwarded. Capture and
+candidate materialization require an explicit verified source plan.
+`materialize_factory_managed_build_with_source` accepts an opaque candidate proof
+bound to the frozen input and rechecks retained bundle/manifest identities at
+acceptance. Every signed Job preserves the Work base revision and receives the
+exact candidate inputs. Capture validates the frozen write scope and deliverable
+contract before signing; it grants no broader paths. The original readonly
+wrapper preserves its input manifest and deterministic identities. These pure
+assembly capabilities do not qualify a writable backend or install a tool broker.
+
+`FactoryCodexBuildMaterializer` composes exact configuration resolution, the
+trusted context reader, read-only compilation and fenced input publication with
+ordinary Build assembly. Its installed profile contains only exact executable,
+plugin, model and Build Configuration references, instructions, credential
+purpose, parameters and independent Project/backend permission ceilings. Flow
+identifiers and logical node names do not select installed instructions. The
+current qualification supports one explicitly configured Pipeline Job; other
+DAGs and writable/capture profiles fail closed. Permission narrowing and the
+instruction digest are checked before reading private context, and fresh owner
+time is checked before reads and again before returning materialization. The
+ordinary acceptance service supplies the persisted admitted closure and still
+performs the final atomic fence/cancellation/deadline check.
+The materializer accepts a bounded catalog selected by exact tool/plugin/model,
+Build Configuration and instruction digest. It does not select a role by Flow or
+node name. `FactoryRuntimeResources::codex_executor` qualifies the package and
+credential/permission contract before wiring native context resolution, S3
+publication, ordinary Build creation/query/cancellation and the native retained
+output reader into one registry binding for the exact executable. This
+binding constructor performs no dependency I/O; readiness remains separately
+qualified. Writable/capture compilers and deployment
+profile loading are separate required installation components.
+
+`FactoryCodexBuildOutputSource` reconstructs the exact persisted common intent
+from ordinary Build origin. It matches installed identities and narrowed grants,
+then compares the generated program and complete protected manifest with the
+executed Job. Output lookup filters the exact Attempt before the byte/read ceiling.
+The requested terminal Attempt must still be the latest ordinary Build Attempt;
+retained predecessor results cannot complete a node after a retry becomes current.
+The adapter verifies immutable bytes, trace structure, invocation provenance,
+schema and reported consumption; only declared structured data enters the common
+result. Private harness records stay in ordinary Build Artifacts. A technical
+harness or ordinary execution failure retains verified consumption without a
+semantic node outcome. Missing measurement remains unavailable, never zero.
+
+
+Installed output verifiers may return `FlowVerifiedBuildData` for a schema-checked
+projection while retaining the original Artifact bytes and identity. The common
+Build adapter consumes this neutral contract and never guesses a provider's wire
+format. The Codex adapter alone decodes its versioned result wrapper; harness
+identifiers do not enter the projected node payload. The owner checks the declared
+schema and retains the raw Artifact digest plus the validated facts in provenance;
+the primary projected facts must equal the accepted node payload.
+
+`FactoryExecutionInputPublisher` publishes only explicit trusted compiler
+documents. It validates the complete protected manifest, derives stable opaque
+identities from the node operation and exact document content, and reserves
+cleanup metadata before writing bytes. Reservation and publication both verify
+the persisted intent, current owner, cancellation and original deadline.
+Interrupted writes remain discoverable for cleanup; verified publication replays
+create no new objects. These private inputs have node provenance and never appear
+as Agent-produced Build outputs. `ArtifactBytePublisher` and `ArtifactByteReader`
+verify exact size and SHA-256, enforce a 64 MiB memory ceiling and apply storage
+operation deadlines; the S3 reader also binds GET to the inspected generation.
+
+Protected transfer accepts either ordinary published Artifacts or these private
+execution inputs and independently verifies the object before issuing a download.
+The capability cannot outlive its Lease or input expiration. The independently
+supervised input retention worker deletes expired objects before acknowledging
+cleanup, including reservations left by failed compilation. This maintenance
+continues with Factory disabled using only ordinary database and object-store
+credentials; it does not enable Factory or affect ordinary readiness. Run metadata
+retention waits for physical cleanup before removing the input journal references.
+Reservation, publication and deletion audit facts share their metadata transaction.
+
+`FactoryArtifactFlowInputs` prepares configured input mappings and reads only
+explicitly selected, retained Project-owned Artifact references. Candidate context
+requires a verified publication in selected result ancestry, including explicit
+intermediate results; control ordering alone grants no context. Repository range
+or fragment retrieval requires a separately installed retrieval capability.
+
+Decision Signal nodes use the same exact immutable operation binding as trusted
+actions. Their installed adapter owns the parameter contract and provider policy;
+logical node names do not choose a provider or confer transition authority.
+Installed routing bindings pin their complete preparation/consumption policy,
+output mappings and independent authority into the published action parameters.
+A changed plan cannot retain the action selected by an admitted node or turn an
+earlier pending reservation into a zero-usage cancellation. Older policy bindings
+can remain installed under their original exact action alongside a replacement.
+`FactoryDecisionSignalReceipts` connects the provider coordinator to private
+PostgreSQL dispatch intents and receipts. `DecisionSignalDispatchAuthorization`
+checks current ownership, cancellation and the original deadline before external
+I/O. A same-transaction audit fact identifies the frozen request. Unresolved calls
+hold their full resource ceiling; verified receipts replace it with measured usage.
+Reservations and receipts share the node budget under the Run lock, so changing
+request UUIDs cannot bypass the ceiling. Exact receipt recovery retains the
+original provider/model, consumption and usage after ownership expires; it grants
+no renewed dispatch authority. Reads verify retained document digests. Private
+journals are scanned one document at a time under bounded count/byte ceilings.
+Bounded Run retention deletes both journals before their node/input references.
+
+Provider failures distinguish measured consumption from an unobserved external
+outcome. JEV transport failures preserve absent usage, and the common consumption
+policy cannot turn them into a free terminal receipt. The coordinator rechecks time
+after asynchronous dispatch authorization. Expired reservations or unavailable
+capabilities still awaiting an earlier result remain pending instead of discarding
+unknown consumption. Installed execution adapters must recover these outcomes
+without creating new effects after the dispatch deadline. The management projection
+uses typed discovery facts rather than private request documents.
 
 `BuildOrigin::Factory` retains the stable operation, Run, Node Attempt and input
 digest; ordinary trigger-origin Builds retain their existing origin. Discovery
@@ -220,6 +498,21 @@ configured gate decides freshness using the trusted observation clock.
 execution is pending. PostgreSQL retention protects these Builds and removes
 execution links before cleaning referenced ordinary metadata.
 
+Read-only Codex usage settlement checks retention at the current observation
+time even after the original execution deadline; it cannot renew dispatch
+authority. Provider timing must fit the persisted Job creation and terminal
+window and its signed deadline. Each installed Codex profile explicitly selects
+reported cost or token rates for its exact immutable model, with separate cached
+input accounting and checked arithmetic. The protected invocation envelope freezes
+that policy before Build admission, so a changed rate policy cannot verify an
+existing execution. Missing counters remain unavailable; no built-in price table
+or implicit zero cost is used.
+The generic Codex task-definition digest binds instructions, the consumed
+credential purpose/profile and the cost policy. Different policy versions can
+remain installed together for old and new admitted calls; selection uses that
+exact digest rather than a mutable tariff or logical node name. Unused credential
+purposes do not couple unrelated calls.
+
 `FlowActionBinding` selects an exact installed plugin, its action key and
 bounded parameters. `FactoryFlowActionAdapter` implements the common node
 executor; plugins receive the frozen projected input, exact grants, ceilings,
@@ -228,6 +521,36 @@ before repeating effects and return a schema-valid payload, declared outcome
 and measured usage. The owner commits their record and completion through the
 same journal as Build results. New technical actions require a plugin; new
 logical stages using installed actions need only configuration.
+
+The native profile installer binds review planning to the same PostgreSQL Run
+journal and trusted execution clock. Each installed planner identity includes
+the complete review-profile digest; criterion packs must belong to an installed
+Project. `FactoryReviewPlanningAction` consumes the exact selected, verified
+Evidence record and freezes policy, evaluator branches, quorum, budget and
+freshness into one retained plan. Missing required evaluator capabilities produce
+the configured escalation outcome. Replay returns the accepted plan through the
+common Node journal rather than creating another planning store.
+
+`FactoryProtectedValidationEvidenceAction` publishes a complete Evidence Manifest
+from one explicitly projected report and qualification-facts Artifact pair. Both
+references must match one retained ordinary Build completion, its original intent,
+execution and independently verified output contracts. The report bytes are checked
+again; qualification facts come from the schema-validated common journal. The
+manifest retains the candidate and all protected input identities, bounded
+freshness and typed discovery facts. The common Node owner persists the result;
+replaying a completed node after restart does not reread the report.
+
+`FactoryRuntimeResources::protected_validation_evidence_executor` composes native
+PostgreSQL/S3 readers with the installed authoring policy, exact retained candidate,
+private test inventory and original validation materialization. Inventory recovery
+reads only the selected inventory bytes and each test file's publication metadata;
+private test bodies remain signed Agent inputs. Mandatory public deliverables are
+requalified from exact retained capture bytes, including the protected-copy check.
+Preparation of a live validation requires retention through its original deadline;
+read-only recovery of a completed validation neither renews that deadline nor
+requires a fresh execution claim. Binding construction validates immutable profile
+identity and output contracts without dependency I/O. Loading additional deployment
+JSON roles is a separate configuration concern.
 
 `FactoryWorkStatusAction` accepts an arbitrary configured status. A connector
 projects that value onto its own representation: GitHub uses a label and Jira
@@ -244,6 +567,9 @@ projector. Retry budgets cannot extend the original deadline. Reporter success,
 failure and restart change only outbox state; external status cannot authorize a
 Factory transition or reconstruct authoritative state. Runtime installation can
 register independent dispatchers without changing the graph owner.
+`FactoryRuntimeResources::work_status_dispatcher` binds the installed projector
+registry to that native journal and the trusted clock without probing or writing
+to a provider during installation.
 
 `FactoryCandidatePublicationAction` selects a protected publisher through the
 same plugin execution boundary. Its frozen request includes the complete captured
@@ -276,6 +602,133 @@ digests and exact Project/Repository, network and secret-profile ceilings are
 checked before protected handles. Tokens remain inside trusted provider processes.
 Common append-only results retain branch/review identities and verified remote
 heads; existing promotion records retain exact deployment observations.
+`FactoryRuntimeResources::promotion_executor` composes the installed deployment
+materializer with native ordinary Build acceptance, observation and cancellation.
+The promotion adapter checks frozen readiness and exact candidate identity;
+deployment credentials and provider mechanics stay in the installed compiler.
+Binding construction performs no dependency I/O.
+`FactoryRuntimeResources::delivery_materializer` uses native Project-owned
+Artifact publication records, ordinary Build ownership and bounded S3 reads.
+The installed target policy selects an existing owner-private connector input
+directory. Both exact bundle and manifest are verified before their opaque
+handles become available; files are published atomically with private permissions.
+Replay accepts identical bytes and refuses to overwrite another input. These
+directories remain outside repository Jobs and model contexts. This filesystem
+handoff is qualified on Unix; other platforms fail installation closed until
+their private-directory access boundary is qualified.
+
+`FactoryDecisionSignalRequestPlan` freezes an installed provider/capability,
+questions, calibration, explicit schema-checked payload projection and call
+ceiling. Preparation contains no I/O and adds no context or transcript implicitly.
+The request identity binds the common attempt, frozen input and complete plan;
+restarting the worker prepares the same request. The call budget must fit inside
+the common Node budget, and its deadline is the earlier of the Node deadline and
+original start plus call ceiling. Preparation grants no dispatch authority;
+durable fenced reservation is still required before contacting a provider.
+
+`FactoryDecisionSignalNodeExecutor` maps a consumed routing disposition to an
+explicit declared outcome and schema-checked projection of safe Signal facts.
+Its bounded catalog selects an exact action and Project; logical node names
+carry no dispatch meaning. `FactoryRuntimeResources::decision_signal_executor`
+binds it to the native journal after verifying independent Project and local
+authority, without contacting dependencies during binding construction.
+Shadow and advisory execution preserve the installed baseline. Private request
+documents and provider payloads never enter the common result. Ambiguous
+disposition mappings are rejected during installation, and four-layer authority
+is checked before provider I/O. Cancellation observes receipts without dispatch:
+an undispatched operation can stop, while a reserved operation with unknown usage
+remains pending. PostgreSQL can settle an exact previously reserved call after
+cancellation under current ownership; this records measured consumption without
+renewing dispatch authority or completing the cancelled node. Tool-risk execution
+requires its separate deterministic authorization and is not installed by this
+routing executor.
+
+The composition root bounds every installed Signal connector by both its call
+ceiling and the remaining immutable request deadline. A timeout after dispatch
+retains unknown usage and its durable reservation; an already expired request
+never contacts the connector and records known zero consumption. The application
+and common Factory contracts contain no HTTP payload, SDK, endpoint or bearer
+format for JEV or another provider.
+
+The JEV adapter accepts its own bounded versioned deployment JSON through
+`JevDecisionSignalProvider::from_deployment_json`. The host resolves its API key
+separately; inline credentials and unknown fields are rejected. Installation
+does not contact the provider. Endpoint, billing conversion and HTTP timeout are
+adapter configuration, while the exact immutable capability is matched by the
+common installed-provider catalog. Configuration errors and adapter diagnostics
+omit private configuration values.
+
+`load_factory_signal_connectors` reads a version-1 catalog of `kind`, `credential_profile`,
+`configuration_file` and `credential_file` references. The catalog and referenced
+files use the same stable owner-only regular-file gate as other server secrets;
+configuration is bounded to 4 MiB and the connector count is finite. Duplicate
+exact provider/adapter/model identities within one credential profile are rejected.
+The resulting neutral registrations bind each transport to its independently
+resolved credential and can be passed to `FactoryRuntimeProfileCatalog::load_with_signal_providers`
+without embedding provider wire configuration or credentials into Flow metadata.
+Routing and tool-risk resolve both the exact capability and credential profile;
+a declared policy alias cannot silently use another installed transport's key.
+Native routing and tool-risk installations require the connector's neutral
+`network_destinations` declaration. Each declared destination must match the
+separately granted host; an undeclared footprint fails qualification. An explicit
+empty declaration is reserved for transports that perform no network I/O.
+JEV derives its destination from its validated endpoint, and the deadline wrapper
+preserves that declaration. Logical provider identity never substitutes for
+actual transport authority.
+
+Each installed registration retains a shared, secret-free observation of failed,
+interrupted or invalid evaluations and recovery lookups. Native Factory readiness
+combines that state with its Project and Artifact dependencies; a domain fallback does not hide a
+degraded connector behind a healthy worker. An exact valid evaluation or recovered
+result clears the observation. An absent recovery observation preserves the
+previous state; an invalid result, failure or interrupted lookup cannot establish
+health. Recovery does not redispatch the evaluation. Readiness performs no
+additional provider evaluation or billable probe. Installation alone establishes
+no remote availability, and the observation
+is local to the current server process. Ordinary CI/CD readiness remains separate.
+
+The default server startup resolves an explicitly configured
+`factory_signal_connectors_file` before loading the Factory profile catalog and
+before opening shared resources. This optional setting requires enabled Factory
+workers and `factory_profiles_file`; ordinary mode needs no connector files or
+credentials. Offline validation rebases the catalog path with the other runtime
+files. Referenced connector configuration and credential paths are absolute
+operator paths and must be provisioned separately in that runtime filesystem.
+The optional `tool_risk` profile entries resolve an exact installed connector
+independently of routing entries. Each pins the complete provider plan, finite
+choice mapping, call allocation, credential and network grants, base task digest
+and Project-owned Build Configuration. Parsing never contacts a provider or
+creates credentials. Local executor qualification remains required before that
+policy can authorize an actual operation.
+
+`FactoryRuntimeResources::tool_risk_authorizer` composes exact installed workload
+and policy pairs over native Run, ordinary Build acceptance, current signed Job,
+lease and Signal journals. It uses the same bounded connector wrapper. The
+server-owned provider grants stay separate from the Job's permissions. Current
+authority is checked before reservation and after the provider response;
+cancelled Builds and lost leases cannot obtain an executable action. The Agent
+still needs a qualified local broker and protected operation route before a
+tool-using Job can be admitted. An enabled installation with no tool policy has a
+digest-bound fail-closed authorization service at the authenticated Agent API.
+
+The common Flow owner emits structured transition events only after its journal,
+budget and immutable audit fact commit together. They retain exact Configuration,
+Definition, input, Context construction-policy, permission and execution-profile
+digests, Context entry count, input generation, claim/fence and hard budgets.
+Run states and root Flow lifecycle changes come from the committed state and
+validated checkpoint; appended cycles retain predecessor and source-attempt UUIDs.
+Node start, completion and technical stop events carry finite states, original
+attempt identity, measured usage and latency; retries name the exact prior attempt.
+Terminal and logical node names are hashed. Replay and rejected stale authority
+emit no new committed events. Context entries, task bodies, protected test source,
+prompts, commands, provider payloads, finding messages, paths, credentials,
+private URLs and hidden reasoning are excluded from these events.
+
+Signal reservation and measured settlement emit an allowlisted structured event
+only after the immutable journal and audit commit. Events correlate Run, attempt,
+request, fence, audit, receipt, exact provider/model/policy/calibration digests,
+rollout mode, hard ceilings and measured usage. Exact replay emits no new commit
+event. Private request state, questions and logical provider aliases are excluded.
 
 ### Supplied base Flow and Accepted Work
 
@@ -328,7 +781,8 @@ into immutable parameters before admission. Current capture changes enforce the
 node's write scope; a separately qualified cumulative Work index preserves required
 updates across rework and detects removed deliverables. Test correction receives
 bounded author-only remediation, excluded from implementation input. Full production wiring
-and live provider qualification remain 16.1 and 16.4. These integrations bind
+is supplied by the native runtime resources; live provider and controlled-tool
+qualification remains 16.4. These integrations bind
 capabilities and profiles without introducing stage-name dispatch.
 
 ### Durable phase-ready pools
@@ -351,10 +805,18 @@ Publication reconstructs severity and dependencies from the frozen input using
 the configured mapping, and rechecks admitted Project priority and capabilities.
 It rejects undersized reservations, substituted inputs and undeclared pools.
 The selected key resolves to frozen policy independently of the node name or
-kind. Dispatch requires the durable selection's exact Run claim, Flow, cycle,
-node and complete input digest. Dependencies require the exact
+kind. Dispatch requires the current authoritative Run claim and the durable
+selection's exact Flow, cycle, node, generation and complete input digest. Dependencies require the exact
 retained Work digest and declared completed root-Flow resolution in the same
 Project. Pool membership conveys no execution permission.
+
+The enabled native owner discovers a bounded page of persisted ready-policy
+identities before claiming Runs. It supplies the exact installed execution
+catalogue, bounded by the same 256-identity ceiling as executor installation;
+node requirements do not establish available capabilities. If the Work batch
+fills before every discovered policy is processed, the next pass resumes after
+the last processed policy. Policy discovery acquires no claims or reservations.
+The existing pool operation remains responsible for admission and ranking.
 
 Each selection pass reconstructs at most 100 candidate histories in policy order and selects
 at most 100 Work items. It rechecks current Flow history, cancellation, Run and
@@ -530,6 +992,9 @@ noncurrent probe versions and delete markers below the health prefix. Recurring
 migration readiness does not replace disaster-recovery reconciliation.
 PostgreSQL and the object prefix are restored as one offline consistency unit;
 the composition root exposes a listener-free `reconcile-restore` command that
+invalidates restored execution and retention claims and requeues outbox work.
+Those changes append digest-bound Factory audit facts in the same recovery
+transaction; repeated recovery preserves the original facts. The command
 checks every visible immutable-object reference before an operator starts the
 normal runtime. Artifact reads independently repeat published-object integrity
 verification. Optional search rebuild preserves the committed watermark while

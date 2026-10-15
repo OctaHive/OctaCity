@@ -35,6 +35,11 @@ pub(super) struct DurableWorkers {
   pub(super) retention: BuildRetentionWorker<PostgresStore, PostgresLogSearchIndex>,
   pub(super) retention_owner: WorkerOwner,
   pub(super) retention_health: Arc<WorkerHealth>,
+  pub(super) input_retention: octacity_server_application::FactoryExecutionInputRetentionWorker<
+    PostgresStore,
+    octacity_artifact_s3::S3ArtifactStore,
+  >,
+  pub(super) input_retention_health: Arc<WorkerHealth>,
   pub(super) manual_trigger_retries: ManualTriggerRetryWorker,
   pub(super) manual_trigger_retry_owner: WorkerOwner,
   pub(super) manual_trigger_retry_health: Arc<WorkerHealth>,
@@ -47,6 +52,7 @@ pub(super) const EXPIRY_WORKER_NAME: &str = "lease-expiry-worker";
 pub(super) const INTERNAL_TRIGGER_WORKER_NAME: &str = "internal-trigger-worker";
 pub(super) const LOG_INDEX_WORKER_NAME: &str = "log-index-worker";
 pub(super) const RETENTION_WORKER_NAME: &str = "build-retention-worker";
+pub(super) const INPUT_RETENTION_WORKER_NAME: &str = "factory-input-retention-worker";
 pub(super) const MANAGED_WEBHOOK_WORKER_NAME: &str = "managed-webhook-worker";
 pub(super) const MANUAL_TRIGGER_RETRY_WORKER_NAME: &str = "manual-trigger-retry-worker";
 pub(super) const SCHEDULE_WORKER_NAME: &str = "schedule-worker";
@@ -106,6 +112,13 @@ pub(super) fn spawn_durable_workers(
     retention_policy,
     cancellation.child_token(),
   );
+  let input_retention = spawn_input_retention_worker(
+    workers.input_retention,
+    workers.input_retention_health,
+    retention_policy,
+    config.factory(),
+    cancellation.child_token(),
+  );
   let manual_trigger_retries = spawn_manual_trigger_retry_worker(
     workers.manual_trigger_retries,
     workers.manual_trigger_retry_owner,
@@ -140,15 +153,11 @@ pub(super) fn spawn_durable_workers(
   let mut factory_outbox = vec![];
   let factory = workers.factory.map(|installed| {
     let policy = config.factory().expect("validated enabled owner policy");
-    for dispatcher in installed.outbox {
+    for outbox in installed.outbox {
       factory_outbox.push(spawn_factory_outbox_worker(
-        dispatcher,
-        Arc::new(WorkerHealth::new(
-          "factory-outbox",
-          policy.poll_interval().saturating_add(policy.claim_lifetime()),
-        )),
-        policy.poll_interval(),
-        policy.claim_lifetime(),
+        outbox.dispatcher,
+        outbox.health,
+        policy,
         cancellation.child_token(),
       ));
     }
@@ -160,6 +169,7 @@ pub(super) fn spawn_durable_workers(
     (INTERNAL_TRIGGER_WORKER_NAME, internal_triggers),
     (LOG_INDEX_WORKER_NAME, log_indexing),
     (RETENTION_WORKER_NAME, retention),
+    (INPUT_RETENTION_WORKER_NAME, input_retention),
     (MANUAL_TRIGGER_RETRY_WORKER_NAME, manual_trigger_retries),
   ];
   if let Some(task) = factory {
@@ -175,6 +185,45 @@ pub(super) fn spawn_durable_workers(
     tasks.push((MANAGED_WEBHOOK_WORKER_NAME, task));
   }
   spawn_worker_supervisor(tasks, cancellation)
+}
+
+fn spawn_input_retention_worker(
+  worker: octacity_server_application::FactoryExecutionInputRetentionWorker<
+    PostgresStore,
+    octacity_artifact_s3::S3ArtifactStore,
+  >,
+  health: Arc<WorkerHealth>,
+  retention: RetentionWorkerPolicy,
+  factory: Option<crate::FactoryRuntimeConfig>,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  let ordinary = retention.retrying().worker();
+  let poll = factory.map_or(ordinary.poll_interval(), |policy| policy.poll_interval());
+  let claim = factory.map_or(ordinary.claim_lifetime(), |policy| policy.claim_lifetime());
+  let limit = factory
+    .map_or(retention.object_batch_size(), |policy| policy.batch_size())
+    .min(octacity_server_store::MAX_ARTIFACT_PAGE_SIZE);
+  let mut identity = WorkerIdentity::new(INPUT_RETENTION_WORKER_NAME, WorkerKind::Factory);
+  if let Some(policy) = factory {
+    identity = identity.with_retry(policy.retry_policy());
+  }
+  let worker = Arc::new(worker);
+  spawn_worker_loop(
+    identity,
+    health,
+    poll,
+    claim,
+    cancellation,
+    move |at, _| {
+      let worker = worker.clone();
+      async move { worker.run_once(at, limit).await }
+    },
+    |completed| {
+      if *completed > 0 {
+        info!(completed, "expired Factory execution inputs deleted");
+      }
+    },
+  )
 }
 
 fn spawn_retention_worker(
@@ -514,11 +563,20 @@ fn spawn_webhook_delivery_worker(
 struct WorkerIdentity {
   name: &'static str,
   kind: WorkerKind,
+  retry: Option<crate::config::FactoryRetryPolicy>,
 }
 
 impl WorkerIdentity {
   const fn new(name: &'static str, kind: WorkerKind) -> Self {
-    Self { name, kind }
+    Self {
+      name,
+      kind,
+      retry: None,
+    }
+  }
+  const fn with_retry(mut self, retry: crate::config::FactoryRetryPolicy) -> Self {
+    self.retry = Some(retry);
+    self
   }
 }
 
@@ -541,14 +599,17 @@ where
   let WorkerIdentity {
     name: worker_name,
     kind: worker_kind,
+    retry,
   } = worker;
   tokio::spawn(async move {
     let _unhealthy_on_drop = UnhealthyOnDrop(health.clone());
+    let mut failures = 0_u16;
+    let mut delay = poll_interval;
     loop {
       tokio::select! {
         biased;
         () = cancellation.cancelled() => return,
-        () = tokio::time::sleep(poll_interval) => {}
+        () = tokio::time::sleep(delay) => {}
       }
       let Some((observed_at, claim_expires_at)) = claim_window(claim_lifetime) else {
         health.mark_failure();
@@ -572,17 +633,29 @@ where
       let _entered = span.enter();
       match result {
         Ok(outcome) => {
+          failures = 0;
+          delay = poll_interval;
           health.mark_success();
           record_worker_run(worker_kind, Outcome::Success, None, elapsed);
           observe(&outcome);
         }
-        Err(error) => {
+        Err(_error) => {
+          if let Some(retry) = retry {
+            failures = failures.saturating_add(1);
+            delay = if failures >= retry.consecutive_failure_limit() {
+              retry.circuit_open()
+            } else {
+              delay.saturating_mul(2).min(retry.max_backoff())
+            };
+            record_worker_retries(worker_kind, 1);
+          }
           health.mark_failure();
           record_worker_run(worker_kind, Outcome::Failure, Some(ErrorClass::Unavailable), elapsed);
           warn!(
             worker = worker_name,
             error.class = ErrorClass::Unavailable.as_str(),
-            %error,
+            retry.delay_ms = delay.as_millis() as u64,
+            circuit.open = retry.is_some_and(|policy| failures >= policy.consecutive_failure_limit()),
             "durable worker pass failed"
           );
         }
@@ -622,7 +695,7 @@ fn spawn_factory_worker(
   let shutdown = Arc::new(octacity_server_application::FactoryReconciliationShutdown::new());
   let pass_cancellation = cancellation.clone();
   spawn_worker_loop(
-    WorkerIdentity::new(FACTORY_WORKER_NAME, WorkerKind::Factory),
+    WorkerIdentity::new(FACTORY_WORKER_NAME, WorkerKind::Factory).with_retry(policy.retry_policy()),
     health,
     policy.poll_interval(),
     policy.claim_lifetime(),
@@ -645,18 +718,17 @@ fn spawn_factory_worker(
   )
 }
 
-fn spawn_factory_outbox_worker(
+pub(super) fn spawn_factory_outbox_worker(
   dispatcher: Arc<dyn octacity_server_application::FactoryOutboxDispatcher>,
   health: Arc<WorkerHealth>,
-  poll_interval: Duration,
-  claim_lifetime: Duration,
+  policy: crate::FactoryRuntimeConfig,
   cancellation: CancellationToken,
 ) -> JoinHandle<()> {
   spawn_worker_loop(
-    WorkerIdentity::new("factory-outbox", WorkerKind::Factory),
+    WorkerIdentity::new("factory-outbox", WorkerKind::Factory).with_retry(policy.retry_policy()),
     health,
-    poll_interval,
-    claim_lifetime,
+    policy.poll_interval(),
+    policy.claim_lifetime(),
     cancellation,
     move |at, _| {
       let dispatcher = dispatcher.clone();
@@ -669,6 +741,153 @@ fn spawn_factory_outbox_worker(
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test(start_paused = true)]
+  async fn factory_outbox_failures_have_independent_cooldown_and_shutdown_is_immediate() {
+    struct Unavailable(tokio::sync::mpsc::UnboundedSender<tokio::time::Instant>);
+    #[async_trait::async_trait]
+    impl octacity_server_application::FactoryOutboxDispatcher for Unavailable {
+      async fn dispatch_once(
+        &self,
+        _: Timestamp,
+      ) -> Result<
+        octacity_server_application::FactoryOutboxDispatchSummary,
+        octacity_server_application::ApplicationError,
+      > {
+        self.0.send(tokio::time::Instant::now()).unwrap();
+        Err(octacity_server_application::ApplicationError::Store(
+          octacity_server_store::StoreError::Unavailable,
+        ))
+      }
+    }
+    let policy: crate::FactoryRuntimeConfig = toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=2\ncircuit_open_milliseconds=200").unwrap();
+    let (events, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let cancel = CancellationToken::new();
+    let started = tokio::time::Instant::now();
+    let task = spawn_factory_outbox_worker(
+      Arc::new(Unavailable(events)),
+      Arc::new(WorkerHealth::new("factory-outbox", Duration::from_secs(1))),
+      policy,
+      cancel.clone(),
+    );
+    assert_eq!(
+      observed.recv().await.unwrap().duration_since(started),
+      Duration::from_millis(10)
+    );
+    assert_eq!(
+      observed.recv().await.unwrap().duration_since(started),
+      Duration::from_millis(30)
+    );
+    tokio::time::advance(Duration::from_millis(100)).await;
+    assert!(
+      observed.try_recv().is_err(),
+      "the open circuit must suppress dependency calls"
+    );
+    let stopped_at = tokio::time::Instant::now();
+    cancel.cancel();
+    task.await.unwrap();
+    assert_eq!(
+      tokio::time::Instant::now(),
+      stopped_at,
+      "shutdown must not wait for the cooldown"
+    );
+  }
+
+  #[tokio::test(start_paused = true)]
+  async fn factory_failures_back_off_open_a_circuit_and_reset_after_recovery() {
+    let policy: crate::FactoryRuntimeConfig = toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap();
+    let started = tokio::time::Instant::now();
+    let (events, mut observed) = tokio::sync::mpsc::unbounded_channel();
+    let count = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let cancel = CancellationToken::new();
+    let health = Arc::new(WorkerHealth::new(FACTORY_WORKER_NAME, Duration::from_secs(1)));
+    let task = spawn_worker_loop(
+      WorkerIdentity::new(FACTORY_WORKER_NAME, WorkerKind::Factory).with_retry(policy.retry_policy()),
+      health,
+      policy.poll_interval(),
+      policy.claim_lifetime(),
+      cancel.clone(),
+      move |_, _| {
+        events.send(started.elapsed().as_millis()).unwrap();
+        let index = count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async move { if index < 3 { Err("unavailable") } else { Ok(()) } }
+      },
+      |_| {},
+    );
+    for expected in [10, 30, 70, 270, 280] {
+      assert_eq!(observed.recv().await.unwrap(), expected);
+    }
+    cancel.cancel();
+    task.await.unwrap();
+  }
+
+  #[tokio::test]
+  async fn factory_worker_errors_emit_only_safe_classification_and_never_provider_text() {
+    struct Capture(Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Capture {
+      fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(bytes);
+        Ok(bytes.len())
+      }
+      fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+      }
+    }
+    let output = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let writer = output.clone();
+    let subscriber = tracing_subscriber::fmt()
+      .without_time()
+      .with_ansi(false)
+      .with_writer(move || Capture(writer.clone()))
+      .finish();
+    let _guard = tracing::subscriber::set_default(subscriber);
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let passes = calls.clone();
+    let cancel = CancellationToken::new();
+    let health = Arc::new(WorkerHealth::new(FACTORY_WORKER_NAME, Duration::from_secs(1)));
+    let task = spawn_worker_loop(
+      WorkerIdentity::new(FACTORY_WORKER_NAME, WorkerKind::Factory),
+      health,
+      Duration::from_millis(1),
+      Duration::from_secs(1),
+      cancel.clone(),
+      move |_, _| {
+        passes.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        async {
+          Err::<(), _>(
+            "private-provider-token https://private.invalid/key private-prompt hidden-test-source /private/repository/file raw-command hidden-reasoning private-task-body private-provider-payload private-finding",
+          )
+        }
+      },
+      |_| {},
+    );
+    tokio::time::timeout(Duration::from_secs(1), async {
+      while calls.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+        tokio::task::yield_now().await;
+      }
+    })
+    .await
+    .unwrap();
+    cancel.cancel();
+    task.await.unwrap();
+    let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
+    assert!(text.contains("durable worker pass failed"));
+    assert!(text.contains("unavailable"));
+    for private in [
+      "private-provider-token",
+      "private.invalid",
+      "private-prompt",
+      "hidden-test-source",
+      "/private/repository",
+      "raw-command",
+      "hidden-reasoning",
+      "private-task-body",
+      "private-provider-payload",
+      "private-finding",
+    ] {
+      assert!(!text.contains(private), "worker diagnostics must omit {private}");
+    }
+  }
 
   #[tokio::test]
   async fn configured_factory_outbox_dispatchers_run_without_invoking_the_flow_owner() {
@@ -695,8 +914,8 @@ mod tests {
     let worker = spawn_factory_outbox_worker(
       dispatcher.clone(),
       health,
-      Duration::from_millis(10),
-      Duration::from_secs(1),
+      toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2")
+        .unwrap(),
       cancel.clone(),
     );
     tokio::time::timeout(Duration::from_secs(1), async {

@@ -26,8 +26,8 @@ pub(super) struct SandboxPlan {
   pub(super) memory_mib: u32,
   /// RAM-backed capacity for writes outside the mounted job root.
   pub(super) root_tmpfs_mib: u32,
-  /// Canonical job-private host root used for aggregate accounting.
-  pub(super) host_job_root: PathBuf,
+  /// Exact canonical roots used for admission and disk usage samples.
+  pub(super) disk_accounting_roots: Vec<PathBuf>,
   /// Writable host roots projected into the guest with non-overlapping quotas.
   pub(super) writable_mounts: Vec<SandboxWritableMount>,
   /// Immutable host roots projected into the guest.
@@ -44,10 +44,8 @@ pub(super) struct SandboxPlan {
   pub(super) guest_executable: String,
   /// Runner data directory translated into the guest workspace mount.
   pub(super) guest_data_dir: PathBuf,
-  /// Plugin directory translated into the guest release mount.
-  pub(super) guest_plugins_dir: PathBuf,
-  /// Plugin lock path translated into the guest release mount.
-  pub(super) guest_plugin_lock: PathBuf,
+  /// Optional real plugin paths translated into the guest release mount.
+  pub(super) guest_plugin_projection: Option<octacity_execution::ExecutionPluginProjection>,
   /// Selector, canonical host path, and fixed guest path for each trusted tool.
   pub(super) external_executables: Vec<(String, PathBuf, String)>,
   /// Optional job-private identity source exposed read-only in the guest.
@@ -131,7 +129,21 @@ impl SandboxPlan {
     // root overlay to consume the VM's entire memory allocation.
     let root_tmpfs_mib = (memory_mib / 2).max(1);
     let job_root_limit_mib = exact_mib("writable disk", request.writable_disk_bytes)?;
-    let existing_bytes = directory_size_async(job_root.clone()).await?;
+    let guest_job_root = if request.factory.is_some() {
+      "/workspace"
+    } else {
+      "/work"
+    }
+    .to_owned();
+    let roots = writable_roots(request, &job_root, &guest_job_root)?;
+    let disk_accounting_roots = if request.factory.as_ref().is_some_and(|factory| {
+      factory.disk_accounting == octacity_execution::ExecutionDiskAccounting::OwnedWritableMounts
+    }) {
+      roots.iter().map(|(_, host)| host.clone()).collect()
+    } else {
+      vec![job_root.clone()]
+    };
+    let existing_bytes = directory_size_roots_async(disk_accounting_roots.clone()).await?;
     if existing_bytes > request.writable_disk_bytes {
       return Err(unavailable(
         "materialized job root already exceeds its writable disk limit",
@@ -172,17 +184,13 @@ impl SandboxPlan {
         (projection.selector, projection.source, destination)
       })
       .collect();
-    let guest_job_root = if request.factory.is_some() {
-      "/workspace"
-    } else {
-      "/work"
-    }
-    .to_owned();
     let guest_workspace = request.factory.as_ref().map_or_else(
       || guest_path(&guest_job_root, &job_root, &workspace),
       |factory| {
         Ok(
-          if factory.source_visible {
+          if factory.workspace_anchor {
+            "/workspace"
+          } else if factory.source_visible {
             FACTORY_SOURCE_ROOT
           } else {
             FACTORY_SCRATCH_ROOT
@@ -224,40 +232,23 @@ impl SandboxPlan {
       })
       .into_iter()
       .collect();
-    let writable_mounts = match &request.factory {
-      Some(factory) => {
-        let mut roots = vec![
-          (FACTORY_SCRATCH_ROOT.to_owned(), factory.scratch.clone()),
-          (FACTORY_OUTPUT_ROOT.to_owned(), factory.output.clone()),
-        ];
-        if factory.source_visible && !factory.source_read_only {
-          roots.insert(0, (FACTORY_SOURCE_ROOT.to_owned(), factory.source.clone()));
-        }
-        for path in &factory.source_writable_paths {
-          roots.push((guest_path(FACTORY_SOURCE_ROOT, &factory.source, path)?, path.clone()));
-        }
-        if remaining_quota_mib < u32::try_from(roots.len()).expect("Factory writable-root count fits u32") {
-          return Err(unavailable(
-            "Microsandbox Factory execution requires at least one writable MiB per projected root",
-          ));
-        }
-        let root_count = roots.len();
-        roots
-          .into_iter()
-          .enumerate()
-          .map(|(index, (guest, host))| SandboxWritableMount {
-            host: host.clone(),
-            guest: guest.to_owned(),
-            quota_mib: partition_quota(remaining_quota_mib, root_count, index),
-          })
-          .collect()
-      }
-      None => vec![SandboxWritableMount {
-        host: job_root.clone(),
-        guest: guest_job_root.clone(),
-        quota_mib: remaining_quota_mib,
-      }],
-    };
+    if request.factory.is_some()
+      && remaining_quota_mib < u32::try_from(roots.len()).expect("Factory writable-root count fits u32")
+    {
+      return Err(unavailable(
+        "Microsandbox Factory execution requires at least one writable MiB per projected root",
+      ));
+    }
+    let root_count = roots.len();
+    let writable_mounts = roots
+      .into_iter()
+      .enumerate()
+      .map(|(index, (guest, host))| SandboxWritableMount {
+        host,
+        guest,
+        quota_mib: partition_quota(remaining_quota_mib, root_count, index),
+      })
+      .collect();
     let workspace_anchor = request
       .factory
       .as_ref()
@@ -269,7 +260,7 @@ impl SandboxPlan {
       cpus,
       memory_mib,
       root_tmpfs_mib,
-      host_job_root: job_root.clone(),
+      disk_accounting_roots,
       writable_mounts,
       read_only_mounts,
       guest_job_root: guest_job_root.clone(),
@@ -279,8 +270,16 @@ impl SandboxPlan {
         Some(factory) => guest_path_buf(FACTORY_SCRATCH_ROOT, &factory.scratch, &request.data_dir)?,
         None => guest_path_buf(&guest_job_root, &job_root, &request.data_dir)?,
       },
-      guest_plugins_dir: guest_path_buf(&guest_release, &runner.release_root, &runner.plugins_dir)?,
-      guest_plugin_lock: guest_path_buf(&guest_release, &runner.release_root, &runner.plugin_lock)?,
+      guest_plugin_projection: runner
+        .plugin_projection
+        .as_ref()
+        .map(|plugins| {
+          Ok::<_, ExecutionError>(octacity_execution::ExecutionPluginProjection {
+            directory: guest_path_buf(&guest_release, &runner.release_root, &plugins.directory)?,
+            lock: guest_path_buf(&guest_release, &runner.release_root, &plugins.lock)?,
+          })
+        })
+        .transpose()?,
       external_executables,
       workload_identity: request.workload_identity.clone(),
       protected_inputs: request.factory.as_ref().map(|factory| factory.protected_inputs.clone()),
@@ -385,6 +384,27 @@ pub(super) fn sandbox_name(agent_id: &str, execution_id: &str) -> String {
   format!("octacity-{}", hex::encode(digest.finalize()))
 }
 
+fn writable_roots(
+  request: &StartExecution,
+  job_root: &Path,
+  guest_job_root: &str,
+) -> Result<Vec<(String, PathBuf)>, ExecutionError> {
+  let Some(factory) = &request.factory else {
+    return Ok(vec![(guest_job_root.to_owned(), job_root.to_owned())]);
+  };
+  let mut roots = vec![
+    (FACTORY_SCRATCH_ROOT.to_owned(), factory.scratch.clone()),
+    (FACTORY_OUTPUT_ROOT.to_owned(), factory.output.clone()),
+  ];
+  if factory.source_visible && !factory.source_read_only {
+    roots.insert(0, (FACTORY_SOURCE_ROOT.to_owned(), factory.source.clone()));
+  }
+  for path in &factory.source_writable_paths {
+    roots.push((guest_path(FACTORY_SOURCE_ROOT, &factory.source, path)?, path.clone()));
+  }
+  Ok(roots)
+}
+
 /// Measures regular files without following symlinks outside the workspace.
 pub(super) fn directory_size(root: &Path) -> Result<u64, ExecutionError> {
   let mut total = 0_u64;
@@ -424,7 +444,17 @@ pub(super) fn directory_size(root: &Path) -> Result<u64, ExecutionError> {
 }
 
 pub(super) async fn directory_size_async(root: PathBuf) -> Result<u64, ExecutionError> {
-  tokio::task::spawn_blocking(move || directory_size(&root))
-    .await
-    .map_err(|error| backend(format!("workspace accounting task failed: {error}")))?
+  directory_size_roots_async(vec![root]).await
+}
+
+pub(super) async fn directory_size_roots_async(roots: Vec<PathBuf>) -> Result<u64, ExecutionError> {
+  tokio::task::spawn_blocking(move || {
+    roots.iter().try_fold(0_u64, |total, root| {
+      total
+        .checked_add(directory_size(root)?)
+        .ok_or_else(|| backend("workspace size overflow"))
+    })
+  })
+  .await
+  .map_err(|error| backend(format!("workspace accounting task failed: {error}")))?
 }

@@ -5,6 +5,36 @@ import { afterEach, it, expect, vi } from 'vitest';
 import { SchemaEditor } from './SchemaEditor';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
+it('authors distinct unit and payload variants without changing their case or sibling shapes', async () => {
+  const normalizeSchema = vi.fn(
+    async () => configurationFixture().configuration.flow.data_schemas[0]!,
+  );
+  render(<SchemaEditor api={{ normalizeSchema }} projectId="visible-project" onAdd={() => {}} />);
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Schema name' }),
+    'operator.alternatives',
+  );
+  await userEvent.type(screen.getByRole('textbox', { name: 'Schema version' }), 'v1');
+  await userEvent.click(screen.getByRole('combobox', { name: 'Schema type' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Tagged alternatives' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add variant' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Variant name' }), 'Ready');
+  await userEvent.click(screen.getByRole('button', { name: 'Add variant' }));
+  await userEvent.type(screen.getAllByRole('textbox', { name: 'Variant name' })[1]!, 'RetryAfter');
+  await userEvent.click(screen.getAllByRole('checkbox', { name: 'Variant has a payload' })[1]!);
+  await userEvent.click(screen.getAllByRole('combobox', { name: 'Schema type' })[1]!);
+  await userEvent.click(screen.getByRole('option', { name: 'Integer' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
+  expect(normalizeSchema).toHaveBeenCalledWith({
+    project_id: 'visible-project',
+    identity: 'operator.alternatives',
+    version: 'v1',
+    shape: {
+      type: 'externally_tagged',
+      variants: { Ready: null, RetryAfter: { type: 'integer', minimum: 0, maximum: 1 } },
+    },
+  });
+});
 it('keeps the edited enum row and sibling value stable when their initial values are equal', async () => {
   const normalizeSchema = vi.fn(
     async () => configurationFixture().configuration.flow.data_schemas[0]!,

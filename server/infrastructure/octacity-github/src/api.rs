@@ -52,6 +52,7 @@ impl GithubApi {
       HeaderValue::from_str(&config.api_version).map_err(|_| FailureClass::Permanent)?,
     );
     let client = Client::builder()
+      .tls_certs_merge(config.api_root_certificates.iter().cloned())
       .default_headers(headers)
       .user_agent("octacity-github")
       .timeout(std::time::Duration::from_secs(30))
@@ -64,10 +65,6 @@ impl GithubApi {
     let client = octocrab::Octocrab::builder()
       .base_uri(config.api_base.as_str())
       .map_err(|_| FailureClass::Permanent)?
-      .add_header(
-        "x-github-api-version".parse().map_err(|_| FailureClass::Permanent)?,
-        config.api_version.clone(),
-      )
       .build_with_reqwest(client)
       .map_err(|_| FailureClass::Permanent)?;
     Ok(Self {

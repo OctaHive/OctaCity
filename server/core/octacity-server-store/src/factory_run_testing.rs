@@ -622,12 +622,8 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
     request: CommitFactoryRunTransition,
   ) -> Result<CommitFactoryRunTransitionOutcome, StoreError> {
     let mut state = self.lock()?;
-    let selection = state
-      .phase_pools
-      .selections
-      .values()
-      .find(|selection| selection.entry.input.run_id == request.run_id && selection.run_claim().id == request.claim_id)
-      .cloned();
+    let selection =
+      crate::factory_phase_pool_testing::retained_selection_for_claim(&state, request.run_id, request.claim_id)?;
     let configuration = state
       .factory_runs
       .get(&request.run_id)

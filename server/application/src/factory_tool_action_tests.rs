@@ -239,7 +239,7 @@ fn mapping(request: &DecisionSignalProviderRequest) -> ToolRiskChoiceMapping {
   .unwrap()
 }
 
-fn signal_request(state: FactoryText, fallback: DecisionSignalFallback) -> DecisionSignalProviderRequest {
+pub(super) fn signal_request(state: FactoryText, fallback: DecisionSignalFallback) -> DecisionSignalProviderRequest {
   let choices = DecisionSignalChoices::try_new(vec![key("allow"), key("deny"), key("escalate")]).unwrap();
   let profile = DecisionSignalProfile::new(DecisionSignalProfileDefinition {
     purpose: DecisionSignalPurpose::ToolRisk,
@@ -394,7 +394,7 @@ fn permissions() -> FactoryPermissionSetV3 {
   }
 }
 
-fn node_fixture() -> (FlowNodeInput, NodeAttempt) {
+pub(super) fn node_fixture() -> (FlowNodeInput, NodeAttempt) {
   let subject = ExactSubject::new(
     ProjectId::generate(),
     RepositoryId::generate(),

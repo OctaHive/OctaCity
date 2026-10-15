@@ -15,7 +15,7 @@ use std::{
 };
 
 use octa_plugin_lock::{PLUGIN_LOCK_VERSION, PluginLock};
-use octacity_execution::RunnerProgram;
+use octacity_execution::{ExecutionProgram, RunnerProgram};
 use octacity_protocol::OctaSpec;
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
@@ -193,6 +193,52 @@ pub enum RunnerInstallationError {
   #[error("installed Octa does not satisfy the signed job: {0}")]
   /// The installed release differs from the version or digests in the job.
   Requirement(String),
+}
+
+/// Verifies a pinned standalone binary without requiring an Octa distribution.
+///
+/// The entrypoint is relative to a trusted, operator-owned distribution root.
+/// Binary platform is read from its bytes, which permits inventorying a guest
+/// executable on a different host. This establishes installed identity only;
+/// backend qualification and immediate pre-start revalidation remain required.
+pub fn verify_standalone_program(
+  release_root: &Path,
+  entrypoint: &Path,
+  sha256: &str,
+  platform: &str,
+) -> Result<ExecutionProgram, RunnerInstallationError> {
+  if !relative_path(entrypoint) || !sha256_digest(sha256) {
+    return Err(invalid("standalone program entrypoint or SHA-256 is invalid"));
+  }
+  let root = canonical_directory("standalone release root", release_root)?;
+  octacity_private_fs::validate_trusted_directory_chain(&root)
+    .map_err(|_| invalid("standalone release root is not operator-controlled"))?;
+  let executable = root.join(entrypoint);
+  validate_regular_file("standalone executable", &executable, true)?;
+  octacity_private_fs::validate_no_untrusted_write_access(&executable)
+    .map_err(|_| invalid("standalone executable is writable by an untrusted principal"))?;
+  let executable = executable
+    .canonicalize()
+    .map_err(|_| invalid("standalone executable could not be resolved"))?;
+  if !executable.starts_with(&root) {
+    return Err(invalid("standalone executable escapes its release root"));
+  }
+  octacity_private_fs::validate_trusted_directory_chain(
+    executable
+      .parent()
+      .ok_or_else(|| invalid("standalone executable has no parent"))?,
+  )
+  .map_err(|_| invalid("standalone executable directory is not operator-controlled"))?;
+  if file_sha256(&executable)? != sha256 {
+    return Err(invalid("standalone executable SHA-256 differs from its installed pin"));
+  }
+  let actual_platform = executable_platform(&executable)?;
+  if actual_platform == "portable-script" || actual_platform != platform {
+    return Err(invalid(
+      "standalone executable binary platform differs from its installed pin",
+    ));
+  }
+  ExecutionProgram::standalone(root, executable).map_err(|_| invalid("standalone executable paths are invalid"))
 }
 
 impl RunnerInstallation {
@@ -444,8 +490,10 @@ impl RunnerInstallation {
     RunnerProgram {
       release_root: self.root.clone(),
       executable: self.executable.clone(),
-      plugins_dir: self.plugins_dir.clone(),
-      plugin_lock: self.default_plugin_lock.clone(),
+      plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+        directory: self.plugins_dir.clone(),
+        lock: self.default_plugin_lock.clone(),
+      }),
       external_executables: executables
         .values()
         .map(|executable| (executable.selection_environment.clone(), executable.executable.clone()))

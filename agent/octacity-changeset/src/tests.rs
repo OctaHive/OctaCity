@@ -55,9 +55,11 @@ async fn creates_reproducible_hook_free_bundle_manifest_patch_and_provenance() {
   let instruction = ChangeSetCaptureV3 {
     author_name: "OctaCity Factory".to_owned(),
     author_email: "factory@octacity.invalid".to_owned(),
-    committed_at: 1_767_225_600,
+    committed_at: 1,
     patch_max_bytes: Some(64 * 1024),
     policy: policy(),
+
+    observation: None,
   };
   let capturer = GitChangeSetCapturer::new(GitCaptureTool {
     executable: git.clone(),
@@ -80,6 +82,8 @@ async fn creates_reproducible_hook_free_bundle_manifest_patch_and_provenance() {
         bundle_base_revision: base.clone(),
         node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
         instruction: instruction.clone(),
+
+        observation: None,
       },
       CancellationToken::new(),
     )
@@ -97,6 +101,8 @@ async fn creates_reproducible_hook_free_bundle_manifest_patch_and_provenance() {
         bundle_base_revision: base.clone(),
         node_attempt_id: "00000000-0000-0000-0000-000000000003".to_owned(),
         instruction: instruction.clone(),
+
+        observation: None,
       },
       CancellationToken::new(),
     )
@@ -160,7 +166,7 @@ async fn creates_reproducible_hook_free_bundle_manifest_patch_and_provenance() {
       &inspection,
       &["show", "-s", "--format=%an|%ae|%at|%P", "FETCH_HEAD"]
     ),
-    format!("OctaCity Factory|factory@octacity.invalid|1767225600|{base}")
+    format!("OctaCity Factory|factory@octacity.invalid|1|{base}")
   );
   assert!(!first_dir.join("capture.git").exists());
 }
@@ -660,7 +666,11 @@ impl CaptureFixture {
             committed_at: 1_767_225_600,
             patch_max_bytes: Some(64 * 1024),
             policy,
+
+            observation: None,
           },
+
+          observation: None,
         },
         CancellationToken::new(),
       )
@@ -748,4 +758,132 @@ fn git_command(git: &Path) -> Command {
 
 fn digest(path: &Path) -> String {
   hex::encode(Sha256::digest(fs::read(path).unwrap()))
+}
+
+#[tokio::test]
+async fn produces_closed_capture_observations_from_the_actual_trusted_commit() {
+  let fixture = CaptureFixture::new();
+  fs::write(fixture.workspace.join("existing.txt"), "PRIVATE_CANDIDATE_BODY\n").unwrap();
+  let destination = fixture._root.path().join("observed");
+  fs::create_dir(&destination).unwrap();
+  let captured = fixture
+    .capturer
+    .capture(
+      CaptureRequest {
+        workspace: fixture.workspace.clone(),
+        destination: destination.clone(),
+        base_revision: fixture.base.clone(),
+        bundle_base_revision: fixture.base.clone(),
+        node_attempt_id: "00000000-0000-0000-0000-000000000003".into(),
+        instruction: ChangeSetCaptureV3 {
+          author_name: "Operator".into(),
+          author_email: "operator@example.test".into(),
+          committed_at: 1_767_225_600,
+          patch_max_bytes: None,
+          policy: policy(),
+          observation: Some(octacity_protocol::ChangeSetObservationOutputV3 {
+            name: "arbitrary.capture-observation".into(),
+            schema: FactoryImmutableReferenceV3 {
+              identity: "project.capture-facts".into(),
+              version: "v7".into(),
+              sha256: "5b".repeat(32),
+            },
+          }),
+        },
+        observation: Some(super::CaptureObservationContext {
+          input_digest: "2a".repeat(32),
+          fresh_until_unix_ms: 5000,
+        }),
+      },
+      CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+  let report = captured
+    .observation
+    .as_ref()
+    .expect("explicit signed observation must be produced");
+  assert_eq!(report.output.name, "arbitrary.capture-observation");
+  assert_eq!(report.output.schema.identity, "project.capture-facts");
+  let raw = fs::read(destination.join(&report.file.name)).unwrap();
+  let actual: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+  assert_eq!(actual["candidate_revision"], captured.manifest.candidate_revision);
+  assert_ne!(actual["candidate_revision"], fixture.base);
+  assert_eq!(actual["input_digest"], "2a".repeat(32));
+  assert_eq!(actual["fresh_until"], 5000);
+  assert_eq!(actual["candidate_digest"].as_str().unwrap().len(), 64);
+  assert_eq!(
+    actual.as_object().unwrap().len(),
+    4,
+    "capture facts contain no provider prose or file names"
+  );
+  assert!(!String::from_utf8_lossy(&raw).contains("PRIVATE_CANDIDATE_BODY"));
+  assert!(!String::from_utf8_lossy(&raw).contains("existing.txt"));
+  assert_eq!(report.file.sha256, digest(&destination.join(&report.file.name)));
+  assert_eq!(report.file.size_bytes, raw.len() as u64);
+}
+
+#[tokio::test]
+async fn rejects_capture_observations_without_canonical_signed_context() {
+  let fixture = CaptureFixture::new();
+  fs::write(fixture.workspace.join("existing.txt"), "candidate\n").unwrap();
+  for (index, context) in [
+    None,
+    Some(super::CaptureObservationContext {
+      input_digest: "invalid".into(),
+      fresh_until_unix_ms: 5000,
+    }),
+    Some(super::CaptureObservationContext {
+      input_digest: "AA".repeat(32),
+      fresh_until_unix_ms: 5000,
+    }),
+    Some(super::CaptureObservationContext {
+      input_digest: "2a".repeat(32),
+      fresh_until_unix_ms: 0,
+    }),
+    Some(super::CaptureObservationContext {
+      input_digest: "2a".repeat(32),
+      fresh_until_unix_ms: u64::MAX,
+    }),
+  ]
+  .into_iter()
+  .enumerate()
+  {
+    let destination = fixture._root.path().join(format!("invalid-context-{index}"));
+    fs::create_dir(&destination).unwrap();
+    let result = fixture
+      .capturer
+      .capture(
+        CaptureRequest {
+          workspace: fixture.workspace.clone(),
+          destination: destination.clone(),
+          base_revision: fixture.base.clone(),
+          bundle_base_revision: fixture.base.clone(),
+          node_attempt_id: "00000000-0000-0000-0000-000000000003".into(),
+          instruction: ChangeSetCaptureV3 {
+            author_name: "Operator".into(),
+            author_email: "operator@example.test".into(),
+            committed_at: 1,
+            patch_max_bytes: None,
+            policy: policy(),
+            observation: Some(octacity_protocol::ChangeSetObservationOutputV3 {
+              name: "arbitrary.capture-observation".into(),
+              schema: FactoryImmutableReferenceV3 {
+                identity: "project.capture-facts".into(),
+                version: "v7".into(),
+                sha256: "5b".repeat(32),
+              },
+            }),
+          },
+          observation: context,
+        },
+        CancellationToken::new(),
+      )
+      .await;
+    assert!(
+      matches!(result, Err(CaptureError::Invalid(_))),
+      "invalid signed observation context must be rejected"
+    );
+    assert_eq!(fs::read_dir(destination).unwrap().count(), 0);
+  }
 }

@@ -12,6 +12,12 @@
 
 #![warn(missing_docs)]
 
+mod factory_execution_partition;
+pub use factory_execution_partition::FactoryExecutionPartition;
+
+mod factory_tool_channel;
+pub use factory_tool_channel::FactoryToolChannel;
+
 use std::{
   collections::BTreeMap,
   path::{Component, Path, PathBuf},
@@ -116,23 +122,56 @@ pub struct ExecutionIo {
   pub stderr: ExecutionReader,
 }
 
-/// Verified host paths required by a backend to start `octa-runner`.
+/// Paired real task-plugin paths, either both present or both absent.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RunnerProgram {
-  /// Canonical root containing the complete verified Octa distribution.
+pub struct ExecutionPluginProjection {
+  /// Locked plugin executable directory.
+  pub directory: PathBuf,
+  /// Exact lock file authorizing that plugin set.
+  pub lock: PathBuf,
+}
+
+/// Trusted executable distribution selected by installation inventory.
+/// Constructing this path value does not establish binary qualification.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionProgram {
+  /// Canonical root containing the installed executable distribution.
   pub release_root: PathBuf,
-  /// Canonical `octa-runner` executable inside `release_root`.
+  /// Canonical installed executable inside `release_root`.
   pub executable: PathBuf,
-  /// Canonical directory containing the locked plugin executables.
-  pub plugins_dir: PathBuf,
-  /// Canonical `Octa.lock` authorizing the plugin set.
-  pub plugin_lock: PathBuf,
+  /// Actual task-plugin distribution when the program uses the Octa protocol.
+  /// Standalone helper programs have no fabricated ancillary files.
+  pub plugin_projection: Option<ExecutionPluginProjection>,
   /// Operator-selected executables exposed only through release-declared
   /// environment selectors. Backends project these paths read-only.
   pub external_executables: BTreeMap<String, PathBuf>,
 }
 
-impl RunnerProgram {
+/// Compatibility name for existing Octa-runner callers.
+pub type RunnerProgram = ExecutionProgram;
+
+impl ExecutionProgram {
+  /// Selects an installed standalone entrypoint without an Octa distribution.
+  pub fn standalone(release_root: PathBuf, executable: PathBuf) -> Result<Self, ExecutionError> {
+    let program = Self {
+      release_root,
+      executable,
+      plugin_projection: None,
+      external_executables: BTreeMap::new(),
+    };
+    program.validate()?;
+    Ok(program)
+  }
+
+  /// Refuses a standalone entrypoint in a backend qualified only for Octa.
+  /// Call this before inspecting job files or creating execution resources.
+  pub fn require_plugin_projection(&self) -> Result<&ExecutionPluginProjection, ExecutionError> {
+    self
+      .plugin_projection
+      .as_ref()
+      .ok_or_else(|| ExecutionError::Unavailable("backend has no qualified standalone program contract".to_owned()))
+  }
+
   /// Projects trusted executables in selector order without exposing product names.
   pub fn external_executable_projections(&self) -> Vec<ExternalExecutableProjection> {
     self
@@ -151,11 +190,13 @@ impl RunnerProgram {
   pub fn validate(&self) -> Result<(), ExecutionError> {
     if !self.release_root.is_absolute()
       || !self.executable.is_absolute()
-      || !self.plugins_dir.is_absolute()
-      || !self.plugin_lock.is_absolute()
       || !self.executable.starts_with(&self.release_root)
-      || !self.plugins_dir.starts_with(&self.release_root)
-      || !self.plugin_lock.starts_with(&self.release_root)
+      || self.plugin_projection.as_ref().is_some_and(|projection| {
+        !projection.directory.is_absolute()
+          || !projection.lock.is_absolute()
+          || !projection.directory.starts_with(&self.release_root)
+          || !projection.lock.starts_with(&self.release_root)
+      })
       || self.external_executables.iter().any(|(selector, executable)| {
         selector.is_empty()
           || selector.trim() != selector
@@ -248,6 +289,16 @@ pub enum NetworkAccess {
   },
 }
 
+/// Filesystem consumption charged to one execution's writable-disk ceiling.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ExecutionDiskAccounting {
+  /// Legacy whole Job directory accounting, including staged immutable inputs.
+  WholeJob,
+  /// Only this execution's physically projected writable mounts.
+  /// A validated Factory partition uses this scope for both participants.
+  OwnedWritableMounts,
+}
+
 /// Backend-neutral host layout for one admitted Factory execution.
 ///
 /// Authorization and portable-path policy are decided before this value is
@@ -255,6 +306,12 @@ pub enum NetworkAccess {
 /// canonical paths above and enforce the effective process-tree ceiling.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryExecutionLayout {
+  /// Selects an empty read-only parent as the runner workspace. Only separately
+  /// admitted source, scratch, and output mounts appear below it; the host Job
+  /// directory is never projected. Unsupported backends refuse this request.
+  pub workspace_anchor: bool,
+  /// Trusted technical scope for this execution's writable-disk accounting.
+  pub disk_accounting: ExecutionDiskAccounting,
   /// Immutable host directory projected at [`FACTORY_PROTECTED_INPUT_ROOT`].
   pub protected_inputs: PathBuf,
   /// Exact private host checkout, projected at [`FACTORY_SOURCE_ROOT`] only when visible.
@@ -267,11 +324,16 @@ pub struct FactoryExecutionLayout {
   /// Empty means no exception. Paths must be disjoint strict descendants; they
   /// narrow a signed capture policy, never grant authority beyond admission.
   pub source_writable_paths: Vec<PathBuf>,
+  /// Optional trusted controlled-read stream. Its endpoint is outside the
+  /// complete Job tree and its source stays outside the workload namespace.
+  /// Unsupported backends must refuse this projection.
+  pub tool_channel: Option<FactoryToolChannel>,
   /// Writable disposable state projected at [`FACTORY_SCRATCH_ROOT`].
   pub scratch: PathBuf,
   /// Writable declared-output root projected at [`FACTORY_OUTPUT_ROOT`].
   pub output: PathBuf,
   /// Maximum processes in the complete runner process tree, including the runner.
+  /// Linux's process counter also charges threads against this ceiling.
   pub process_limit: u32,
 }
 
@@ -339,6 +401,14 @@ impl FactoryExecutionLayout {
       output.as_path(),
       protected.as_path(),
     ];
+    if let Some(channel) = &self.tool_channel {
+      channel.validate()?;
+      if self.source_visible || channel.host_socket().starts_with(job_root) {
+        return Err(ExecutionError::Invalid(
+          "controlled reads require a hidden source and private endpoint outside the Job tree".to_owned(),
+        ));
+      }
+    }
     if job_root.parent() != Some(canonical_work_root.as_path())
       || workspace != source
       || scratch.parent() != Some(job_root)
@@ -400,6 +470,33 @@ pub struct StartExecution {
 }
 
 impl StartExecution {
+  /// Refuses a parent workspace projection in backends that do not qualify it.
+  /// This runs before any Job inspection or resource creation.
+  pub fn require_unanchored_factory_workspace(&self) -> Result<(), ExecutionError> {
+    if self.factory.as_ref().is_some_and(|factory| factory.workspace_anchor) {
+      return Err(ExecutionError::Unavailable(
+        "backend does not provide an isolated Factory workspace anchor".to_owned(),
+      ));
+    }
+    Ok(())
+  }
+
+  /// Refuses partition-specific disk semantics in a legacy backend before it
+  /// inspects private Job files. This check grants no execution authority;
+  /// normal request validation still follows it.
+  pub fn require_whole_job_disk_accounting(&self) -> Result<(), ExecutionError> {
+    if self
+      .factory
+      .as_ref()
+      .is_some_and(|factory| factory.disk_accounting != ExecutionDiskAccounting::WholeJob)
+    {
+      return Err(ExecutionError::Unavailable(
+        "backend does not support owned writable-mount disk accounting".to_owned(),
+      ));
+    }
+    Ok(())
+  }
+
   /// Validates backend-independent execution invariants.
   pub fn validate(&self) -> Result<(), ExecutionError> {
     if self.execution_id.is_empty() || self.execution_id.chars().any(char::is_control) {
@@ -490,6 +587,19 @@ impl StartExecution {
     }
     if let Some(factory) = &self.factory {
       factory.validate(&canonical_root, &canonical_workspace, &canonical_data)?;
+      if factory.tool_channel.is_some()
+        && !matches!(
+          self.root,
+          ExecutionTarget::Oci {
+            isolation: OciIsolation::Hypervisor,
+            ..
+          }
+        )
+      {
+        return Err(ExecutionError::Unavailable(
+          "private tool-action streams require an OCI hypervisor transport".to_owned(),
+        ));
+      }
     }
     if self.cpu_millis == 0 || self.memory_bytes == 0 || self.writable_disk_bytes == 0 || self.max_duration.is_zero() {
       return Err(ExecutionError::Invalid(
@@ -600,17 +710,16 @@ fn is_immutable_oci_reference(value: &str) -> bool {
       .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-/// Paths as seen by `octa-runner` inside the selected backend.
+/// Paths as seen by the installed program inside the selected backend.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutionPaths {
   /// Workspace path as observed by the runner.
   pub workspace: PathBuf,
   /// Octa state path as observed by the runner.
   pub data_dir: PathBuf,
-  /// Plugin directory as observed by the runner.
-  pub plugins_dir: PathBuf,
-  /// Plugin lock path as observed by the runner.
-  pub plugin_lock: PathBuf,
+  /// Actual task-plugin distribution as observed inside this execution.
+  /// A standalone program has no plugin projection.
+  pub plugin_projection: Option<ExecutionPluginProjection>,
   /// Cache paths after backend-specific host-to-guest translation.
   pub cache: Option<ExecutionCachePaths>,
 }
@@ -715,6 +824,14 @@ impl ExecutionError {
 /// resources, it must roll them back before returning an error.
 #[async_trait]
 pub trait ExecutionBackend: Send + Sync {
+  /// Exact target's immutable executable projection root when private reader
+  /// transport and partition accounting are both available. Default absence
+  /// refuses controlled setup before Source or credentials are materialized.
+  /// This technical metadata alone does not qualify a complete controlled Job.
+  fn factory_tool_projection(&self, _target: &ExecutionTarget) -> Option<PathBuf> {
+    None
+  }
+
   /// Starts one execution and rolls back all created resources on failure.
   async fn start(
     &self,
@@ -735,6 +852,13 @@ pub trait RunningExecution: Send {
   fn take_io(&mut self) -> Result<ExecutionIo, ExecutionError>;
   /// Samples accounting for the complete process tree or sandbox.
   async fn sample_usage(&mut self) -> Result<ResourceUsage, ExecutionError>;
+  /// Seals owned auxiliary work and samples terminal accounting while the main
+  /// process counters still exist. Ordinary executions use their usual sample;
+  /// composed owners must await their auxiliary teardown before returning.
+  /// The caller still owns closing input, waiting, killing and destruction.
+  async fn sample_final_usage(&mut self) -> Result<ResourceUsage, ExecutionError> {
+    self.sample_usage().await
+  }
   /// Closes any backend-owned input transport after the caller drops its
   /// `ExecutionIo::stdin`. Most process transports need no extra action;
   /// runtimes such as containerd must explicitly signal EOF to their shim.
@@ -756,13 +880,17 @@ pub trait RunningExecution: Send {
 mod tests {
   use super::*;
 
+  include!("private_tool_channel_tests.rs");
+
   #[test]
   fn projects_external_executables_in_stable_selector_order() {
     let runner = RunnerProgram {
       release_root: PathBuf::from("/release"),
       executable: PathBuf::from("/release/octa-runner"),
-      plugins_dir: PathBuf::from("/release/plugins"),
-      plugin_lock: PathBuf::from("/release/Octa.lock"),
+      plugin_projection: Some(crate::ExecutionPluginProjection {
+        directory: PathBuf::from("/release/plugins"),
+        lock: PathBuf::from("/release/Octa.lock"),
+      }),
       external_executables: BTreeMap::from([
         ("Z_TOOL".to_owned(), PathBuf::from("/tools/z")),
         ("A_TOOL".to_owned(), PathBuf::from("/tools/a")),
@@ -781,6 +909,20 @@ mod tests {
       projections[1].destination(Path::new("/guest/tools")),
       PathBuf::from("/guest/tools/tool-1")
     );
+  }
+
+  #[test]
+  fn a_standalone_execution_program_projects_no_invented_plugin_files() {
+    let temporary = tempfile::tempdir().unwrap();
+    let release = temporary.path().canonicalize().unwrap();
+    let executable = release.join("reader");
+    std::fs::write(&executable, b"selected-helper").unwrap();
+    let program = ExecutionProgram::standalone(release.clone(), executable.clone()).unwrap();
+    program.validate().unwrap();
+    assert_eq!(program.executable, executable);
+    assert!(program.plugin_projection.is_none());
+    assert_eq!(std::fs::read_dir(&release).unwrap().count(), 1);
+    assert!(ExecutionProgram::standalone(release.clone(), release.parent().unwrap().join("outside")).is_err());
   }
 
   #[test]
@@ -817,8 +959,7 @@ mod tests {
     assert!(invalid.validate().is_err());
   }
 
-  #[test]
-  fn validates_the_factory_layout_before_backend_projection() {
+  fn factory_execution_fixture() -> (tempfile::TempDir, StartExecution, PathBuf) {
     let temporary = tempfile::tempdir().unwrap();
     let work_root = temporary.path().join("work");
     let job_root = work_root.join("job");
@@ -844,16 +985,19 @@ mod tests {
     protected_permissions.set_readonly(true);
     std::fs::set_permissions(&protected, protected_permissions).unwrap();
     let layout = FactoryExecutionLayout {
+      workspace_anchor: false,
+      disk_accounting: crate::ExecutionDiskAccounting::WholeJob,
       protected_inputs: protected.canonicalize().unwrap(),
       source: source.canonicalize().unwrap(),
       source_visible: true,
       source_read_only: false,
       source_writable_paths: Vec::new(),
+      tool_channel: None,
       scratch: scratch.canonicalize().unwrap(),
       output: output.canonicalize().unwrap(),
       process_limit: 4,
     };
-    let mut request = StartExecution {
+    let request = StartExecution {
       execution_id: "factory-job".to_owned(),
       workspace_root: work_root.canonicalize().unwrap(),
       workspace: source.canonicalize().unwrap(),
@@ -875,6 +1019,13 @@ mod tests {
       },
       network: NetworkAccess::Disabled,
     };
+    (temporary, request, writable_protected)
+  }
+
+  #[test]
+  fn validates_the_factory_layout_before_backend_projection() {
+    let (_temporary, mut request, writable_protected) = factory_execution_fixture();
+    let layout = request.factory.clone().unwrap();
     assert!(request.validate().is_ok());
     let mut scoped = request.clone();
     let policy = scoped.factory.as_mut().unwrap();
@@ -1130,5 +1281,149 @@ mod tests {
     };
 
     assert!(request.validate().is_err());
+  }
+  #[test]
+  fn an_octa_only_backend_refuses_a_standalone_program_projection() {
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path().canonicalize().unwrap();
+    let program = ExecutionProgram::standalone(root.clone(), root.join("reader")).unwrap();
+    assert!(matches!(
+      program.require_plugin_projection(),
+      Err(ExecutionError::Unavailable(_))
+    ));
+    let plugins = ExecutionPluginProjection {
+      directory: root.join("plugins"),
+      lock: root.join("Octa.lock"),
+    };
+    let runner = ExecutionProgram {
+      plugin_projection: Some(plugins.clone()),
+      ..program
+    };
+    assert_eq!(runner.require_plugin_projection().unwrap(), &plugins);
+  }
+  #[test]
+  fn a_factory_helper_reserves_resources_from_the_original_job_allocation() {
+    let (_directory, mut main, _) = factory_execution_fixture();
+    main.cpu_millis = 3000;
+    main.memory_bytes = 768 * 1024 * 1024;
+    main.writable_disk_bytes = 64 * 1024 * 1024;
+    main.factory.as_mut().unwrap().process_limit = 64;
+    main.root = ExecutionTarget::Oci {
+      reference: format!("example.invalid/factory@sha256:{}", "0".repeat(64)),
+      platform: ExecutionPlatform {
+        os: ExecutionOs::Linux,
+        architecture: ExecutionArchitecture::Amd64,
+      },
+      isolation: OciIsolation::Hypervisor,
+    };
+    let layout = main.factory.as_mut().unwrap();
+    layout.source_visible = false;
+    layout.source_read_only = true;
+    let root = layout.source.parent().unwrap().to_owned();
+    let helper_scratch = root.join("reader-scratch");
+    let helper_output = root.join("reader-output");
+    let helper_protected = root.join("reader-protected");
+    for directory in [&helper_scratch, &helper_output, &helper_protected] {
+      std::fs::create_dir(directory).unwrap();
+    }
+    let helper_data = helper_scratch.join("data");
+    std::fs::create_dir(&helper_data).unwrap();
+    let mut permissions = std::fs::metadata(&helper_protected).unwrap().permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&helper_protected, permissions).unwrap();
+    let mut helper = main.clone();
+    helper.execution_id = "selected-reader".to_owned();
+    helper.data_dir = helper_data;
+    helper.cpu_millis = 1000;
+    helper.memory_bytes = 256 * 1024 * 1024;
+    helper.writable_disk_bytes = 16 * 1024 * 1024;
+    helper.max_duration = Duration::from_millis(500);
+    let helper_layout = helper.factory.as_mut().unwrap();
+    helper_layout.source_visible = true;
+    helper_layout.scratch = helper_scratch;
+    helper_layout.output = helper_output;
+    helper_layout.protected_inputs = helper_protected;
+    helper_layout.process_limit = 8;
+    let original = main.clone();
+    let (narrowed, reserved) = FactoryExecutionPartition::new(main, helper.clone())
+      .unwrap()
+      .into_parts();
+    assert_eq!(
+      narrowed.factory.as_ref().unwrap().disk_accounting,
+      ExecutionDiskAccounting::OwnedWritableMounts
+    );
+    assert_eq!(
+      reserved.factory.as_ref().unwrap().disk_accounting,
+      ExecutionDiskAccounting::OwnedWritableMounts
+    );
+    assert_eq!(narrowed.cpu_millis, 2000);
+    assert_eq!(narrowed.memory_bytes, 512 * 1024 * 1024);
+    assert_eq!(narrowed.writable_disk_bytes, 48 * 1024 * 1024);
+    assert_eq!(narrowed.factory.as_ref().unwrap().process_limit, 56);
+    assert_eq!(reserved.cpu_millis, 1000);
+    assert_eq!(reserved.memory_bytes, 256 * 1024 * 1024);
+    assert_eq!(reserved.writable_disk_bytes, 16 * 1024 * 1024);
+    assert_eq!(reserved.factory.as_ref().unwrap().process_limit, 8);
+    assert_eq!(narrowed.max_duration, original.max_duration);
+    assert_eq!(reserved.max_duration, Duration::from_millis(500));
+    assert!(narrowed.validate().is_ok());
+    assert!(reserved.validate().is_ok());
+    for dimension in 0..4 {
+      let mut oversized = helper.clone();
+      match dimension {
+        0 => oversized.cpu_millis = original.cpu_millis,
+        1 => oversized.memory_bytes = original.memory_bytes,
+        2 => oversized.writable_disk_bytes = original.writable_disk_bytes,
+        _ => oversized.factory.as_mut().unwrap().process_limit = original.factory.as_ref().unwrap().process_limit,
+      }
+      assert!(
+        FactoryExecutionPartition::new(original.clone(), oversized).is_err(),
+        "dimension {dimension} has no main remainder"
+      );
+    }
+    let mut writable = helper.clone();
+    writable.factory.as_mut().unwrap().source_read_only = false;
+    assert!(writable.validate().is_ok());
+    assert!(FactoryExecutionPartition::new(original.clone(), writable).is_err());
+    let mut overlapping = helper.clone();
+    overlapping.factory.as_mut().unwrap().scratch = original.factory.as_ref().unwrap().scratch.clone();
+    overlapping.data_dir = original.data_dir.clone();
+    assert!(overlapping.validate().is_ok());
+    assert!(FactoryExecutionPartition::new(original.clone(), overlapping).is_err());
+    let foreign_source = root.join("other-source");
+    std::fs::create_dir(&foreign_source).unwrap();
+    let mut foreign = helper.clone();
+    foreign.workspace = foreign_source.clone();
+    foreign.factory.as_mut().unwrap().source = foreign_source;
+    assert!(foreign.validate().is_ok());
+    assert!(FactoryExecutionPartition::new(original.clone(), foreign).is_err());
+    let mut foreign_target = helper.clone();
+    foreign_target.root = ExecutionTarget::Oci {
+      reference: format!("example.invalid/factory@sha256:{}", "1".repeat(64)),
+      platform: ExecutionPlatform {
+        os: ExecutionOs::Linux,
+        architecture: ExecutionArchitecture::Amd64,
+      },
+      isolation: OciIsolation::Hypervisor,
+    };
+    assert!(foreign_target.validate().is_ok());
+    assert!(FactoryExecutionPartition::new(original.clone(), foreign_target).is_err());
+    let identity = root.join("private-identity");
+    std::fs::write(&identity, b"private").unwrap();
+    helper.workload_identity = Some(identity);
+    assert!(helper.validate().is_ok());
+    assert!(FactoryExecutionPartition::new(original, helper).is_err());
+  }
+  #[test]
+  fn a_legacy_backend_refuses_partition_disk_accounting_before_job_inspection() {
+    let (_directory, mut request, _) = factory_execution_fixture();
+    assert!(request.require_whole_job_disk_accounting().is_ok());
+    request.factory.as_mut().unwrap().disk_accounting = ExecutionDiskAccounting::OwnedWritableMounts;
+    request.workspace = request.workspace_root.join("unopened-job");
+    assert!(matches!(
+      request.require_whole_job_disk_accounting(),
+      Err(ExecutionError::Unavailable(_))
+    ));
+    assert!(!request.workspace.exists());
   }
 }

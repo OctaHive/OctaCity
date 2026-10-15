@@ -10,18 +10,34 @@ mod application;
 mod assembly;
 mod composition;
 mod delivery;
+mod delivery_material;
+pub use delivery_material::RetainedFactoryDeliveryMaterializer;
 mod error;
 mod factory;
+mod factory_command_runtime;
+pub use factory_command_runtime::FactoryRuntimeProtectedValidationProfile;
+mod factory_connector_file;
+pub use factory_connector_file::{
+  FactoryRuntimeSignalConnector, FactoryRuntimeSignalReadiness, load_factory_signal_connectors,
+};
+mod factory_profiles;
+mod factory_signal_provider;
+pub use factory_profiles::{FactoryProfileRuntimeInstaller, FactoryRuntimeProfileCatalog, FactoryRuntimeSignalProfile};
+#[cfg(test)]
+mod factory_tests;
 pub use delivery::{
   FactoryDeliveryInputs, FactoryDeliveryMaterializer, FactoryDeliveryPolicy, FactoryDeliveryPolicyDraft,
   FactoryDeliveryTargetPolicy, HostedFactoryCandidatePublisher,
 };
+#[cfg(all(test, unix))]
+mod delivery_material_tests;
 #[cfg(test)]
 mod delivery_tests;
 pub use factory::{
   FactoryRuntimeInstallation, FactoryRuntimeInstallationError, FactoryRuntimeInstaller, FactoryRuntimeReadiness,
   FactoryRuntimeResources,
 };
+mod factory_profile_file;
 mod lifecycle;
 mod listeners;
 mod maintenance;
@@ -81,3 +97,12 @@ impl ServerRuntime {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod factory_profile_file_tests;
+
+#[cfg(test)]
+mod factory_command_runtime_tests;
+mod factory_delivery_file;
+#[cfg(test)]
+mod factory_evaluation_runtime_tests;

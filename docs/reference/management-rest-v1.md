@@ -832,6 +832,15 @@ closure. Native gates require no deployment alias. Clients must match the whole
 reference and must not infer native support from a policy or node name. The
 `FactoryFlowValueSchema` and `FactoryFlowValueMapping` schemas publish their
 core-owned nesting limits as `x-max-depth` for bounded generated editors.
+The `externally_tagged` data shape describes finite typed alternatives without
+changing their existing JSON encoding. For example,
+`{"type":"externally_tagged","variants":{"Ready":null,"RetryAfter":{"type":"integer","minimum":1,"maximum":10}}}`
+accepts the unit string `"Ready"` or the single-key object `{"RetryAfter":3}`.
+Unknown tags, multiple keys and incorrect payload shapes are rejected. Tag names
+are case-sensitive data labels, bounded to 128 UTF-8 bytes and 64 alternatives;
+they do not change the rules for Flow or node identifiers. Payload shapes share
+the existing depth and encoded-schema limits. OpenAPI publishes the name and
+count bounds for editors; immutable schema digests bind every alternative.
 
 Run filters are `configuration_id`, `source`, `state`, `decision`, `delivery_state`,
 `admitted_from_unix_ms` (inclusive) and `admitted_before_unix_ms` (exclusive).

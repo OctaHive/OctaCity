@@ -67,6 +67,7 @@ async fn s3_store_satisfies_the_minio_contract() {
   store.health_check().await.unwrap();
 
   verify_upload_download_and_delete(&store).await;
+  verify_trusted_input_publication(&store).await;
   verify_cache_blob_contract(&store).await;
   verify_log_chunk_contract(&store).await;
   verify_mismatched_generations_remain_unpublished(&client, &bucket, &store).await;
@@ -76,6 +77,92 @@ async fn s3_store_satisfies_the_minio_contract() {
   delete_test_objects(&client, &bucket).await;
   client.delete_bucket().bucket(bucket).send().await.unwrap();
   proxy.shutdown().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured MinIO service"]
+async fn s3_download_honors_declared_logical_media_for_exact_generic_transport_bytes() {
+  let endpoint = required("OCTACITY_MINIO_ENDPOINT");
+  let access_key = required("OCTACITY_MINIO_ACCESS_KEY");
+  let secret_key = required("OCTACITY_MINIO_SECRET_KEY");
+  let region = env::var("OCTACITY_MINIO_REGION").unwrap_or_else(|_| "us-east-1".into());
+  let bucket = format!("octacity-media-test-{}", Uuid::new_v4().simple());
+  let client = minio_client(&endpoint, &region, &access_key, &secret_key);
+  client.create_bucket().bucket(&bucket).send().await.unwrap();
+  let store = S3ArtifactStore::new(S3ArtifactStoreConfig {
+    endpoint,
+    region,
+    bucket: bucket.clone(),
+    prefix: TEST_PREFIX.into(),
+    access_key: zeroize::Zeroizing::new(access_key),
+    secret_key: zeroize::Zeroizing::new(secret_key),
+    force_path_style: true,
+    operation_timeout: Duration::from_secs(5),
+    capability_recheck_interval: Duration::from_secs(300),
+  })
+  .unwrap();
+  let bytes = br#"{"selected":"immutable bytes"}"#;
+  let physical = object(bytes);
+  assert_eq!(physical.content_type(), "application/octet-stream");
+  upload(&store, &physical, bytes).await;
+  store.complete_upload(&physical).await.unwrap();
+  let logical = ArtifactObject::new(
+    physical.artifact_id(),
+    physical.upload_id(),
+    physical.size_bytes(),
+    physical.sha256(),
+    "application/vnd.example.protected+json",
+  )
+  .unwrap();
+  let download = store
+    .authorize_download(&logical, Duration::from_secs(60))
+    .await
+    .unwrap();
+  let response = reqwest::get(download.url)
+    .await
+    .unwrap_or_else(|_| panic!("authorized protected download failed"));
+  let status = response.status();
+  let media = response
+    .headers()
+    .get(reqwest::header::CONTENT_TYPE)
+    .unwrap()
+    .to_str()
+    .unwrap()
+    .to_owned();
+  let downloaded = response
+    .bytes()
+    .await
+    .unwrap_or_else(|_| panic!("protected response body unavailable"));
+  // Clean this owned bucket even when the response metadata assertion establishes Red.
+  ArtifactStore::delete(&store, &physical).await.unwrap();
+  client.delete_bucket().bucket(bucket).send().await.unwrap();
+  assert!(status.is_success());
+  assert_eq!(
+    downloaded,
+    bytes.as_slice(),
+    "response metadata cannot change the exact verified object bytes"
+  );
+  assert_eq!(
+    media, "application/vnd.example.protected+json",
+    "GET response must honor the authorized logical type even when upload used a generic transport"
+  );
+}
+
+async fn verify_trusted_input_publication(store: &S3ArtifactStore) {
+  use octacity_artifact_store::{ArtifactBytePublisher as _, ArtifactByteReader as _};
+  let bytes = b"private compiler document";
+  let object = object(bytes);
+  store.publish_verified(&object, bytes.to_vec()).await.unwrap();
+  store.publish_verified(&object, bytes.to_vec()).await.unwrap();
+  assert_eq!(store.read_published(&object, 1024).await.unwrap(), bytes);
+  assert!(
+    store
+      .publish_verified(&object, b"substituted private input".to_vec())
+      .await
+      .is_err()
+  );
+  assert_eq!(store.read_published(&object, 1024).await.unwrap(), bytes);
+  ArtifactStore::delete(store, &object).await.unwrap();
 }
 
 async fn verify_log_chunk_contract(store: &S3ArtifactStore) {

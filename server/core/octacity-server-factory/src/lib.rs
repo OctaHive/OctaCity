@@ -7,6 +7,9 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+/// Maximum exact installed execution identities admitted by one Factory owner.
+pub const MAX_FACTORY_EXECUTOR_BINDINGS: usize = 256;
+
 mod assessment;
 mod budget;
 mod configuration;
@@ -44,6 +47,8 @@ mod flow_gate_program_tests;
 mod flow_gate_tests;
 #[cfg(test)]
 mod flow_journal_tests;
+#[cfg(test)]
+mod flow_tagged_schema_tests;
 #[cfg(test)]
 mod flow_template_tests;
 #[cfg(any(test, feature = "test-support"))]
@@ -121,11 +126,11 @@ pub use decision_signal::{
   DecisionSignalChoices, DecisionSignalConsumption, DecisionSignalConsumptionKind, DecisionSignalDisposition,
   DecisionSignalInputMedia, DecisionSignalProbability, DecisionSignalProvider, DecisionSignalProviderCapability,
   DecisionSignalProviderFailure, DecisionSignalProviderFuture, DecisionSignalProviderInput,
-  DecisionSignalProviderLimits, DecisionSignalProviderObservation, DecisionSignalProviderRequest,
-  DecisionSignalProviderResult, DecisionSignalQuestion, DecisionSignalQuestionCriteria, DecisionSignalQuestionDomain,
-  DecisionSignalQuestionKind, DecisionSignalReceipt, DecisionSignalRouteSet, DecisionSignalScoreDomain,
-  DecisionSignalThreshold, MAX_DECISION_SIGNAL_CHOICES, MAX_DECISION_SIGNAL_QUESTIONS, MAX_DECISION_SIGNAL_RECEIPTS,
-  ToolRiskChoiceMapping, consume_routing_signal, consume_tool_risk_signal,
+  DecisionSignalProviderLimits, DecisionSignalProviderObservation, DecisionSignalProviderObservationFuture,
+  DecisionSignalProviderRequest, DecisionSignalProviderResult, DecisionSignalQuestion, DecisionSignalQuestionCriteria,
+  DecisionSignalQuestionDomain, DecisionSignalQuestionKind, DecisionSignalReceipt, DecisionSignalRouteSet,
+  DecisionSignalScoreDomain, DecisionSignalThreshold, MAX_DECISION_SIGNAL_CHOICES, MAX_DECISION_SIGNAL_QUESTIONS,
+  MAX_DECISION_SIGNAL_RECEIPTS, ToolRiskChoiceMapping, consume_routing_signal, consume_tool_risk_signal,
 };
 pub use enum_value::{
   AssessmentOutcome, DecisionOutcome, DecisionSignalFallback, DecisionSignalMode, DecisionSignalPurpose,
@@ -158,10 +163,10 @@ pub use flow::{
   MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES,
   MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT, MAX_FLOW_GATE_PARAMETER_BYTES,
   MAX_FLOW_INPUT_BINDING_BYTES, MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_REPEAT_COUNT,
-  MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS, NodeAttempt,
-  NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity,
-  PinnedFlowDefinitionClosure, PublishedFlowTemplate, ValidatedFlowDefinitionClosure, WorkflowCycle,
-  validate_flow_runtime_history,
+  MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS,
+  MAX_FLOW_VARIANT_NAME_BYTES, NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput,
+  NodeExecutionIdentity, PinnedFlowDefinitionClosure, PublishedFlowTemplate, ValidatedFlowDefinitionClosure,
+  WorkflowCycle, validate_flow_runtime_history,
 };
 pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{

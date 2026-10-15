@@ -106,9 +106,12 @@ class RegistrationObserver:
         self,
         client: bootstrap.BootstrapClient,
         not_before_unix_ms: int | None,
+        *,
+        require_factory: bool = False,
     ):
         self._client = client
         self._not_before_unix_ms = not_before_unix_ms
+        self._require_factory = require_factory
 
     def registered(self, remaining_seconds: float) -> bool:
         try:
@@ -156,6 +159,11 @@ class RegistrationObserver:
             raise AgentStartupError("registered Agent advertises an unexpected execution identity")
         if not isinstance(capacity, dict) or capacity.get("virtualization_available") is not True:
             raise AgentStartupError("registered Agent does not report virtualization availability")
+        if self._require_factory:
+            contract = inventory.get("execution_contract")
+            capabilities = inventory.get("factory_executions")
+            if not isinstance(contract, dict) or type(contract.get("max")) is not int or contract["max"] < 3 or not isinstance(capabilities, list) or not capabilities:
+                raise AgentStartupError("registered Agent does not advertise qualified Factory execution")
         return True
 
 
@@ -183,6 +191,7 @@ def _start_locked(
     home: Path,
     openssl: str,
     startup_timeout_seconds: float,
+    factory_agent_profile: Path | None = None,
 ) -> AgentStartResult:
     owner.require_exclusive_lock()
     if owner.root != root:
@@ -194,6 +203,7 @@ def _start_locked(
             repository=repository,
             home=home,
             openssl=openssl,
+            factory_agent_profile=factory_agent_profile,
         )
         plan = configurator.validated_launch_plan(root, native_installation, receipt)
         client = bootstrap.management_client(
@@ -236,7 +246,7 @@ def _start_locked(
             result_state = "registered"
         record = owner.wait_until_ready(
             AGENT_PROCESS_NAME,
-            RegistrationObserver(client, registration_not_before).registered,
+            RegistrationObserver(client, registration_not_before, require_factory=factory_agent_profile is not None).registered,
             timeout_seconds=startup_timeout_seconds,
             poll_interval_seconds=0.25,
         )
@@ -258,6 +268,7 @@ def start_agent(
     home: Path = Path.home(),
     openssl: str = "openssl",
     startup_timeout_seconds: float = DEFAULT_STARTUP_TIMEOUT_SECONDS,
+    factory_agent_profile: Path | None = None,
 ) -> AgentStartResult:
     """Start or reuse one verified Microsandbox-only Agent under the shared lock."""
 
@@ -281,6 +292,7 @@ def start_agent(
                     home=home,
                     openssl=openssl,
                     startup_timeout_seconds=startup_timeout_seconds,
+                    factory_agent_profile=factory_agent_profile,
                 )
         except lifecycle.LifecycleError as cause:
             raise AgentStartupError(str(cause)) from cause
@@ -294,6 +306,7 @@ def start_agent(
         home=home,
         openssl=openssl,
         startup_timeout_seconds=startup_timeout_seconds,
+        factory_agent_profile=factory_agent_profile,
     )
 
 
@@ -317,6 +330,7 @@ def parse_arguments() -> argparse.Namespace:
         default=DEFAULT_STARTUP_TIMEOUT_SECONDS,
     )
     parser.add_argument("--openssl", default="openssl")
+    parser.add_argument("--factory-agent-profile", type=Path, help="separate private local Factory Agent policy")
     return parser.parse_args()
 
 
@@ -329,6 +343,7 @@ def main() -> int:
             origin=arguments.origin,
             openssl=arguments.openssl,
             startup_timeout_seconds=arguments.startup_timeout_seconds,
+            factory_agent_profile=arguments.factory_agent_profile,
         )
     except (AgentStartupError, OSError, ValueError) as cause:
         raise SystemExit(f"local stand Agent startup failed: {cause}") from cause

@@ -6,9 +6,11 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod connector;
 mod jev;
 mod registry;
 
+pub use connector::{DecisionSignalConnectorError, install_decision_signal_connector};
 pub use jev::{JevAdapterError, JevApiKey, JevBillingPolicy, JevDecisionSignalProvider};
 pub use registry::{DecisionSignalProviderRegistry, DecisionSignalRegistryError};
 

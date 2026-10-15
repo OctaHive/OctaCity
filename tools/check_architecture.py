@@ -118,6 +118,12 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     "octacity-server-trigger": frozenset({"chrono", "chrono-tz", "cron"}),
 }
 
+# Capturing structured application events is a test responsibility. This grant
+# applies only when Cargo declares the dependency exclusively as dev-only.
+PACKAGE_ALLOWED_TEST_DEPENDENCIES = {
+    "octacity-server-application": frozenset({"tracing-subscriber"}),
+}
+
 # Composition, infrastructure, Agent, CLI, and test packages intentionally
 # select concrete implementations, so they cannot use the narrow layer
 # allowlists above. Freeze their v1 external package vocabulary here instead:
@@ -332,7 +338,7 @@ MANAGEMENT_PREFIX_OWNERS = frozenset({
     Path("v1/openapi.rs"),
     TYPED_MANAGEMENT_ROUTE_REGISTRY,
 })
-OPERATIONAL_ROUTE_PATHS = frozenset({"/health/live", "/health/ready", "/metrics"})
+OPERATIONAL_ROUTE_PATHS = frozenset({"/health/live", "/health/ready", "/health/factory", "/metrics"})
 ROUTE_LITERAL = re.compile(r"\.\s*route\s*\(\s*\"([^\"]+)\"")
 STORE_SELECTED_MANAGEMENT_ACTOR = re.compile(
     r'"(?:un)?authenticated_management"|AuditActorKind::(?:Authenticated|Unauthenticated)Management'
@@ -385,6 +391,7 @@ class Package:
     shared_consumers: tuple[str, ...]
     shared_scaffold: bool
     shared_policy_valid: bool
+    dev_only_external_dependencies: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -521,9 +528,14 @@ def graph_from_metadata(metadata: dict[str, Any]) -> Graph:
             if dependency.get("path") is None
             or _normalized_path(dependency["path"]) not in workspace_directories
         }
+        production_dependencies = {
+            dependency["name"] for dependency in dependencies
+            if dependency.get("kind") != "dev"
+        }
         packages_by_directory[directory] = replace(
             package,
             external_dependencies=tuple(sorted(external_dependencies)),
+            dev_only_external_dependencies=tuple(sorted(external_dependencies - production_dependencies)),
         )
 
     edges: list[Edge] = []
@@ -624,6 +636,9 @@ def check(graph: Graph) -> list[Violation]:
                 )
         allowed_for_role = ROLE_ALLOWED_EXTERNAL_DEPENDENCIES.get(package.role)
         allowed_for_package = PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES.get(package.name, frozenset())
+        allowed_for_package |= PACKAGE_ALLOWED_TEST_DEPENDENCIES.get(package.name, frozenset()).intersection(
+            package.dev_only_external_dependencies
+        )
         deferred_dependencies: dict[str, list[str]] = {}
         for dependency in package.external_dependencies:
             if dependency in allowed_for_package:

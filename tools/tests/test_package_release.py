@@ -71,6 +71,74 @@ class PackageReleaseTests(unittest.TestCase):
             },
         )()
 
+    def test_macos_archive_can_pin_a_separate_linux_reader_worker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = self.fixture(root, "macos-arm64", "agent.tar.gz")
+            reader = root / "linux-reader"
+            reader.write_bytes(b"independently-pinned-linux-worker")
+            args.protected_reader = reader
+            args.protected_reader_platform = "linux-aarch64"
+            output = PACKAGE_RELEASE.package(args)
+            worker_path = "workers/protected-reader/linux-aarch64/octacity-protected-reader"
+            with tarfile.open(output, "r:gz") as archive:
+                self.assertEqual(archive.extractfile(worker_path).read(), reader.read_bytes())
+                self.assertEqual(archive.getmember(worker_path).mode, 0o755)
+                manifest = json.load(archive.extractfile("release-manifest.json"))
+                self.assertEqual(manifest["platform"], "macos-arm64")
+                sums = archive.extractfile("SHA256SUMS").read().decode()
+                self.assertIn(f"  {worker_path}\n", sums)
+
+    def test_reader_executable_and_guest_platform_must_be_supplied_together(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reader = root / "reader"
+            reader.write_bytes(b"reader")
+            for executable, platform in ((reader, None), (None, "linux-aarch64")):
+                with self.subTest(executable=executable, platform=platform):
+                    args = self.fixture(root, "macos-arm64", "agent.tar.gz")
+                    args.protected_reader = executable
+                    args.protected_reader_platform = platform
+                    with self.assertRaisesRegex(ValueError, "together"):
+                        PACKAGE_RELEASE.package(args)
+
+    def test_reader_platform_cannot_select_an_archive_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            reader = root / "reader"
+            reader.write_bytes(b"reader")
+            for platform in ("../outside", "portable-script", "macos-aarch64"):
+                with self.subTest(platform=platform):
+                    args = self.fixture(root, "macos-arm64", "agent.tar.gz")
+                    args.protected_reader = reader
+                    args.protected_reader_platform = platform
+                    with self.assertRaisesRegex(ValueError, "unsupported protected reader platform"):
+                        PACKAGE_RELEASE.package(args)
+                    self.assertFalse(args.output.exists())
+
+    def test_reader_keeps_the_existing_product_component_contract(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            args = self.fixture(root, "macos-arm64", "agent.tar.gz")
+            reader = root / "reader"
+            reader.write_bytes(b"independently-pinned-linux-worker")
+            args.protected_reader = reader
+            args.protected_reader_platform = "linux-aarch64"
+            output = PACKAGE_RELEASE.package(args)
+            with tarfile.open(output, "r:gz") as archive:
+                manifest = json.load(archive.extractfile("release-manifest.json"))
+                self.assertEqual(set(manifest["components"]), {"agent", "source_git"})
+                worker_manifest_path = "workers/protected-reader/linux-aarch64/manifest.json"
+                worker_manifest = json.load(archive.extractfile(worker_manifest_path))
+                self.assertEqual(worker_manifest, {
+                    "format_version": 1,
+                    "executable": "octacity-protected-reader",
+                    "platform": "linux-aarch64",
+                    "sha256": "9ea8cc5bbbfa869ff09da48e5b56715e21cacdb0662da1cae2779e10a489190b",
+                })
+                sums = archive.extractfile("SHA256SUMS").read().decode()
+                self.assertIn(f"  {worker_manifest_path}\n", sums)
+
     def test_linux_archive_is_reproducible_and_self_verifying(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

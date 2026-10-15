@@ -17,7 +17,9 @@ pub(super) struct MicrosandboxExecution {
   pub(super) event_task: JoinHandle<()>,
   pub(super) cleanup_timeout: Duration,
   pub(super) started: Instant,
-  pub(super) host_job_root: PathBuf,
+  pub(super) deadline: Instant,
+  pub(super) metrics_sample_interval: Duration,
+  pub(super) disk_accounting_roots: Vec<PathBuf>,
   pub(super) memory_peak_bytes: u64,
   pub(super) disk_peak_bytes: u64,
 }
@@ -33,9 +35,29 @@ impl RunningExecution for MicrosandboxExecution {
   }
 
   async fn sample_usage(&mut self) -> Result<ResourceUsage, ExecutionError> {
-    let metrics = self.sandbox.metrics().await.map_err(msb_error)?;
+    let local = self
+      .sandbox
+      .backend()
+      .as_local()
+      .ok_or_else(|| backend("Microsandbox accounting requires a local backend"))?;
+    let metrics = timeout_at(self.deadline, async {
+      loop {
+        match microsandbox::sandbox::sandbox_metrics_report_local(local, self.sandbox.name())
+          .await
+          .map_err(msb_error)?
+        {
+          Some(report) => return Ok(report.metrics),
+          // A running VM can precede its first verified shared-memory sample.
+          // Wait for real data at the configured sampling cadence; never emit
+          // fabricated zero usage or retry a catalog/identity failure.
+          None => tokio::time::sleep(self.metrics_sample_interval).await,
+        }
+      }
+    })
+    .await
+    .map_err(|_| backend("Microsandbox accounting did not become available within the execution window"))??;
     self.memory_peak_bytes = self.memory_peak_bytes.max(metrics.memory_bytes);
-    let disk_current_bytes = directory_size_async(self.host_job_root.clone()).await?;
+    let disk_current_bytes = directory_size_roots_async(self.disk_accounting_roots.clone()).await?;
     self.disk_peak_bytes = self.disk_peak_bytes.max(disk_current_bytes);
     Ok(ResourceUsage {
       elapsed_ms: millis(self.started.elapsed()),

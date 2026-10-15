@@ -137,6 +137,7 @@ impl FlowBuildProvenance {
       || self.profile.result_output != binding.result_output
       || self.profile.result_output_kind != binding.result_output_kind
       || &raw.schema != payload.schema()
+      || raw.data.as_ref().is_some_and(|data| data.payload() != payload)
       || raw.output_kind != binding.result_output_kind
       || raw.producer.tool() != binding.result_tool()
       || raw.producer.plugin() != &binding.plugin

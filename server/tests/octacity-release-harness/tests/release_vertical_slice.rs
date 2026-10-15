@@ -40,8 +40,16 @@ mod browser;
 mod linux_native;
 #[path = "release_vertical_slice/release.rs"]
 mod release;
+#[path = "release_vertical_slice/server.rs"]
+mod server;
+#[path = "release_vertical_slice/server_config_tests.rs"]
+mod server_config_tests;
 #[path = "release_vertical_slice/support.rs"]
 mod support;
+use server::*;
+#[path = "release_vertical_slice/environment.rs"]
+mod environment;
+use environment::*;
 
 use agent::{AgentConfigOverrides, AgentReleasePaths, AgentToolExecutable, spawn_agent, write_agent_config};
 use backend::ReleaseBackend;
@@ -469,160 +477,6 @@ async fn drain_agent(client: &Client, origin: &str, agent_name: &str, run: &str)
   );
 }
 
-struct ServerConfigInput<'a> {
-  postgres_url: &'a str,
-  object_endpoint: &'a str,
-  cache_endpoint: &'a str,
-  toolchain: &'a Toolchain,
-  management_addr: SocketAddr,
-  agent_addr: SocketAddr,
-  cache_addr: Option<SocketAddr>,
-}
-
-fn write_server_config(directory: &Path, input: &ServerConfigInput<'_>) -> PathBuf {
-  let postgres = private_file(directory, "postgres-url", input.postgres_url);
-  let access_key = private_file(directory, "object-access-key", "octacity");
-  let secret_key = private_file(directory, "object-secret-key", "octacity-secret");
-  let signing_key = private_file(directory, "signing-key", &STANDARD.encode(SIGNING_SEED));
-  let enrollment_key = private_file(directory, "agent-enrollment-key", &STANDARD.encode([8_u8; 32]));
-  let cache_key = private_file(directory, "cache-credential-key", &STANDARD.encode([9_u8; 32]));
-  let policy = directory.join("job-spec-policy.json");
-  fs::write(
-    &policy,
-    serde_json::to_vec(&input.toolchain.job_spec_policy(900).unwrap()).unwrap(),
-  )
-  .unwrap();
-  let cache_bind = input
-    .cache_addr
-    .map_or_else(String::new, |address| format!("cache_bind = \"{address}\"\n"));
-  let contents = format!(
-    r#"
-management_bind = "{}"
-agent_bind = "{}"
-{}
-shutdown_grace_milliseconds = 5000
-readiness_check_interval_milliseconds = 100
-readiness_check_timeout_milliseconds = {RELEASE_READINESS_TIMEOUT_MILLISECONDS}
-agent_registration_lifetime_milliseconds = 900000
-agent_enrollment_lifetime_milliseconds = 900000
-agent_lease_lifetime_milliseconds = {RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS}
-supported_pipeline_capabilities = ["native", "oci.process", "oci.hypervisor", "shell"]
-
-[postgres]
-url_file = {}
-
-[object_storage]
-endpoint = {}
-region = "us-east-1"
-bucket = "octacity-artifacts"
-force_path_style = true
-operation_timeout_milliseconds = {RELEASE_OBJECT_OPERATION_TIMEOUT_MILLISECONDS}
-access_key_file = {}
-secret_key_file = {}
-
-[signing]
-key_id = "test-key"
-key_file = {}
-
-[agent_credentials]
-enrollment_key_file = {}
-
-[cache]
-endpoint = {}
-credential_key_file = {}
-session_lifetime_milliseconds = {RELEASE_JOB_AUTHORITY_LIFETIME_MILLISECONDS}
-
-[job_spec]
-policy_file = {}
-"#,
-    input.management_addr,
-    input.agent_addr,
-    cache_bind,
-    toml_string(&postgres),
-    toml_text(input.object_endpoint),
-    toml_string(&access_key),
-    toml_string(&secret_key),
-    toml_string(&signing_key),
-    toml_string(&enrollment_key),
-    toml_text(input.cache_endpoint),
-    toml_string(&cache_key),
-    toml_string(&policy)
-  );
-  let path = directory.join("server.toml");
-  fs::write(&path, contents).unwrap();
-  path
-}
-
-fn unused_loopback_addresses() -> (SocketAddr, SocketAddr) {
-  let management = TcpListener::bind("127.0.0.1:0").unwrap();
-  let agent = TcpListener::bind("127.0.0.1:0").unwrap();
-  (management.local_addr().unwrap(), agent.local_addr().unwrap())
-}
-
-fn spawn_server(binary: &Path, config: &Path, stdout: &Path, stderr: &Path) -> Child {
-  Command::new(binary)
-    .arg("--log-format")
-    .arg("json")
-    .arg("--log-filter")
-    .arg("info")
-    .arg("run")
-    .arg(config)
-    .stdout(Stdio::from(File::create(stdout).unwrap()))
-    .stderr(Stdio::from(File::create(stderr).unwrap()))
-    .kill_on_drop(true)
-    .spawn()
-    .unwrap()
-}
-
-async fn wait_for_server_ready(client: &Client, origin: &str, server: &mut Child, log: &Path) {
-  let deadline = Instant::now() + Duration::from_secs(60);
-  loop {
-    if let Some(status) = server.try_wait().unwrap() {
-      panic!(
-        "released server exited before readiness with {status}: {}",
-        fs::read_to_string(log).unwrap_or_default()
-      );
-    }
-    if client
-      .get(format!("{origin}/health/ready"))
-      .send()
-      .await
-      .is_ok_and(|response| response.status().is_success())
-    {
-      return;
-    }
-    assert!(
-      Instant::now() < deadline,
-      "timed out waiting for released server readiness: {}",
-      fs::read_to_string(log).unwrap_or_default()
-    );
-    sleep(Duration::from_millis(100)).await;
-  }
-}
-
-async fn shutdown_server(server: &mut Child, log: &Path) {
-  let process_id = server.id().expect("released server must still be running");
-  let process_id = rustix::process::Pid::from_raw(process_id as i32).unwrap();
-  rustix::process::kill_process(process_id, rustix::process::Signal::TERM).unwrap();
-  let status = timeout(Duration::from_secs(30), server.wait())
-    .await
-    .expect("released server did not stop before its graceful-shutdown deadline")
-    .unwrap();
-  assert!(
-    status.success(),
-    "released server exited unsuccessfully: {}",
-    fs::read_to_string(log).unwrap_or_default()
-  );
-}
-
-fn host_architecture() -> &'static str {
-  if cfg!(target_arch = "aarch64") {
-    "arm64"
-  } else {
-    "amd64"
-  }
-}
-
 fn backend_workspace_entries(backend: &ReleaseBackend) -> Vec<std::ffi::OsString> {
   let work_root = match backend {
     ReleaseBackend::Native { work_root, .. }
@@ -637,42 +491,6 @@ fn backend_workspace_entries(backend: &ReleaseBackend) -> Vec<std::ffi::OsString
     .unwrap();
   entries.sort();
   entries
-}
-
-fn required_string(name: &str) -> String {
-  env::var(name)
-    .unwrap_or_else(|_| panic!("{name} must be set"))
-    .trim()
-    .to_owned()
-}
-fn required_u64(name: &str) -> u64 {
-  required_string(name)
-    .parse()
-    .unwrap_or_else(|_| panic!("{name} must be a positive integer"))
-}
-fn required_path(name: &str, must_exist: bool) -> PathBuf {
-  let path = PathBuf::from(required_string(name));
-  assert!(path.is_absolute(), "{name} must be absolute");
-  if must_exist {
-    assert!(path.exists(), "{name} does not exist: {path:?}");
-  }
-  path
-}
-fn private_file(directory: &Path, name: &str, contents: &str) -> PathBuf {
-  let path = directory.join(name);
-  fs::write(&path, contents).unwrap();
-  set_mode(&path, 0o600);
-  path
-}
-fn set_mode(path: &Path, mode: u32) {
-  use std::os::unix::fs::PermissionsExt as _;
-  fs::set_permissions(path, fs::Permissions::from_mode(mode)).unwrap();
-}
-fn toml_string(path: &Path) -> String {
-  toml_text(path.to_str().expect("release paths must be UTF-8"))
-}
-fn toml_text(value: &str) -> String {
-  serde_json::to_string(value).unwrap()
 }
 
 #[test]

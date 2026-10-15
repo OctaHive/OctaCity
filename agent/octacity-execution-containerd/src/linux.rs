@@ -228,6 +228,9 @@ impl OciEngine for ContainerdEngine {
     if cancellation.is_cancelled() {
       return Err(ExecutionError::Cancelled);
     }
+    request.require_unanchored_factory_workspace()?;
+    request.require_whole_job_disk_accounting()?;
+    runner.require_plugin_projection()?;
     runner.validate()?;
     request.validate()?;
     if let Some(cache) = &request.cache {

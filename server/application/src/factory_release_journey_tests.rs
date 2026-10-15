@@ -732,10 +732,15 @@ async fn journey(
       Arc::new(ContextInputs),
       crate::factory_node_test_support::clock(),
     );
-    match owner
-      .reconcile_flow(run_id, claim.id, at(tick))
-      .await
-      .unwrap_or_else(|error| panic!("owner failed at tick {tick}: {error:?}"))
+    match crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      store.as_ref(),
+      run_id,
+      claim.id,
+      at(tick),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("owner failed at tick {tick}: {error:?}"))
     {
       FactoryFlowStep::Advanced | FactoryFlowStep::Waiting => {}
       FactoryFlowStep::Resolved(terminal) => {
@@ -754,7 +759,15 @@ async fn journey(
           .any(|done| done.node_attempt_id() == attempt.id())
     }) {
       assert_eq!(
-        owner.reconcile_flow(run_id, claim.id, at(tick)).await.unwrap(),
+        crate::factory_node_test_support::reconcile_admission_then_observe(
+          &owner,
+          store.as_ref(),
+          run_id,
+          claim.id,
+          at(tick)
+        )
+        .await
+        .unwrap(),
         FactoryFlowStep::Waiting,
         "a human disposition cannot advance until its authorized exact response"
       );
@@ -886,10 +899,15 @@ fn a_failed_bounded_observation_rolls_back_and_external_monitoring_cannot_rewrit
       crate::factory_node_test_support::clock(),
     );
     assert_eq!(
-      owner
-        .reconcile_flow(snapshot.run.id(), claim.id, at(900))
-        .await
-        .unwrap(),
+      crate::factory_node_test_support::reconcile_admission_then_observe(
+        &owner,
+        store.as_ref(),
+        snapshot.run.id(),
+        claim.id,
+        at(900)
+      )
+      .await
+      .unwrap(),
       FactoryFlowStep::Resolved(key("selected_rollout.rolled_back"))
     );
     assert_eq!(store.factory_run_snapshot(snapshot.run.id()).await.unwrap(), snapshot);
@@ -932,10 +950,15 @@ fn a_failed_bounded_observation_rolls_back_and_external_monitoring_cannot_rewrit
     for tick in 903..922 {
       execution.clock.store(tick, Ordering::SeqCst);
       assert!(matches!(
-        owner
-          .reconcile_flow(new.factory_run_id, new_claim.id, at(tick))
-          .await
-          .unwrap(),
+        crate::factory_node_test_support::reconcile_admission_then_observe(
+          &owner,
+          store.as_ref(),
+          new.factory_run_id,
+          new_claim.id,
+          at(tick)
+        )
+        .await
+        .unwrap(),
         FactoryFlowStep::Advanced | FactoryFlowStep::Waiting
       ));
     }
@@ -1040,7 +1063,15 @@ fn optional_declared_nodes_can_be_added_removed_and_reordered_in_the_admitted_co
       );
       for tick in 31..(32 + 2 * order.len() as i64) {
         assert_eq!(
-          owner.reconcile_flow(run, claim.id, at(tick)).await.unwrap(),
+          crate::factory_node_test_support::reconcile_admission_then_observe(
+            &owner,
+            store.as_ref(),
+            run,
+            claim.id,
+            at(tick)
+          )
+          .await
+          .unwrap(),
           FactoryFlowStep::Advanced
         );
       }

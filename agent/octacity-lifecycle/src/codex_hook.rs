@@ -1,8 +1,13 @@
 //! Bounded adapter between Codex `PreToolUse` JSON and Factory tool actions.
 
+use octacity_protocol::{
+  CanonicalFactoryToolActionV3, FactoryImmutableReferenceV3, FactoryOutputPermissionsV3, FactoryResourceLimitsV3,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
+
+use crate::ProtectedReadRecipe;
 
 /// Maximum hook document accepted before JSON parsing.
 pub const MAX_CODEX_HOOK_BYTES: usize = 64 * 1024;
@@ -18,12 +23,14 @@ pub enum CodexHookError {
 /// Minimal trusted projection of the official Codex `PreToolUse` input.
 ///
 /// Common hook fields are deliberately ignored after the complete input is
-/// byte-bounded. Raw tool input is never included in `Debug` output.
+/// byte-bounded. Provider-controlled identifiers and raw tool input are never
+/// included in `Debug` output.
 #[derive(Clone, Deserialize)]
 pub struct CodexPreToolUseInput {
   hook_event_name: String,
   tool_name: String,
   tool_use_id: String,
+  tool_input: Value,
 }
 
 impl std::fmt::Debug for CodexPreToolUseInput {
@@ -31,9 +38,7 @@ impl std::fmt::Debug for CodexPreToolUseInput {
     formatter
       .debug_struct("CodexPreToolUseInput")
       .field("hook_event_name", &self.hook_event_name)
-      .field("tool_name", &self.tool_name)
-      .field("tool_use_id", &self.tool_use_id)
-      .finish()
+      .finish_non_exhaustive()
   }
 }
 
@@ -47,10 +52,65 @@ impl CodexPreToolUseInput {
     if input.hook_event_name != "PreToolUse"
       || !bounded_identifier(&input.tool_name)
       || !bounded_identifier(&input.tool_use_id)
+      || !input.tool_input.is_object()
     {
       return Err(CodexHookError::InvalidInput);
     }
     Ok(input)
+  }
+
+  /// Normalizes only an installed MCP reader with the strict `{path}` contract.
+  /// Operator-pinned identities and limits supply the executable envelope;
+  /// input cannot select a command, add authority, or invoke a native shell.
+  /// Execution still requires the broker and trusted protected dispatcher.
+  pub fn normalize_read(&self, recipe: &CodexMcpReadRecipe) -> Result<CanonicalFactoryToolActionV3, CodexHookError> {
+    #[derive(Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct ReadInput {
+      path: String,
+    }
+    if self.tool_name != recipe.hook_tool_name {
+      return Err(CodexHookError::InvalidInput);
+    }
+    let input: ReadInput = serde_json::from_value(self.tool_input.clone()).map_err(|_| CodexHookError::InvalidInput)?;
+    recipe
+      .reader
+      .action(&input.path)
+      .map_err(|_| CodexHookError::InvalidInput)
+  }
+}
+
+/// Operator-installed definition of one finite structured MCP read operation.
+/// It must also identify the real trusted reader in the protected dispatcher;
+/// constructing this recipe alone does not qualify a harness or backend.
+#[derive(Clone)]
+pub struct CodexMcpReadRecipe {
+  hook_tool_name: String,
+  reader: ProtectedReadRecipe,
+}
+
+impl CodexMcpReadRecipe {
+  /// Pins the exact MCP tool and reader executable, resource and output bounds.
+  /// The reader accepts one absolute portable path argument and can request no
+  /// network, credential, workload-identity or filesystem-write authority.
+  pub fn new(
+    hook_tool_name: String,
+    tool: FactoryImmutableReferenceV3,
+    executable: FactoryImmutableReferenceV3,
+    resources: FactoryResourceLimitsV3,
+    outputs: FactoryOutputPermissionsV3,
+  ) -> Result<Self, CodexHookError> {
+    let mcp_name = hook_tool_name
+      .strip_prefix("mcp__")
+      .and_then(|name| name.split_once("__"));
+    if !bounded_identifier(&hook_tool_name)
+      || !mcp_name.is_some_and(|(server, tool)| !server.is_empty() && !tool.is_empty())
+    {
+      return Err(CodexHookError::InvalidInput);
+    }
+    let reader =
+      ProtectedReadRecipe::new(tool, executable, resources, outputs).map_err(|_| CodexHookError::InvalidInput)?;
+    Ok(Self { hook_tool_name, reader })
   }
 }
 
@@ -100,6 +160,10 @@ fn bounded_identifier(value: &str) -> bool {
 }
 
 #[cfg(test)]
+#[path = "codex_mcp_recipe_tests.rs"]
+mod recipe_tests;
+
+#[cfg(test)]
 mod tests {
   use serde_json::json;
 
@@ -112,6 +176,16 @@ mod tests {
     let rendered = format!("{input:?}");
     assert!(!rendered.contains("super-secret"));
     assert!(!rendered.contains("tool_input"));
+  }
+
+  #[test]
+  fn provider_controlled_hook_identifiers_do_not_reach_diagnostics() {
+    let input = input(br#"{"hook_event_name":"PreToolUse","tool_name":"private-path-/home/operator/credential","tool_use_id":"provider-secret-canary","tool_input":{}}"#);
+
+    let rendered = format!("{input:?}");
+    assert!(!rendered.contains("/home/operator/credential"));
+    assert!(!rendered.contains("provider-secret-canary"));
+    assert!(rendered.contains("PreToolUse"));
   }
 
   #[test]
@@ -130,6 +204,21 @@ mod tests {
       ),
       Err(CodexHookError::InvalidInput)
     ));
+  }
+
+  #[test]
+  fn rejects_hook_calls_without_a_bounded_object_describing_the_actual_action() {
+    for bytes in [
+      br#"{"hook_event_name":"PreToolUse","tool_name":"Read","tool_use_id":"call-1"}"#.as_slice(),
+      br#"{"hook_event_name":"PreToolUse","tool_name":"Read","tool_use_id":"call-1","tool_input":null}"#.as_slice(),
+      br#"{"hook_event_name":"PreToolUse","tool_name":"Read","tool_use_id":"call-1","tool_input":"/private/canary"}"#
+        .as_slice(),
+    ] {
+      assert!(
+        matches!(CodexPreToolUseInput::parse(bytes), Err(CodexHookError::InvalidInput)),
+        "an incomplete action cannot enter exact-action normalization"
+      );
+    }
   }
 
   #[test]

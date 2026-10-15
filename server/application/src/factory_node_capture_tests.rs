@@ -29,83 +29,113 @@ fn trusted_capture_rejects_missing_deliverables_despite_successful_execution() {
     "a successful model and capture cannot omit required public deliverables"
   );
 }
-pub(crate) fn capture_outputs(intent: &FlowBuildIntent, builds: &Builds, base: &str) -> FactoryNodeBuildOutputs {
-  let tool = reference("git.capture");
-  let bundle = b"trusted fixture bundle\n".to_vec();
-  let manifest = CapturedChangeSetManifestV1 {
-    cumulative_changes: None,
-    format_version: 1,
-    base_revision: base.to_owned(),
-    candidate_revision: "captured-revision".to_owned(),
-    node_attempt_id: intent.node().id().to_string(),
-    capture_tool: FactoryImmutableReferenceV3 {
-      identity: tool.identity().as_str().to_owned(),
-      version: tool.version().as_str().to_owned(),
-      sha256: tool.digest().to_string(),
-    },
-    changed_paths: vec![],
-    bundle: CapturedChangeSetFileV1 {
-      name: CHANGE_SET_BUNDLE_OUTPUT.to_owned(),
-      size_bytes: bundle.len() as u64,
-      sha256: FactoryDigest::content_sha256(&bundle).to_string(),
-    },
-    patch: None,
-  };
-  let mut manifest = serde_json::to_vec(&manifest).unwrap();
-  manifest.push(b'\n');
-  let lease = octacity_server_domain::LeaseId::generate();
-  let schema = reference("capture.artifacts");
-  let documents = [
-    (CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_BUNDLE_MEDIA_TYPE, bundle),
-    (CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE, manifest),
-  ]
-  .into_iter()
-  .map(|(name, media, bytes)| {
-    let mut doc = crate::factory_node_test_support::document_kind(
-      builds,
-      &key(name),
-      &schema,
-      bytes,
-      tool.clone(),
-      EvidenceOutputKind::Artifact,
-    );
-    doc.plugin = intent.profile().plugin.clone();
-    let mut identity = doc.record.identity().clone();
-    identity.lease_id = lease;
-    identity.media_type = ArtifactMediaType::new(media).unwrap();
-    let record = ArtifactRecord::pending(identity.clone(), builds.created_at).unwrap();
-    let record = record
-      .transition(
-        &identity,
-        record.version(),
-        ArtifactEvent::BeginVerification,
-        builds.created_at,
-      )
-      .unwrap();
-    doc.record = record
-      .transition(&identity, record.version(), ArtifactEvent::Publish, builds.created_at)
-      .unwrap();
-    doc
-  })
-  .collect::<Vec<_>>();
-  FactoryNodeBuildOutputs {
-    execution: FactoryNodeBuildExecutionFacts {
-      profile: intent.profile().clone(),
-      input_digest: intent.input().digest().unwrap(),
-      permissions: intent.permissions().clone(),
-      budget: intent.budget(),
-      deadline: intent.node().deadline(),
-    },
-    usage: BudgetUsage {
-      attempts: 1,
-      output_bytes: documents.iter().map(|doc| doc.bytes.len() as u64).sum(),
-      ..Default::default()
-    },
-    documents,
-    verified_at: builds.created_at,
-    fresh_until: time(1000),
-  }
+
+#[test]
+fn trusted_capture_rejects_direct_paths_outside_the_frozen_source_write_scope() {
+  let work = work();
+  let mut binding = binding(work.subject().project_id());
+  binding.capture_write_paths = Some(vec![FactoryRepositoryPath::new("public/approved").unwrap()]);
+  let (_, admitted, _, input, node) =
+    execution_fixture_for_work_with_binding(FlowNodeKind::BuildCommand, work, binding, None, None);
+  let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+  let builds = Builds::new();
+  let execution = FlowBuildExecution::new(
+    &intent,
+    builds.acceptance.build_id,
+    builds.acceptance.attempt_id,
+    builds.acceptance.job_ids.clone(),
+  )
+  .unwrap();
+  let mut outputs = capture_outputs(&intent, &builds, "base");
+  assert!(verify_factory_node_change_set(&intent, &execution, &outputs, &reference("git.capture"), time(30)).is_ok());
+  update_capture_manifest(&mut outputs, |value| {
+    value["changed_paths"] = serde_json::json!([{
+      "status":"A", "path":"private/disallowed.txt", "old_mode":"000000", "new_mode":"100644",
+      "content_sha256":"a".repeat(64)
+    }]);
+  });
+  assert!(
+    verify_factory_node_change_set(&intent, &execution, &outputs, &reference("git.capture"), time(30)).is_err(),
+    "valid retained bytes and matching producer pins cannot authorize changes outside the frozen write scope"
+  );
 }
+
+#[test]
+fn restored_legacy_capture_rejects_direct_paths_outside_the_frozen_source_write_scope() {
+  crate::factory_admission_tests::run_ready(async {
+    let work = work();
+    let mut binding = binding(work.subject().project_id());
+    let tool = reference("git.capture");
+    binding.capture_write_paths = Some(vec![FactoryRepositoryPath::new("public/approved").unwrap()]);
+    binding.evidence = [CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT]
+      .into_iter()
+      .map(|name| {
+        EvidenceRequirement::new(
+          key(name),
+          EvidenceOutputKind::Artifact,
+          reference("capture.artifacts"),
+          tool.clone(),
+          binding.plugin.clone(),
+        )
+      })
+      .collect();
+    let (work, admitted, schema, input, node) =
+      execution_fixture_for_work_with_binding(FlowNodeKind::Reasoning, work, binding, None, None);
+    let intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
+    let builds = std::sync::Arc::new(Builds::new());
+    crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &schema).await;
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+    let mut outputs = capture_outputs(&intent, &builds, "base");
+    update_capture_manifest(&mut outputs, |value| {
+      value["changed_paths"] = serde_json::json!([{
+        "status":"A", "path":"private/disallowed.txt", "old_mode":"000000", "new_mode":"100644",
+        "content_sha256":"a".repeat(64)
+      }]);
+    });
+    let manifest = outputs.documents[1].clone();
+    let public = crate::factory_node_test_support::document(
+      &builds,
+      &intent.profile().result_output,
+      schema.reference(),
+      br#"{"count":9}"#.to_vec(),
+      intent.profile().tool.clone(),
+    );
+    outputs.usage.output_bytes += public.bytes.len() as u64;
+    outputs.documents.push(public);
+    // The ordinary adapter constructs independently retained legacy facts;
+    // this fixture does not use the now-corrected capture verifier to accept them.
+    let adapter = FactoryNodeBuildAdapter::new(
+      builds.clone(),
+      std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs))),
+    );
+    let step = adapter
+      .observe(FactoryNodeExecutionRequest {
+        run_id: input.factory_run_id(),
+        admitted: &admitted,
+        work: &work,
+        input: &input,
+        attempt: &node,
+        build: Some(&intent),
+        ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
+        observed_at: time(31),
+      })
+      .await
+      .unwrap();
+    let FactoryNodeExecutionStep::Completed {
+      record,
+      execution: Some(execution),
+      ..
+    } = step
+    else {
+      panic!("the public ordinary boundary must supply the independently retained legacy record");
+    };
+    assert!(
+      restore_factory_node_change_set(&record, &intent, &execution, &manifest, &tool).is_err(),
+      "recovery cannot revive legacy capture outside its original frozen source authority"
+    );
+  });
+}
+pub(crate) use crate::factory_node_test_support::capture_outputs;
 
 pub(crate) fn deliverable_binding(mut binding: FlowBuildBinding) -> FlowBuildBinding {
   let mut wire = serde_json::to_value(&binding).unwrap();
@@ -226,8 +256,22 @@ fn capture_can_keep_a_public_primary_report_and_restore_its_private_candidate_ar
       execution_fixture_for_work_with_binding(FlowNodeKind::Reasoning, work, binding, None, None);
     let intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
     let builds = std::sync::Arc::new(Builds::new());
+    crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &schema).await;
     *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
     let mut outputs = capture_outputs(&intent, &builds, "base");
+    // Model reports can precede the trusted Agent capture publications. The
+    // common primary timestamp must remain the public report's publication.
+    for document in &mut outputs.documents {
+      let identity = document.record.identity().clone();
+      let pending = ArtifactRecord::pending(identity.clone(), time(31)).unwrap();
+      let verifying = pending
+        .transition(&identity, pending.version(), ArtifactEvent::BeginVerification, time(31))
+        .unwrap();
+      document.record = verifying
+        .transition(&identity, verifying.version(), ArtifactEvent::Publish, time(31))
+        .unwrap();
+    }
+    outputs.verified_at = time(31);
     let manifest = outputs.documents[1].clone();
     let public = crate::factory_node_test_support::document(
       &builds,
@@ -252,7 +296,7 @@ fn capture_can_keep_a_public_primary_report_and_restore_its_private_candidate_ar
         attempt: &node,
         build: Some(&intent),
         ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
-        observed_at: time(31),
+        observed_at: time(32),
       })
       .await
       .unwrap();
@@ -265,8 +309,33 @@ fn capture_can_keep_a_public_primary_report_and_restore_its_private_candidate_ar
       panic!("expected verified completion")
     };
     assert_eq!(record.payload().value(), &serde_json::json!({"count":9}));
+    assert_eq!(
+      record.observed_at(),
+      time(30),
+      "primary publication remains independent of later evidence verification"
+    );
+    assert!(manifest.record.published_at().unwrap() > record.observed_at());
     let candidate = restore_factory_node_change_set(&record, &intent, &execution, &manifest, &tool).unwrap();
     assert_eq!(candidate.subject().candidate_revision().as_str(), "captured-revision");
+    let provenance = record.build_provenance().unwrap();
+    let mut late = provenance.outputs().to_vec();
+    for output in &mut late {
+      if [CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT].contains(&output.name.as_str()) {
+        output.verified_at = intent.node().deadline();
+        output.fresh_until = time(intent.node().deadline().unix_millis() + 1);
+      }
+    }
+    let late = record
+      .clone()
+      .with_build_provenance(
+        FlowBuildProvenance::new(provenance.profile().clone(), late).unwrap(),
+        admitted.closure().definition(input.definition()).unwrap(),
+      )
+      .unwrap();
+    assert!(
+      restore_factory_node_change_set(&late, &intent, &execution, &manifest, &tool).is_err(),
+      "evidence verified at the exclusive original Node deadline cannot become a candidate"
+    );
     let mut changed = manifest;
     changed.bytes[0] ^= 1;
     assert!(restore_factory_node_change_set(&record, &intent, &execution, &changed, &tool).is_err());
@@ -554,6 +623,7 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
       };
       let intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
       let builds = std::sync::Arc::new(Builds::new());
+      crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &schema).await;
       *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
       let mut outputs = capture_outputs(&intent, &builds, capture_base);
       outputs.documents[1].schema = schema.reference().clone();
@@ -610,6 +680,11 @@ fn configured_capture_executor_returns_the_verified_manifest_through_the_common_
         panic!("trusted capture must publish a common result rather than a lifecycle checkpoint");
       };
       assert_eq!(expected.subject().exact(), work.subject());
+      assert_eq!(
+        record.discovery().and_then(FlowDiscoveryFacts::published_candidate),
+        Some(expected.subject()),
+        "a completed trusted capture must publish its exact candidate for downstream context selection"
+      );
       assert_eq!(record.payload().value()["base_revision"], capture_base);
       assert_eq!(execution.node_attempt_id(), node.id());
       assert_eq!(
@@ -800,7 +875,7 @@ fn partial_capture_retry_uses_the_frozen_base_and_restores_the_candidate_from_th
         _: octacity_server_domain::BuildId,
         _: octacity_server_domain::AttemptId,
         _: u64,
-      ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError> {
+      ) -> Result<FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError> {
         panic!("partial capture bytes from a failed execution cannot become a candidate")
       }
     }
@@ -821,6 +896,13 @@ fn partial_capture_retry_uses_the_frozen_base_and_restores_the_candidate_from_th
         .await
         .unwrap(),
       FactoryNodeStep::Advanced
+    );
+    assert_eq!(
+      first
+        .run_once(run.id(), claim.id, target.clone(), None, time(31))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Waiting
     );
     assert_eq!(
       first
@@ -914,6 +996,13 @@ fn partial_capture_retry_uses_the_frozen_base_and_restores_the_candidate_from_th
       )),
       crate::factory_node_test_support::clock(),
     );
+    assert_eq!(
+      recovered
+        .run_once(run.id(), successor.id, target.clone(), None, time(41))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Waiting
+    );
     assert!(matches!(
       recovered
         .run_once(run.id(), successor.id, target.clone(), None, time(41))
@@ -949,5 +1038,363 @@ fn partial_capture_retry_uses_the_frozen_base_and_restores_the_candidate_from_th
     ));
     assert_eq!(store.factory_run_snapshot(run.id()).await.unwrap(), completed);
     assert_eq!(successful.requests.lock().unwrap().len(), 1);
+  });
+}
+
+#[test]
+fn candidate_context_keeps_binary_source_inputs_out_of_declared_model_text() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = candidate_context_fixture().await;
+    assert_eq!(fixture.context.input_digest(), fixture.intent.input().digest().unwrap());
+    assert_eq!(
+      fixture.intent,
+      FlowBuildIntent::new(
+        fixture.intent.input().clone(),
+        &fixture.admitted,
+        fixture.intent.node().clone(),
+        fixture.intent.usage_before(),
+        fixture.intent.priority()
+      )
+      .unwrap()
+    );
+    assert!(!fixture.instructions.as_str().is_empty());
+    let persisted = octacity_server_store::FactoryRunStore::factory_run_snapshot(
+      fixture.runs.as_ref(),
+      fixture.intent.input().factory_run_id(),
+    )
+    .await
+    .unwrap();
+    assert!(persisted.flow.data.build_intents.contains(&fixture.intent));
+    assert_eq!(persisted.flow.data.records.len(), 1);
+    let producer = &persisted.flow.data.records[0];
+    let producer_intent = persisted
+      .flow
+      .data
+      .build_intents
+      .iter()
+      .find(|row| row.node().id() == producer.node_attempt_id())
+      .unwrap();
+    let producer_execution = persisted
+      .flow
+      .data
+      .build_executions
+      .iter()
+      .find(|row| row.node_attempt_id() == producer.node_attempt_id())
+      .unwrap();
+    let recovered = fixture
+      .source
+      .read(ReadFactoryCandidateContext {
+        input: fixture.intent.input(),
+        producer_record: producer,
+        producer_intent,
+        producer_execution,
+        capture_tool: &reference("git.capture"),
+        observed_at: time(32),
+        required_until: time(100),
+      })
+      .await
+      .unwrap();
+    assert_eq!(recovered.input_digest(), fixture.context.input_digest());
+    assert_eq!(
+      fixture.context.model_context(),
+      &std::collections::BTreeMap::from([(fixture.text.record.identity().artifact_id, fixture.text.bytes)])
+    );
+    assert_eq!(fixture.context.bundle().identity().artifact_id, fixture.bundle_id);
+    assert_eq!(fixture.context.manifest().identity().artifact_id, fixture.manifest_id);
+    let _opaque_verified_proof = fixture.context.candidate().clone();
+    assert!(
+      !fixture.calls.contains(&fixture.bundle_id),
+      "the binary bundle is never server model-context I/O"
+    );
+    assert!(fixture.calls.contains(&fixture.manifest_id));
+    assert!(fixture.calls.contains(&fixture.text.record.identity().artifact_id));
+    assert_eq!(fixture.calls.len(), 2);
+  });
+}
+
+pub(super) async fn candidate_context_fixture() -> crate::factory_candidate_context_test_support::CandidateContextFixture
+{
+  use crate::factory_candidate_context_test_support::{ReadonlyCandidateFixtureProfile, candidate_context_fixture};
+  use crate::factory_codex_tests::{credential_profiles, permissions};
+  let work = work();
+  let plugin = ImmutableReference::new(key("codex"), key("v1"), FactoryDigest::from_bytes([10; 32]));
+  let executable = ImmutableReference::new(key("codex-cli"), key("v1"), FactoryDigest::from_bytes([11; 32]));
+  candidate_context_fixture(ReadonlyCandidateFixtureProfile {
+    build_configuration: binding(work.subject().project_id()).build_configuration,
+    work,
+    permissions: permissions(FactoryTaskMode::Evaluate, plugin.clone(), executable.clone(), true),
+    toolchain: FactoryTaskToolchain {
+      plugin,
+      executable,
+      model: ImmutableReference::new(key("an-exact-model"), key("v1"), FactoryDigest::from_bytes([12; 32])),
+    },
+    credentials: credential_profiles(),
+    instructions: FactoryText::new("Measure the declared candidate and return the configured observation.").unwrap(),
+  })
+  .await
+}
+
+#[test]
+fn stored_candidate_context_recovers_only_the_persisted_selected_producer() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = candidate_context_fixture().await;
+    let source = FactoryStoredCandidateContextSource::new(
+      fixture.runs.clone(),
+      fixture.source.clone(),
+      reference("git.capture"),
+      crate::factory_node_test_support::clock(),
+    );
+    let context = source
+      .read_candidate_context(
+        &fixture.intent,
+        &FactoryClaimOwnership::new(fixture.intent.node().owner().clone(), fixture.intent.node().claim()),
+        time(32),
+        fixture.intent.node().deadline(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(context.input_digest(), fixture.intent.input().digest().unwrap());
+    assert_eq!(context.bundle(), fixture.context.bundle());
+    assert_eq!(context.manifest(), fixture.context.manifest());
+    assert_eq!(context.model_context(), fixture.context.model_context());
+  });
+}
+
+fn installed_candidate_profile(
+  fixture: &crate::factory_candidate_context_test_support::CandidateContextFixture,
+) -> FactoryCodexBuildProfile {
+  let frozen = fixture.intent.profile();
+  FactoryCodexBuildProfile {
+    toolchain: FactoryTaskToolchain {
+      plugin: frozen.plugin.clone(),
+      executable: frozen.tool.clone(),
+      model: frozen.model_or_tool.clone(),
+    },
+    build_configuration: frozen.build_configuration.clone(),
+    instructions: fixture.instructions.clone(),
+    credentials: crate::factory_codex_tests::credential_profiles(),
+    consumer: FactoryCredentialConsumer::ReadOnlyReview,
+    usage_policy: FactoryCodexUsagePolicy::ReportedCost,
+    tool_risk: None,
+    tool_response_limits: None,
+    reviewer: None,
+    candidate_capture_tool: Some(reference("git.capture")),
+    capture: None,
+    pipeline_node: octacity_server_domain::PipelineNodeId::new("explicit-consumer-94").unwrap(),
+    parameters: std::collections::BTreeMap::new(),
+    project_permissions: fixture.intent.permissions().clone(),
+    local_permissions: LocalPermissionCeiling::fully_enforced(fixture.intent.permissions().clone()),
+  }
+}
+
+#[test]
+fn installed_codex_candidate_profile_uses_one_explicit_capture_pin_for_dispatch_and_observation() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = candidate_context_fixture().await;
+    let profile = installed_candidate_profile(&fixture);
+    let source = FactoryCodexCandidateContextSource::new(
+      fixture.runs.clone(),
+      fixture.source.clone(),
+      vec![profile],
+      crate::factory_node_test_support::clock(),
+    )
+    .unwrap();
+    let dispatch = source
+      .read_candidate_context(
+        &fixture.intent,
+        &FactoryClaimOwnership::new(fixture.intent.node().owner().clone(), fixture.intent.node().claim()),
+        time(32),
+        fixture.intent.node().deadline(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(dispatch.input_digest(), fixture.intent.input().digest().unwrap());
+    assert_eq!(dispatch.bundle(), fixture.context.bundle());
+    assert_eq!(dispatch.model_context(), fixture.context.model_context());
+    let observation = source
+      .read_retained_candidate_context(&fixture.intent, time(2000), time(2001))
+      .await
+      .unwrap();
+    assert_eq!(observation.manifest(), fixture.context.manifest());
+    assert_eq!(observation.input_digest(), dispatch.input_digest());
+    assert_eq!(observation.model_context(), dispatch.model_context());
+  });
+}
+
+#[test]
+fn installed_candidate_source_rejects_absent_unknown_or_ambiguous_profiles_before_io() {
+  struct NoIoClock;
+  impl FactoryExecutionClock for NoIoClock {
+    fn now(&self) -> Result<octacity_server_domain::Timestamp, ApplicationError> {
+      panic!("profile rejection must precede trusted reader I/O")
+    }
+  }
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = candidate_context_fixture().await;
+    let profile = installed_candidate_profile(&fixture);
+    let mut disabled = profile.clone();
+    disabled.candidate_capture_tool = None;
+    let mut unknown = profile.clone();
+    unknown.toolchain.model = reference("other-installed-model");
+    for profiles in [vec![disabled], vec![unknown], vec![profile.clone(), profile]] {
+      let source = FactoryCodexCandidateContextSource::new(
+        fixture.runs.clone(),
+        fixture.source.clone(),
+        profiles,
+        std::sync::Arc::new(NoIoClock),
+      )
+      .unwrap();
+      let ownership = FactoryClaimOwnership::new(fixture.intent.node().owner().clone(), fixture.intent.node().claim());
+      assert!(
+        source
+          .read_candidate_context(&fixture.intent, &ownership, time(32), fixture.intent.node().deadline())
+          .await
+          .is_err()
+      );
+      assert!(
+        source
+          .read_retained_candidate_context(&fixture.intent, time(2000), time(2001))
+          .await
+          .is_err()
+      );
+    }
+  });
+}
+
+#[test]
+fn retained_candidate_context_survives_the_execution_deadline_without_renewing_authority() {
+  struct ObservationClock;
+  impl FactoryExecutionClock for ObservationClock {
+    fn now(&self) -> Result<octacity_server_domain::Timestamp, ApplicationError> {
+      Ok(time(2000))
+    }
+  }
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = candidate_context_fixture().await;
+    assert!(time(2000) > fixture.intent.node().deadline());
+    let source = FactoryStoredCandidateContextSource::new(
+      fixture.runs.clone(),
+      fixture.source.clone(),
+      reference("git.capture"),
+      std::sync::Arc::new(ObservationClock),
+    );
+    let before = octacity_server_store::FactoryRunStore::factory_run_snapshot(
+      fixture.runs.as_ref(),
+      fixture.intent.input().factory_run_id(),
+    )
+    .await
+    .unwrap();
+    let context = source
+      .read_retained_candidate_context(&fixture.intent, time(2000), time(2001))
+      .await
+      .expect("retained source verification requires no renewed execution claim");
+    assert_eq!(context.input_digest(), fixture.intent.input().digest().unwrap());
+    assert_eq!(context.bundle(), fixture.context.bundle());
+    assert_eq!(context.manifest(), fixture.context.manifest());
+    assert_eq!(context.model_context(), fixture.context.model_context());
+    assert_eq!(
+      octacity_server_store::FactoryRunStore::factory_run_snapshot(
+        fixture.runs.as_ref(),
+        fixture.intent.input().factory_run_id(),
+      )
+      .await
+      .unwrap(),
+      before,
+      "readonly recovery cannot acquire or renew execution authority"
+    );
+  });
+}
+
+#[test]
+fn retained_candidate_observation_accepts_io_duration_within_actual_artifact_retention() {
+  use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+  };
+  struct AdvancingClock(AtomicUsize);
+  impl FactoryExecutionClock for AdvancingClock {
+    fn now(&self) -> Result<octacity_server_domain::Timestamp, ApplicationError> {
+      Ok(time(if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+        2000
+      } else {
+        2002
+      }))
+    }
+  }
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = candidate_context_fixture().await;
+    let source = FactoryStoredCandidateContextSource::new(
+      fixture.runs.clone(),
+      fixture.source.clone(),
+      reference("git.capture"),
+      Arc::new(AdvancingClock(AtomicUsize::new(0))),
+    );
+    let context = source
+      .read_retained_candidate_context(&fixture.intent, time(2000), time(2001))
+      .await
+      .expect("a minimum retention guarantee must not become a one-millisecond I/O timeout");
+    assert_eq!(context.input_digest(), fixture.intent.input().digest().unwrap());
+    assert_eq!(context.model_context(), fixture.context.model_context());
+  });
+}
+
+#[test]
+fn stored_candidate_context_rejects_short_retention_foreign_capture_and_late_owner_expiry() {
+  use std::sync::{
+    Arc,
+    atomic::{AtomicUsize, Ordering},
+  };
+  struct ExpiringClock(AtomicUsize);
+  impl FactoryExecutionClock for ExpiringClock {
+    fn now(&self) -> Result<octacity_server_domain::Timestamp, ApplicationError> {
+      Ok(time(if self.0.fetch_add(1, Ordering::SeqCst) == 0 {
+        32
+      } else {
+        100
+      }))
+    }
+  }
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = candidate_context_fixture().await;
+    let ownership = FactoryClaimOwnership::new(fixture.intent.node().owner().clone(), fixture.intent.node().claim());
+    let source = FactoryStoredCandidateContextSource::new(
+      fixture.runs.clone(),
+      fixture.source.clone(),
+      reference("git.capture"),
+      crate::factory_node_test_support::clock(),
+    );
+    assert!(
+      source
+        .read_candidate_context(&fixture.intent, &ownership, time(32), time(100))
+        .await
+        .is_err(),
+      "retention cannot stop before the original Job deadline"
+    );
+    let foreign = FactoryStoredCandidateContextSource::new(
+      fixture.runs.clone(),
+      fixture.source.clone(),
+      reference("different.operator.capture"),
+      crate::factory_node_test_support::clock(),
+    );
+    assert!(
+      foreign
+        .read_candidate_context(&fixture.intent, &ownership, time(32), fixture.intent.node().deadline())
+        .await
+        .is_err(),
+      "stored facts do not authorize another installed capture implementation"
+    );
+    let expired = FactoryStoredCandidateContextSource::new(
+      fixture.runs.clone(),
+      fixture.source.clone(),
+      reference("git.capture"),
+      Arc::new(ExpiringClock(AtomicUsize::new(0))),
+    );
+    assert!(
+      expired
+        .read_candidate_context(&fixture.intent, &ownership, time(32), fixture.intent.node().deadline())
+        .await
+        .is_err(),
+      "owner expiry during asynchronous context I/O is checked at actual time"
+    );
   });
 }

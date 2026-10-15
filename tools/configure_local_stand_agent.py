@@ -32,6 +32,7 @@ MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_CREDENTIAL_BYTES = 64 * 1024
 MAX_PUBLIC_KEY_BYTES = 1024
 MAX_CA_BYTES = 1024 * 1024
+MAX_FACTORY_AGENT_PROFILE_BYTES = 256 * 1024
 # These ceilings equal the aggregate extraction policy in the staging
 # allowlist. Configuration verification must never turn a malformed bundle
 # into an unbounded filesystem walk or whole-file allocation.
@@ -125,6 +126,81 @@ class AgentLaunchPlan:
 
 class AgentConfigurationError(RuntimeError):
     """The native local-stand Agent configuration cannot be trusted."""
+
+
+def _verify_factory_executable(tool: Any) -> None:
+    """Verify one immutable operator executable, independently of its purpose."""
+    if not isinstance(tool, dict) or set(tool) != {"path", "version", "platform", "sha256"}:
+        raise ValueError("tool")
+    if not all(isinstance(value, str) and value for value in tool.values()) or not VERSION_PATTERN.fullmatch(tool["version"]) or not re.fullmatch("[a-z0-9_-]+", tool["platform"]) or not re.fullmatch("[0-9a-f]{64}", tool["sha256"]):
+        raise ValueError("tool")
+    executable = Path(tool["path"])
+    if not executable.is_absolute():
+        raise ValueError("path")
+    digest, _ = _verified_file_digest(executable, "Factory Agent executable", 256 * 1024 * 1024, 256 * 1024 * 1024)
+    if digest != tool["sha256"] or not os.access(executable, os.X_OK):
+        raise ValueError("identity")
+
+
+def read_factory_agent_profile(path: Path) -> dict[str, Any]:
+    """Read a separate operator policy and verify its selected executable bytes."""
+    try:
+        contents = state.read_regular_file(
+            path, "Factory Agent profile", max_bytes=MAX_FACTORY_AGENT_PROFILE_BYTES,
+            modes=frozenset({PRIVATE_FILE_MODE}),
+        )
+        document = tomllib.loads(contents.decode("utf-8"))
+        required = {"version", "factory_permissions", "tool_executables", "allowed_network_hosts"}
+        if not required <= set(document) or set(document) - required - {"change_set_capture", "factory_credential_profiles", "protected_reader"} or type(document["version"]) is not int or document["version"] != 1:
+            raise ValueError("shape")
+        grants, tools, hosts = document["factory_permissions"], document["tool_executables"], document["allowed_network_hosts"]
+        if not isinstance(grants, dict) or not isinstance(tools, dict) or not 1 <= len(tools) <= 32 or not isinstance(hosts, list) or len(hosts) > 128:
+            raise ValueError("shape")
+        if any(not isinstance(host, str) or not host or host.strip() != host or any(ord(char) < 32 for char in host) for host in hosts) or len(hosts) != len(set(hosts)):
+            raise ValueError("hosts")
+        for product, tool in tools.items():
+            if not product:
+                raise ValueError("tool")
+            _verify_factory_executable(tool)
+        if "change_set_capture" in document:
+            capture = document["change_set_capture"]
+            if not isinstance(capture, dict) or set(capture) != {"provider", "executable"} or capture["provider"] != "git":
+                raise ValueError("capture")
+            _verify_factory_executable(capture["executable"])
+        for reference in grants.get("executables", []):
+            tool = tools.get(reference.get("identity"))
+            if tool is None or reference.get("version") != tool["version"] or reference.get("sha256") != tool["sha256"]:
+                raise ValueError("identity")
+        credentials = document.get("factory_credential_profiles", {})
+        if not isinstance(credentials, dict) or len(credentials) > 32 or any(
+            not isinstance(name, str) or not name or not isinstance(path, str) or not Path(path).is_absolute()
+            for name, path in credentials.items()
+        ):
+            raise ValueError("credential references")
+        if "protected_reader" in document and not isinstance(document["protected_reader"], dict):
+            raise ValueError("reader")
+        _toml_value(grants)
+        return document
+    except (OSError, UnicodeError, ValueError, TypeError, AttributeError, RecursionError, state.StateError, AgentConfigurationError) as error:
+        raise AgentConfigurationError("Factory Agent profile is invalid") from error
+
+
+def _factory_policy_matches(document: dict[str, Any], profile: dict[str, Any]) -> bool:
+    """Compare the complete installed local policy, including optional capture."""
+    return all(document.get(name) == profile.get(name) for name in (
+        "factory_permissions", "tool_executables", "allowed_network_hosts", "change_set_capture", "factory_credential_profiles", "protected_reader",
+    ))
+
+
+def _toml_value(value: Any) -> str:
+    """Render bounded protocol policy values as one TOML inline value."""
+    if isinstance(value, dict):
+        return "{ " + ", ".join(f"{json.dumps(key)} = {_toml_value(item)}" for key, item in value.items()) + " }"
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(item) for item in value) + "]"
+    if isinstance(value, (str, bool)) or type(value) is int:
+        return json.dumps(value)
+    raise ValueError("unsupported policy value")
 
 
 def microsandbox_state_root(root: Path) -> Path:
@@ -346,10 +422,12 @@ def _render_config(
     ca_certificate: Path,
     signing_public_key: str,
     microsandbox_version: str,
+    factory_profile: dict[str, Any] | None = None,
+    temporary_state_root: Path | None = None,
 ) -> bytes:
     agent_root = root / "agent"
     work_root = agent_root / "work"
-    state_root = microsandbox_state_root(root)
+    state_root = temporary_state_root or microsandbox_state_root(root)
     cache_root = agent_root / "cache"
     values = {
         "credential": _toml_string(credential),
@@ -372,6 +450,24 @@ def _render_config(
         modes=frozenset({0o755}),
     )
     codex_digest = hashlib.sha256(codex_contents).hexdigest()
+    factory_prefix = ""
+    selected_hosts = "[]"
+    tool_toml = f'''[tool_executables.codex-cli]
+path = {_toml_string(codex_fixture)}
+version = "{LOCAL_CODEX_VERSION}"
+platform = "{LOCAL_CODEX_PLATFORM}"
+sha256 = "{codex_digest}"
+'''
+    if factory_profile is not None:
+        factory_prefix = f'factory_permissions = {_toml_value(factory_profile["factory_permissions"])}\ntool_executables = {_toml_value(factory_profile["tool_executables"])}\n'
+        if "change_set_capture" in factory_profile:
+            factory_prefix += f'change_set_capture = {_toml_value(factory_profile["change_set_capture"])}\n'
+        if "factory_credential_profiles" in factory_profile:
+            factory_prefix += f'factory_credential_profiles = {_toml_value(factory_profile["factory_credential_profiles"])}\n'
+        if "protected_reader" in factory_profile:
+            factory_prefix += f'protected_reader = {_toml_value(factory_profile["protected_reader"])}\n'
+        selected_hosts = _toml_value(factory_profile["allowed_network_hosts"])
+        tool_toml = ""
     agent_limits = _toml_integer_lines(LOCAL_AGENT_LIMITS)
     output_limits = _toml_inline_integer_table(LOCAL_OUTPUT_LIMITS)
     cache_limits = _toml_integer_lines(LOCAL_CACHE_LIMITS)
@@ -380,7 +476,7 @@ def _render_config(
     labels = "\n".join(
         f"{name} = {json.dumps(value)}" for name, value in LOCAL_AGENT_LABELS.items()
     )
-    return f'''agent_id = "{LOCAL_AGENT_NAME}"
+    return f'''{factory_prefix}agent_id = "{LOCAL_AGENT_NAME}"
 server_url = "{initializer.gateway_origin("agent.localhost")}"
 credential_file = {values["credential"]}
 tls_ca_certificate_file = {values["ca"]}
@@ -394,7 +490,7 @@ allow_native_execution = false
 native_linux_pids_limit = 0
 allow_host_execution = false
 allow_unrestricted_network = false
-allowed_network_hosts = []
+allowed_network_hosts = {selected_hosts}
 allowed_upload_origins = ["{initializer.gateway_origin("objects.localhost")}"]
 {agent_limits}
 max_output_limits = {output_limits}
@@ -426,11 +522,7 @@ metrics_sample_interval_seconds = 1
 [server_signing_keys]
 local-stand = {values["signing_key"]}
 
-[tool_executables.codex-cli]
-path = {_toml_string(codex_fixture)}
-version = "{LOCAL_CODEX_VERSION}"
-platform = "{LOCAL_CODEX_PLATFORM}"
-sha256 = "{codex_digest}"
+{tool_toml}
 
 [labels]
 {labels}
@@ -491,6 +583,16 @@ def validated_launch_plan(
             ).hexdigest(),
         }
     }
+    profile_path = receipt.get("factory_agent_profile")
+    if profile_path is not None:
+        if profile_path != str(root / "config/factory-agent-profile.toml"):
+            raise AgentConfigurationError("Factory Agent profile targets unexpected state")
+        profile = read_factory_agent_profile(Path(profile_path))
+        expected_tool = profile["tool_executables"]
+        if not _factory_policy_matches(document, profile):
+            raise AgentConfigurationError("Factory Agent configuration differs from its installed profile")
+    elif any(document.get(name) is not None for name in ("factory_permissions", "change_set_capture", "factory_credential_profiles", "protected_reader")):
+        raise AgentConfigurationError("Factory Agent configuration has no independently installed profile")
     if document.get("tool_executables") != expected_tool:
         raise AgentConfigurationError("Agent configuration has an unexpected tool executable")
     manifest = _json_object(
@@ -538,7 +640,7 @@ def _ensure_exact_private_file(path: Path, contents: bytes, description: str) ->
         raise AgentConfigurationError(f"{description} differs from the verified input")
 
 
-def _validate_with_agent(agent: Path, configuration: Path) -> None:
+def _validate_with_agent(agent: Path, configuration: Path, *, private_factory: bool = False) -> None:
     environment = {
         **os.environ,
         "HTTP_PROXY": "http://127.0.0.1:9",
@@ -558,8 +660,46 @@ def _validate_with_agent(agent: Path, configuration: Path) -> None:
     except (OSError, subprocess.TimeoutExpired) as error:
         raise AgentConfigurationError(f"cannot validate Agent configuration: {error}") from error
     if result.returncode != 0 or "configuration is valid" not in result.stdout:
+        if private_factory:
+            raise AgentConfigurationError("octacity-agent rejected the Factory configuration")
         diagnostic = (result.stderr or result.stdout).strip()[-2048:]
         raise AgentConfigurationError(f"octacity-agent rejected generated configuration: {diagnostic}")
+
+
+def preflight_factory_agent_profile(root: Path, installation: Path, profile_path: Path) -> None:
+    """Validate installed authority with the real Agent before enrollment or launch.
+
+    The CLI receives only disposable owned work, state, cache and credential
+    paths. Public trust inputs and immutable installed executables are reused.
+    """
+    profile = read_factory_agent_profile(profile_path)
+    existing = root / "config/agent.toml"
+    if existing.exists() or existing.is_symlink():
+        try:
+            document = tomllib.loads(_regular_file(existing, "installed Agent configuration", max_bytes=256 * 1024, modes=frozenset({PRIVATE_FILE_MODE})).decode("utf-8"))
+        except (OSError, UnicodeError, ValueError) as error:
+            raise AgentConfigurationError("installed Agent configuration is invalid") from error
+        if not _factory_policy_matches(document, profile):
+            raise AgentConfigurationError("Factory Agent installation cannot change an existing profile; reset the disposable stand first")
+    manifest, installed = _verified_installation(installation, _installation_limits(REPOSITORY))
+    with tempfile.TemporaryDirectory(prefix="ocf-", dir=MICROSANDBOX_STATE_PARENT) as temporary:
+        validation_root = Path(temporary).resolve()
+        for relative in ("agent", "agent/work", "agent/cache", "agent/state", "agent/trust"):
+            state.ensure_private_directory(validation_root / relative)
+        credential = validation_root / "agent/credential"
+        credential.write_text("disposable-preflight-credential\n")
+        credential.chmod(PRIVATE_FILE_MODE)
+        ca = validation_root / "agent/trust/local-ca.pem"
+        ca.write_bytes(_regular_file(root / "pki/local-ca.pem", "stand CA", max_bytes=MAX_CA_BYTES, modes=frozenset({0o644})))
+        ca.chmod(PRIVATE_FILE_MODE)
+        signing_key = _regular_file(root / "pki/server-signing-public-key", "stand signing public key", max_bytes=MAX_PUBLIC_KEY_BYTES, modes=frozenset({0o644})).decode("ascii").strip()
+        contents = _render_config(root=validation_root, installation=installation.resolve(), credential=credential,
+            ca_certificate=ca, signing_public_key=signing_key, microsandbox_version=manifest["microsandbox_version"],
+            factory_profile=profile, temporary_state_root=validation_root / "agent/state")
+        config = validation_root / "agent.toml"
+        config.write_bytes(contents)
+        config.chmod(PRIVATE_FILE_MODE)
+        _validate_with_agent(installed["agent"], config, private_factory=True)
 
 
 def _require_apple_silicon(system: str | None, machine: str | None) -> None:
@@ -578,10 +718,12 @@ def generate_agent_configuration(
     openssl: str = "openssl",
     host_system: str | None = None,
     host_machine: str | None = None,
+    factory_agent_profile: Path | None = None,
 ) -> dict[str, str]:
     """Validate all trust inputs and publish one fail-closed Agent configuration."""
 
     _require_apple_silicon(host_system, host_machine)
+    factory_profile = read_factory_agent_profile(factory_agent_profile) if factory_agent_profile is not None else None
     try:
         initialized = initializer.validate_initialized_state(
             root,
@@ -660,6 +802,7 @@ def generate_agent_configuration(
             ca_certificate=trusted_ca,
             signing_public_key=encoded_key,
             microsandbox_version=manifest["microsandbox_version"],
+            factory_profile=factory_profile,
         )
         destination = root / "config/agent.toml"
         if destination.exists() or destination.is_symlink():
@@ -676,7 +819,7 @@ def generate_agent_configuration(
                     output.flush()
                     os.fsync(output.fileno())
                 descriptor = -1
-                _validate_with_agent(installed["agent"], temporary)
+                _validate_with_agent(installed["agent"], temporary, private_factory=factory_profile is not None)
                 try:
                     os.link(temporary, destination, follow_symlinks=False)
                 except FileExistsError:
@@ -687,8 +830,11 @@ def generate_agent_configuration(
                 if descriptor >= 0:
                     os.close(descriptor)
                 temporary.unlink(missing_ok=True)
+        if factory_profile is not None:
+            normalized = "\n".join(f"{json.dumps(name)} = {_toml_value(value)}" for name, value in factory_profile.items()).encode("utf-8") + b"\n"
+            _ensure_exact_private_file(root / "config/factory-agent-profile.toml", normalized, "installed Factory Agent profile")
 
-    return {
+    receipt = {
         "config": str(destination),
         "credential": str(credential),
         "work_root": str(agent_root / "work"),
@@ -697,6 +843,9 @@ def generate_agent_configuration(
         "log_root": str(root / "logs/agent"),
         "ca_certificate": str(trusted_ca),
     }
+    if factory_profile is not None:
+        receipt["factory_agent_profile"] = str(root / "config/factory-agent-profile.toml")
+    return receipt
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -709,6 +858,7 @@ def parse_arguments() -> argparse.Namespace:
     )
     parser.add_argument("--native-installation", required=True, type=Path)
     parser.add_argument("--openssl", default="openssl", help="OpenSSL executable")
+    parser.add_argument("--factory-agent-profile", type=Path, help="separate private local Factory Agent policy")
     return parser.parse_args()
 
 
@@ -719,6 +869,7 @@ def main() -> int:
             arguments.root,
             arguments.native_installation,
             openssl=arguments.openssl,
+            factory_agent_profile=arguments.factory_agent_profile,
         )
     except (AgentConfigurationError, OSError, UnicodeError, ValueError) as error:
         raise SystemExit(f"local stand Agent configuration failed: {error}") from error

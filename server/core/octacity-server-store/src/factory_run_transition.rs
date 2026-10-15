@@ -500,7 +500,9 @@ fn validate_node_journal(
         return Err(invalid());
       }
       let selected = &selection.entry.input;
-      if selection.run_claim() != *baseline.claim
+      // A current store-validated owner may resume an expired original lease,
+      // retaining the same immutable selection and capacity reservation.
+      if (selection.run_claim() != *baseline.claim && baseline.claim.claim.claimed_at() < selection.claim.expires_at())
         || selected.run_id != request.run_id
         || selected.flow_run_id != attempt.flow_run_id()
         || selected.cycle_id != attempt.workflow_cycle_id()

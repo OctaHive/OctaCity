@@ -47,6 +47,14 @@ async fn verify_sequential_pipeline(factory_enabled: bool) {
   } else {
     runtime_config(directory.path(), &postgres_url, &object_endpoint)
   };
+  for (file, variable) in [
+    ("object-access-key", "OCTACITY_MINIO_ACCESS_KEY"),
+    ("object-secret-key", "OCTACITY_MINIO_SECRET_KEY"),
+  ] {
+    if let Ok(value) = std::env::var(variable) {
+      std::fs::write(directory.path().join(file), value).unwrap();
+    }
+  }
   let pool = PgPoolOptions::new()
     .max_connections(4)
     .connect(&postgres_url)
@@ -246,6 +254,42 @@ async fn verify_sequential_pipeline(factory_enabled: bool) {
     &format!("{run}-lease-1"),
   )
   .await;
+  if factory_enabled {
+    let request = octacity_protocol::AuthorizeToolActionRequest {
+      protocol_version: 1,
+      request_id: format!("{run}-tool-action"),
+      registration_id: registered.registration_id.clone(),
+      lease: (&first).into(),
+      proposal_sha256: "11".repeat(32),
+      proposal_summary: octacity_protocol::FactoryToolActionSummaryV3 {
+        argument_count: 1,
+        read_path_count: 0,
+        write_path_count: 0,
+        network_host_count: 0,
+        secret_profile_count: 0,
+        workload_identity_profile_count: 0,
+        descendants: 1,
+        output_kind_count: 0,
+      },
+    };
+    let response: octacity_protocol::AuthorizeToolActionResponse = protocol_post(
+      &client,
+      &format!("{agent_origin}/api/v1/leases/{}/tool-actions:authorize", first.lease_id),
+      &request.request_id,
+      &registration_credential,
+      &request,
+    )
+    .await;
+    response.validate(&request).unwrap();
+    assert_eq!(
+      response.decision.disposition(),
+      octacity_protocol::FactoryToolActionDispositionV3::Deny
+    );
+    assert_eq!(
+      response.decision.source(),
+      octacity_protocol::FactoryToolActionDecisionSourceV3::HardPolicy
+    );
+  }
   finish_job(
     &client,
     &agent_origin,

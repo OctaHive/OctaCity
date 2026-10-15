@@ -19,8 +19,11 @@ mod runtime;
 pub use config::{FactoryRuntimeConfig, ServerConfig, ServerConfigError};
 pub use runtime::{
   DurableWorkerError, FactoryDeliveryInputs, FactoryDeliveryMaterializer, FactoryDeliveryPolicy,
-  FactoryDeliveryPolicyDraft, FactoryDeliveryTargetPolicy, FactoryRuntimeInstallation, FactoryRuntimeInstallationError,
-  FactoryRuntimeInstaller, FactoryRuntimeReadiness, FactoryRuntimeResources, HostedFactoryCandidatePublisher,
-  LogSearchMaintenanceError, RestoreMaintenanceError, RestoredStateSummary, RuntimeAssemblyError, ServerRuntime,
-  ServerRuntimeError, rebuild_log_search, reconcile_restored_state, validate_runtime_files,
+  FactoryDeliveryPolicyDraft, FactoryDeliveryTargetPolicy, FactoryProfileRuntimeInstaller, FactoryRuntimeInstallation,
+  FactoryRuntimeInstallationError, FactoryRuntimeInstaller, FactoryRuntimeProfileCatalog,
+  FactoryRuntimeProtectedValidationProfile, FactoryRuntimeReadiness, FactoryRuntimeResources,
+  FactoryRuntimeSignalConnector, FactoryRuntimeSignalProfile, FactoryRuntimeSignalReadiness,
+  HostedFactoryCandidatePublisher, LogSearchMaintenanceError, RestoreMaintenanceError, RestoredStateSummary,
+  RuntimeAssemblyError, ServerRuntime, ServerRuntimeError, load_factory_signal_connectors, rebuild_log_search,
+  reconcile_restored_state, validate_runtime_files,
 };

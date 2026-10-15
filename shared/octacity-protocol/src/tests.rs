@@ -138,6 +138,7 @@ fn v3_spec() -> JobSpecV3 {
     source: current.source,
     octa: current.octa,
     execution: ManagedOctaExecutionV3 {
+      workspace_root: None,
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
       credential_profile: Some("model-coding".to_owned()),
@@ -255,6 +256,8 @@ fn v3_change_set_capture_is_bounded_and_requires_explicit_source_write_authority
       binary_policy: ChangeSetBinaryPolicyV3::Reject,
       forbidden_secret_patterns: ChangeSetSecretPatternV3::ALL.to_vec(),
     },
+
+    observation: None,
   });
   value.validate(&v3_binding(&value)).unwrap();
 
@@ -300,6 +303,34 @@ fn v3_change_set_capture_is_bounded_and_requires_explicit_source_write_authority
     .policy
     .allowed_path_prefixes = vec!["src".to_owned(), "src".to_owned()];
   assert!(value.validate(&v3_binding(&value)).is_err());
+}
+
+#[test]
+fn managed_workspace_anchor_is_explicit_and_cannot_select_an_arbitrary_root() {
+  let original = v3_spec();
+  let mut document = serde_json::to_value(&original).unwrap();
+  assert!(document["execution"].get("workspace_root").is_none());
+  document["execution"]["workspace_root"] = serde_json::json!("/workspace");
+  let anchored: JobSpecV3 = serde_json::from_value(document.clone())
+    .expect("a signed managed execution can select the fixed virtual workspace anchor");
+  anchored.validate(&v3_binding(&anchored)).unwrap();
+  for invalid in [
+    "/",
+    "/workspace/source",
+    "/workspace/../private",
+    "/octacity/protected",
+    "/host/job",
+  ] {
+    document["execution"]["workspace_root"] = serde_json::json!(invalid);
+    let refused = match serde_json::from_value::<JobSpecV3>(document.clone()) {
+      Ok(value) => value.validate(&v3_binding(&value)).is_err(),
+      Err(_) => true,
+    };
+    assert!(
+      refused,
+      "a workspace selection cannot widen the fixed virtual root: {invalid}"
+    );
+  }
 }
 
 #[test]
@@ -389,6 +420,13 @@ fn captured_change_set_manifest_is_bounded_canonical_and_portable() {
     },
     patch: None,
   };
+  // Compatibility vector for the existing length-framed ChangeSet identity:
+  // base/candidate revisions, bundle digest, then verified manifest digest.
+  assert_eq!(
+    manifest.candidate_digest(&"2a".repeat(32)).unwrap(),
+    "b4b198f0b55c6d23b7a584456c74fafaa31732dd0fd8dbb08af280a6dca39e39"
+  );
+  assert!(manifest.candidate_digest(&"2A".repeat(32)).is_err());
   let mut node_manifest = serde_json::to_value(&manifest).unwrap();
   node_manifest.as_object_mut().unwrap().remove("stage_attempt_id");
   node_manifest["node_attempt_id"] = serde_json::json!("00000000-0000-0000-0000-000000000003");
@@ -690,7 +728,45 @@ fn v3_wildcard_command_arguments_have_explicit_enforceable_bounds() {
 }
 
 #[test]
-fn v3_protected_tools_require_the_exact_blocking_plugin_contract() {
+fn managed_tool_control_accepts_an_independent_signed_plugin_with_the_known_action_mode() {
+  let mut value = v3_spec();
+  let digest = value.octa.plugin_digests.remove("codex").unwrap();
+  value
+    .octa
+    .plugin_digests
+    .insert("independent-harness".to_owned(), digest);
+  value
+    .permissions
+    .plugins
+    .iter_mut()
+    .find(|plugin| plugin.identity == "codex")
+    .unwrap()
+    .identity = "independent-harness".to_owned();
+  value
+    .permissions
+    .plugins
+    .sort_by(|left, right| left.identity.cmp(&right.identity));
+  value.permissions.tools = vec![FactoryImmutableReferenceV3 {
+    identity: "protected-read".to_owned(),
+    version: "1.0.0".to_owned(),
+    sha256: DIGEST.to_owned(),
+  }];
+  value.execution.tool_control = Some(FactoryToolControlV3 {
+    plugin: "independent-harness".to_owned(),
+    capability: "reader.blocking-tool-authorization.v1".to_owned(),
+    mode: FactoryToolControlModeV3::ToolRisk,
+    response_limits: FactoryToolResponseLimitsV3 {
+      per_call_bytes: 32,
+      total_bytes: 64,
+    },
+  });
+  value.validate(&binding(&spec())).expect(
+    "intrinsic protocol validation must not select a vendor; installed semantic qualification is required separately",
+  );
+}
+
+#[test]
+fn v3_protected_tools_require_signed_control_and_a_canonical_capability_selector() {
   let mut value = v3_spec();
   value.permissions.tools = vec![FactoryImmutableReferenceV3 {
     identity: "bash".to_owned(),
@@ -701,16 +777,61 @@ fn v3_protected_tools_require_the_exact_blocking_plugin_contract() {
 
   value.execution.tool_control = Some(FactoryToolControlV3 {
     plugin: "codex".to_owned(),
-    capability: "unsupported".to_owned(),
+    capability: "noncanonical capability".to_owned(),
     mode: FactoryToolControlModeV3::ToolRisk,
+    response_limits: FactoryToolResponseLimitsV3 {
+      per_call_bytes: 32,
+      total_bytes: 64,
+    },
   });
   assert!(value.validate(&binding(&spec())).is_err());
 
-  value.execution.tool_control.as_mut().unwrap().capability = BLOCKING_TOOL_AUTHORIZATION_CAPABILITY.to_owned();
+  value.execution.tool_control.as_mut().unwrap().capability = "fixture.blocking-tool-authorization.v1".to_owned();
   value.validate(&binding(&spec())).unwrap();
 
   value.execution.tool_control.as_mut().unwrap().plugin = "missing".to_owned();
   assert!(value.validate(&binding(&spec())).is_err());
+}
+
+#[test]
+fn signed_tool_control_requires_explicit_valid_response_limits() {
+  let control = serde_json::json!({
+    "plugin": "codex",
+    "capability": "fixture.blocking-tool-authorization.v1",
+    "mode": "tool_risk"
+  });
+  assert!(
+    serde_json::from_value::<FactoryToolControlV3>(control.clone()).is_err(),
+    "signed control must not silently supply absent aggregate tool-response limits"
+  );
+  for (per_call, total, valid) in [
+    (0, 64, false),
+    (32, 0, false),
+    (65, 64, false),
+    (32, 64, true),
+    (4_194_304, 4_194_304, true),
+    (4_194_305, 4_194_305, false),
+  ] {
+    let mut value = v3_spec();
+    value.permissions.tools = vec![FactoryImmutableReferenceV3 {
+      identity: "protected-read".to_owned(),
+      version: "1.0.0".to_owned(),
+      sha256: DIGEST.to_owned(),
+    }];
+    let mut json = serde_json::to_value(value).unwrap();
+    let mut bounded = control.clone();
+    bounded["response_limits"] = serde_json::json!({
+      "per_call_bytes": per_call,
+      "total_bytes": total
+    });
+    json["execution"]["tool_control"] = bounded;
+    let decoded: JobSpecV3 = serde_json::from_value(json).unwrap();
+    assert_eq!(
+      decoded.validate(&binding(&spec())).is_ok(),
+      valid,
+      "response limit per-call={per_call}, total={total}"
+    );
+  }
 }
 
 #[test]
@@ -1032,4 +1153,55 @@ fn managed_execution_requires_a_future_absolute_deadline_independent_of_validity
       })
       .is_ok()
   );
+}
+
+#[test]
+fn mixed_wildcard_permissions_keep_the_actual_command_argument_byte_ceiling() {
+  let mut job = v3_spec();
+  job.permissions.commands[0].arguments = vec![
+    FactoryCommandArgumentV3::Exact {
+      value: "--schema".to_owned(),
+    },
+    FactoryCommandArgumentV3::Any {
+      max_bytes: MAX_FACTORY_COMMAND_ARGUMENT_BYTES as u32,
+    },
+  ];
+  // Each wildcard is a per-argument ceiling. Concrete arguments also share
+  // the independent invocation ceiling, even beside fixed literal arguments.
+  job.permissions.validate().unwrap();
+  let command = &job.permissions.commands[0];
+  assert!(command.permits_arguments(&["--schema".to_owned(), "x".repeat(16_376)]));
+  assert!(!command.permits_arguments(&["--schema".to_owned(), "x".repeat(16_377)]));
+  assert!(!command.permits_arguments(&["--different".to_owned(), "short".to_owned()]));
+}
+
+#[test]
+fn capture_observation_descriptor_requires_a_distinct_bounded_schema_pinned_report() {
+  let output = ChangeSetObservationOutputV3 {
+    name: "arbitrary.capture-observation".to_owned(),
+    schema: FactoryImmutableReferenceV3 {
+      identity: "project.capture-facts".to_owned(),
+      version: "v7".to_owned(),
+      sha256: "5b".repeat(32),
+    },
+  };
+  output.validate().unwrap();
+  for name in [
+    CHANGE_SET_BUNDLE_OUTPUT,
+    CHANGE_SET_MANIFEST_OUTPUT,
+    CHANGE_SET_PATCH_OUTPUT,
+    "../escape",
+    "",
+    "UPPERCASE",
+  ] {
+    let mut changed = output.clone();
+    changed.name = name.to_owned();
+    assert!(
+      changed.validate().is_err(),
+      "capture reports require independent canonical logical identities"
+    );
+  }
+  let mut changed = output;
+  changed.schema.sha256 = "invalid".to_owned();
+  assert!(changed.validate().is_err());
 }

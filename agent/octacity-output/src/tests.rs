@@ -150,7 +150,7 @@ async fn retries_one_presigned_put_then_completes_and_removes_staging() {
   )
   .unwrap();
   let temporary = tempfile::tempdir().unwrap();
-  let workspace = temporary.path().join("workspace");
+  let workspace = temporary.path().join("output");
   tokio::fs::create_dir(&workspace).await.unwrap();
   tokio::fs::write(workspace.join("result.bin"), b"immutable-output")
     .await
@@ -158,7 +158,7 @@ async fn retries_one_presigned_put_then_completes_and_removes_staging() {
   let staging = temporary.path().join("staging");
   let results = vec![serde_json::json!({
     "run_id": 17,
-    "tasks": [{"task_id": 23, "artifacts": [{"name": "binary", "path": "result.bin"}]}]
+    "tasks": [{"task_id": 23, "artifacts": [{"name": "binary", "path": "output/result.bin"}]}]
   })];
   let registration = registration();
   let lease = lease();
@@ -168,6 +168,7 @@ async fn retries_one_presigned_put_then_completes_and_removes_staging() {
     .freeze(
       FreezeOutputs {
         workspace: &workspace,
+        workspace_prefix: Some(std::path::Path::new("output")),
         results: &results,
         trusted_files: &[],
         limits: &OutputLimits {
@@ -200,6 +201,64 @@ async fn retries_one_presigned_put_then_completes_and_removes_staging() {
   assert_eq!(coordinator.begun.lock().unwrap().len(), 1);
   assert_eq!(coordinator.completed.lock().unwrap().len(), 1);
   assert!(!staging.exists());
+}
+
+#[tokio::test]
+async fn mounted_output_publication_cannot_read_another_resource_namespace() {
+  let coordinator = Arc::new(UploadCoordinator {
+    put_url: "https://objects.example/object".to_owned(),
+    expires_at: unix_now() + 60,
+    begun: Mutex::new(Vec::new()),
+    completed: Mutex::new(Vec::new()),
+  });
+  let publisher = PresignedOutputPublisher::new(
+    coordinator.clone(),
+    PresignedOutputPublisherConfig {
+      allowed_origins: vec!["https://objects.example".to_owned()],
+      ca_certificate_file: None,
+      max_archive_entries: 16,
+      upload_timeout: Duration::from_secs(2),
+      retry: RetryPolicy {
+        max_attempts: 1,
+        initial_delay: Duration::from_millis(1),
+        max_delay: Duration::from_millis(1),
+      },
+    },
+  )
+  .unwrap();
+  let temporary = tempfile::tempdir().unwrap();
+  let output = temporary.path().join("output");
+  std::fs::create_dir(&output).unwrap();
+  for namespace in ["source", "scratch", "protected", "Source2"] {
+    // The file exists: a missing path must not be the reason this is denied.
+    std::fs::create_dir(output.join(namespace)).unwrap();
+    std::fs::write(output.join(namespace).join("private.bin"), b"private-canary").unwrap();
+    let results = [serde_json::json!({"run_id":17,"tasks":[{"task_id":23,"artifacts":[
+      {"name":"result","path":format!("{namespace}/private.bin")}
+    ]}]})];
+    let result = publisher
+      .freeze(
+        FreezeOutputs {
+          workspace: &output,
+          workspace_prefix: Some(std::path::Path::new("output")),
+          results: &results,
+          trusted_files: &[],
+          staging_root: &temporary.path().join("staging"),
+          limits: &OutputLimits {
+            artifact_count: 1,
+            artifact_bytes: 1024,
+            report_count: 0,
+            report_bytes: 0,
+            single_output_bytes: 1024,
+          },
+        },
+        CancellationToken::new(),
+      )
+      .await;
+    assert!(matches!(result, Err(OutputError::Invalid(_))));
+  }
+  assert!(coordinator.begun.lock().unwrap().is_empty());
+  assert!(coordinator.completed.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -259,6 +318,7 @@ async fn partial_real_upload_publishes_no_second_identity_and_removes_staging() 
     .freeze(
       FreezeOutputs {
         workspace: &workspace,
+        workspace_prefix: None,
         results: &results,
         trusted_files: &[],
         limits: &OutputLimits {
@@ -391,6 +451,7 @@ async fn publish_fixture(publisher: &PresignedOutputPublisher) -> Result<(), Out
     .freeze(
       FreezeOutputs {
         workspace: &workspace,
+        workspace_prefix: None,
         results: &results,
         trusted_files: &[],
         limits: &OutputLimits {

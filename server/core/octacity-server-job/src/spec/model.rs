@@ -264,6 +264,16 @@ pub struct ManagedJobSpecIntent {
 }
 
 impl ManagedJobSpecIntent {
+  /// Borrows the exact compiler-owned program selected by the signed Job.
+  #[must_use]
+  pub const fn execution(&self) -> &ManagedOctaExecutionV3 {
+    &self.execution
+  }
+  /// Borrows immutable input identities and destinations, without transfer grants.
+  #[must_use]
+  pub const fn protected_inputs(&self) -> &ProtectedInputManifestV3 {
+    &self.protected_inputs
+  }
   /// Borrows the immutable common node causality signed with the Job.
   #[must_use]
   pub const fn factory(&self) -> &FactoryCausalityV3 {
@@ -475,6 +485,16 @@ impl JobSpecTemplate {
     match &self.execution {
       JobExecutionIntent::Ordinary(_) => None,
       JobExecutionIntent::Managed(managed) => Some(&managed.required_enforcement),
+    }
+  }
+
+  /// Whether this managed Job requires the fixed read-only parent workspace.
+  /// Ordinary and legacy managed Jobs preserve their existing route eligibility.
+  #[must_use]
+  pub fn requires_factory_workspace_anchor(&self) -> bool {
+    match &self.execution {
+      JobExecutionIntent::Ordinary(_) => false,
+      JobExecutionIntent::Managed(managed) => managed.execution.workspace_root.is_some(),
     }
   }
 

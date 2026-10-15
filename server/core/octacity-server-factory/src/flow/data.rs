@@ -59,7 +59,16 @@ pub enum FlowValueSchema {
     /// Exact allowed values; object/array alternatives are rejected.
     values: Vec<Value>,
   },
+  /// Finite externally tagged alternatives, preserving existing typed JSON wires.
+  ExternallyTagged {
+    /// A null shape declares a unit string; a shape declares a single-key object.
+    /// Variant names are bounded data tags, independent of graph identifiers.
+    variants: BTreeMap<String, Option<Box<FlowValueSchema>>>,
+  },
 }
+
+/// Maximum UTF-8 bytes in one externally tagged data variant name.
+pub const MAX_FLOW_VARIANT_NAME_BYTES: usize = 128;
 
 /// Presence and shape of one configured object field.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -69,6 +78,16 @@ pub struct FlowFieldSchema {
   value: FlowValueSchema,
 }
 impl FlowFieldSchema {
+  /// Returns whether this field must be present.
+  #[must_use]
+  pub const fn is_required(&self) -> bool {
+    self.required
+  }
+  /// Returns the configured value shape.
+  #[must_use]
+  pub const fn value(&self) -> &FlowValueSchema {
+    &self.value
+  }
   /// Declares a field that must be present.
   #[must_use]
   pub const fn required(value: FlowValueSchema) -> Self {
@@ -129,6 +148,11 @@ impl FlowDataSchema {
   #[must_use]
   pub fn accepts_all(&self, producer: &FlowValueSchema) -> bool {
     producer.validate(0).is_ok() && self.shape.covers(producer)
+  }
+  /// Returns the validated shape for trusted capability compilers.
+  #[must_use]
+  pub const fn shape(&self) -> &FlowValueSchema {
+    &self.shape
   }
   /// Returns the exact contract name, version and content identity.
   #[must_use]
@@ -228,6 +252,20 @@ impl FlowValueSchema {
         min_items: *min_items,
         max_items: *max_items,
       },
+      Self::ExternallyTagged { variants } => Self::ExternallyTagged {
+        variants: variants
+          .iter()
+          .map(|(name, shape)| {
+            Ok((
+              name.clone(),
+              shape
+                .as_ref()
+                .map(|shape| shape.resolve(schemas, depth + 1, remaining).map(Box::new))
+                .transpose()?,
+            ))
+          })
+          .collect::<Result<_, FactoryError>>()?,
+      },
       other => other.clone(),
     })
   }
@@ -256,6 +294,16 @@ impl FlowValueSchema {
           .any(|(index, value)| value.is_object() || value.is_array() || values[..index].contains(value))
         {
           return Err(invalid());
+        }
+      }
+      Self::ExternallyTagged { variants } if !variants.is_empty() && variants.len() <= MAX_FLOW_SCHEMA_ENTRIES => {
+        for (name, shape) in variants {
+          if name.trim().is_empty() || name.len() > MAX_FLOW_VARIANT_NAME_BYTES || name.chars().any(char::is_control) {
+            return Err(invalid());
+          }
+          if let Some(shape) = shape {
+            shape.validate(depth + 1)?;
+          }
         }
       }
       _ => return Err(invalid()),
@@ -300,6 +348,15 @@ impl FlowValueSchema {
           .iter()
           .all(|(key, field)| !field.required || source.get(key).is_some_and(|actual| actual.required))
       }
+      (Self::ExternallyTagged { variants: target }, Self::ExternallyTagged { variants: source }) => {
+        source.iter().all(|(name, shape)| {
+          target.get(name).is_some_and(|expected| match (expected, shape) {
+            (None, None) => true,
+            (Some(expected), Some(actual)) => expected.covers(actual),
+            _ => false,
+          })
+        })
+      }
       _ => false,
     }
   }
@@ -321,6 +378,16 @@ impl FlowValueSchema {
           && values.iter().all(|value| item.accepts(value))
       }),
       Self::Enum { values } => values.contains(value),
+      Self::ExternallyTagged { variants } => match value {
+        Value::String(name) => variants.get(name).is_some_and(Option::is_none),
+        Value::Object(fields) if fields.len() == 1 => fields.iter().all(|(name, value)| {
+          variants
+            .get(name)
+            .and_then(Option::as_ref)
+            .is_some_and(|shape| shape.accepts(value))
+        }),
+        _ => false,
+      },
       Self::Object { fields } => value.as_object().is_some_and(|object| {
         object.keys().all(|name| fields.keys().any(|key| key.as_str() == name))
           && fields.iter().all(|(key, field)| {

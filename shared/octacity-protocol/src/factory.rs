@@ -52,15 +52,14 @@ pub const CHANGE_SET_MANIFEST_INPUT: &str = "/octacity/protected/change-set-mani
 pub const CHANGE_SET_CAPTURE_PRODUCER_ID: u64 = u64::MAX;
 /// Maximum exact arguments in one command permission.
 pub const MAX_FACTORY_COMMAND_ARGUMENTS: usize = 64;
-/// Maximum combined UTF-8 bytes in one command argument pattern.
+/// Maximum combined UTF-8 bytes in one concrete command invocation.
 pub const MAX_FACTORY_COMMAND_ARGUMENT_BYTES: usize = 16 * 1024;
 /// Reserved read-only root for server-owned v3 inputs.
 pub const PROTECTED_INPUT_ROOT: &str = "/octacity/protected";
+/// Read-only virtual anchor containing only explicit Source/Scratch/Output mounts.
+pub const FACTORY_WORKSPACE_ROOT: &str = "/workspace";
 /// Reserved writable root containing the exact materialized source revision.
 pub const FACTORY_SOURCE_ROOT: &str = "/workspace/source";
-/// Capability advertised by a harness plugin that blocks every protected tool
-/// action until an external authorizer returns a disposition.
-pub const BLOCKING_TOOL_AUTHORIZATION_CAPABILITY: &str = "codex.blocking-pre-tool-authorization.v1";
 /// Reserved writable root for disposable Factory task state.
 pub const FACTORY_SCRATCH_ROOT: &str = "/workspace/scratch";
 /// Reserved writable root for declared Factory outputs.
@@ -134,6 +133,42 @@ pub struct CapturedChangeSetManifestV1 {
 }
 
 impl CapturedChangeSetManifestV1 {
+  /// Computes the stable candidate identity from this checked manifest and the
+  /// independently verified SHA-256 of its actual retained canonical bytes.
+  /// The identity binds revisions, bundle content and manifest content; Artifact
+  /// IDs and provider-authored reports cannot select or replace these inputs.
+  pub fn candidate_digest(&self, manifest_sha256: &str) -> Result<String, String> {
+    use sha2::{Digest as _, Sha256};
+    self.validate()?;
+    crate::sha256("ChangeSet manifest", manifest_sha256)?;
+    let decode = |value: &str| -> Result<Vec<u8>, String> {
+      value
+        .as_bytes()
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|pair| {
+          let pair = std::str::from_utf8(pair).map_err(|_| "invalid ChangeSet digest".to_owned())?;
+          u8::from_str_radix(pair, 16).map_err(|_| "invalid ChangeSet digest".to_owned())
+        })
+        .collect()
+    };
+    let bundle = decode(&self.bundle.sha256)?;
+    let manifest = decode(manifest_sha256)?;
+    let mut hash = Sha256::new();
+    for field in [
+      b"octacity.factory.changeset.v1".as_slice(),
+      self.base_revision.as_bytes(),
+      self.candidate_revision.as_bytes(),
+      bundle.as_slice(),
+      manifest.as_slice(),
+    ] {
+      hash.update((field.len() as u64).to_be_bytes());
+      hash.update(field);
+    }
+    Ok(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+  }
+
   /// Decodes one bounded canonical manifest and validates its structural contract.
   pub fn decode_canonical(bytes: &[u8]) -> Result<Self, String> {
     if u64::try_from(bytes.len()).unwrap_or(u64::MAX) > MAX_CHANGE_SET_MANIFEST_BYTES {
@@ -327,7 +362,8 @@ pub struct ChangeSetMaterializationV3 {
 }
 
 impl ChangeSetMaterializationV3 {
-  fn validate(&self, inputs: &ProtectedInputManifestV3) -> Result<(), String> {
+  /// Validates the exact signed candidate inputs before host reconstruction or projection.
+  pub fn validate(&self, inputs: &ProtectedInputManifestV3) -> Result<(), String> {
     bounded_identity("factory.change_set_materialization.bundle_input", &self.bundle_input)?;
     bounded_identity(
       "factory.change_set_materialization.manifest_input",
@@ -373,13 +409,57 @@ pub struct ChangeSetCaptureV3 {
   pub author_name: String,
   /// Canonical author and committer email address.
   pub author_email: String,
-  /// Unix second derived from the immutable Node Attempt creation claim.
+  /// Deterministic Unix second selected by the immutable capture instruction.
   pub committed_at: u64,
   /// Optional bounded textual patch. The bundle and manifest are always required.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub patch_max_bytes: Option<u64>,
   /// Immutable changed-path, content, and size policy enforced by the Agent.
   pub policy: ChangeSetCapturePolicyV3,
+  /// Optional trusted report emitted after capture, independent of model output.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub observation: Option<ChangeSetObservationOutputV3>,
+}
+
+/// Signed logical publication identity; it never selects a filesystem path.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeSetObservationOutputV3 {
+  /// Arbitrary bounded logical report name selected by the operator.
+  pub name: String,
+  /// Immutable schema expected by the independently verifying consumer.
+  pub schema: FactoryImmutableReferenceV3,
+}
+
+impl ChangeSetObservationOutputV3 {
+  /// Validates an independent logical report name and immutable schema pin.
+  pub fn validate(&self) -> Result<(), String> {
+    bounded_key("factory.change_set_capture.observation.name", &self.name)?;
+    if [
+      CHANGE_SET_BUNDLE_OUTPUT,
+      CHANGE_SET_MANIFEST_OUTPUT,
+      CHANGE_SET_PATCH_OUTPUT,
+    ]
+    .contains(&self.name.as_str())
+    {
+      return Err("capture observation must have a distinct report identity".to_owned());
+    }
+    self.schema.validate_identity()
+  }
+}
+
+/// Closed technical facts produced from trusted capture and signed causality.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CapturedChangeSetObservationV1 {
+  /// Actual captured Git commit.
+  pub candidate_revision: String,
+  /// Common candidate identity derived from the exact captured manifest.
+  pub candidate_digest: String,
+  /// Frozen signed producer input, never supplied by the model.
+  pub input_digest: String,
+  /// Signed execution deadline; consumers additionally enforce actual retention.
+  pub fresh_until: i64,
 }
 
 /// Handling of binary blobs during trusted ChangeSet capture.
@@ -449,6 +529,9 @@ impl ChangeSetCaptureV3 {
       ));
     }
     self.policy.validate()?;
+    if let Some(observation) = &self.observation {
+      observation.validate()?;
+    }
     Ok(())
   }
 }
@@ -607,6 +690,10 @@ impl ProtectedInputManifestV3 {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ManagedOctaExecutionV3 {
+  /// Optional fixed virtual workspace anchor; absence preserves legacy source
+  /// workspace selection. This does not expose the host Job parent directory.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub workspace_root: Option<String>,
   /// Logical protected input containing the server-generated Octafile.
   pub octafile_input: String,
   /// Exact non-empty Octa task names, in execution order.
@@ -629,6 +716,36 @@ pub enum FactoryToolControlModeV3 {
   ToolRisk,
 }
 
+/// Maximum physical tool-response bytes produced by one controlled read call.
+/// Shared with the controlled-reader dispatcher allocation and channel bound.
+pub const MAX_FACTORY_TOOL_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Explicit signed tool-response allocation, separate from Artifact/report
+/// publication. All produced backend response bytes consume the Job total,
+/// including repeated proposals and responses withheld after cancellation.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryToolResponseLimitsV3 {
+  /// Positive response ceiling for each physical call, at most 4 MiB.
+  pub per_call_bytes: u64,
+  /// Positive aggregate ceiling across the complete controlled Job scope.
+  pub total_bytes: u64,
+}
+
+impl FactoryToolResponseLimitsV3 {
+  /// Rejects absent capacity, oversized calls and inverted allocations.
+  /// Aggregate reservations must use checked arithmetic at the enforcing owner.
+  pub fn validate(&self) -> Result<(), String> {
+    if self.per_call_bytes == 0
+      || self.per_call_bytes > MAX_FACTORY_TOOL_RESPONSE_BYTES
+      || self.total_bytes < self.per_call_bytes
+    {
+      return Err("tool response limits require 1..=4 MiB per call and total bytes at least per-call bytes".to_owned());
+    }
+    Ok(())
+  }
+}
+
 /// Exact blocking-hook capability required for one managed tool-using task.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -639,10 +756,19 @@ pub struct FactoryToolControlV3 {
   pub capability: String,
   /// Maximum decision mechanism enabled for this task.
   pub mode: FactoryToolControlModeV3,
+  /// Required independently configured physical response allocation.
+  pub response_limits: FactoryToolResponseLimitsV3,
 }
 
 impl ManagedOctaExecutionV3 {
   pub(crate) fn validate(&self, inputs: &ProtectedInputManifestV3) -> Result<(), String> {
+    if self
+      .workspace_root
+      .as_deref()
+      .is_some_and(|root| root != FACTORY_WORKSPACE_ROOT)
+    {
+      return Err("managed workspace must select the fixed virtual anchor".to_owned());
+    }
     bounded_identity("execution.octafile_input", &self.octafile_input)?;
     if !inputs.contains(&self.octafile_input) {
       return Err("managed Octafile is absent from protected inputs".to_owned());
@@ -662,9 +788,8 @@ impl ManagedOctaExecutionV3 {
     }
     if let Some(control) = &self.tool_control {
       bounded_key("execution.tool_control.plugin", &control.plugin)?;
-      if control.capability != BLOCKING_TOOL_AUTHORIZATION_CAPABILITY {
-        return Err("managed tool control requires the supported blocking-hook capability".to_owned());
-      }
+      bounded_key("execution.tool_control.capability", &control.capability)?;
+      control.response_limits.validate()?;
     }
     Ok(())
   }
@@ -849,7 +974,10 @@ impl FactoryPermissionSetV3 {
       let bytes = command.arguments.iter().try_fold(0_usize, |total, argument| {
         let bytes = match argument {
           FactoryCommandArgumentV3::Exact { value } => value.len(),
-          FactoryCommandArgumentV3::Any { max_bytes } => usize::try_from(*max_bytes).ok()?,
+          // Wildcard bounds apply independently to each argument. The concrete
+          // invocation also passes the aggregate ceiling in permits_arguments;
+          // adding all wildcard maxima would reject valid mixed patterns.
+          FactoryCommandArgumentV3::Any { .. } => 0,
         };
         total.checked_add(bytes)
       });

@@ -6,6 +6,10 @@ use thiserror::Error;
 pub enum StoreOperation {
   /// Atomically create ordinary execution for a persisted common node intent.
   AcceptFactoryBuild,
+  /// Publish verified private inputs for one persisted node operation.
+  PublishFactoryExecutionInputs,
+  /// List or acknowledge expired private execution input cleanup.
+  RetainFactoryExecutionInputs,
   /// Create one Project below an optional parent.
   CreateProject,
   /// Rename one Project using an optimistic version precondition.

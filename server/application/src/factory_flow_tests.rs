@@ -281,7 +281,7 @@ impl FactoryNodeBuildOutputSource for Execution {
     build: octacity_server_domain::BuildId,
     _: octacity_server_domain::AttemptId,
     max_bytes: u64,
-  ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError> {
+  ) -> Result<FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError> {
     let builds = self.by_build(build);
     let request = builds.requests.lock().unwrap()[0].clone();
     let causality = request.causality.as_ref();
@@ -294,7 +294,7 @@ impl FactoryNodeBuildOutputSource for Execution {
         &self.requirements[&profile.node],
       )
     }) {
-      return Ok(outputs);
+      return Ok(FactoryNodeBuildOutputObservation::Verified(Box::new(outputs)));
     }
     let wire: serde_json::Value = serde_json::from_slice(&causality.input).unwrap();
     let schema = self.result_schema(profile.node.clone());
@@ -355,23 +355,25 @@ impl FactoryNodeBuildOutputSource for Execution {
     }
     let output_bytes = documents.iter().map(|doc| doc.record.identity().size_bytes).sum();
     assert!(output_bytes <= max_bytes);
-    Ok(FactoryNodeBuildOutputs {
-      execution: FactoryNodeBuildExecutionFacts {
-        profile: profile.clone(),
-        input_digest: causality.input_digest,
-        permissions: request.effective_permissions,
-        budget: request.budget,
-        deadline: request.deadline,
+    Ok(FactoryNodeBuildOutputObservation::Verified(Box::new(
+      FactoryNodeBuildOutputs {
+        execution: FactoryNodeBuildExecutionFacts {
+          profile: profile.clone(),
+          input_digest: causality.input_digest,
+          permissions: request.effective_permissions,
+          budget: request.budget,
+          deadline: request.deadline,
+        },
+        documents,
+        usage: BudgetUsage {
+          attempts: 1,
+          output_bytes,
+          ..Default::default()
+        },
+        verified_at: builds.created_at,
+        fresh_until: at(10000),
       },
-      documents,
-      usage: BudgetUsage {
-        attempts: 1,
-        output_bytes,
-        ..Default::default()
-      },
-      verified_at: builds.created_at,
-      fresh_until: at(10000),
-    })
+    )))
   }
 }
 /// Metadata-only fixtures for the configured owner contract. Byte/capture trust
@@ -770,10 +772,15 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    match owner
-      .reconcile_flow(admission.run.id(), claim.id, at(time))
-      .await
-      .unwrap()
+    match crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      store.as_ref(),
+      admission.run.id(),
+      claim.id,
+      at(time),
+    )
+    .await
+    .unwrap()
     {
       FactoryFlowStep::Advanced => {}
       FactoryFlowStep::Ready(entry) => {
@@ -936,10 +943,15 @@ async fn verify_owner_journey<S: FactoryRunStore + FactoryPhasePoolStore>(
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    match owner
-      .reconcile_flow(admission.run.id(), selected_claim.id, at(time))
-      .await
-      .unwrap()
+    match crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      store.as_ref(),
+      admission.run.id(),
+      selected_claim.id,
+      at(time),
+    )
+    .await
+    .unwrap()
     {
       FactoryFlowStep::Advanced => {}
       FactoryFlowStep::Resolved(outcome) => {
@@ -1116,10 +1128,15 @@ fn model_small_work_claim_cannot_bypass_independently_verified_large_work() {
     let mut decision = None;
     for time in 31..65 {
       execution.clock.store(time, std::sync::atomic::Ordering::SeqCst);
-      match owner
-        .reconcile_flow(admission.run.id(), claim.id, at(time))
-        .await
-        .unwrap()
+      match crate::factory_node_test_support::reconcile_admission_then_observe(
+        &owner,
+        store.as_ref(),
+        admission.run.id(),
+        claim.id,
+        at(time),
+      )
+      .await
+      .unwrap()
       {
         FactoryFlowStep::Advanced => {}
         FactoryFlowStep::Resolved(outcome) => {
@@ -1375,7 +1392,16 @@ pub(crate) async fn verify_nested_owner<S: FactoryRunStore + FactoryPhasePoolSto
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    match owner.reconcile_flow(run.id(), claim.id, at(time)).await.unwrap() {
+    match crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      store.as_ref(),
+      run.id(),
+      claim.id,
+      at(time),
+    )
+    .await
+    .unwrap()
+    {
       FactoryFlowStep::Advanced => {}
       FactoryFlowStep::Resolved(outcome) => {
         resolved = Some(outcome);
@@ -1724,7 +1750,16 @@ pub(crate) async fn verify_bounded_owner<S: FactoryRunStore + FactoryPhasePoolSt
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    match owner.reconcile_flow(run.id(), claim.id, at(time)).await.unwrap() {
+    match crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      store.as_ref(),
+      run.id(),
+      claim.id,
+      at(time),
+    )
+    .await
+    .unwrap()
+    {
       FactoryFlowStep::Advanced => {}
       FactoryFlowStep::Resolved(outcome) => {
         terminal = Some(outcome);
@@ -1960,10 +1995,15 @@ pub(crate) async fn verify_correction_owner<S: FactoryRunStore + FactoryPhasePoo
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    match owner
-      .reconcile_flow(admission.run.id(), claim.id, at(time))
-      .await
-      .unwrap_or_else(|error| panic!("correction at {time}: {error:?}"))
+    match crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      store.as_ref(),
+      admission.run.id(),
+      claim.id,
+      at(time),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("correction at {time}: {error:?}"))
     {
       FactoryFlowStep::Advanced => {}
       FactoryFlowStep::Resolved(terminal) => {
@@ -2181,10 +2221,15 @@ fn every_ready_fanout_sibling_can_be_published_to_its_configured_pool() {
     );
     for time in 31..34 {
       assert_eq!(
-        owner
-          .reconcile_flow(admission.run.id(), claim.id, at(time))
-          .await
-          .unwrap(),
+        crate::factory_node_test_support::reconcile_admission_then_observe(
+          &owner,
+          store.as_ref(),
+          admission.run.id(),
+          claim.id,
+          at(time)
+        )
+        .await
+        .unwrap(),
         FactoryFlowStep::Advanced
       );
     }
@@ -2289,10 +2334,15 @@ fn a_correction_cycle_can_publish_its_non_root_entry_to_a_configured_pool() {
     let mut reached = false;
     for time in 31..48 {
       execution.clock.store(time, std::sync::atomic::Ordering::SeqCst);
-      match owner
-        .reconcile_flow(admission.run.id(), claim.id, at(time))
-        .await
-        .unwrap()
+      match crate::factory_node_test_support::reconcile_admission_then_observe(
+        &owner,
+        store.as_ref(),
+        admission.run.id(),
+        claim.id,
+        at(time),
+      )
+      .await
+      .unwrap()
       {
         FactoryFlowStep::Advanced => {}
         FactoryFlowStep::Ready(entry) => {
@@ -2310,3 +2360,4 @@ fn a_correction_cycle_can_publish_its_non_root_entry_to_a_configured_pool() {
     assert!(reached);
   });
 }
+use crate::FactoryNodeBuildOutputObservation;

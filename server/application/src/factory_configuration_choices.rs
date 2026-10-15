@@ -85,6 +85,8 @@ pub struct FactoryConfigurationDocumentBounds {
   pub definitions: usize,
   /// Maximum declared schema fields or local named policies.
   pub schema_entries: usize,
+  /// Maximum UTF-8 bytes in one externally tagged data variant name.
+  pub schema_variant_name_bytes: usize,
   /// Maximum declared schema array items.
   pub schema_items: u16,
   /// Maximum configured data schema and mapping nesting depth.
@@ -142,6 +144,7 @@ pub const fn factory_configuration_document_bounds() -> FactoryConfigurationDocu
     transitions: factory::MAX_FLOW_DEFINITION_EDGES,
     definitions: factory::MAX_FLOW_DEFINITION_CLOSURE,
     schema_entries: factory::MAX_FLOW_SCHEMA_ENTRIES,
+    schema_variant_name_bytes: factory::MAX_FLOW_VARIANT_NAME_BYTES,
     schema_items: factory::MAX_FLOW_SCHEMA_ITEMS,
     schema_depth: factory::MAX_FLOW_SCHEMA_DEPTH,
     value_bytes: factory::MAX_FLOW_DATA_BYTES,

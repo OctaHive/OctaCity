@@ -158,6 +158,7 @@ impl From<JobSpecV3> for ExecutableJobSpec {
       source: spec.source,
       octa: spec.octa,
       execution: ExecutableExecution::Managed(Box::new(ManagedFactoryExecution {
+        execution_deadline_unix_ms: spec.execution_deadline_unix_ms,
         execution: spec.execution,
         factory: spec.factory,
         protected_inputs: spec.protected_inputs,

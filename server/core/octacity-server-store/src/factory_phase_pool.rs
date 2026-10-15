@@ -4,8 +4,9 @@ use async_trait::async_trait;
 use octacity_server_domain::{ProjectId, Timestamp};
 use octacity_server_factory::{
   BudgetUsage, FactoryClaim, FactoryClaimFence, FactoryDigest, FactoryKey, FactoryRunId, FactoryRunVersion,
-  FindingSeverity, FlowDirective, FlowInterpreter, FlowRunId, ImmutableReference, MAX_PHASE_POOL_BATCH,
-  MAX_PHASE_POOL_WIP, PhasePoolOrder, PhasePoolPolicy, WorkEnvelopeId, WorkflowCycleId, reserve_phase_budget,
+  FindingSeverity, FlowDirective, FlowInterpreter, FlowRunId, ImmutableReference, MAX_FACTORY_EXECUTOR_BINDINGS,
+  MAX_PHASE_POOL_BATCH, MAX_PHASE_POOL_WIP, PhasePoolOrder, PhasePoolPolicy, WorkEnvelopeId, WorkflowCycleId,
+  reserve_phase_budget,
 };
 use serde::{Deserialize, Serialize};
 
@@ -125,7 +126,7 @@ impl SelectPhasePool {
     if self.limit == 0
       || self.limit > MAX_PHASE_POOL_BATCH
       || self.expires_at <= self.observed_at
-      || self.capabilities.len() > 64
+      || self.capabilities.len() > MAX_FACTORY_EXECUTOR_BINDINGS
     {
       return Err(pool_invalid());
     }
@@ -136,6 +137,14 @@ impl SelectPhasePool {
 /// Operation-shaped durable pool contract, separate from Agent placement and run reconciliation.
 #[async_trait]
 pub trait FactoryPhasePoolStore: Send + Sync {
+  /// Discovers one bounded page of policies with current unselected ready work.
+  /// Cursor is exclusive; discovery does not acquire claims or reserve capacity.
+  async fn ready_phase_policies(
+    &self,
+    after: Option<FactoryDigest>,
+    limit: u16,
+  ) -> Result<Vec<FactoryDigest>, StoreError>;
+
   /// Returns the exact retained selection granting this current Run claim.
   async fn phase_pool_selection_for_claim(
     &self,

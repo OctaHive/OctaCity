@@ -141,6 +141,21 @@ impl octacity_server::FactoryRuntimeReadiness for Installation {
   }
 }
 #[async_trait]
+impl LeaseBoundToolActionAuthorizer for Installation {
+  async fn authorize(
+    &self,
+    input: LeaseBoundToolActionInput,
+  ) -> Result<octacity_protocol::FactoryToolActionDecisionV3, AgentToolActionError> {
+    octacity_protocol::FactoryToolActionDecisionV3::new(
+      input.proposal_sha256,
+      octacity_protocol::FactoryToolActionDispositionV3::Deny,
+      octacity_protocol::FactoryToolActionDecisionSourceV3::HardPolicy,
+      None,
+    )
+    .map_err(|_| AgentToolActionError::Unavailable)
+  }
+}
+#[async_trait]
 impl octacity_server::FactoryRuntimeInstaller for Installation {
   async fn install(
     &self,
@@ -151,6 +166,8 @@ impl octacity_server::FactoryRuntimeInstaller for Installation {
       inputs: Arc::new(Inputs),
       readiness: Arc::new(Installation),
       outbox_dispatchers: vec![],
+      tool_authorizer: Some(Arc::new(Installation)),
+      output_finalizer: None,
       executors: vec![
         (
           FlowNodeKind::TrustedAction,

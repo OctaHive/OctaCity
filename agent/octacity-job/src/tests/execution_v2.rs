@@ -3,6 +3,184 @@ use std::time::SystemTime;
 
 const FACTORY_RUNNER_BYTES: &[u8] = b"factory runner fixture";
 
+struct CredentialJobFixture {
+  executor: JobExecutor,
+  spec: JobSpecV3,
+  inputs: Vec<ProtectedInputTransferV3>,
+  root: tempfile::TempDir,
+  server: tokio_util::task::AbortOnDropHandle<()>,
+  downloads: Arc<AtomicUsize>,
+  source_calls: Arc<AtomicUsize>,
+  starts: Arc<AtomicUsize>,
+}
+async fn credential_job_fixture() -> CredentialJobFixture {
+  use sha2::Digest as _;
+  use tokio::io::AsyncReadExt as _;
+  let octafile = b"version: 1\nvars:\n  PRIVATE_AUTH:\n    required: true\n    secret: true\ntasks:\n  implement:\n    shell: echo managed\n";
+  let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let origin = format!("http://{}", listener.local_addr().unwrap());
+  let downloads = Arc::new(AtomicUsize::new(0));
+  let requests = downloads.clone();
+  let server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+    let (mut socket, _) = listener.accept().await.unwrap();
+    let mut request = [0_u8; 4096];
+    let count = socket.read(&mut request).await.unwrap();
+    assert!(request[..count].starts_with(b"GET "));
+    requests.fetch_add(1, Ordering::SeqCst);
+    let header = format!(
+      "HTTP/1.1 200 OK\r\nContent-Type: application/yaml\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+      octafile.len()
+    );
+    socket.write_all(header.as_bytes()).await.unwrap();
+    socket.write_all(octafile).await.unwrap();
+  }));
+  let root = tempfile::tempdir().unwrap();
+  let source_calls = Arc::new(AtomicUsize::new(0));
+  let starts = Arc::new(AtomicUsize::new(0));
+  let mut spec = factory_spec();
+  spec.execution.credential_profile = Some("author-private-profile".to_owned());
+  spec.permissions.secret_profiles = vec!["author-private-profile".to_owned()];
+  spec.protected_inputs.inputs[0].size_bytes = octafile.len() as u64;
+  spec.protected_inputs.inputs[0].sha256 = hex::encode(sha2::Sha256::digest(octafile));
+  spec.octa.runner_sha256 = hex::encode(sha2::Sha256::digest(FACTORY_RUNNER_BYTES));
+  spec
+    .validate(&JobBinding {
+      job_id: &spec.job_id,
+      attempt: spec.attempt,
+      now: spec.issued_at,
+    })
+    .unwrap();
+  let mut executor = factory_executor(
+    root.path(),
+    source_calls.clone(),
+    starts.clone(),
+    &spec,
+    FactoryEnforcementCapabilityV3::ALL,
+  );
+  executor.factory_permissions = Some(spec.permissions.clone());
+  executor.protected_input_stager = Some(
+    ProtectedInputStager::new(ProtectedInputStagerConfig {
+      allowed_origins: vec![origin.clone()],
+      download_timeout: Duration::from_secs(5),
+    })
+    .unwrap(),
+  );
+  install_revalidatable_runner(&mut executor, root.path());
+  let mut inputs = transfers(&spec.protected_inputs);
+  inputs[0].capability.url = format!("{origin}/exact-protected-input");
+  CredentialJobFixture {
+    executor,
+    spec,
+    inputs,
+    root,
+    server,
+    downloads,
+    source_calls,
+    starts,
+  }
+}
+
+#[tokio::test]
+async fn missing_installed_factory_credentials_stop_before_inputs_source_or_spawn() {
+  let fixture = credential_job_fixture().await;
+  let (events, mut receiver) = mpsc::channel(128);
+  let drain =
+    tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move { while receiver.recv().await.is_some() {} }));
+  let result = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await;
+  let outcome = match result {
+    Ok(completion) => {
+      completion.cleanup().await.unwrap();
+      None
+    }
+    Err(failure) => {
+      let missing = matches!(
+        failure.error(),
+        JobError::FactoryPreflight(FactoryPreflightError::SecretProfile)
+      );
+      failure.cleanup().await.unwrap();
+      Some(missing)
+    }
+  };
+  fixture.server.abort();
+  drain.abort();
+  let _ = fixture.server.await;
+  let _ = drain.await;
+  assert_eq!(
+    outcome,
+    Some(true),
+    "an allowlisted logical key must not select a repository file or bypass private installation"
+  );
+  assert_eq!(fixture.downloads.load(Ordering::SeqCst), 0);
+  assert_eq!(fixture.source_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(fixture.starts.load(Ordering::SeqCst), 0);
+  assert_eq!(
+    fs::read_dir(fixture.root.path()).unwrap().count(),
+    1,
+    "only the preinstalled runner fixture remains"
+  );
+}
+
+#[tokio::test]
+async fn installed_private_credentials_reach_only_the_runner_and_are_redacted_from_results() {
+  let mut fixture = credential_job_fixture().await;
+  let private_canary = "operator-private-credential-canary";
+  let profile = FactoryCredentialProfile::new(
+    "author-private-profile".to_owned(),
+    BTreeMap::from([("PRIVATE_AUTH".to_owned(), private_canary.to_owned())]),
+  )
+  .unwrap();
+  assert!(!format!("{profile:?}").contains(private_canary));
+  fixture.executor = fixture.executor.with_factory_credential_profiles([profile]).unwrap();
+  let public_intent = serde_json::to_string(&fixture.spec).unwrap();
+  assert!(!public_intent.contains(private_canary));
+  let (events, mut receiver) = mpsc::channel(128);
+  let drain =
+    tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move { while receiver.recv().await.is_some() {} }));
+  let completion = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap();
+  assert_eq!(completion.runner().status, RunStatus::Succeeded);
+  assert_eq!(
+    completion.runner().results,
+    vec![serde_json::json!({
+      "variables":{"PRIVATE_AUTH":"[redacted]"},"secrets_profile":null
+    })],
+    "local logical credentials supply exactly their declared private input; the key never becomes a repository filename"
+  );
+  assert!(!format!("{:?}", completion.runner()).contains(private_canary));
+  assert_eq!(fixture.downloads.load(Ordering::SeqCst), 1);
+  assert_eq!(fixture.source_calls.load(Ordering::SeqCst), 1);
+  assert_eq!(fixture.starts.load(Ordering::SeqCst), 1);
+  completion.cleanup().await.unwrap();
+  fixture.server.abort();
+  drain.abort();
+  let _ = fixture.server.await;
+  let _ = drain.await;
+}
+
 #[tokio::test]
 async fn expired_managed_execution_stops_before_protected_inputs_or_source_materialization() {
   let root = tempfile::tempdir().unwrap();
@@ -262,6 +440,106 @@ async fn rejects_factory_grant_widening_before_source_or_spawn() {
   assert!(fs::read_dir(work_root.path()).unwrap().next().is_none());
 }
 
+fn install_blocking_plugin(
+  executor: &mut JobExecutor,
+  spec: &mut JobSpecV3,
+  mode: octacity_protocol::FactoryToolControlModeV3,
+) {
+  use octacity_protocol::FactoryToolControlV3;
+  use octacity_runner::RunnerPlugin;
+  let plugin = FactoryImmutableReferenceV3 {
+    identity: "operator-hook".to_owned(),
+    version: "1.0.0".to_owned(),
+    sha256: executor.runner.sha256.clone(),
+  };
+  executor.runner.plugins.insert(
+    plugin.identity.clone(),
+    RunnerPlugin {
+      version: plugin.version.clone(),
+      protocol: spec.octa.plugin_protocol,
+      platforms: vec![executor.runner.capabilities.platform.clone()],
+      executable: executor.runner.executable.clone(),
+      sha256: plugin.sha256.clone(),
+      capabilities: vec!["fixture.blocking-tool-authorization.v1".to_owned()],
+    },
+  );
+  spec.octa.runner_sha256 = executor.runner.sha256.clone();
+  spec.octa.plugin_digests = BTreeMap::from([(plugin.identity.clone(), plugin.sha256.clone())]);
+  spec.permissions.plugins = vec![plugin.clone()];
+  spec.permissions.tools = vec![FactoryImmutableReferenceV3 {
+    identity: "operator-tool".to_owned(),
+    version: "1.0.0".to_owned(),
+    sha256: DIGEST.to_owned(),
+  }];
+  spec.execution.tool_control = Some(FactoryToolControlV3 {
+    plugin: plugin.identity,
+    capability: "fixture.blocking-tool-authorization.v1".to_owned(),
+    mode,
+    response_limits: octacity_protocol::FactoryToolResponseLimitsV3 {
+      per_call_bytes: 32,
+      total_bytes: 64,
+    },
+  });
+}
+
+#[tokio::test]
+async fn a_blocking_plugin_alone_does_not_qualify_an_unconfigured_local_tool_authorizer() {
+  use octacity_protocol::FactoryToolControlModeV3;
+
+  for mode in [
+    FactoryToolControlModeV3::Deterministic,
+    FactoryToolControlModeV3::ToolRisk,
+  ] {
+    let work_root = tempfile::tempdir().unwrap();
+    let source_calls = Arc::new(AtomicUsize::new(0));
+    let starts = Arc::new(AtomicUsize::new(0));
+    let mut spec = factory_spec();
+    let mut executor = factory_executor(
+      work_root.path(),
+      source_calls.clone(),
+      starts.clone(),
+      &spec,
+      FactoryEnforcementCapabilityV3::ALL,
+    );
+    install_revalidatable_runner(&mut executor, work_root.path());
+    install_blocking_plugin(&mut executor, &mut spec, mode);
+    spec
+      .validate(&JobBinding {
+        job_id: &spec.job_id,
+        attempt: spec.attempt,
+        now: spec.issued_at,
+      })
+      .unwrap();
+    executor.factory_permissions = Some(spec.permissions.clone());
+    let (events, _receiver) = mpsc::channel(1);
+    let failure = executor
+      .execute(
+        ExecuteJobRequest {
+          protected_inputs: transfers(&spec.protected_inputs),
+          spec: spec.into(),
+          source_credentials: BTreeMap::new(),
+          cache_grant: None,
+        },
+        CancellationToken::new(),
+        &events,
+      )
+      .await
+      .unwrap_err();
+
+    assert_eq!(
+      failure.error().to_string(),
+      "Factory execution preflight failed: trusted blocking tool authorizer is not configured"
+    );
+    assert_eq!(source_calls.load(Ordering::SeqCst), 0);
+    assert_eq!(starts.load(Ordering::SeqCst), 0);
+    assert_eq!(
+      fs::read_dir(work_root.path()).unwrap().count(),
+      1,
+      "only the operator runner installation may exist"
+    );
+  }
+}
+
 #[tokio::test]
 async fn rejects_an_incomplete_factory_backend_before_source_or_spawn() {
   let work_root = tempfile::tempdir().unwrap();
@@ -403,6 +681,57 @@ struct SlowChangeSetMaterializer {
   cancelled: Arc<AtomicBool>,
 }
 
+#[tokio::test]
+async fn candidate_materialization_keeps_source_inputs_out_of_the_backend_projection() {
+  let (completion, _, _root) = captured_factory_job(None, true, &[]).await;
+  let completion = completion.expect("accepted candidate can run after host reconstruction");
+  assert!(completion.change_set().is_none());
+  completion.cleanup().await.unwrap();
+}
+
+struct CandidateMaterializer;
+
+#[async_trait]
+impl ChangeSetMaterializer for CandidateMaterializer {
+  async fn materialize(
+    &self,
+    request: MaterializationRequest,
+    _cancellation: CancellationToken,
+  ) -> Result<octacity_changeset::MaterializedChangeSet, MaterializationError> {
+    assert!(!fs::read(request.bundle).unwrap().is_empty());
+    assert!(!fs::read(request.manifest).unwrap().is_empty());
+    Ok(octacity_changeset::MaterializedChangeSet {
+      base_revision: request.expected_base_revision,
+      candidate_revision: request.expected_candidate_revision,
+    })
+  }
+}
+
+struct CandidateProjectionBackend(Arc<dyn ExecutionBackend>);
+
+#[async_trait]
+impl ExecutionBackend for CandidateProjectionBackend {
+  async fn start(
+    &self,
+    runner: &RunnerProgram,
+    request: StartExecution,
+    cancellation: CancellationToken,
+  ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+    let layout = request.factory.as_ref().unwrap();
+    assert!(layout.protected_inputs.join("Octafile.yml").is_file());
+    assert!(
+      !layout.protected_inputs.join("change-set.bundle").exists(),
+      "host-only bundle must not reach model environment"
+    );
+    assert!(!layout.protected_inputs.join("change-set-manifest.json").exists());
+    self.0.start(runner, request, cancellation).await
+  }
+
+  async fn cleanup_orphans(&self) -> Result<(), ExecutionError> {
+    self.0.cleanup_orphans().await
+  }
+}
+
 #[async_trait]
 impl ChangeSetMaterializer for SlowChangeSetMaterializer {
   async fn materialize(
@@ -443,6 +772,25 @@ async fn captured_factory_job_with_visibility(
   write_paths: &[&str],
   source_write_paths: Option<&[&str]>,
   source_visible: bool,
+) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
+  captured_factory_job_with_observation(
+    deadline,
+    materialization,
+    write_paths,
+    source_write_paths,
+    source_visible,
+    false,
+  )
+  .await
+}
+
+async fn captured_factory_job_with_observation(
+  deadline: Option<Duration>,
+  materialization: bool,
+  write_paths: &[&str],
+  source_write_paths: Option<&[&str]>,
+  source_visible: bool,
+  observation: bool,
 ) -> (Result<JobCompletion, JobFailure>, Arc<AtomicBool>, tempfile::TempDir) {
   use sha2::Digest as _;
   use std::time::SystemTime;
@@ -485,6 +833,24 @@ async fn captured_factory_job_with_visibility(
   spec.protected_inputs.inputs[0].media_type = "application/yaml".to_owned();
   spec.octa.runner_sha256 = hex::encode(sha2::Sha256::digest(FACTORY_RUNNER_BYTES));
   spec.factory = Some(capture_causality());
+  if observation {
+    spec
+      .factory
+      .as_mut()
+      .unwrap()
+      .change_set_capture
+      .as_mut()
+      .unwrap()
+      .observation = Some(octacity_protocol::ChangeSetObservationOutputV3 {
+      name: "arbitrary.capture-observation".to_owned(),
+      schema: FactoryImmutableReferenceV3 {
+        identity: "project.capture-facts".to_owned(),
+        version: "v7".to_owned(),
+        sha256: DIGEST.to_owned(),
+      },
+    });
+  }
+
   spec.factory.as_mut().unwrap().source_write_paths =
     source_write_paths.map(|paths| paths.iter().map(|path| (*path).to_owned()).collect());
   if !source_visible {
@@ -511,6 +877,9 @@ async fn captured_factory_job_with_visibility(
     .as_secs()
     + 1;
   if materialization {
+    if deadline.is_none() {
+      spec.factory.as_mut().unwrap().change_set_capture = None;
+    }
     for (id, destination, media_type) in [
       (
         "accepted-change-set-bundle",
@@ -560,6 +929,11 @@ async fn captured_factory_job_with_visibility(
     FactoryEnforcementCapabilityV3::ALL,
   );
   install_revalidatable_runner(&mut executor, work_root.path());
+  if materialization && deadline.is_none() {
+    for route in executor.execution_backends.values_mut() {
+      route.backend = Arc::new(CandidateProjectionBackend(route.backend.clone()));
+    }
+  }
   if !source_visible {
     for route in executor.execution_backends.values_mut() {
       route.backend = Arc::new(SourceFreeBackend(route.backend.clone()));
@@ -576,12 +950,18 @@ async fn captured_factory_job_with_visibility(
   let executor = executor
     .with_protected_input_stager(stager)
     .with_change_set_capturer(Arc::new(FakeChangeSetCapturer {
+      observation: observation.then(|| octacity_changeset::CaptureObservationContext {
+        input_digest: DIGEST.to_owned(),
+        fresh_until_unix_ms: spec.execution_deadline_unix_ms,
+      }),
       called: captured.clone(),
       starts: starts.clone(),
       delay: deadline.map(|_| Duration::from_secs(2)),
       cancelled: cancelled.clone(),
     }));
-  let executor = if materialization {
+  let executor = if materialization && deadline.is_none() {
+    executor.with_change_set_materializer(Arc::new(CandidateMaterializer))
+  } else if materialization {
     executor.with_change_set_materializer(Arc::new(SlowChangeSetMaterializer {
       cancelled: cancelled.clone(),
     }))
@@ -626,8 +1006,11 @@ async fn captured_factory_job_with_visibility(
   if !materialization {
     assert_eq!(starts.load(Ordering::SeqCst), 1);
     assert_eq!(captured.load(Ordering::SeqCst), source_visible);
-  } else {
+  } else if deadline.is_some() {
     assert_eq!(starts.load(Ordering::SeqCst), 0);
+    assert!(!captured.load(Ordering::SeqCst));
+  } else {
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
     assert!(!captured.load(Ordering::SeqCst));
   }
   (completion, cancelled, work_root)
@@ -755,6 +1138,7 @@ async fn rejects_requested_change_set_materialization_before_source_when_unconfi
 }
 
 struct FakeChangeSetCapturer {
+  observation: Option<octacity_changeset::CaptureObservationContext>,
   called: Arc<AtomicBool>,
   starts: Arc<AtomicUsize>,
   delay: Option<Duration>,
@@ -772,6 +1156,10 @@ impl ChangeSetCapturer for FakeChangeSetCapturer {
       self.starts.load(Ordering::SeqCst),
       1,
       "capture must run after the runner"
+    );
+    assert_eq!(
+      request.observation, self.observation,
+      "capture receives only the original signed producer input and execution deadline"
     );
     assert!(request.workspace.join("Octafile.yml").is_file());
     assert!(request.destination.is_dir());
@@ -813,6 +1201,8 @@ impl ChangeSetCapturer for FakeChangeSetCapturer {
         size_bytes: 1,
         sha256: DIGEST.to_owned(),
       },
+
+      observation: None,
     })
   }
 }
@@ -1068,6 +1458,7 @@ fn factory_spec() -> JobSpecV3 {
     source: current.source,
     octa: current.octa,
     execution: ManagedOctaExecutionV3 {
+      workspace_root: None,
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
       credential_profile: None,
@@ -1117,6 +1508,8 @@ fn capture_causality() -> FactoryCausalityV3 {
         binary_policy: ChangeSetBinaryPolicyV3::Reject,
         forbidden_secret_patterns: ChangeSetSecretPatternV3::ALL.to_vec(),
       },
+
+      observation: None,
     }),
     change_set_materialization: None,
   }
@@ -1146,4 +1539,93 @@ async fn signed_source_write_roots_narrow_the_runner_write_projection_before_aut
   assert!(completion.workspace().join("contracts").is_dir());
   assert!(completion.workspace().join("plans/changes").is_dir());
   completion.cleanup().await.unwrap();
+}
+
+struct RecordingToolExecutionOwner {
+  job_id: String,
+  permissions: octacity_protocol::FactoryPermissionSetV3,
+  calls: Arc<AtomicUsize>,
+}
+impl crate::FactoryToolExecutionOwner for RecordingToolExecutionOwner {
+  fn prepare(
+    &self,
+    scope: crate::FactoryToolExecutionScope,
+  ) -> Result<Arc<dyn ExecutionBackend>, FactoryPreflightError> {
+    assert_eq!(scope.job_id, self.job_id);
+    assert_eq!(scope.attempt, 1);
+    assert_eq!(scope.permissions, self.permissions);
+    assert_eq!(scope.control.capability, "fixture.blocking-tool-authorization.v1");
+    assert!(scope.deadline > tokio::time::Instant::now());
+    assert!(!scope.cancellation.is_cancelled());
+    self.calls.fetch_add(1, Ordering::SeqCst);
+    Ok(scope.backend)
+  }
+}
+
+#[tokio::test]
+async fn explicit_tool_execution_owner_is_bound_before_any_input_source_or_credential_io() {
+  let mut fixture = credential_job_fixture().await;
+  install_blocking_plugin(
+    &mut fixture.executor,
+    &mut fixture.spec,
+    octacity_protocol::FactoryToolControlModeV3::ToolRisk,
+  );
+  fixture.executor.factory_permissions = Some(fixture.spec.permissions.clone());
+  fixture
+    .spec
+    .validate(&JobBinding {
+      job_id: &fixture.spec.job_id,
+      attempt: fixture.spec.attempt,
+      now: fixture.spec.issued_at,
+    })
+    .unwrap();
+  let calls = Arc::new(AtomicUsize::new(0));
+  let owner = Arc::new(RecordingToolExecutionOwner {
+    job_id: fixture.spec.job_id.clone(),
+    permissions: fixture.spec.permissions.clone(),
+    calls: calls.clone(),
+  });
+  let (events, _receiver) = mpsc::channel(8);
+  let failure = fixture
+    .executor
+    .execute_with_factory_tools(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      owner,
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .unwrap_err();
+  assert!(
+    matches!(
+      failure.error(),
+      JobError::FactoryPreflight(FactoryPreflightError::SecretProfile)
+    ),
+    "configured owner advances to independent credential policy: {failure}"
+  );
+  assert_eq!(calls.load(Ordering::SeqCst), 1);
+  assert_eq!(fixture.downloads.load(Ordering::SeqCst), 0);
+  assert_eq!(fixture.source_calls.load(Ordering::SeqCst), 0);
+  assert_eq!(fixture.starts.load(Ordering::SeqCst), 0);
+  assert_eq!(
+    fs::read_dir(fixture.root.path()).unwrap().count(),
+    1,
+    "only immutable runner installation exists"
+  );
+  drop(fixture.server);
+}
+
+#[tokio::test]
+async fn managed_capture_binds_observations_to_signed_input_and_original_deadline() {
+  let (completion, _, _root) = captured_factory_job_with_observation(None, false, &[], None, true, true).await;
+  completion
+    .expect("an opted-in capture can retain its independently signed observation context")
+    .cleanup()
+    .await
+    .unwrap();
 }

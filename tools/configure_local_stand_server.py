@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from typing import Any
@@ -23,6 +24,7 @@ DIRECTORY_MODE = state.DIRECTORY_MODE
 PRIVATE_FILE_MODE = state.PRIVATE_FILE_MODE
 MAX_POLICY_BYTES = 1024 * 1024
 MAX_MANIFEST_BYTES = 1024 * 1024
+MAX_FACTORY_PROFILE_BYTES = 4 * 1024 * 1024
 SERVER_BUNDLE_FILES = {
     "config": "server.toml",
     "postgres_url": "postgres-url",
@@ -127,8 +129,18 @@ def _postgres_url(password: str) -> bytes:
     return f"postgresql://octacity:{encoded}@postgres:5432/octacity\n".encode("ascii")
 
 
-def _server_toml() -> bytes:
-    return f'''management_bind = "0.0.0.0:8080"
+def _server_toml(*, factory: bool = False, signal_connectors: bool = False) -> bytes:
+    profile = 'factory_profiles_file = "/run/octacity-secrets/factory-profiles.json"\n' if factory else ""
+    if signal_connectors:
+        profile += 'factory_signal_connectors_file = "/run/octacity-secrets/factory-signal-connectors.json"\n'
+    workers = '''
+[factory]
+poll_interval_milliseconds = 250
+claim_lifetime_milliseconds = 30000
+batch_size = 8
+concurrency = 2
+''' if factory else ""
+    return f'''{profile}management_bind = "0.0.0.0:8080"
 agent_bind = "0.0.0.0:8081"
 cache_bind = "0.0.0.0:8082"
 acknowledge_unauthenticated_management = true
@@ -160,40 +172,135 @@ session_lifetime_milliseconds = 300000
 
 [job_spec]
 policy_file = "/run/octacity/job-spec-policy.json"
+{workers}
 '''.encode("utf-8")
 
 
-def _expected_bundle(password: str, policy: bytes) -> dict[str, bytes]:
-    return {
-        SERVER_BUNDLE_FILES["config"]: _server_toml(),
+def _expected_bundle(password: str, policy: bytes, profiles: bytes | None, *, signal_connectors: bool = False) -> dict[str, bytes]:
+    expected = {
+        SERVER_BUNDLE_FILES["config"]: _server_toml(factory=profiles is not None, signal_connectors=signal_connectors),
         SERVER_BUNDLE_FILES["postgres_url"]: _postgres_url(password),
         SERVER_BUNDLE_FILES["job_spec_policy"]: policy,
     }
+    if profiles is not None:
+        expected["factory-profiles.json"] = profiles
+    return expected
 
 
-def _validate_existing_bundle(destination: Path, expected: dict[str, bytes]) -> None:
+def _connector_bundle(catalog: Path) -> dict[str, bytes]:
+    """Copy opaque adapter files while rewriting only trusted runtime references."""
+    try:
+        document = _load_json_object(_validate_regular_file(
+            catalog, "Factory connector catalog", MAX_FACTORY_PROFILE_BYTES,
+            frozenset({PRIVATE_FILE_MODE}),
+        ), "Factory connector catalog")
+        connectors = document.get("connectors")
+        if (set(document) != {"version", "connectors"}
+                or type(document["version"]) is not int or document["version"] != 1
+                or not isinstance(connectors, list) or len(connectors) > 64):
+            raise ServerConfigurationError("invalid connector catalog")
+        files: dict[str, bytes] = {}
+        installed = []
+        for index, connector in enumerate(connectors):
+            if (not isinstance(connector, dict)
+                    or set(connector) != {"kind", "credential_profile", "configuration_file", "credential_file"}
+                    or not all(isinstance(value, str) and value for value in connector.values())):
+                raise ServerConfigurationError("invalid connector files")
+            rewritten = {"kind": connector["kind"], "credential_profile": connector["credential_profile"]}
+            for field, suffix, limit in (
+                ("configuration_file", "configuration", MAX_FACTORY_PROFILE_BYTES),
+                ("credential_file", "credential", 64 * 1024),
+            ):
+                source = Path(connector[field])
+                if not source.is_absolute():
+                    raise ServerConfigurationError("connector files must be absolute")
+                name = f"factory-signal-{index:04d}-{suffix}"
+                files[name] = _validate_regular_file(
+                    source, "Factory connector input", limit,
+                    frozenset({PRIVATE_FILE_MODE}),
+                )
+                rewritten[field] = f"/run/octacity-secrets/{name}"
+            installed.append(rewritten)
+        files["factory-signal-connectors.json"] = (
+            json.dumps({"version": 1, "connectors": installed}, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        return files
+    except (OSError, UnicodeError, ValueError, ServerConfigurationError):
+        raise ServerConfigurationError("Factory connector inputs are invalid") from None
+
+
+def _delivery_bundle(root: Path) -> tuple[dict[str, bytes | None], frozenset[str]]:
+    """Copy a bounded opaque provider installation, never interpreting its API."""
+    try:
+        files: dict[str, bytes | None] = {"factory-delivery": None}
+        executables = set()
+        pending = [(root, "factory-delivery", 0)]
+        total = 0
+        while pending:
+            directory, relative, depth = pending.pop()
+            state.validate_private_directory(directory)
+            if depth > 4:
+                raise ValueError("depth")
+            for path in directory.iterdir():
+                if len(files) >= 1024 or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", path.name):
+                    raise ValueError("entry")
+                name = f"{relative}/{path.name}"
+                metadata = path.lstat()
+                if path.is_symlink():
+                    raise ValueError("link")
+                if path.is_dir():
+                    files[name] = None
+                    pending.append((path, name, depth + 1))
+                else:
+                    executable = bool(metadata.st_mode & 0o111)
+                    contents = state.read_regular_file(
+                        path, "Factory Delivery input", max_bytes=256 * 1024 * 1024 if executable else 4 * 1024 * 1024,
+                        modes=frozenset({0o500, 0o700, 0o755}) if executable else frozenset({PRIVATE_FILE_MODE}),
+                    )
+                    total += len(contents)
+                    if total > 512 * 1024 * 1024:
+                        raise ValueError("size")
+                    files[name] = contents
+                    if executable:
+                        executables.add(name)
+        return files, frozenset(executables)
+    except (OSError, ValueError, state.StateError):
+        raise ServerConfigurationError("Factory Delivery installation is invalid") from None
+
+
+def _validate_existing_bundle(destination: Path, expected: dict[str, bytes | None], executables: frozenset[str] = frozenset()) -> None:
     initializer.validate_private_directory(destination)
     entries = {path.name for path in destination.iterdir()}
-    if entries != set(expected):
+    if ("factory-profiles.json" in entries) != ("factory-profiles.json" in expected):
+        raise ServerConfigurationError(
+            "Factory installation cannot change an existing server bundle; "
+            "reset the disposable stand before changing its Factory mode"
+        )
+    if entries != {Path(name).parts[0] for name in expected}:
         raise ServerConfigurationError(
             "generated server bundle contains missing or unexpected files"
         )
     for name, contents in expected.items():
         path = destination / name
+        if contents is None:
+            state.validate_private_directory(path)
+            if {entry.name for entry in path.iterdir()} != {Path(child).name for child in expected if Path(child).parent.as_posix() == name}:
+                raise ServerConfigurationError("generated server bundle contains missing or unexpected files")
+            continue
         if _validate_regular_file(
             path,
             f"generated server {name}",
             len(contents),
-            frozenset({PRIVATE_FILE_MODE}),
+            frozenset({0o700 if name in executables else PRIVATE_FILE_MODE}),
         ) != contents:
             raise ServerConfigurationError(
                 f"generated server {name} differs from the verified inputs"
             )
 
 
-def _publish_bundle(destination: Path, expected: dict[str, bytes]) -> None:
+def _publish_bundle(destination: Path, expected: dict[str, bytes | None], executables: frozenset[str] = frozenset()) -> None:
     if destination.exists() or destination.is_symlink():
-        _validate_existing_bundle(destination, expected)
+        _validate_existing_bundle(destination, expected, executables)
         return
     staging = Path(
         tempfile.mkdtemp(prefix=".server.staging-", dir=destination.parent)
@@ -202,15 +309,18 @@ def _publish_bundle(destination: Path, expected: dict[str, bytes]) -> None:
     try:
         for name, contents in expected.items():
             path = staging / name
+            if contents is None:
+                state.ensure_private_directory(path)
+                continue
             path.write_bytes(contents)
-            path.chmod(PRIVATE_FILE_MODE)
-        _validate_existing_bundle(staging, expected)
+            path.chmod(0o700 if name in executables else PRIVATE_FILE_MODE)
+        _validate_existing_bundle(staging, expected, executables)
         try:
             staging.rename(destination)
         except OSError:
             if not destination.exists() and not destination.is_symlink():
                 raise
-            _validate_existing_bundle(destination, expected)
+            _validate_existing_bundle(destination, expected, executables)
     finally:
         if staging.exists():
             shutil.rmtree(staging)
@@ -223,9 +333,14 @@ def generate_server_configuration(
     repository: Path = REPOSITORY,
     home: Path = Path.home(),
     openssl: str = "openssl",
+    factory_profiles: Path | None = None,
+    factory_signal_connectors: Path | None = None,
+    factory_delivery_bundle: Path | None = None,
 ) -> dict[str, str]:
     """Validate inputs and atomically publish an idempotent server bundle."""
 
+    if (factory_signal_connectors is not None or factory_delivery_bundle is not None) and factory_profiles is None:
+        raise ServerConfigurationError("Factory connectors require an explicit Factory profile")
     try:
         initialized = initializer.validate_initialized_state(
             root,
@@ -241,18 +356,41 @@ def generate_server_configuration(
         credentials["database_password"],
     ).decode("ascii")
     policy = _verified_policy(native_installation.expanduser())
-    expected = _expected_bundle(password, policy)
+    profiles = None
+    if factory_profiles is not None:
+        profiles = _validate_regular_file(
+            factory_profiles.expanduser(), "Factory profile catalog",
+            MAX_FACTORY_PROFILE_BYTES, frozenset({PRIVATE_FILE_MODE}),
+        )
+        document = _load_json_object(profiles, "Factory profile catalog")
+        if type(document.get("version")) is not int or document["version"] != 1:
+            raise ServerConfigurationError("Factory profile catalog schema version is unsupported")
+    connector_files = None if factory_signal_connectors is None else _connector_bundle(factory_signal_connectors.expanduser())
+    expected = _expected_bundle(password, policy, profiles, signal_connectors=connector_files is not None)
+    if connector_files is not None:
+        expected.update(connector_files)
+    executables = frozenset()
+    if factory_delivery_bundle is not None:
+        delivery_files, executables = _delivery_bundle(factory_delivery_bundle.expanduser())
+        expected.update(delivery_files)
 
     root = Path(initialized["root"])
     with state.private_umask():
         config_root = root / "config"
         state.ensure_private_directory(config_root)
         destination = config_root / "server"
-        _publish_bundle(destination, expected)
-    return {
+        _publish_bundle(destination, expected, executables)
+    receipt = {
         name: str(destination / filename)
         for name, filename in SERVER_BUNDLE_FILES.items()
     }
+    if profiles is not None:
+        receipt["factory_profiles"] = str(destination / "factory-profiles.json")
+    if connector_files is not None:
+        receipt["factory_signal_connectors"] = str(destination / "factory-signal-connectors.json")
+    if factory_delivery_bundle is not None:
+        receipt["factory_delivery_bundle"] = str(destination / "factory-delivery")
+    return receipt
 
 
 def parse_arguments() -> argparse.Namespace:
@@ -270,6 +408,9 @@ def parse_arguments() -> argparse.Namespace:
         help="verified native installation containing job-spec-policy.json",
     )
     parser.add_argument("--openssl", default="openssl", help="OpenSSL executable")
+    parser.add_argument("--factory-profiles", type=Path, help="explicit private native Factory profile catalog; omitted disables Factory")
+    parser.add_argument("--factory-signal-connectors", type=Path, help="separate private Decision Signal connector catalog")
+    parser.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")
     return parser.parse_args()
 
 
@@ -280,6 +421,9 @@ def main() -> int:
             arguments.root,
             arguments.native_installation,
             openssl=arguments.openssl,
+            factory_profiles=arguments.factory_profiles,
+            factory_signal_connectors=arguments.factory_signal_connectors,
+            factory_delivery_bundle=arguments.factory_delivery_bundle,
         )
     except (OSError, UnicodeError, ValueError, ServerConfigurationError) as error:
         raise SystemExit(f"local stand server configuration failed: {error}") from error

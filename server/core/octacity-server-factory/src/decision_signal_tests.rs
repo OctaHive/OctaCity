@@ -253,6 +253,36 @@ pub(crate) fn observation(
 }
 
 #[test]
+fn an_unobserved_provider_outcome_cannot_be_consumed_as_a_free_receipt() {
+  let request = provider_request(
+    DecisionSignalPurpose::Routing,
+    DecisionSignalMode::Shadow,
+    DecisionSignalFallback::Escalate,
+    &["left", "right"],
+    600_000,
+    100_000,
+  );
+  let failure = DecisionSignalProviderFailure::unobserved(
+    request.id(),
+    request.provider().clone(),
+    request.adapter().clone(),
+    request.model().clone(),
+    DecisionSignalState::TimedOut,
+  )
+  .unwrap();
+  assert!(failure.usage().is_none());
+  assert!(
+    consume_routing_signal(
+      DecisionSignalReceiptId::generate(),
+      &request,
+      DecisionSignalProviderObservation::Failure(failure),
+      key("left")
+    )
+    .is_err()
+  );
+}
+
+#[test]
 fn finite_choices_reject_empty_duplicate_and_oversized_domains() {
   assert!(DecisionSignalChoices::try_new(vec![]).is_err());
   assert!(DecisionSignalChoices::try_new(vec![key("one"), key("one")]).is_err());

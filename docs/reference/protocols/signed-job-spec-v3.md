@@ -162,7 +162,7 @@ fallback.
 
 A node with explicit source write authority may carry one signed
 `factory.change_set_capture` instruction. The instruction fixes the canonical
-author and committer identity, Node Attempt time, optional patch ceiling, and
+author and committer identity, deterministic Unix commit time, optional patch ceiling, and
 the complete capture policy. Nodes with read-only source authority reject this
 instruction. An Agent without an operator-verified `change_set_capture`
 tool rejects it before source materialization.
@@ -214,6 +214,23 @@ do not echo paths or candidate contents. A rejected capture therefore supplies
 no authoritative candidate identity and publishes no accepted ChangeSet;
 server-side acceptance and Artifact publication are separate later boundaries.
 
+An optional `observation` on the capture instruction declares a logical Report
+`name` and an immutable `schema` with `identity`, `version`, and `sha256`. Its
+name cannot replace capture products or the selected adapter's model records;
+it never selects a filesystem path. The Agent derives the closed
+`candidate_revision`, `candidate_digest`, `input_digest`, and `fresh_until`
+record after the actual commit and manifest exist. The input digest and expiry
+come from signed Factory causality and the original execution deadline, rather
+than model output or renewable Lease expiry. These invocation facts remain
+outside the installed capture policy to avoid a circular input identity.
+
+The Report consumes its own signed count and byte allowance. Its immutable
+schema and trusted producer must match declared evidence. Server acceptance
+independently compares all four fields with the verified retained candidate and
+input, and rejects expiry beyond actual retention. Candidate contents and path
+inventory stay in opaque Artifacts; the Report exposes neither. Without the
+optional descriptor, the existing capture wire representation is unchanged.
+
 The trusted lifecycle publishes the exact regular files through the generic
 bounded output protocol using the reserved names `change-set.bundle`,
 `change-set-manifest.json`, and, when enabled, `change-set.patch`. They consume
@@ -241,6 +258,13 @@ candidate authority. Evaluation receives this reconstructed source through a
 read-only backend mount; validation and bounded rework receive only the mount
 authority declared by their signed permission set.
 
+The bundle and capture manifest remain host-only reconstruction inputs. Their
+identities and digests stay in the signed protected-input manifest, but the Agent
+seals a separate runner subtree excluding those two exact logical identities.
+It revalidates both trees before spawn and removes both during Job cleanup.
+The backend mounts only the runner subtree at `/octacity/protected`; no model
+receives the original bundle or manifest through that mount.
+
 ## Placement and capacity diagnostics
 
 Registration inventory exposes `factory_executions` separately from ordinary
@@ -251,6 +275,14 @@ platforms, execution guarantees, and every capability in the signed
 `required_enforcement` list. An Agent may advertise these entries only while
 also advertising execution-contract v3, and only for a non-Host route already
 present in its ordinary execution inventory.
+
+A managed intent with `execution.workspace_root: "/workspace"` also requires
+`workspace_anchor: true` on that same Factory route. Omitted inventory means
+false; an unrelated qualified route cannot lend this capability. The Agent
+advertises it from the exact backend's mount contract, and unqualified backends
+refuse the projection. An empty read-only anchor exposes only separately
+admitted child mounts, never the host Job directory. Ordinary Jobs and managed
+intents without this field retain their existing placement eligibility.
 
 The management Agent projection exposes the negotiated execution-contract
 range, ordinary routes, and Factory-qualified route ceilings. Operators can
@@ -295,7 +327,12 @@ Microsandbox seals the `/workspace` parent, projects the same source authority
 and writable roots separately, partitions their growth quotas so their sum cannot
 exceed the Job disk ceiling, binds protected inputs read-only/no-exec, applies
 `RLIMIT_NPROC`, and translates the exact restricted-host policy into its
-default-deny network policy. Both retain the existing CPU, memory, elapsed-time,
+default-deny network policy. Literal IPv4 and IPv6 selections become exact
+single-address rules (`/32` and `/128`); DNS selections remain exact domain
+rules. The SDK's reserved `host.microsandbox.internal` alias maps to its
+per-sandbox host destination only when explicitly granted. This translation
+belongs to the Microsandbox adapter and does not grant a private network or
+match lookalike DNS suffixes. Both retain the existing CPU, memory, elapsed-time,
 identity, immutable image, read-only release/tool, and output supervision
 boundaries. Concrete provider names are used only for diagnostics and
 composition; signed policy and admission use semantic capabilities.
@@ -306,11 +343,14 @@ legacy Native routes likewise never advertise the v3 enforcement vocabulary.
 
 ## Protected tool-action decisions
 
-This section defines the target contract and the implemented shared gate. It
-does not claim that `tool_risk` bounded control is currently deployable. The
-server route is unavailable unless composition explicitly installs a concrete
-authorizer, and the Agent does not yet project an authorizer helper into a
-running Codex task.
+The ordinary Unix Agent can install the pinned protected reader and its
+provider-local bridge through explicit operator configuration. It binds each
+controlled Job to the current lease and coordinator authorizer before protected
+input, Source or credential I/O. A missing qualified installation still rejects
+signed `tool_control` with `ToolAuthorizationUnavailable` at preflight; a plugin
+capability declaration alone cannot qualify an authorizer. The packaged pilot
+qualifies the finite structured reader with JEV in shadow mode. Provider
+calibration and promotion to bounded control remain separate requirements.
 
 A coding harness proposal is untrusted input. Before any optional model-backed
 assessment, the trusted Agent-side adapter must normalize it into one bounded canonical action covering
@@ -337,25 +377,136 @@ again, compares its domain-separated digest with the decision, requires an
 ceilings. Only the exact canonical value returned by this final gate may be
 executed; a separately retained or modified proposal is not an executable
 authorization. Stable errors and `Debug` output redact raw action material.
+Cancellation is checked again after the coordinator exchange: an allow response
+cannot release the action if that same exchange cancelled the leased execution.
+Codex hook formatting also omits provider-controlled tool names and call IDs.
+The private broker channel accepts one length-prefixed neutral v3 proposal,
+bounded before allocation to 4 MiB. Reading and fenced authorization share the
+same cancellation and timeout scope. The resulting authorized value is for the
+trusted protected dispatcher, not evidence that an untrusted harness enforced
+the disposition.
 
 The signed managed execution declares `tool_control` whenever its permission
 set contains protected tools. The declaration names the exact signed plugin,
-the mode (`deterministic` or `tool_risk`), and the capability
-`codex.blocking-pre-tool-authorization.v1`. Agents missing that exact verified
-plugin capability are rejected at placement and again at preflight. Managed
+the mode (`deterministic` or `tool_risk`), and an exact canonical plugin capability
+selector. The shared v3 proposal and coordinator protocol define the neutral
+action shape; the mode selects the decision mechanism, not hook semantics.
+Intrinsic validation checks selector syntax and signed plugin membership without
+choosing a harness vendor. Agents missing the exact verified, semantically
+qualified plugin capability are rejected at placement and again at preflight.
+The Codex adapter separately pins `codex.blocking-pre-tool-authorization.v1`;
+declaring that selector alone never qualifies its enforcement. Managed
 execution without protected tools omits `tool_control`, so ordinary CI/CD and
 Factory tasks without per-action control retain their existing behavior.
 
+Every present `execution.tool_control` also requires explicit
+`response_limits: { per_call_bytes, total_bytes }`. `per_call_bytes` is positive
+and at most 4 MiB; `total_bytes` is at least `per_call_bytes`. These signed
+physical tool-response limits are separate from Artifact/report publication
+limits and are never inferred from them. The installed task policy selects the
+allocation and its frozen identity includes it. Tool-free tasks omit control
+and retain their previous payloads.
+
+The controlled reader must reserve bytes atomically from one shared Job quota
+before each physical read. It passes at most the smaller of the signed
+per-call allowance, local ceiling, and remaining aggregate quota to its backend.
+Every produced backend response consumes the aggregate even when cancelled or
+withheld; repeated action digests grant no free output. A known completed
+response refunds only unused reservation bytes. Failed or dropped reads retain
+their reservation when their produced byte count is unknown. Exhaustion
+prevents another physical read. This allocation does not establish physical
+helper CPU/memory/teardown enforcement.
+
+The private protected-reader channel uses a length-prefixed JSON request with
+`schema_version: 1`, `operation: authorize | read`, and the complete neutral v3
+`proposal`. An `authorize` request waits for the fenced broker disposition but
+does not execute a helper, reserve response bytes, or return file contents. A
+`read` request obtains current authority again before its physical operation;
+successful preflight is never a reusable grant. Both use the same canonical
+proposal identity, so server-side Decision Signal deduplication still applies.
+Unsupported versions, operations and unknown fields are rejected. The existing
+status-byte/length response returns an empty body for authorization success.
+
 Octa 0.5.1 supplies the pinned synchronous Codex `PreToolUse` integration and
-requires a protected native helper. OctaCity currently has the bounded parser,
+requires a protected native helper. OctaCity composes the bounded parser,
 deny/allow output encoder, redacted broker request, local permission checks,
-fenced request/receipt response binding, and final unchanged-action gate as
-tested components. It deliberately does not manufacture exact path, host,
-secret, descendant, resource, or output requests by copying the complete Job
-ceiling: the generic Codex hook document does not prove those effects. Until a
-trusted exact-action adapter and Agent-local IPC helper are composed and
-release-tested, no Agent advertises or enables `tool_risk` bounded control for
-Codex. Ordinary execution and backend enforcement remain unchanged.
+fenced request/receipt response binding, and final unchanged-action gate with a
+separately confined reader. It does not manufacture exact path, host, secret,
+descendant, resource, or output requests by copying the complete Job ceiling:
+the generic Codex hook document does not prove those effects. Only the exact
+installed structured reader is qualified by this path; arbitrary shell or edit
+hooks gain no authority. Ordinary CI/CD retains its existing behavior.
+
+The pinned [Codex 0.161.0 unified-exec adapter](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/core/src/tools/handlers/unified_exec/exec_command.rs)
+reports `Bash` with only `tool_input.command`; it omits the effective execution
+directory and other execution parameters. The [pinned hook serializer](https://github.com/openai/codex/blob/rust-v0.161.0/codex-rs/hooks/src/events/pre_tool_use.rs)
+preserves resolved JSON arguments for MCP tools. Therefore a finite structured
+MCP operation can supply exact action inputs; arbitrary shell text cannot prove
+its filesystem or process effects. Native `Read` is not an assumed hook name,
+and `apply_patch` must not be treated as an authorization-grade `Write` record.
+The [official hook coverage contract](https://developers.openai.com/codex/hooks/)
+also permits specialized paths to bypass hooks. Qualification consequently
+requires an outside-harness protected dispatcher and independent backend
+enforcement, with narrower harness mounts; hook `allow` alone is insufficient.
+
+The adapter component supports an operator-installed structured MCP reader
+with exactly one `path` argument. Its recipe pins the canonical MCP tool name,
+tool and reader executable identities, and resource/output bounds. It produces
+one portable read path and no network, credential or workload-identity request;
+extra input fields and native shell/edit hooks are refused. The normal Agent
+composition installs the verified MCP bridge and lease-bound dispatcher for this
+recipe. The adapter's parser alone still cannot execute an operation or
+establish backend enforcement.
+
+The Agent's protected-read dispatcher composes the lease-bound broker with an
+installed reader outside the harness. Only the consumed, non-cloneable action
+proof reaches that reader; it must check its exact tool, executable, arguments
+and read effects before I/O. Authorization and reading share one deadline and
+cancellation scope. The dispatcher withholds cancelled or oversized responses;
+the backend owns confinement, bounded allocation and physical cleanup. Public
+temporary-file tests cover dispatcher composition and rejected-action isolation.
+The packaged PostgreSQL-backed controlled-tool pilot additionally covers the
+ordinary Agent installation, released bridge, actual confined read, Server
+receipt and restart durability; see
+[backend contracts](../../testing/backend-contracts.md#packaged-controlled-tool-risk-execution).
+
+The Unix rooted-read component retains an opened source-directory handle and
+opens every relative directory and final file with `O_NOFOLLOW`. Absolute paths,
+parent traversal, symlink ancestors and non-regular final files are refused;
+renaming or replacing the root path does not redirect its retained authority.
+The root itself must come from the trusted Job source namespace. This component
+does not establish mount isolation or immutability, and Windows explicitly
+refuses it until an equivalent handle-based implementation is qualified.
+
+The rooted backend obtains its provider-neutral `ProtectedReadRecipe` from the
+trusted `installed_rooted_reader` inventory port. It compares the complete
+consumed action against that recipe before reading; an otherwise authorized
+different executable or command cannot select the built-in reader. Portable
+source paths map only below its retained physical root. The operator-installed
+inventory pins the reader and bridge binaries and entrypoints; normal Agent
+composition verifies them before advertising controlled tools. Physical
+filesystem calls run in the separately supervised helper, whose backend must
+enforce teardown; an async response timeout alone cannot terminate a blocking
+kernel operation.
+
+The Unix private-reader component accepts the same bounded neutral proposal
+frame through an owner-only socket. `ProtectedReadDispatcher::read_channel`
+authorizes exactly once and consumes the resulting proof in the installed
+backend. Responses carry a status byte (0 success, 1 refusal), a big-endian u32
+byte count, and at most the dispatcher response bound. An empty successful read
+remains distinct from refusal. Each connection serves one request and stays
+open until the peer closes it, cancellation occurs, or its operation deadline
+expires; the pinned vsock transport can lose queued bytes on immediate host
+closure.
+
+`ProtectedReadChannel::attach` couples listener ownership to the existing
+`RunningExecution`. Main completion, kill, and destruction cancel pending
+reader exchanges and remove only the owned socket identity. The confined
+composition separately accounts for helper CPU, I/O and elapsed consumption,
+combines main/helper resource peaks conservatively, and seals helper activity
+before terminal accounting. The signed shared response quota remains a separate
+byte limit. Socket lifetime tests alone do not qualify these physical bounds;
+they are covered by the confined reader and packaged backend contracts.
 
 ## Stable template derivation
 

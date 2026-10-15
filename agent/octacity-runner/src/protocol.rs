@@ -89,7 +89,8 @@ pub async fn write_command<W: AsyncWrite + Unpin>(
   writer: &mut W,
   command: &RunnerCommand,
 ) -> Result<(), RunnerProtocolError> {
-  let mut frame = serde_json::to_vec(command).map_err(|error| RunnerProtocolError::Json(Box::new(error)))?;
+  let mut frame =
+    zeroize::Zeroizing::new(serde_json::to_vec(command).map_err(|error| RunnerProtocolError::Json(Box::new(error)))?);
   frame.push(b'\n');
   if frame.len() > MAX_RUNNER_INPUT_FRAME_BYTES {
     return Err(RunnerProtocolError::InputTooLarge);

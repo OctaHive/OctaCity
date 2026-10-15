@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
@@ -21,20 +20,8 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPOSITORY / "tools"))
 
 
-def load_module(name: str, path: Path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-INITIALIZER = load_module("init_local_stand", REPOSITORY / "tools/init_local_stand.py")
-CONFIGURATOR = load_module(
-    "configure_local_stand_agent",
-    REPOSITORY / "tools/configure_local_stand_agent.py",
-)
+import init_local_stand as INITIALIZER  # noqa: E402
+import configure_local_stand_agent as CONFIGURATOR  # noqa: E402
 
 
 @unittest.skipUnless(os.name == "posix", "local stand host state requires POSIX permissions")
@@ -305,6 +292,236 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         snapshot = (configuration_path.read_bytes(), configuration_path.stat().st_mtime_ns)
         self.assertEqual(receipt, self.generate())
         self.assertEqual(snapshot, (configuration_path.read_bytes(), configuration_path.stat().st_mtime_ns))
+
+    def _factory_profile(self):
+        permissions = json.loads((REPOSITORY / "shared/protocol-fixtures/job-spec/job-spec-v3.json").read_text())["permissions"]
+        tool = self.installation / "agent/share/local-stand-codex-fixture"
+        digest = hashlib.sha256(tool.read_bytes()).hexdigest()
+        permissions["executables"][0]["sha256"] = digest
+        permissions["executables"][0]["version"] = "0.161.0"
+        permissions["commands"][0]["executable"] = permissions["executables"][0].copy()
+        policy = Path(self.temporary.name) / "operator-agent-policy.toml"
+        executable = f'{{ identity = "codex-cli", version = "0.161.0", sha256 = "{digest}" }}'
+        rendered = (
+            'version = 1\nallowed_network_hosts = ["api.openai.com"]\n'
+            f'tool_executables = {{ "codex-cli" = {{ path = {json.dumps(str(tool))}, '
+            f'version = "0.161.0", platform = "linux-aarch64", sha256 = "{digest}" }} }}\n'
+            '[factory_permissions]\n'
+            'plugins = [{ identity = "codex", version = "0.5.0", sha256 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" }]\n'
+            f'executables = [{executable}]\n'
+            'tools = []\n'
+            f'commands = [{{ executable = {executable}, arguments = [{{ kind = "exact", value = "--json" }}] }}]\n'
+            'max_descendants = 4\n'
+            'mounts = [{ root = "/octacity/protected", mode = "read_only" }, { root = "/workspace/output", mode = "read_write" }, { root = "/workspace/scratch", mode = "read_write" }, { root = "/workspace/source", mode = "read_write" }]\n'
+            'network_hosts = ["api.openai.com"]\nsecret_profiles = ["model-coding"]\nworkload_identity_profiles = []\n'
+            '[factory_permissions.resources]\ncpu_millis = 1000\nmemory_bytes = 536870912\ndisk_bytes = 1073741824\nprocess_count = 8\nelapsed_millis = 600000\n'
+            '[factory_permissions.outputs]\nkinds = ["codex-result"]\nmax_artifact_count = 10\nmax_artifact_bytes = 1024\nmax_report_count = 10\nmax_report_bytes = 1024\n'
+        )
+        policy.write_text(rendered)
+        policy.chmod(0o600)
+        return policy, permissions, digest
+
+    def test_factory_uses_only_the_independently_supplied_local_agent_policy(self):
+        policy, permissions, digest = self._factory_profile()
+        receipt = CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        configuration = tomllib.loads(Path(receipt["config"]).read_text())
+        self.assertEqual(configuration["factory_permissions"], permissions)
+        self.assertNotIn("change_set_capture", configuration)
+        self.assertEqual(configuration["allowed_network_hosts"], ["api.openai.com"])
+        self.assertEqual(configuration["tool_executables"]["codex-cli"]["sha256"], digest)
+        self.assertEqual(len(configuration["virtualization_providers"]), 1)
+        CONFIGURATOR.validated_launch_plan(self.root.resolve(), self.installation, receipt)
+
+    def test_factory_credential_references_remain_agent_owned_across_restart(self):
+        policy, _, _ = self._factory_profile()
+        private = Path(self.temporary.name) / "private-model"
+        private.mkdir(mode=0o700)
+        credential = private / "model.json"
+        credential.write_text('{"OPENAI_API_KEY":"private-credential-canary"}')
+        credential.chmod(0o600)
+        references = {"model-coding": str(credential)}
+        policy.write_text(
+            f'factory_credential_profiles = {CONFIGURATOR._toml_value(references)}\n'
+            + policy.read_text()
+        )
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        receipt = CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        configuration = Path(receipt["config"])
+        original = configuration.read_bytes()
+        self.assertEqual(tomllib.loads(original.decode())["factory_credential_profiles"], references)
+        self.assertNotIn(b"private-credential-canary", original)
+        CONFIGURATOR.validated_launch_plan(self.root.resolve(), self.installation, receipt)
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        replacement = private / "other.json"
+        replacement.write_bytes(credential.read_bytes())
+        replacement.chmod(0o600)
+        policy.write_text(policy.read_text().replace(str(credential), str(replacement)))
+        with self.assertRaisesRegex(CONFIGURATOR.AgentConfigurationError, "reset"):
+            CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        self.assertEqual(configuration.read_bytes(), original)
+
+    def test_factory_protected_reader_is_separate_from_model_tools_and_immutable(self):
+        policy, _, _ = self._factory_profile()
+        release = Path(self.temporary.name) / "reader-release"
+        release.mkdir(mode=0o700)
+        binary = release / "bounded-reader"
+        binary.write_bytes(b"reader fixture")
+        binary.chmod(0o500)
+        reader = {
+            "release_root": str(release), "entrypoint": "bounded-reader", "platform": "linux-aarch64",
+            "tool": {"identity": "source-reader", "version": "1", "sha256": "a" * 64},
+            "executable": {"identity": "bounded-reader", "version": "1", "sha256": hashlib.sha256(binary.read_bytes()).hexdigest()},
+            "resources": {"cpu_millis": 1000, "memory_bytes": 268435456, "disk_bytes": 16777216, "process_count": 8, "elapsed_millis": 5000},
+            "outputs": {"kinds": [], "max_artifact_count": 0, "max_artifact_bytes": 0, "max_report_count": 0, "max_report_bytes": 0},
+        }
+        policy.write_text(f'protected_reader = {CONFIGURATOR._toml_value(reader)}\n' + policy.read_text())
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        receipt = CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        configuration = Path(receipt["config"])
+        original = configuration.read_bytes()
+        document = tomllib.loads(original.decode())
+        self.assertEqual(document["protected_reader"], reader)
+        self.assertEqual(set(document["tool_executables"]), {"codex-cli"})
+        CONFIGURATOR.validated_launch_plan(self.root.resolve(), self.installation, receipt)
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        policy.write_text(policy.read_text().replace('"elapsed_millis" = 5000', '"elapsed_millis" = 4000'))
+        with self.assertRaisesRegex(CONFIGURATOR.AgentConfigurationError, "reset"):
+            CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        self.assertEqual(configuration.read_bytes(), original)
+
+    def _factory_capture_profile(self):
+        policy, _, _ = self._factory_profile()
+        executable = Path(self.temporary.name) / "operator-capture-git"
+        executable.write_text("#!/bin/sh\nexit 0\n")
+        executable.chmod(0o755)
+        capture = {"provider": "git", "executable": {
+            "path": str(executable), "version": "2.51.0",
+            "platform": "macos-aarch64", "sha256": hashlib.sha256(executable.read_bytes()).hexdigest(),
+        }}
+        executable_toml = ", ".join(f"{name} = {json.dumps(value)}" for name, value in capture["executable"].items())
+        policy.write_text(f'change_set_capture = {{ provider = "git", executable = {{ {executable_toml} }} }}\n' + policy.read_text())
+        return policy, capture
+
+    def test_factory_installs_the_explicit_trusted_capture_configuration(self):
+        policy, capture = self._factory_capture_profile()
+        credential_before = self.credential.read_bytes()
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        self.assertFalse((self.root / "config/agent.toml").exists())
+        self.assertEqual(self.credential.read_bytes(), credential_before)
+        receipt = CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        configuration = tomllib.loads(Path(receipt["config"]).read_text())
+        self.assertEqual(configuration["change_set_capture"], capture)
+        installed_policy = tomllib.loads(Path(receipt["factory_agent_profile"]).read_text())
+        self.assertEqual(installed_policy["change_set_capture"], capture)
+        CONFIGURATOR.validated_launch_plan(self.root.resolve(), self.installation, receipt)
+
+    def test_factory_launch_rejects_capture_configuration_removed_from_installed_policy(self):
+        policy, _ = self._factory_capture_profile()
+        receipt = CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        config = Path(receipt["config"])
+        config.write_text("\n".join(line for line in config.read_text().splitlines()
+                                   if not line.startswith("change_set_capture = ")) + "\n")
+        with self.assertRaisesRegex(CONFIGURATOR.AgentConfigurationError, "differs"):
+            CONFIGURATOR.validated_launch_plan(self.root.resolve(), self.installation, receipt)
+
+    def test_factory_capture_preflight_rejects_changed_bytes_before_agent_or_live_state(self):
+        policy, capture = self._factory_capture_profile()
+        observed = Path(self.temporary.name) / "capture-validator-observed"
+        self._executable("agent/bin/octacity-agent",
+                         '#!/usr/bin/env python3\nfrom pathlib import Path\n'
+                         f'Path({str(observed)!r}).write_text("called")\n')
+        self._write_manifest()
+        Path(capture["executable"]["path"]).write_text("#!/bin/sh\necho changed-capture-byte-canary\n")
+        credential_before = self.credential.read_bytes()
+        with self.assertRaisesRegex(CONFIGURATOR.AgentConfigurationError, "profile is invalid") as error:
+            CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        self.assertNotIn("changed-capture-byte-canary", str(error.exception))
+        self.assertFalse(observed.exists())
+        self.assertEqual(self.credential.read_bytes(), credential_before)
+        self.assertFalse((self.root / "config/agent.toml").exists())
+
+    def test_factory_capture_preflight_passes_exact_config_in_temporary_roots(self):
+        policy, capture = self._factory_capture_profile()
+        observed = Path(self.temporary.name) / "capture-preflight.json"
+        self._executable(
+            "agent/bin/octacity-agent",
+            '#!/usr/bin/env python3\nimport json,sys,tomllib\nfrom pathlib import Path\n'
+            'config=tomllib.loads(Path(sys.argv[2]).read_text())\n'
+            f'Path({str(observed)!r}).write_text(json.dumps(config))\n'
+            'print("configuration is valid")\n',
+        )
+        self._write_manifest()
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        configuration = json.loads(observed.read_text())
+        self.assertEqual(configuration["change_set_capture"], capture)
+        for name in ("work_root", "state_root", "credential_file"):
+            self.assertFalse(Path(configuration[name]).is_relative_to(self.root.resolve()))
+            self.assertFalse(Path(configuration[name]).exists())
+        self.assertFalse((self.root / "config/agent.toml").exists())
+
+    def test_factory_agent_validator_failure_does_not_disclose_private_diagnostics(self):
+        policy, _, _ = self._factory_profile()
+        self._executable(
+            "agent/bin/octacity-agent",
+            '#!/bin/sh\nif [ "$1" = --version ]; then echo "octacity-agent 0.1.0"; exit 0; fi\n'
+            'echo "private-factory-command-canary" >&2\nexit 2\n',
+        )
+        self._write_manifest()
+        with self.assertRaises(CONFIGURATOR.AgentConfigurationError) as error:
+            CONFIGURATOR.generate_agent_configuration(
+                self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+                host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+            )
+        self.assertNotIn("private-factory-command-canary", str(error.exception))
+        self.assertFalse((self.root / "config/agent.toml").exists())
+
+    def test_factory_preflight_validates_in_temporary_roots_without_opening_live_agent_state(self):
+        policy, _, _ = self._factory_profile()
+        live = self.root / "agent/work/live-state-canary"
+        live.parent.mkdir()
+        live.write_bytes(b"live-state-must-not-change")
+        observed = Path(self.temporary.name) / "observed.json"
+        self._executable(
+            "agent/bin/octacity-agent",
+            '#!/usr/bin/env python3\nimport json,sys,tomllib\nfrom pathlib import Path\n'
+            'if sys.argv[1] == "--version":\n print("octacity-agent 0.1.0");sys.exit(0)\n'
+            'config=tomllib.loads(Path(sys.argv[2]).read_text())\n'
+            f'Path({str(observed)!r}).write_text(json.dumps(config))\n'
+            'print("configuration is valid")\n',
+        )
+        self._write_manifest()
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        config = json.loads(observed.read_text())
+        for name in ("work_root", "state_root", "credential_file"):
+            self.assertFalse(Path(config[name]).is_relative_to(self.root.resolve()))
+            self.assertFalse(Path(config[name]).exists(), "temporary preflight inputs must be removed")
+        self.assertEqual(live.read_bytes(), b"live-state-must-not-change")
+        self.assertFalse((self.root / "config/agent.toml").exists())
+        self.assertEqual(config["factory_permissions"]["secret_profiles"], ["model-coding"])
+
+    def test_factory_preflight_cannot_change_a_published_ordinary_agent_configuration(self):
+        original = self.generate()
+        config = Path(original["config"])
+        before = config.read_bytes()
+        policy, _, _ = self._factory_profile()
+        with self.assertRaisesRegex(CONFIGURATOR.AgentConfigurationError, "reset"):
+            CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        self.assertEqual(config.read_bytes(), before)
 
     def test_repeated_generation_does_not_reopen_the_live_agent_state(self):
         with mock.patch.object(

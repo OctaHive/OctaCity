@@ -22,21 +22,28 @@ octacity-execution-oci = { path = "../octacity-execution-oci" }
 octacity-inventory = { path = "../octacity-inventory" }
 octacity-identity = { path = "../octacity-identity" }
 octacity-job = { path = "../octacity-job" }
+octacity-private-fs = { path = "../octacity-private-fs" }
 octacity-lifecycle = { path = "../octacity-lifecycle" }
 octacity-output = { path = "../octacity-output" }
 octacity-observability = { path = "../../shared/octacity-observability" }
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 octacity-source = { path = "../octacity-source" }
+serde.workspace = true
+serde_json.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tracing-layer-win-eventlog.workspace = true
 windows-service.workspace = true
 
 [dev-dependencies]
+base64.workspace = true
+ed25519-dalek.workspace = true
 async-trait.workspace = true
 tempfile.workspace = true
+toml.workspace = true

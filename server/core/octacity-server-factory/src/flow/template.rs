@@ -263,7 +263,8 @@ impl FlowDefinitionTemplate {
         }
         if matches!(choice.kind, FlowNodeKind::BuildCommand | FlowNodeKind::Reasoning) && choice.build_profile.is_none()
           || choice.kind == FlowNodeKind::DeterministicGate && choice.gate.is_none()
-          || choice.kind == FlowNodeKind::TrustedAction && choice.action.is_none()
+          || matches!(choice.kind, FlowNodeKind::TrustedAction | FlowNodeKind::DecisionSignal)
+            && choice.action.is_none()
         {
           return Err(invalid());
         }

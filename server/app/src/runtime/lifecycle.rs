@@ -100,9 +100,10 @@ impl ServerRuntime {
     if self.listener_tasks.is_empty() {
       return Err(ServerRuntimeError::UnexpectedExit);
     }
-    let Some(mut readiness_task) = self.readiness_task.take() else {
+    let mut readiness_task = self.readiness_task.take();
+    if readiness_task.is_none() {
       return Err(ServerRuntimeError::UnexpectedExit);
-    };
+    }
     let mut worker_task = self.worker_task.take();
     let mut notification_task = self.notification_task.take();
     let mut metrics_task = self.metrics_task.take();
@@ -120,23 +121,23 @@ impl ServerRuntime {
           _ => {}
         }
       }
-      if let Err(source) = (&mut readiness_task).await {
+      if let Err(source) = wait_for_optional_task(&mut readiness_task).await {
         return Err(ServerRuntimeError::ReadinessTask(source));
       }
-      if let Some(task) = worker_task.as_mut() {
-        match task.await {
+      if worker_task.is_some() {
+        match wait_for_optional_task(&mut worker_task).await {
           Err(source) => return Err(ServerRuntimeError::WorkerTask(source)),
           Ok(Err(source)) => return Err(ServerRuntimeError::DurableWorker(source)),
           Ok(Ok(())) => {}
         }
       }
-      if let Some(task) = notification_task.as_mut()
-        && let Err(source) = task.await
+      if notification_task.is_some()
+        && let Err(source) = wait_for_optional_task(&mut notification_task).await
       {
         return Err(ServerRuntimeError::NotificationTask(source));
       }
-      if let Some(task) = metrics_task.as_mut()
-        && let Err(source) = task.await
+      if metrics_task.is_some()
+        && let Err(source) = wait_for_optional_task(&mut metrics_task).await
       {
         return Err(ServerRuntimeError::MetricsTask(source));
       }
@@ -151,7 +152,9 @@ impl ServerRuntime {
       Ok(Err(error)) => Err(error),
       Err(_) => {
         self.listener_tasks.abort_all();
-        readiness_task.abort();
+        if let Some(task) = readiness_task.as_mut() {
+          task.abort();
+        }
         if let Some(task) = worker_task.as_mut() {
           task.abort();
         }
@@ -162,7 +165,9 @@ impl ServerRuntime {
           task.abort();
         }
         while self.listener_tasks.join_next().await.is_some() {}
-        let _ = readiness_task.await;
+        if let Some(task) = readiness_task {
+          let _ = task.await;
+        }
         if let Some(task) = worker_task {
           let _ = task.await;
         }
@@ -199,8 +204,12 @@ impl Drop for ServerRuntime {
 }
 
 async fn wait_for_optional_task<T>(task: &mut Option<JoinHandle<T>>) -> Result<T, tokio::task::JoinError> {
-  match task {
-    Some(task) => task.await,
-    None => std::future::pending().await,
-  }
+  let Some(running) = task.as_mut() else {
+    return std::future::pending().await;
+  };
+  let result = running.await;
+  // A pending wait keeps ownership for cancellation. A completed wait consumes
+  // the handle so bounded cleanup cannot poll its already-returned result again.
+  task.take();
+  result
 }

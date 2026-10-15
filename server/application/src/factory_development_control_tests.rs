@@ -81,10 +81,15 @@ async fn verify_late_control(cancel: bool) {
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    let step = owner
-      .reconcile_flow(admission.run.id(), claim.id, at(time))
-      .await
-      .unwrap_or_else(|error| panic!("owner at {time}, controlled {}: {error:?}", held.is_some()));
+    let step = crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      store.as_ref(),
+      admission.run.id(),
+      claim.id,
+      at(time),
+    )
+    .await
+    .unwrap_or_else(|error| panic!("owner at {time}, controlled {}: {error:?}", held.is_some()));
     let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
     if held.is_none() && step == FactoryFlowStep::Waiting {
       let input = snapshot

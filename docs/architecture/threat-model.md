@@ -119,6 +119,119 @@ only an immediate code-owned lifecycle successor. Every Stage Attempt records
 its creating owner, deadline and fence; terminal observations record their own
 fenced owner and consumed budget.
 
+### Configured Flow, private execution inputs, and Decision Signal
+
+An admitted Run pins its complete immutable Flow Definition closure, schemas,
+projections, transitions, repeat and expansion limits, permission ceilings and
+budgets. Repository files and provider results cannot replace that closure or
+add a route. New configuration publication affects later admissions. Control
+dependencies establish ordering; they grant no Context, protected test,
+credential, Artifact or mount access. A task consumes only its explicit frozen
+projection and exact selected retained inputs.
+
+The installation selects technical capabilities through exact immutable
+identities and qualified authority. Logical Flow and node names do not select
+executors. Provider wire decoding belongs to its adapter; the common engine
+accepts independently verified schema-bound facts. A read-only compiler without
+verified ChangeSet materialization must reject candidate context rather than
+execute the base revision while claiming candidate provenance. Writable authors,
+independent reviewers, protected validators, delivery and promotion require
+separate installed credentials and enforceable backend grants.
+
+Private compiler inputs are reserved before object-store writes, published under
+the current fenced operation and exact content identities, and excluded from
+ordinary output discovery. Transfer expiry cannot exceed the original execution
+deadline. Cleanup deletes the physical object before acknowledging deletion,
+including reservations left by interrupted writes. Selected Artifact reads
+independently verify Project ownership, exact size and digest, byte ceilings and
+retention through the consumer's execution window.
+
+Decision Signal reserves its full call ceiling before external I/O. An unknown
+response retains that reservation; loss of a response or a changed capability
+cannot invent zero consumption. Exact receipt replay performs no new call.
+Only an atomic fresh reservation permits provider evaluation. Concurrent or
+uncertain retries can read the existing evaluation through the neutral
+observation contract, but cannot evaluate again. Unsupported, unknown or
+wrong-request observations leave usage pending. A matching measured outcome
+received after the original deadline settles as a timeout with its actual
+usage; read-only recovery does not extend dispatch authority.
+Cancellation revokes dispatch, including replayed authorization. Settlement of
+an already reserved call requires a current claim and records measured usage
+without completing a cancelled node. Shadow and advisory modes preserve the
+deterministic baseline. Tool-risk proposals remain subject to deterministic
+permission checks and exact-action authorization independently of any signal.
+
+The lease-bound server authorizer resolves the actual ordinary Job and latest
+Attempt, persisted Factory Build origin, initial acceptance bridge, frozen Node
+input and current Run claim. Initial hook calls can precede the owner's
+execution-link append, so the authoritative acceptance bridge supplies that
+binding without inventing a new Build. Retries require the retained execution
+link and exact ordinary ancestry. Terminal Builds, replaced leases, stopped
+Nodes and cancelled Runs cannot release an action. Receipt publication obtains
+the current Run claim again after a provider call; the final lease check can
+refuse the action while retaining the call's measured consumption.
+Tool-risk reservation also locks and validates the actual registration, lease,
+Job and latest Attempt in its journal transaction. It requires the signed
+tool-risk control mode and rereads the database clock after lock acquisition;
+a lease that expires while waiting for the Run lock cannot authorize I/O.
+
+An installed tool-risk policy pins its provider/model/questions/calibration,
+consuming mapping, separate credential and host, Project/local grants and finite
+call allowance into the workload's opaque task digest. Its provider authority
+must be granted by the admitted overall Flow ceiling and remain outside the
+worker's signed credential list. A changed installation cannot silently alter
+an admitted workload. The Signal journal enforces the dedicated allowance
+atomically; worker settlement includes consumed Signal usage and waits for
+unresolved reservations. Runtime call deadlines are enforced by a neutral
+connector decorator, so the application never depends on a provider SDK or
+asynchronous runtime.
+
+Same-transaction audit facts and post-commit structured events contain only
+bounded state, immutable digests, usage, budgets and fencing identities. Private
+task or question text, provider payloads, protected tests, commands, paths,
+credential material and provider aliases are excluded. Rejected mutations and
+exact replay do not emit a fresh committed event.
+
+Release qualification must exercise these controls through the released server
+and Agent on every selected backend, alongside portable graph, schema, journal
+and adapter contracts. Portable tests alone cannot prove filesystem, process,
+network, secret or resource isolation. The released pilot must cover restarts,
+unknown responses, immutable manifests and receipts, candidate lineage,
+independent-agent isolation and policy-governed promotion before these boundaries
+are considered complete.
+
+The adversarial qualification cases cross explicit trust boundaries:
+
+| Untrusted proposal | Authoritative check | Required observable refusal |
+| --- | --- | --- |
+| Repository or retrieved text asks to change policy, execute instructions, or invent a route | The admitted definition closure, typed outcomes, exact input projections and deterministic tool permissions | The closure and permitted action remain unchanged; an undeclared outcome cannot complete the node |
+| Repository supplies its own Flow definition or a recursive/unbounded subflow | Operator-owned publication and complete closure validation before admission | No Run, source download, provider call or Job dispatch is accepted |
+| A control predecessor names another node's private context or protected tests | Explicit Context projection, selected Artifact identity, Project scope and independent consumer permissions | No undeclared bytes or transfer grant are delivered to the consumer |
+| Provider substitutes a model, executable, policy, cost basis or result schema | Exact installed identities, immutable task policy and independently verified execution provenance | No substituted result or invented zero usage settles the node; unknown consumption stays reserved |
+| Workload changes a mount, path, credential purpose, signed manifest or executable | Signed v3 intent, independent local grants, read-only staging, toolchain revalidation and selected backend controls | Failure occurs before source or spawn, with a fixed diagnostic and no Host fallback |
+| Author or reviewer forges evidence, rewrites a ChangeSet, or reports a different candidate | Trusted output publication, size/digest checks, exact subject and candidate ancestry | No evidence, candidate, delivery or promotion authority is derived from prose |
+| An old cycle, expired owner or duplicate external response attempts settlement | Current cycle/claim/fence and stable operation, input and receipt identities | No second logical side effect, transition or fresh committed event is created |
+| A tool authorization returns allow as the leased execution is cancelled | Agent cancellation is rechecked after the coordinator exchange, before releasing the unchanged action | The blocked action remains denied even when allow and cancellation arrive in one poll |
+| Hook identifiers or adapter errors embed commands, paths or credential canaries | Closed diagnostics and redacted formatting of provider-controlled fields | The canary is absent from diagnostics, logs, events, receipts and public discovery |
+
+The executable coverage map and portable release-gate commands are maintained
+in [Factory adversarial contracts](../testing/security.md#factory-adversarial-contracts).
+Restoring persisted admission must recheck relationships as well as structural
+validity: a replacement definition is not the originally admitted definition,
+even when its logical identity and version match. Restore must recheck the exact
+root digest against the retained root Run before interpreting any route.
+
+Portable parser, compiler, graph and broker tests establish these logical
+refusals; they do not establish released-backend isolation. The ordinary
+released Codex fixture exercises redaction, overflow and cancellation, and the
+v3 backend contracts exercise protected mounts and local permission ceilings.
+Factory qualification additionally requires the released server and Agent to
+execute the configured nested Flow, including the installed blocking tool gate,
+independent author/reviewer/verifier roles and trusted candidate reconstruction.
+Absence of that wiring or of selected-backend evidence must remain a missing
+qualification, rather than being replaced by an in-memory success or a broader
+execution route.
+
 ### Cross-project disclosure and secret leakage
 
 An attacker may traverse artifact paths, reuse cache authority, place secrets

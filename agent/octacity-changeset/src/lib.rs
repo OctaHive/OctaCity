@@ -56,6 +56,26 @@ pub struct CaptureRequest {
   pub node_attempt_id: String,
   /// Server-selected deterministic commit instruction.
   pub instruction: ChangeSetCaptureV3,
+  /// Signed invocation facts kept outside the installed capture policy digest.
+  pub observation: Option<CaptureObservationContext>,
+}
+
+/// Independently signed causal facts used only for an opted-in capture report.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CaptureObservationContext {
+  /// Exact frozen input identity from the signed Factory causality.
+  pub input_digest: String,
+  /// Original absolute execution deadline, without a renewed lifetime.
+  pub fresh_until_unix_ms: u64,
+}
+
+/// One trusted report with separate physical and signed logical identities.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CapturedObservation {
+  /// Actual Agent-owned file metadata, using a fixed technical filename.
+  pub file: CapturedFile,
+  /// Exact operator-selected logical name and schema.
+  pub output: octacity_protocol::ChangeSetObservationOutputV3,
 }
 
 /// One immutable file produced by trusted capture.
@@ -75,6 +95,8 @@ pub struct CapturedChangeSet {
   pub manifest: ChangeSetManifest,
   /// Manifest file metadata.
   pub manifest_file: CapturedFile,
+  /// Optional trusted observation, separate from immutable capture evidence.
+  pub observation: Option<CapturedObservation>,
 }
 
 /// Stable failure classes for trusted ChangeSet capture.
@@ -196,6 +218,22 @@ impl GitChangeSetCapturer {
     cancellation: CancellationToken,
   ) -> Result<CapturedChangeSet, CaptureError> {
     request.instruction.validate().map_err(CaptureError::Invalid)?;
+    match (&request.instruction.observation, &request.observation) {
+      (None, None) => {}
+      (Some(_), Some(context))
+        if context.input_digest.len() == 64
+          && context
+            .input_digest
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+          && context.fresh_until_unix_ms > 0
+          && i64::try_from(context.fresh_until_unix_ms).is_ok() => {}
+      _ => {
+        return Err(CaptureError::Invalid(
+          "capture observation requires canonical signed context".to_owned(),
+        ));
+      }
+    }
     validate_directory(&request.workspace, false)?;
     validate_directory(&request.destination, true)?;
     policy::validate_workspace_ownership(&request.workspace, &request.destination)?;
@@ -521,11 +559,41 @@ impl GitChangeSetCapturer {
     bytes.push(b'\n');
     fs::write(&manifest_path, bytes)?;
     let manifest_file = captured_file(&manifest_path)?;
+    let observation = match (&request.instruction.observation, &request.observation) {
+      (Some(output), Some(context)) => {
+        let observation = octacity_protocol::CapturedChangeSetObservationV1 {
+          candidate_revision: manifest.candidate_revision.clone(),
+          candidate_digest: manifest
+            .candidate_digest(&manifest_file.sha256)
+            .map_err(CaptureError::Invalid)?,
+          input_digest: context.input_digest.clone(),
+          fresh_until: i64::try_from(context.fresh_until_unix_ms)
+            .map_err(|_| CaptureError::Invalid("capture observation deadline is invalid".to_owned()))?,
+        };
+        let path = request.destination.join("capture-observation.json");
+        fs::write(
+          &path,
+          serde_json::to_vec(&observation)
+            .map_err(|_| CaptureError::Invalid("capture observation encoding failed".to_owned()))?,
+        )?;
+        Some(CapturedObservation {
+          file: captured_file(&path)?,
+          output: output.clone(),
+        })
+      }
+      (None, None) => None,
+      _ => {
+        return Err(CaptureError::Invalid(
+          "capture observation requires exact signed context".to_owned(),
+        ));
+      }
+    };
     fs::remove_dir_all(repository)?;
     Ok(CapturedChangeSet {
       root,
       manifest,
       manifest_file,
+      observation,
     })
   }
 }
@@ -657,7 +725,7 @@ pub(crate) async fn git_bytes<const N: usize>(
   max_output_bytes: usize,
   cancellation: &CancellationToken,
 ) -> Result<Vec<u8>, CaptureError> {
-  let timestamp = format!("{} +0000", environment.instruction.committed_at);
+  let timestamp = format!("@{} +0000", environment.instruction.committed_at);
   let mut command = Command::new(executable)
     .env_clear()
     .env("GIT_CONFIG_NOSYSTEM", "1")

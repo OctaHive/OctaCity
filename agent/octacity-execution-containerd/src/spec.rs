@@ -27,8 +27,16 @@ pub(super) fn guest_paths(runner: &RunnerProgram, request: &StartExecution) -> R
   Ok(ExecutionPaths {
     workspace,
     data_dir,
-    plugins_dir: map_path(&runner.release_root, &runner.plugins_dir, Path::new(GUEST_RELEASE))?,
-    plugin_lock: map_path(&runner.release_root, &runner.plugin_lock, Path::new(GUEST_RELEASE))?,
+    plugin_projection: runner
+      .plugin_projection
+      .as_ref()
+      .map(|plugins| {
+        Ok::<_, ExecutionError>(octacity_execution::ExecutionPluginProjection {
+          directory: map_path(&runner.release_root, &plugins.directory, Path::new(GUEST_RELEASE))?,
+          lock: map_path(&runner.release_root, &plugins.lock, Path::new(GUEST_RELEASE))?,
+        })
+      })
+      .transpose()?,
     cache: request
       .cache
       .as_ref()

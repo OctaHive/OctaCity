@@ -306,9 +306,48 @@ fn protected_materialization_requires_an_explicit_exact_selection_and_retained_f
 
 #[test]
 fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores_it_after_restart() {
+  retained_author_fixture();
+}
+pub(crate) struct RetainedAuthorFixture {
+  pub(crate) work: WorkEnvelope,
+  pub(crate) admitted: AdmittedFlow,
+  pub(crate) intent: FlowBuildIntent,
+  pub(crate) execution: FlowBuildExecution,
+  pub(crate) record: FlowNodeRecord,
+  pub(crate) completion: NodeAttemptCompletion,
+  pub(crate) manifest: FactoryNodeBuildOutputDocument,
+  pub(crate) file: FactoryNodeBuildOutputDocument,
+  pub(crate) bundle: ProtectedTestBundle,
+  pub(crate) requirement: EvidenceRequirement,
+  pub(crate) builds: std::sync::Arc<Builds>,
+}
+pub(crate) fn retained_author_fixture() -> RetainedAuthorFixture {
+  retained_author_fixture_with_flow(work(), |admitted, input, node| {
+    (admitted, input, node, BudgetUsage::default())
+  })
+}
+pub(crate) fn retained_author_fixture_with_flow(
+  work: WorkEnvelope,
+  extend: impl FnOnce(AdmittedFlow, FlowNodeInput, NodeAttempt) -> (AdmittedFlow, FlowNodeInput, NodeAttempt, BudgetUsage),
+) -> RetainedAuthorFixture {
+  retained_author_fixture_with_contract(work, None, extend)
+}
+pub(crate) fn retained_author_fixture_with_contract(
+  work: WorkEnvelope,
+  accepted_contract: Option<FactoryDigest>,
+  extend: impl FnOnce(AdmittedFlow, FlowNodeInput, NodeAttempt) -> (AdmittedFlow, FlowNodeInput, NodeAttempt, BudgetUsage),
+) -> RetainedAuthorFixture {
+  retained_author_fixture_with_contract_and_reserved_inputs(work, accepted_contract, 4, time(900), extend)
+}
+pub(crate) fn retained_author_fixture_with_contract_and_reserved_inputs(
+  work: WorkEnvelope,
+  accepted_contract: Option<FactoryDigest>,
+  reserved_inputs: u16,
+  valid_until: octacity_server_domain::Timestamp,
+  extend: impl FnOnce(AdmittedFlow, FlowNodeInput, NodeAttempt) -> (AdmittedFlow, FlowNodeInput, NodeAttempt, BudgetUsage),
+) -> RetainedAuthorFixture {
   crate::factory_admission_tests::run_ready(async {
     use std::sync::Arc;
-    let work = work();
     let tool = reference("tests.capture");
     let requirement = EvidenceRequirement::new(
       key("private.inventory"),
@@ -345,12 +384,20 @@ fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores
     binding.evidence = vec![requirement.clone()];
     let (work, admitted, schema, input, node) =
       execution_fixture_for_work_with_binding(FlowNodeKind::Reasoning, work, binding, None, Some(schema));
-    let intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
+    let (admitted, input, node, usage_before) = extend(admitted, input, node);
+    let intent = FlowBuildIntent::new(
+      input.clone(),
+      &admitted,
+      node.clone(),
+      usage_before,
+      i64::from(work.priority().get()),
+    )
+    .unwrap();
     let plan = ProtectedTestPlan::new(
-      input.digest().unwrap(),
+      accepted_contract.unwrap_or_else(|| input.digest().unwrap()),
       input.context().unwrap().subject().clone(),
-      ProtectedTestCoverage::new(vec![key("custom")], 4, 9000, 4).unwrap(),
-      time(900),
+      ProtectedTestCoverage::new(vec![key("custom")], 4, 9000, reserved_inputs).unwrap(),
+      valid_until,
     )
     .unwrap();
     struct Plan(ProtectedTestPlan);
@@ -412,7 +459,7 @@ fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores
       accepted_contract: plan.accepted_contract(),
       classes: plan.classes().to_vec(),
     };
-    let handoff = document_kind(
+    let mut handoff = document_kind(
       &builds,
       &intent.profile().result_output,
       schema.reference(),
@@ -420,6 +467,27 @@ fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores
       tool,
       EvidenceOutputKind::Report,
     );
+    let publication_at = time(30).max(node.started_at());
+    for document in [&mut file, &mut manifest, &mut handoff] {
+      let identity = document.record.identity().clone();
+      let pending = octacity_server_artifacts::ArtifactRecord::pending(identity.clone(), publication_at).unwrap();
+      let verifying = pending
+        .transition(
+          &identity,
+          pending.version(),
+          octacity_server_artifacts::ArtifactEvent::BeginVerification,
+          publication_at,
+        )
+        .unwrap();
+      document.record = verifying
+        .transition(
+          &identity,
+          verifying.version(),
+          octacity_server_artifacts::ArtifactEvent::Publish,
+          publication_at,
+        )
+        .unwrap();
+    }
     let outputs = FactoryNodeBuildOutputs {
       execution: FactoryNodeBuildExecutionFacts {
         profile: intent.profile().clone(),
@@ -433,9 +501,9 @@ fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores
         output_bytes: (file.bytes.len() + manifest.bytes.len() + handoff.bytes.len()) as u64,
         ..Default::default()
       },
-      documents: vec![manifest.clone(), file, handoff],
-      verified_at: time(30),
-      fresh_until: time(900),
+      documents: vec![manifest.clone(), file.clone(), handoff],
+      verified_at: publication_at,
+      fresh_until: valid_until,
     };
     let source = Arc::new(crate::factory_node_test_support::Outputs(Some(outputs)));
     let executor = FactoryProtectedTestAuthoringAdapter::new(
@@ -454,7 +522,17 @@ fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores
       ownership: FactoryClaimOwnership::new(node.owner().clone(), node.claim()),
       observed_at: time(31),
     };
+    let FactoryNodeExecutionStep::Waiting {
+      execution: Some(accepted),
+    } = executor.observe(request()).await.unwrap()
+    else {
+      panic!("author admission must retain execution before observing outputs");
+    };
+    assert_eq!(accepted.build_id(), builds.acceptance.build_id);
+    assert_eq!(accepted.attempt_id(), builds.acceptance.attempt_id);
     let step = executor.observe(request()).await.unwrap();
+    assert_eq!(builds.requests.lock().unwrap().len(), 1);
+
     let FactoryNodeExecutionStep::Completed {
       record,
       execution: Some(execution),
@@ -512,7 +590,20 @@ fn author_executor_keeps_private_inventory_out_of_the_common_result_and_restores
       restored.public_handoff(),
       serde_json::from_value(record.payload().value().clone()).unwrap()
     );
-  });
+    RetainedAuthorFixture {
+      work,
+      admitted,
+      intent,
+      execution: *execution,
+      record: *record,
+      completion,
+      manifest,
+      file,
+      bundle: restored,
+      requirement,
+      builds,
+    }
+  })
 }
 
 #[test]
@@ -524,7 +615,26 @@ fn validation_freezes_both_inputs_and_rejects_replayed_or_incomplete_reports() {
 fn validation_requires_captured_public_deliverables_and_rejects_protected_file_copying() {
   verify_validation_materialization(true);
 }
-fn verify_validation_materialization(require_deliverables: bool) {
+pub(crate) struct ValidationFixture {
+  pub(crate) work: WorkEnvelope,
+  pub(crate) admitted: AdmittedFlow,
+  pub(crate) schema: FlowDataSchema,
+  pub(crate) intent: FlowBuildIntent,
+  pub(crate) materialized: FactoryProtectedValidationMaterialization,
+  pub(crate) completed: FactoryNodeBuildCompletion,
+  pub(crate) document: FactoryNodeBuildOutputDocument,
+  pub(crate) requirement: EvidenceRequirement,
+  pub(crate) facts_requirement: EvidenceRequirement,
+  pub(crate) builds: std::sync::Arc<Builds>,
+  pub(crate) evidence: EvidenceManifest,
+}
+pub(crate) fn verify_validation_materialization(require_deliverables: bool) -> ValidationFixture {
+  validation_fixture_with_flow(require_deliverables, |_, admitted, input, node| (admitted, input, node))
+}
+pub(crate) fn validation_fixture_with_flow(
+  require_deliverables: bool,
+  extend: impl FnOnce(&WorkEnvelope, AdmittedFlow, FlowNodeInput, NodeAttempt) -> (AdmittedFlow, FlowNodeInput, NodeAttempt),
+) -> ValidationFixture {
   let template: FlowDefinitionTemplate = crate::factory_node_test_support::fixtures::supplied_base_flow_template();
   let report_schema = template
     .data_schemas()
@@ -562,7 +672,15 @@ fn verify_validation_materialization(require_deliverables: bool) {
   let admitted = admitted
     .with_data_schemas(vec![schema.clone(), report_schema, facts_schema])
     .unwrap();
-  let capture_intent = FlowBuildIntent::new(input.clone(), &admitted, node.clone(), BudgetUsage::default(), 7).unwrap();
+  let (admitted, input, node) = extend(&work, admitted, input, node);
+  let capture_intent = FlowBuildIntent::new(
+    input.clone(),
+    &admitted,
+    node.clone(),
+    BudgetUsage::default(),
+    i64::from(work.priority().get()),
+  )
+  .unwrap();
   let builds = Builds::new();
   let execution = FlowBuildExecution::new(
     &capture_intent,
@@ -714,7 +832,14 @@ fn verify_validation_materialization(require_deliverables: bool) {
   let mut wire = serde_json::to_value(&node).unwrap();
   wire["input_digest"] = serde_json::to_value(selected.digest().unwrap()).unwrap();
   let node: NodeAttempt = serde_json::from_value(wire).unwrap();
-  let intent = FlowBuildIntent::new(selected, &admitted, node, BudgetUsage::default(), 7).unwrap();
+  let intent = FlowBuildIntent::new(
+    selected,
+    &admitted,
+    node,
+    BudgetUsage::default(),
+    i64::from(work.priority().get()),
+  )
+  .unwrap();
   let request = || FactoryProtectedValidationRequest {
     deliverables: deliverables.as_ref(),
     intent: &intent,
@@ -906,10 +1031,19 @@ fn verify_validation_materialization(require_deliverables: bool) {
       requirement.clone(),
       facts_requirement.clone(),
     );
+    let FactoryNodeExecutionStep::Waiting {
+      execution: Some(accepted),
+    } = installed.observe(request()).await.unwrap()
+    else {
+      panic!("validator admission must retain execution before terminal verification");
+    };
+    assert_eq!(accepted.build_id(), validator.acceptance.build_id);
+    assert_eq!(accepted.attempt_id(), validator.acceptance.attempt_id);
     assert!(matches!(
       installed.observe(request()).await.unwrap(),
       FactoryNodeExecutionStep::Completed { .. }
     ));
+    assert_eq!(validator.requests.lock().unwrap().len(), 1);
     let mut substituted = outputs.clone();
     let mut replayed = report.clone();
     replayed.input_digest = FactoryDigest::from_bytes([99; 32]);
@@ -933,7 +1067,7 @@ fn verify_validation_materialization(require_deliverables: bool) {
       "a replayed command result must be rejected before the common owner can commit it"
     );
     let adapter = FactoryNodeBuildAdapter::new(
-      validator,
+      validator.clone(),
       std::sync::Arc::new(crate::factory_node_test_support::Outputs(Some(outputs))),
     );
     let step = adapter
@@ -987,7 +1121,7 @@ fn verify_validation_materialization(require_deliverables: bool) {
     )
     .unwrap();
     assert_eq!(repeated.digest().unwrap(), evidence.digest().unwrap());
-    let mut drift = report_doc;
+    let mut drift = report_doc.clone();
     drift.bytes[0] ^= 1;
     assert!(
       construct_factory_protected_validation_evidence_manifest(
@@ -1001,5 +1135,18 @@ fn verify_validation_materialization(require_deliverables: bool) {
       )
       .is_err()
     );
-  });
+    ValidationFixture {
+      work,
+      admitted,
+      schema,
+      intent,
+      materialized,
+      completed: *completed,
+      document: report_doc,
+      requirement,
+      facts_requirement,
+      builds: validator,
+      evidence,
+    }
+  })
 }

@@ -17,6 +17,12 @@ export function initialFactoryValue(schema: FactoryValueSchema, depth = 0): unkn
       return '';
     case 'enum':
       return schema.values[0];
+    case 'externally_tagged': {
+      const first = Object.entries(schema.variants)[0];
+      if (!first) return undefined;
+      const [name, payload] = first;
+      return payload === null ? name : { [name]: initialFactoryValue(payload, depth + 1) };
+    }
     case 'array':
       return [];
     case 'object':
@@ -45,6 +51,17 @@ export function validFactoryValue(schema: FactoryValueSchema, value: unknown, de
     }
     case 'enum':
       return schema.values.some((item) => Object.is(value, item));
+    case 'externally_tagged': {
+      if (typeof value === 'string')
+        return Object.hasOwn(schema.variants, value) && schema.variants[value] === null;
+      if (value === null || typeof value !== 'object' || Array.isArray(value)) return false;
+      const entries = Object.entries(value);
+      if (entries.length !== 1) return false;
+      const [name, payload] = entries[0]!;
+      if (!Object.hasOwn(schema.variants, name)) return false;
+      const shape = schema.variants[name];
+      return shape !== null && shape !== undefined && validFactoryValue(shape, payload, depth + 1);
+    }
     case 'array':
       return (
         Array.isArray(value) &&
@@ -140,6 +157,39 @@ export function FactoryValueInput({
     return (
       <ArrayValue schema={schema} value={value} onChange={onChange} label={label} depth={depth} />
     );
+  if (schema.type === 'externally_tagged') {
+    const entries =
+      value !== null && typeof value === 'object' && !Array.isArray(value)
+        ? Object.entries(value)
+        : [];
+    const name = typeof value === 'string' ? value : entries.length === 1 ? entries[0]![0] : '';
+    const shape = Object.hasOwn(schema.variants, name) ? schema.variants[name] : undefined;
+    return (
+      <fieldset>
+        <legend>{label}</legend>
+        <SelectMenu
+          ariaLabel={t('factory.variantSelection', { label })}
+          value={name}
+          options={Object.keys(schema.variants).map((name) => ({ value: name, label: name }))}
+          onValueChange={(name) => {
+            if (!Object.hasOwn(schema.variants, name)) return;
+            const shape = schema.variants[name];
+            if (shape !== undefined)
+              onChange(shape === null ? name : { [name]: initialFactoryValue(shape, depth + 1) });
+          }}
+        />
+        {shape !== null && shape !== undefined ? (
+          <FactoryValueInput
+            schema={shape}
+            value={entries[0]?.[1]}
+            onChange={(payload) => onChange({ [name]: payload })}
+            label={`${label} · ${name}`}
+            depth={depth + 1}
+          />
+        ) : null}
+      </fieldset>
+    );
+  }
   if (schema.type === 'object') {
     const record =
       value !== null && typeof value === 'object' && !Array.isArray(value)

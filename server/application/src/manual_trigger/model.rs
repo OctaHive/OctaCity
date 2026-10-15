@@ -3,19 +3,17 @@ use std::collections::BTreeMap;
 use octacity_server_domain::{
   AttemptId, BuildId, ImmutableRevision, JobId, SourceReference, Timestamp, TriggerOccurrenceId,
 };
-use octacity_server_job::{JobSpecDerivationError, JobSpecToolchainPolicy};
+use octacity_server_job::JobSpecDerivationError;
 use octacity_server_store::{
-  PublishedBuildConfiguration, PublishedPipeline, PublishedRepository, StoreError, StoreInputError,
-  TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerTarget,
+  PublishedRepository, StoreError, StoreInputError, TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerTarget,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use thiserror::Error;
 
 use crate::{
-  ApplicationFailure, Command, EffectiveProjectPolicy, ManagementAction, ManagementAuthorizationMapping,
-  ManagementAuthorizationTarget, ManagementResourceKind, ManagementResourceResult, MutationDisposition,
-  management_security::instance_resource,
+  ApplicationFailure, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
+  ManagementResourceKind, ManagementResourceResult, MutationDisposition, management_security::instance_resource,
 };
 
 /// Source expression supplied by a trusted-network manual Build command.
@@ -120,20 +118,8 @@ impl From<TriggerEvaluationOutcome> for ManualTriggerOutcome {
   }
 }
 
-/// Immutable server-owned inputs needed to evaluate a manual Trigger.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ManualTriggerContext {
-  /// Exact Build Configuration version targeted by the Trigger.
-  pub configuration: PublishedBuildConfiguration,
-  /// Exact Repository version selected by the configuration.
-  pub repository: PublishedRepository,
-  /// Exact Pipeline version selected by the configuration.
-  pub pipeline: PublishedPipeline,
-  /// Root-to-leaf effective Project policy frozen for the Build.
-  pub effective_policy: EffectiveProjectPolicy,
-  /// Operator-owned source-plugin, Octa release, and JobSpec validity policy.
-  pub job_spec_toolchain: JobSpecToolchainPolicy,
-}
+/// Backward-compatible name for the shared immutable ordinary Build context.
+pub type ManualTriggerContext = crate::BuildExecutionContext;
 
 /// Failure while loading immutable manual-Trigger context.
 #[derive(Debug, Error)]

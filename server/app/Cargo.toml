@@ -16,6 +16,7 @@ clap.workspace = true
 metrics-exporter-prometheus.workspace = true
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-artifact-s3 = { path = "../infrastructure/octacity-artifact-s3" }
+octacity-artifact-store = { path = "../core/octacity-artifact-store" }
 octacity-observability = { path = "../../shared/octacity-observability" }
 octacity-server-api-agent = { path = "../api/octacity-server-api-agent" }
 octacity-server-api-cache = { path = "../api/octacity-server-api-cache" }
@@ -23,6 +24,7 @@ octacity-server-api-rest = { path = "../api/octacity-server-api-rest" }
 octacity-server-api-webhook = { path = "../api/octacity-server-api-webhook" }
 octacity-server-application = { path = "../application" }
 octacity-server-domain = { path = "../core/octacity-server-domain" }
+octacity-server-decision-signal = { path = "../infrastructure/octacity-server-decision-signal" }
 octacity-server-job = { path = "../core/octacity-server-job" }
 octacity-server-factory = { path = "../core/octacity-server-factory" }
 octacity-server-store = { path = "../core/octacity-server-store" }
@@ -39,6 +41,7 @@ sha2.workspace = true
 hex.workspace = true
 sqlx.workspace = true
 thiserror.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 toml.workspace = true

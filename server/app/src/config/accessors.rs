@@ -7,6 +7,14 @@ use super::{
 };
 
 impl ServerConfig {
+  /// Separate operator-owned connector installations; absent keeps networking uninstalled.
+  pub fn factory_signal_connectors_file(&self) -> Option<&Path> {
+    self.factory_signal_connectors_file.as_deref()
+  }
+  /// Explicit deployment-owned installed profiles; never inferred from a repository.
+  pub fn factory_profiles_file(&self) -> Option<&Path> {
+    self.factory_profiles_file.as_deref()
+  }
   /// Explicit optional Flow owner bounds; absent means Factory is disabled.
   pub const fn factory(&self) -> Option<super::FactoryRuntimeConfig> {
     self.factory
@@ -37,6 +45,12 @@ impl ServerConfig {
     rebase(&mut self.agent_credentials.enrollment_key_file, root)?;
     rebase(&mut self.cache.credential_key_file, root)?;
     rebase(&mut self.job_spec.policy_file, root)?;
+    if let Some(path) = &mut self.factory_profiles_file {
+      rebase(path, root)?;
+    }
+    if let Some(path) = &mut self.factory_signal_connectors_file {
+      rebase(path, root)?;
+    }
     Ok(())
   }
 

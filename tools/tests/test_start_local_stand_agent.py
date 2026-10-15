@@ -186,7 +186,7 @@ class NativeAgentStartupTests(unittest.TestCase):
             "next_cursor": None,
         }
 
-    def start(self, owner: FakeLifecycle, transport: AgentTransport):
+    def start(self, owner: FakeLifecycle, transport: AgentTransport, **options):
         with (
             mock.patch.object(
                 configurator,
@@ -207,8 +207,21 @@ class NativeAgentStartupTests(unittest.TestCase):
                 repository=REPOSITORY,
                 home=Path.home(),
                 startup_timeout_seconds=2,
+                **options,
             )
         return result, generate, run
+
+    def test_explicit_factory_agent_policy_reaches_configuration_before_launch(self):
+        policy = self.root / "operator-agent-policy.toml"
+        page = json.loads(json.dumps(self.online_page))
+        page["items"][0]["inventory"]["execution_contract"] = {"min": 1, "max": 3}
+        page["items"][0]["inventory"]["factory_executions"] = [{"execution": {"mode": "virtualization"}, "enforcement": ["managed_octa_execution"]}]
+        _, generate, _ = self.start(FakeLifecycle(self.root), AgentTransport([page]), factory_agent_profile=policy)
+        self.assertEqual(generate.call_args.kwargs["factory_agent_profile"], policy)
+
+    def test_factory_policy_cannot_treat_an_ordinary_only_registration_as_qualified(self):
+        with self.assertRaisesRegex(starter.AgentStartupError, "Factory execution"):
+            self.start(FakeLifecycle(self.root), AgentTransport([self.online_page]), factory_agent_profile=self.root / "operator-agent-policy.toml")
 
     def test_preflights_launches_exact_agent_and_waits_for_online_registration(self):
         owner = FakeLifecycle(self.root)

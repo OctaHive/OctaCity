@@ -38,15 +38,49 @@ mod external_trigger;
 mod factory_admission;
 #[cfg(test)]
 mod factory_admission_tests;
+mod factory_artifact_flow_inputs;
+mod factory_artifact_reader;
 mod factory_build;
 mod factory_build_service;
+mod factory_candidate_context;
+mod factory_stored_candidate_context;
+pub use factory_stored_candidate_context::{
+  FactoryNodeCandidateContextSource, FactoryRetainedCandidateContextSource, FactoryStoredCandidateContextSource,
+};
+mod factory_execution_input_publisher;
+mod factory_execution_input_retention;
+pub use factory_artifact_flow_inputs::FactoryArtifactFlowInputs;
+pub use factory_artifact_reader::{
+  FactoryArtifactReader, FactoryNodeContextSource, FactoryRetainedArtifact, ReadFactoryArtifact,
+};
 pub use factory_build_service::{FactoryBuildMaterializer, FactoryOrdinaryBuildService};
+pub use factory_candidate_context::{
+  FactoryCandidateContext, FactoryCandidateContextSource, ReadFactoryCandidateContext,
+};
+pub use factory_execution_input_publisher::{FactoryExecutionDocument, FactoryExecutionInputPublisher};
+pub use factory_execution_input_retention::FactoryExecutionInputRetentionWorker;
 mod factory_candidate_publication;
 mod factory_promotion;
 pub use factory_promotion::FactoryPromotionBuildAdapter;
 mod factory_codex;
+mod factory_codex_candidate_context;
+mod factory_codex_materializer;
+pub use factory_codex_candidate_context::FactoryCodexCandidateContextSource;
+mod factory_codex_output_source;
+mod factory_codex_review_build;
+pub use factory_codex_output_source::FactoryCodexBuildOutputSource;
+#[cfg(test)]
+mod factory_codex_output_source_tests;
+pub use factory_codex_materializer::{
+  FactoryCodexBuildMaterializer, FactoryCodexBuildProfile, FactoryCodexCapturePolicy, FactoryCodexReviewerPolicy,
+};
 mod factory_codex_contract;
 mod factory_codex_observation;
+mod factory_codex_tool_risk;
+mod factory_codex_usage;
+pub use factory_codex_observation::project_codex_node_output;
+pub use factory_codex_tool_risk::FactoryCodexToolRiskPolicy;
+pub use factory_codex_usage::FactoryCodexUsagePolicy;
 #[cfg(test)]
 mod factory_codex_observation_tests;
 #[cfg(test)]
@@ -64,9 +98,21 @@ mod factory_credentials;
 #[cfg(test)]
 mod factory_credentials_tests;
 mod factory_decision_signal;
+mod factory_decision_signal_node;
+pub use factory_decision_signal_node::{
+  FactoryDecisionSignalNodeBinding, FactoryDecisionSignalNodeExecutor, FactoryDecisionSignalNodeOutput,
+  FactoryDecisionSignalNodeProfile,
+};
+mod factory_decision_signal_plan;
+pub use factory_decision_signal_plan::FactoryDecisionSignalRequestPlan;
+mod factory_decision_signal_receipts;
 #[cfg(test)]
 mod factory_decision_signal_tests;
 mod factory_evaluation;
+mod factory_evaluation_action;
+pub use factory_evaluation_action::{FactoryEvaluationDecisionAction, FactoryEvaluationDecisionProfile};
+#[cfg(test)]
+mod factory_evaluation_action_tests;
 mod factory_evidence;
 #[cfg(test)]
 mod factory_promotion_tests;
@@ -79,6 +125,14 @@ pub use factory_verification::{
   VerifiedFactoryVerificationCheck, evaluate_factory_verification, verify_factory_verification_check,
 };
 mod factory_flow_action;
+mod factory_review_invocation;
+pub use factory_review_invocation::{
+  FactoryReviewInvocation, FactoryReviewInvocationSource, FactoryStoredReviewInvocationSource,
+};
+#[cfg(test)]
+mod factory_review_invocation_tests;
+mod factory_review_planning;
+pub use factory_review_planning::{FactoryReviewPlanningAction, FactoryReviewPlanningProfile};
 mod factory_work_status_outbox;
 pub use factory_candidate_publication::{
   FactoryCandidatePublication, FactoryCandidatePublicationAction, FactoryCandidatePublicationRequest,
@@ -91,17 +145,39 @@ mod factory_candidate_deliverables;
 #[cfg(test)]
 mod factory_flow_action_tests;
 mod factory_node_capture;
+#[cfg(test)]
+mod factory_protected_validation_evidence_action_tests;
+#[cfg(test)]
+mod factory_review_planning_tests;
 pub use factory_candidate_deliverables::{
   VerifiedFactoryCandidateDeliverables, verify_factory_node_candidate_deliverables,
 };
 mod factory_node_capture_build;
 mod factory_protected_test_authoring;
+mod factory_protected_test_executor;
 mod factory_protected_test_plan;
+mod factory_protected_test_profile;
+pub use factory_protected_test_profile::{FactoryProtectedTestAuthoringPolicy, FactoryProtectedTestAuthoringProfile};
+mod factory_protected_test_finalizer;
+pub use factory_protected_test_finalizer::FactoryProtectedTestOutputFinalizer;
+mod factory_protected_test_publication;
+pub use factory_protected_test_publication::{
+  FactoryProtectedTestFileOutput, FactoryProtectedTestInventoryPublication, FactoryProtectedTestInventoryPublisher,
+};
+#[cfg(test)]
+mod factory_protected_test_profile_tests;
+#[cfg(test)]
+mod factory_protected_test_publication_tests;
 mod factory_protected_tests;
 mod factory_protected_validation;
+mod factory_protected_validation_evidence_action;
+pub use factory_protected_validation_evidence_action::{
+  FactoryProtectedValidationEvidenceAction, FactoryProtectedValidationEvidenceProfile,
+};
 mod factory_protected_validation_build;
 mod factory_verified_build_outputs;
 pub use factory_protected_test_authoring::{FactoryProtectedTestAuthoringAdapter, FactoryProtectedTestPlanSource};
+pub use factory_protected_test_executor::FactoryProtectedTestAuthoringExecutor;
 pub use factory_protected_test_plan::{
   FactoryProtectedTestPolicy, FactoryStoredProtectedTestPlanSource, freeze_factory_protected_test_plan,
 };
@@ -118,6 +194,9 @@ pub use factory_protected_validation_build::{
   FactoryProtectedValidationAdapter, FactoryProtectedValidationInputSource,
 };
 #[cfg(test)]
+#[path = "../tests/support/factory_candidate_context.rs"]
+mod factory_candidate_context_test_support;
+#[cfg(test)]
 mod factory_node_capture_tests;
 #[cfg(test)]
 mod factory_protected_test_tests;
@@ -132,10 +211,11 @@ mod factory_job_spec_tests;
 mod factory_node;
 mod factory_node_build;
 mod factory_node_registry;
+mod factory_observability;
 pub use factory_node::{
   FactoryExecutionClock, FactoryFlowCoordinator, FactoryFlowStep, FactoryNodeCancellationStep,
   FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor, FactoryNodeOutboxEffect,
-  FactoryNodeRunner, FactoryNodeStep, FactoryNodeTarget, SystemFactoryExecutionClock,
+  FactoryNodeRunner, FactoryNodeStep, FactoryNodeTarget, SystemFactoryExecutionClock, prepare_factory_flow_input,
 };
 pub use factory_node_registry::{
   FactoryNodeExecutorBinding, FactoryNodeExecutorRegistry, MAX_FACTORY_EXECUTOR_BINDINGS,
@@ -153,13 +233,27 @@ mod factory_reconciliation;
 mod factory_reconciliation_tests;
 pub use factory_node_build::{
   FactoryNodeBuildAdapter, FactoryNodeBuildCancellation, FactoryNodeBuildCompletion, FactoryNodeBuildExecutionFacts,
-  FactoryNodeBuildOutputDocument, FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs, FactoryNodeBuildStep,
+  FactoryNodeBuildOutputDocument, FactoryNodeBuildOutputObservation, FactoryNodeBuildOutputSource,
+  FactoryNodeBuildOutputs, FactoryNodeBuildStep,
 };
+mod build_configuration_job_policy;
+mod build_configuration_policy;
+mod factory_build_materialization;
+pub use factory_build_materialization::{
+  FactoryManagedBuildInput, FactoryManagedCandidateProof, FactoryManagedJobProgram, FactoryManagedSourcePlan,
+  materialize_factory_managed_build, materialize_factory_managed_build_with_source,
+};
+mod build_execution_context;
 #[cfg(test)]
 mod factory_node_build_tests;
 mod factory_tool_action;
 #[cfg(test)]
 mod factory_tool_action_tests;
+mod factory_tool_risk_authorizer;
+#[cfg(test)]
+mod factory_tool_risk_authorizer_tests;
+#[cfg(test)]
+mod factory_tool_risk_native_tests;
 mod internal_trigger;
 mod internal_trigger_management;
 mod job_event_cqrs;
@@ -170,6 +264,9 @@ mod log_search;
 mod management_input;
 mod management_security;
 mod manual_trigger;
+pub use build_execution_context::{
+  BuildExecutionContext, BuildExecutionContextError, BuildExecutionContextSource, StoreBackedBuildExecutionContext,
+};
 mod opaque_cursor;
 mod operational_metadata;
 mod operator_attention;
@@ -212,7 +309,8 @@ pub use agent_cqrs::{
 };
 pub use agent_enrollment::{AgentEnrollmentHandler, IssueAgentEnrollmentCommand, IssueAgentEnrollmentCommandOutcome};
 pub use agent_execution::{
-  AgentExecutionError, AgentExecutionService, AgentExecutionUseCases, AppendAgentEventsInput, CompleteAgentLeaseInput,
+  AgentExecutionError, AgentExecutionService, AgentExecutionUseCases, AgentOutputFinalization, AgentOutputFinalizer,
+  AppendAgentEventsInput, CompleteAgentLeaseInput,
 };
 pub use agent_heartbeat::{AgentHeartbeatError, AgentHeartbeatInput, AgentHeartbeatService, AgentHeartbeatUseCases};
 pub use agent_placement::{
@@ -291,14 +389,17 @@ pub use factory_build::{
   OrdinaryBuildCancellationApplication,
 };
 pub use factory_codex::{
-  CodexCompilationError, CompiledCodexTask, FactoryProtectedDocument, FactoryProtectedDocumentKind,
-  codex_prompt_digest, codex_prompt_provenance_digest, compile_codex_node_task, compile_codex_reviewer,
-  compile_codex_task,
+  CodexCompilationError, CompiledCodexTask, FactoryCodexFlowCompilationOptions, FactoryCodexReviewCompilation,
+  FactoryProtectedDocument, FactoryProtectedDocumentKind, codex_flow_task_digest, codex_prompt_digest,
+  codex_prompt_provenance_digest, compile_codex_flow_task, compile_codex_flow_task_with_context,
+  compile_codex_flow_task_with_options, compile_codex_node_task, compile_codex_reviewer, compile_codex_task,
 };
 pub use factory_codex_observation::{
   CodexHarnessOutcome, FactoryCodexEvaluationObservation, FactoryCodexImplementationObservation,
-  FactoryCodexObservationStatus, FactoryCodexOutputDocument, FactoryCodexReviewerBinding,
-  FactoryCodexTerminalObservation, FactoryImplementationReport, observe_codex_evaluation, observe_codex_implementation,
+  FactoryCodexNodeRunContract, FactoryCodexNodeRunObservation, FactoryCodexObservationStatus,
+  FactoryCodexOutputDocument, FactoryCodexReviewerBinding, FactoryCodexTerminalObservation,
+  FactoryImplementationReport, observe_codex_evaluation, observe_codex_implementation, verify_codex_node_run,
+  verify_codex_review_node_run,
 };
 pub use factory_configuration_choices::{
   FactoryChoiceIdentity, FactoryChoiceMetadata, FactoryChoiceReferenceProjection,
@@ -321,9 +422,11 @@ pub use factory_control::{
 };
 pub use factory_credentials::{FactoryCredentialResolutionError, ScopedFactoryCredential, resolve_factory_credential};
 pub use factory_decision_signal::{
-  DecisionSignalApplicationError, DecisionSignalCapabilityDiscovery, DecisionSignalDispatch, DecisionSignalPortError,
-  DecisionSignalReceiptPublication, DecisionSignalRequestObservation, DecisionSignalService,
+  DecisionSignalApplicationError, DecisionSignalCapabilityDiscovery, DecisionSignalDispatch,
+  DecisionSignalDispatchAuthorization, DecisionSignalPortError, DecisionSignalReceiptPublication,
+  DecisionSignalRequestObservation, DecisionSignalService,
 };
+pub use factory_decision_signal_receipts::FactoryDecisionSignalReceipts;
 pub use factory_evaluation::FactoryEvaluationDecision;
 pub use factory_evidence::{
   FactoryEvidenceAttestation, FactoryEvidenceError, VerifiedFactoryEvidence, construct_factory_evidence_manifest,
@@ -342,6 +445,9 @@ pub use factory_reconciliation::{
 pub use factory_tool_action::{
   DeterministicToolActionRule, PreparedToolAction, ProtectedToolActionGate, ToolActionGateError, ToolRiskAssessment,
   ToolRiskSignalEvaluation, ToolRiskSignalEvaluator,
+};
+pub use factory_tool_risk_authorizer::{
+  FactoryToolRiskAuthorizer, FactoryToolRiskBinding, FactoryToolRiskNodeProfile, factory_tool_risk_task_digest,
 };
 pub use internal_trigger::{InternalTriggerBatchOutcome, InternalTriggerWorker, InternalTriggerWorkerError};
 pub use internal_trigger_management::{
@@ -550,3 +656,46 @@ pub use octacity_server_store::PhaseReadyPage as FactoryPhaseReadyPageProjection
 pub use factory_configuration_choices::{
   factory_decision_outcomes, factory_delivery_states, factory_finding_severities,
 };
+
+#[cfg(test)]
+mod factory_protected_test_context_tests;
+
+mod factory_protected_test_context;
+pub use factory_protected_test_context::{FactoryProtectedTestContext, FactoryStoredProtectedTestContextSource};
+
+#[cfg(test)]
+mod factory_protected_validation_input_source_tests;
+
+mod factory_protected_validation_input_source;
+pub use factory_protected_validation_input_source::FactoryStoredProtectedValidationInputSource;
+
+mod factory_phase_pool_selection;
+pub use factory_phase_pool_selection::{FactoryPhasePoolCoordination, FactoryPhasePoolSelector};
+
+#[cfg(test)]
+mod factory_build_service_tests;
+#[cfg(test)]
+mod factory_command_materializer_tests;
+mod factory_command_output_source;
+#[cfg(test)]
+mod factory_command_output_source_tests;
+#[cfg(test)]
+mod factory_command_tests;
+pub use factory_command_output_source::FactoryCommandBuildOutputSource;
+
+mod factory_command;
+pub use factory_command::{
+  CompiledFactoryCommandTask, FactoryCommandBuildProfile, FactoryCommandOctafile, FactoryCommandProgram,
+  FactoryManagedCommandProof, MAX_FACTORY_COMMAND_OCTAFILE_BYTES, compile_factory_command_task,
+};
+mod factory_deployment_command;
+#[cfg(test)]
+mod factory_deployment_command_tests;
+pub use factory_deployment_command::{
+  FactoryDeploymentCommandAuthority, FactoryDeploymentCommandProfile, compile_factory_deployment_command_task,
+};
+mod factory_command_catalog;
+mod factory_command_materializer;
+pub use factory_command_materializer::FactoryCommandBuildMaterializer;
+
+pub use factory_codex_review_build::FactoryCodexReviewBuildAdapter;

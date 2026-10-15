@@ -1,5 +1,8 @@
 use std::sync::{Arc, Mutex};
 
+#[path = "https_tests.rs"]
+mod https_tests;
+
 use super::{DecisionSignalProviderRegistry, JevDecisionSignalProvider};
 use crate::jev::{JevHttpResponse, JevTransport, JevTransportError, JevTransportFuture};
 use octacity_server_domain::{ArtifactId, ImmutableRevision, ProjectId, RepositoryId, Timestamp};
@@ -16,6 +19,110 @@ use octacity_server_factory::{
   ImmutableReference, NodeAttempt, RiskClass, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId,
   WorkPriority,
 };
+
+#[test]
+fn installed_connector_discovery_returns_the_common_provider_contract() {
+  let request = request("jev-1.13-20260917", DecisionSignalMode::Shadow);
+  let capability = capability(&request);
+  let document = serde_json::json!({
+    "version":1,"endpoint":"https://jev-ai.org/api/v1/systemone/",
+    "capability":capability,"credit_cost_micro_units":7,"timeout_milliseconds":1000,
+  });
+  let bytes = serde_json::to_vec(&document).unwrap();
+  let secret = || "sk-glm5-discovery-private-canary".to_owned();
+  let provider = super::install_decision_signal_connector(&FactoryKey::new("jev").unwrap(), &bytes, secret()).unwrap();
+  assert_eq!(provider.capability(), &capability);
+  let registry = DecisionSignalProviderRegistry::try_new([provider]).unwrap();
+  assert!(registry.resolve(&request).is_ok());
+  let error = super::install_decision_signal_connector(&FactoryKey::new("unknown").unwrap(), &bytes, secret())
+    .err()
+    .unwrap();
+  assert_eq!(error.to_string(), "Decision Signal connector configuration is invalid");
+  assert!(
+    super::install_decision_signal_connector(&FactoryKey::new("jev").unwrap(), &bytes, "bad-key-canary".to_owned())
+      .is_err()
+  );
+}
+
+#[test]
+fn jev_deployment_configuration_is_adapter_owned_and_keeps_credentials_separate() {
+  let request = request("jev-1.13-20260917", DecisionSignalMode::Shadow);
+  let capability = capability(&request);
+  let document = serde_json::json!({
+    "version": 1,
+    "endpoint": "https://private-deployment-canary.invalid/api/v1/systemone/",
+    "capability": capability,
+    "credit_cost_micro_units": 7,
+    "timeout_milliseconds": 1000,
+  });
+  let secret = || super::JevApiKey::new("sk-glm5-deployment-secret-canary".to_owned()).unwrap();
+  let provider =
+    JevDecisionSignalProvider::from_deployment_json(&serde_json::to_vec(&document).unwrap(), secret()).unwrap();
+  assert_eq!(provider.capability(), &capability);
+  assert!(!format!("{provider:?}").contains("deployment-canary"));
+  assert!(!format!("{provider:?}").contains("secret-canary"));
+  for (field, value) in [
+    ("version", serde_json::json!(2)),
+    ("timeout_milliseconds", serde_json::json!(0)),
+    ("credit_cost_micro_units", serde_json::json!(0)),
+    (
+      "endpoint",
+      serde_json::json!("http://private-deployment-canary.invalid/api/v1/systemone/"),
+    ),
+    ("api_key", serde_json::json!("private-inline-secret-canary")),
+  ] {
+    let mut invalid = document.clone();
+    invalid[field] = value;
+    let error =
+      JevDecisionSignalProvider::from_deployment_json(&serde_json::to_vec(&invalid).unwrap(), secret()).unwrap_err();
+    assert_eq!(error, super::JevAdapterError::InvalidConfiguration);
+    assert!(!error.to_string().contains("canary"));
+  }
+  assert!(JevDecisionSignalProvider::from_deployment_json(&vec![b' '; 4 * 1024 * 1024 + 1], secret()).is_err());
+}
+
+#[tokio::test]
+async fn a_lost_jev_response_has_unknown_usage_instead_of_a_free_terminal_failure() {
+  struct LostResponse;
+  impl JevTransport for LostResponse {
+    fn post<'a>(&'a self, _: &'a reqwest::Url, _: &'a str, _: Vec<u8>) -> JevTransportFuture<'a> {
+      Box::pin(async { Err(JevTransportError::TimedOut) })
+    }
+    fn get<'a>(&'a self, _: &'a reqwest::Url) -> JevTransportFuture<'a> {
+      Box::pin(async { Err(JevTransportError::Unavailable) })
+    }
+  }
+  let request = request("jev-1.13-20260917", DecisionSignalMode::Shadow);
+  let provider = JevDecisionSignalProvider::for_test(
+    "https://jev-ai.org/api/v1/systemone/",
+    capability(&request),
+    Arc::new(LostResponse),
+  )
+  .unwrap();
+  let failure = provider.evaluate(&request).await.unwrap_err();
+  assert_eq!(failure.state(), DecisionSignalState::TimedOut);
+  assert!(
+    failure.usage().is_none(),
+    "a transport timeout does not establish measured zero usage"
+  );
+}
+
+#[test]
+fn jev_debug_omits_private_endpoints_and_credentials() {
+  let request = request("jev-1.13-20260917", DecisionSignalMode::Shadow);
+  let provider = JevDecisionSignalProvider::new(
+    "https://private-tenant-canary.invalid/api/v1/systemone/",
+    super::JevApiKey::new("sk-glm5-private-credential-canary".to_owned()).unwrap(),
+    capability(&request),
+    super::JevBillingPolicy::new(1).unwrap(),
+    std::time::Duration::from_millis(100),
+  )
+  .unwrap();
+  let rendered = format!("{provider:?}");
+  assert!(rendered.contains("JevDecisionSignalProvider"));
+  assert!(!rendered.contains("private-tenant-canary"));
+  assert!(!rendered.contains("private-credential-canary"));
+}
 
 #[tokio::test]
 async fn jev_and_fake_adapters_satisfy_one_provider_neutral_contract() {
@@ -98,6 +205,29 @@ async fn jev_idempotency_conflict_observes_the_original_request_instead_of_repos
     transport.observed_url(),
     "https://jev-ai.org/api/v1/requests/dec_fixture/"
   );
+}
+
+#[tokio::test]
+async fn jev_conflict_observation_rejects_a_result_for_another_provider_request() {
+  let request = request("jev-1.13-20260917", DecisionSignalMode::Shadow);
+  let transport = Arc::new(ConflictTransport::new(jev_response().replacen(
+    "\"id\":\"dec_fixture\"",
+    "\"id\":\"dec_other\"",
+    1,
+  )));
+  let jev = JevDecisionSignalProvider::for_test(
+    "https://jev-ai.org/api/v1/systemone/",
+    capability(&request),
+    transport.clone(),
+  )
+  .unwrap();
+  let failure = jev
+    .evaluate(&request)
+    .await
+    .expect_err("status observation must belong to the original external request");
+  assert_eq!(failure.state(), DecisionSignalState::Invalid);
+  assert!(failure.usage().is_none());
+  assert_eq!(transport.posts(), 1);
 }
 
 #[test]

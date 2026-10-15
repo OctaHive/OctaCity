@@ -938,6 +938,90 @@ fn admitted_data_contracts_survive_restart_and_require_the_complete_exact_schema
 }
 
 #[test]
+fn persisted_admission_rejects_a_replacement_definition_even_with_the_same_flow_version() {
+  const CANARY: &str = "private-repository-flow-canary";
+  let (_, admitted, _, _, _) = crate::flow_test_support::execution_fixture(FlowNodeKind::BuildCommand);
+  admitted.validated().unwrap();
+  let original = admitted.closure().definition(admitted.closure().root()).unwrap();
+  let mut binding = original.nodes()[0].build().unwrap().clone();
+  binding.task_digest = FactoryDigest::content_sha256(CANARY.as_bytes());
+  binding.model_or_tool = ImmutableReference::new(key(CANARY), key("v1"), FactoryDigest::from_bytes([82; 32]));
+  let replacement = FlowDefinition::new(FlowDefinitionInput {
+    id: original.reference().id(),
+    version: original.reference().version(),
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes: vec![original.nodes()[0].clone().with_build(binding).unwrap()],
+    transitions: original.transitions().to_vec(),
+    terminals: original.terminals().to_vec(),
+    context_projections: original.context_projections().to_vec(),
+    data_projections: original.data_projections().to_vec(),
+    execution: original.execution().clone(),
+  })
+  .unwrap();
+  assert_eq!(replacement.reference().id(), original.reference().id());
+  assert_eq!(replacement.reference().version(), original.reference().version());
+  assert_ne!(replacement.reference(), original.reference());
+  let closure = PinnedFlowDefinitionClosure::new(replacement.reference(), vec![replacement]).unwrap();
+  closure.clone().validate(admitted.limits().clone()).unwrap();
+  let mut persisted = serde_json::to_value(&admitted).unwrap();
+  persisted["closure"] = serde_json::to_value(closure).unwrap();
+  let restored: AdmittedFlow = serde_json::from_value(persisted).unwrap();
+  assert_eq!(restored.root_run(), admitted.root_run());
+  assert!(serde_json::to_string(&restored).unwrap().contains(CANARY));
+  let error = restored
+    .validated()
+    .expect_err("a replacement closure cannot inherit the original Run's admission");
+  assert!(matches!(
+    error,
+    FactoryError::InvalidReference {
+      relationship: "admitted Flow root"
+    }
+  ));
+  assert!(!error.to_string().contains(CANARY));
+  assert!(!format!("{error:?}").contains(CANARY));
+}
+
+#[test]
+fn persisted_admission_revalidates_the_root_and_initial_cycle_relationships() {
+  let (_, admitted, _, _, _) = crate::flow_test_support::execution_fixture(FlowNodeKind::BuildCommand);
+  let original = serde_json::to_value(&admitted).unwrap();
+  let parent = FlowRunParent::new(FlowRunId::generate(), NodeAttemptId::generate());
+  for (path, changed) in [
+    ("/root_run/parent", serde_json::to_value(parent).unwrap()),
+    (
+      "/initial_cycle/flow_run_id",
+      serde_json::to_value(FlowRunId::generate()).unwrap(),
+    ),
+    ("/initial_cycle/number", serde_json::json!(2)),
+    (
+      "/initial_cycle/predecessor",
+      serde_json::to_value(WorkflowCycleId::generate()).unwrap(),
+    ),
+  ] {
+    let mut wire = original.clone();
+    *wire.pointer_mut(path).unwrap() = changed;
+    let restored: AdmittedFlow = serde_json::from_value(wire).unwrap();
+    assert!(
+      AdmittedFlow::new(
+        restored.closure().clone(),
+        restored.limits().clone(),
+        restored.root_run().clone(),
+        restored.initial_cycle().clone(),
+        restored.wip_limits(),
+      )
+      .is_err()
+    );
+    assert!(matches!(
+      restored.validated(),
+      Err(FactoryError::InvalidReference {
+        relationship: "admitted Flow root"
+      })
+    ));
+  }
+}
+
+#[test]
 fn a_configured_factory_journey_has_no_mandatory_intake_stage_and_freezes_its_data_catalogue() {
   let (work, admitted, schema) = node_fixture();
   let configured = FactoryFlowConfiguration::new(

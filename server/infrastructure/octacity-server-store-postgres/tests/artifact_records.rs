@@ -110,6 +110,7 @@ async fn verify_artifact_records(database: &support::TestDatabase) -> Result<(),
   let store = PostgresStore::new(database.pool.clone());
   let all = store
     .list_published_artifacts(ListPublishedArtifacts {
+      attempt_id: None,
       build_id: fixture.request.build.id,
       limit: 1,
       visibility: ArtifactListVisibility::all(),
@@ -119,6 +120,7 @@ async fn verify_artifact_records(database: &support::TestDatabase) -> Result<(),
   assert_eq!(all[0].artifact.identity().artifact_id, id(953));
   let restricted = store
     .list_published_artifacts(ListPublishedArtifacts {
+      attempt_id: None,
       build_id: fixture.request.build.id,
       limit: 1,
       visibility: ArtifactListVisibility::restricted([id(953)])?,
@@ -132,6 +134,7 @@ async fn verify_artifact_records(database: &support::TestDatabase) -> Result<(),
     assert!(
       store
         .list_published_artifacts(ListPublishedArtifacts {
+          attempt_id: None,
           build_id: fixture.request.build.id,
           limit: 1,
           visibility,

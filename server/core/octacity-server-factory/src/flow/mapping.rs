@@ -81,7 +81,9 @@ impl FlowDataMapping {
   pub fn project(&self, input: &FlowPayload, schema: &FlowDataSchema) -> Result<FlowPayload, FactoryError> {
     self.project_value(input.value(), schema)
   }
-  pub(super) fn project_value(&self, input: &Value, schema: &FlowDataSchema) -> Result<FlowPayload, FactoryError> {
+  /// Projects a trusted JSON source through the bounded mapping and exact target schema.
+  /// Callers establish source provenance; this method grants no execution authority.
+  pub fn project_value(&self, input: &Value, schema: &FlowDataSchema) -> Result<FlowPayload, FactoryError> {
     FlowPayload::new(schema, self.project_raw(input)?)
   }
   pub(crate) fn project_raw(&self, input: &Value) -> Result<Value, FactoryError> {

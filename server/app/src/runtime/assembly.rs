@@ -296,7 +296,25 @@ fn parse_signing_key(key_id: &str, encoded: &str) -> Result<JobSpecSigner, Runti
   })
 }
 
-async fn read_credential(purpose: &'static str, path: &Path) -> Result<Zeroizing<String>, RuntimeAssemblyError> {
+pub(super) async fn read_credential(
+  purpose: &'static str,
+  path: &Path,
+) -> Result<Zeroizing<String>, RuntimeAssemblyError> {
+  let bytes = read_private_bytes(purpose, path, MAX_CREDENTIAL_BYTES).await?;
+  let value = std::str::from_utf8(&bytes)
+    .map_err(|_| RuntimeAssemblyError::InvalidCredential { purpose })?
+    .trim_end_matches(['\r', '\n']);
+  if value.is_empty() || value.chars().any(char::is_control) {
+    return Err(RuntimeAssemblyError::InvalidCredential { purpose });
+  }
+  Ok(Zeroizing::new(value.to_owned()))
+}
+
+pub(super) async fn read_private_bytes(
+  purpose: &'static str,
+  path: &Path,
+  max_bytes: u64,
+) -> Result<Zeroizing<Vec<u8>>, RuntimeAssemblyError> {
   let path_metadata =
     tokio::fs::symlink_metadata(path)
       .await
@@ -373,7 +391,7 @@ async fn read_credential(purpose: &'static str, path: &Path) -> Result<Zeroizing
   }
   let mut bytes = Zeroizing::new(Vec::new());
   file
-    .take(MAX_CREDENTIAL_BYTES + 1)
+    .take(max_bytes + 1)
     .read_to_end(&mut bytes)
     .await
     .map_err(|source| RuntimeAssemblyError::ReadCredential {
@@ -381,19 +399,13 @@ async fn read_credential(purpose: &'static str, path: &Path) -> Result<Zeroizing
       path: path.to_owned(),
       source,
     })?;
-  if bytes.len() as u64 > MAX_CREDENTIAL_BYTES {
+  if bytes.len() as u64 > max_bytes {
     return Err(RuntimeAssemblyError::CredentialTooLarge {
       purpose,
       path: path.to_owned(),
     });
   }
-  let value = std::str::from_utf8(&bytes)
-    .map_err(|_| RuntimeAssemblyError::InvalidCredential { purpose })?
-    .trim_end_matches(['\r', '\n']);
-  if value.is_empty() || value.chars().any(char::is_control) {
-    return Err(RuntimeAssemblyError::InvalidCredential { purpose });
-  }
-  Ok(Zeroizing::new(value.to_owned()))
+  Ok(bytes)
 }
 
 #[cfg(unix)]

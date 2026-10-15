@@ -131,6 +131,10 @@ impl ServerRuntime {
       }
       (None, _) => octacity_server_api_rest::management_router(move || router_readiness.is_ready()),
     };
+    let factory_readiness = readiness.clone();
+    let management_router = management_router.merge(octacity_server_api_rest::factory_readiness_routes(move || {
+      factory_readiness.factory_readiness()
+    }));
     let management_router = admission.protect_management(management_router);
     let agent_router = admission.protect_agent(agent_router);
     let webhook_router = webhook_router.map(|router| admission.protect_webhook(router));

@@ -243,6 +243,7 @@ mod tests {
       crate::FactoryNodeBuildOutputDocument {
         record: self.record.clone(),
         bytes: self.bytes.clone(),
+        data: None,
         schema: self.attestation.schema.clone(),
         tool: self.attestation.tool.clone(),
         plugin: self.attestation.plugin.clone(),
@@ -359,6 +360,7 @@ mod tests {
         DeterministicGateOutcome::Passed,
         time(40),
       );
+      crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &schema).await;
       let adapter = FactoryNodeBuildAdapter::new(builds, Arc::new(Outputs(Some(outputs))));
       let FactoryNodeBuildStep::Completed(completed) = adapter
         .observe_or_dispatch(

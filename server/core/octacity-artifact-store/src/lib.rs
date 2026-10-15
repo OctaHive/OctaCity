@@ -127,6 +127,10 @@ pub enum ArtifactStoreOperation {
   AuthorizeDownload,
   /// Reconcile one published object after restore.
   VerifyPublished,
+  /// Read bounded published bytes for a trusted compiler or verifier.
+  ReadPublished,
+  /// Publish bounded verified bytes from a trusted compiler.
+  PublishVerified,
   /// Delete pending and published bytes.
   Delete,
 }
@@ -138,6 +142,8 @@ impl std::fmt::Display for ArtifactStoreOperation {
       Self::CompleteUpload => "complete upload",
       Self::AuthorizeDownload => "authorize download",
       Self::VerifyPublished => "verify published object",
+      Self::ReadPublished => "read published object",
+      Self::PublishVerified => "publish verified object",
       Self::Delete => "delete object",
     })
   }
@@ -235,7 +241,9 @@ pub trait ArtifactStore: Send + Sync {
   /// database snapshot cannot advertise missing or corrupt object bytes.
   async fn verify_published(&self, object: &ArtifactObject) -> Result<(), ArtifactStoreError>;
 
-  /// Creates a short-lived GET capability for an already published object.
+  /// Creates a short-lived GET capability for already verified immutable bytes.
+  /// The response Content-Type must honor the authorized object description,
+  /// which may carry a logical input type distinct from generic upload transport.
   async fn authorize_download(
     &self,
     object: &ArtifactObject,
@@ -247,6 +255,27 @@ pub trait ArtifactStore: Send + Sync {
   /// Adapters that physically deduplicate content must reference-count inside
   /// the adapter and remove shared bytes only after the final logical release.
   async fn delete(&self, object: &ArtifactObject) -> Result<(), ArtifactStoreError>;
+}
+
+/// Hard per-read memory ceiling for trusted retained-input and result verification.
+pub const MAX_ARTIFACT_READ_BYTES: u64 = 64 * 1024 * 1024;
+
+/// Bounded access to exact published bytes, independent of upload capabilities.
+/// Callers must authorize logical metadata and subject ownership before reading.
+#[async_trait]
+pub trait ArtifactByteReader: Send + Sync {
+  /// Verifies exact size and digest from one frozen object generation.
+  /// Rejects metadata over the caller's ceiling before contacting storage and
+  /// applies the operation deadline to the complete streamed body.
+  async fn read_published(&self, object: &ArtifactObject, maximum_bytes: u64) -> Result<Vec<u8>, ArtifactStoreError>;
+}
+
+/// Trusted compiler byte publication, without an Agent upload capability.
+#[async_trait]
+pub trait ArtifactBytePublisher: Send + Sync {
+  /// Verifies bytes against the bounded immutable identity before any write.
+  /// An identical retry recovers publication; substitution never overwrites it.
+  async fn publish_verified(&self, object: &ArtifactObject, bytes: Vec<u8>) -> Result<(), ArtifactStoreError>;
 }
 
 /// Result of an idempotent immutable log-chunk write.

@@ -1,4 +1,6 @@
-//! Public plugin operations over an actual HTTP fixture; HTTPS validation remains production-only.
+//! Public plugin operations over HTTP fixtures and installed HTTPS API trust.
+#[path = "https_tests.rs"]
+mod https;
 use super::*;
 use octacity_delivery_protocol::{DeliveryIntent, ReviewState, decode_request};
 use sha2::{Digest as _, Sha256};

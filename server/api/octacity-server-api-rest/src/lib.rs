@@ -65,6 +65,29 @@ pub fn management_router_with_application_and_metrics(
     .layer(middleware::from_fn(request_context))
 }
 
+/// Adds the independently scoped Factory health endpoint. None means disabled mode.
+/// A Factory failure never changes the ordinary readiness probe.
+pub fn factory_readiness_routes(readiness: impl Fn() -> Option<bool> + Clone + Send + Sync + 'static) -> Router {
+  Router::new()
+    .route(
+      "/health/factory",
+      get(move || {
+        let readiness = readiness.clone();
+        async move {
+          match readiness() {
+            None => (StatusCode::OK, Json(HealthResponse { status: "disabled" })),
+            Some(true) => (StatusCode::OK, Json(HealthResponse { status: "ready" })),
+            Some(false) => (
+              StatusCode::SERVICE_UNAVAILABLE,
+              Json(HealthResponse { status: "unavailable" }),
+            ),
+          }
+        }
+      }),
+    )
+    .layer(middleware::from_fn(request_context))
+}
+
 fn application_routes(
   readiness: impl Fn() -> bool + Send + Sync + 'static,
   application: v1::ManagementApplication,
@@ -189,6 +212,39 @@ mod tests {
   use tower::ServiceExt as _;
 
   use super::*;
+
+  #[tokio::test]
+  async fn factory_readiness_is_scoped_and_reports_disabled_ready_and_unavailable() {
+    for (factory_ready, status, body) in [
+      (None, StatusCode::OK, r#"{"status":"disabled"}"#),
+      (Some(true), StatusCode::OK, r#"{"status":"ready"}"#),
+      (
+        Some(false),
+        StatusCode::SERVICE_UNAVAILABLE,
+        r#"{"status":"unavailable"}"#,
+      ),
+    ] {
+      let router = management_router(|| true).merge(factory_readiness_routes(move || factory_ready));
+      let factory = router
+        .clone()
+        .oneshot(
+          HttpRequest::builder()
+            .uri("/health/factory")
+            .body(Body::empty())
+            .unwrap(),
+        )
+        .await
+        .unwrap();
+      assert_eq!(factory.status(), status);
+      assert!(factory.headers().contains_key(&REQUEST_ID_HEADER));
+      assert_eq!(axum::body::to_bytes(factory.into_body(), 128).await.unwrap(), body);
+      let ordinary = router
+        .oneshot(HttpRequest::builder().uri("/health/ready").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+      assert_eq!(ordinary.status(), StatusCode::OK);
+    }
+  }
 
   #[tokio::test]
   async fn readiness_reports_unavailable_without_affecting_liveness() {

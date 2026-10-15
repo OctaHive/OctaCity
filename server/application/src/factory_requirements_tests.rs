@@ -7,9 +7,9 @@ use crate::factory_node_test_support::{
 use crate::{
   ApplicationError, CreateFactoryBuild, FactoryCandidatePublication, FactoryCandidatePublicationAction,
   FactoryCandidatePublicationRequest, FactoryCandidatePublisher, FactoryControlHandlers, FactoryFlowActionAdapter,
-  FactoryFlowCoordinator, FactoryFlowRunner, FactoryFlowStep, FactoryNodeBuildAdapter, FactoryNodeBuildExecutionFacts,
-  FactoryNodeBuildOutputs, FactoryNodeExecutorRegistry, ManagementAuthorizationGrant, ManagementCommandUseCase,
-  ManagementRequestContext, ManagementRequestId, ManagementVisibility, ResolveFactoryNodeCommand,
+  FactoryFlowRunner, FactoryFlowStep, FactoryNodeBuildAdapter, FactoryNodeBuildExecutionFacts, FactoryNodeBuildOutputs,
+  FactoryNodeExecutorRegistry, ManagementAuthorizationGrant, ManagementCommandUseCase, ManagementRequestContext,
+  ManagementRequestId, ManagementVisibility, ResolveFactoryNodeCommand,
 };
 use async_trait::async_trait;
 use octacity_server_factory::*;
@@ -506,9 +506,14 @@ pub(crate) async fn verify_specified_owner<
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    match owner
-      .reconcile_flow(admission.run.id(), claim.id, at(if stale { 1500 } else { time }))
-      .await
+    match crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      backend.as_ref(),
+      admission.run.id(),
+      claim.id,
+      at(if stale { 1500 } else { time }),
+    )
+    .await
     {
       Ok(FactoryFlowStep::Advanced) => {}
       Ok(FactoryFlowStep::Resolved(outcome)) => {
@@ -910,10 +915,15 @@ async fn validation_case_snapshot(
       Arc::new(Inputs),
       crate::factory_node_test_support::clock(),
     );
-    match owner
-      .reconcile_flow(admission.run.id(), claim.id, at(time))
-      .await
-      .unwrap()
+    match crate::factory_node_test_support::reconcile_admission_then_observe(
+      &owner,
+      store.as_ref(),
+      admission.run.id(),
+      claim.id,
+      at(time),
+    )
+    .await
+    .unwrap()
     {
       FactoryFlowStep::Advanced => {}
       FactoryFlowStep::Resolved(outcome) => {

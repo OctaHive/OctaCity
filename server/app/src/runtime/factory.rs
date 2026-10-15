@@ -17,6 +17,369 @@ pub struct FactoryRuntimeResources {
   pub toolchain: JobSpecToolchainPolicy,
 }
 
+impl FactoryRuntimeResources {
+  /// Installs a content-pinned deterministic review join over the native journal.
+  /// Construction performs no evaluator or external-service I/O.
+  pub fn evaluation_decision_executor(
+    &self,
+    identity: octacity_server_factory::ImmutableReference,
+    profile: octacity_server_application::FactoryEvaluationDecisionProfile,
+  ) -> Result<FactoryNodeExecutorBinding, FactoryRuntimeInstallationError> {
+    use octacity_server_application::{
+      FactoryEvaluationDecisionAction, FactoryFlowActionAdapter, SystemFactoryExecutionClock,
+    };
+    if identity.digest() != profile.digest().map_err(|_| FactoryRuntimeInstallationError::Invalid)? {
+      return Err(FactoryRuntimeInstallationError::Invalid);
+    }
+    let action = FactoryEvaluationDecisionAction::new(
+      identity.clone(),
+      self.runs.clone(),
+      profile,
+      Arc::new(SystemFactoryExecutionClock),
+    );
+    Ok((
+      octacity_server_factory::FlowNodeKind::TrustedAction,
+      octacity_server_factory::NodeExecutionIdentity::External(identity),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
+    ))
+  }
+
+  /// Binds private installed Delivery input directories to native retained
+  /// Artifact ownership and byte verification. Credentials remain connector-owned.
+  pub fn delivery_materializer(
+    &self,
+    directories: std::collections::BTreeMap<octacity_server_factory::ImmutableReference, std::path::PathBuf>,
+  ) -> Result<Arc<dyn super::FactoryDeliveryMaterializer>, FactoryRuntimeInstallationError> {
+    let reader = Arc::new(octacity_server_application::FactoryArtifactReader::new(
+      self.runs.clone(),
+      self.builds.clone(),
+      self.objects.clone(),
+    ));
+    super::RetainedFactoryDeliveryMaterializer::new(
+      reader,
+      directories,
+      Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+    )
+    .map(|material| Arc::new(material) as Arc<dyn super::FactoryDeliveryMaterializer>)
+  }
+
+  /// Binds qualified promotion to ordinary Build creation, observation and
+  /// cancellation. Installed deployment compilers retain provider ownership;
+  /// constructing the binding performs no dependency I/O.
+  pub fn promotion_executor<O: octacity_server_application::FactoryNodeBuildOutputSource + 'static>(
+    &self,
+    identity: octacity_server_factory::ImmutableReference,
+    compiler: Arc<dyn octacity_server_application::FactoryBuildMaterializer>,
+    outputs: Arc<O>,
+  ) -> FactoryNodeExecutorBinding {
+    use octacity_server_application::{
+      FactoryNodeBuildAdapter, FactoryOrdinaryBuildService, FactoryPromotionBuildAdapter, SystemFactoryExecutionClock,
+    };
+    let builds = Arc::new(FactoryOrdinaryBuildService::new(
+      self.builds.clone(),
+      self.runs.clone(),
+      compiler,
+      Arc::new(SystemFactoryExecutionClock),
+    ));
+    let executor = FactoryPromotionBuildAdapter::new(identity.clone(), FactoryNodeBuildAdapter::new(builds, outputs));
+    (
+      octacity_server_factory::FlowNodeKind::TrustedAction,
+      octacity_server_factory::NodeExecutionIdentity::External(identity),
+      Arc::new(executor),
+    )
+  }
+
+  /// Binds installed non-authoritative status projectors to the native outbox
+  /// journal and trusted clock. Construction performs no external dispatch.
+  pub fn work_status_dispatcher(
+    &self,
+    projectors: std::collections::BTreeMap<
+      octacity_server_factory::ImmutableReference,
+      Arc<dyn octacity_server_application::FactoryWorkStatusProjector>,
+    >,
+    settings: octacity_server_application::FactoryReporterWorkerSettings,
+  ) -> Result<Arc<dyn octacity_server_application::FactoryOutboxDispatcher>, FactoryRuntimeInstallationError> {
+    use octacity_server_application::{FactoryWorkStatusOutboxWorker, SystemFactoryExecutionClock};
+    FactoryWorkStatusOutboxWorker::new(
+      self.runs.clone(),
+      projectors,
+      settings,
+      Arc::new(SystemFactoryExecutionClock),
+    )
+    .map(|worker| Arc::new(worker) as Arc<dyn octacity_server_application::FactoryOutboxDispatcher>)
+    .map_err(|_| FactoryRuntimeInstallationError::Invalid)
+  }
+
+  /// Composes installed tool-risk connectors behind native Build, Job, lease and
+  /// Run authority. Provider credentials remain owned by the connector; its
+  /// immutable call window is enforced by the runtime before receipt settlement.
+  pub fn tool_risk_authorizer(
+    &self,
+    mut profiles: Vec<octacity_server_application::FactoryToolRiskNodeProfile>,
+  ) -> Result<Arc<dyn octacity_server_application::LeaseBoundToolActionAuthorizer>, FactoryRuntimeInstallationError> {
+    use octacity_server_application::{FactoryToolRiskAuthorizer, SystemFactoryExecutionClock};
+    let clock = Arc::new(SystemFactoryExecutionClock);
+    for profile in &mut profiles {
+      if profile.binding.project_id != profile.build_configuration.project_id()
+        || !signal_network_is_qualified(profile.provider.as_ref(), &profile.binding.network_host)
+      {
+        return Err(FactoryRuntimeInstallationError::Invalid);
+      }
+      profile.provider = Arc::new(super::factory_signal_provider::BoundedFactorySignalProvider::new(
+        profile.provider.clone(),
+        clock.clone(),
+      ));
+    }
+    FactoryToolRiskAuthorizer::new(
+      self.runs.clone(),
+      self.runs.clone(),
+      self.builds.clone(),
+      self.builds.clone(),
+      self.runs.clone(),
+      profiles,
+      clock,
+    )
+    .map(|authorizer| Arc::new(authorizer) as Arc<dyn octacity_server_application::LeaseBoundToolActionAuthorizer>)
+    .map_err(|_| FactoryRuntimeInstallationError::Invalid)
+  }
+
+  /// Wires exact installed routing actions to native fenced request and receipt
+  /// storage. Provider construction and credential resolution belong to the
+  /// trusted installer; creating this binding performs no external I/O.
+  pub fn decision_signal_executor(
+    &self,
+    mut profiles: Vec<octacity_server_application::FactoryDecisionSignalNodeProfile>,
+  ) -> Result<FactoryNodeExecutorBinding, FactoryRuntimeInstallationError> {
+    use octacity_server_application::{FactoryDecisionSignalNodeExecutor, SystemFactoryExecutionClock};
+    use octacity_server_factory::{FlowNodeKind, NodeExecutionIdentity, resolve_factory_permissions};
+    let adapter = profiles
+      .first()
+      .ok_or(FactoryRuntimeInstallationError::Invalid)?
+      .provider
+      .capability()
+      .adapter()
+      .clone();
+    for profile in &profiles {
+      let binding = &profile.binding;
+      let permissions = &binding.project_permissions;
+      if binding.action.plugin() != &adapter
+        || !signal_network_is_qualified(profile.provider.as_ref(), &binding.network_host)
+        || profile.provider.capability().adapter() != &adapter
+        || !permissions.plugins().any(|plugin| plugin == &adapter)
+        || !permissions
+          .secret_profiles()
+          .any(|profile| profile == &binding.credential_profile)
+        || !permissions.network_hosts().any(|host| host == &binding.network_host)
+        || !resolve_factory_permissions(permissions, permissions, permissions, &binding.local_permissions)
+          .is_ok_and(|effective| &effective == permissions)
+      {
+        return Err(FactoryRuntimeInstallationError::Invalid);
+      }
+    }
+    let identity = NodeExecutionIdentity::External(adapter);
+    let clock = Arc::new(SystemFactoryExecutionClock);
+    for profile in &mut profiles {
+      profile.provider = Arc::new(super::factory_signal_provider::BoundedFactorySignalProvider::new(
+        profile.provider.clone(),
+        clock.clone(),
+      ));
+    }
+    let executor = FactoryDecisionSignalNodeExecutor::new(self.runs.clone(), profiles, clock)
+      .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+    Ok((FlowNodeKind::DecisionSignal, identity, Arc::new(executor)))
+  }
+
+  /// Wires qualified Codex review or bounded authoring to native ordinary Build creation,
+  /// immutable context reads, protected input publication and cancellation.
+  /// Retained output verification uses the same installed profile catalog; this never probes dependencies
+  /// or interprets logical Flow/node names while creating the binding.
+  pub fn codex_executor(
+    &self,
+    profiles: Vec<octacity_server_application::FactoryCodexBuildProfile>,
+  ) -> Result<FactoryNodeExecutorBinding, FactoryRuntimeInstallationError> {
+    use octacity_server_application::*;
+    let executable = profiles
+      .first()
+      .ok_or(FactoryRuntimeInstallationError::Invalid)?
+      .toolchain
+      .executable
+      .clone();
+    for profile in &profiles {
+      if profile.toolchain.executable != executable {
+        return Err(FactoryRuntimeInstallationError::Invalid);
+      }
+      profile
+        .validate_installation(&self.toolchain)
+        .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+    }
+    let identity = octacity_server_factory::NodeExecutionIdentity::External(executable);
+    let clock = Arc::new(SystemFactoryExecutionClock);
+    let policies = Arc::new(StoreBackedEffectiveProjectPolicySource::new(self.runs.clone()));
+    let contexts = Arc::new(StoreBackedBuildExecutionContext::new(
+      self.runs.clone(),
+      self.runs.clone(),
+      policies,
+      self.toolchain.clone(),
+    ));
+    let reader = Arc::new(FactoryArtifactReader::new(
+      self.runs.clone(),
+      self.builds.clone(),
+      self.objects.clone(),
+    ));
+    let publisher = Arc::new(FactoryExecutionInputPublisher::new(
+      self.runs.clone(),
+      self.objects.clone(),
+      clock.clone(),
+    ));
+    let review_invocations = Arc::new(FactoryStoredReviewInvocationSource::new(self.runs.clone()));
+    // One trusted profile selection owns both dispatch preparation and retained
+    // observation. Candidate source pins come only from installed operator policy.
+    let readonly_profiles = profiles
+      .iter()
+      .filter(|profile| profile.consumer == octacity_server_factory::FactoryCredentialConsumer::ReadOnlyReview)
+      .cloned()
+      .collect::<Vec<_>>();
+    let candidate_contexts = if readonly_profiles.is_empty() {
+      None
+    } else {
+      Some(Arc::new(
+        FactoryCodexCandidateContextSource::new(
+          self.runs.clone(),
+          Arc::new(FactoryCandidateContextSource::new(reader.clone())),
+          readonly_profiles,
+          clock.clone(),
+        )
+        .map_err(|_| FactoryRuntimeInstallationError::Invalid)?,
+      ))
+    };
+    let mut outputs = FactoryCodexBuildOutputSource::new(
+      self.runs.clone(),
+      self.builds.clone(),
+      self.runs.clone(),
+      self.objects.clone(),
+      profiles.clone(),
+      reader.clone(),
+      clock.clone(),
+    )
+    .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
+    .with_review_invocation_source(review_invocations.clone());
+    let mut compiler = FactoryCodexBuildMaterializer::new(contexts, publisher, profiles.clone(), reader, clock.clone())
+      .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
+      .with_review_invocation_source(review_invocations.clone());
+    if let Some(candidate_contexts) = candidate_contexts {
+      outputs = outputs.with_retained_candidate_context_source(candidate_contexts.clone());
+      compiler = compiler.with_candidate_context_source(candidate_contexts);
+    }
+    let outputs = Arc::new(outputs);
+    let compiler: Arc<dyn FactoryBuildMaterializer> = Arc::new(compiler);
+    let builds = Arc::new(FactoryOrdinaryBuildService::new(
+      self.builds.clone(),
+      self.runs.clone(),
+      compiler,
+      clock,
+    ));
+    Ok((
+      octacity_server_factory::FlowNodeKind::Reasoning,
+      identity,
+      Arc::new(NativeCodexNodeExecutor {
+        builds,
+        outputs,
+        profiles,
+        review_invocations,
+      }),
+    ))
+  }
+}
+
+/// Dispatches by the exact frozen installed profile; models sharing one CLI can
+/// independently have no capture or distinct trusted capture implementations.
+pub(super) struct NativeCodexNodeExecutor<B, O, R> {
+  pub(super) builds: Arc<B>,
+  pub(super) outputs: Arc<O>,
+  pub(super) profiles: Vec<octacity_server_application::FactoryCodexBuildProfile>,
+  pub(super) review_invocations: Arc<R>,
+}
+impl<B, O, R> NativeCodexNodeExecutor<B, O, R> {
+  pub(super) fn profile(
+    &self,
+    intent: &octacity_server_factory::FlowBuildIntent,
+  ) -> Result<&octacity_server_application::FactoryCodexBuildProfile, octacity_server_application::ApplicationError> {
+    let mut matches = self.profiles.iter().filter(|profile| profile.matches_intent(intent));
+    let profile = matches
+      .next()
+      .ok_or_else(octacity_server_application::ApplicationError::invalid)?;
+    if matches.next().is_some() {
+      return Err(octacity_server_application::ApplicationError::invalid());
+    }
+    Ok(profile)
+  }
+}
+#[async_trait]
+impl<B, O, R> octacity_server_application::FactoryNodeExecutor for NativeCodexNodeExecutor<B, O, R>
+where
+  B: octacity_server_application::OrdinaryBuildCancellationApplication + octacity_server_store::BuildQueryStore,
+  O: octacity_server_application::FactoryNodeBuildOutputSource,
+  R: octacity_server_application::FactoryReviewInvocationSource + 'static,
+{
+  async fn observe(
+    &self,
+    request: octacity_server_application::FactoryNodeExecutionRequest<'_>,
+  ) -> Result<octacity_server_application::FactoryNodeExecutionStep, octacity_server_application::ApplicationError> {
+    use octacity_server_application::*;
+    let intent = request.build.ok_or_else(ApplicationError::invalid)?;
+    let profile = self.profile(intent)?;
+    match (&profile.capture, &profile.reviewer) {
+      (Some(capture), None) => {
+        FactoryNodeCaptureBuildAdapter::new(self.builds.clone(), self.outputs.clone(), capture.tool().clone())
+          .observe(request)
+          .await
+      }
+      (None, Some(reviewer)) => {
+        FactoryCodexReviewBuildAdapter::new(
+          self.builds.clone(),
+          self.outputs.clone(),
+          self.review_invocations.clone(),
+          reviewer.evaluator.clone(),
+        )
+        .observe(request)
+        .await
+      }
+      (None, None) => {
+        FactoryNodeBuildAdapter::new(self.builds.clone(), self.outputs.clone())
+          .observe(request)
+          .await
+      }
+      (Some(_), Some(_)) => Err(ApplicationError::invalid()),
+    }
+  }
+  async fn cancel(
+    &self,
+    request: octacity_server_application::FactoryNodeExecutionRequest<'_>,
+    at: octacity_server_domain::Timestamp,
+  ) -> Result<octacity_server_application::FactoryNodeCancellationStep, octacity_server_application::ApplicationError>
+  {
+    use octacity_server_application::*;
+    // Cancellation stops the known ordinary execution even when its historical
+    // profile is no longer installed; it never creates capture authority.
+    FactoryNodeExecutor::cancel(
+      &FactoryNodeBuildAdapter::new(self.builds.clone(), self.outputs.clone()),
+      request,
+      at,
+    )
+    .await
+  }
+}
+
+fn signal_network_is_qualified(
+  provider: &dyn octacity_server_factory::DecisionSignalProvider,
+  permitted_host: &octacity_server_factory::NetworkHost,
+) -> bool {
+  provider.network_destinations().is_some_and(|hosts| {
+    hosts.len() <= octacity_server_application::MAX_FACTORY_EXECUTOR_BINDINGS
+      && hosts.iter().all(|host| host == permitted_host)
+  })
+}
+
 /// Required availability of installed Factory capabilities, evaluated only in enabled mode.
 #[async_trait]
 pub trait FactoryRuntimeReadiness: Send + Sync {
@@ -37,6 +400,10 @@ pub struct FactoryRuntimeInstallation {
   pub readiness: Arc<dyn FactoryRuntimeReadiness>,
   /// Optional independent deferred-effect dispatchers; source failures cannot drive the owner.
   pub outbox_dispatchers: Vec<Arc<dyn octacity_server_application::FactoryOutboxDispatcher>>,
+  /// Optional exact server-owned policy for current lease-bound actions.
+  pub tool_authorizer: Option<Arc<dyn octacity_server_application::LeaseBoundToolActionAuthorizer>>,
+  /// Optional server-derived publication under the actual current Job Lease.
+  pub output_finalizer: Option<Arc<dyn octacity_server_application::AgentOutputFinalizer>>,
 }
 
 /// Secret-safe deployment installation failure.
@@ -72,11 +439,48 @@ impl crate::readiness::ReadinessCheck for CapabilityReadiness {
   }
 }
 
+struct UnavailableInstallation;
+#[async_trait]
+impl crate::readiness::ReadinessCheck for UnavailableInstallation {
+  fn name(&self) -> &'static str {
+    "factory-installation"
+  }
+  async fn check(&self) -> bool {
+    false
+  }
+}
+
 /// Worker plus health tracked by the existing durable supervisor.
 pub(super) struct InstalledFactoryWorker {
   pub(super) owner: octacity_server_application::FactoryReconciler<PostgresStore>,
   pub(super) health: Arc<crate::readiness::WorkerHealth>,
-  pub(super) outbox: Vec<Arc<dyn octacity_server_application::FactoryOutboxDispatcher>>,
+  pub(super) outbox: Vec<InstalledFactoryOutbox>,
+  pub(super) tool_authorizer: Arc<dyn octacity_server_application::LeaseBoundToolActionAuthorizer>,
+  pub(super) output_finalizer: Option<Arc<dyn octacity_server_application::AgentOutputFinalizer>>,
+}
+
+/// One deferred-effect worker shares its health with the scoped readiness monitor.
+pub(super) struct InstalledFactoryOutbox {
+  pub(super) dispatcher: Arc<dyn octacity_server_application::FactoryOutboxDispatcher>,
+  pub(super) health: Arc<crate::readiness::WorkerHealth>,
+}
+
+pub(super) fn install_outbox(
+  dispatchers: Vec<Arc<dyn octacity_server_application::FactoryOutboxDispatcher>>,
+  policy: crate::FactoryRuntimeConfig,
+  readiness: &mut crate::readiness::ReadinessChecks,
+) -> Vec<InstalledFactoryOutbox> {
+  dispatchers
+    .into_iter()
+    .map(|dispatcher| {
+      let health = Arc::new(crate::readiness::WorkerHealth::new(
+        "factory-outbox",
+        policy.poll_interval().saturating_add(policy.claim_lifetime()),
+      ));
+      readiness.push_factory(health.clone());
+      InstalledFactoryOutbox { dispatcher, health }
+    })
+    .collect()
 }
 
 pub(super) async fn assemble(
@@ -88,20 +492,24 @@ pub(super) async fn assemble(
   use super::ServerRuntimeError;
   use crate::readiness::WorkerHealth;
   let installed = match (config.factory(), installer) {
-    (Some(_), Some(installer)) => Some(
-      tokio::time::timeout(
-        config.readiness_check_timeout(),
-        installer.install(FactoryRuntimeResources {
-          runs: Arc::new(PostgresStore::new(resources.postgres.clone())),
-          builds: placement_store.clone(),
-          objects: resources.object_storage.clone(),
-          toolchain: resources.job_spec_toolchain.clone(),
-        }),
-      )
-      .await
-      .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?
-      .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
-    ),
+    (Some(_), Some(installer)) => match tokio::time::timeout(
+      config.readiness_check_timeout(),
+      installer.install(FactoryRuntimeResources {
+        runs: Arc::new(PostgresStore::new(resources.postgres.clone())),
+        builds: placement_store.clone(),
+        objects: resources.object_storage.clone(),
+        toolchain: resources.job_spec_toolchain.clone(),
+      }),
+    )
+    .await
+    {
+      Ok(Ok(installed)) => Some(installed),
+      Ok(Err(FactoryRuntimeInstallationError::Unavailable)) | Err(_) => {
+        resources.readiness.push_factory(Arc::new(UnavailableInstallation));
+        None
+      }
+      Ok(Err(FactoryRuntimeInstallationError::Invalid)) => return Err(ServerRuntimeError::InvalidFactoryInstallation),
+    },
     (None, _) => None,
     (Some(_), None) => unreachable!("installation requirement checked before loading resources"),
   };
@@ -120,10 +528,26 @@ pub(super) async fn assemble(
           .saturating_add(policy.claim_lifetime())
           .saturating_add(config.readiness_check_interval()),
       ));
-      resources.readiness.push(health.clone());
+      resources.readiness.push_factory(health.clone());
       resources
         .readiness
-        .push(Arc::new(CapabilityReadiness(installed.readiness)));
+        .push_factory(Arc::new(CapabilityReadiness(installed.readiness)));
+      let capabilities = installed
+        .executors
+        .iter()
+        .filter_map(|(_, identity, _)| match identity {
+          octacity_server_factory::NodeExecutionIdentity::External(reference) => Some(reference.clone()),
+          octacity_server_factory::NodeExecutionIdentity::BuiltIn => None,
+        })
+        .collect();
+      let phase_selector = Arc::new(
+        octacity_server_application::FactoryPhasePoolSelector::new(
+          registration_store.clone(),
+          capabilities,
+          policy.batch_size(),
+        )
+        .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
+      );
       let executors = Arc::new(
         octacity_server_application::FactoryNodeExecutorRegistry::new(installed.executors)
           .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
@@ -142,15 +566,72 @@ pub(super) async fn assemble(
         policy.concurrency(),
         flow,
       )
-      .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?;
+      .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?
+      .with_phase_pool_selector(phase_selector);
       Some(InstalledFactoryWorker {
         owner: worker,
         health,
-        outbox: installed.outbox_dispatchers,
+        outbox: install_outbox(installed.outbox_dispatchers, policy, &mut resources.readiness),
+        output_finalizer: installed.output_finalizer,
+        tool_authorizer: installed
+          .tool_authorizer
+          .unwrap_or_else(|| Arc::new(octacity_server_application::FailClosedToolActionAuthorizer)),
       })
     }
-    (None, None) => None,
+    (_, None) => None,
     _ => unreachable!("Factory policy and installation are paired"),
   };
   Ok((registration_store, factory))
+}
+
+impl FactoryRuntimeResources {
+  /// Binds evidence publication to the original retained candidate, test plan and
+  /// completed ordinary validation Build. All policy comes from the installed
+  /// profile; construction validates metadata without probing dependencies.
+  pub fn protected_validation_evidence_executor(
+    &self,
+    identity: octacity_server_factory::ImmutableReference,
+    profile: octacity_server_application::FactoryProtectedValidationEvidenceProfile,
+    author_profile: octacity_server_factory::ImmutableReference,
+    policy: octacity_server_application::FactoryProtectedTestPolicy,
+    inventory: octacity_server_factory::EvidenceRequirement,
+    capture_tool: octacity_server_factory::ImmutableReference,
+  ) -> Result<FactoryNodeExecutorBinding, FactoryRuntimeInstallationError> {
+    use octacity_server_application::*;
+    use octacity_server_factory::{EvidenceOutputKind, FlowActionBinding, FlowNodeKind, NodeExecutionIdentity};
+    if inventory.output_kind() != EvidenceOutputKind::Artifact {
+      return Err(FactoryRuntimeInstallationError::Invalid);
+    }
+    let clock = Arc::new(SystemFactoryExecutionClock);
+    let reader = Arc::new(FactoryArtifactReader::new(
+      self.runs.clone(),
+      self.builds.clone(),
+      self.objects.clone(),
+    ));
+    let inputs = self.protected_validation_inputs(super::FactoryRuntimeProtectedValidationProfile {
+      author_profile,
+      policy,
+      inventory,
+      capture_tool,
+    })?;
+    let binding = FlowActionBinding::new(identity.clone(), profile.action.clone(), serde_json::json!({}))
+      .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+    let outcome = profile.ready.clone();
+    let action = FactoryProtectedValidationEvidenceAction::new(
+      identity.clone(),
+      self.runs.clone(),
+      reader,
+      inputs,
+      profile,
+      clock,
+    );
+    action
+      .validate(&binding, &[outcome])
+      .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+    Ok((
+      FlowNodeKind::TrustedAction,
+      NodeExecutionIdentity::External(identity),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
+    ))
+  }
 }

@@ -6,7 +6,7 @@ mod accessors;
 mod admission;
 mod defaults;
 mod factory;
-pub use factory::FactoryRuntimeConfig;
+pub use factory::{FactoryRetryPolicy, FactoryRuntimeConfig};
 mod infrastructure;
 mod integrations;
 mod loading;
@@ -26,6 +26,10 @@ pub(crate) use workers::{RetentionWorkerPolicy, RetryingWorkerPolicy, WebhookWor
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
+  #[serde(default)]
+  factory_signal_connectors_file: Option<PathBuf>,
+  #[serde(default)]
+  factory_profiles_file: Option<PathBuf>,
   #[serde(default)]
   factory: Option<FactoryRuntimeConfig>,
   #[serde(default)]

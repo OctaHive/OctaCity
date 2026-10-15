@@ -7,7 +7,7 @@ mod question;
 
 pub use consumption::*;
 pub use contract::*;
-pub use provider::{DecisionSignalProvider, DecisionSignalProviderFuture};
+pub use provider::{DecisionSignalProvider, DecisionSignalProviderFuture, DecisionSignalProviderObservationFuture};
 pub use question::*;
 
 /// Maximum routing receipts that may be bound to one deterministic Decision.

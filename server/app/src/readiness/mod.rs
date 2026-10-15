@@ -35,6 +35,7 @@ type CriticalConditionSink = Arc<dyn CriticalSystemConditionStore>;
 /// adapters or workers are configured by the composition root.
 pub(crate) struct ReadinessChecks {
   checks: Vec<SharedCheck>,
+  factory_checks: Vec<SharedCheck>,
 }
 
 impl ReadinessChecks {
@@ -50,7 +51,10 @@ impl ReadinessChecks {
   ) -> Self {
     let mut checks = vec![migrations, postgres, object_storage, signing_material];
     checks.extend(additional_required);
-    Self { checks }
+    Self {
+      checks,
+      factory_checks: Vec::new(),
+    }
   }
 
   /// Adds one composition-selected supervised worker to the readiness gate.
@@ -58,9 +62,22 @@ impl ReadinessChecks {
     self.checks.push(check);
   }
 
+  /// Adds an enabled Factory dependency without gating ordinary CI/CD readiness.
+  pub(crate) fn push_factory(&mut self, check: SharedCheck) {
+    self.factory_checks.push(check);
+  }
+
   async fn evaluate(&self, timeout: std::time::Duration) -> ReadinessEvaluation {
+    Self::evaluate_checks(&self.checks, timeout).await
+  }
+
+  async fn evaluate_factory(&self, timeout: std::time::Duration) -> ReadinessEvaluation {
+    Self::evaluate_checks(&self.factory_checks, timeout).await
+  }
+
+  async fn evaluate_checks(checks: &[SharedCheck], timeout: std::time::Duration) -> ReadinessEvaluation {
     let deadline = tokio::time::Instant::now() + timeout;
-    for check in &self.checks {
+    for check in checks {
       let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
       if remaining.is_zero() {
         return ReadinessEvaluation::failed(check.name(), ReadinessFailureKind::TimedOut);
@@ -170,10 +187,19 @@ impl ReadinessMonitor {
   ) -> Self {
     let critical_condition_source = CriticalSystemConditionSourceId::from_uuid(uuid::Uuid::new_v4())
       .expect("a random UUID is a valid critical-condition source identity");
-    let state = Arc::new(ReadinessState::default());
-    let mut evaluation = checks.evaluate(timeout).await;
+    let factory_enabled = !checks.factory_checks.is_empty();
+    let state = Arc::new(ReadinessState {
+      factory_enabled,
+      ..Default::default()
+    });
+    let (mut evaluation, mut factory_evaluation) =
+      tokio::join!(checks.evaluate(timeout), checks.evaluate_factory(timeout));
+    state
+      .factory_healthy
+      .store(factory_evaluation.is_ready(), Ordering::Release);
     state.set(evaluation.is_ready());
     report_transition(
+      ReadinessScope::Server,
       None,
       evaluation,
       critical_condition_source,
@@ -181,6 +207,17 @@ impl ReadinessMonitor {
       timeout,
     )
     .await;
+    if factory_enabled {
+      report_transition(
+        ReadinessScope::Factory,
+        None,
+        factory_evaluation,
+        critical_condition_source,
+        critical_conditions.as_ref(),
+        timeout,
+      )
+      .await;
+    }
     let task_state = state.clone();
     let task = tokio::spawn(async move {
       let _unready_on_exit = UnreadyOnDrop(task_state.clone());
@@ -192,17 +229,19 @@ impl ReadinessMonitor {
             return;
           }
           () = tokio::time::sleep(interval) => {
-            let next = tokio::select! {
+            let (next, next_factory) = tokio::select! {
               biased;
               () = cancellation.cancelled() => {
                 task_state.set(false);
                 return;
               }
-              evaluation = checks.evaluate(timeout) => evaluation,
+              evaluations = async { tokio::join!(checks.evaluate(timeout), checks.evaluate_factory(timeout)) } => evaluations,
             };
             task_state.set(next.is_ready());
+            task_state.factory_healthy.store(next_factory.is_ready(), Ordering::Release);
             if next != evaluation {
               report_transition(
+                ReadinessScope::Server,
                 Some(evaluation),
                 next,
                 critical_condition_source,
@@ -210,6 +249,10 @@ impl ReadinessMonitor {
                 timeout,
               ).await;
               evaluation = next;
+            }
+            if factory_enabled && next_factory != factory_evaluation {
+              report_transition(ReadinessScope::Factory, Some(factory_evaluation), next_factory, critical_condition_source, critical_conditions.as_ref(), timeout).await;
+              factory_evaluation = next_factory;
             }
           }
         }
@@ -227,7 +270,22 @@ impl ReadinessMonitor {
   }
 }
 
+#[derive(Clone, Copy)]
+enum ReadinessScope {
+  Server,
+  Factory,
+}
+impl ReadinessScope {
+  const fn label(self) -> &'static str {
+    match self {
+      Self::Server => "Server",
+      Self::Factory => "Factory",
+    }
+  }
+}
+
 async fn report_transition(
+  scope: ReadinessScope,
   previous: Option<ReadinessEvaluation>,
   current: ReadinessEvaluation,
   source: CriticalSystemConditionSourceId,
@@ -237,12 +295,14 @@ async fn report_transition(
   match current.failure {
     None => tracing::info!(
       recovered = previous.is_some_and(|status| !status.is_ready()),
-      "server readiness established"
+      scope = scope.label(),
+      "readiness established"
     ),
     Some(failure) => tracing::warn!(
       dependency = failure.dependency,
       reason = ?failure.kind,
-      "server readiness lost"
+      scope = scope.label(),
+      "readiness lost"
     ),
   }
 
@@ -257,7 +317,7 @@ async fn report_transition(
   if let Some(failure) = previous_failure.filter(|failure| Some(*failure) != current.failure) {
     record_condition(
       critical_conditions,
-      CriticalSystemConditionChange::resolve(source, condition_code(failure), observed_at),
+      CriticalSystemConditionChange::resolve(source, condition_code(scope, failure), observed_at),
       timeout,
     )
     .await;
@@ -271,8 +331,8 @@ async fn report_transition(
       critical_conditions,
       CriticalSystemConditionChange::open(
         source,
-        condition_code(failure),
-        format!("Server readiness lost: {} is {reason}", failure.dependency),
+        condition_code(scope, failure),
+        format!("{} readiness lost: {} is {reason}", scope.label(), failure.dependency),
         observed_at,
       ),
       timeout,
@@ -297,9 +357,13 @@ async fn record_condition(
   }
 }
 
-fn condition_code(failure: ReadinessFailure) -> String {
+fn condition_code(scope: ReadinessScope, failure: ReadinessFailure) -> String {
   let mut digest = Sha256::new();
-  digest.update(b"octacity-server-readiness-v1\0");
+  let (domain, prefix): (&[u8], &str) = match scope {
+    ReadinessScope::Server => (b"octacity-server-readiness-v1\0", "server_readiness"),
+    ReadinessScope::Factory => (b"octacity-factory-readiness-v1\0", "factory_readiness"),
+  };
+  digest.update(domain);
   digest.update(failure.dependency.as_bytes());
   digest.update([match failure.kind {
     ReadinessFailureKind::Unavailable => 0,
@@ -307,7 +371,7 @@ fn condition_code(failure: ReadinessFailure) -> String {
   }]);
   let digest = digest.finalize();
   format!(
-    "server_readiness_{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
+    "{prefix}_{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}{:02x}",
     digest[0], digest[1], digest[2], digest[3], digest[4], digest[5], digest[6], digest[7]
   )
 }
@@ -331,9 +395,17 @@ impl Drop for UnreadyOnDrop {
 #[derive(Default)]
 pub(crate) struct ReadinessState {
   ready: AtomicBool,
+  factory_enabled: bool,
+  factory_healthy: AtomicBool,
 }
 
 impl ReadinessState {
+  pub(crate) fn factory_readiness(&self) -> Option<bool> {
+    self
+      .factory_enabled
+      .then(|| self.is_ready() && self.factory_healthy.load(Ordering::Acquire))
+  }
+
   pub(crate) fn is_ready(&self) -> bool {
     self.ready.load(Ordering::Acquire)
   }
@@ -500,6 +572,63 @@ mod tests {
     cancellation.cancel();
     monitor.into_task().await.unwrap();
     assert!(!state.is_ready());
+  }
+
+  #[tokio::test]
+  async fn factory_recovery_resolves_only_its_own_condition_when_dependency_names_match() {
+    let factory = controlled("shared-dependency", false);
+    let mut checks = ReadinessChecks::new(
+      controlled("shared-dependency", false),
+      controlled("postgres", true),
+      controlled("objects", true),
+      controlled("signing", true),
+      std::iter::empty(),
+    );
+    checks.push_factory(factory.clone());
+    let recorded = Arc::new(RecordingCriticalConditions::default());
+    let cancellation = CancellationToken::new();
+    let monitor = ReadinessMonitor::start(
+      checks,
+      std::time::Duration::from_millis(2),
+      std::time::Duration::from_millis(50),
+      Some(recorded.clone()),
+      cancellation.clone(),
+    )
+    .await;
+    let (server_code, factory_code) = {
+      let changes = recorded.changes.lock().unwrap();
+      let CriticalSystemConditionChange::Open { code: server, .. } = &changes[0] else {
+        panic!("server unavailable");
+      };
+      let CriticalSystemConditionChange::Open { code: factory, .. } = &changes[1] else {
+        panic!("factory unavailable");
+      };
+      assert_ne!(
+        server, factory,
+        "Factory recovery must never resolve an ordinary CI/CD failure"
+      );
+      (server.clone(), factory.clone())
+    };
+    factory.healthy.store(true, Ordering::Release);
+    tokio::time::timeout(std::time::Duration::from_secs(3), async {
+      while recorded.changes.lock().unwrap().len() < 3 {
+        tokio::task::yield_now().await;
+      }
+    })
+    .await
+    .unwrap();
+    let changes = recorded.changes.lock().unwrap().clone();
+    assert!(
+      matches!(&changes[2], CriticalSystemConditionChange::Resolve { code, .. } if code == &factory_code && code != &server_code)
+    );
+    assert!(!monitor.state().is_ready());
+    assert_eq!(
+      monitor.state().factory_readiness(),
+      Some(false),
+      "global dependencies remain required"
+    );
+    cancellation.cancel();
+    monitor.into_task().await.unwrap();
   }
 
   #[tokio::test]

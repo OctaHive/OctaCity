@@ -173,8 +173,7 @@ impl ExecutionBackend for FakeBackend {
       paths: ExecutionPaths {
         workspace: request.workspace,
         data_dir: request.data_dir,
-        plugins_dir: runner.plugins_dir.clone(),
-        plugin_lock: runner.plugin_lock.clone(),
+        plugin_projection: runner.plugin_projection.clone(),
         cache: None,
       },
       destroyed: self.destroyed.clone(),
@@ -241,6 +240,7 @@ async fn fake_runner(
   let mut command = String::new();
   input.read_line(&mut command).await.unwrap();
   assert!(command.contains(&request_id));
+  let start: serde_json::Value = serde_json::from_str(&command).unwrap();
   let id = serde_json::to_string(&request_id).unwrap();
   let mut messages = format!("{{\"type\":\"accepted\",\"request_id\":{id}}}\n");
   let results = if let Some(identity) = exposed_identity {
@@ -258,6 +258,17 @@ async fn fake_runner(
     messages.push_str(&event.to_string());
     messages.push('\n');
     serde_json::to_string(&vec![serde_json::json!({"identity": identity})]).unwrap()
+  } else if start["request"]["variables"]
+    .as_object()
+    .is_some_and(|variables| !variables.is_empty())
+  {
+    // Portable protocol observation only. Real signed author execution is
+    // qualified separately through the released runner and actual backend.
+    serde_json::to_string(&vec![serde_json::json!({
+      "variables":start["request"]["variables"],
+      "secrets_profile":start["request"]["secrets_profile"],
+    })])
+    .unwrap()
   } else {
     "[]".to_owned()
   };

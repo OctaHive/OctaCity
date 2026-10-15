@@ -109,6 +109,7 @@ pub(super) async fn start_matrix_agent(input: AgentStartInput<'_>) -> MatrixAgen
     AgentReleasePaths::from(input.release),
     input.backend,
     &AgentConfigOverrides {
+      factory: None,
       cache_read: true,
       cache_write: true,
       remote_cache_origin: Some(&input.cache_proxy.origin),

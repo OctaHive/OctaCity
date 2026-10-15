@@ -61,6 +61,51 @@ class SecurityMatrixTests(unittest.TestCase):
             )
         )
 
+    def test_agent_security_gate_executes_lease_bound_hook_and_broker_negatives(self):
+        commands = []
+
+        def runner(command, _repository, log_path):
+            commands.append(tuple(command))
+            log_path.write_text("security evidence\n", encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(
+                SECURITY_MATRIX.run_contracts(
+                    REPOSITORY, Path(directory), runner=runner
+                ),
+                0,
+            )
+
+        agent_command = next(
+            command for command in commands if "octacity-job" in command
+        )
+        self.assertIn(
+            "octacity-lifecycle",
+            agent_command,
+            "the released Agent security gate must exercise hook redaction and cancellation fencing",
+        )
+
+    def test_security_runner_executes_factory_definition_and_provider_negatives(self):
+        commands = []
+
+        def runner(command, _repository, log_path):
+            commands.append(tuple(command))
+            log_path.write_text("security evidence\n", encoding="utf-8")
+            return 0
+
+        with tempfile.TemporaryDirectory() as directory:
+            self.assertEqual(
+                SECURITY_MATRIX.run_contracts(REPOSITORY, Path(directory), runner=runner),
+                0,
+            )
+
+        executed = {argument for command in commands for argument in command}
+        self.assertTrue(
+            {"octacity-server-factory", "octacity-server-decision-signal"} <= executed,
+            "release security must execute graph/context/evidence and provider substitution negatives",
+        )
+
     def test_release_workflow_requires_and_retains_security_evidence(self):
         workflow = (
             REPOSITORY / ".github/workflows/backend-contracts.yml"

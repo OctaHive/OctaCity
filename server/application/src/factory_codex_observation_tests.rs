@@ -19,6 +19,126 @@ use crate::{
 
 use super::factory_codex_tests::{credential_profiles, permissions, reference, standard_deliverables, task_envelope};
 
+fn node_observation_fixture() -> (
+  Fixture,
+  octacity_server_factory::FlowBuildProfile,
+  octacity_server_factory::FlowDataSchema,
+) {
+  use octacity_server_factory::{FlowBuildIntent, FlowNodeKind};
+  let mut fixture = Fixture::successful();
+  let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+  result["structured_result"] = json!({"count":9});
+  result["usage"]["cost_micro_units"] = json!(2);
+  let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+  provenance["usage"] = result["usage"].clone();
+  fixture.replace_document("codex-run-result", result);
+  fixture.replace_document("codex-run-provenance", provenance);
+  let (_, admitted, schema, input, node) =
+    crate::factory_node_test_support::fixtures::execution_fixture(FlowNodeKind::Reasoning);
+  let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+  let mut profile = intent.profile().clone();
+  profile.tool = fixture.envelope.executable().clone();
+  profile.plugin = fixture.envelope.plugin().clone();
+  profile.model_or_tool = fixture.envelope.model().clone();
+  profile.result_output = FactoryKey::new("codex-run-result").unwrap();
+  (fixture, profile, schema)
+}
+
+#[test]
+fn codex_node_usage_prices_reported_tokens_under_the_frozen_exact_model_policy() {
+  use crate::{FactoryCodexNodeRunContract, FactoryCodexUsagePolicy, verify_codex_node_run};
+  let (mut fixture, profile, schema) = node_observation_fixture();
+  let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+  result["usage"] = json!({"input_tokens":12,"cached_input_tokens":2,"output_tokens":6});
+  let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+  provenance["usage"] = result["usage"].clone();
+  fixture.replace_document("codex-run-result", result);
+  fixture.replace_document("codex-run-provenance", provenance);
+  let policy = FactoryCodexUsagePolicy::TokenRates {
+    model: profile.model_or_tool.clone(),
+    input_micro_units_per_million: 2_000_000,
+    cached_input_micro_units_per_million: 1_000_000,
+    output_micro_units_per_million: 5_000_000,
+  };
+  let observed = verify_codex_node_run(
+    FactoryCodexNodeRunContract {
+      profile: &profile,
+      schema: &schema,
+      prompt_digest: fixture.envelope.digests().prompt_provenance,
+      source_revision: fixture.envelope.subject().exact().base_revision(),
+      budget: fixture.envelope.budget(),
+      usage_policy: &policy,
+      execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+    },
+    &fixture.documents,
+  )
+  .unwrap();
+  assert_eq!(observed.usage.tokens, 18);
+  assert_eq!(observed.usage.cost_micro_units, 52);
+}
+
+#[test]
+fn codex_node_observation_verifies_exact_execution_provenance_and_projects_only_declared_data() {
+  use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
+  let (fixture, profile, schema) = node_observation_fixture();
+  let expected = || FactoryCodexNodeRunContract {
+    usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+    profile: &profile,
+    schema: &schema,
+    prompt_digest: fixture.envelope.digests().prompt_provenance,
+    source_revision: fixture.envelope.subject().exact().base_revision(),
+    budget: fixture.envelope.budget(),
+    execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+  };
+  let observed = verify_codex_node_run(expected(), &fixture.documents).unwrap();
+  assert_eq!(observed.outcome, CodexHarnessOutcome::Completed);
+  assert_eq!(observed.data.unwrap().payload().value(), &json!({"count":9}));
+  assert_eq!(observed.usage.tokens, 18);
+  assert_eq!(observed.usage.cost_micro_units, 2);
+  assert_eq!(observed.usage.elapsed_millis, 10);
+  assert_eq!(
+    observed.usage.output_bytes,
+    fixture
+      .documents
+      .iter()
+      .map(|document| document.bytes.len() as u64)
+      .sum::<u64>()
+  );
+}
+
+#[test]
+fn codex_node_execution_failure_keeps_measured_usage_without_a_semantic_result() {
+  use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
+  let (mut fixture, profile, schema) = node_observation_fixture();
+  let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+  result["outcome"] = json!("blocked");
+  result["structured_result"] = Value::Null;
+  let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+  provenance["outcome"] = result["outcome"].clone();
+  fixture.replace_document("codex-run-result", result);
+  fixture.replace_document("codex-run-provenance", provenance);
+  let observed = verify_codex_node_run(
+    FactoryCodexNodeRunContract {
+      usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+      profile: &profile,
+      schema: &schema,
+      prompt_digest: fixture.envelope.digests().prompt_provenance,
+      source_revision: fixture.envelope.subject().exact().base_revision(),
+      budget: fixture.envelope.budget(),
+      execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+    },
+    &fixture.documents,
+  )
+  .expect("a verified technical failure still has measured consumption");
+  assert_eq!(observed.outcome, CodexHarnessOutcome::Blocked);
+  assert!(
+    observed.data.is_none(),
+    "technical status cannot fabricate a configured semantic outcome"
+  );
+  assert_eq!(observed.usage.tokens, 18);
+  assert_eq!(observed.usage.cost_micro_units, 2);
+}
+
 struct Fixture {
   envelope: octacity_server_factory::FactoryTaskEnvelope,
   build: FactoryBuildObservation,
@@ -383,6 +503,7 @@ fn factory_implementation_build_captures_typed_result_usage_trace_and_provenance
     &fixture.envelope,
     "Implement the selected stage and return only the required structured result.",
     &credential_profiles(),
+    None,
   )
   .unwrap();
   assert_eq!(compiled.task_name(), "implement");
@@ -784,4 +905,142 @@ fn a_trusted_capability_observation_returns_bounded_data_without_creating_a_stag
     "Keep the existing execution boundary"
   );
   assert_eq!(observed.deliverables().len(), 2);
+}
+
+#[test]
+fn codex_node_accepts_the_released_report_media_without_weakening_its_record_contract() {
+  use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
+  let (mut fixture, profile, schema) = node_observation_fixture();
+  let envelope = fixture.envelope.clone();
+  let expected = || FactoryCodexNodeRunContract {
+    usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+    profile: &profile,
+    schema: &schema,
+    prompt_digest: envelope.digests().prompt_provenance,
+    source_revision: envelope.subject().exact().base_revision(),
+    budget: envelope.budget(),
+    execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+  };
+  fixture.documents[0].identity.media_type = ArtifactMediaType::new("application/octet-stream").unwrap();
+  let observed = verify_codex_node_run(expected(), &fixture.documents)
+    .expect("released Octa reports retain their format while regular-file media defaults to binary");
+  assert_eq!(observed.data.unwrap().payload().value(), &json!({"count":9}));
+  let mut unrelated = fixture.documents.clone();
+  unrelated[0].identity.artifact_type = ArtifactType::Report(ArtifactReportFormat::new("unrelated.format.v1").unwrap());
+  assert!(verify_codex_node_run(expected(), &unrelated).is_err());
+  let mut malformed = fixture.documents.clone();
+  malformed[0].bytes = b"not a JSON record".to_vec();
+  malformed[0].identity.size_bytes = malformed[0].bytes.len() as u64;
+  malformed[0].identity.digest = digest(&malformed[0].bytes);
+  assert!(
+    verify_codex_node_run(expected(), &malformed).is_err(),
+    "matching immutable bytes do not make malformed report JSON valid"
+  );
+  let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+  result["structured_result"] = json!({"count":"wrong schema type"});
+  fixture.replace_document("codex-run-result", result);
+  assert!(verify_codex_node_run(expected(), &fixture.documents).is_err());
+}
+#[test]
+fn qualified_common_reviewer_records_produce_server_owned_assessment_and_reject_a_model_authored_assessment() {
+  use crate::FactoryReviewInvocationSource;
+  crate::factory_admission_tests::run_ready(async {
+    let (runs, intent, admitted, profile, context) =
+      crate::factory_review_planning_tests::prepared_codex_review_invocation().await;
+    let policy = profile.reviewer.as_ref().unwrap();
+    let invocation = crate::FactoryStoredReviewInvocationSource::new(runs)
+      .invocation(
+        intent.input(),
+        &policy.evaluator,
+        Timestamp::from_unix_millis(31).unwrap(),
+      )
+      .await
+      .unwrap();
+    let review = crate::FactoryCodexReviewCompilation {
+      policy,
+      invocation: &invocation,
+    };
+    let compiled = crate::compile_codex_flow_task_with_options(
+      &intent,
+      &admitted,
+      &profile.instructions,
+      &profile.credentials,
+      profile.consumer,
+      &profile.usage_policy,
+      crate::FactoryCodexFlowCompilationOptions {
+        context: Some(&context),
+        reviewer: Some(review),
+        ..Default::default()
+      },
+    )
+    .unwrap();
+    let prompt = std::str::from_utf8(compiled.document(crate::FactoryProtectedDocumentKind::Prompt).bytes()).unwrap();
+    let mut fixture = Fixture::successful_evaluation("satisfied", json!([]));
+    let usage = json!({"input_tokens":1,"output_tokens":2,"cost_micro_units":1});
+    let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+    result["usage"] = usage.clone();
+    fixture.replace_document("codex-run-result", result);
+    let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+    provenance["plugin"]["version"] = json!(profile.toolchain.plugin.version().as_str());
+    provenance["codex"]["version"] = json!(profile.toolchain.executable.version().as_str());
+    provenance["settings"]["model"] = json!(profile.toolchain.model.identity().as_str());
+    provenance["prompt_digest"]["value"] = json!(crate::codex_prompt_provenance_digest(prompt).to_string());
+    provenance["source_revision"] = json!(invocation.plan().subject().candidate_revision().as_str());
+    provenance["timing"] = json!({"started_unix_millis":32,"finished_unix_millis":36,"duration_millis":4});
+    provenance["usage"] = usage;
+    fixture.replace_document("codex-run-provenance", provenance);
+    let schema = admitted
+      .closure()
+      .definition(intent.input().definition())
+      .unwrap()
+      .node(intent.input().node())
+      .unwrap()
+      .outcome(intent.result_outcome())
+      .and_then(|o| admitted.data_schema(o.schema()))
+      .unwrap();
+    let expected = || crate::FactoryCodexNodeRunContract {
+      profile: intent.profile(),
+      schema,
+      prompt_digest: crate::codex_prompt_provenance_digest(prompt),
+      source_revision: invocation.plan().subject().candidate_revision(),
+      budget: intent.budget(),
+      usage_policy: &profile.usage_policy,
+      execution_window: Timestamp::from_unix_millis(32).unwrap()..=Timestamp::from_unix_millis(40).unwrap(),
+    };
+    let observed =
+      crate::verify_codex_review_node_run(expected(), &intent, review, &compiled, &fixture.documents).unwrap();
+    let assessment: octacity_server_factory::Assessment =
+      serde_json::from_value(observed.data.unwrap().payload().value().clone()).unwrap();
+    assessment
+      .validate_bindings(invocation.plan(), invocation.evidence())
+      .unwrap();
+    assert_eq!(assessment.outcome(), AssessmentOutcome::Satisfied);
+    assert_eq!(assessment.evaluator_reference(), &policy.evaluator);
+    assert_eq!(assessment.provenance().model(), &profile.toolchain.model);
+    assert_eq!(
+      assessment.provenance().prompt_digest(),
+      crate::codex_prompt_digest(prompt)
+    );
+    assert_eq!(
+      assessment.provenance().result().artifact_id(),
+      fixture.documents[0].identity.artifact_id
+    );
+    assert_eq!(
+      assessment.provenance().record().artifact_id(),
+      fixture.documents[2].identity.artifact_id
+    );
+    let replay =
+      crate::verify_codex_review_node_run(expected(), &intent, review, &compiled, &fixture.documents).unwrap();
+    assert_eq!(
+      replay.data.unwrap().payload().value(),
+      &serde_json::to_value(&assessment).unwrap()
+    );
+    let mut result: Value = serde_json::from_slice(&fixture.documents[0].bytes).unwrap();
+    result["structured_result"] = serde_json::to_value(&assessment).unwrap();
+    fixture.replace_document("codex-run-result", result);
+    assert!(
+      crate::verify_codex_review_node_run(expected(), &intent, review, &compiled, &fixture.documents).is_err(),
+      "a provider-authored Assessment must never establish its own plan/model/provenance"
+    );
+  });
 }

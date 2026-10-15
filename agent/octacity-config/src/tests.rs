@@ -6,6 +6,7 @@ use super::*;
 use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
 use octacity_private_fs::test_support::PrivateDirectoryFixture;
 
+mod protected_reader;
 mod virtualization;
 
 struct Fixture {
@@ -47,6 +48,7 @@ impl Fixture {
       source_plugins_dir: directory("sources"),
       tool_executables: BTreeMap::new(),
       change_set_capture: None,
+      protected_reader: None,
       workload_identity_profiles: BTreeMap::new(),
       cache: CacheConfig {
         root: directory("cache"),
@@ -90,6 +92,7 @@ impl Fixture {
       allow_unrestricted_network: false,
       allowed_network_hosts: vec!["vault.example.com".to_owned()],
       factory_permissions: None,
+      factory_credential_profiles: BTreeMap::new(),
       allowed_upload_origins: vec!["https://objects.example".to_owned()],
       max_archive_entries: 10_000,
       upload_timeout_seconds: 30,
@@ -1093,5 +1096,52 @@ fn example_configuration_stays_parseable() {
   assert_eq!(configs[3].agent_id, "windows-builder-01");
   for config in configs {
     assert!(decode_signing_key("primary", &config.server_signing_keys["primary"]).is_ok());
+  }
+}
+
+#[test]
+fn private_factory_profile_files_are_operator_references_without_reading_secret_values() {
+  let mut fixture = Fixture::new();
+  let variables_file = fixture._temp.path().join("private-model-values.json");
+  // The configuration boundary validates references. Disabled Factory must
+  // not require this optional dependency or read its secret contents.
+  fixture.config.factory_credential_profiles =
+    BTreeMap::from([("Operator.Model-1".to_owned(), variables_file.clone())]);
+  let validated = fixture.config.validate().unwrap();
+  assert_eq!(
+    validated.config.factory_credential_profiles["Operator.Model-1"],
+    variables_file
+  );
+  assert!(!variables_file.exists());
+}
+
+#[test]
+fn private_factory_profile_references_cannot_name_paths_or_job_storage() {
+  for identity in ["", "../profile", "profile/name", "model provider", "profile\n"] {
+    let mut fixture = Fixture::new();
+    fixture.config.factory_credential_profiles.insert(
+      identity.to_owned(),
+      fixture._temp.path().join("private-model-values.json"),
+    );
+    assert!(fixture.config.validate().is_err(), "invalid logical profile identity");
+  }
+  for root in 0..5 {
+    let mut fixture = Fixture::new();
+    let path = match root {
+      0 => &fixture.config.work_root,
+      1 => &fixture.config.state_root,
+      2 => &fixture.config.cache.root,
+      3 => &fixture.config.octa_release_root,
+      _ => &fixture.config.source_plugins_dir,
+    }
+    .join("private-values.json");
+    fixture
+      .config
+      .factory_credential_profiles
+      .insert("operator-model".to_owned(), path);
+    assert!(
+      fixture.config.validate().is_err(),
+      "private profile cannot occupy job or installation storage"
+    );
   }
 }

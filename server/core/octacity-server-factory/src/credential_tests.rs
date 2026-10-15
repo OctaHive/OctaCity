@@ -50,3 +50,28 @@ fn credential_authority_is_bound_to_a_common_node_and_trusted_consumer() {
     })
   ));
 }
+#[test]
+fn tool_reasoning_uses_model_credentials_without_evaluator_authority() {
+  use crate::FactoryCredentialPurpose;
+  let stage = NodeAttemptId::generate();
+  let installed = profiles();
+  let authorized = installed
+    .authorize(stage, FactoryCredentialConsumer::ToolReasoning, &key("model-coding"))
+    .unwrap();
+  assert_eq!(authorized.purpose(), FactoryCredentialPurpose::Model);
+  assert_eq!(authorized.node_attempt_id(), stage);
+  assert!(
+    installed
+      .authorize(
+        stage,
+        FactoryCredentialConsumer::ToolReasoning,
+        &key("model-evaluation")
+      )
+      .is_err()
+  );
+  assert!(
+    installed
+      .authorize(stage, FactoryCredentialConsumer::ReadOnlyReview, &key("model-coding"))
+      .is_err()
+  );
+}

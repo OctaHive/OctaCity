@@ -888,6 +888,7 @@ fn oci_v3_specification(ordinary: &JobSpecV2, runner: &RunnerInstallation, octaf
     source: ordinary.source.clone(),
     octa: ordinary.octa.clone(),
     execution: ManagedOctaExecutionV3 {
+      workspace_root: None,
       octafile_input: protected_input.artifact_id.clone(),
       tasks: vec!["contract".to_owned()],
       credential_profile: None,

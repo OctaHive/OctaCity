@@ -16,8 +16,13 @@ use crate::{FactoryBuildObservation, factory_codex_contract::CODEX_STAGE_SUMMARY
 
 mod evaluation;
 mod evidence;
+mod node;
 mod records;
 mod validation;
+
+pub use node::{
+  FactoryCodexNodeRunContract, FactoryCodexNodeRunObservation, verify_codex_node_run, verify_codex_review_node_run,
+};
 
 pub use evaluation::{
   FactoryCodexEvaluationObservation, FactoryCodexReviewerBinding, FactoryCodexTerminalObservation,
@@ -27,6 +32,33 @@ pub use evaluation::{
 use evidence::artifact_reference;
 use records::implementation_report;
 use validation::validate_codex_run;
+
+/// Projects the pinned Codex result protocol into an exact declared node schema.
+/// The installed Codex output source separately verifies executed Job facts and
+/// provenance before calling this decoder. Raw Artifact bytes remain unchanged.
+pub fn project_codex_node_output(
+  document: &mut crate::FactoryNodeBuildOutputDocument,
+  schema: &octacity_server_factory::FlowDataSchema,
+) -> Result<(), crate::ApplicationError> {
+  let identity = document.record.identity();
+  if document.schema != *schema.reference()
+    || !evidence::result_output_type(identity)
+    || identity.size_bytes != document.bytes.len() as u64
+    || identity.digest.as_bytes() != octacity_server_factory::FactoryDigest::content_sha256(&document.bytes).as_bytes()
+  {
+    return Err(crate::ApplicationError::invalid());
+  }
+  let result: records::CodexResultRecord<serde_json::Value> =
+    serde_json::from_slice(&document.bytes).map_err(|_| crate::ApplicationError::invalid())?;
+  if result.format_version != 1 || result.outcome != records::HarnessOutcomeWire::Completed {
+    return Err(crate::ApplicationError::invalid());
+  }
+  document.data = Some(
+    octacity_server_factory::FlowVerifiedBuildData::new(schema.clone(), result.structured_result)
+      .map_err(|_| crate::ApplicationError::invalid())?,
+  );
+  Ok(())
+}
 
 /// Stable semantic outcome recorded by the pinned Codex plugin.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

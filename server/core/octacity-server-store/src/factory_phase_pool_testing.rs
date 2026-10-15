@@ -22,20 +22,48 @@ pub(super) struct PhasePoolMemoryState {
 
 #[async_trait]
 impl FactoryPhasePoolStore for InMemoryFactoryConfigurationStore {
+  async fn ready_phase_policies(
+    &self,
+    after: Option<FactoryDigest>,
+    limit: u16,
+  ) -> Result<Vec<FactoryDigest>, StoreError> {
+    if limit == 0 || limit > MAX_PHASE_POOL_BATCH {
+      return Err(pool_invalid());
+    }
+    let state = self.lock()?;
+    Ok(
+      state
+        .phase_pools
+        .policies
+        .keys()
+        .filter(|policy| {
+          after.is_none_or(|cursor| **policy > cursor)
+            && state.phase_pools.entries.values().any(|entry| {
+              entry.policy_digest == **policy
+                && state
+                  .factory_runs
+                  .get(&entry.input.run_id)
+                  .is_some_and(|run| run.run().state().is_active() && run.run().version() == entry.input.run_version)
+                && !state
+                  .phase_pools
+                  .selections
+                  .values()
+                  .any(|selection| same_target(entry, &selection.entry))
+            })
+        })
+        .take(usize::from(limit))
+        .copied()
+        .collect(),
+    )
+  }
+
   async fn phase_pool_selection_for_claim(
     &self,
     run: octacity_server_factory::FactoryRunId,
     claim: FactoryDigest,
   ) -> Result<Option<PhasePoolSelection>, StoreError> {
     let state = self.lock()?;
-    Ok(
-      state
-        .phase_pools
-        .selections
-        .values()
-        .find(|selection| selection.entry.input.run_id == run && selection.run_claim().id == claim)
-        .cloned(),
-    )
+    retained_selection_for_claim(&state, run, claim)
   }
 
   async fn publish_phase_ready(
@@ -310,5 +338,53 @@ fn same_target(left: &PhasePoolEntry, right: &PhasePoolEntry) -> bool {
     right.input.cycle_id,
     &right.input.node,
     right.input.generation,
+  )
+}
+
+/// Returns immutable reservation evidence only to its original claim or the
+/// currently authoritative replacement claim; target liveness remains checked.
+pub(super) fn retained_selection_for_claim(
+  state: &crate::factory_configuration_testing::FactoryConfigurationMemoryState,
+  run: octacity_server_factory::FactoryRunId,
+  claim: FactoryDigest,
+) -> Result<Option<PhasePoolSelection>, StoreError> {
+  if let Some(original) = state
+    .phase_pools
+    .selections
+    .values()
+    .find(|selection| selection.entry.input.run_id == run && selection.run_claim().id == claim)
+  {
+    return Ok(Some(original.clone()));
+  }
+  if !state
+    .phase_pools
+    .selections
+    .values()
+    .any(|selection| selection.entry.input.run_id == run)
+  {
+    return Ok(None);
+  }
+  let Some(stored) = state.factory_runs.get(&run) else {
+    return Ok(None);
+  };
+  let snapshot = stored.snapshot()?;
+  if snapshot
+    .current_claim
+    .as_ref()
+    .is_none_or(|current| current.id != claim)
+  {
+    return Ok(None);
+  }
+  Ok(
+    state
+      .phase_pools
+      .selections
+      .values()
+      .filter(|selection| {
+        selection.entry.input.run_id == run
+          && phase_pool_selection_active(selection, &snapshot, selection.claim.claimed_at())
+      })
+      .max_by_key(|selection| selection.claim.claimed_at())
+      .cloned(),
   )
 }

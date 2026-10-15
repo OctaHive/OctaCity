@@ -8,7 +8,9 @@ use std::{
 use octacity_private_fs::{
   create_private_directory, read_bounded_regular_file, validate_private_access, validate_trusted_owner,
 };
-use octacity_protocol::{PROTECTED_INPUT_ROOT, ProtectedInputManifestV3, ProtectedInputTransferV3};
+use octacity_protocol::{
+  ChangeSetMaterializationV3, PROTECTED_INPUT_ROOT, ProtectedInputManifestV3, ProtectedInputTransferV3,
+};
 use reqwest::{StatusCode, Url, header::HeaderMap};
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
@@ -104,7 +106,11 @@ impl ProtectedInputStager {
         Err(_) => Err(ProtectedInputError::Cleanup),
       };
     }
-    let staged = StagedProtectedInputs { root, manifest };
+    let staged = StagedProtectedInputs {
+      root,
+      manifest,
+      runner_projection: None,
+    };
     if let Err(error) = staged.revalidate() {
       return cleanup_failed_publication(&staged.root, error);
     }
@@ -244,6 +250,7 @@ impl ProtectedInputStager {
 pub struct StagedProtectedInputs {
   root: PathBuf,
   manifest: ProtectedInputManifestV3,
+  runner_projection: Option<(PathBuf, ProtectedInputManifestV3)>,
 }
 
 impl StagedProtectedInputs {
@@ -252,7 +259,60 @@ impl StagedProtectedInputs {
   /// [`PROTECTED_INPUT_ROOT`] for runner start.
   pub fn revalidate_for_runner(&self) -> Result<&Path, ProtectedInputError> {
     self.revalidate()?;
-    Ok(&self.root)
+    match &self.runner_projection {
+      Some((root, manifest)) => {
+        validate_sealed_tree(root, manifest)?;
+        Ok(root)
+      }
+      None => Ok(&self.root),
+    }
+  }
+
+  /// Seals a separate runner view excluding the signed host-only candidate inputs.
+  /// The original manifest and bytes remain available for trusted reconstruction.
+  pub fn prepare_runner_projection(
+    &mut self,
+    materialization: &ChangeSetMaterializationV3,
+  ) -> Result<(), ProtectedInputError> {
+    self.revalidate()?;
+    materialization
+      .validate(&self.manifest)
+      .map_err(|_| ProtectedInputError::Manifest)?;
+    if self.runner_projection.is_some() {
+      return Err(ProtectedInputError::Collision);
+    }
+    let manifest = ProtectedInputManifestV3 {
+      inputs: self
+        .manifest
+        .inputs
+        .iter()
+        .filter(|input| {
+          input.artifact_id != materialization.bundle_input && input.artifact_id != materialization.manifest_input
+        })
+        .cloned()
+        .collect(),
+    };
+    let root = self
+      .root
+      .parent()
+      .ok_or(ProtectedInputError::Filesystem)?
+      .join("runner-protected");
+    create_private_directory(&root).map_err(|_| ProtectedInputError::Collision)?;
+    let operation = (|| {
+      for input in &manifest.inputs {
+        let relative = protected_relative_path(&input.destination)?;
+        let target = root.join(&relative);
+        create_private_ancestors(&root, target.parent().ok_or(ProtectedInputError::Manifest)?)?;
+        fs::copy(self.root.join(relative), target).map_err(|_| ProtectedInputError::Filesystem)?;
+      }
+      seal_tree(&root).map_err(|_| ProtectedInputError::Filesystem)?;
+      validate_sealed_tree(&root, &manifest)
+    })();
+    if let Err(error) = operation {
+      return cleanup_failed_publication(&root, error);
+    }
+    self.runner_projection = Some((root, manifest));
+    Ok(())
   }
 
   /// Resolves one signed logical Artifact to its sealed host path.
@@ -272,36 +332,45 @@ impl StagedProtectedInputs {
 
   /// Removes the protected tree, including portable read-only attributes.
   pub fn cleanup(self) -> Result<(), ProtectedInputError> {
-    cleanup_private_tree(&self.root).map_err(|_| ProtectedInputError::Cleanup)
+    let projection = self
+      .runner_projection
+      .as_ref()
+      .map(|(root, _)| cleanup_private_tree(root))
+      .transpose();
+    let original = cleanup_private_tree(&self.root);
+    projection.and(original).map_err(|_| ProtectedInputError::Cleanup)
   }
 
   fn revalidate(&self) -> Result<(), ProtectedInputError> {
-    validate_private_access(&self.root).map_err(|_| ProtectedInputError::Filesystem)?;
-    validate_trusted_owner(&self.root).map_err(|_| ProtectedInputError::Filesystem)?;
-    require_directory(&self.root)?;
-    let expected = self
-      .manifest
-      .inputs
-      .iter()
-      .map(|input| protected_relative_path(&input.destination))
-      .collect::<Result<BTreeSet<_>, _>>()?;
-    if collect_files(&self.root)? != expected {
-      return Err(ProtectedInputError::Collision);
-    }
-    for input in &self.manifest.inputs {
-      let path = self.root.join(protected_relative_path(&input.destination)?);
-      let metadata = fs::symlink_metadata(&path).map_err(|_| ProtectedInputError::Filesystem)?;
-      if !metadata.file_type().is_file() || !metadata.permissions().readonly() || metadata.len() != input.size_bytes {
-        return Err(ProtectedInputError::Mutation);
-      }
-      let contents = read_bounded_regular_file(&path, input.size_bytes.saturating_add(1))
-        .map_err(|_| ProtectedInputError::Mutation)?;
-      if contents.len() as u64 != input.size_bytes || hex::encode(Sha256::digest(&contents)) != input.sha256 {
-        return Err(ProtectedInputError::Mutation);
-      }
-    }
-    Ok(())
+    validate_sealed_tree(&self.root, &self.manifest)
   }
+}
+
+fn validate_sealed_tree(root: &Path, manifest: &ProtectedInputManifestV3) -> Result<(), ProtectedInputError> {
+  validate_private_access(root).map_err(|_| ProtectedInputError::Filesystem)?;
+  validate_trusted_owner(root).map_err(|_| ProtectedInputError::Filesystem)?;
+  require_directory(root)?;
+  let expected = manifest
+    .inputs
+    .iter()
+    .map(|input| protected_relative_path(&input.destination))
+    .collect::<Result<BTreeSet<_>, _>>()?;
+  if collect_files(root)? != expected {
+    return Err(ProtectedInputError::Collision);
+  }
+  for input in &manifest.inputs {
+    let path = root.join(protected_relative_path(&input.destination)?);
+    let metadata = fs::symlink_metadata(&path).map_err(|_| ProtectedInputError::Filesystem)?;
+    if !metadata.file_type().is_file() || !metadata.permissions().readonly() || metadata.len() != input.size_bytes {
+      return Err(ProtectedInputError::Mutation);
+    }
+    let contents = read_bounded_regular_file(&path, input.size_bytes.saturating_add(1))
+      .map_err(|_| ProtectedInputError::Mutation)?;
+    if contents.len() as u64 != input.size_bytes || hex::encode(Sha256::digest(&contents)) != input.sha256 {
+      return Err(ProtectedInputError::Mutation);
+    }
+  }
+  Ok(())
 }
 
 fn canonical_origin(value: &str) -> Result<String, ProtectedInputError> {
@@ -665,6 +734,81 @@ mod tests {
     for (_, staged) in retained {
       staged.cleanup().unwrap();
     }
+  }
+
+  #[tokio::test]
+  async fn candidate_source_inputs_remain_host_private_in_the_runner_projection() {
+    use octacity_protocol::{
+      CHANGE_SET_BUNDLE_INPUT, CHANGE_SET_BUNDLE_MEDIA_TYPE, CHANGE_SET_MANIFEST_INPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE,
+      ChangeSetMaterializationV3,
+    };
+
+    let (_temporary, job_root) = private_job_root();
+    let mut transfers = Vec::new();
+    let mut origins = Vec::new();
+    let mut responses = Vec::new();
+    for (id, destination, media_type, body) in [
+      (
+        "program",
+        "/octacity/protected/context/task.json",
+        "application/json",
+        b"public task".as_slice(),
+      ),
+      (
+        "source-bundle",
+        CHANGE_SET_BUNDLE_INPUT,
+        CHANGE_SET_BUNDLE_MEDIA_TYPE,
+        b"private bundle canary".as_slice(),
+      ),
+      (
+        "source-manifest",
+        CHANGE_SET_MANIFEST_INPUT,
+        CHANGE_SET_MANIFEST_MEDIA_TYPE,
+        b"private manifest canary".as_slice(),
+      ),
+    ] {
+      let (origin, response) = server(body, media_type).await;
+      let mut selected = input(body, destination);
+      selected.artifact_id = id.to_owned();
+      selected.media_type = media_type.to_owned();
+      transfers.push(transfer(selected, format!("{origin}/artifact")));
+      origins.push(origin);
+      responses.push(response);
+    }
+    let stager = ProtectedInputStager::new(ProtectedInputStagerConfig {
+      allowed_origins: origins,
+      download_timeout: Duration::from_secs(10),
+    })
+    .unwrap();
+    let mut staged = stager
+      .stage(&transfers, &job_root, &CancellationToken::new())
+      .await
+      .unwrap();
+    for response in responses {
+      response.await.unwrap();
+    }
+    staged
+      .prepare_runner_projection(&ChangeSetMaterializationV3 {
+        bundle_input: "source-bundle".to_owned(),
+        manifest_input: "source-manifest".to_owned(),
+        candidate_revision: "abcdef0123456789abcdef0123456789abcdef01".to_owned(),
+      })
+      .unwrap();
+    let projected = staged.revalidate_for_runner().unwrap().to_owned();
+    assert_eq!(fs::read(projected.join("context/task.json")).unwrap(), b"public task");
+    assert!(!projected.join("change-set.bundle").exists());
+    assert!(!projected.join("change-set-manifest.json").exists());
+    assert_eq!(
+      fs::read(staged.path_for_input("source-bundle").unwrap()).unwrap(),
+      b"private bundle canary"
+    );
+    assert_eq!(
+      fs::read(staged.path_for_input("source-manifest").unwrap()).unwrap(),
+      b"private manifest canary"
+    );
+    staged.cleanup().unwrap();
+    assert!(!projected.exists());
+    assert!(!job_root.join("protected").exists());
   }
 
   #[tokio::test]

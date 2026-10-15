@@ -83,13 +83,49 @@ pub fn open_regular_file_no_follow(path: &Path) -> std::io::Result<File> {
 /// The size is checked through the open handle and the read itself is capped,
 /// so a concurrent replacement or growth cannot bypass the memory bound.
 pub fn read_bounded_regular_file(path: &Path, maximum: u64) -> std::io::Result<Vec<u8>> {
+  validate_read_bound(maximum)?;
+  read_bounded_open_file(open_regular_file_no_follow(path)?, maximum)
+}
+
+/// Retained directory authority for reads below an Agent-owned source root.
+///
+/// The operator supplies the trusted root path; its final component must not be
+/// a link. Reads retain that directory's identity and never follow relative-path
+/// links. This prevents ancestor redirection without check-then-open path races.
+/// The caller still owns mount isolation and source immutability. Windows is
+/// currently unsupported and returns an explicit error instead of a fallback.
+pub struct RootedReadDirectory {
+  directory: File,
+}
+
+impl RootedReadDirectory {
+  /// Opens and retains one trusted source directory without following its final
+  /// component. Ancestors of this operator-owned root must already be trusted.
+  pub fn open(root: &Path) -> std::io::Result<Self> {
+    Ok(Self {
+      directory: platform::open_rooted_read_directory(root)?,
+    })
+  }
+
+  /// Reads a bounded regular file through the retained root and no-follow
+  /// directory handles. Absolute paths, parent traversal and links are refused.
+  pub fn read_bounded(&self, relative: &Path, maximum: u64) -> std::io::Result<Vec<u8>> {
+    validate_read_bound(maximum)?;
+    read_bounded_open_file(platform::open_rooted_regular_file(&self.directory, relative)?, maximum)
+  }
+}
+
+fn validate_read_bound(maximum: u64) -> std::io::Result<()> {
   if maximum == 0 || maximum >= usize::MAX as u64 {
     return Err(std::io::Error::new(
       std::io::ErrorKind::InvalidInput,
       "regular-file read bound must be between 1 and usize::MAX - 1",
     ));
   }
-  let file = open_regular_file_no_follow(path)?;
+  Ok(())
+}
+
+fn read_bounded_open_file(file: File, maximum: u64) -> std::io::Result<Vec<u8>> {
   let metadata = file.metadata()?;
   if metadata.len() > maximum {
     return Err(std::io::Error::new(
@@ -151,6 +187,8 @@ compile_error!("octacity-private-fs requires either a Unix or Windows target");
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  include!("rooted_read_tests.rs");
 
   #[test]
   fn creates_and_validates_a_private_directory() {

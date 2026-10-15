@@ -10,8 +10,10 @@ fn runner(root: &Path) -> RunnerProgram {
   RunnerProgram {
     release_root: root.to_owned(),
     executable: root.join("octa-runner"),
-    plugins_dir: root.join("plugins"),
-    plugin_lock: root.join("Octa.lock"),
+    plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+      directory: root.join("plugins"),
+      lock: root.join("Octa.lock"),
+    }),
     external_executables: std::collections::BTreeMap::new(),
   }
 }
@@ -317,8 +319,11 @@ async fn maps_verified_host_paths_into_the_guest() {
     .await
     .unwrap();
   assert_eq!(plan.guest_executable, "/opt/octacity/octa/octa-runner");
-  assert_eq!(plan.guest_plugins_dir, Path::new("/opt/octacity/octa/plugins"));
-  assert_eq!(plan.host_job_root, job_root);
+  assert_eq!(
+    plan.guest_plugin_projection.as_ref().unwrap().directory,
+    Path::new("/opt/octacity/octa/plugins")
+  );
+  assert_eq!(plan.disk_accounting_roots, vec![job_root.clone()]);
   assert_eq!(plan.guest_job_root, "/work");
   assert!(plan.workspace_anchor.is_none());
   assert_eq!(plan.guest_workspace, "/work/workspace");
@@ -379,6 +384,9 @@ async fn projects_only_the_bounded_factory_roots() {
   request.workspace_root = work_root;
   request.data_dir = data_dir;
   request.factory = Some(FactoryExecutionLayout {
+    workspace_anchor: false,
+    disk_accounting: octacity_execution::ExecutionDiskAccounting::WholeJob,
+    tool_channel: None,
     protected_inputs: protected.clone(),
     source: source.clone(),
     source_visible: true,
@@ -637,4 +645,62 @@ fn accounts_for_nested_files_without_following_symlinks() {
     directory_size(socket_root.path()),
     Err(ExecutionError::Backend(message)) if message.contains("unsupported special file")
   ));
+}
+
+#[test]
+fn restricted_literal_addresses_are_exact_ip_rules_and_names_remain_exact_domains() {
+  let policy = network_policy(&NetworkAccess::Restricted {
+    allowed_hosts: vec![
+      "192.0.2.17".to_owned(),
+      "2001:db8::23".to_owned(),
+      "stage.example.test".to_owned(),
+    ],
+  })
+  .unwrap()
+  .unwrap();
+  let wire = serde_json::to_value(policy).unwrap();
+  assert_eq!(wire["default_egress"], "deny");
+  assert_eq!(wire["default_ingress"], "deny");
+  assert_eq!(
+    wire["rules"],
+    serde_json::json!([
+      {"direction":"egress", "destination":{"group":"host"}, "protocols":["tcp","udp"],
+        "ports":[{"start":53,"end":53}], "action":"allow"},
+      {"direction":"egress", "destination":{"cidr":"192.0.2.17/32"}, "protocols":["tcp"],
+        "ports":[], "action":"allow"},
+      {"direction":"egress", "destination":{"cidr":"2001:db8::23/128"}, "protocols":["tcp"],
+        "ports":[], "action":"allow"},
+      {"direction":"egress", "destination":{"domain":"stage.example.test"}, "protocols":["tcp"],
+        "ports":[], "action":"allow"},
+    ])
+  );
+}
+
+#[test]
+fn restricted_microsandbox_host_alias_selects_only_the_explicit_host_destination() {
+  let policy = network_policy(&NetworkAccess::Restricted {
+    allowed_hosts: vec![
+      "host.microsandbox.internal".to_owned(),
+      "host.microsandbox.internal.example.test".to_owned(),
+    ],
+  })
+  .unwrap()
+  .unwrap();
+  let wire = serde_json::to_value(policy).unwrap();
+  assert_eq!(wire["default_egress"], "deny");
+  assert_eq!(wire["default_ingress"], "deny");
+  assert_eq!(
+    wire["rules"][1],
+    serde_json::json!({
+      "direction":"egress", "destination":{"group":"host"}, "protocols":["tcp"], "ports":[], "action":"allow"
+    })
+  );
+  assert_eq!(
+    wire["rules"][2],
+    serde_json::json!({
+      "direction":"egress", "destination":{"domain":"host.microsandbox.internal.example.test"},
+      "protocols":["tcp"], "ports":[], "action":"allow"
+    })
+  );
+  assert_eq!(wire["rules"].as_array().unwrap().len(), 3);
 }

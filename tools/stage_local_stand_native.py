@@ -33,6 +33,7 @@ from pinned_source_archive import (
 import verify_local_stand_context as context
 import verify_local_stand_inputs as inputs
 import validate_octa_release_contract as release_contract
+import local_stand_state as state
 
 
 REPOSITORY = Path(__file__).resolve().parents[1]
@@ -42,6 +43,9 @@ DEFAULT_AGENT_FIXTURE = REPOSITORY / "deployment/local-stand/fixtures/agent.toml
 MAX_RELEASE_FILES = 4096
 MAX_CHECKSUM_BYTES = 4 * 1024 * 1024
 MAX_JOB_SPEC_POLICY_BYTES = 1024 * 1024
+MAX_PROTECTED_READER_BYTES = 256 * 1024 * 1024
+MAX_PROTECTED_READER_MANIFEST_BYTES = 16 * 1024
+PROTECTED_READER_EXECUTABLE = "octacity-protected-reader"
 DEFAULT_JOB_SPEC_VALIDITY_SECONDS = 900
 POLICY_HELPER_ROLE = "octacity_release_harness"
 
@@ -579,6 +583,7 @@ def _verify_installation_manifest(
     entries: dict[str, dict[str, Any]],
     inputs_root: Path,
     revision: str,
+    protected_reader: dict[str, str] | None = None,
 ) -> None:
     manifest = _json_object(root / "installation-manifest.json")
     expected_inputs = {
@@ -592,10 +597,57 @@ def _verify_installation_manifest(
         "microsandbox_version": document["native"]["microsandbox"]["version"],
         "inputs": expected_inputs,
     }
+    if manifest.get("protected_reader") != protected_reader:
+        raise NativeStageError("native installation protected reader differs from its selected pin")
     if {key: manifest.get(key) for key in expected_identity} != expected_identity:
         raise NativeStageError("native installation manifest differs from immutable inputs")
     if manifest.get("files") != _installed_file_digests(root):
         raise NativeStageError("native installation file inventory differs from its manifest")
+
+
+def _read_protected_reader_file(root: Path, name: str) -> bytes:
+    manifest = name == "manifest.json"
+    return state.read_regular_file(
+        root / name, "protected reader distribution file",
+        max_bytes=MAX_PROTECTED_READER_MANIFEST_BYTES if manifest else MAX_PROTECTED_READER_BYTES,
+        modes=frozenset({0o400, 0o444, 0o600, 0o644} if manifest else {0o500, 0o555, 0o700, 0o755}),
+    )
+
+
+def _protected_reader_pin(root: Path) -> dict[str, str]:
+    """Verify exactly the separately packaged reader subtree, without executing it."""
+
+    try:
+        if root.is_symlink() or not root.is_dir():
+            raise ValueError("root")
+        if {path.name for path in root.iterdir()} != {"manifest.json", PROTECTED_READER_EXECUTABLE}:
+            raise ValueError("files")
+        manifest = state.load_json_object(_read_protected_reader_file(root, "manifest.json"), "protected reader manifest")
+        executable = _read_protected_reader_file(root, PROTECTED_READER_EXECUTABLE)
+        platform = inputs.EXPECTED_OCTA_RUNTIME_PLATFORM
+        if (set(manifest) != {"format_version", "executable", "platform", "sha256"}
+                or type(manifest["format_version"]) is not int or manifest["format_version"] != 1
+                or manifest["executable"] != PROTECTED_READER_EXECUTABLE
+                or manifest["platform"] != platform or manifest["sha256"] != hashlib.sha256(executable).hexdigest()):
+            raise ValueError("pin")
+        return {"root": f"workers/protected-reader/{platform}", "platform": platform,
+                "sha256": manifest["sha256"]}
+    except (OSError, ValueError, state.StateError) as error:
+        raise NativeStageError("protected reader distribution is invalid") from error
+
+
+def _copy_protected_reader(source: Path, installation: Path, pin: dict[str, str]) -> None:
+    destination = installation / pin["root"]
+    destination.mkdir(parents=True, mode=0o755)
+    for name in ("manifest.json", PROTECTED_READER_EXECUTABLE):
+        try:
+            contents = _read_protected_reader_file(source, name)
+        except (OSError, state.StateError) as error:
+            raise NativeStageError("protected reader distribution changed during staging") from error
+        (destination / name).write_bytes(contents)
+        (destination / name).chmod(0o755 if name == PROTECTED_READER_EXECUTABLE else 0o644)
+    if _protected_reader_pin(destination) != pin:
+        raise NativeStageError("protected reader distribution changed during staging")
 
 
 def install_native_bundle(
@@ -605,14 +657,19 @@ def install_native_bundle(
     entries: dict[str, dict[str, Any]],
     revision: str,
     fixture: Path,
+    *,
+    protected_reader_root: Path | None = None,
 ) -> Path:
-    """Install only verified local inputs, validate them, and atomically activate."""
+    """Install verified inputs and an optional independent reader atomically."""
 
+    reader = None if protected_reader_root is None else _protected_reader_pin(protected_reader_root)
+    if reader is not None:
+        destination = destination.with_name(destination.name + "-reader-" + reader["sha256"][:12])
     context.validate_staging_directory(inputs_root, entries, document, revision)
     policy_helper = inputs_root / entries[POLICY_HELPER_ROLE]["filename"]
     validate_policy_helper(policy_helper, document)
     if destination.is_dir() and not destination.is_symlink():
-        _verify_installation_manifest(destination, document, entries, inputs_root, revision)
+        _verify_installation_manifest(destination, document, entries, inputs_root, revision, reader)
         validate_native_installation(destination, document, revision, fixture)
         _verify_job_spec_policy(destination, document, policy_helper)
         return destination.resolve()
@@ -638,6 +695,8 @@ def install_native_bundle(
         )
         _install_microsandbox(raw, root / "microsandbox")
         shutil.rmtree(raw)
+        if reader is not None:
+            _copy_protected_reader(protected_reader_root, root, reader)
         validate_native_installation(root, document, revision, fixture)
         _write_job_spec_policy(root, document, policy_helper)
         manifest = {
@@ -652,6 +711,8 @@ def install_native_bundle(
             },
             "files": _installed_file_digests(root),
         }
+        if reader is not None:
+            manifest["protected_reader"] = reader
         (root / "installation-manifest.json").write_text(
             json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
         )
@@ -677,9 +738,15 @@ def main() -> int:
     parser.add_argument("--fixture", type=Path, default=DEFAULT_AGENT_FIXTURE)
     parser.add_argument("--repository", type=Path, default=REPOSITORY)
     parser.add_argument("--agent-revision")
+    parser.add_argument("--protected-reader-root", type=Path,
+                        help="optional separately pinned guest reader distribution; install/all only")
     arguments = parser.parse_args()
     try:
         require_native_host()
+        if arguments.protected_reader_root is not None:
+            if arguments.command == "prepare":
+                raise NativeStageError("--protected-reader-root requires install or all")
+            _protected_reader_pin(arguments.protected_reader_root)
         repository = arguments.repository.resolve()
         revision = arguments.agent_revision or git_revision(repository)
         document, entries = load_policy(
@@ -701,6 +768,7 @@ def main() -> int:
                 entries,
                 revision,
                 arguments.fixture.resolve(),
+                protected_reader_root=arguments.protected_reader_root,
             )
             print(path)
         else:

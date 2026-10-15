@@ -183,7 +183,8 @@ async fn advance(
   .await
   .map_err(unavailable)?;
   let remaining: bool = sqlx::query_scalar(
-    "SELECT EXISTS(SELECT 1 FROM factory_artifact_references WHERE run_id = $1 AND released_at IS NULL)",
+    "SELECT EXISTS(SELECT 1 FROM factory_artifact_references WHERE run_id = $1 AND released_at IS NULL) \
+       OR EXISTS(SELECT 1 FROM factory_execution_input_manifests manifest JOIN factory_execution_inputs input USING (operation_id) WHERE manifest.run_id=$1 AND input.deleted_at_millis IS NULL)",
   )
   .bind(request.run_id.as_uuid())
   .fetch_one(&mut *transaction)
@@ -244,6 +245,10 @@ async fn delete_metadata_page(
   limit: u16,
 ) -> Result<u16, StoreError> {
   const DELETE_STEPS: &[&str] = &[
+    "WITH selected AS (SELECT ctid FROM factory_decision_signal_receipts WHERE run_id=$1 ORDER BY ctid LIMIT $2) DELETE FROM factory_decision_signal_receipts WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_decision_signal_requests WHERE run_id=$1 ORDER BY ctid LIMIT $2) DELETE FROM factory_decision_signal_requests WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT input.ctid FROM factory_execution_inputs input JOIN factory_execution_input_manifests manifest USING (operation_id) WHERE manifest.run_id=$1 AND input.deleted_at_millis IS NOT NULL ORDER BY input.ctid LIMIT $2) DELETE FROM factory_execution_inputs WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_execution_input_manifests manifest WHERE run_id=$1 AND NOT EXISTS (SELECT 1 FROM factory_execution_inputs input WHERE input.operation_id=manifest.operation_id) ORDER BY ctid LIMIT $2) DELETE FROM factory_execution_input_manifests WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_node_stops WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_node_stops WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_flow_build_executions WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_build_executions WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_flow_build_intents WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_build_intents WHERE ctid IN (SELECT ctid FROM selected)",

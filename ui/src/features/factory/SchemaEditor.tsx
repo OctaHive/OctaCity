@@ -14,6 +14,9 @@ const MAX_DEPTH = FACTORY_AUTHORING_SCHEMAS.FactoryFlowValueSchema['x-max-depth'
 const MAX_ENUM_VALUES = FACTORY_AUTHORING_SCHEMAS.FactoryFlowValueSchema.oneOf.flatMap((variant) =>
   'values' in variant.properties ? [variant.properties.values.maxItems] : [],
 )[0]!;
+const VARIANT_CONTRACT = FACTORY_AUTHORING_SCHEMAS.FactoryFlowValueSchema.oneOf.flatMap(
+  (variant) => ('variants' in variant.properties ? [variant.properties.variants] : []),
+)[0]!;
 
 const TYPES = {
   boolean: 'factory.boolean',
@@ -22,6 +25,7 @@ const TYPES = {
   object: 'factory.object',
   array: 'factory.array',
   enum: 'factory.enum',
+  externally_tagged: 'factory.tagged',
 } satisfies Record<Shape['type'], MessageKey>;
 export function SchemaEditor({
   api,
@@ -93,6 +97,9 @@ function ShapeEditor({
   const { t } = usePresentation();
   const fieldKeys = useDraftRowKeys(value.type === 'object' ? Object.values(value.fields) : []);
   const enumKeys = useDraftRowKeys(value.type === 'enum' ? value.values : []);
+  const variantKeys = useDraftRowKeys(
+    value.type === 'externally_tagged' ? Object.values(value.variants) : [],
+  );
   return (
     <fieldset>
       <SelectMenu
@@ -120,6 +127,9 @@ function ShapeEditor({
               break;
             case 'enum':
               onChange({ type, values: [] });
+              break;
+            case 'externally_tagged':
+              onChange({ type, variants: {} });
           }
         }}
       />
@@ -293,6 +303,86 @@ function ShapeEditor({
                 }
               >
                 {t('factory.removeEnumValue')}
+              </button>
+            </fieldset>
+          ))}
+        </>
+      ) : null}
+      {value.type === 'externally_tagged' ? (
+        <>
+          <button
+            type="button"
+            disabled={
+              Object.keys(value.variants).length >= VARIANT_CONTRACT.maxProperties ||
+              Object.hasOwn(value.variants, '')
+            }
+            onClick={() => onChange({ ...value, variants: { ...value.variants, '': null } })}
+          >
+            {t('factory.addVariant')}
+          </button>
+          {Object.entries(value.variants).map(([name, shape], index) => (
+            <fieldset key={variantKeys[index]}>
+              <label>
+                {t('factory.variantName')}
+                <input
+                  maxLength={VARIANT_CONTRACT.propertyNames.maxLength}
+                  value={name}
+                  onChange={(event) => {
+                    if (
+                      event.target.value !== name &&
+                      Object.hasOwn(value.variants, event.target.value)
+                    )
+                      return;
+                    onChange({
+                      ...value,
+                      variants: Object.fromEntries(
+                        Object.entries(value.variants).map(([key, item]) => [
+                          key === name ? event.target.value : key,
+                          item,
+                        ]),
+                      ),
+                    });
+                  }}
+                />
+              </label>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={shape !== null}
+                  disabled={depth >= MAX_DEPTH}
+                  onChange={(event) =>
+                    onChange({
+                      ...value,
+                      variants: {
+                        ...value.variants,
+                        [name]: event.target.checked ? { type: 'boolean' } : null,
+                      },
+                    })
+                  }
+                />
+                {t('factory.variantPayload')}
+              </label>
+              {shape !== null && depth < MAX_DEPTH ? (
+                <ShapeEditor
+                  value={shape}
+                  depth={depth + 1}
+                  onChange={(shape) =>
+                    onChange({ ...value, variants: { ...value.variants, [name]: shape } })
+                  }
+                />
+              ) : null}
+              <button
+                type="button"
+                onClick={() =>
+                  onChange({
+                    ...value,
+                    variants: Object.fromEntries(
+                      Object.entries(value.variants).filter(([key]) => key !== name),
+                    ),
+                  })
+                }
+              >
+                {t('factory.removeVariant')}
               </button>
             </fieldset>
           ))}

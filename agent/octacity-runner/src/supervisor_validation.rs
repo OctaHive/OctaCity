@@ -41,12 +41,15 @@ pub(super) fn build_run_request(
     }
     _ => return invalid("runner and backend cache projections must agree"),
   };
+  let plugins = paths.plugin_projection.as_ref().ok_or_else(|| {
+    RunnerSupervisionError::Invalid("runner requires a projected plugin directory and lock".to_owned())
+  })?;
   Ok(RunRequest {
     workspace: paths.workspace.clone(),
     octafile: spec.octafile.as_ref().map(Into::into),
     data_dir: paths.data_dir.clone(),
-    plugins_dir: paths.plugins_dir.clone(),
-    plugin_lock: Some(paths.plugin_lock.clone()),
+    plugins_dir: plugins.directory.clone(),
+    plugin_lock: Some(plugins.lock.clone()),
     secrets_profile: spec.secrets_profile.as_ref().map(Into::into),
     cache,
     plugins: octa.plugin_digests.keys().cloned().collect(),
@@ -178,8 +181,10 @@ mod tests {
     ExecutionPaths {
       workspace: PathBuf::from("/workspace"),
       data_dir: PathBuf::from("/workspace/.octa"),
-      plugins_dir: PathBuf::from("/opt/octa/plugins"),
-      plugin_lock: PathBuf::from("/opt/octa/Octa.lock"),
+      plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+        directory: PathBuf::from("/opt/octa/plugins"),
+        lock: PathBuf::from("/opt/octa/Octa.lock"),
+      }),
       cache: Some(ExecutionCachePaths {
         local_directory: PathBuf::from("/var/cache/octa"),
         token_file: Some(PathBuf::from("/run/octa-cache/token")),

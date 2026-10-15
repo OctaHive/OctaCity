@@ -14,6 +14,7 @@ use thiserror::Error;
 /// Signed v3-only execution data retained until a qualified backend can start it.
 #[derive(Clone, Debug)]
 pub(super) struct ManagedFactoryExecution {
+  pub(super) execution_deadline_unix_ms: u64,
   pub(super) execution: ManagedOctaExecutionV3,
   pub(super) factory: Option<FactoryCausalityV3>,
   pub(super) protected_inputs: ProtectedInputManifestV3,
@@ -75,6 +76,9 @@ pub enum FactoryPreflightError {
   /// The selected execution route lacks one required semantic control.
   #[error("selected backend cannot enforce the complete Factory permission set")]
   BackendCapability,
+  /// A blocking plugin was selected without a composed trusted local authorizer.
+  #[error("trusted blocking tool authorizer is not configured")]
+  ToolAuthorizationUnavailable,
   /// A local executable or plugin changed after Agent inventory.
   #[error("verified Factory toolchain changed on disk")]
   ToolchainDrift,
@@ -477,6 +481,7 @@ mod tests {
   #[test]
   fn selected_secret_profile_must_be_the_only_signed_profile() {
     let execution = ManagedOctaExecutionV3 {
+      workspace_root: None,
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
       credential_profile: Some("model-coding".to_owned()),

@@ -794,7 +794,7 @@ pub struct DecisionSignalProviderFailure {
   adapter: ImmutableReference,
   model: ImmutableReference,
   state: DecisionSignalState,
-  usage: BudgetUsage,
+  usage: Option<BudgetUsage>,
 }
 
 impl DecisionSignalProviderFailure {
@@ -818,8 +818,21 @@ impl DecisionSignalProviderFailure {
       adapter,
       model,
       state,
-      usage,
+      usage: Some(usage),
     })
+  }
+
+  /// Classifies an uncertain external outcome without inventing measured usage.
+  pub fn unobserved(
+    request_id: DecisionSignalRequestId,
+    provider: ImmutableReference,
+    adapter: ImmutableReference,
+    model: ImmutableReference,
+    state: DecisionSignalState,
+  ) -> Result<Self, FactoryError> {
+    let mut failure = Self::new(request_id, provider, adapter, model, state, BudgetUsage::default())?;
+    failure.usage = None;
+    Ok(failure)
   }
 
   /// Returns the safe terminal classification.
@@ -852,16 +865,19 @@ impl DecisionSignalProviderFailure {
     &self.model
   }
 
-  /// Returns bounded usage observed before the terminal failure.
+  /// Returns measured usage; an uncertain external outcome remains absent.
   #[must_use]
-  pub const fn usage(&self) -> BudgetUsage {
+  pub const fn usage(&self) -> Option<BudgetUsage> {
     self.usage
   }
 
-  /// Returns terminal provider latency in milliseconds.
+  /// Returns measured terminal provider latency, absent for an uncertain outcome.
   #[must_use]
-  pub const fn latency_millis(&self) -> u64 {
-    self.usage.elapsed_millis
+  pub const fn latency_millis(&self) -> Option<u64> {
+    match self.usage {
+      Some(usage) => Some(usage.elapsed_millis),
+      None => None,
+    }
   }
 
   pub(super) fn is_valid_for(&self, request: &DecisionSignalProviderRequest) -> bool {
@@ -869,7 +885,9 @@ impl DecisionSignalProviderFailure {
       && &self.provider == request.provider()
       && &self.adapter == request.adapter()
       && &self.model == request.model()
-      && self.usage.validate(request.request().budget()).is_ok()
+      && self
+        .usage
+        .is_some_and(|usage| usage.validate(request.request().budget()).is_ok())
   }
 }
 
@@ -880,4 +898,16 @@ pub enum DecisionSignalProviderObservation {
   Result(DecisionSignalProviderResult),
   /// A secret-safe provider failure.
   Failure(DecisionSignalProviderFailure),
+}
+
+impl DecisionSignalProviderObservation {
+  /// Checks the exact request identity, pinned provider selection, response
+  /// shape and measured usage before an observation can settle a reservation.
+  #[must_use]
+  pub fn is_valid_for(&self, request: &DecisionSignalProviderRequest) -> bool {
+    match self {
+      Self::Result(result) => result.is_valid_for(request),
+      Self::Failure(failure) => failure.is_valid_for(request),
+    }
+  }
 }

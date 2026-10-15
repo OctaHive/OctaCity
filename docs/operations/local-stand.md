@@ -189,6 +189,352 @@ browser if it does not notice a trust change immediately.
 
 ## Verify readiness and a real job
 
+### Optional Factory installation
+
+Factory remains disabled on the default stand. To opt in, supply an operator
+owned native profile catalog with mode `0600`:
+
+```shell
+chmod 0600 /absolute/private/path/factory-profiles.json
+tools/local-stand up --factory-profiles /absolute/private/path/factory-profiles.json
+```
+
+The launcher copies the bounded catalog into its private server bundle and
+enables bounded Factory workers. It applies the Factory Compose overlay only
+for that installed bundle. `down`, `status`, `logs`, and `reset` detect the same
+installation without a second flag. Repeat `--factory-profiles` on subsequent
+`up` commands; the bundle is immutable and rejects changed contents. Changing
+the installation requires a deliberate reset of the disposable stand state.
+
+The native Agent requires its own independent policy; a server catalog does
+not enable Agent authority. Supply it separately:
+
+```shell
+tools/local-stand up \
+  --factory-profiles /absolute/private/path/factory-profiles.json \
+  --factory-agent-profile /absolute/private/path/factory-agent-profile.toml
+```
+
+The Agent policy is an owner-only regular TOML file with `version = 1`,
+`factory_permissions`, `tool_executables`, and `allowed_network_hosts`, plus
+optional `change_set_capture`, `factory_credential_profiles`, and
+`protected_reader`, using the existing Agent configuration types.
+Permission references and tool entries must agree on exact executable identity, version and SHA-256. Tool
+paths are absolute and verified before use. The file supplies credential
+aliases through `factory_permissions.secret_profiles`. Install private JSON
+credential values separately and map only their absolute paths through
+`factory_credential_profiles`, as described in [Agent operations](agent.md).
+The launcher preserves these references in the Agent policy and never copies
+the values into the server catalog, generated configuration, or receipt.
+The Agent validates the private files before enabled execution; installing a
+reference does not grant a Job permission to consume it. Changing a reference
+after publication requires reset. Rotate values in the separately owned file
+and restart the Agent without changing its reference or exposing it to the
+server.
+
+`protected_reader` selects a separate released reader distribution, its exact
+tool/executable identities, platform, and resource/output bounds. It does not
+add the reader to model plugin tools. Keep its distribution outside all Agent
+writable roots, source-plugin/Octa installations and credential directories.
+The installed Agent validates the technical envelope and binary inventory in
+preflight and startup; backend capability matching still rejects an
+unqualified reader or requested permission. Changing that policy also
+requires reset. Omitting both fields preserves the ordinary stand profile.
+
+For a separately released Linux ARM64 reader, native staging accepts
+`tools/stage_local_stand_native.py install --protected-reader-root DIR`
+(or `all` with the same option). Keep the usual staging arguments for the
+pinned inputs. `DIR` must contain exactly the released worker `manifest.json`
+and `octacity-protected-reader`. Staging checks the platform, digest, file
+bounds, ownership and absence of links, adds the files to the installation
+inventory, and records their relative root under `protected_reader` in
+`installation-manifest.json`. Use that root below the printed installation
+path in the Agent policy. The installation name includes the reader digest;
+an ordinary installation without the option keeps its original identity.
+Staging does not qualify the reader backend or execute the worker.
+
+`change_set_capture` selects the existing Agent capture provider and its own
+operator-pinned executable; it does not infer capture authority from model
+outputs or the server catalog. The current provider is `git`. Its `executable`
+contains an absolute `path`, `version`, `platform`, and `sha256`, with the same
+byte verification as independently installed tools. The Agent validator also
+requires a distinct canonical path outside Agent-owned writable roots. Omitting
+this field keeps capture unconfigured. Changing or removing it after publication
+requires reset, just like changing the remaining Agent policy. These settings
+prepare configuration only; they do not qualify a writable backend or enable
+native author roles.
+
+The launcher validates the selected policy with the installed Agent in
+disposable work, cache, state, and credential directories before Compose or
+enrollment. It leaves live Agent state alone and removes those temporary
+directories. Registration must advertise Factory v3 execution before startup
+is accepted. This checks the advertised contract; actual backend qualification
+and successful Job execution still need their released backend tests. Repeat
+the Agent policy flag on subsequent `up` commands. Changing a published Agent
+policy requires reset and never silently enables a fallback backend.
+
+The catalog supplies exact published references and qualified profiles; the
+launcher does not create Flow Definitions, select node names, infer model
+aliases, or provide missing credentials. JEV must use an installed connector
+profile. The existing Codex fixture proves the execution boundary only and
+does not qualify an author, reviewer, verifier, delivery, or promotion profile
+for the complete Factory pilot. Provider credentials remain separate from the
+catalog and ordinary stand credentials.
+
+A `codex` profile may explicitly select `reviewer: {"evaluator": REFERENCE}`
+for an independent typed review. This requires an evaluator credential purpose,
+read-only review mode and an exact `candidate_capture_tool`; capture, writable
+tool control and response-limit overrides remain unavailable for that role.
+The evaluator reference changes the immutable task digest. The Node must
+explicitly select the complete committed Evaluation Plan and Evidence Manifest,
+the exact candidate and the real selected CriterionPack Artifact bytes. The
+server qualifies the result records and constructs the Assessment, including
+its model, prompt, Plan and result provenance. A model-provided Assessment
+object grants no authority. Omitting `reviewer` preserves ordinary observation
+profiles and their task identities. These installation checks do not substitute
+for the complete released-product pilot.
+
+Install non-model programs in the catalog's optional `commands` array. Each
+entry supplies `identity`, `plugin`, `executor`, `build_configuration`,
+`pipeline_node`, `program`, `input_destination`, `parameters`,
+`project_permissions`, `local_permissions`, and `outputs`; an optional
+`candidate_capture_tool` pins the accepted candidate producer. These are exact
+versioned references, not logical Flow or node names. Profiles sharing an
+`executor` use one native binding, with the immutable task digest selecting
+the installed program. The Build Configuration must also be offered by the
+same Project's installed choices.
+
+Both Project and local plugin grants must equal the complete approved Octa
+runtime inventory by plugin identity and SHA-256. The Agent compares the signed
+set with its installed `Octa.lock`; a subset does not describe that installation.
+The admitted Node's plugin grants must retain that exact inventory as well.
+The profile's primary `plugin` selects the immutable operator program and its
+output contracts. Approving the runtime inventory does not add external
+executables, tool control, network, secrets, or workload identities: hermetic
+commands continue to reject those grants. Inventory changes require an explicit
+profile, task digest, Flow binding, and Agent policy update; admission never
+adds plugins automatically.
+
+`program` contains the installed Octafile string, finite `tasks`, optional
+`workspace_root`, and `credential_profile` (which must be absent or null for
+hermetic commands). The Octafile uses the released Octa format. Its dedicated
+installed-source type accepts nonblank YAML or JSON up to 64 KiB of UTF-8,
+preserving indentation and line endings in the exact task digest. Unsupported
+control characters are rejected. Human-readable Factory summaries retain
+their separate 4 KiB limit. Declare outputs in the Octafile's `reports` or `artifacts`
+as well as the profile's output contracts; creating a file alone does not
+publish it. With task `dir: /workspace`, declare paths relative to that workspace,
+such as `output/result.json`; the shell may write `/workspace/output/result.json`.
+The Agent rejects absolute output declarations. Source and protected inputs
+remain read-only; writable paths are limited to output and scratch.
+
+The static program is published separately from frozen input JSON. Neither
+Flow data nor a returned report can supply replacement instructions or
+provenance. The `executor` reference selects the server capability and does
+not require inventing an Agent external executable. Actual execution still
+requires the exact released plugin and independently qualified backend.
+
+Protected validation additionally publishes
+`/octacity/protected/validation-input.json`. Its `changeset_id`, `candidate`,
+`tests`, `input_digest`, and ordered `classes` come from the original verified
+candidate and retained test plan. Use these identities when forming the
+validation report; neither report JSON nor arbitrary Flow payloads may replace
+them. This descriptor contains no private test bodies. Reserve at least six
+non-test input slots in the frozen plan: three compiler documents, the
+candidate bundle and capture manifest, and the private test inventory.
+Private test files require their own slots and retention through the Job's
+deadline. The compiler checks the complete manifest before signing.
+
+The same catalog keeps the remaining roles explicit:
+
+| Catalog array | Installed contract |
+| --- | --- |
+| `codex` | Exact author or evaluator profile, with its separate credential purpose and optional trusted capture policy. |
+| `review_planning` | An exact `identity` and immutable `profile` describing the independent review plan. |
+| `evaluation_decisions` | An exact action `identity` and `profile` with `action`, immutable `policy`, and all five `{disposition, outcome}` contracts. The policy contains `version`, `required_evidence`, `required_evaluators`, `quorum`, `severity_threshold`, `indeterminate_policy`, and `failure_outcome`; its canonical digest is bound into the action identity. |
+| `protected_test_authors` | Entries contain `command` using the ordinary static command format and canonical `policy` containing protection limits under `policy`, exact `inventory`, and finite private `files` mappings. |
+| `protected_validation` | `profiles` of static commands, `inputs` containing `author_profile`, `policy`, `inventory`, and `capture_tool`, plus distinct declared `report` and `facts` contracts. |
+| `protected_validation_evidence` | Exact action `identity`, evidence `profile`, and the original author/policy/inventory/capture references used to verify and publish validation evidence. |
+| `delivery` | An exact action identity and outcome, private `adapter_root`, content-derived `policies`, and bounded process timeouts. |
+| `promotions` | An exact trusted-action `identity` and static command `profiles`; each command's executor and physical plugin must equal that identity. Optional `deployment_authority` explicitly selects the separately qualified external-target role. |
+
+Author and evaluator credentials remain Agent-local; Delivery credentials stay
+in the separate server package. Hermetic validation and promotion command
+profiles receive no model, network, secret, external-tool or workload-identity
+grants. Installing a role does not connect it to a Flow: publish explicit
+definitions with the exact references and task digests. None of these arrays
+supplies an implicit business graph or chooses logical node names.
+
+An external deployment uses `promotions[].deployment_authority` with `identity`
+and `version` policy keys, an immutable `environment` reference, a canonical
+HTTP(S) `endpoint`, and optional logical `credential_profile`. The authority
+constructor recomputes its domain-separated reference; every command's
+`identity` must equal that reference. Changing the target, environment or
+credential requires repinning the command identity and task digest. URLs with
+userinfo, query or fragment are rejected. Credential bytes remain Agent-local.
+
+This deployment role permits exactly the endpoint's derived host and its
+optional single credential, under both project and local ceilings. It requires
+the complete approved plugin inventory, readonly Source and protected inputs,
+and writes only to output/scratch; external executables, tools and workload
+identity remain unavailable. Dispatch and retained-output verification use the
+same installed qualification and approved toolchain. The static program receives
+`/octacity/protected/deployment-target.json` with `authority`, `environment`,
+`endpoint` and `credential_profile`, alongside the independent frozen promotion
+plan. This concrete adapter accepts one environment per action. Installation
+alone does not establish a deployment effect or a successful post-check.
+
+A protected-test author is installed as a Reasoning capability under its exact
+command executor identity. Its command identity digest must equal the canonical
+policy digest; changing a private file name, class or path requires repinning.
+The static command publishes only its declared private files. Before ordinary Job
+success, the server verifies the signed command and derives the inventory and
+public handoff from actual published file IDs under the current Lease fence.
+Completion retries reuse those publications. Ordinary commands retain their
+existing completion path.
+
+The author observer keeps private files and inventory as opaque Artifacts; only
+the schema-checked handoff becomes Flow data. Readonly candidate inputs require
+an explicit trusted capture verifier. Authoring cannot combine promotion or
+private validation roles, model/network credentials, protected tools, or Source
+writes. Leave one Artifact-list slot beyond private files plus inventory and
+handoff so undeclared publications remain detectable. Installing this role does
+not qualify its generator or complete the released-product pilot.
+
+Promotion command installation explicitly enables its separate input role.
+`/octacity/protected/promotion-input.json` contains the original frozen `plan`
+and `plan_digest`, including the exact candidate, environment references,
+observation policy and configured disposition criteria. The command must use
+these facts for its deployment observation. Reuse the exact trusted candidate
+capture pin; an installation cannot infer it from returned JSON. Ordinary
+commands do not acquire this role from their node kind. Promotion and private
+test validation are separate compiler roles and cannot be combined. The
+ordinary CI/CD system remains responsible for rollout and rollback; the
+Factory adapter qualifies its observation against the frozen plan.
+
+Readonly Codex profiles may include `candidate_capture_tool`, an exact
+`ImmutableReference` to the trusted capture implementation accepted for retained
+candidate provenance. It does not grant model commands or writable source access,
+and it does not change the task digest. Omitting it preserves candidate rejection.
+The runtime candidate reader and released backend isolation still require separate
+qualification; setting this field alone does not enable the complete pilot.
+
+Installed Codex policy can also declare `tool_response_limits` with positive
+`per_call_bytes` (at most 4 MiB) and `total_bytes` (at least the per-call bound).
+These are independent reader quotas, never inferred from Artifact or report
+publication limits. They become part of the immutable task digest and signed
+`tool_control.response_limits`; a tool-using compiler refuses absent limits.
+Tool-free profiles may omit this field and preserve their earlier task identity.
+This policy does not qualify a helper or enable author/tool roles by itself.
+
+A Codex entry can explicitly select `"execution_mode": "protected_tools"` with
+`"credential_purpose": "model"` and finite `tool_response_limits`. It must omit
+both `capture` and `candidate_capture_tool`. Its permissions must select protected
+tools, the model credential, the three CodeX record outputs, and read-only or no
+Source mount. This mode grants neither source writes nor candidate reconstruction;
+independent evaluator profiles continue to use their separate credentials.
+
+The private loader requires exactly one installed `tool_risk` entry with the same
+`base_task_digest`, complete `build_configuration` reference and Project. It derives
+the compiled provider policy from that binding. A missing, ambiguous or outdated
+binding fails installation; it never silently becomes deterministic tool execution.
+Omitting `execution_mode` preserves the existing review and capture profiles and
+their task identities. The Agent must separately install and qualify its bounded
+protected-reader runtime; declaring server metadata alone does not qualify it.
+
+Install server-side Decision Signal connectors through a separate private
+catalog, repeated on each `up` alongside the Factory profile:
+
+```shell
+tools/local-stand up \
+  --factory-profiles /absolute/private/path/factory-profiles.json \
+  --factory-signal-connectors /absolute/private/path/signal-connectors.json
+```
+
+The connector catalog has this outer format; both referenced files must have
+absolute paths and mode `0600`, as must the catalog itself:
+
+```json
+{
+  "version": 1,
+  "connectors": [
+    {
+      "kind": "jev",
+      "credential_profile": "routing-key",
+      "configuration_file": "/absolute/private/path/jev-settings.json",
+      "credential_file": "/absolute/private/path/jev-api-key"
+    }
+  ]
+}
+```
+
+The launcher copies adapter configuration as opaque bytes and rewrites only
+these file references. The credential profile must match the corresponding
+Signal binding: connector discovery resolves that alias and the exact provider
+capability together. A routing binding cannot select a connector installed with
+another credential alias. It publishes profiles, connector configuration and keys
+atomically in the immutable private server bundle. The Factory overlay mounts
+that bundle read-only; the entrypoint copies only bounded connector files to
+the private runtime directory and gives ownership to the unprivileged server.
+Connector inputs never enter the Agent policy or ordinary stand credentials.
+Changing any published input requires resetting the disposable stand.
+
+The installed adapter interprets its own configuration. The built-in `jev`
+adapter requires `version = 1` and JSON fields `endpoint`, `capability`,
+`credit_cost_micro_units`, and `timeout_milliseconds`; its API key is read
+separately. The endpoint's actual host must be granted by the corresponding
+Factory Signal binding. An unknown adapter kind, malformed private file or
+ungranted destination fails installation. Custom adapters implement the neutral
+Decision Signal provider contract and are registered by server composition;
+the file catalog discovers only adapters installed in this server binary.
+Installing a connector does not qualify an execution backend or complete the
+released-product Factory pilot.
+
+Delivery processes have a separate private installation:
+
+```shell
+tools/local-stand up \
+  --factory-profiles /absolute/private/path/factory-profiles.json \
+  --factory-delivery-bundle /absolute/private/path/delivery-adapters
+```
+
+The supplied directory contains the installed provider registry, including its
+`adapter.toml` manifests, pinned Linux ARM64 executables, opaque provider
+configuration, private credential files and input directories. It uses the
+existing Delivery process protocol; the launcher does not interpret a forge
+API, select a Flow/node, or grant delivery credentials to the Agent. Keep
+directories owner-private (`0700`), data files `0600`, and executables `0500`,
+`0700` or `0755`. Links and special files are rejected. The package is bounded
+to 1,024 entries, four directory levels and 512 MiB total; individual executable
+and data bounds are 256 MiB and 4 MiB respectively.
+
+The launcher publishes this package atomically with the immutable server
+bundle. The entrypoint copies it into `/run/octacity-delivery` with private
+permissions and ownership of the unprivileged server. Point installed delivery
+profiles at that container path; provider configuration must use container
+paths for its own dependencies. The native registry independently verifies
+the exact executable and protocol capabilities. Delivery policy references
+must match their complete computed content digest and the adapter's pinned
+configuration digest. Installation performs no publication or credential
+resolution. Changing a published package requires a deliberate stand reset;
+`down`, `status`, `logs` and `reset` use the installed overlay automatically.
+Repeat the same Delivery bundle option on each subsequent `up`, alongside the
+Factory catalog and any separately installed Signal connector options.
+
+Only the Factory overlay increases private runtime storage for bounded profile
+and connector inputs and installs an executable private tmpfs for Delivery.
+The ordinary Compose profile keeps its existing mounts. Retained delivery
+inputs are reconstructed from Project-owned, digest-verified Artifact records;
+the tmpfs is disposable and is not authoritative state. Existing Factory/Build
+retention holds preserve objects needed by active or held Runs. Retention must
+cover the complete configured execution and review window; clearing an input
+directory cannot make an expired or missing Artifact valid again.
+
+`/health/ready` remains the ordinary CI/CD readiness endpoint.
+`/health/factory` reports the enabled Factory capability independently, so a
+degraded connector must not prevent ordinary sample Builds from running. The
+default lifecycle and sample Build verifier require no Factory credentials.
+
 The health commands above verify the gateway and server. The integration
 verifier additionally checks the built UI entry point, exactly one local Pool,
 exactly one online macOS ARM64 Agent, its Linux ARM64 Microsandbox target, a

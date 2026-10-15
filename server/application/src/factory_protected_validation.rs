@@ -149,6 +149,16 @@ pub fn factory_protected_validation_materialization(
   Ok(materialized)
 }
 impl FactoryProtectedValidationMaterialization {
+  pub(crate) fn command_invocation_bytes(&self) -> Result<Vec<u8>, ApplicationError> {
+    serde_json::to_vec(&serde_json::json!({
+      "changeset_id": self.candidate.id(),
+      "candidate": self.candidate.subject(),
+      "tests": self.tests.artifact(),
+      "input_digest": self.input_digest()?,
+      "classes": self.tests.plan().classes(),
+    }))
+    .map_err(|_| ApplicationError::invalid())
+  }
   /// Assembles candidate/test inputs with the compiler's actual managed documents.
   /// All non-source inputs must fit the pinned plan's reserved slots before signing;
   /// the complete manifest is also checked for count, byte and destination collisions.

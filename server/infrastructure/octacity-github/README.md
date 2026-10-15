@@ -42,6 +42,17 @@ name = "<github-repository>"
 remote = "https://github.com/<github-owner>/<github-repository>.git"
 ```
 
+Optional `api_root_certificates_pem` adds at most eight individual PEM
+certificates, at most 16 KiB each, to system trust for the HTTPS API client.
+Hostname verification remains enabled. This setting is part of the immutable
+configuration digest; changing it requires repinning the provider configuration.
+It does not change Git's separate TLS trust or executable configuration.
+
+The HTTPS tests load this operator configuration through `GithubPlugin::load`
+and observe a real local TLS peer without mutating the private transport.
+Untrusted certificates, hostname mismatch, malformed or oversized trust entries,
+and stale configuration digests fail before an HTTP request is accepted.
+
 Directories must be private (0700 on Unix); configuration/protected files must be
 regular private files (0600). Caller-selected filesystem paths are never opened.
 A handle selects `credentials/<sha256(handle)>.json` containing `class`, `token`

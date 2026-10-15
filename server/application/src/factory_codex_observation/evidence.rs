@@ -54,14 +54,23 @@ pub(super) fn record_output_types(
   trace: &FactoryCodexOutputDocument,
   provenance: &FactoryCodexOutputDocument,
 ) -> bool {
-  matches!(
-    &result.identity.artifact_type,
-    ArtifactType::Report(format) if format.as_str() == CODEX_RESULT_FORMAT
-  ) && result.identity.media_type.as_str() == JSON_MEDIA_TYPE
+  result_output_type(&result.identity)
     && matches!(trace.identity.artifact_type, ArtifactType::Artifact)
     && trace.identity.media_type.as_str() == TRACE_MEDIA_TYPE
     && matches!(provenance.identity.artifact_type, ArtifactType::Artifact)
     && provenance.identity.media_type.as_str() == JSON_MEDIA_TYPE
+}
+
+pub(super) fn result_output_type(identity: &ArtifactIdentity) -> bool {
+  // Released Octa reports keep their explicit format but regular-file media
+  // defaults to binary. The caller still verifies exact bytes and JSON schema.
+  matches!(
+    &identity.artifact_type,
+    ArtifactType::Report(format) if format.as_str() == CODEX_RESULT_FORMAT
+  ) && matches!(
+    identity.media_type.as_str(),
+    JSON_MEDIA_TYPE | "application/octet-stream"
+  )
 }
 
 pub(super) fn artifact_reference(identity: &ArtifactIdentity) -> Option<FactoryArtifactReference> {
@@ -78,6 +87,32 @@ pub(super) fn valid_provenance<T>(
   result: &CodexResultRecord<T>,
   provenance: &CodexProvenanceRecord,
 ) -> bool {
+  valid_provenance_for(
+    CodexProvenanceExpectation {
+      plugin: envelope.plugin(),
+      executable: envelope.executable(),
+      model: envelope.model(),
+      prompt_digest: envelope.digests().prompt_provenance,
+      source_revision: expected_revision(envelope),
+    },
+    result,
+    provenance,
+  )
+}
+
+pub(super) struct CodexProvenanceExpectation<'a> {
+  pub(super) plugin: &'a octacity_server_factory::ImmutableReference,
+  pub(super) executable: &'a octacity_server_factory::ImmutableReference,
+  pub(super) model: &'a octacity_server_factory::ImmutableReference,
+  pub(super) prompt_digest: FactoryDigest,
+  pub(super) source_revision: &'a str,
+}
+
+pub(super) fn valid_provenance_for<T>(
+  expected: CodexProvenanceExpectation<'_>,
+  result: &CodexResultRecord<T>,
+  provenance: &CodexProvenanceRecord,
+) -> bool {
   provenance.format_version == 1
     && result.format_version == 1
     && valid_identifiers(&result.harness_identifiers)
@@ -85,18 +120,18 @@ pub(super) fn valid_provenance<T>(
     && provenance.trace_format_version == 1
     && provenance.result_format_version == 1
     && provenance.plugin.name == CODEX_PLUGIN_PROVENANCE_IDENTITY
-    && provenance.plugin.version == envelope.plugin().version().as_str()
+    && provenance.plugin.version == expected.plugin.version().as_str()
     && provenance.codex.name == CODEX_EXECUTABLE_IDENTITY
-    && provenance.codex.version == envelope.executable().version().as_str()
-    && provenance.settings.model.as_deref() == Some(envelope.model().identity().as_str())
+    && provenance.codex.version == expected.executable.version().as_str()
+    && provenance.settings.model.as_deref() == Some(expected.model.identity().as_str())
     && provenance
       .settings
       .reasoning_effort
       .as_deref()
       .is_none_or(|value| matches!(value, "low" | "medium" | "high" | "xhigh"))
     && provenance.prompt_digest.algorithm == "blake3"
-    && provenance.prompt_digest.value == envelope.digests().prompt_provenance.to_string()
-    && provenance.source_revision.as_deref() == Some(expected_revision(envelope))
+    && provenance.prompt_digest.value == expected.prompt_digest.to_string()
+    && provenance.source_revision.as_deref() == Some(expected.source_revision)
     && provenance.timing.finished_unix_millis >= provenance.timing.started_unix_millis
     && provenance.timing.finished_unix_millis - provenance.timing.started_unix_millis
       == provenance.timing.duration_millis

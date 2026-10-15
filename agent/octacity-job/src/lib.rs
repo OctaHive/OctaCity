@@ -48,12 +48,13 @@ use octacity_execution::{ExecutionBackend, ExecutionError, FactoryExecutionLayou
 use octacity_identity::{WorkloadIdentityError, WorkloadIdentityLease, WorkloadIdentityProvider};
 use octacity_protocol::{
   BeginCacheSessionResponse, ExecutionCacheIdentityV2, ExecutionEvidenceV2, ExecutionMode, ExecutionProviderId,
-  ExecutionSpec, FACTORY_SOURCE_ROOT, FactoryMountModeV3, FactoryPermissionSetV3, NetworkPolicy, OutputLimits,
-  ProtectedInputTransferV3, RuntimeMode, VerifiedJobSpec,
+  ExecutionSpec, FACTORY_OUTPUT_ROOT, FACTORY_SOURCE_ROOT, FACTORY_WORKSPACE_ROOT, FactoryMountModeV3,
+  FactoryPermissionSetV3, NetworkPolicy, OutputLimits, ProtectedInputTransferV3, RuntimeMode, VerifiedJobSpec,
 };
 use octacity_runner::{
   RunStatus, RunnerCompletion, RunnerInstallation, RunnerInstallationError, RunnerJobRequest, RunnerRedactions,
-  RunnerStreamItem, RunnerSupervisionError, RunnerSupervisionPolicy, VerifiedExternalExecutable, supervise,
+  RunnerStreamItem, RunnerSupervisionError, RunnerSupervisionPolicy, VerifiedExternalExecutable,
+  supervise_with_private_variables,
 };
 use octacity_source::{MaterializedSource, SourceError, SourceMaterializationRequest, SourceMaterializer};
 use sha2::{Digest as _, Sha256};
@@ -61,6 +62,12 @@ use thiserror::Error;
 use tokio::{sync::mpsc, time::Instant};
 use tokio_util::sync::CancellationToken;
 use tracing::{info, warn};
+
+mod factory_tool_execution;
+pub use factory_tool_execution::{FactoryToolExecutionOwner, FactoryToolExecutionScope};
+
+mod factory_credentials;
+pub use factory_credentials::FactoryCredentialProfile;
 
 /// Verified execution intent and agent-resolved source credentials for one job.
 #[derive(Debug)]
@@ -83,6 +90,7 @@ pub struct JobCompletion {
   runner: RunnerCompletion,
   output_limits: octacity_protocol::OutputLimits,
   workspace: PathBuf,
+  publication_workspace: Option<PathBuf>,
   job_root: Option<PathBuf>,
   execution: Option<ExecutionEvidenceV2>,
   change_set: Option<CapturedChangeSet>,
@@ -181,6 +189,21 @@ impl JobCompletion {
   /// Host workspace retained after runner shutdown for output processing.
   pub fn workspace(&self) -> &Path {
     &self.workspace
+  }
+
+  /// Retained directory authorized for runner-declared output publication.
+  /// Anchored managed execution selects only Output; ordinary Jobs use Source.
+  pub fn publication_workspace(&self) -> &Path {
+    self.publication_workspace.as_deref().unwrap_or(&self.workspace)
+  }
+
+  /// Exact guest-relative namespace for an anchored Output directory.
+  pub fn publication_prefix(&self) -> Option<&Path> {
+    self.publication_workspace.as_ref().map(|_| {
+      Path::new(FACTORY_OUTPUT_ROOT)
+        .strip_prefix(FACTORY_WORKSPACE_ROOT)
+        .expect("fixed protocol Output is below its workspace anchor")
+    })
   }
 
   /// Concrete provider evidence for a provider-neutral v2 execution.
@@ -360,6 +383,7 @@ pub struct JobExecutor {
   runner_supervision: RunnerSupervisionPolicy,
   external_executables: BTreeMap<String, VerifiedExternalExecutable>,
   factory_permissions: Option<FactoryPermissionSetV3>,
+  factory_credential_profiles: BTreeMap<String, FactoryCredentialProfile>,
   protected_input_stager: Option<ProtectedInputStager>,
   change_set_capturer: Option<Arc<dyn ChangeSetCapturer>>,
   change_set_materializer: Option<Arc<dyn ChangeSetMaterializer>>,
@@ -429,6 +453,7 @@ impl JobExecutor {
       runner_supervision: config.runner_supervision,
       external_executables: config.external_executables,
       factory_permissions: config.factory_permissions,
+      factory_credential_profiles: BTreeMap::new(),
       protected_input_stager: None,
       change_set_capturer: None,
       change_set_materializer: None,
@@ -483,6 +508,29 @@ impl JobExecutor {
     cancellation: CancellationToken,
     events: &mpsc::Sender<RunnerStreamItem>,
   ) -> Result<JobCompletion, JobFailure> {
+    self.execute_inner(request, None, cancellation, events).await
+  }
+
+  /// Runs a controlled Job with explicit trusted per-lease execution ownership.
+  /// The caller must compose the owner from current registration and lease;
+  /// neither a Flow nor a runner can provide or replace it.
+  pub async fn execute_with_factory_tools(
+    &self,
+    request: ExecuteJobRequest,
+    owner: Arc<dyn FactoryToolExecutionOwner>,
+    cancellation: CancellationToken,
+    events: &mpsc::Sender<RunnerStreamItem>,
+  ) -> Result<JobCompletion, JobFailure> {
+    self.execute_inner(request, Some(owner), cancellation, events).await
+  }
+
+  async fn execute_inner(
+    &self,
+    request: ExecuteJobRequest,
+    tool_owner: Option<Arc<dyn FactoryToolExecutionOwner>>,
+    cancellation: CancellationToken,
+    events: &mpsc::Sender<RunnerStreamItem>,
+  ) -> Result<JobCompletion, JobFailure> {
     let spec = ExecutableJobSpec::try_from(request.spec).map_err(JobFailure::from)?;
     let managed_deadline = spec
       .execution_deadline
@@ -515,7 +563,7 @@ impl JobExecutor {
       .source
       .verify(&spec.source)
       .map_err(|error| JobError::Source(Box::new(error)))?;
-    let selected = self.select_backend(&spec.runtime)?;
+    let mut selected = self.select_backend(&spec.runtime)?;
     if spec.runtime.workload_identity_profile().is_some()
       && selected
         .evidence
@@ -552,7 +600,7 @@ impl JobExecutor {
       let ExecutableRuntime::Current(runtime) = &spec.runtime else {
         return Err(JobError::FactoryPreflight(FactoryPreflightError::BackendCapability).into());
       };
-      let selected = FactoryAdmission {
+      let granted_executables = FactoryAdmission {
         intent,
         runtime,
         outputs: &spec.outputs,
@@ -564,10 +612,38 @@ impl JobExecutor {
       }
       .authorize()
       .map_err(JobError::FactoryPreflight)?;
+      if let Some(control) = &intent.execution.tool_control {
+        let owner = tool_owner.as_ref().ok_or(JobError::FactoryPreflight(
+          FactoryPreflightError::ToolAuthorizationUnavailable,
+        ))?;
+        selected.backend = owner
+          .prepare(FactoryToolExecutionScope {
+            job_id: spec.job_id.clone(),
+            attempt: spec.attempt,
+            backend: selected.backend.clone(),
+            target: spec.runtime.execution_target()?,
+            control: control.clone(),
+            permissions: intent.permissions.clone(),
+            deadline: managed_deadline.expect("controlled Job retains its signed deadline"),
+            cancellation: cancellation.clone(),
+          })
+          .map_err(JobError::FactoryPreflight)?;
+      }
+      // A signed logical allowlist cannot resolve a credential from repository
+      // contents. Refuse credentialed work until its private local installation
+      // is composed; staging and Source I/O must not run first.
+      if intent
+        .execution
+        .credential_profile
+        .as_ref()
+        .is_some_and(|profile| !self.factory_credential_profiles.contains_key(profile))
+      {
+        return Err(JobError::FactoryPreflight(FactoryPreflightError::SecretProfile).into());
+      }
       if self.protected_input_stager.is_none() {
         return Err(JobError::ProtectedInputs(ProtectedInputError::Policy).into());
       }
-      selected
+      granted_executables
     } else {
       if !request.protected_inputs.is_empty() {
         return Err(JobError::FactoryPreflight(FactoryPreflightError::ProtectedInputTransfer).into());
@@ -578,7 +654,7 @@ impl JobExecutor {
     let execution_id = execution_id(&spec.job_id, spec.attempt);
     let job_root = self.work_root.join(&execution_id);
     create_private_directory(&job_root)?;
-    let staged = match (&managed, &self.protected_input_stager) {
+    let mut staged = match (&managed, &self.protected_input_stager) {
       (Some(_), Some(stager)) => Some(
         tokio::time::timeout_at(
           managed_deadline.expect("managed execution retains its signed deadline"),
@@ -593,6 +669,10 @@ impl JobExecutor {
       (Some(_), None) => unreachable!("managed execution checked protected-input policy before workspace creation"),
     };
     let result = async {
+      let private_variables = match (&managed, &staged) {
+        (Some(intent), Some(staged)) => self.authorize_factory_credentials(intent, staged)?,
+        _ => None,
+      };
       let workspace = job_root.join(if managed.is_some() { "source" } else { "workspace" });
       create_private_directory(&workspace)?;
       let (scratch, output) = if managed.is_some() {
@@ -643,6 +723,18 @@ impl JobExecutor {
         ),
       )
       .await?;
+
+      if let Some(materialization) = managed
+        .as_ref()
+        .and_then(|intent| intent.factory.as_ref())
+        .and_then(|factory| factory.change_set_materialization.as_ref())
+      {
+        staged
+          .as_mut()
+          .ok_or(JobError::ProtectedInputs(ProtectedInputError::Manifest))?
+          .prepare_runner_projection(materialization)
+          .map_err(JobError::ProtectedInputs)?;
+      }
 
       if cancellation.is_cancelled() {
         return Err(JobError::Cancelled);
@@ -716,6 +808,9 @@ impl JobExecutor {
           (
             managed_runner_spec(intent)?,
             Some(FactoryExecutionLayout {
+              workspace_anchor: intent.execution.workspace_root.is_some(),
+              disk_accounting: octacity_execution::ExecutionDiskAccounting::WholeJob,
+              tool_channel: None,
               protected_inputs,
               source: workspace.clone(),
               source_visible: intent
@@ -747,7 +842,7 @@ impl JobExecutor {
         _ => return Err(JobError::Invalid("managed execution layout is incomplete".to_owned())),
       };
       let operation = async {
-        supervise(
+        supervise_with_private_variables(
           &self.runner,
           selected.backend.as_ref(),
           RunnerJobRequest {
@@ -782,6 +877,7 @@ impl JobExecutor {
           cancellation.clone(),
           events,
           &self.runner_supervision,
+          private_variables,
         )
         .await
         .map_err(map_runner_error)
@@ -807,16 +903,25 @@ impl JobExecutor {
       .await?;
 
       info!(job_id = %spec.job_id, attempt = spec.attempt, status = ?runner.status, "finished job");
-      Ok((source, runner, workspace, change_set))
+      let publication_workspace = if managed
+        .as_ref()
+        .is_some_and(|intent| intent.execution.workspace_root.as_deref() == Some(FACTORY_WORKSPACE_ROOT))
+      {
+        output
+      } else {
+        None
+      };
+      Ok((source, runner, workspace, change_set, publication_workspace))
     }
     .await;
     let result = finish_protected_inputs(result, staged);
     match result {
-      Ok((source, runner, workspace, change_set)) => Ok(JobCompletion {
+      Ok((source, runner, workspace, change_set, publication_workspace)) => Ok(JobCompletion {
         source,
         runner,
         output_limits: spec.outputs,
         workspace,
+        publication_workspace,
         job_root: Some(job_root),
         execution: selected.evidence,
         change_set,
@@ -1029,8 +1134,12 @@ impl JobExecutor {
     job_root: &Path,
     cancellation: &CancellationToken,
   ) -> Result<Option<CapturedChangeSet>, JobError> {
+    let Some(managed) = managed else {
+      return Ok(None);
+    };
     let Some((factory, capture)) = managed
-      .and_then(|intent| intent.factory.as_ref())
+      .factory
+      .as_ref()
       .and_then(|factory| factory.change_set_capture.as_ref().map(|capture| (factory, capture)))
     else {
       return Ok(None);
@@ -1050,6 +1159,14 @@ impl JobExecutor {
       bundle_base_revision: source_revision.to_owned(),
       node_attempt_id: factory.node_attempt_id.clone(),
       instruction: capture.clone(),
+
+      observation: capture
+        .observation
+        .as_ref()
+        .map(|_| octacity_changeset::CaptureObservationContext {
+          input_digest: factory.input_digest.clone(),
+          fresh_until_unix_ms: managed.execution_deadline_unix_ms,
+        }),
     };
     self
       .change_set_capturer
@@ -1079,7 +1196,7 @@ fn managed_runner_spec(intent: &factory_preflight::ManagedFactoryExecution) -> R
     failfast: true,
     // The signed managed execution selects at most one stage-scoped logical
     // profile; the permission allowlist alone never selects a secret.
-    secrets_profile: intent.execution.credential_profile.clone(),
+    secrets_profile: None,
   })
 }
 

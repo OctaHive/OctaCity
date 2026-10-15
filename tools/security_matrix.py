@@ -29,6 +29,9 @@ class Boundary(StrEnum):
     LOG_SEARCH_REDACTION = "build-log-search-redaction"
     PRESIGNED_URL_REDACTION = "presigned-url-redaction"
     CACHE_NAMESPACES = "cache-namespaces"
+    FACTORY_DEFINITION = "factory-definition-and-context"
+    FACTORY_EVIDENCE = "factory-evidence-and-lineage"
+    FACTORY_SIGNAL = "factory-provider-authority"
 
 
 class SecurityProperty(StrEnum):
@@ -53,6 +56,27 @@ class SecurityContract(NamedTuple):
 
 
 CONTRACTS = (
+    SecurityContract(
+        name="factory-authority",
+        boundaries=(
+            Boundary.FACTORY_DEFINITION,
+            Boundary.FACTORY_EVIDENCE,
+            Boundary.FACTORY_SIGNAL,
+        ),
+        properties=(
+            SecurityProperty.AUTHORIZATION,
+            SecurityProperty.INTEGRITY,
+            SecurityProperty.ISOLATION,
+            SecurityProperty.NON_EXECUTION,
+            SecurityProperty.REDACTION,
+            SecurityProperty.FAIL_CLOSED,
+        ),
+        command=(
+            "cargo", "test", "--locked", "--all-features",
+            "-p", "octacity-server-factory",
+            "-p", "octacity-server-decision-signal",
+        ),
+    ),
     SecurityContract(
         name="identity-policy-and-jobspec",
         boundaries=(
@@ -127,6 +151,7 @@ CONTRACTS = (
             "-p", "octacity-runner",
             "-p", "octacity-source",
             "-p", "octacity-job",
+            "-p", "octacity-lifecycle",
             "-p", "octacity-output",
             "-p", "octacity-private-fs",
         ),

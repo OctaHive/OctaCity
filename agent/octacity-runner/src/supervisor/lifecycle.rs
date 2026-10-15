@@ -21,14 +21,18 @@ use crate::protocol::{RunnerMessage, write_command};
 
 pub(super) async fn drive(
   execution: &mut dyn RunningExecution,
-  protocol_io: (ExecutionWriter, ExecutionReader),
+  protocol_io: (
+    ExecutionWriter,
+    ExecutionReader,
+    Option<crate::AuthorizedRunnerPrivateVariables>,
+  ),
   job: &mut RunnerJobRequest,
   operation_deadline: Instant,
   cancellation: CancellationToken,
   events: &mpsc::Sender<RunnerStreamItem>,
   policy: &RunnerSupervisionPolicy,
 ) -> Result<RunnerCompletion, RunnerSupervisionError> {
-  let (mut stdin, stdout) = protocol_io;
+  let (mut stdin, stdout, private_variables) = protocol_io;
   let deadline = operation_deadline;
   let run = build_run_request(&job.spec, &job.octa, job.cache.as_ref(), execution.paths())?;
   let mut stdout = BufReader::new(stdout);
@@ -44,17 +48,22 @@ pub(super) async fn drive(
   validate_hello(&hello, &job.octa)?;
   debug!(request_id = %job.request_id, "validated octa-runner hello");
 
-  let start_command = RunnerCommand::Start {
-    protocol_version: job.octa.runner_protocol,
-    request_id: job.request_id.clone(),
-    request: Box::new(run),
-  };
+  let start_command = crate::private_variables::PrivateRunnerCommand::new(
+    RunnerCommand::Start {
+      protocol_version: job.octa.runner_protocol,
+      request_id: job.request_id.clone(),
+      request: Box::new(run),
+    },
+    private_variables.as_ref(),
+  )?;
   tokio::select! {
     () = cancellation.cancelled() => return Err(ExecutionError::Cancelled.into()),
-    result = timeout_at(deadline, write_command(&mut stdin, &start_command)) => {
+    result = timeout_at(deadline, write_command(&mut stdin, &start_command.command)) => {
       result.map_err(|_| RunnerSupervisionError::StartupTimeout)??
     },
   }
+  drop(start_command);
+  drop(private_variables);
 
   let operation_deadline = sleep_until(operation_deadline);
   tokio::pin!(operation_deadline);
@@ -252,7 +261,7 @@ async fn final_usage(
   timeout_duration: Duration,
   max_accounting_failures: usize,
 ) -> Result<ResourceUsage, RunnerSupervisionError> {
-  timeout(timeout_duration, execution.sample_usage())
+  timeout(timeout_duration, execution.sample_final_usage())
     .await
     .map_err(|_| RunnerSupervisionError::AccountingUnavailable(max_accounting_failures))?
     .map_err(Into::into)

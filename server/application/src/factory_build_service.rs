@@ -21,10 +21,21 @@ use std::sync::Arc;
 /// do not select compilers or change the source, permissions or deadline.
 #[async_trait]
 pub trait FactoryBuildMaterializer: Send + Sync {
+  /// Projects exact trusted action data from the immutable installed capability.
+  /// This must be deterministic and perform no I/O or credential resolution.
+  /// Ordinary compilers accept no extra action data by default.
+  fn action_input(
+    &self,
+    _intent: &FlowBuildIntent,
+    _admitted: &octacity_server_factory::AdmittedFlow,
+  ) -> Result<Option<serde_json::Value>, OrdinaryBuildApplicationError> {
+    Ok(None)
+  }
   /// Prepares immutable materialization; dispatch authority is checked again atomically.
   async fn materialize(
     &self,
     intent: &FlowBuildIntent,
+    admitted: &octacity_server_factory::AdmittedFlow,
     ownership: FactoryClaimOwnership,
     at: Timestamp,
   ) -> Result<AcceptFactoryBuild, OrdinaryBuildApplicationError>;
@@ -87,8 +98,9 @@ where
       .iter()
       .find(|intent| intent.operation_id().ok() == Some(request.operation_id))
       .ok_or(OrdinaryBuildApplicationError::Invalid)?;
-    let canonical = crate::factory_node_build::factory_build_request(intent, request.ownership.clone())
+    let mut canonical = crate::factory_node_build::factory_build_request(intent, request.ownership.clone())
       .map_err(|_| OrdinaryBuildApplicationError::Invalid)?;
+    canonical.causality.action_input = self.compiler.action_input(intent, &snapshot.admitted_flow)?;
     if canonical != request {
       return Err(OrdinaryBuildApplicationError::Conflict);
     }
@@ -121,7 +133,7 @@ where
     }
     let mut prepared = self
       .compiler
-      .materialize(intent, request.ownership.clone(), now)
+      .materialize(intent, &snapshot.admitted_flow, request.ownership.clone(), now)
       .await?;
     if prepared.intent != *intent || prepared.ownership != request.ownership || prepared.accepted_at != now {
       return Err(OrdinaryBuildApplicationError::Invalid);

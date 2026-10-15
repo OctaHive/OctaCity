@@ -2,6 +2,10 @@
 
 use std::process::Command;
 
+#[cfg(unix)]
+#[path = "cli/factory_profiles.rs"]
+mod factory_profiles;
+
 #[test]
 fn prints_the_agent_version() {
   let output = Command::new(env!("CARGO_BIN_EXE_octacity-agent"))

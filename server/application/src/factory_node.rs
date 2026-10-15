@@ -134,6 +134,51 @@ pub enum FactoryNodeStep {
   /// Exact accepted result; configured transitions can now consume it.
   Completed(Box<FlowNodeRecord>),
 }
+/// Prepares input only from immutable incoming data, Work or retained predecessor results.
+pub fn prepare_factory_flow_input(
+  snapshot: &FactoryRunSnapshot,
+  target: &FactoryNodeTarget,
+) -> Result<FlowNodeInput, ApplicationError> {
+  let flow = snapshot
+    .flow
+    .runs
+    .iter()
+    .find(|row| row.id() == target.flow_run_id)
+    .ok_or_else(ApplicationError::invalid)?;
+  let cycle = snapshot
+    .flow
+    .cycles
+    .iter()
+    .find(|row| row.id() == target.cycle_id)
+    .ok_or_else(ApplicationError::invalid)?;
+  if !runtime(snapshot).is_current_cycle(cycle.id()) {
+    return Err(ApplicationError::invalid());
+  }
+  let node = snapshot
+    .admitted_flow
+    .closure()
+    .definition(flow.definition())
+    .and_then(|definition| definition.node(&target.node))
+    .ok_or_else(ApplicationError::invalid)?;
+  let schema = node
+    .input_schema()
+    .and_then(|schema| snapshot.admitted_flow.data_schema(schema))
+    .ok_or_else(ApplicationError::invalid)?;
+  FlowNodeInput::prepare(FlowInputPreparation {
+    work: &snapshot.work,
+    admitted: &snapshot.admitted_flow,
+    flow,
+    cycle,
+    node: target.node.clone(),
+    schema,
+    history: runtime(snapshot),
+    records: &snapshot.flow.data.records,
+    inputs: &snapshot.flow.data.inputs,
+    incoming: snapshot.flow.data.incoming.first(),
+  })
+  .map_err(invalid)
+}
+
 /// Common owner for any configured node. Each call performs at most one fenced append.
 pub struct FactoryNodeRunner<S, E> {
   store: Arc<S>,
@@ -153,44 +198,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     snapshot: &FactoryRunSnapshot,
     target: &FactoryNodeTarget,
   ) -> Result<FlowNodeInput, ApplicationError> {
-    let flow = snapshot
-      .flow
-      .runs
-      .iter()
-      .find(|row| row.id() == target.flow_run_id)
-      .ok_or_else(ApplicationError::invalid)?;
-    let cycle = snapshot
-      .flow
-      .cycles
-      .iter()
-      .find(|row| row.id() == target.cycle_id)
-      .ok_or_else(ApplicationError::invalid)?;
-    if !runtime(snapshot).is_current_cycle(cycle.id()) {
-      return Err(ApplicationError::invalid());
-    }
-    let node = snapshot
-      .admitted_flow
-      .closure()
-      .definition(flow.definition())
-      .and_then(|definition| definition.node(&target.node))
-      .ok_or_else(ApplicationError::invalid)?;
-    let schema = node
-      .input_schema()
-      .and_then(|schema| snapshot.admitted_flow.data_schema(schema))
-      .ok_or_else(ApplicationError::invalid)?;
-    FlowNodeInput::prepare(FlowInputPreparation {
-      work: &snapshot.work,
-      admitted: &snapshot.admitted_flow,
-      flow,
-      cycle,
-      node: target.node.clone(),
-      schema,
-      history: runtime(snapshot),
-      records: &snapshot.flow.data.records,
-      inputs: &snapshot.flow.data.inputs,
-      incoming: snapshot.flow.data.incoming.first(),
-    })
-    .map_err(invalid)
+    prepare_factory_flow_input(snapshot, target)
   }
   /// Starts or observes one ready node under the exact current Run claim.
   ///
@@ -712,48 +720,66 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     let mut current = snapshot.current.clone();
     current.budget_id = budget.id;
     current.lifecycle_checkpoint_id = checkpoint.id;
+    // Bind the audit to the complete accepted journal, including protected
+    // context and execution provenance. Only its digest enters diagnostics.
+    let flow = &append.flow;
+    let transition_bytes = serde_json::to_vec(&(
+      snapshot.run.id(),
+      snapshot.run.version(),
+      claim.id,
+      (&flow.runs, &flow.cycles, &flow.attempts, &flow.completions),
+      (
+        &flow.data.stops,
+        &flow.data.incoming,
+        &flow.data.inputs,
+        &flow.data.records,
+        &flow.data.build_intents,
+        &flow.data.build_executions,
+      ),
+      budget.usage,
+      checkpoint.id,
+      outbox.iter().map(|row| row.id).collect::<Vec<_>>(),
+    ))
+    .map_err(|_| ApplicationError::invalid())?;
     let audit = FactoryAuditFact::new(
       snapshot.run.id(),
       AuditActorKind::Worker,
       None,
       FactoryKey::new("factory.node.advance").map_err(invalid)?,
-      FactoryDigest::sha256(
-        "octacity.factory.node-transition.v1",
-        &[&snapshot.run.version().get().to_be_bytes()],
-      ),
+      FactoryDigest::sha256("octacity.factory.node-transition.v2", &[&transition_bytes]),
       FactoryKey::new("accepted").map_err(invalid)?,
       at,
     );
-    self
-      .store
-      .commit_factory_run_transition(CommitFactoryRunTransition {
-        run_id: snapshot.run.id(),
-        expected_version: snapshot.run.version(),
-        claim_id: claim.id,
-        owner: claim.owner.clone(),
-        fence: claim.claim.fence(),
-        committed_at: at,
-        next_run: FactoryRun::restore(
-          snapshot.run.id(),
-          snapshot.run.configuration().clone(),
-          &snapshot.work,
-          snapshot.run.subject().clone(),
-          match disposition {
-            GraphDisposition::Resolved(_) => FactoryRunState::Completed,
-            GraphDisposition::Running => FactoryRunState::Running,
-            GraphDisposition::Cancelled => FactoryRunState::Cancelled,
-          },
-          version,
-        )
-        .map_err(invalid)?,
-        budget,
-        lifecycle_checkpoint: checkpoint,
-        append,
-        current,
-        audit,
-        outbox,
-      })
-      .await?;
+    let transition = CommitFactoryRunTransition {
+      run_id: snapshot.run.id(),
+      expected_version: snapshot.run.version(),
+      claim_id: claim.id,
+      owner: claim.owner.clone(),
+      fence: claim.claim.fence(),
+      committed_at: at,
+      next_run: FactoryRun::restore(
+        snapshot.run.id(),
+        snapshot.run.configuration().clone(),
+        &snapshot.work,
+        snapshot.run.subject().clone(),
+        match disposition {
+          GraphDisposition::Resolved(_) => FactoryRunState::Completed,
+          GraphDisposition::Running => FactoryRunState::Running,
+          GraphDisposition::Cancelled => FactoryRunState::Cancelled,
+        },
+        version,
+      )
+      .map_err(invalid)?,
+      budget,
+      lifecycle_checkpoint: checkpoint,
+      append,
+      current,
+      audit,
+      outbox,
+    };
+    let observation = crate::factory_observability::FactoryTransitionObservation::new(snapshot, &transition);
+    self.store.commit_factory_run_transition(transition).await?;
+    observation.emit();
     Ok(())
   }
 }

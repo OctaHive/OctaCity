@@ -33,6 +33,7 @@ impl<'a> From<&'a InstalledRelease> for AgentReleasePaths<'a> {
 }
 
 pub(super) struct AgentConfigOverrides<'a> {
+  pub(super) factory: Option<AgentFactoryOverrides<'a>>,
   pub(super) cache_read: bool,
   pub(super) cache_write: bool,
   pub(super) remote_cache_origin: Option<&'a str>,
@@ -41,6 +42,13 @@ pub(super) struct AgentConfigOverrides<'a> {
   pub(super) upload_origins: &'a [&'a str],
   pub(super) output_limits: Option<OutputLimits>,
   pub(super) tool_executables: &'a [AgentToolExecutable<'a>],
+}
+
+pub(super) struct AgentFactoryOverrides<'a> {
+  pub(super) permissions: &'a octacity_protocol::FactoryPermissionSetV3,
+  pub(super) credential_profiles: &'a std::collections::BTreeMap<String, PathBuf>,
+  pub(super) capture: Option<&'a AgentToolExecutable<'a>>,
+  pub(super) protected_reader: Option<&'a toml::Table>,
 }
 
 pub(super) struct AgentToolExecutable<'a> {
@@ -54,6 +62,7 @@ pub(super) struct AgentToolExecutable<'a> {
 impl<'a> AgentConfigOverrides<'a> {
   pub(super) fn restricted_without_outputs(upload_origins: &'a [&'a str]) -> Self {
     Self {
+      factory: None,
       cache_read: true,
       cache_write: false,
       remote_cache_origin: None,
@@ -364,6 +373,41 @@ release_gate = {}
     toml_text(backend.name()),
   );
   let path = directory.join("agent.toml");
+  let config = if let Some(factory) = &overrides.factory {
+    let mut document: toml::Table = toml::from_str(&config).unwrap();
+    document.insert(
+      "factory_permissions".to_owned(),
+      toml::Value::try_from(factory.permissions).unwrap(),
+    );
+    document.insert(
+      "factory_credential_profiles".to_owned(),
+      toml::Value::try_from(factory.credential_profiles).unwrap(),
+    );
+    if let Some(capture) = factory.capture {
+      let executable = toml::Table::from_iter([
+        (
+          "path".to_owned(),
+          toml::Value::String(capture.path.to_str().unwrap().to_owned()),
+        ),
+        ("version".to_owned(), toml::Value::String(capture.version.to_owned())),
+        ("platform".to_owned(), toml::Value::String(capture.platform.to_owned())),
+        ("sha256".to_owned(), toml::Value::String(capture.sha256.to_owned())),
+      ]);
+      document.insert(
+        "change_set_capture".to_owned(),
+        toml::Value::Table(toml::Table::from_iter([
+          ("provider".to_owned(), toml::Value::String(capture.product.to_owned())),
+          ("executable".to_owned(), toml::Value::Table(executable)),
+        ])),
+      );
+    }
+    if let Some(reader) = factory.protected_reader {
+      document.insert("protected_reader".to_owned(), toml::Value::Table(reader.clone()));
+    }
+    toml::to_string(&document).unwrap()
+  } else {
+    config
+  };
   fs::write(&path, config).unwrap();
   path
 }

@@ -80,6 +80,72 @@ fn test_config() -> ServerConfig {
   ServerConfig::parse_toml(test_config_source()).unwrap()
 }
 
+#[test]
+fn signal_connector_file_requires_an_explicit_factory_profile_installation() {
+  let profile = "factory_profiles_file='/run/secrets/factory-profiles.json'\n";
+  let connector = "factory_signal_connectors_file='/run/secrets/signal-connectors.json'\n";
+  let workers =
+    "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n";
+  let source = format!("{profile}{connector}{}{workers}", test_config_source());
+  assert!(
+    ServerConfig::parse_toml(&source).is_ok(),
+    "explicit separate connectors must be accepted"
+  );
+  for invalid in [
+    source.replace(profile, ""),
+    source.replace(workers, ""),
+    source.replace("/run/secrets/signal-connectors.json", ""),
+  ] {
+    assert!(ServerConfig::parse_toml(&invalid).is_err());
+  }
+}
+
+#[test]
+fn deployment_factory_profile_file_is_explicit_and_rebased_with_runtime_files() {
+  let workers =
+    "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n";
+  let source = format!(
+    "factory_profiles_file='/run/secrets/factory-profiles.json'\nfactory_signal_connectors_file='/run/secrets/signal-connectors.json'\n{}{workers}",
+    test_config_source()
+  );
+  let absolute = source
+    .replace(
+      "url_file = \"postgres-url\"",
+      "url_file = \"/run/secrets/postgres-url\"",
+    )
+    .replace("= \"object-access-key\"", "= \"/run/secrets/object-access-key\"")
+    .replace("= \"object-secret-key\"", "= \"/run/secrets/object-secret-key\"")
+    .replace("= \"signing-key\"", "= \"/run/secrets/signing-key\"")
+    .replace("= \"agent-enrollment-key\"", "= \"/run/secrets/agent-enrollment-key\"")
+    .replace("= \"cache-credential-key\"", "= \"/run/secrets/cache-credential-key\"")
+    .replace("= \"job-spec-policy.json\"", "= \"/run/secrets/job-spec-policy.json\"");
+  let mut config = ServerConfig::parse_toml(&absolute).unwrap();
+  assert_eq!(
+    config.factory_profiles_file().unwrap(),
+    std::path::Path::new("/run/secrets/factory-profiles.json")
+  );
+  // Offline image validation relocates every absolute runtime file together.
+  config.rebase_runtime_files(std::path::Path::new("/offline")).unwrap();
+  assert_eq!(
+    config.factory_profiles_file().unwrap(),
+    std::path::Path::new("/offline/run/secrets/factory-profiles.json")
+  );
+  assert_eq!(
+    config.factory_signal_connectors_file().unwrap(),
+    std::path::Path::new("/offline/run/secrets/signal-connectors.json")
+  );
+  assert!(
+    ServerConfig::parse_toml(&format!(
+      "factory_profiles_file='/private/config'\n{}",
+      test_config_source()
+    ))
+    .is_err()
+  );
+  assert!(ServerConfig::parse_toml(&source.replace("/run/secrets/factory-profiles.json", "")).is_err());
+  assert!(test_config().factory_profiles_file().is_none());
+  assert!(test_config().factory_signal_connectors_file().is_none());
+}
+
 #[tokio::test]
 async fn factory_requires_explicit_installation_before_loading_resources_or_binding() {
   let source = format!(
@@ -101,6 +167,66 @@ async fn factory_requires_explicit_installation_before_loading_resources_or_bind
 }
 
 #[tokio::test]
+async fn startup_rejects_invalid_connector_catalog_before_other_resources() {
+  let directory = tempfile::tempdir().unwrap();
+  let profiles = directory.path().join("profiles.json");
+  let connectors = directory.path().join("private-connector-canary.json");
+  std::fs::write(
+    &profiles,
+    serde_json::to_vec(&serde_json::json!({
+      "version":1,"projects":[{"project_id":octacity_server_domain::ProjectId::generate(),
+        "references":[],"build_configurations":[]}],"codex":[],
+    }))
+    .unwrap(),
+  )
+  .unwrap();
+  std::fs::write(&connectors, "{\"private-endpoint\":\"https://private-canary.invalid\"}").unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt;
+    for path in [&profiles, &connectors] {
+      std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+  }
+  let source = format!(
+    "factory_profiles_file={}\nfactory_signal_connectors_file={}\n{}\n[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n",
+    serde_json::to_string(&profiles).unwrap(),
+    serde_json::to_string(&connectors).unwrap(),
+    test_config_source(),
+  );
+  let error = ServerRuntime::start(ServerConfig::parse_toml(&source).unwrap())
+    .await
+    .err()
+    .unwrap();
+  assert!(
+    matches!(error, ServerRuntimeError::InvalidFactoryInstallation),
+    "connector installation must precede shared-resource I/O"
+  );
+  assert!(!format!("{error:?}").contains("canary"));
+}
+
+#[tokio::test]
+async fn startup_reads_explicit_factory_catalog_before_resources_with_safe_diagnostics() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("private-instructions-canary.json");
+  std::fs::write(&path, "{\"instructions\":\"provider-secret-canary\"}").unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+  }
+  let source = format!(
+    "factory_profiles_file={}\n{}\n[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n",
+    serde_json::to_string(&path).unwrap(),
+    test_config_source()
+  );
+  let config = ServerConfig::parse_toml(&source).unwrap();
+  let error = ServerRuntime::start(config).await.err().unwrap();
+  assert_eq!(error.to_string(), "Factory runtime installation failed");
+  assert!(!format!("{error:?}").contains("canary"));
+}
+
+#[tokio::test]
 async fn startup_separates_ingress_and_exposes_health_checks() {
   let _listener_guard = LISTENER_TEST_LOCK.lock().await;
   let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())
@@ -112,6 +238,7 @@ async fn startup_separates_ingress_and_exposes_health_checks() {
   for (path, expected_body) in [
     ("/health/live", r#"{"status":"live"}"#),
     ("/health/ready", r#"{"status":"ready"}"#),
+    ("/health/factory", r#"{"status":"disabled"}"#),
   ] {
     let response = client.get(format!("{origin}{path}")).send().await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
@@ -278,4 +405,221 @@ async fn dropping_runtime_aborts_owned_listener_work() {
     .await
     .expect("aborted listener future must be dropped")
     .unwrap();
+}
+
+#[tokio::test]
+async fn unavailable_factory_dependency_does_not_block_ordinary_health_and_recovers() {
+  struct FactoryCheck(std::sync::atomic::AtomicBool);
+  #[async_trait]
+  impl ReadinessCheck for FactoryCheck {
+    fn name(&self) -> &'static str {
+      "factory-test-provider"
+    }
+    async fn check(&self) -> bool {
+      self.0.load(std::sync::atomic::Ordering::SeqCst)
+    }
+  }
+  let _listener_guard = LISTENER_TEST_LOCK.lock().await;
+  let provider = Arc::new(FactoryCheck(std::sync::atomic::AtomicBool::new(false)));
+  let mut checks = healthy_checks();
+  checks.push_factory(provider.clone());
+  let runtime = ServerRuntime::start_with_readiness(test_config(), checks)
+    .await
+    .unwrap();
+  let client = reqwest::Client::new();
+  let origin = format!("http://{}", runtime.management_addr());
+  for path in ["/health/live", "/health/ready"] {
+    assert_eq!(
+      client.get(format!("{origin}{path}")).send().await.unwrap().status(),
+      StatusCode::OK
+    );
+  }
+  let factory = client.get(format!("{origin}/health/factory")).send().await.unwrap();
+  assert_eq!(factory.status(), StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(factory.text().await.unwrap(), r#"{"status":"unavailable"}"#);
+  provider.0.store(true, std::sync::atomic::Ordering::SeqCst);
+  tokio::time::timeout(std::time::Duration::from_secs(1), async {
+    loop {
+      if client
+        .get(format!("{origin}/health/factory"))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        == StatusCode::OK
+      {
+        break;
+      }
+      tokio::task::yield_now().await;
+    }
+  })
+  .await
+  .unwrap();
+  assert_eq!(
+    client
+      .get(format!("{origin}/health/ready"))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::OK
+  );
+  runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn installed_factory_outbox_health_tracks_failure_recovery_and_shutdown_over_http() {
+  struct Dispatcher(std::sync::atomic::AtomicBool);
+  #[async_trait]
+  impl octacity_server_application::FactoryOutboxDispatcher for Dispatcher {
+    async fn dispatch_once(
+      &self,
+      _: octacity_server_domain::Timestamp,
+    ) -> Result<octacity_server_application::FactoryOutboxDispatchSummary, octacity_server_application::ApplicationError>
+    {
+      if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+        Err(octacity_server_application::ApplicationError::Store(
+          octacity_server_store::StoreError::Unavailable,
+        ))
+      } else {
+        Ok(Default::default())
+      }
+    }
+  }
+  let _listener_guard = LISTENER_TEST_LOCK.lock().await;
+  let dispatcher = Arc::new(Dispatcher(std::sync::atomic::AtomicBool::new(true)));
+  let policy: crate::FactoryRuntimeConfig = toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap();
+  let mut checks = healthy_checks();
+  let installed = factory::install_outbox(vec![dispatcher.clone()], policy, &mut checks)
+    .pop()
+    .unwrap();
+  let cancel = CancellationToken::new();
+  let task = workers::spawn_factory_outbox_worker(installed.dispatcher, installed.health, policy, cancel.clone());
+  let runtime = ServerRuntime::start_with_readiness(test_config(), checks)
+    .await
+    .unwrap();
+  let client = reqwest::Client::new();
+  let origin = format!("http://{}", runtime.management_addr());
+  assert_eq!(
+    client
+      .get(format!("{origin}/health/factory"))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::SERVICE_UNAVAILABLE
+  );
+  assert_eq!(
+    client
+      .get(format!("{origin}/health/ready"))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::OK
+  );
+  dispatcher.0.store(false, std::sync::atomic::Ordering::SeqCst);
+  tokio::time::timeout(std::time::Duration::from_secs(3), async {
+    loop {
+      let response = client.get(format!("{origin}/health/factory")).send().await.unwrap();
+      if response.status() == StatusCode::OK {
+        assert_eq!(response.text().await.unwrap(), r#"{"status":"ready"}"#);
+        break;
+      }
+      tokio::task::yield_now().await;
+    }
+  })
+  .await
+  .unwrap();
+  cancel.cancel();
+  task.await.unwrap();
+  tokio::time::timeout(std::time::Duration::from_secs(3), async {
+    while client
+      .get(format!("{origin}/health/factory"))
+      .send()
+      .await
+      .unwrap()
+      .status()
+      != StatusCode::SERVICE_UNAVAILABLE
+    {
+      tokio::task::yield_now().await;
+    }
+  })
+  .await
+  .unwrap();
+  assert_eq!(
+    client
+      .get(format!("{origin}/health/ready"))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::OK
+  );
+  runtime.shutdown().await.unwrap();
+}
+
+#[tokio::test(start_paused = true)]
+async fn shutdown_timeout_drains_only_tasks_that_have_not_already_completed() {
+  for blocked in ["workers", "notifications", "metrics"] {
+    let cancellation = CancellationToken::new();
+    let listener_cancellation = cancellation.child_token();
+    let readiness_cancellation = cancellation.child_token();
+    let worker_cancellation = cancellation.child_token();
+    let notification_cancellation = cancellation.child_token();
+    let metrics_cancellation = cancellation.child_token();
+    let (dropped_sender, dropped_receiver) = tokio::sync::oneshot::channel();
+    let dropped_sender = Arc::new(std::sync::Mutex::new(Some(dropped_sender)));
+    let worker_drop = dropped_sender.clone();
+    let notification_drop = dropped_sender.clone();
+    let metrics_drop = dropped_sender;
+    let mut listener_tasks = JoinSet::new();
+    listener_tasks.spawn(async move {
+      listener_cancellation.cancelled().await;
+      Ok("management")
+    });
+    let grace = std::time::Duration::from_millis(10);
+    let runtime = ServerRuntime {
+      management_addr: SocketAddr::from(([127, 0, 0, 1], 0)),
+      agent_addr: None,
+      cache_addr: None,
+      webhook_addr: None,
+      shutdown_grace: grace,
+      readiness: Arc::new(ReadinessState::default()),
+      cancellation,
+      listener_tasks,
+      readiness_task: Some(tokio::spawn(async move {
+        readiness_cancellation.cancelled().await;
+      })),
+      worker_task: Some(tokio::spawn(async move {
+        worker_cancellation.cancelled().await;
+        if blocked == "workers" {
+          let _drop = DropSignal(worker_drop.lock().unwrap().take());
+          std::future::pending::<()>().await;
+        }
+        Ok(())
+      })),
+      notification_task: Some(tokio::spawn(async move {
+        notification_cancellation.cancelled().await;
+        if blocked == "notifications" {
+          let _drop = DropSignal(notification_drop.lock().unwrap().take());
+          std::future::pending::<()>().await;
+        }
+      })),
+      metrics_task: Some(tokio::spawn(async move {
+        metrics_cancellation.cancelled().await;
+        if blocked == "metrics" {
+          let _drop = DropSignal(metrics_drop.lock().unwrap().take());
+          std::future::pending::<()>().await;
+        }
+      })),
+    };
+    let result = tokio::spawn(runtime.shutdown())
+      .await
+      .expect("a completed earlier task must never be polled twice during bounded cleanup");
+    assert!(matches!(result, Err(ServerRuntimeError::ShutdownTimeout(value)) if value == grace));
+    dropped_receiver
+      .await
+      .expect("the still-blocked owned task must be aborted and drained before returning");
+  }
 }

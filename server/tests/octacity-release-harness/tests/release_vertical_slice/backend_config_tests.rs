@@ -37,6 +37,7 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
     release,
     &backend,
     &AgentConfigOverrides {
+      factory: None,
       cache_read: true,
       cache_write: true,
       remote_cache_origin: Some("https://127.0.0.1:8443"),
@@ -113,6 +114,7 @@ fn codex_tool_selection_is_explicit_and_absent_from_ordinary_agent_configuration
     },
     &backend,
     &AgentConfigOverrides {
+      factory: None,
       cache_read: false,
       cache_write: false,
       remote_cache_origin: None,
@@ -462,4 +464,188 @@ fn generated_apple_vf_agent_configuration_keeps_provider_authority_operator_owne
     Some("apple-vf-macos-arm64-v1")
   );
   assert_eq!(provider["executable"].as_str(), executable.to_str());
+}
+#[test]
+fn factory_agent_configuration_preserves_role_refs_and_exact_capture_without_secret_values() {
+  use std::collections::BTreeMap;
+  let directory = tempfile::tempdir().unwrap();
+  for name in ["work", "state", "octa", "sources"] {
+    fs::create_dir(directory.path().join(name)).unwrap();
+  }
+  let backend = ReleaseBackend::Microsandbox {
+    work_root: directory.path().join("work"),
+    state_root: directory.path().join("state"),
+    executable: directory.path().join("msb"),
+    libkrunfw: directory.path().join("libkrunfw"),
+    environment_identity: "installed-sandbox-v7".into(),
+    image: format!("example.invalid/image@sha256:{}", "a".repeat(64)),
+    workspace_bytes: 1024 * 1024,
+  };
+  let profiles = BTreeMap::from([
+    ("author-role".to_owned(), directory.path().join("author-private.json")),
+    ("review-role".to_owned(), directory.path().join("review-private.json")),
+  ]);
+  for path in profiles.values() {
+    fs::write(path, b"not-part-of-public-config-canary").unwrap();
+  }
+  let permissions: octacity_protocol::FactoryPermissionSetV3 = serde_json::from_value(json!({
+    "plugins":[],"executables":[],"tools":[],"commands":[],"max_descendants":0,"mounts":[],"network_hosts":[],"secret_profiles":["author-role","review-role"],"workload_identity_profiles":[],
+    "resources":{"cpu_millis":1,"memory_bytes":1,"disk_bytes":1,"process_count":1,"elapsed_millis":1},
+    "outputs":{"kinds":[],"max_artifact_count":0,"max_artifact_bytes":0,"max_report_count":0,"max_report_bytes":0}
+  })).unwrap();
+  let capture_path = directory.path().join("git");
+  let capture_sha = "c".repeat(64);
+  let capture = AgentToolExecutable {
+    product: "git",
+    path: &capture_path,
+    version: "2.56.0",
+    platform: "macos-aarch64",
+    sha256: &capture_sha,
+  };
+  let config = write_agent_config(
+    directory.path(),
+    "http://127.0.0.1:12345",
+    "factory-config",
+    "enrollment",
+    AgentReleasePaths {
+      octa_root: &directory.path().join("octa"),
+      source_plugins: &directory.path().join("sources"),
+    },
+    &backend,
+    &AgentConfigOverrides {
+      factory: Some(agent::AgentFactoryOverrides {
+        permissions: &permissions,
+        credential_profiles: &profiles,
+        capture: Some(&capture),
+        protected_reader: None,
+      }),
+      ..AgentConfigOverrides::restricted_without_outputs(&[])
+    },
+  );
+  let contents = fs::read_to_string(config).unwrap();
+  let document: toml::Value = toml::from_str(&contents).unwrap();
+  assert_eq!(
+    document["factory_credential_profiles"]["author-role"].as_str(),
+    profiles["author-role"].to_str()
+  );
+  assert_eq!(
+    document["factory_credential_profiles"]["review-role"].as_str(),
+    profiles["review-role"].to_str()
+  );
+  assert_ne!(
+    document["factory_credential_profiles"]["author-role"],
+    document["factory_credential_profiles"]["review-role"]
+  );
+  let decoded: octacity_protocol::FactoryPermissionSetV3 = document["factory_permissions"].clone().try_into().unwrap();
+  assert_eq!(
+    serde_json::to_value(decoded).unwrap(),
+    serde_json::to_value(permissions).unwrap()
+  );
+  assert_eq!(document["change_set_capture"]["provider"].as_str(), Some("git"));
+  assert_eq!(
+    document["change_set_capture"]["executable"]["path"].as_str(),
+    capture_path.to_str()
+  );
+  assert_eq!(
+    document["change_set_capture"]["executable"]["sha256"].as_str(),
+    Some(capture_sha.as_str())
+  );
+  assert!(!contents.contains("not-part-of-public-config-canary"));
+  assert_eq!(
+    document["virtualization_providers"][0]["environment_identity"].as_str(),
+    Some("installed-sandbox-v7")
+  );
+}
+
+#[test]
+#[ignore = "requires the staged current Agent, pinned Octa/MSB and installed Git for the Factory pilot"]
+fn factory_agent_configuration_validates_against_the_real_installed_process() {
+  use sha2::Digest as _;
+  use std::collections::BTreeMap;
+  let runtime = octacity_release_harness::validate_installed_agent_runtime(
+    &octacity_release_harness::AgentRuntimeBundles {
+      agent: required_path("OCTACITY_RELEASE_AGENT_ROOT", true),
+      octa: required_path("OCTACITY_CONTRACT_OCTA_RELEASE_ROOT", true),
+    },
+    &octacity_release_harness::AgentRuntimePlatforms::new(
+      format!("{}-{}", std::env::consts::OS, host_architecture()),
+      format!("linux-{}", std::env::consts::ARCH),
+    ),
+  )
+  .expect("the exact staged Agent and pinned Octa must validate before configuration");
+  let directory = tempfile::tempdir().unwrap();
+  set_mode(directory.path(), 0o700);
+  let permissions: octacity_protocol::FactoryPermissionSetV3 = serde_json::from_value(json!({
+    "plugins":[],"executables":[],"tools":[],"commands":[],"max_descendants":0,"mounts":[],"network_hosts":[],"secret_profiles":["author-role","review-role"],"workload_identity_profiles":[],
+    "resources":{"cpu_millis":1000,"memory_bytes":536870912,"disk_bytes":67108864,"process_count":64,"elapsed_millis":120000},
+    "outputs":{"kinds":[],"max_artifact_count":0,"max_artifact_bytes":0,"max_report_count":0,"max_report_bytes":0}
+  })).unwrap();
+  let profiles = BTreeMap::from([
+    ("author-role".to_owned(), directory.path().join("author-private.json")),
+    ("review-role".to_owned(), directory.path().join("review-private.json")),
+  ]);
+  for (name, path) in &profiles {
+    fs::write(
+      path,
+      serde_json::to_vec(&json!({"OCTACITY_CODEX_AUTH":format!("private-{name}-canary")})).unwrap(),
+    )
+    .unwrap();
+    set_mode(path, 0o600);
+  }
+  let git = required_path("OCTACITY_CONTRACT_GIT_EXECUTABLE", true)
+    .canonicalize()
+    .unwrap();
+  let version = std::process::Command::new(&git).arg("--version").output().unwrap();
+  assert!(
+    version.status.success(),
+    "the configured capture binary must identify itself"
+  );
+  let version = String::from_utf8(version.stdout).unwrap();
+  let sha = hex::encode(sha2::Sha256::digest(fs::read(&git).unwrap()));
+  let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
+  let capture = AgentToolExecutable {
+    product: "git",
+    path: &git,
+    version: version.split_whitespace().nth(2).unwrap(),
+    platform: &platform,
+    sha256: &sha,
+  };
+  let config = write_agent_config(
+    directory.path(),
+    "http://127.0.0.1:12345",
+    "factory-validation",
+    "fixture-enrollment",
+    AgentReleasePaths {
+      octa_root: &runtime.octa_root,
+      source_plugins: &runtime.source_plugins,
+    },
+    &ReleaseBackend::from_environment(),
+    &AgentConfigOverrides {
+      factory: Some(agent::AgentFactoryOverrides {
+        permissions: &permissions,
+        credential_profiles: &profiles,
+        capture: Some(&capture),
+        protected_reader: None,
+      }),
+      ..AgentConfigOverrides::restricted_without_outputs(&["http://127.0.0.1:9000"])
+    },
+  );
+  let output = std::process::Command::new(&runtime.agent_binary)
+    .arg("validate")
+    .arg(config)
+    .output()
+    .unwrap();
+  assert!(
+    output.status.success(),
+    "the real staged Agent must accept the generated exact Factory configuration"
+  );
+  let diagnostic = [output.stdout, output.stderr].concat();
+  for name in profiles.keys() {
+    assert!(
+      !diagnostic
+        .windows(format!("private-{name}-canary").len())
+        .any(|part| part == format!("private-{name}-canary").as_bytes()),
+      "configuration diagnostics must not expose role credentials"
+    );
+  }
 }

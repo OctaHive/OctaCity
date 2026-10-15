@@ -855,3 +855,18 @@ fn generated_openapi_contract_has_no_dangling_local_references() {
 
   assert!(unresolved.is_empty(), "unresolved OpenAPI references: {unresolved:?}");
 }
+
+#[test]
+fn agent_route_qualification_flags_are_documented_as_optional_booleans() {
+  let document = openapi_document();
+  let schema = &document["components"]["schemas"]["AgentFactoryExecutionCapability"];
+  for flag in ["controlled_tools", "workspace_anchor"] {
+    assert_eq!(schema["properties"][flag]["type"], "boolean");
+    assert!(
+      !schema["required"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!(flag))
+    );
+  }
+}

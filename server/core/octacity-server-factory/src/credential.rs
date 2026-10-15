@@ -25,6 +25,8 @@ pub enum FactoryCredentialConsumer {
   CodingNode,
   /// Read-only independent evaluation node.
   ReadOnlyReview,
+  /// Model reasoning with explicitly installed, bounded protected tools.
+  ToolReasoning,
   /// Trusted source-resolution adapter.
   SourceResolver,
   /// Trusted write-capable delivery adapter.
@@ -36,7 +38,7 @@ impl FactoryCredentialConsumer {
   #[must_use]
   pub const fn purpose(self) -> FactoryCredentialPurpose {
     match self {
-      Self::CodingNode => FactoryCredentialPurpose::Model,
+      Self::CodingNode | Self::ToolReasoning => FactoryCredentialPurpose::Model,
       Self::ReadOnlyReview => FactoryCredentialPurpose::Evaluator,
       Self::SourceResolver => FactoryCredentialPurpose::Source,
       Self::DeliveryAdapter => FactoryCredentialPurpose::Delivery,

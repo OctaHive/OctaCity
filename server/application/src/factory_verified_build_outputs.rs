@@ -1,5 +1,8 @@
 //! Shared terminal-Attempt fencing for installed ordinary output verifiers.
-use crate::{ApplicationError, FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs, OrdinaryBuildApplicationError};
+use crate::{
+  ApplicationError, FactoryNodeBuildOutputObservation, FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs,
+  OrdinaryBuildApplicationError,
+};
 use async_trait::async_trait;
 use octacity_server_domain::{AttemptId, BuildId};
 use octacity_server_factory::{BudgetUsage, FlowBuildExecution, FlowBuildIntent};
@@ -31,7 +34,7 @@ where
     build: BuildId,
     attempt_id: AttemptId,
     max_bytes: u64,
-  ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError> {
+  ) -> Result<FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError> {
     let outputs = self.source.published_outputs(build, attempt_id, max_bytes).await?;
     let attempt = self.builds.attempt(attempt_id).await.map_err(|error| match error {
       StoreError::Unavailable => OrdinaryBuildApplicationError::Unavailable,
@@ -47,7 +50,9 @@ where
       attempt.jobs.iter().map(|job| job.id()).collect(),
     )
     .map_err(|_| OrdinaryBuildApplicationError::Invalid)?;
-    (self.verify)(&execution, &outputs).map_err(|_| OrdinaryBuildApplicationError::Invalid)?;
+    if let FactoryNodeBuildOutputObservation::Verified(verified) = &outputs {
+      (self.verify)(&execution, verified).map_err(|_| OrdinaryBuildApplicationError::Invalid)?;
+    }
     Ok(outputs)
   }
 }

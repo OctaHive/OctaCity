@@ -1,7 +1,6 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use octacity_server_domain::{AttemptId, BuildId, ImmutableRevision, JobId, PipelineNodeId, TriggerOccurrenceId};
-use octacity_server_job::JobRequirements;
 use octacity_server_store::{
   BuildRetentionDeadlines, ManagementSecurityScope, MaterializedJob, MaterializedJobPayload, PublishedPipeline,
   StoreError,
@@ -92,29 +91,7 @@ pub(super) fn materialize_jobs(
     .map(|node| {
       let job_id = identities.jobs[node.id()];
       let dependencies = dependencies_by_node.get(node.id()).cloned().unwrap_or_default();
-      let mut capabilities: BTreeSet<_> = definition.agent_requirements.capabilities.iter().cloned().collect();
-      capabilities.extend(node.required_capabilities().iter().cloned());
-      let requirements = JobRequirements {
-        capabilities,
-        labels: definition.agent_requirements.labels.clone(),
-        minimum_cpu_millis: definition
-          .agent_requirements
-          .minimum_cpu_millis
-          .max(definition.runtime.cpu_millis),
-        minimum_memory_bytes: definition
-          .agent_requirements
-          .minimum_memory_bytes
-          .max(definition.runtime.memory_bytes),
-        minimum_disk_bytes: definition
-          .agent_requirements
-          .minimum_disk_bytes
-          .max(definition.runtime.writable_disk_bytes),
-        runtime_class: definition.runtime.class,
-        operating_system: definition.runtime.operating_system,
-        architecture: definition.runtime.architecture,
-        host_platform: definition.runtime.host_platform,
-        required_guarantees: definition.runtime.required_guarantees.clone(),
-      };
+      let requirements = crate::build_configuration_job_policy::configuration_job_requirements(definition, node);
       MaterializedJob::new(
         job_id,
         node.id().clone(),

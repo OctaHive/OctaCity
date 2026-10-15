@@ -5,8 +5,7 @@ use async_trait::async_trait;
 use octacity_server_factory::{FlowNodeKind, NodeExecutionIdentity};
 use std::sync::Arc;
 
-/// Maximum installed execution bindings in one bounded Factory owner.
-pub const MAX_FACTORY_EXECUTOR_BINDINGS: usize = 256;
+pub use octacity_server_factory::MAX_FACTORY_EXECUTOR_BINDINGS;
 
 /// One installed executor selected by primitive and exact immutable execution identity.
 pub type FactoryNodeExecutorBinding = (FlowNodeKind, NodeExecutionIdentity, Arc<dyn FactoryNodeExecutor>);

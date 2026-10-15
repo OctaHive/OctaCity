@@ -36,6 +36,14 @@ pub struct RunnerRedactions {
 }
 
 impl RunnerRedactions {
+  pub(crate) fn extend<'a>(&mut self, additional: impl IntoIterator<Item = &'a [u8]>) {
+    let additional = additional
+      .into_iter()
+      .map(|value| Zeroizing::new(value.to_vec()))
+      .collect::<Vec<_>>();
+    let replacement = Self::new(self.values.iter().chain(&additional).map(|value| value.as_slice()));
+    *self = replacement;
+  }
   /// Copies non-empty values into a short-lived redaction set.
   pub fn new<'a>(values: impl IntoIterator<Item = &'a [u8]>) -> Self {
     let mut copied = Vec::new();

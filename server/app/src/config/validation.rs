@@ -32,6 +32,24 @@ const MAX_VCS_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
 
 impl ServerConfig {
   pub(super) fn validate(&self) -> Result<(), ServerConfigError> {
+    if self
+      .factory_signal_connectors_file
+      .as_ref()
+      .is_some_and(|path| self.factory.is_none() || self.factory_profiles_file.is_none() || path.as_os_str().is_empty())
+    {
+      return Err(ServerConfigError::Invalid(
+        "Decision Signal connector file requires enabled Factory workers and an explicit profile file".to_owned(),
+      ));
+    }
+    if self
+      .factory_profiles_file
+      .as_ref()
+      .is_some_and(|path| self.factory.is_none() || path.as_os_str().is_empty())
+    {
+      return Err(ServerConfigError::Invalid(
+        "Factory profile file requires enabled Factory workers and a nonempty path".to_owned(),
+      ));
+    }
     if let Some(factory) = self.factory {
       factory.validate()?;
     }

@@ -107,6 +107,12 @@ impl TryFrom<PolicyWire> for FactoryProtectedTestPolicy {
   }
 }
 impl FactoryProtectedTestPolicy {
+  /// Returns the bounded classes, file/byte ceilings and reserved input capacity.
+  #[must_use]
+  pub const fn coverage(&self) -> &ProtectedTestCoverage {
+    &self.coverage
+  }
+
   /// Validates arbitrary class keys and bounded file, byte and retention parameters.
   pub fn new(coverage: ProtectedTestCoverage, retention_millis: u64) -> Result<Self, ApplicationError> {
     if retention_millis == 0 || retention_millis > i64::MAX as u64 {

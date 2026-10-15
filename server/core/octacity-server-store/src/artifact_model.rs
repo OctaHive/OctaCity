@@ -102,6 +102,8 @@ pub enum ArtifactVerificationResult {
 pub struct ListPublishedArtifacts {
   /// Build whose outputs are requested.
   pub build_id: BuildId,
+  /// Optional exact producing Attempt, applied before ordering and the result ceiling.
+  pub attempt_id: Option<octacity_server_domain::AttemptId>,
   /// Positive result ceiling.
   pub limit: u16,
   /// Authorization-derived Artifact identities applied before the result ceiling.

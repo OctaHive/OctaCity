@@ -1,5 +1,6 @@
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
+import { validFactoryValue } from './FactoryValueInput';
 
 export type DraftIssue = {
   field: string;
@@ -289,6 +290,8 @@ function compatible(
   from: components['schemas']['FactoryFlowValueSchema'],
   to: components['schemas']['FactoryFlowValueSchema'],
 ): boolean {
+  if (from.type === 'enum' && to.type === 'externally_tagged')
+    return from.values.every((value) => validFactoryValue(to, value));
   if (from.type !== to.type) return false;
   if (from.type === 'boolean' && to.type === 'boolean') return true;
   if (from.type === 'integer' && to.type === 'integer')
@@ -303,11 +306,19 @@ function compatible(
       from.max_items <= to.max_items &&
       compatible(from.item, to.item)
     );
+  if (from.type === 'externally_tagged' && to.type === 'externally_tagged')
+    return Object.entries(from.variants).every(([name, shape]) => {
+      if (!Object.hasOwn(to.variants, name)) return false;
+      const target = to.variants[name];
+      return shape === null
+        ? target === null
+        : target !== null && target !== undefined && compatible(shape, target);
+    });
   if (from.type === 'object' && to.type === 'object')
     return (
       Object.keys(from.fields).every((key) => Object.hasOwn(to.fields, key)) &&
       Object.entries(to.fields).every(([key, field]) => {
-        const source = from.fields[key];
+        const source = Object.hasOwn(from.fields, key) ? from.fields[key] : undefined;
         return source
           ? (!field.required || source.required) && compatible(source.value, field.value)
           : !field.required;

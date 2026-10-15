@@ -19,6 +19,12 @@ use crate::{
 pub(super) const DIRECTORY_ARCHIVE_CONTENT_TYPE: &str = "application/vnd.octacity.directory.tar.v1";
 const FILE_CONTENT_TYPE: &str = "application/octet-stream";
 
+/// One retained directory and its exact guest-relative resource namespace.
+pub(super) struct OutputRoot {
+  pub(super) directory: PathBuf,
+  pub(super) prefix: Option<PathBuf>,
+}
+
 /// One frozen file containing the exact bytes authorized for upload.
 #[derive(Debug)]
 pub(super) struct PreparedOutput {
@@ -107,7 +113,7 @@ impl Declaration {
 }
 
 pub(super) async fn prepare(
-  workspace: &Path,
+  workspace: OutputRoot,
   results: &[serde_json::Value],
   trusted_files: &[TrustedFileOutput],
   limits: &OutputLimits,
@@ -115,7 +121,6 @@ pub(super) async fn prepare(
   max_archive_entries: usize,
   cancellation: CancellationToken,
 ) -> Result<Vec<PreparedOutput>, OutputError> {
-  let workspace = workspace.to_owned();
   let results = results.to_vec();
   let trusted_files = trusted_files.to_vec();
   let limits = limits.clone();
@@ -136,7 +141,7 @@ pub(super) async fn prepare(
 }
 
 fn prepare_blocking(
-  workspace: &Path,
+  workspace: &OutputRoot,
   results: &[serde_json::Value],
   trusted_files: &[TrustedFileOutput],
   limits: &OutputLimits,
@@ -150,8 +155,9 @@ fn prepare_blocking(
   }
   check_cancel(cancellation)?;
   let canonical_workspace = workspace
+    .directory
     .canonicalize()
-    .map_err(|source| io("canonicalize workspace", workspace, source))?;
+    .map_err(|source| io("canonicalize workspace", &workspace.directory, source))?;
   if !canonical_workspace.is_dir() {
     return Err(OutputError::Invalid("output workspace is not a directory".to_owned()));
   }
@@ -214,7 +220,14 @@ fn prepare_blocking(
   for (index, declaration) in declarations.into_iter().enumerate() {
     check_cancel(cancellation)?;
     let relative = relative_path(declaration.path())?;
-    let source = canonical_workspace.join(&relative);
+    let relative = if let Some(prefix) = &workspace.prefix {
+      relative
+        .strip_prefix(prefix)
+        .map_err(|_| OutputError::Invalid("runner output is outside its authorized output directory".to_owned()))?
+    } else {
+      &relative
+    };
+    let source = canonical_workspace.join(relative);
     #[cfg(windows)]
     reject_windows_reparse_point(&source)?;
     let metadata = fs::symlink_metadata(&source).map_err(|error| io("inspect declared path", &source, error))?;
@@ -419,6 +432,13 @@ mod tests {
     }
   }
 
+  fn workspace_root(path: &Path) -> OutputRoot {
+    OutputRoot {
+      directory: path.to_owned(),
+      prefix: None,
+    }
+  }
+
   fn result() -> serde_json::Value {
     serde_json::json!({
       "run_id": 17,
@@ -441,7 +461,7 @@ mod tests {
     fs::write(workspace.join("reports/result.xml"), "<testsuite/>").unwrap();
 
     let first = prepare(
-      &workspace,
+      workspace_root(&workspace),
       &[result()],
       &[],
       &limits(),
@@ -452,7 +472,7 @@ mod tests {
     .await
     .unwrap();
     let second = prepare(
-      &workspace,
+      workspace_root(&workspace),
       &[result()],
       &[],
       &limits(),
@@ -494,7 +514,7 @@ mod tests {
     });
 
     let outputs = prepare(
-      &workspace,
+      workspace_root(&workspace),
       &[result],
       &[],
       &limits(),
@@ -533,7 +553,7 @@ mod tests {
     )
     .unwrap();
     let prepared = prepare(
-      &workspace,
+      workspace_root(&workspace),
       &[],
       std::slice::from_ref(&trusted),
       &limits(),
@@ -553,7 +573,7 @@ mod tests {
     });
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         &[spoof],
         std::slice::from_ref(&trusted),
         &limits(),
@@ -566,7 +586,7 @@ mod tests {
     ));
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         &[],
         &[trusted.clone(), trusted],
         &limits(),
@@ -595,7 +615,7 @@ mod tests {
 
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         &[result],
         &[],
         &limits(),
@@ -621,7 +641,7 @@ mod tests {
     });
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         &[traversal],
         &[],
         &limits(),
@@ -644,7 +664,7 @@ mod tests {
       }]
     });
     let error = prepare(
-      &workspace,
+      workspace_root(&workspace),
       &[duplicate],
       &[],
       &limits(),
@@ -665,7 +685,7 @@ mod tests {
     });
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         &[artifact],
         &[],
         &no_artifacts,
@@ -683,7 +703,7 @@ mod tests {
     });
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         std::slice::from_ref(&directory),
         &[],
         &limits(),
@@ -699,7 +719,7 @@ mod tests {
     one_byte.single_output_bytes = 1;
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         &[directory],
         &[],
         &one_byte,
@@ -728,7 +748,7 @@ mod tests {
     });
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         &[artifact],
         &[],
         &limits(),
@@ -766,7 +786,7 @@ mod tests {
 
     assert!(matches!(
       prepare(
-        &workspace,
+        workspace_root(&workspace),
         &[artifact],
         &[],
         &limits(),
@@ -794,7 +814,7 @@ mod tests {
       "tasks": [{"task_id": 23, "artifacts": [{"name": "safe", "path": "dist"}]}]
     });
     let prepared = prepare(
-      &workspace,
+      workspace_root(&workspace),
       std::slice::from_ref(&artifact),
       &[],
       &limits(),
@@ -818,7 +838,7 @@ mod tests {
 
     fs::write(workspace.join("dist/bad\\name"), "payload").unwrap();
     let error = prepare(
-      &workspace,
+      workspace_root(&workspace),
       &[artifact],
       &[],
       &limits(),

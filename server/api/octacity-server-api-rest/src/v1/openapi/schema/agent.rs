@@ -92,6 +92,8 @@ pub(super) fn insert_agent_detail_schemas(schemas: &mut Map<String, Value>) {
     "AgentFactoryExecutionCapability".to_owned(),
     object(
       [
+        ("workspace_anchor", boolean()),
+        ("controlled_tools", boolean()),
         ("execution", schema_ref("AgentExecutionCapability")),
         ("enforcement", unique_array(schema_ref("FactoryEnforcementCapability"))),
       ],

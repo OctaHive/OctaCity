@@ -160,3 +160,31 @@ fn cumulative_files(
   }
   candidate_files(&changes.changed_paths)
 }
+
+/// Restores mandatory deliverables from the exact retained capture bytes and original producer.
+/// Qualification uses the same immutable policy and file digests as fresh capture.
+pub(crate) fn restore_factory_node_candidate_deliverables(
+  record: &octacity_server_factory::FlowNodeRecord,
+  intent: &FlowBuildIntent,
+  execution: &FlowBuildExecution,
+  document: &crate::FactoryNodeBuildOutputDocument,
+  capture_tool: &ImmutableReference,
+) -> Result<VerifiedFactoryCandidateDeliverables, FactoryChangeSetError> {
+  let invalid = || FactoryChangeSetError::InvalidEvidence;
+  let candidate = crate::restore_factory_node_change_set(record, intent, execution, document, capture_tool)?;
+  let manifest: CapturedChangeSetManifestV1 = serde_json::from_slice(&document.bytes).map_err(|_| invalid())?;
+  let contract = intent
+    .profile()
+    .capture_deliverables
+    .as_ref()
+    .ok_or_else(invalid)?
+    .freeze(intent.input())
+    .map_err(|_| invalid())?;
+  Ok(VerifiedFactoryCandidateDeliverables {
+    candidate,
+    manifest: crate::factory_node_build::artifact_reference(document).map_err(|_| invalid())?,
+    contract,
+    files: cumulative_files(intent, &manifest)?,
+    changes: candidate_files(&manifest.changed_paths)?,
+  })
+}

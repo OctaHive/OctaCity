@@ -570,3 +570,106 @@ fn uuid(value: u128) -> uuid::Uuid {
 fn time(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn restored_factory_claims_and_requeued_work_have_one_immutable_audit_each() {
+  use octacity_server_store::{
+    FactoryRunDiagnosticKind, FactoryRunDiagnosticRecord, FactoryRunStore as _, ListFactoryRunDiagnostics,
+  };
+  let database = TestDatabase::migrated().await;
+  seed_factory_runs(&database.pool).await;
+  let store = PostgresStore::new(database.pool.clone());
+  let recovery = store.recover_restored_factory_state(time(40), 1).await.unwrap();
+  let query = ListFactoryRunDiagnostics::new(run_id(1), FactoryRunDiagnosticKind::Audit, None, 100).unwrap();
+  let retention_query = ListFactoryRunDiagnostics::new(run_id(2), FactoryRunDiagnosticKind::Audit, None, 100).unwrap();
+  let mut facts = store.list_factory_run_diagnostics(query.clone()).await.unwrap();
+  facts.items.extend(
+    store
+      .list_factory_run_diagnostics(retention_query.clone())
+      .await
+      .unwrap()
+      .items,
+  );
+  let replay = store.recover_restored_factory_state(time(41), 1).await.unwrap();
+  let mut replayed_facts = store.list_factory_run_diagnostics(query).await.unwrap();
+  replayed_facts
+    .items
+    .extend(store.list_factory_run_diagnostics(retention_query).await.unwrap().items);
+  database.cleanup().await;
+  assert_eq!(
+    (
+      recovery.expired_claims,
+      recovery.requeued_outbox,
+      recovery.expired_retention_claims
+    ),
+    (1, 1, 1)
+  );
+  let operations = facts
+    .items
+    .iter()
+    .filter_map(|record| match record {
+      FactoryRunDiagnosticRecord::Audit(fact) => Some(fact.operation.as_str()),
+      _ => None,
+    })
+    .collect::<std::collections::BTreeSet<_>>();
+  assert_eq!(
+    operations,
+    std::collections::BTreeSet::from([
+      "factory.restore.claim_invalidated",
+      "factory.restore.outbox_requeued",
+      "factory.restore.retention_claim_invalidated"
+    ])
+  );
+  assert_eq!(facts.items.len(), 3);
+  assert_eq!(
+    (
+      replay.expired_claims,
+      replay.requeued_outbox,
+      replay.expired_retention_claims
+    ),
+    (0, 0, 0)
+  );
+  assert_eq!(
+    replayed_facts, facts,
+    "restart recovery does not recreate accepted mutation facts"
+  );
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn rejected_restore_audit_rolls_back_claim_invalidation_and_outbox_retry() {
+  use octacity_server_store::{FactoryRunDiagnosticKind, FactoryRunStore as _, ListFactoryRunDiagnostics};
+  let database = TestDatabase::migrated().await;
+  seed_factory_runs(&database.pool).await;
+  let store = PostgresStore::new(database.pool.clone());
+  sqlx::query("ALTER TABLE factory_audit_links ADD CONSTRAINT reject_test_restore_audit CHECK (operation <> 'factory.restore.outbox_requeued')")
+    .execute(&database.pool).await.unwrap();
+  let result = store.recover_restored_factory_state(time(40), 1).await;
+  let audits = store
+    .list_factory_run_diagnostics(
+      ListFactoryRunDiagnostics::new(run_id(1), FactoryRunDiagnosticKind::Audit, None, 100).unwrap(),
+    )
+    .await
+    .unwrap();
+  sqlx::query("ALTER TABLE factory_audit_links DROP CONSTRAINT reject_test_restore_audit")
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  let recovered = store.recover_restored_factory_state(time(41), 1).await.unwrap();
+  database.cleanup().await;
+  assert!(result.is_err());
+  assert!(
+    audits.items.is_empty(),
+    "a failed restored mutation leaves no Factory audit link"
+  );
+  assert_eq!(
+    (
+      recovered.expired_claims,
+      recovered.requeued_outbox,
+      recovered.expired_retention_claims
+    ),
+    (1, 1, 1),
+    "all original authority and work remain available after the rejected transaction"
+  );
+}

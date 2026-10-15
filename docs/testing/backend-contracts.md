@@ -60,6 +60,423 @@ vocabulary. Apple VF continues to run only the v2
 contract until it can enforce restricted host allowlists, so backend names do
 not stand in for semantic qualification.
 
+### Private controlled-reader transport
+
+The ignored `octacity-execution-microsandbox` test
+`private_channel_reads_an_unmounted_source_without_exposing_it_to_the_guest`
+starts the pinned real VM with `source_visible=false` and networking disabled.
+A test-only Linux ARM64 client refuses readable `/workspace/source/input`, then
+connects to the configured host Unix listener through vsock CID 2, port 5001.
+The host listener reads that unmounted file and returns its bytes. The test
+destroys the execution before asserting the response. Its host socket lives in
+a separate private control directory outside the Job tree and projected roots.
+
+Compile the retained probe on an Apple Silicon host using Clang and the Rust
+toolchain's bundled ELF linker:
+
+```shell
+clang --target=aarch64-unknown-linux-gnu -O2 -ffreestanding -fno-builtin \
+  -fno-stack-protector -c \
+  agent/octacity-execution-microsandbox/tests/fixtures/vsock_probe_aarch64.c \
+  -o /tmp/octacity-vsock-probe.o
+"$(rustc --print sysroot)/lib/rustlib/aarch64-apple-darwin/bin/rust-lld" \
+  -flavor gnu -m aarch64linux -static -e _start \
+  /tmp/octacity-vsock-probe.o -o /tmp/octacity-vsock-probe
+```
+
+Provide the same `OCTACITY_CONTRACT_MICROSANDBOX_*` installation, image, state,
+and work variables used by the real backend contract, plus
+`OCTACITY_CONTRACT_VSOCK_PROBE=/tmp/octacity-vsock-probe`, then run:
+
+```shell
+cargo test -p octacity-execution-microsandbox --test private_tool_channel \
+  private_channel_reads_an_unmounted_source_without_exposing_it_to_the_guest \
+  -- --ignored --exact --nocapture
+```
+
+This is transport and mount-isolation evidence. The listener does not authorize
+tools, and the probe is not a packaged Agent helper. It does not qualify the
+ToolRisk broker, installed executable identity, helper CPU/memory/process
+limits, response accounting, or cancellation and teardown of a production
+helper. The signed controlled-Job preflight guard remains closed until those
+boundaries have their own released evidence.
+
+### Factory runner process ceiling
+
+The ignored `factory_process_limit_bounds_the_live_runner_descendants` contract
+uses a finite Linux ARM64 client that attempts twelve simultaneous children,
+releases their barrier, and reaps them before exiting. With `process_limit=8`,
+the real guest must report a nonzero real UID and at most seven children plus
+its runner. Linux excludes real UID 0 and certain privileged capabilities from
+[`RLIMIT_NPROC`](https://man7.org/linux/man-pages/man2/getrlimit.2.html), so a
+root runner does not provide this ceiling. The Linux counter also includes
+threads, so a released runner/plugin role needs enough declared capacity for
+its threads as well as its subprocesses. A small declared ceiling remains
+enforced; the adapter does not raise it to make a task succeed.
+
+Factory execution selects the numeric owner of the trusted private runtime
+root. The pinned SDK presents private bind files to that same guest UID/GID and
+executes the runner as that user with the pinned SDK's restricted security
+profile. The separate ignored
+`factory_runner_cannot_regain_privileges_through_guest_setuid_executables`
+contract inspects the real guest's kernel `no_new_privs` flag and effective
+capabilities: they must be one and zero respectively. This prevents subsequent
+exec from recovering setuid/file-capability privileges. Host permissions remain
+private; the runtime does not widen them to enable access. Root-owned runtime roots are explicitly
+unsupported until an ownership mapping is qualified. Ordinary Job execution
+retains its existing user and mount ownership.
+
+Compile `tests/fixtures/process_limit_probe_aarch64.c` from the Microsandbox
+crate using the same Clang/ELF linker commands as the transport client above,
+then set `OCTACITY_CONTRACT_PROCESS_LIMIT_PROBE` to its executable and run:
+
+```shell
+cargo test -p octacity-execution-microsandbox --test private_tool_channel \
+  factory_process_limit_bounds_the_live_runner_descendants \
+  -- --ignored --exact --nocapture
+```
+
+This qualifies the runner descendant process ceiling in the selected real
+backend. It does not qualify a separate host reader helper's resource limits,
+CPU/memory limits, aggregate tool response accounting, or the complete ToolRisk
+controlled-Job route.
+
+### Host-only candidate inputs
+
+The ignored `octacity-job` integration test
+`candidate_inputs_remain_host_readable_and_are_absent_from_the_real_guest`
+uses the public `ProtectedInputStager`, `prepare_runner_projection`, released
+Octa runner, and real Microsandbox backend. Its immutable manifest contains a
+public document plus the two candidate source inputs. The host can read both
+source inputs before and after execution. Inside the Linux ARM64 guest, an
+ordinary Octa task reads the public document, cannot modify it, and verifies
+that the bundle, capture manifest, and alternate host staging roots are absent.
+Runner supervision owns the deadline and mandatory VM destruction.
+
+Provision the pinned Microsandbox executable, firmware and immutable image,
+then set `OCTACITY_CONTRACT_MICROSANDBOX_WORK_ROOT`,
+`OCTACITY_CONTRACT_MICROSANDBOX_STATE_ROOT`,
+`OCTACITY_CONTRACT_MICROSANDBOX_EXECUTABLE`,
+`OCTACITY_CONTRACT_MICROSANDBOX_LIBKRUNFW`,
+`OCTACITY_CONTRACT_MICROSANDBOX_IMAGE`, and the verified Linux ARM64 release at
+`OCTACITY_CONTRACT_OCTA_RELEASE_ROOT`. Use the same private `MSB_HOME` as the
+ordinary real-backend contract. Run:
+
+```shell
+cargo test -p octacity-job --test candidate_input_projection \
+  candidate_inputs_remain_host_readable_and_are_absent_from_the_real_guest \
+  -- --ignored --exact --nocapture
+```
+
+The fixture uses binary and JSON canaries to qualify physical projection; it
+does not reconstruct a Git candidate, verify a JobSpec signature, execute a
+model, or qualify a complete Factory pilot. Those boundaries require their
+separate contracts. As a sensitivity check, passing the original complete
+host input root to the backend makes the real guest task fail; the production
+projection passes. This evidence grants no writable or tool authority.
+
+### Standalone protected-reader worker
+
+The public `octacity_runner::verify_standalone_program` installation boundary
+binds a relative entrypoint to its operator-controlled distribution root,
+exact SHA-256 and binary platform without an Octa lock or plugin directory.
+`cargo test -p octacity-runner --test standalone_installation` covers guest
+platform and digest substitution, root escape and a replaceable nested
+directory. Inventorying these bytes does not establish backend qualification;
+the execution owner must revalidate them immediately before starting a helper.
+
+The portable Unix contract invokes the actual `octacity-protected-reader`
+binary built by the `octacity-lifecycle` package:
+
+```shell
+cargo test -p octacity-lifecycle --test protected_reader_process
+```
+
+The supervisor chooses the working directory. One u32 big-endian length frame
+carries strict JSON `{schema_version: 1, relative_path, max_bytes}`; the worker
+cannot choose another root, executable or command. Framing is bounded before
+allocation, portable paths use the shared validator, and physical reads use the
+retained no-follow directory primitive. Replies contain one status byte
+(`0` success, `1` refusal), a u32 big-endian payload length and raw bounded bytes.
+The test verifies exact bytes, root escape and overflow refusal, unknown-field
+rejection and path redaction in diagnostics.
+
+This host process test does not qualify CPU, memory, process-tree accounting,
+mount isolation, lease authorization, helper inventory or teardown in a VM.
+Those remain separate conditions for enabling controlled Jobs. No helper is
+selected automatically, and the controlled-Job preflight guard remains closed.
+
+The separate ignored `standalone_reader_uses_its_actual_entrypoint_without_an_octa_distribution`
+contract runs the exact Linux ARM64 worker through the real Microsandbox engine.
+Its `ExecutionProgram` has no Octa plugin projection. The worker reads its
+readonly source with networking disabled and returns the independently specified
+19-byte payload. The operator must supply `OCTACITY_CONTRACT_PROTECTED_READER`
+in addition to the pinned Microsandbox environment variables described below.
+This qualifies that process and transport boundary, not a complete controlled
+Job, installed broker/normalizer, combined resource owner or released pilot.
+
+The ignored Agent integration `confined_reader` exercises the consumed action
+through `ConfinedProtectedReadBackend` with the exact inventoried Linux ARM64
+binary, reserved CPU/memory/disk/process allocation and one original deadline.
+It verifies the 15-byte admitted source result, cancellation of a real worker
+blocked before its input frame, and caller-future deletion. The cancellation
+and deletion tests retain the actual guest input stream and assert successful
+physical kill and destruction before owner shutdown completes; a caller timeout
+cannot count as teardown. Set `OCTACITY_CONTRACT_PROTECTED_READER_SHA256` to the
+independently verified artifact digest as well as the pinned VM environment.
+
+```shell
+cargo test -p octacity-agent --test confined_reader -- --ignored
+```
+
+Microsandbox metrics can become available after the VM is ready. Accounting
+waits for a verified SDK metrics report at the configured sampling cadence,
+within the original execution deadline. A missing report never produces zero
+usage; identity/catalog errors and deadline expiry remain accounting failures.
+The completed-reader usage contract runs two sequential real workers and
+compares their separately observed backend samples with the cumulative ledger.
+CPU, I/O and worker elapsed time accumulate with overflow rejection; serialized
+memory/disk peaks retain the larger sample, and destroyed workers have zero
+current memory. Job wall time is still the original main execution window.
+The main-owner contract starts another real VM with the narrowed, hidden-source
+allocation and keeps its input open. Killing its attached `RunningExecution`
+awaits the blocked reader's actual kill and destruction, rather than relying on
+caller deletion or the helper's duration limit.
+The neutral `RunningExecution::sample_final_usage` boundary preserves ordinary
+backend sampling while allowing a composed owner to seal and drain auxiliary
+work before sampling the unreaped main process. The final-owner contract checks
+both actual VM samples: CPU and I/O accumulate, distinct writable roots add,
+main wall time remains unchanged, and new reads are refused after sealing.
+Summed per-part memory/disk peaks are conservative accounting bounds; they do
+not claim simultaneously observed whole-Job peaks.
+These terminal component contracts do not establish live combined main/helper
+accounting, runner integration, signed Job composition or released controlled-Job
+qualification.
+
+`owned_writable_disk_excludes_readonly_inputs_and_other_execution_roots`
+qualifies the explicit `OwnedWritableMounts` accounting scope. A 16 MiB worker
+allocation contains 2 MiB of scratch and 2 MiB of output; separate 32 MiB readonly
+source and 32 MiB sibling state must neither prevent launch nor appear in its
+disk usage. The real worker completes and reports exactly 4 MiB. Unpartitioned
+executions retain `WholeJob` accounting. Both parts of a validated Factory
+partition request the explicit owned scope; combined Job accounting and teardown
+remain separate qualification requirements. The physical test fixture uses
+unique execution identities so concurrent contracts cannot share a sandbox.
+
+Readonly staging has a separate bound: the signed protected-input manifest
+allows at most 1 GiB in aggregate, and staging verifies each exact size and
+digest. Excluding those immutable bytes from one participant's writable share
+does not remove that staging limit. Total materialized repository storage and
+combined Job usage still require their own accounting checks.
+
+```shell
+cargo test -p octacity-execution-microsandbox --test private_tool_channel \
+  -- --ignored
+```
+
+### Native readonly candidate composition
+
+The ignored `octacity-server` integration test
+`default_native_runtime_materializes_one_exact_readonly_candidate_and_recovers_its_inputs`
+uses the default `ServerRuntime`, an operator-owned version 1 profile file,
+PostgreSQL, and S3-compatible object storage. A fixture first publishes retained
+producer facts through ordinary Build admission, lease-authorized Artifact
+upload, completion, and fenced Factory journal ports. The default owner then
+selects that exact persisted candidate for a configured readonly consumer.
+Its ordinary managed Job retains four compiler documents and two source inputs;
+the binary bundle is absent from the compiler document bodies. Restart preserves
+the Build identity and frozen inputs, and independently retained candidate proof
+remains valid. The selected capture-tool pin comes from the private installed
+profile, never from a model response or the capture manifest.
+
+With disposable services, set `OCTACITY_POSTGRES_URL`,
+`OCTACITY_MINIO_ENDPOINT`, `OCTACITY_MINIO_ACCESS_KEY`, and
+`OCTACITY_MINIO_SECRET_KEY`; provision the `octacity-artifacts` bucket. Run:
+
+```shell
+cargo test -p octacity-server --test factory_native_candidate \
+  default_native_runtime_materializes_one_exact_readonly_candidate_and_recovers_its_inputs \
+  -- --ignored --exact --nocapture
+```
+
+This is a server composition contract. Its precompleted producer and binary
+canary do not qualify real Git capture or restoration, Agent execution, model
+completion, writable roles, ToolRisk control, or a full Factory pilot. The
+consumer retains readonly source mounts and no write, capture, or tool authority.
+
+### Scoped guest writes and trusted Git capture
+
+The ignored `octacity-job` test
+`real_guest_change_is_confined_and_roundtrips_through_trusted_git` checks a
+component boundary using the public `FactoryExecutionLayout`, runner
+`supervise`, `GitChangeSetCapturer`, and `GitChangeSetMaterializer`. A finite
+ordinary Octa task changes one file inside an explicitly writable source
+prefix in the real Microsandbox guest. The remaining source tree, Git metadata,
+and protected document must remain readonly. After mandatory VM teardown,
+operator-pinned host Git captures one bounded change and reconstructs its exact
+candidate revision in a fresh private repository; the changed file has a known
+independent content digest.
+
+Use the same pinned Microsandbox and Linux ARM64 Octa variables as the other
+physical component contracts, and set `OCTACITY_CONTRACT_GIT_EXECUTABLE` to an
+absolute trusted Git executable. Run:
+
+```shell
+cargo test -p octacity-job --test guest_candidate_capture \
+  real_guest_change_is_confined_and_roundtrips_through_trusted_git \
+  -- --ignored --exact --nocapture
+```
+
+The fixture allows 64 runner/plugin processes independently of the separate
+exact PID-limit-8 contract. It changes no signed Job or installed profile
+limits. This direct component test does not exercise JobSpec signature checks,
+the complete `JobExecutor` capture handoff, Artifact publication, model or
+protected-tool execution, native author installation, or a full Factory pilot.
+Those gates remain separate. As a sensitivity check, replacing the readonly
+source plus explicit writable prefix with an unrestricted writable source mount
+makes the real guest mutate the neighbouring file, and this test fails. The
+bounded projection passes without a production permission change.
+
+### Installed author capture policy
+
+The portable Application contract checks ordinary Job assembly separately from
+physical backend qualification. An installed `FactoryCodexCapturePolicy` binds
+the trusted producer pin and deterministic capture instruction into the task
+digest. The admitted intent must declare that exact capture implementation and
+source path scope before protected documents are published. Candidate consumer
+pins remain separate. Tool-free author assembly selects the coding credential,
+retains four compiler inputs, and signs the bounded capture instruction; it
+grants no protected-tool authority. Existing readonly profiles keep their task
+identities with `capture: None`.
+
+```shell
+cargo test -p octacity-server-application --test manual_trigger \
+  codex_capture::installed_codex_author_materializes_only_the_explicit_trusted_capture_scope_without_tools \
+  -- --exact
+```
+
+This portable assembly test does not by itself qualify an actual execution.
+The separate native profile contract accepts bounded capture with the coding
+credential purpose and exact producer outputs; readonly profiles retain their
+independent evaluation credential and mount restrictions. Placement requires a
+workspace anchor capability on the exact backend route, and unsupported routes
+remain ineligible.
+
+The separate portable observer contracts retain the verified public model
+result alongside capture bundle/manifest records, without interpreting binary
+capture data as model text. Capture metadata is checked against current frozen
+source scope and the installed empty-change and direct-path-count policies; retained recovery also
+rejects direct changes outside that source scope. These contracts use published
+Artifact lifecycle records and independently pinned bytes, and do not prove the
+Git contents or a complete signed author execution.
+
+```shell
+cargo test -p octacity-server-application --lib factory_codex_output_source_tests
+cargo test -p octacity-server-application --lib factory_node_capture_tests
+```
+
+### Empty parent workspace projection
+
+A signed managed task may select the fixed `/workspace` parent workspace. The
+Agent projects an empty read-only hierarchy there, then separately mounts the
+admitted Source, Scratch and Output roots. It never mounts the host Job parent.
+Source remains read-only except for approved directory overlays; immutable
+protected inputs retain their separate read-only path, and Source2 is absent.
+The backend capability defaults to false: providers without this qualified
+projection refuse it before Job inspection or resource creation.
+
+```shell
+cargo test -p octacity-job --test guest_candidate_capture -- --ignored
+cargo test -p octacity-execution-oci --lib
+```
+
+The explicit Microsandbox component contract changes a selected source file in
+a real guest and round-trips that change through trusted Git capture and restore.
+It also checks the inaccessible private Source2 sibling and refused source,
+Git-metadata and protected-input writes. This qualifies the mount boundary, not
+a remote model, installed author profile or complete Factory pilot. Octa and its
+released plugin binaries are unchanged.
+
+### Signed author Job on the released plugin
+
+```shell
+cargo test -p octacity-release-harness --test factory_author_job -- --ignored
+```
+
+The explicit contract requires pinned Microsandbox, firmware and image,
+released Linux ARM Octa, an actual Source Git plugin and the operator-selected
+Git executable. It compiles and verifies a signed managed Job, invokes the
+released CodeX plugin, then captures the selected source change through trusted
+Git. The operator-installed finite CLI replaces the remote model process. It
+requires the private credential in its normal environment, writes one selected
+file and returns the frozen Boolean; the contract does not qualify a remote
+provider or real model behavior. Events, terminal results and every retained
+CodeX Output file are checked for the private credential canary. Cleanup occurs
+before assertions, including the publication-root and capture checks.
+
+The same signed contract reads hostile repository instructions as data and runs
+finite filesystem attacks from the released plugin's normal CLI process. Its
+retained `output/security-probes.json` records each result explicitly: writes
+to a source sibling, Git metadata, an escaping repository symlink and the
+protected Octafile; reads of private Source2 and another host credential; and
+creation of an undeclared workspace sibling must all be `denied`. The protected
+Octafile must already be readable, otherwise the probe records `absent` and
+the contract fails. Source2 contains a known host-readable canary before the
+guest starts. The other credential is also created and checked on the host;
+neither its bytes nor its private path may enter public output or diagnostics.
+The admitted source edit and its trusted Git capture must still succeed.
+
+The portable CLI fixture contract deliberately runs the same probes without a
+sandbox and requires the writable/readable attacks to report `allowed`. It also
+checks that repository shell substitutions never execute. This sensitivity
+check prevents canned denial reports from qualifying the physical boundary:
+
+```shell
+python3 -m unittest discover -s tools/tests -p test_factory_codex_author_fixture.py
+```
+
+These are deterministic adversarial process and mount contracts. They qualify
+the Agent boundary when an untrusted process attempts those operations, without
+claiming that a remote model resists natural-language prompt injection.
+
+| Threat boundary | Executable evidence | Scope |
+| --- | --- | --- |
+| Repository prompt and path/mount escape | `factory_author_job` plus the CLI fixture contract above | Signed Job, released plugin, real Microsandbox and trusted capture |
+| Private candidate/context files | `candidate_input_projection`, `guest_candidate_capture` | Real guest projection with known host canaries |
+| Private variable crossing or task replacement | Runner `private_variables`; Job `execution_v2::installed_private_credentials` and `missing_installed_factory_credentials` | Portable binding, digest revalidation, refusal ordering and redaction |
+| Executable/platform/root substitution | Runner `standalone_installation` and installation tests | Portable exact identity and filesystem ownership checks |
+| Unqualified execution or Host fallback | Job `execution_v2::reports_an_unqualified_mode_without_falling_back_to_a_legacy_backend` and `never_falls_back_to_host_for_a_factory_job` | Portable exact route refusal before execution |
+
+Passing one row does not qualify the other boundaries or a complete Factory
+pilot. The portable refusal tests do not require a privileged runtime; the
+explicit real-backend tests still require their pinned installation.
+
+### Private credentials bound to immutable tasks
+
+The portable Job/Runner contracts install a logical credential profile as opaque,
+zeroing named values. The profile identity never selects a repository secrets
+file. An absent installation stops before Artifact download, Source acquisition
+or backend start. Only the generated Octafile's exact root `required: true,
+secret: true` declarations may receive these values; public variables, includes,
+task dependencies and nested variable scopes cannot acquire this authority.
+
+Runner independently reopens the protected Octafile and verifies its frozen
+hash, size and selected tasks immediately before backend start. Changed bytes
+and public/private variable collisions stop before that boundary. Values exist
+only in the transient runner command, are erased after writing, and extend
+redaction before any runner event or result is forwarded. These APIs accept the
+closed compiler-generated task shape, rather than general repository Octafiles.
+
+```shell
+cargo test -p octacity-runner --test private_variables
+cargo test -p octacity-job --lib tests::execution_v2::installed_private_credentials
+cargo test -p octacity-job --lib tests::execution_v2::missing_installed_factory_credentials
+```
+
+These portable contracts qualify binding and refusal/redaction ordering. Their
+recording backend does not qualify provider credentials, the actual released
+model/plugin process, native author installation or a complete Factory pilot.
+
 ### Release-matrix cadence and runner evidence
 
 The workflow uses the following fixed cadence:
@@ -669,3 +1086,1026 @@ cargo llvm-cov report --summary-only \
 Use the corresponding exact Native, Apple VF, or Microsandbox test name on workers for
 those backends. This keeps production adapters in the coverage denominator and
 measures them with their actual kernel/runtime boundary rather than mocks.
+
+## Portable review planning through the common node journal
+
+Run `cargo test -p octacity-server-application --lib factory_review_planning_tests`.
+The two-node contract publishes a trusted Evidence Manifest, projects its complete
+structured value into a configured planning action, and retains one immutable
+Evaluation Plan. Restart returns the original accepted record. The installed
+profile binds criteria, evaluator capabilities, data-handling policy, budgets,
+action and output contracts by content digest; logical node names carry no authority.
+
+The planner requires an exact persisted input, one selected source-record digest,
+and matching code-owned evidence facts. Identical JSON without those facts and
+partial projections fail closed. Unavailable required capability produces the
+configured escalation without evaluator I/O. Plan authority ends by the earliest
+evidence freshness boundary and the original deadline. Trusted time is checked
+after snapshot reads and before returning a result; elapsed time and structured
+output bytes are charged within the frozen ceilings.
+
+These portable tests use the existing authoritative in-memory journal contract.
+They qualify the planning action, persistence and replay semantics; production
+evidence construction, native PostgreSQL composition and evaluator execution
+require their own integration evidence.
+
+## Deterministic Decision from a selected completed review
+
+Run `cargo test -p octacity-server-application --lib factory_evaluation_action_tests`.
+The configured journey publishes an Evidence Manifest, Evaluation Plan and typed
+Assessment, then projects their complete values into the installed Decision action:
+`{evidence, plan, assessments, signal_receipts}`. Each value must match an explicitly
+selected committed record, its digest and its trusted discovery facts. Copying a
+Plan into configuration or supplying Assessment-shaped model JSON grants no authority.
+
+The action derives the completed branch join from the original persisted reviewer
+inputs, Contexts and Node Attempts. It accepts no caller-supplied progress and
+cannot manufacture a missing required result. The installed profile binds the
+Decision policy version/digest and all five disposition-to-outcome contracts.
+The existing pure Decision Engine selects the typed disposition; the configured
+Flow owns subsequent routing. The common fenced journal retains the complete
+Decision and its safe discovery projection, and restart returns that same record.
+Evidence freshness, the Plan deadline, the Node deadline and the current authority
+window all remain upper bounds; result bytes and elapsed time consume the Node budget.
+Native `evaluation_decision_executor` and FILE `evaluation_decisions` install
+the same action. The runtime contracts reject policy or output-contract changes
+without repinning the identity; a metadata-only parser cannot silently omit an
+executor. Run the Server library `factory_evaluation_runtime_tests` filter for
+these composition contracts.
+
+These contracts qualify metadata composition and replay using the authoritative
+in-memory journal. They do not establish real evaluator execution, delivery or
+deployment; those effects require the packaged PostgreSQL-backed pilot.
+
+The generic `flow_tagged_schema_tests` contract preserves externally tagged JSON,
+checks unit/payload alternatives, bounds, restoration, structural compatibility
+and template alias expansion. The CodeX compiler and public OpenAPI tests verify
+the same closed alternatives at their respective boundaries. This permits typed
+non-accepting Decision reasons without changing historical Decision serialization
+or widening graph identifiers. Operator Console tests cover authoring, value entry,
+compatibility and own-property handling for names such as `__proto__`.
+
+## Installed GitHub API trust over a real TLS peer
+
+Run `cargo test --locked -p octacity-github --lib`. The HTTPS tests load the
+private provider TOML through the public plugin API and observe an exact existing
+review over real TLS. Optional `api_root_certificates_pem` accepts at most eight
+individual PEM certificates, at most 16 KiB each, merged with system API trust.
+The exact configuration bytes remain the provider identity. Unknown trust,
+hostname mismatch, malformed/oversized/bundled entries and an unrepinned trust
+change fail closed. HTTP redirects, automatic retries, credential scope and
+Git's independent TLS/executable configuration retain their existing boundaries.
+
+These portable tests qualify the installed API transport. They do not prove
+packaged delivery, remote Git TLS or an actual Factory publication; those require
+the corresponding released-product fixture and real observed side effects.
+
+## Retained candidate delivery inputs
+
+The Native delivery boundary keeps the composite captured-candidate identity
+separate from the SHA-256 of the manifest file. Delivery protocol v1 retains
+its existing `changeset_digest` wire meaning: the manifest file SHA-256. Before
+staging either private connector input, the server verifies the canonical,
+provider-neutral capture manifest against the composite candidate digest,
+candidate revision, actual retained bundle hash and size, and original Work
+base. A later coding cycle may have a different immediate parent while retaining
+that same original base. Substituted inputs produce no staged files; exact
+replay preserves the original private files and their permissions.
+
+```shell
+cargo test --locked --jobs 2 -p octacity-server --lib runtime::delivery
+cargo test --locked --jobs 2 -p octacity-protocol --lib delivery
+```
+
+These contracts qualify the server handoff and unchanged v1 wire contract.
+They do not establish an external publication.
+
+## Durable HTTPS review target
+
+`factory_delivery_target` exercises the pilot's separate HTTPS forge through
+actual requests. Ref lookups read the test-owned bare Git repository, including
+a candidate branch created by a real push. Creating a review atomically stores
+its supplied metadata before optionally dropping the HTTP response. Read-only
+observation returns that review and the actual Git revisions; target restart
+preserves the review without another POST. Request sizes, accepted routes and
+credentials are bounded. The target never creates a Factory Delivery receipt.
+
+```shell
+cargo test --locked -p octacity-release-harness --test factory_delivery_target
+```
+
+The ignored `installed_github_process_observes_actual_https_git_absence` case
+also invokes an explicitly built native provider executable with an empty
+inherited environment and private installed configuration. It observes two real
+HTTPS Git-reference reads, each carrying exactly one configured
+`x-github-api-version` header, first directly and then through the common
+`DeliveryAdapterRegistry` process host. Both observations prove that absence
+creates neither a review nor a POST. The fixture continues to reject duplicate headers. Set
+`OCTACITY_FACTORY_GITHUB_PLUGIN` to the exact executable path and
+`OCTACITY_CONTRACT_GIT_EXECUTABLE` to the pinned system Git executable:
+
+```shell
+cargo test --locked -p octacity-release-harness --test factory_delivery_target \
+  installed_github_process_observes_actual_https_git_absence -- --ignored --exact
+```
+
+This qualifies the external pilot fixture. Packaged GitHub plugin publication,
+its observe-before-retry behavior and the Factory delivery owner still require
+the corresponding released-product journey. Test-owned local Git transport
+also does not qualify remote Git TLS.
+
+## Packaged Server/JEV shadow and unknown-response slice
+
+`factory_pilot_signal` starts the checksummed Server binary against a disposable
+PostgreSQL database and installs the real JEV adapter from private operator
+files. Its local HTTPS fixture supplies an explicit private CA; normal hostname
+verification remains enabled. The fixture is an external provider boundary and
+does not seed receipts, Factory history or execution effects.
+
+Use the released-product environment described above: the verified
+`OCTACITY_RELEASE_SERVER_ROOT`, `OCTACITY_RELEASE_AGENT_ROOT` and
+`OCTACITY_CONTRACT_OCTA_RELEASE_ROOT`, the selected `OCTACITY_RELEASE_BACKEND`
+and its contract variables, plus `OCTACITY_POSTGRES_URL`,
+`OCTACITY_MINIO_ENDPOINT`, `OCTACITY_MINIO_ACCESS_KEY` and
+`OCTACITY_MINIO_SECRET_KEY`. PostgreSQL must allow creation and removal of
+disposable databases. The Server bundle must contain the current adapter build.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot_signal \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The successful case publishes its Flow, configuration and manual Work through
+REST. An actual shadow recommendation disagrees with the declared baseline,
+while deterministic consumption retains that baseline. Canonical request and
+receipt integrity, exact persisted bytes and public diagnostics survive Server
+restart without another POST. Only the declared public state reaches JEV;
+unselected Work metadata remains private.
+
+The lost-response case accepts one HTTPS POST and closes the connection. It
+retains an unresolved reservation and publishes no terminal receipt. After
+restart, the test waits for a persisted successor claim, drains the Server's
+in-flight worker through graceful shutdown, and verifies unchanged reservation
+bytes, no manufactured receipt and exactly one total POST. Ordinary readiness
+remains independent. This recovery never guesses JEV's lost opaque request ID.
+
+Provider-neutral recovery readiness is covered without remote calls by
+`cargo test --locked -p octacity-server --lib
+signal_connector_readiness_tracks_recovery_without_reevaluating_the_request`.
+After a timeout, only an exact recovered result restores availability; absent
+observations preserve the prior state, while invalid results, failures and
+interrupted lookups cannot establish health. Recovery never invokes `evaluate`.
+This contract does not add receipt lookup support to adapters that lack it.
+
+Both cases passed against the current packaged Server in 66.13 seconds:
+`/tmp/octacity-165-current-packaged-signal-final.log`.
+
+This is a Signal-only composition test. Its Work artifact references are
+explicitly unselected, no Agent process runs, and it does not qualify retained
+artifact reads, Git transport, model execution, tool-risk execution or the full
+nested-flow pilot. Those boundaries require their own real execution tests.
+
+## Packaged nested model execution and restart
+
+`factory_pilot` uses the same released-product environment and requires
+`OCTACITY_FACTORY_PILOT_CLI` to select the native Linux ARM64 fixture executable.
+Build `fixtures/factory/pilot-cli.rs` with a pinned matching Rust toolchain; it
+embeds `pilot-cli.mjs` and executes the qualified image's `/usr/local/bin/node`.
+The fixture accepts a bounded installed JSON program. It does not dispatch on
+Flow names, node names or model roles. Changes to the embedded program require
+rebuilding the executable; its actual SHA-256 is pinned in the installed profile.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_factory_pilot_runs_real_jobs_before_work_admission \
+  -- --exact --ignored --nocapture --test-threads=1
+```
+
+The test creates a disposable PostgreSQL database, publishes ordinary resources
+through REST, enrolls the packaged Agent and runs the released Git source plugin
+and Octa in the qualified Microsandbox image. A private operator-installed Git
+mirror supplies the exact local fixture revision. Task and acceptance references
+come from the resulting published artifacts. No completed Job, Flow record,
+model result or receipt is inserted directly into the database.
+
+The second phase installs a finite readonly model profile and admits a nested
+Flow through REST. The real model Job must produce the three released Codex
+records; the Server verifies their retained bytes, provenance and structured
+result before the Flow reaches its declared operator gate. Restarting both
+processes preserves identical node records, Build references and call receipts.
+An operator response then completes the Flow without another model
+Build. Restart waits allow the installed durable claim lifetime plus acquisition
+and completion time; polling does not assume that an old claim disappears at
+process shutdown.
+
+This slice verifies native model execution and restart continuity. It does not
+yet qualify protected tool reads, private-test publication, independent candidate
+consumers or policy-governed promotion. The complete configurable journey in
+task 16.5 requires those additional real execution boundaries.
+
+## Signed controlled execution
+
+`factory_controlled_job` exercises a signed v3 Job with the released Codex plugin
+and Octa, an actual native finite CLI, and separately confined reader executions.
+Only the remote model and coordinator transport are contract fixtures. The test
+uses no Flow or node labels to select executable behavior.
+
+Provide the Microsandbox contract environment plus
+`OCTACITY_FACTORY_PILOT_CLI`, `OCTACITY_CONTRACT_PROTECTED_READER`,
+`OCTACITY_CONTRACT_CODEX_READER`, `OCTACITY_RELEASE_AGENT_ROOT` and
+`OCTACITY_CONTRACT_GIT_EXECUTABLE`. The reader and bridge must be actual immutable
+Linux guest executables. The Agent bundle supplies the released Git source
+plugin. Use dedicated short private work/state roots; Unix runtime socket limits
+also apply to Microsandbox's derived paths. Import the exact qualified image into
+that state root's `microsandbox` home before running; another installation's image
+cache does not satisfy this prerequisite.
+
+This direct signed-Job fixture passes a local repository to SourceGit. Supply
+a disposable Agent bundle whose source-plugin settings explicitly allow local
+file transport; the production bundle keeps it disabled. The packaged pilot
+instead installs its own private Git mirror transport.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_controlled_job \
+  -- --ignored --nocapture --test-threads=1
+```
+
+The immutable command grant permits exactly one public file. The main model VM
+cannot read Source directly; its structured result must equal the bytes returned
+through the neutral Agent channel and pinned reader. The provider-local hook
+first sends an authorization-only request and waits for a fenced disposition;
+it receives no file bytes and reserves no response quota. The subsequent MCP
+call obtains current authorization for the same canonical proposal immediately
+before its single physical read. No permission token is cached or transferred
+to the workload. Both exchanges share the original execution scope, while only
+the physical read consumes the signed response quota and helper allocation.
+Helper executions are serialized. The portable `codex_reader_process` contract
+checks hook-to-MCP dispatch and refusal after a successful hook; the dispatcher
+contract uses exactly one response's byte allocation and rejects another read.
+
+Portable regressions are `cargo test --locked -p octacity-lifecycle --test
+codex_reader_process` and `cargo test --locked -p octacity-lifecycle --lib
+hook_authorization_preserves_the_single_read_response_allowance`.
+
+Assertions cover the exact current registration/lease/fence, distinct request
+identities, exact structured result, absence of the unselected canary in retained
+outputs/events, and removal of the private endpoint and directory. Installation
+pins are revalidated before execution. The ordinary Agent component and lifecycle
+tests separately cover explicit bridge installation, safe substitution failure,
+and current-lease handoff without starting controlled work for ordinary Jobs.
+
+The normal Agent advertises `controlled_tools` only for the exact compatible
+route after both reader programs and the private channel address are verified.
+Older inventories default to unqualified; a flag on another backend cannot
+satisfy placement. An unusably long Unix channel path fails startup before
+registration, with a diagnostic that omits the private path.
+
+This tracer qualifies the released execution boundary. It does not start a
+packaged Agent daemon against the real Server authorization endpoint or establish
+the complete protected-test/candidate/promotion journey required by task 16.5.
+
+## Protected-test author completion
+
+The application contracts `factory_protected_test_publication_tests` and
+`protected_author_completion_resolves_the_actual_signed_job_before_publication`
+exercise publication before successful Job settlement. The installed canonical
+policy pins private logical outputs, classes, paths, coverage and retention.
+The Server derives inventory entries from actual published file identities and
+publishes the closed `ProtectedTestHandoff` under the admitted outcome schema;
+no command or model predicts future Artifact IDs.
+
+The completion finalizer resolves the actual Job, immutable Build origin,
+current Attempt, persisted accepted ancestry and exact compiled command program.
+A matching origin alone does not qualify a substituted Job. Current Lease
+fencing remains required for every publication, including a replay whose bytes
+already exist. A terminal completion acknowledgement performs no new writes and
+returns to the ordinary completion ledger. Private artifacts remain opaque in
+the common Flow result; only the schema-validated public Report carries data.
+
+These application tests use real domain contracts and in-memory authoritative
+ports. They do not replace the PostgreSQL-backed packaged author/candidate/
+promotion journey required by task 16.5.
+
+The packaged author boundary is covered separately by
+`packaged_protected_author_completes_with_actual_private_file_identities` in
+`factory_pilot`. Run that ignored case with the same release, PostgreSQL,
+object-store and Microsandbox environment as the nested pilot above. Its
+installed static command publishes an actual private file; the normal Server
+completion finalizer derives the inventory and closed public handoff. The test
+reads the exact private bytes through authorized Artifact access, checks that
+public Flow data exposes no private contents or paths, and restarts Server and
+Agent without changing retained records or admitting another Build. The command
+explicitly pins the full approved Octa plugin inventory, while executable, tool,
+network and credential grants remain empty. Candidate execution, independent
+verification and promotion remain separate pilot steps.
+
+
+## Packaged controlled tool-risk execution
+
+The second `factory_pilot` case adds the actual packaged Agent composition to
+that released execution proof. It uses the same PostgreSQL and object-store
+contract environment, immutable Linux ARM64 model fixture and qualified
+Microsandbox image. Also supply `OCTACITY_CONTRACT_PROTECTED_READER` and
+`OCTACITY_CONTRACT_CODEX_READER` as separately pinned native Linux guest programs.
+The fixture installs them outside writable Job and credential roots. Short
+private backend state roots remain necessary for the control channel and guest
+runtime sockets.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_factory_tool_risk_job_reads_only_through_its_actual_agent_lease \
+  -- --exact --ignored --nocapture --test-threads=1
+```
+
+A real ordinary bootstrap Job publishes both Work inputs. A separate installed
+ToolReasoning profile, File catalog and current Agent then execute one nested
+model Job. Registration must advertise `controlled_tools` on the exact selected
+Microsandbox route. The signed command permits one existing public file; the
+model VM must be unable to open it directly. Its retained structured result must
+instead equal `facts`, read through the blocking hook, Agent-owned channel and
+confined helper.
+
+The installed JEV connector reaches a finite HTTPS wire fixture with a private
+CA and a dedicated Server-only credential. The authorization-only hook and the
+MCP read use the same canonical proposal, reusing one actual POST and one
+durable Shadow receipt while performing only one physical read.
+The test verifies receipt integrity and deterministic Allow consumption, with
+only the configured redacted state reaching the connector. Retained outputs
+must contain none of the independent model, provider or unselected Source
+canaries. No completed Job, model result, receipt or Flow record is inserted by
+the fixture.
+
+Both controlled execution contracts now allow exactly the five bytes in `facts`
+as their per-call and total response allocation. The packaged ToolRisk contract
+also permits only one unique assessment. This prevents a duplicate physical read
+from hiding behind a larger response allocation or provider-call allowance.
+
+Restarting the packaged Server and Agent preserves the exact completed node,
+Build lineage and call receipts; an operator response then completes the nested
+Flow without another model Job. This qualifies the normal daemon's controlled
+execution and native tool-risk authorization path. Protected-test publication,
+independent candidate consumers and promotion require their own pilot slices.
+
+## Trusted capture observation publication
+
+The optional signed capture observation declares an arbitrary bounded logical
+Report name and immutable schema reference. After the trusted Git commit, the
+Agent derives a closed four-field record from the actual capture manifest:
+`candidate_revision`, `candidate_digest`, `input_digest` and `fresh_until`.
+The original signed Factory input digest and execution deadline supply the last
+two fields. The model's ordinary primary result remains separate. Logical names
+never select filesystem paths; the trusted producer owns the private file.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-changeset --lib \
+  produces_closed_capture_observations_from_the_actual_trusted_commit
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-job --lib \
+  managed_capture_binds_observations_to_signed_input_and_original_deadline
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-lifecycle --lib \
+  trusted_capture_observation_is_a_schema_pinned_report_at_the_actual_freeze_boundary
+```
+
+The Lifecycle contract runs real Git capture, the production capture-output
+adapter, `OutputPublisher::freeze` and actual HTTP PUT uploads. A signed zero
+Report allowance must reject publication; one Report allowance retains the
+exact logical name, schema identity, trusted producer, byte count and digest.
+The record contains no candidate file contents or names. On the Server,
+`capture_observations_require_the_exact_installed_report_contract_without_model_deliverables`
+checks the exact declared Report kind, registered schema, capture tool and plugin.
+`capture_observer_exposes_only_independently_verified_candidate_report_data` and
+`capture_observer_rejects_schema_valid_but_substituted_candidate_facts` exercise
+the installed output source against ordinary Job journals and retained Artifact
+bytes. The source independently verifies the Git manifest before comparing all
+four fields with the actual candidate, signed input and original deadline. A
+report cannot extend actual retention. Bundle and manifest Artifacts remain
+opaque; only the closed verified Report becomes Flow data. Ordinary raw Report
+uploads use `application/octet-stream`; the exact pinned report format and
+schema still determine JSON interpretation, without a media conversion.
+
+Protected input transfer also preserves the signed logical media type when the
+same immutable bytes were uploaded with generic transport metadata. The public
+`protected_download_preserves_signed_logical_media_over_generic_upload_transport`
+contract checks authorized logical metadata and rejects forged media, SHA-256
+and size. The ignored S3 contract
+`s3_download_honors_declared_logical_media_for_exact_generic_transport_bytes`
+uploads real bytes to the configured MinIO instance, downloads through the
+presigned capability and verifies both the logical Content-Type and exact body.
+Run it with `cargo test --locked -p octacity-artifact-s3 --test minio -- --ignored`.
+The response metadata changes neither stored bytes nor immutable integrity,
+ownership, retention or Lease checks. This qualifies transfer; the complete
+packaged validation journey has its own acceptance test.
+
+The capture Build adapter publishes the independently verified `CandidateSubject`
+as discovery only after successful completion. This lets declared downstream
+Context inputs select the actual candidate without interpreting arbitrary model
+JSON. The native Codex binding selects capture or ordinary observation by the
+complete installed profile; readonly and capture profiles may share one CLI.
+The existing `configured_capture_executor_returns_the_verified_manifest_through_the_common_node_contract`
+contract checks discovery against the independently verified capture subject.
+
+Run these Server application contracts with `cargo test --locked -p octacity-server-application --lib capture_observer_` and the exact compiler test
+name above. These checks qualify the producer, publication and independent
+acceptance boundaries. The complete PostgreSQL-backed packaged candidate
+journey remains a separate pilot requirement.
+
+## Packaged private-test author qualification
+
+`packaged_protected_author_completes_with_actual_private_file_identities` uses
+the same explicit packaged Server/Agent, PostgreSQL, object-storage, released
+Octa and Microsandbox environment as the packaged pilot above:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_protected_author_completes_with_actual_private_file_identities \
+  -- --ignored --exact --nocapture
+```
+
+A configured accepted Gate precedes an installed static Reasoning command.
+The real Agent publishes one private file; the lease-bound Server finalizer
+derives the inventory and public handoff from its actual published identity
+before ordinary Job success. The common Flow completes. The test checks the
+retained file bytes, opaque inventory metadata and closed public payload, then
+restarts both packaged processes and compares the persisted records, Build
+lineage and publications. It creates no synthetic Agent outputs or receipts.
+
+The command explicitly approves the complete installed plugin inventory while
+granting no Source, external executable, network, secret or tool authority.
+This qualifies author publication and restart durability. Its finite private
+file is an opacity fixture; executing protected checks against a reconstructed
+candidate and the full author-to-delivery journey require separate integration
+coverage.
+
+## Packaged original-test candidate validation
+
+With the same explicit packaged environment, run:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_original_private_tests_validate_the_real_captured_candidate \
+  -- --ignored --exact --nocapture
+```
+
+The actual author publishes a private JSON assertion and the Server derives its
+inventory from the published file identity. A separate ordinary CodeX Job writes
+the approved Source file; trusted Git capture freezes its real candidate and
+publishes independently verified candidate facts. The validation Job restores
+that exact candidate read-only and runs the original retained assertion from the
+original inventory. Its primary report and closed facts must bind the same
+inventory, candidate revision, candidate digest, covered class and report digest.
+The common Flow completes, then restarting Server and Agent must preserve the
+exact records, Build lineage and publications without repeating those Jobs.
+
+The bootstrap and all three role Jobs execute through the packaged Agent and
+qualified Microsandbox backend. The model process is an explicit finite adapter
+fixture; the static validator reads actual candidate and private-file bytes.
+No successful Job, Artifact identity, report, capture or completion receipt is
+inserted by the test. This qualifies original-test validation and durability;
+separate-Agent verification, typed criterion review, delivery and promotion
+remain separate parts of the complete pilot.
+
+## Packaged independent candidate verifier
+
+With `OCTACITY_FACTORY_VERIFIER_CLI` explicitly pointing to the separately pinned
+finite CLI that supports bounded `expected_text` checks, run:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_separate_agent_verifies_only_the_explicit_nested_candidate \
+  -- --ignored --exact --nocapture
+```
+
+This extends the actual original-test validation journey with a scoped nested
+Flow, another immutable Build Configuration, and a separately enrolled Agent in
+its own pool. The verifier receives only its evaluator credential and the two
+explicit candidate Artifact references. Its finite model process reads the
+actual candidate file and requires its complete bounded contents to equal the
+expected text; the original private inventory, private test body and author
+output are absent from its Job. The retained closed report binds the original
+candidate revision, candidate digest and producer input digest. The public
+ordinary Attempt diagnostics must show different Agent identities and the exact
+configured pool for each role. The nested call returns the exact child payload;
+Server and both Agents then restart without changing retained records, Build
+lineage or publications.
+
+This is a real packaged Server/Agent and Microsandbox check, with five successful
+ordinary Jobs including bootstrap. No report, capture, Artifact identity or
+completion receipt is seeded. It qualifies isolated candidate verification;
+it does not substitute for EvaluationPlan-bound Assessment review, external
+delivery or deployment, or qualify the complete pilot by itself.
+
+## Packaged candidate delivery and accepted-response recovery
+
+With the separately pinned `OCTACITY_FACTORY_VERIFIER_CLI` and native
+`OCTACITY_FACTORY_GITHUB_PLUGIN` executable explicitly selected, run the existing
+private pilot environment:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -p octacity-release-harness --test factory_pilot \
+  packaged_delivery_recovers_the_accepted_real_review_after_server_restart \
+  -- --ignored --exact --nocapture
+```
+
+This extends original private-test authoring, real CodeX capture, original-test
+validation and separate-Agent nested verification with the installed Native
+publication action. Its Node and Project explicitly grant both the exact frozen
+action identity and the pinned physical provider plugin. The provider alone owns
+the delivery credential; model Jobs do not receive it.
+
+The target reads a real bare Git repository. The provider pushes the exact
+captured revision and creates a review over verified HTTPS. The fixture syncs
+that accepted review before holding its response and any recovery observation.
+The parent then kills and reaps only its owned Server process, releases the held
+response, and starts Server against the same PostgreSQL journal. Recovery must
+retain the exact candidate receipt, original base, actual branch contents and
+review identity, with exactly one review POST. A final normal Server and both
+Agents restart preserves the common records and ordinary Build lineage.
+
+The qualified slice executes five ordinary Jobs including bootstrap and retains
+seven configured node completions. No Git effect, review, Artifact or Factory
+receipt is seeded. The separate public Server runtime timeout regression also
+proves completed task handles are joined once, while remaining owned tasks are
+aborted and drained under the original shutdown bound; fault injection does not
+require a graceful-success response from a deliberately crashed process.
+
+```shell
+cargo test --locked -p octacity-server --lib \
+  shutdown_timeout_drains_only_tasks_that_have_not_already_completed
+```
+
+The provider's private installed Git wrapper redirects only its frozen logical
+HTTPS repository to the test-owned bare mirror. This qualifies actual local Git
+effects and HTTPS API delivery recovery, not remote Git TLS, deployment,
+EvaluationPlan-bound review in this same journey, or the complete pilot.
+
+## Finite deployment CLI contract
+
+The operator-installed `fixtures/factory/deployer.mjs` transfers a declared
+regular candidate file to a separate HTTP target and verifies its actual bytes
+through two target reads. These reads bracket the configured observation window;
+the report records that complete window, ending at the second verified read.
+The command accepts the compiler's protected `deployment-target.json`, existing
+`promotion-input.json` and frozen command input. It requires the exact single
+environment contract and original input digest, honors the original deadline,
+and emits the existing `PromotionObservation` shape. Its final CLI argument is
+the operator-installed arbitrary strategy key, frozen by the command task pin.
+The finite program supports one stage-only target with empty allocation and no
+production environments; it rejects an uninstalled strategy or unsupported
+rollout parameters before any HTTP write. Strategy names are not interpreted by
+factory-core. The target owns the durable deployment receipt; the command does
+not invent a deployment identity.
+
+```shell
+python3 -m unittest discover -s tools/tests -p test_factory_pilot_deployment.py
+```
+
+The contract uses an actual separate HTTP service and target file. It checks
+scope substitution before any remote write, bounded candidate and response
+bytes, candidate path escape, changed readback and a connection lost after the
+target accepted the write. An unknown write response fails without retrying the
+POST or publishing a successful observation. Each HTTP exchange uses the
+remaining original deadline, including the response body; a slow acknowledgement
+within that budget does not fail because of a separate short request timer.
+The finite pilot command supports an unauthenticated hermetic target only and
+rejects a credential selection;
+other installed deployment programs must bind their own qualified credential.
+The separate Rust target fixture serves the deployed candidate through its
+`/live` HTTP route and persists the candidate, content and immutable receipt in
+one atomically published, synced state file. Its finite target accepts one
+operation: exact replay returns the same receipt, including after target
+restart; another operation or a substituted candidate cannot replace it.
+
+```shell
+cargo test --locked -p octacity-release-harness --test factory_deployment_target
+```
+
+These CLI and target contracts alone do not qualify VM egress or packaged
+runtime wiring. The separate [packaged deployment contract](#packaged-candidate-deployment)
+below exercises those boundaries for its exact installed stage target.
+
+## Installed deployment command qualification
+
+Installed command source has a dedicated 64 KiB UTF-8 bound. YAML line breaks
+and indentation are preserved; blank, oversized or unsupported control-bearing
+source is rejected during configuration deserialization. The existing string
+wire representation and task digest for unchanged source are preserved, while
+ordinary human-readable Factory text keeps its 4 KiB bound.
+
+```shell
+cargo test --locked -p octacity-server-application --lib \
+  installed_command_program_accepts_bounded_source_without_changing_ordinary_factory_text
+```
+
+`FactoryDeploymentCommandAuthority` pins one immutable environment, canonical
+HTTP(S) endpoint and optional separate Agent-local credential selection. Its
+reference digest is domain-separated from ordinary command policies; changing
+any selection requires repinning the command identity and task. The protected
+`deployment-target.json` contains only `authority`, `environment`, `endpoint`
+and `credential_profile` (a logical name or `null`). The existing frozen
+`promotion-input.json` remains a separate document.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-server-application --lib \
+  explicitly_pinned_deployment_command_qualifies_without_widening_builtin_commands
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-server-application --lib \
+  deployment_compiler_rejects_broader_node_permissions_with_the_same_frozen_task_pin
+```
+
+The public input publisher verifies the actual four-document compilation and
+closed managed-program proof. Negative contracts reject substituted selections,
+unpinned authority, noncanonical credential-bearing URLs, an ordinary command
+role, a different admitted environment and broader effective Node permissions.
+This concrete installed adapter qualifies exactly one environment per action;
+the core Promotion Plan still supports multiple environments. Existing owner
+readiness and authorization remain required. This application contract alone proves qualification and compilation. Actual
+deployment effects, the selected Agent/backend network path and post-deployment
+measurements are checked by the separate packaged deployment contract below.
+
+The ordinary materializer signs the four generated documents plus the two
+independently verified retained candidate inputs. The output observer uses the
+same closed installed-role catalog for both Job attribution and semantic
+reconstruction. It rejects a changed frozen `BuildPolicySnapshot` toolchain or
+Job Octa inventory, including before charging terminal usage. Legacy builtin,
+author and validator qualifications retain their separate restrictions.
+
+```shell
+cargo test --locked --jobs 2 -p octacity-server-application --lib \
+  retained_deployment_reconstructs_the_qualified_target_and_plan_at_both_verification_boundaries
+cargo test --locked --jobs 2 -p octacity-server --lib \
+  native_deployment_command_installs_only_its_exact_action_capture_and_approved_inventory
+cargo test --locked --jobs 2 -p octacity-server --lib \
+  file_deployment_authority_recomputes_the_policy_pin_before_native_installation
+```
+
+The Native and FILE installation contracts reach the qualified ordinary Build
+ports, preserve the exact action/plugin/capture requirements, and reject
+unrepinned target selections. These installation tests perform no provider I/O;
+the separate packaged deployment contract exercises an external target. Neither
+installation tests nor that scoped journey establish the complete pilot.
+
+## Qualified readonly reviewer Jobs
+
+An optional installed CodeX `reviewer` policy pins one independent evaluator and
+changes the immutable task identity. Its absence preserves existing task pins.
+The role requires readonly candidate inputs and rejects capture, tools and
+reader quotas. Whole `EvaluationPlan` and `EvidenceManifest` values must be
+explicitly projected into the frozen input from their exact committed journal
+records, with matching typed discovery and a selected evaluator. Criterion-pack
+bytes must be explicitly selected as immutable Policy context.
+
+The materializer and retained output observer use the same journal-qualified
+invocation and compiler. The ordinary Job receives four generated protected
+documents plus the independently verified candidate bundle and manifest. Its
+model schema is the adapter's existing EvaluationV1 schema. The model cannot
+supply an Assessment identity or provenance: the server creates the immutable
+`Assessment` only after checking all result, provenance and trace records against
+the executed Job and exact prompt. The common Node owner retains its typed
+Assessment discovery atomically with completion; replay creates no second Build.
+Retained observation checks the original invocation at its frozen start and
+actual model timing within the original Node/Plan window, without renewing
+execution authority.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-server-application --lib \
+  factory_codex_output_source_tests::review
+cargo test --locked --jobs 2 -p octacity-server-application --lib \
+  review_invocation_qualifies_only_the_full_selected_plan_evidence_and_installed_evaluator
+cargo test --locked --jobs 2 -p octacity-server-application --lib \
+  qualified_common_reviewer_records_produce_server_owned_assessment_and_reject_a_model_authored_assessment
+```
+
+These public application contracts reuse the capture journal and ordinary
+Artifact publication lifecycle. They cover default-denied invocation recovery,
+exact readonly dispatch, server-owned Assessment projection and owner replay.
+The packaged contract additionally runs the role through actual Server/Agent
+processes, PostgreSQL and the qualified Microsandbox route. With the separately
+pinned `OCTACITY_FACTORY_VERIFIER_CLI` selected as described above, run:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  packaged_original_evidence_plan_reviewer_and_decision_retain_exact_typed_authority \
+  -- --ignored --exact --nocapture
+```
+
+The same admitted Run executes protected authoring, real candidate capture and
+original private-test validation, then constructs its EvidenceManifest and
+EvaluationPlan. A separately enrolled readonly evaluator Job produces qualified
+EvaluationV1 records; the server creates the exact plan-bound Assessment and the
+configured deterministic action creates an Accept Decision. The test checks all
+four typed discovery projections, exact candidate/evidence/criterion/provenance
+bindings, different producing Agent identities and pools, and absence of private
+tests and credentials in review metadata. Its criterion Artifact is published by
+the real bootstrap Job with the exact installed bytes and digest.
+
+There are eight committed node completions and four ordinary role Builds, plus
+the bootstrap Job. Server and both Agents restart with exact retained records,
+publications and Build lineage preserved, without repeating a role Job. This
+qualifies the packaged typed-review slice. The separate RequirementsReview and
+DeployedCandidate contracts below cover further composed boundaries; this test
+alone does not qualify the complete pilot.
+
+## Packaged requirements-to-Decision journey
+
+Use the same checksummed Server/Agent installations, qualified Microsandbox
+image, PostgreSQL/object-storage environment and local Git mirror prerequisites
+as the packaged candidate tests above. Select the original finite model CLI with
+`OCTACITY_FACTORY_PILOT_CLI` and the separately pinned content-checking CLI with
+`OCTACITY_FACTORY_VERIFIER_CLI`. This scenario does not install controlled-reader
+tools, so it does not require `OCTACITY_CONTRACT_PROTECTED_READER` or
+`OCTACITY_CONTRACT_CODEX_READER`. Those remain prerequisites for the separate
+controlled/Shadow scenarios.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  packaged_nested_triage_and_requirements_are_retained_by_original_tests_and_review \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+The observed packaged run passed once in 319.84 seconds. It commits seventeen
+node completions and eight ordinary role Builds, plus the real bootstrap Job
+(nine Jobs total). Nested triage and configured requirements produce an accepted
+criteria Artifact through actual publication. The accepted `criteria_artifact`
+reference is checked against the producing ordinary Build's published Artifact
+ID, digest, size and downloaded contents. That exact Artifact supplies the
+original private-test authoring contract before CodeX changes Source and
+captures its candidate. The original retained private bundle validates that
+candidate; a separately enrolled Agent in its own pool then verifies only the
+explicit candidate in a scoped nested Flow. The same admitted journey continues
+through original EvidenceManifest, EvaluationPlan, readonly typed review,
+server-owned Assessment and configured Decision.
+
+The test preserves the actual accepted criteria Artifact identity, candidate and
+original test bindings through the downstream records. Server and both Agents
+restart with the same retained completions, Builds and Artifact publications;
+no successful Job, receipt or outcome is seeded. The successful run log is
+`/tmp/octacity-165-packaged-prelude-input-contract-runtime.log`. This scenario
+does not include external delivery or deployment, and is not a complete-pilot
+qualification.
+
+## Packaged candidate deployment
+
+Use the same packaged environment and finite CLI selections above, plus
+`OCTACITY_FACTORY_GITHUB_PLUGIN` pointing to the separately checksummed native
+Github provider with its qualified private-CA configuration and single API
+version header. The fixture installs operator-owned policy and credentials;
+repository content cannot select these pins. As with RequirementsReview, this
+scenario uses no controlled-reader tools. Current local operator builds must be
+identified by their actual checksums/provenance rather than described as an
+unchanged published release.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  packaged_candidate_is_delivered_deployed_and_observed_through_its_exact_policy \
+  -- --ignored --exact --nocapture --test-threads=1
+```
+
+The observed packaged run passed once in 224.99 seconds, with nine committed
+node completions and five ordinary role Builds plus bootstrap (six Jobs total).
+It runs actual private-test authoring, CodeX candidate capture, original-test
+validation and nested separate-Agent verification before the real Git/HTTPS
+delivery recovery described above. An accepted review survives the intentional
+owned Server crash and restart with exactly one review POST. The installed
+promotion command then deploys the readonly captured candidate to a separate
+HTTP target, followed by its configured post-deployment criteria gate.
+
+Deployment has its own immutable ordinary Build Configuration: its restricted
+runtime network and Factory grants both select exactly
+`host.microsandbox.internal`. The packaged Agent and qualified Microsandbox
+backend execute this allowed host-alias path; the fixture does not reuse the
+author's disabled-network configuration or substitute a gateway IP. The static
+program pins one stage-only authority, environment, endpoint and strategy, with
+no deployment credentials or production allocation.
+
+The target receives the actual candidate file bytes and owns the durable
+receipt. Two verified matching reads bracket the configured 100 ms observation
+window. The retained PromotionObservation must report `passed` and exactly
+`matching_reads: 2`, bind the captured CandidateSubject and installed environment,
+and match the input digest independently read from its public Node Attempt
+diagnostic. The test downloads the actual observation Artifact, checks `/live`
+returns the candidate's `facts` bytes, and compares the target's retained
+candidate and content digest. These checks repeat after the final normal Server
+and both-Agent restart, alongside unchanged retained records, Builds and
+publications. No deployment receipt or completion is inserted by the test.
+
+The successful run log is
+`/tmp/octacity-165-packaged-deployment-diagnostic-runtime.log`. This qualifies the
+exact packaged stage deployment and readback path, not arbitrary network egress,
+remote Git TLS, production rollout or all deployment providers. The composed
+journey with both Shadow signals, optional research/reordering/removal and exact
+audit continuity is qualified separately in the final section below.
+
+## Ordinary admission and fresh observation time
+
+Ordinary Build admission can complete after a Factory owner pass sampled its
+observation time. `FactoryNodeBuildAdapter` now validates the durable acceptance
+receipt and returns `Waiting` with that exact execution. It does not immediately
+observe newly created state using the older entry time. The next fenced owner
+pass observes the retained Build with its own fresh time and stable operation
+identity; it does not create another Build or manufacture a later timestamp.
+
+The public adapter test advances its controlled clock from 31 to 32 during
+`create_factory_build`, persists the actual admission time of 32, and requires
+`Waiting` with the accepted Build, Attempt and Job identities. A reconstructed
+adapter still rejects an existing Build when observed at 31. Observation at 32
+returns the same execution, with exactly one admission request. Existing
+ownership, deadline and future-state timestamp guards remain in force.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-server-application --lib \
+  admission_time_advancing_during_create_returns_waiting_with_the_accepted_execution
+
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-server-application --lib \
+  factory_node_build_tests
+```
+
+The first test produced an actual behavioral Red: admission completed at 32, but
+the adapter returned `InvalidInput` instead of retaining the pending execution.
+The observed evidence is `/tmp/octacity-165-admission-observation-clock-red.log`
+and `/tmp/octacity-165-admission-observation-clock-green.log` (one test passed).
+The expanded test, including the stale-time rejection and single-admission
+assertions, also passed in the complete 29-test adapter regression recorded in
+`/tmp/octacity-165-admission-observation-regression-green.log`.
+
+Final regression commands, using the same debug/incremental settings above:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-server-application --lib -- --test-threads=2
+
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-server-application \
+  --test manual_trigger --test factory_artifact_reader --test factory_observability \
+  -- --test-threads=2
+
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo clippy --locked --jobs 2 -p octacity-server-application -p octacity-server \
+  -p octacity-release-harness --all-targets --all-features -- -D warnings
+```
+
+One complete Application run passed all 382 tests in 921.20 seconds
+(`/tmp/octacity-165-admission-observation-app-bounded-final.log`). The three
+integration targets passed 42 tests: manual triggers 34, Artifact reader 5 and
+observability 3 (`/tmp/octacity-165-admission-observation-integration-final-green.log`).
+Strict Clippy passed in 39.90 seconds
+(`/tmp/octacity-165-admission-observation-strict-final.log`). The initial manual
+trigger run passed 33/34: its builtin-command fixture still declared only shell
+instead of the exact approved codex+shell plugin inventory. Aligning those
+test-only literal pins preserved its phantom-executable and secret assertions;
+no production qualification guard changed for that correction.
+
+This qualifies the admission-to-observation boundary. The final section records
+the separate successful composed packaged journey and its retained proofs.
+
+## Optional-parent and audit fixture contracts
+
+The lightweight reordered/removed Prelude probes publish new versions of the
+same parent Flow. Their initial parent already declares the accepted-input
+schema. The fixture extension must reuse that exact schema, append only missing
+contracts, and reject a conflicting body under an existing reference. Core's
+unique-schema validation remains unchanged.
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  prelude_schema_extension_preserves_an_existing_accepted_contract -- --test-threads=2
+
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  published_prelude_root_uses_the_public_content_addressed_reference -- --test-threads=2
+
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  -- --test-threads=2
+```
+
+The meaningful fixture Red exercised public `FactoryFlowConfiguration::new`:
+the repeated accepted schema caused `InvalidConfiguration` for
+`admitted Flow data schemas`. It is recorded in
+`/tmp/octacity-165-prelude-schema-extension-behavior-red.log`; the earlier
+`schema-extension-red.log` compile/API failure is not behavioral evidence.
+`/tmp/octacity-165-prelude-schema-extension-green.log` records four fast fixture
+tests passing, with the eleven packaged environment tests still ignored.
+
+The first combined actual run completed A's twenty-three nodes and twelve Jobs
+(including bootstrap), and passed its assertions before the variant probes, but
+failed on the lightweight parent replacement returning HTTP 400. That entire
+run failed after 648.82 seconds. Its corrected rerun
+(`/tmp/octacity-165-unique-prelude-schemas-runtime.log`) completed A's same
+twenty-three nodes and twelve Jobs and published B's parent version, then failed
+after 489.60 seconds in a fixture assertion reading top-level definition IDs.
+
+A second meaningful fixture Red serializes the public
+`PublishedFactoryFlowDefinition` DTO and requires its exact root definition.
+Definitions store their full content-addressed identity under `reference`;
+matching that complete reference, including digest, fixes the assertion without
+changing product wire contracts. Evidence is
+`/tmp/octacity-165-public-prelude-root-red.log` and
+`/tmp/octacity-165-public-prelude-root-green.log` (five fast tests passed, eleven
+packaged tests ignored). The same all-targets/all-features strict Clippy command
+above passed again in 16.47 seconds
+(`/tmp/octacity-165-public-root-reference-strict.log`).
+
+That corrected actual run (`/tmp/octacity-165-public-root-reference-runtime.log`)
+completed all A/B/C variants: 39 completions and 18 ordinary Jobs including
+bootstrap, followed by the final Server and both-Agent restart. It still failed
+after 698.68 seconds because the fixture required equality of the whole audit
+list. The original 195 facts and all three FlowRun references remained exact;
+seven legitimate `factory.execution_input_deleted` facts had been appended by
+asynchronous expired-input cleanup.
+
+The public-DTO fixture test
+`completed_run_audit_preserves_facts_when_retained_input_cleanup_appends` now
+requires every original audit identity to retain its exact whole fact, while
+allowing new unique facts and keeping FlowRun references strictly equal. Its
+positive append case failed under the old assertion
+(`/tmp/octacity-165-append-only-audit-red.log`). The same fast-test command above
+passed six tests, including missing/mutated/duplicate fact and changed Flow
+reference negatives (`/tmp/octacity-165-append-only-audit-green.log`). This changes
+only the fixture assertion; product audit and retention behavior are unchanged.
+
+The corrected combined actual run passed in 694.84 seconds, with all final
+post-restart checks (`/tmp/octacity-165-append-only-audit-runtime.log`). The Cargo
+commands above reproduce the fixture contracts; the final section records the
+actual preserved-binary invocation used for the successful long run.
+
+## Composed packaged 16.5 qualification
+
+The composed contract passed once: one test passed, zero failed or ignored, in
+694.84 seconds. It uses checksummed current operator Server/Agent builds,
+released Octa and the qualified Microsandbox image, PostgreSQL, retained object
+storage and the existing finite CLI/provider installations described above.
+The private runner loads that pilot environment. The actual invocation was:
+
+```shell
+env \
+  OCTACITY_CONTRACT_PROTECTED_READER=/private/tmp/of-reader-linux-avtgmjws/output/octacity-protected-reader \
+  OCTACITY_CONTRACT_CODEX_READER=/private/tmp/of-reader-linux-avtgmjws/output/octacity-codex-reader \
+  OCTACITY_FACTORY_VERIFIER_CLI=/private/tmp/octacity-165-cli-content/finite-cli \
+  OCTACITY_FACTORY_GITHUB_PLUGIN=/private/tmp/octacity-165-delivery-provider-single-header/octacity-github \
+  python3 /tmp/octacity-165-run.py \
+  /tmp/octacity-165-append-only-audit-runtime.log \
+  /tmp/octacity-165-preserved/factory-pilot-append-only-audit \
+  --ignored --exact \
+  packaged_nested_criteria_drive_private_tests_before_review_delivery_and_promotion \
+  --nocapture
+```
+
+To reproduce from source with the same qualified environment and explicit
+reader, bridge, verifier and provider selections:
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  -- --ignored --exact \
+  packaged_nested_criteria_drive_private_tests_before_review_delivery_and_promotion \
+  --nocapture --test-threads=1
+```
+
+Run A executes Research then Requirements and commits 23 node completions and
+12 ordinary Jobs including bootstrap. Actual accepted criteria drive private
+test authoring, candidate capture, original-test validation, nested verification
+on a separately enrolled Agent, EvidenceManifest, EvaluationPlan, qualified
+Assessment and deterministic Decision. Routing and ToolRisk Shadow recommendations
+both disagree with their authorized baseline; the retained receipts preserve
+that baseline. JEV credentials remain Server-only, and the tool Job reads the
+original Source through the lease-owned protected reader.
+
+The same journey publishes the captured candidate through actual bare Git and
+HTTPS review, recovers an accepted response across an owned Server crash without
+another review POST, deploys actual candidate bytes to its installed stage
+target, and checks bounded readback. On the same live Server and Agents, B
+reorders Requirements then Research (9 completions, 4 Jobs), while C removes both
+optional phases (7 completions, 2 Jobs). All three use versions 1, 2 and 3 of the
+same parent Flow identity. B retains Requirements as its exact criteria Artifact
+producer; C selects Classification. Only declared readonly roles create Jobs.
+
+The total is 39 completions and 18 ordinary Jobs including one bootstrap.
+Publication of B/C and the final Server and both-Agent restart preserve exact
+admitted closure bytes/references, common records, Builds, completions, Artifact
+publications and both Shadow receipts, without repeating successful Jobs.
+Public paged audit checks retain every original whole fact and exact root/nested
+Flow provenance while allowing legitimate asynchronous cleanup facts to append.
+All final delivery, deployment, reviewer, variant and receipt assertions passed.
+
+This qualifies the configured finite pilot with real packaged execution and
+hermetic Git/HTTPS/stage effects. Model responses and external provider endpoints
+are explicit finite fixtures. It does not qualify remote Git TLS, production
+rollout, arbitrary providers or a different backend/image/toolchain installation.

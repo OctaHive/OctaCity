@@ -54,6 +54,27 @@ def package_fixture(
 
 
 class ArchitecturePolicyTests(unittest.TestCase):
+    def test_application_trace_capture_is_test_only_and_package_specific(self):
+        def violations(name, kinds):
+            metadata = {"workspace_root": "/workspace", "packages": [{
+                "name": name, "manifest_path": "/workspace/server/application/Cargo.toml",
+                "dependencies": [{"name": "tracing-subscriber", "kind": kind, "path": None}
+                                 for kind in kinds],
+            }]}
+            return [violation.code for violation in ARCHITECTURE.check(
+                ARCHITECTURE.graph_from_metadata(metadata)
+            )]
+
+        self.assertEqual(violations("octacity-server-application", ["dev"]), [])
+        for name, kinds in (
+            ("octacity-server-application", [None]),
+            ("octacity-server-application", ["dev", None]),
+            ("octacity-server-application", ["build"]),
+            ("another-application", ["dev"]),
+        ):
+            with self.subTest(name=name, kinds=kinds):
+                self.assertEqual(violations(name, kinds), ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"])
+
     def test_github_sdk_is_confined_to_the_single_provider_plugin(self):
         from dataclasses import replace
 
@@ -374,6 +395,19 @@ class ArchitecturePolicyTests(unittest.TestCase):
                     [violation.code for violation in ARCHITECTURE.check_shared_sources(graph)],
                     ["ARCH008_SHARED_REPRESENTATION"],
                 )
+
+    def test_factory_readiness_is_an_owned_operational_route(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            workspace = Path(temporary_directory)
+            source = workspace / "server/api/octacity-server-api-rest/src/lib.rs"
+            source.parent.mkdir(parents=True)
+            source.write_text('Router::new().route("/health/factory", get(factory_readiness));')
+            self.assertEqual(ARCHITECTURE.check_management_route_sources(workspace), [])
+            source.write_text('Router::new().route("/health/provider-admin", handler);')
+            self.assertEqual(
+                [violation.code for violation in ARCHITECTURE.check_management_route_sources(workspace)],
+                ["ARCH013_UNTYPED_MANAGEMENT_ROUTE"],
+            )
 
     def test_management_routes_cannot_bypass_the_typed_registry(self):
         invalid_sources = {

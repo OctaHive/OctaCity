@@ -25,7 +25,7 @@ use octacity_execution_containerd::{CONTAINERD_ENGINE_NAME, ContainerdEngine, Co
 use octacity_execution_host::{HOST_BACKEND_NAME, HostBackend, HostBackendConfig};
 use octacity_execution_microsandbox::{MICROSANDBOX_ENGINE_NAME, MicrosandboxEngine, MicrosandboxEngineConfig};
 use octacity_execution_native::{LinuxNativeConfig, NATIVE_BACKEND_NAME, NativeBackend};
-use octacity_execution_oci::{OciBackend, OciCapability, OciEngine};
+use octacity_execution_oci::{OciBackend, OciCapability, OciEngine, qualified_factory_tool_projection};
 use octacity_identity::FileWorkloadIdentityProvider;
 use octacity_inventory::{AgentInventoryConfig, HostMonitor, build_inventory, host_platform};
 use octacity_job::{
@@ -45,10 +45,15 @@ use octacity_source::{SourceMaterializer, SourcePluginRegistry};
 
 use crate::maintenance::WorkspaceCapacityReservation;
 
+mod factory_credentials;
+#[cfg(unix)]
+mod factory_reader;
+
 pub(crate) struct Components {
   pub(crate) validated: ValidatedConfig,
   pub(crate) runner: RunnerInstallation,
   pub(crate) executor: Arc<JobExecutor>,
+  pub(crate) factory_tools: Option<Arc<dyn octacity_lifecycle::FactoryToolExecutionProvider>>,
   pub(crate) coordinator: Arc<dyn CoordinatorClient>,
   pub(crate) cache_coordinator: Arc<dyn CacheSessionCoordinator>,
   pub(crate) cache: Arc<CacheSessionManager>,
@@ -78,6 +83,28 @@ impl Components {
       })
       .collect::<Vec<_>>();
     let tool_executables = runner.verify_external_executables(&configured_executables)?;
+    #[cfg(unix)]
+    let (tool_executables, reader) = factory_reader::load(&validated.config, tool_executables)?;
+    #[cfg(unix)]
+    let controlled_tools_installed = reader.is_some()
+      && validated
+        .config
+        .protected_reader
+        .as_ref()
+        .is_some_and(|installed| installed.platform == runner.capabilities.platform);
+    #[cfg(not(unix))]
+    let controlled_tools_installed = false;
+
+    #[cfg(not(unix))]
+    if validated
+      .config
+      .protected_reader
+      .as_ref()
+      .is_some_and(|reader| reader.bridge.is_some())
+    {
+      return Err("controlled reader installation is unavailable on this host".into());
+    }
+
     let source_plugins = Arc::new(SourcePluginRegistry::discover(&validated.config.source_plugins_dir)?);
     let source_plugin_count = source_plugins.len();
     let ExecutorAssembly {
@@ -92,6 +119,7 @@ impl Components {
       runner.clone(),
       source_plugins.clone(),
       tool_executables.clone(),
+      controlled_tools_installed,
     )
     .await?;
     let workspace_capacity_reservation = workspace_capacity_reservation(&runtimes, &executions);
@@ -134,6 +162,11 @@ impl Components {
       max_body_bytes: validated.config.coordinator_max_body_bytes,
       retry: retry.clone(),
     })?);
+
+    #[cfg(unix)]
+    let factory_tools = reader.map(|reader| reader.with_coordinator(http_coordinator.clone()));
+    #[cfg(not(unix))]
+    let factory_tools = None;
     let coordinator: Arc<dyn CoordinatorClient> = http_coordinator.clone();
     let cache_coordinator: Arc<dyn CacheSessionCoordinator> = http_coordinator.clone();
     let output_coordinator: Arc<dyn OutputUploadCoordinator> = http_coordinator;
@@ -151,6 +184,7 @@ impl Components {
       validated,
       runner,
       executor: Arc::new(executor),
+      factory_tools,
       coordinator,
       cache_coordinator,
       cache,
@@ -197,10 +231,14 @@ impl BackendAssembly {
     environment_identity: ExecutionEnvironmentId,
     backend: Arc<dyn ExecutionBackend>,
     factory_enforcement: Option<&'static [FactoryEnforcementCapabilityV3]>,
+    workspace_anchor: bool,
+    controlled_tools: bool,
   ) -> Result<(), octacity_job::JobError> {
     let route = ExecutionBackendRoute::new(capability.clone(), environment_identity, backend)?;
     if let Some(capabilities) = factory_enforcement {
       self.factory_executions.push(FactoryExecutionCapabilityV3 {
+        workspace_anchor,
+        controlled_tools,
         execution: capability.clone(),
         enforcement: capabilities.to_vec(),
       });
@@ -352,8 +390,16 @@ impl BackendAssembly {
         return Err(isolation_error.into());
       }
       let capability = execution_capability(provider_name, ExecutionMode::Isolation, engine_capability.platform)?;
+      let workspace_anchor = engine.supports_factory_workspace_anchor();
       let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
-      self.add_execution(capability, environment_identity.clone(), backend, factory_enforcement)?;
+      self.add_execution(
+        capability,
+        environment_identity.clone(),
+        backend,
+        factory_enforcement,
+        workspace_anchor,
+        false,
+      )?;
     }
     Ok(())
   }
@@ -363,6 +409,7 @@ impl BackendAssembly {
     validated: &ValidatedConfig,
     runner: &RunnerInstallation,
     providers: &[VirtualizationProviderConfig],
+    controlled_tools_installed: bool,
   ) -> Result<(), Box<dyn std::error::Error>> {
     for provider in providers {
       let VirtualizationProviderConfig::Microsandbox {
@@ -387,12 +434,16 @@ impl BackendAssembly {
         ExecutionMode::Virtualization,
         engine_capability.platform,
       )?;
+      let workspace_anchor = engine.supports_factory_workspace_anchor();
+      let controlled_tools = controlled_tools_installed && qualified_factory_tool_projection(engine.as_ref()).is_some();
       let backend: Arc<dyn ExecutionBackend> = Arc::new(OciBackend::new(vec![engine])?);
       self.add_execution(
         capability,
         environment_identity.clone(),
         backend,
         Some(&FactoryEnforcementCapabilityV3::ALL),
+        workspace_anchor,
+        controlled_tools,
       )?;
     }
     Ok(())
@@ -404,6 +455,7 @@ async fn build_executor(
   runner: RunnerInstallation,
   source_plugins: Arc<SourcePluginRegistry>,
   tool_executables: BTreeMap<String, VerifiedExternalExecutable>,
+  controlled_tools_installed: bool,
 ) -> Result<ExecutorAssembly, Box<dyn std::error::Error>> {
   #[cfg(unix)]
   if validated.runtimes.iter().any(|runtime| match runtime {
@@ -447,7 +499,7 @@ async fn build_executor(
           guarantees: guarantees_for(ExecutionMode::Host),
           immutable_images: false,
         };
-        assembly.add_execution(capability, environment_identity.clone(), backend, None)?;
+        assembly.add_execution(capability, environment_identity.clone(), backend, None, false, false)?;
       }
       ValidatedRuntimeConfig::Native {
         cgroup_root,
@@ -482,7 +534,7 @@ async fn build_executor(
         assembly.add_isolation(validated, &runner, providers).await?;
       }
       ValidatedRuntimeConfig::Virtualization { providers } => {
-        assembly.add_virtualization(validated, &runner, providers)?;
+        assembly.add_virtualization(validated, &runner, providers, controlled_tools_installed)?;
       }
     }
   }
@@ -545,10 +597,12 @@ async fn build_executor(
     executor
   };
   let executor = if validated.config.factory_permissions.is_some() {
-    executor.with_protected_input_stager(ProtectedInputStager::new(ProtectedInputStagerConfig {
-      allowed_origins: validated.config.allowed_upload_origins.clone(),
-      download_timeout: Duration::from_secs(validated.config.upload_timeout_seconds),
-    })?)
+    executor
+      .with_factory_credential_profiles(factory_credentials::load(&validated.config)?)?
+      .with_protected_input_stager(ProtectedInputStager::new(ProtectedInputStagerConfig {
+        allowed_origins: validated.config.allowed_upload_origins.clone(),
+        download_timeout: Duration::from_secs(validated.config.upload_timeout_seconds),
+      })?)
   } else {
     executor
   };
@@ -963,4 +1017,5 @@ primary = "11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo="
     assert!(components.host.capacity().virtualization_available);
     assert_eq!(components.backend_health, vec![ready_execution(capability)]);
   }
+  include!("composition/factory_reader_tests.rs");
 }

@@ -18,6 +18,8 @@ thiserror.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+rcgen.workspace = true
 octacity-server-factory = { path = "../../core/octacity-server-factory", features = ["test-support"] }
 octacity-server-domain = { path = "../../core/octacity-server-domain" }
 tokio.workspace = true
+tokio-rustls.workspace = true

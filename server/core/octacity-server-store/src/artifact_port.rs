@@ -41,6 +41,17 @@ pub trait ArtifactRecordStore: Send + Sync {
   /// Reads a published logical Artifact and its backend-neutral upload identity.
   async fn published_artifact(&self, artifact_id: ArtifactId) -> Result<ArtifactUploadRecord, StoreError>;
 
+  /// Reads verified input metadata without assigning fabricated Agent provenance.
+  /// Ordinary published Artifacts remain eligible; private compiler inputs are
+  /// available only through this transfer boundary, never output discovery.
+  async fn published_execution_input(
+    &self,
+    artifact_id: ArtifactId,
+  ) -> Result<crate::PublishedExecutionInput, StoreError> {
+    let upload = self.published_artifact(artifact_id).await?;
+    crate::PublishedExecutionInput::from_artifact(&upload)
+  }
+
   /// Lists a bounded set of published logical outputs for one Build.
   async fn list_published_artifacts(
     &self,

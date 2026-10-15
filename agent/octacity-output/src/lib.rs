@@ -76,6 +76,9 @@ impl TrustedFileOutput {
 pub struct FreezeOutputs<'a> {
   /// Frozen host workspace retained by `octacity-job`.
   pub workspace: &'a Path,
+  /// Exact relative guest mount prefix for this retained host output directory.
+  /// None preserves ordinary workspace-relative resource declarations.
+  pub workspace_prefix: Option<&'a Path>,
   /// Opaque runner results containing task-level declarations.
   pub results: &'a [serde_json::Value],
   /// Agent-owned exact files produced by trusted post-run lifecycle hooks.
@@ -362,7 +365,10 @@ impl OutputPublisher for PresignedOutputPublisher {
     cancellation: CancellationToken,
   ) -> Result<FrozenOutputs, OutputError> {
     let outputs = match prepare::prepare(
-      request.workspace,
+      prepare::OutputRoot {
+        directory: request.workspace.to_owned(),
+        prefix: request.workspace_prefix.map(Path::to_owned),
+      },
       request.results,
       request.trusted_files,
       request.limits,

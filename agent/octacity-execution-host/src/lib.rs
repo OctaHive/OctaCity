@@ -116,6 +116,9 @@ impl ExecutionBackend for HostBackend {
     if cancellation.is_cancelled() {
       return Err(ExecutionError::Cancelled);
     }
+    request.require_unanchored_factory_workspace()?;
+    request.require_whole_job_disk_accounting()?;
+    runner.require_plugin_projection()?;
     request.validate()?;
     if request.workload_identity.is_some() {
       return Err(ExecutionError::Unavailable(
@@ -194,8 +197,7 @@ impl ExecutionBackend for HostBackend {
       paths: ExecutionPaths {
         workspace: workspace.clone(),
         data_dir,
-        plugins_dir: runner.plugins_dir.clone(),
-        plugin_lock: runner.plugin_lock.clone(),
+        plugin_projection: runner.plugin_projection.clone(),
         cache: request
           .cache
           .as_ref()
@@ -591,6 +593,46 @@ mod tests {
   }
 
   #[tokio::test]
+  async fn refuses_standalone_programs_before_inspecting_job_files() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().canonicalize().unwrap();
+    let executable = root.join("selected-helper");
+    fs::write(&executable, b"installed implementation").unwrap();
+    let program = octacity_execution::ExecutionProgram::standalone(root.clone(), executable).unwrap();
+    let backend = HostBackend::new(HostBackendConfig {
+      work_root: root.clone(),
+      runner_platform: runner_platform(host_platform().unwrap()),
+      environment: BTreeMap::from([("PATH".to_owned(), ".".to_owned())]),
+      cleanup_timeout: Duration::from_secs(1),
+      max_accounted_workspace_entries: 100,
+    })
+    .unwrap();
+    let request = StartExecution {
+      execution_id: "fixture".to_owned(),
+      workspace_root: root.clone(),
+      workspace: root.join("unopened-job"),
+      data_dir: root.join("unopened-job/data"),
+      workload_identity: None,
+      cache: None,
+      factory: None,
+      cpu_millis: 1,
+      memory_bytes: 1,
+      writable_disk_bytes: 1,
+      max_duration: Duration::from_secs(1),
+      root: ExecutionTarget::Host {
+        platform: host_platform().unwrap(),
+      },
+      network: NetworkAccess::Unrestricted,
+    };
+    let error = match backend.start(&program, request, CancellationToken::new()).await {
+      Ok(_) => panic!("unqualified standalone Host execution started"),
+      Err(error) => error,
+    };
+    assert!(matches!(error, ExecutionError::Unavailable(_)), "{error:?}");
+    assert!(!root.join("unopened-job").exists());
+  }
+
+  #[tokio::test]
   async fn rejects_workload_identity_before_starting_a_host_process() {
     let temporary = tempfile::tempdir().unwrap();
     let job_root = temporary
@@ -630,8 +672,10 @@ mod tests {
     let invalid_runner = RunnerProgram {
       release_root: PathBuf::new(),
       executable: PathBuf::new(),
-      plugins_dir: PathBuf::new(),
-      plugin_lock: PathBuf::new(),
+      plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+        directory: PathBuf::new(),
+        lock: PathBuf::new(),
+      }),
       external_executables: BTreeMap::new(),
     };
 
@@ -682,8 +726,10 @@ mod tests {
     let runner = RunnerProgram {
       release_root,
       executable,
-      plugins_dir,
-      plugin_lock,
+      plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+        directory: plugins_dir,
+        lock: plugin_lock,
+      }),
       external_executables: BTreeMap::new(),
     };
     let request = StartExecution {

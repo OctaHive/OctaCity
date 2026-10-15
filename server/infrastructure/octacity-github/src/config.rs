@@ -24,6 +24,8 @@ struct Wire {
   config_version: u16,
   api_base: String,
   api_version: String,
+  #[serde(default)]
+  api_root_certificates_pem: Vec<String>,
   git_path: PathBuf,
   git_sha256: String,
   credential_directory: PathBuf,
@@ -34,6 +36,7 @@ pub(crate) struct Config {
   pub(crate) digest: String,
   pub(crate) api_base: url::Url,
   pub(crate) api_version: String,
+  pub(crate) api_root_certificates: Vec<reqwest::Certificate>,
   pub(crate) git_path: PathBuf,
   pub(crate) git_sha256: String,
   pub(crate) credential_directory: PathBuf,
@@ -62,6 +65,20 @@ impl Config {
     let wire: Wire =
       toml::from_str(std::str::from_utf8(&bytes).map_err(|_| GithubConfigError)?).map_err(|_| GithubConfigError)?;
     let api_base = https(&wire.api_base)?;
+    if wire.api_root_certificates_pem.len() > 8 {
+      return Err(GithubConfigError);
+    }
+    let mut api_root_certificates = Vec::with_capacity(wire.api_root_certificates_pem.len());
+    for pem in wire.api_root_certificates_pem {
+      if pem.len() > 16 * 1024 {
+        return Err(GithubConfigError);
+      }
+      let certificates = reqwest::Certificate::from_pem_bundle(pem.as_bytes()).map_err(|_| GithubConfigError)?;
+      if certificates.len() != 1 {
+        return Err(GithubConfigError);
+      }
+      api_root_certificates.extend(certificates);
+    }
     if wire.config_version != 1
       || wire.api_version.is_empty()
       || wire.api_version.len() > 32
@@ -101,6 +118,7 @@ impl Config {
       digest: hex::encode(Sha256::digest(&*bytes)),
       api_base,
       api_version: wire.api_version,
+      api_root_certificates,
       git_path,
       git_sha256: wire.git_sha256,
       credential_directory: private(&wire.credential_directory)?,

@@ -69,6 +69,17 @@ impl ArtifactRecordStore for PostgresStore {
     crate::artifact::published(&self.pool, artifact_id).await
   }
 
+  async fn published_execution_input(
+    &self,
+    artifact_id: octacity_server_domain::ArtifactId,
+  ) -> Result<PublishedExecutionInput, StoreError> {
+    if let Some(input) = crate::factory_execution_input::read(&self.pool, artifact_id).await? {
+      return Ok(input);
+    }
+    let upload = self.published_artifact(artifact_id).await?;
+    PublishedExecutionInput::from_artifact(&upload)
+  }
+
   async fn list_published_artifacts(
     &self,
     query: ListPublishedArtifacts,

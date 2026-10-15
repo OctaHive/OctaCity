@@ -18,6 +18,30 @@ On macOS use `shasum -a 256 -c`; on Windows use `Get-FileHash` and compare the
 lowercase SHA-256. After extraction, verify every line in the bundled
 `SHA256SUMS` before copying files into their final locations.
 
+The build-time Agent packager can include a separately built protected-reader
+worker with `--protected-reader <binary>` and
+`--protected-reader-platform linux-x86_64|linux-aarch64`. Both options are
+required together. The worker is stored below its own guest-platform directory
+in `workers/protected-reader`, with its platform and SHA-256 in a separate
+worker `manifest.json`. Both that manifest and the executable are covered by
+the archive's `SHA256SUMS`; the main product manifest retains its existing
+component contract. A macOS Agent archive can therefore
+carry a Linux ARM64 worker for its VM without treating that worker as a macOS
+executable. Packaging the bytes does not qualify or enable controlled Jobs;
+installed inventory and the selected backend's physical contracts must still
+pass. Archives without these options retain their ordinary layout.
+
+The optional `protected_reader` configuration freezes a dedicated
+`release_root`, relative `entrypoint`, binary `platform`, immutable `tool` and
+`executable` references, and the resource/output tuple for the reader operation.
+Its distribution must be separate from work, state, cache, Octa, source-plugin
+and enrollment-credential directories and must contain no configured workload
+identity tokens. Model requests cannot supply a replacement executable,
+source root, credentials or network settings. Omitting the configuration keeps
+ordinary Agent behavior unchanged. Validating this metadata alone does not
+enable controlled Jobs: verified binary inventory, supervised execution and
+the qualified Job attachment remain required.
+
 Octa is a separate product and release. Verify its archive and provenance in
 the same way, then install its complete runner, capability manifest, plugin
 directory, and `Octa.lock` below the configured `octa_release_root`.
@@ -39,6 +63,35 @@ configuration as a dedicated Agent and Pool restricted to the intended
 Projects, and do not install ambient model credentials for that service
 identity. Signed per-Job selection belongs to the Factory Permission Set in
 JobSpec v3; the existing protocol is not reinterpreted.
+
+Private Factory credential values are installed separately from the public
+Agent configuration. `factory_credential_profiles` maps an operator-selected
+logical name to an absolute private JSON file, for example:
+
+```toml
+factory_credential_profiles = { model_service = "/run/octacity-private/model-service.json" }
+```
+
+Each file contains a bounded object of named string values. Duplicate names,
+non-string values, invalid files, symlinks, and access by other local users are
+rejected when Factory execution is enabled. Keep the files in an owner-private
+directory outside work, state, cache, and installed distributions. The Agent
+loads no profile values when `factory_permissions` is absent; ordinary CI/CD
+does not need these optional files or their parent directories when references
+are normalized absolute paths. References cannot name job or installation
+storage; enabling Factory applies full canonical and private-file
+validation before loading any values. `octacity-agent validate` checks the same
+enabled installation as daemon startup without contacting a model provider.
+Invalid private-profile references produce a stable diagnostic without disclosing
+the file or parent-directory path, JSON contents, or credential values.
+
+Installing a profile grants no Job authority. A signed Factory request must
+select its exact logical name within the local permission ceiling, and the
+immutable protected task must declare the selected variables as required
+secrets. Values are injected only after those checks; they remain absent from
+the public JobSpec and diagnostics. Loaded values and encoded file buffers are
+erased when released. Keep this installation on the dedicated Agent/Pool
+described above.
 
 Writable Factory implementation and rework stages may additionally request a
 trusted ChangeSet capture. Configure `change_set_capture` with the provider and

@@ -102,6 +102,14 @@ pub struct AgentInventory {
 #[derive(Clone, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryExecutionCapabilityV3 {
+  /// This exact route projects an empty read-only parent workspace with only
+  /// separately admitted child mounts. Missing inventory means unsupported.
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub workspace_anchor: bool,
+  /// This exact route has an installed lease-owned blocking tool bridge and
+  /// private confined reader lifecycle. Missing inventory means unsupported.
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub controlled_tools: bool,
   /// Provider-neutral execution route proved by backend startup validation.
   pub execution: ExecutionCapabilityV2,
   /// Ordered semantic controls enforced by this exact route.
@@ -957,3 +965,7 @@ impl CoordinatorProtocolError {
 
 #[cfg(test)]
 mod tests;
+
+fn is_false(value: &bool) -> bool {
+  !*value
+}

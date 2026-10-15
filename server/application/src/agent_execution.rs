@@ -51,6 +51,30 @@ pub trait AgentExecutionUseCases: Send + Sync {
   async fn complete_lease(&self, input: CompleteAgentLeaseInput) -> Result<(), AgentExecutionError>;
 }
 
+/// Authenticated completion context for server-owned output derivation.
+/// Publication must still validate the current Lease fence in the authoritative
+/// store before each effect; registration authentication alone grants no writes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AgentOutputFinalization {
+  /// Exact Agent, registration epoch and Lease authority from this request.
+  pub lease: octacity_server_store::LeaseAccess,
+  /// Leased Job whose installed output policy must be resolved independently.
+  pub job_id: octacity_server_domain::JobId,
+  /// Attempt echoed by the authenticated Lease request.
+  pub attempt: octacity_server_domain::AttemptNumber,
+  /// Server-observed completion arrival time, never an Agent timestamp.
+  pub observed_at: octacity_server_domain::Timestamp,
+}
+
+/// Optional server-owned publication before a Job can become successful.
+/// Implementations select only installed immutable policies, remain idempotent
+/// across completion retries, and leave unrelated ordinary Jobs unchanged.
+#[async_trait]
+pub trait AgentOutputFinalizer: Send + Sync {
+  /// Derives and publishes required outputs under the still-current Lease.
+  async fn finalize(&self, input: AgentOutputFinalization) -> Result<(), AgentExecutionError>;
+}
+
 /// Store-backed event ingestion and terminal completion service.
 pub struct AgentExecutionService<S> {
   registrations: Arc<dyn AgentRegistrationUseCases>,
@@ -58,6 +82,7 @@ pub struct AgentExecutionService<S> {
   log_objects: Option<Arc<dyn LogChunkStore>>,
   log_redactor: LogRedactor,
   orphan_cleanup_grace: Duration,
+  output_finalizer: Option<Arc<dyn AgentOutputFinalizer>>,
 }
 
 impl<S> AgentExecutionService<S> {
@@ -69,6 +94,7 @@ impl<S> AgentExecutionService<S> {
       log_objects: None,
       log_redactor: LogRedactor::default(),
       orphan_cleanup_grace: Duration::ZERO,
+      output_finalizer: None,
     }
   }
 
@@ -86,7 +112,16 @@ impl<S> AgentExecutionService<S> {
       log_objects: Some(log_objects),
       log_redactor,
       orphan_cleanup_grace,
+      output_finalizer: None,
     }
+  }
+
+  /// Installs output derivation before successful completion. Failed execution
+  /// bypasses publication so a storage outage cannot prevent failure settlement.
+  #[must_use]
+  pub fn with_output_finalizer(mut self, finalizer: Arc<dyn AgentOutputFinalizer>) -> Self {
+    self.output_finalizer = Some(finalizer);
+    self
   }
 }
 
@@ -213,6 +248,18 @@ where
           JobCompletionStatus::InfrastructureFailed => JobCompletionKind::Failed(JobFailureClass::Infrastructure),
           JobCompletionStatus::Cancelled => JobCompletionKind::Cancelled,
         };
+        if input.request.status == JobCompletionStatus::Succeeded
+          && let Some(finalizer) = &self.output_finalizer
+        {
+          finalizer
+            .finalize(AgentOutputFinalization {
+              lease: lease.access,
+              job_id: lease.job_id,
+              attempt: lease.attempt,
+              observed_at: completed_at,
+            })
+            .await?;
+        }
         self
           .store
           .complete_job(JobCompletion {
@@ -610,6 +657,63 @@ mod tests {
       "a rejected transaction must leave durable cleanup work"
     );
     assert!(store.appends.lock().unwrap().is_empty());
+  }
+
+  #[test]
+  fn successful_completion_waits_for_fenced_output_finalization_and_can_retry() {
+    struct Finalizer {
+      fail: AtomicBool,
+      calls: Mutex<Vec<AgentOutputFinalization>>,
+      registrations: Arc<RegistrationStub>,
+      store: Arc<RecordingStore>,
+    }
+    #[async_trait]
+    impl AgentOutputFinalizer for Finalizer {
+      async fn finalize(&self, input: AgentOutputFinalization) -> Result<(), AgentExecutionError> {
+        assert_eq!(
+          self.registrations.operations.lock().unwrap().last(),
+          Some(&AgentOperation::Complete),
+          "registration must be authenticated before publication"
+        );
+        assert!(self.store.completions.lock().unwrap().is_empty());
+        self.calls.lock().unwrap().push(input);
+        if self.fail.load(Ordering::Acquire) {
+          Err(AgentExecutionError::Unavailable)
+        } else {
+          Ok(())
+        }
+      }
+    }
+    let registrations = Arc::new(RegistrationStub {
+      operations: Mutex::new(Vec::new()),
+    });
+    let store = Arc::new(RecordingStore::default());
+    let finalizer = Arc::new(Finalizer {
+      fail: AtomicBool::new(true),
+      calls: Mutex::new(Vec::new()),
+      registrations: registrations.clone(),
+      store: store.clone(),
+    });
+    let service = AgentExecutionService::new(registrations, store.clone()).with_output_finalizer(finalizer.clone());
+    let mut input = completion_input();
+    input.request.status = JobCompletionStatus::Succeeded;
+    assert_eq!(
+      run_ready(service.complete_lease(input.clone())),
+      Err(AgentExecutionError::Unavailable)
+    );
+    assert!(store.completions.lock().unwrap().is_empty());
+    finalizer.fail.store(false, Ordering::Release);
+    assert_eq!(run_ready(service.complete_lease(input)), Ok(()));
+    assert_eq!(store.completions.lock().unwrap().len(), 1);
+    let calls = finalizer.calls.lock().unwrap();
+    assert_eq!(calls.len(), 2);
+    assert_eq!(calls[0], calls[1]);
+    assert_eq!(calls[0].job_id, request_lease_job());
+    assert_eq!(calls[0].attempt.get(), 1);
+    assert_eq!(calls[0].lease.lease_id.to_string(), protocol_lease().lease_id);
+    assert_eq!(calls[0].lease.agent_id, AgentId::from_uuid(Uuid::from_u128(1)).unwrap());
+    assert_eq!(calls[0].lease.registration_epoch.get(), 7);
+    assert_eq!(calls[0].observed_at.unix_millis(), 2_000);
   }
 
   #[test]

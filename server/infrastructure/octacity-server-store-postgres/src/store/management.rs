@@ -486,6 +486,14 @@ impl AgentCredentialStore for PostgresStore {
 
 #[async_trait]
 impl FactoryPhasePoolStore for PostgresStore {
+  async fn ready_phase_policies(
+    &self,
+    after: Option<octacity_server_factory::FactoryDigest>,
+    limit: u16,
+  ) -> Result<Vec<octacity_server_factory::FactoryDigest>, StoreError> {
+    crate::factory_run::ready_phase_policies(&self.pool, after, limit).await
+  }
+
   async fn phase_pool_selection_for_claim(
     &self,
     run: octacity_server_factory::FactoryRunId,

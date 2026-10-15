@@ -218,16 +218,20 @@ fn guest_paths(runner: &RunnerProgram, request: &StartExecution) -> Result<Execu
       &request.data_dir,
       Path::new(GUEST_WORKSPACE),
     )?),
-    plugins_dir: PathBuf::from(map_path(
-      &runner.release_root,
-      &runner.plugins_dir,
-      Path::new(GUEST_RELEASE),
-    )?),
-    plugin_lock: PathBuf::from(map_path(
-      &runner.release_root,
-      &runner.plugin_lock,
-      Path::new(GUEST_RELEASE),
-    )?),
+    plugin_projection: runner
+      .plugin_projection
+      .as_ref()
+      .map(|plugins| {
+        Ok::<_, ExecutionError>(octacity_execution::ExecutionPluginProjection {
+          directory: PathBuf::from(map_path(
+            &runner.release_root,
+            &plugins.directory,
+            Path::new(GUEST_RELEASE),
+          )?),
+          lock: PathBuf::from(map_path(&runner.release_root, &plugins.lock, Path::new(GUEST_RELEASE))?),
+        })
+      })
+      .transpose()?,
     cache: request.cache.as_ref().map(|cache| cache.projected_paths()),
   })
 }
@@ -322,8 +326,10 @@ mod tests {
     let runner = RunnerProgram {
       release_root: release.clone(),
       executable: release.join("octa-runner"),
-      plugins_dir: release.join("plugins"),
-      plugin_lock: release.join("Octa.lock"),
+      plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+        directory: release.join("plugins"),
+        lock: release.join("Octa.lock"),
+      }),
       external_executables: std::collections::BTreeMap::new(),
     };
     let request = StartExecution {

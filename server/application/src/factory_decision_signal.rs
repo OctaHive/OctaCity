@@ -11,6 +11,7 @@ use octacity_server_factory::{
   DecisionSignalState, FactoryError, FactoryKey, ToolRiskChoiceMapping, consume_routing_signal,
   consume_tool_risk_signal,
 };
+use octacity_server_store::FactoryDecisionSignalRequestDisposition;
 use thiserror::Error;
 
 /// Stable secret-free failure shared by Decision Signal application ports.
@@ -44,6 +45,20 @@ pub trait DecisionSignalRequestObservation: Send + Sync {
   ) -> Result<Option<DecisionSignalReceipt>, DecisionSignalPortError>;
 }
 
+/// Durable authority is checked before an idempotent provider operation can run.
+#[async_trait]
+pub trait DecisionSignalDispatchAuthorization: Send + Sync {
+  /// Recovers a prior dispatch reservation without renewing authority.
+  async fn was_reserved(&self, request: &DecisionSignalProviderRequest) -> Result<bool, DecisionSignalPortError>;
+  /// Verifies current ownership, cancellation and deadline and reserves call budget.
+  /// Only a new atomic reservation permits evaluation. An existing unresolved
+  /// reservation permits observation and never authorizes a second external call.
+  async fn authorize_dispatch(
+    &self,
+    request: &DecisionSignalProviderRequest,
+  ) -> Result<FactoryDecisionSignalRequestDisposition, DecisionSignalPortError>;
+}
+
 /// Dispatches one exact canonical request without consuming its result.
 #[async_trait]
 pub trait DecisionSignalDispatch: Send + Sync {
@@ -52,6 +67,15 @@ pub trait DecisionSignalDispatch: Send + Sync {
     &self,
     request: &DecisionSignalProviderRequest,
   ) -> Result<octacity_server_factory::DecisionSignalProviderResult, DecisionSignalProviderFailure>;
+
+  /// Reads an already dispatched evaluation without authorizing another call.
+  /// Unknown or unsupported recovery keeps the existing reservation pending.
+  async fn observe_evaluation(
+    &self,
+    _request: &DecisionSignalProviderRequest,
+  ) -> Option<DecisionSignalProviderObservation> {
+    None
+  }
 }
 
 /// Atomically publishes one immutable consumed Decision Signal receipt.
@@ -88,11 +112,24 @@ where
   ) -> Result<octacity_server_factory::DecisionSignalProviderResult, DecisionSignalProviderFailure> {
     self.evaluate(request).await
   }
+
+  async fn observe_evaluation(
+    &self,
+    request: &DecisionSignalProviderRequest,
+  ) -> Option<DecisionSignalProviderObservation> {
+    DecisionSignalProvider::observe_evaluation(self, request).await
+  }
 }
 
 /// Failure while coordinating observation, provider dispatch, consumption, and publication.
 #[derive(Debug, Error)]
 pub enum DecisionSignalApplicationError {
+  /// A reserved external operation still needs an authoritative measured outcome.
+  #[error("Decision Signal is awaiting provider observation")]
+  AwaitingProviderObservation,
+  /// Current ownership or bounded dispatch reservation was rejected before external I/O.
+  #[error("Decision Signal dispatch authorization failed")]
+  Authorization(#[source] DecisionSignalPortError),
   /// The authoritative wall clock could not be represented safely.
   #[error("Decision Signal clock is unavailable")]
   ClockUnavailable,
@@ -118,6 +155,7 @@ pub struct DecisionSignalService {
   dispatcher: Arc<dyn DecisionSignalDispatch>,
   publisher: Arc<dyn DecisionSignalReceiptPublication>,
   clock: Arc<dyn DecisionSignalClock>,
+  authorizations: Arc<dyn DecisionSignalDispatchAuthorization>,
 }
 
 impl DecisionSignalService {
@@ -128,12 +166,14 @@ impl DecisionSignalService {
     observations: Arc<dyn DecisionSignalRequestObservation>,
     dispatcher: Arc<dyn DecisionSignalDispatch>,
     publisher: Arc<dyn DecisionSignalReceiptPublication>,
+    authorizations: Arc<dyn DecisionSignalDispatchAuthorization>,
   ) -> Self {
     Self::with_clock(
       capabilities,
       observations,
       dispatcher,
       publisher,
+      authorizations,
       Arc::new(SystemDecisionSignalClock),
     )
   }
@@ -143,6 +183,7 @@ impl DecisionSignalService {
     observations: Arc<dyn DecisionSignalRequestObservation>,
     dispatcher: Arc<dyn DecisionSignalDispatch>,
     publisher: Arc<dyn DecisionSignalReceiptPublication>,
+    authorizations: Arc<dyn DecisionSignalDispatchAuthorization>,
     clock: Arc<dyn DecisionSignalClock>,
   ) -> Self {
     Self {
@@ -150,6 +191,7 @@ impl DecisionSignalService {
       observations,
       dispatcher,
       publisher,
+      authorizations,
       clock,
     }
   }
@@ -161,9 +203,37 @@ impl DecisionSignalService {
     provider: Arc<dyn DecisionSignalProvider>,
     observations: Arc<dyn DecisionSignalRequestObservation>,
     publisher: Arc<dyn DecisionSignalReceiptPublication>,
+    authorizations: Arc<dyn DecisionSignalDispatchAuthorization>,
   ) -> Self {
     let operations = Arc::new(ResolvedProviderOperations(provider));
-    Self::new(operations.clone(), observations, operations, publisher)
+    Self::new(operations.clone(), observations, operations, publisher, authorizations)
+  }
+
+  pub(crate) fn for_provider_with_factory_clock(
+    provider: Arc<dyn DecisionSignalProvider>,
+    observations: Arc<dyn DecisionSignalRequestObservation>,
+    publisher: Arc<dyn DecisionSignalReceiptPublication>,
+    authorizations: Arc<dyn DecisionSignalDispatchAuthorization>,
+    clock: Arc<dyn crate::FactoryExecutionClock>,
+  ) -> Self {
+    struct Clock(Arc<dyn crate::FactoryExecutionClock>);
+    impl DecisionSignalClock for Clock {
+      fn now(&self) -> Result<Timestamp, DecisionSignalApplicationError> {
+        self
+          .0
+          .now()
+          .map_err(|_| DecisionSignalApplicationError::ClockUnavailable)
+      }
+    }
+    let operations = Arc::new(ResolvedProviderOperations(provider));
+    Self::with_clock(
+      operations.clone(),
+      observations,
+      operations,
+      publisher,
+      authorizations,
+      Arc::new(Clock(clock)),
+    )
   }
 
   #[cfg(test)]
@@ -171,10 +241,18 @@ impl DecisionSignalService {
     provider: Arc<dyn DecisionSignalProvider>,
     observations: Arc<dyn DecisionSignalRequestObservation>,
     publisher: Arc<dyn DecisionSignalReceiptPublication>,
+    authorizations: Arc<dyn DecisionSignalDispatchAuthorization>,
     clock: Arc<dyn DecisionSignalClock>,
   ) -> Self {
     let operations = Arc::new(ResolvedProviderOperations(provider));
-    Self::with_clock(operations.clone(), observations, operations, publisher, clock)
+    Self::with_clock(
+      operations.clone(),
+      observations,
+      operations,
+      publisher,
+      authorizations,
+      clock,
+    )
   }
 
   /// Obtains and consumes a routing signal against one declared baseline route.
@@ -214,30 +292,113 @@ impl DecisionSignalService {
       return Ok(receipt);
     }
 
+    if self
+      .authorizations
+      .was_reserved(request)
+      .await
+      .map_err(DecisionSignalApplicationError::Authorization)?
+    {
+      return self.recover_reserved(request, consume).await;
+    }
+
     if self.now()? >= request.deadline() {
-      let receipt = consume(unavailable_observation(request, DecisionSignalState::TimedOut))
-        .map_err(DecisionSignalApplicationError::Consumption)?;
+      let receipt = consume(
+        self
+          .before_dispatch_failure(request, DecisionSignalState::TimedOut)
+          .await?,
+      )
+      .map_err(DecisionSignalApplicationError::Consumption)?;
       return self.publish_or_observe(request, receipt).await;
     }
 
     let observation = match self.capabilities.discover_capability(request).await {
       Ok(capability) if capability_matches(request, &capability) => {
         if self.now()? >= request.deadline() {
-          unavailable_observation(request, DecisionSignalState::TimedOut)
+          self
+            .before_dispatch_failure(request, DecisionSignalState::TimedOut)
+            .await?
         } else {
-          match self.dispatcher.dispatch_request(request).await {
-            Ok(result) if self.now()? < request.deadline() => DecisionSignalProviderObservation::Result(result),
-            Ok(result) => timed_out_observation(request, result.usage()),
-            Err(failure) if self.now()? < request.deadline() => DecisionSignalProviderObservation::Failure(failure),
-            Err(failure) => timed_out_observation(request, failure.usage()),
+          let disposition = self
+            .authorizations
+            .authorize_dispatch(request)
+            .await
+            .map_err(DecisionSignalApplicationError::Authorization)?;
+          if disposition == FactoryDecisionSignalRequestDisposition::Replayed {
+            return self.recover_reserved(request, consume).await;
           }
+          if self.now()? >= request.deadline() {
+            return Err(DecisionSignalApplicationError::AwaitingProviderObservation);
+          }
+          let observation = match self.dispatcher.dispatch_request(request).await {
+            Ok(result) => DecisionSignalProviderObservation::Result(result),
+            Err(failure) => DecisionSignalProviderObservation::Failure(failure),
+          };
+          self.measured_observation(request, observation)?
         }
       }
-      Ok(_) => unavailable_observation(request, DecisionSignalState::Invalid),
-      Err(_) => unavailable_observation(request, DecisionSignalState::Unavailable),
+      Ok(_) => {
+        self
+          .before_dispatch_failure(request, DecisionSignalState::Invalid)
+          .await?
+      }
+      Err(_) => {
+        self
+          .before_dispatch_failure(request, DecisionSignalState::Unavailable)
+          .await?
+      }
     };
     let receipt = consume(observation).map_err(DecisionSignalApplicationError::Consumption)?;
     self.publish_or_observe(request, receipt).await
+  }
+
+  async fn recover_reserved(
+    &self,
+    request: &DecisionSignalProviderRequest,
+    consume: impl FnOnce(DecisionSignalProviderObservation) -> Result<DecisionSignalReceipt, FactoryError>,
+  ) -> Result<DecisionSignalReceipt, DecisionSignalApplicationError> {
+    let observation = self
+      .dispatcher
+      .observe_evaluation(request)
+      .await
+      .ok_or(DecisionSignalApplicationError::AwaitingProviderObservation)?;
+    let observation = self.measured_observation(request, observation)?;
+    let receipt = consume(observation).map_err(DecisionSignalApplicationError::Consumption)?;
+    self.publish_or_observe(request, receipt).await
+  }
+
+  fn measured_observation(
+    &self,
+    request: &DecisionSignalProviderRequest,
+    observation: DecisionSignalProviderObservation,
+  ) -> Result<DecisionSignalProviderObservation, DecisionSignalApplicationError> {
+    if !observation.is_valid_for(request) {
+      return Err(DecisionSignalApplicationError::AwaitingProviderObservation);
+    }
+    if self.now()? >= request.deadline() {
+      let usage = match observation {
+        DecisionSignalProviderObservation::Result(result) => result.usage(),
+        DecisionSignalProviderObservation::Failure(failure) => failure.usage().expect("validated measured observation"),
+      };
+      Ok(timed_out_observation(request, usage))
+    } else {
+      Ok(observation)
+    }
+  }
+
+  async fn before_dispatch_failure(
+    &self,
+    request: &DecisionSignalProviderRequest,
+    state: DecisionSignalState,
+  ) -> Result<DecisionSignalProviderObservation, DecisionSignalApplicationError> {
+    if self
+      .authorizations
+      .was_reserved(request)
+      .await
+      .map_err(DecisionSignalApplicationError::Authorization)?
+    {
+      return Err(DecisionSignalApplicationError::AwaitingProviderObservation);
+    }
+    Ok(unavailable_observation(request, state))
   }
 
   async fn publish_or_observe(
@@ -319,6 +480,13 @@ impl DecisionSignalDispatch for ResolvedProviderOperations {
     request: &DecisionSignalProviderRequest,
   ) -> Result<octacity_server_factory::DecisionSignalProviderResult, DecisionSignalProviderFailure> {
     self.0.evaluate(request).await
+  }
+
+  async fn observe_evaluation(
+    &self,
+    request: &DecisionSignalProviderRequest,
+  ) -> Option<DecisionSignalProviderObservation> {
+    self.0.observe_evaluation(request).await
   }
 }
 

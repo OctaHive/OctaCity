@@ -1,9 +1,12 @@
 //! Unix mode implementation for private agent state.
 
 use std::{
+  ffi::CString,
   fs,
+  os::fd::{AsRawFd as _, FromRawFd as _},
+  os::unix::ffi::OsStrExt as _,
   os::unix::fs::{DirBuilderExt as _, MetadataExt as _, OpenOptionsExt as _, PermissionsExt as _},
-  path::Path,
+  path::{Component, Path},
 };
 
 // `MetadataExt::mode` uses a portable `u32` representation. Naming the POSIX
@@ -89,6 +92,60 @@ pub(super) fn open_regular_file_no_follow(path: &Path) -> std::io::Result<fs::Fi
     ));
   }
   Ok(file)
+}
+
+pub(super) fn open_rooted_read_directory(path: &Path) -> std::io::Result<fs::File> {
+  fs::OpenOptions::new()
+    .read(true)
+    .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC | libc::O_NONBLOCK)
+    .open(path)
+}
+
+pub(super) fn open_rooted_regular_file(root: &fs::File, relative: &Path) -> std::io::Result<fs::File> {
+  if relative.as_os_str().is_empty()
+    || !relative
+      .components()
+      .all(|component| matches!(component, Component::Normal(_)))
+  {
+    return Err(std::io::Error::new(
+      std::io::ErrorKind::InvalidInput,
+      "read path must remain below its root",
+    ));
+  }
+  let mut directory = root.try_clone()?;
+  let mut components = relative.components().peekable();
+  while let Some(Component::Normal(component)) = components.next() {
+    let name = CString::new(component.as_bytes())
+      .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "read path contains a nul byte"))?;
+    let is_directory = components.peek().is_some();
+    let flags = libc::O_RDONLY
+      | libc::O_NOFOLLOW
+      | libc::O_CLOEXEC
+      | libc::O_NONBLOCK
+      | if is_directory { libc::O_DIRECTORY } else { 0 };
+    // SAFETY: the retained directory fd and nul-terminated component remain
+    // valid for this call. No creation flag is set, so no variadic mode is used.
+    let descriptor = unsafe { libc::openat(directory.as_raw_fd(), name.as_ptr(), flags) };
+    if descriptor < 0 {
+      return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: successful openat transfers exactly one new owned descriptor.
+    let opened = unsafe { fs::File::from_raw_fd(descriptor) };
+    if !is_directory {
+      if !opened.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+          std::io::ErrorKind::InvalidInput,
+          "read target is not a regular file",
+        ));
+      }
+      return Ok(opened);
+    }
+    directory = opened;
+  }
+  Err(std::io::Error::new(
+    std::io::ErrorKind::InvalidInput,
+    "read path does not name a file",
+  ))
 }
 
 #[cfg(test)]

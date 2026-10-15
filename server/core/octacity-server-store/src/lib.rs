@@ -15,6 +15,8 @@ mod build_control;
 mod build_discovery_model;
 mod build_discovery_port;
 mod build_origin;
+mod factory_execution_input;
+mod factory_signal_receipt;
 pub use build_origin::{BuildOrigin, BuildSummaryOrigin, FactoryBuildOrigin, TriggerBuildOrigin};
 mod build_query;
 mod build_query_port;
@@ -743,3 +745,15 @@ pub use factory_flow_definition::{
 
 mod factory_phase_discovery;
 pub use factory_phase_discovery::{ListPhaseReadyEntries, PhaseReadyPage, PhaseReadyPagePosition};
+
+pub use factory_execution_input::{
+  CompleteFactoryExecutionInputDeletion, FactoryExecutionInputDisposition, FactoryExecutionInputPublication,
+  FactoryExecutionInputRetentionStore, FactoryExecutionInputStore, PublishFactoryExecutionInputs,
+  PublishedExecutionInput,
+};
+
+pub use factory_signal_receipt::{
+  FactoryDecisionSignalLeaseGuard, FactoryDecisionSignalNodeUsage, FactoryDecisionSignalReceiptStore,
+  FactoryDecisionSignalRequestDisposition, FactoryDecisionSignalRequestStore, FactoryDecisionSignalUsageStore,
+  PublishFactoryDecisionSignalReceipt, ReserveFactoryDecisionSignalRequest,
+};

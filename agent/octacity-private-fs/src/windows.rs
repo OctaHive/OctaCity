@@ -320,6 +320,20 @@ pub(super) fn open_regular_file_no_follow(path: &Path) -> std::io::Result<fs::Fi
   Ok(file)
 }
 
+pub(super) fn open_rooted_read_directory(_path: &Path) -> std::io::Result<fs::File> {
+  Err(std::io::Error::new(
+    std::io::ErrorKind::Unsupported,
+    "rooted protected reads are not qualified on this platform",
+  ))
+}
+
+pub(super) fn open_rooted_regular_file(_root: &fs::File, _relative: &Path) -> std::io::Result<fs::File> {
+  Err(std::io::Error::new(
+    std::io::ErrorKind::Unsupported,
+    "rooted protected reads are not qualified on this platform",
+  ))
+}
+
 pub(super) fn is_reparse_point(path: &Path) -> std::io::Result<bool> {
   Ok(fs::symlink_metadata(path)?.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0)
 }

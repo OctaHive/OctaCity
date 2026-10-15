@@ -34,17 +34,7 @@ impl AdmittedFlow {
   ) -> Result<Self, FactoryError> {
     validate_wip_limits(&limits, wip_limits)?;
     closure.clone().validate(limits.clone())?;
-    if root_run.definition() != closure.root()
-      || root_run.parent().is_some()
-      || initial_cycle.flow_run_id() != root_run.id()
-      || initial_cycle.number() != WorkflowCycleNumber::INITIAL
-      || initial_cycle.predecessor().is_some()
-    {
-      return Err(FactoryError::InvalidReference {
-        relationship: "admitted Flow root",
-      });
-    }
-    Ok(Self {
+    let admitted = Self {
       closure,
       limits,
       wip_limits,
@@ -52,7 +42,9 @@ impl AdmittedFlow {
       initial_cycle,
       data_schemas: vec![],
       pools: Default::default(),
-    })
+    };
+    admitted.validate_root_bindings()?;
+    Ok(admitted)
   }
 
   /// Admits the exact journey selected by the immutable configuration.
@@ -102,12 +94,28 @@ impl AdmittedFlow {
     self.wip_limits
   }
 
-  /// Revalidates the persisted closure against its original admission limits.
+  /// Revalidates persisted root/cycle bindings and the exact closure against
+  /// the original admission limits.
   pub fn validated(&self) -> Result<crate::ValidatedFlowDefinitionClosure, FactoryError> {
+    self.validate_root_bindings()?;
     validate_wip_limits(&self.limits, self.wip_limits)?;
     self.validate_data_schemas()?;
     crate::phase_pool::validate_pool_settings(&self.closure, &self.limits, &self.pools)?;
     self.closure.clone().validate(self.limits.clone())
+  }
+
+  fn validate_root_bindings(&self) -> Result<(), FactoryError> {
+    if self.root_run.definition() != self.closure.root()
+      || self.root_run.parent().is_some()
+      || self.initial_cycle.flow_run_id() != self.root_run.id()
+      || self.initial_cycle.number() != WorkflowCycleNumber::INITIAL
+      || self.initial_cycle.predecessor().is_some()
+    {
+      return Err(FactoryError::InvalidReference {
+        relationship: "admitted Flow root",
+      });
+    }
+    Ok(())
   }
 
   /// Freezes the complete configured data catalogue before publishing admission.

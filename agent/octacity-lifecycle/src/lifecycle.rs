@@ -197,11 +197,13 @@ impl FinishingAttempt<'_> {
     if self.active.error.is_none() {
       let staging_root = self.attempt_root.join("outputs");
       let cancellation = CancellationToken::new();
-      match trusted_change_set_outputs(&completion) {
+      match completion.change_set().map(trusted_change_set_outputs).transpose() {
         Ok(trusted_files) => {
+          let trusted_files = trusted_files.unwrap_or_default();
           let freeze = self.lifecycle.outputs.freeze(
             FreezeOutputs {
-              workspace: completion.workspace(),
+              workspace: completion.publication_workspace(),
+              workspace_prefix: completion.publication_prefix(),
               results: &results,
               trusted_files: &trusted_files,
               limits: completion.output_limits(),
@@ -306,10 +308,13 @@ impl FinishingAttempt<'_> {
   }
 }
 
-fn trusted_change_set_outputs(completion: &JobCompletion) -> Result<Vec<TrustedFileOutput>, OutputError> {
-  let Some(captured) = completion.change_set() else {
-    return Ok(Vec::new());
-  };
+/// Converts trusted post-run capture products into the ordinary bounded upload inputs.
+///
+/// These files still pass through `OutputPublisher::freeze` and the signed output
+/// limits; capture authority does not bypass publication accounting.
+pub fn trusted_change_set_outputs(
+  captured: &octacity_changeset::CapturedChangeSet,
+) -> Result<Vec<TrustedFileOutput>, OutputError> {
   if captured.manifest.bundle.name != CHANGE_SET_BUNDLE_OUTPUT
     || captured.manifest_file.name != CHANGE_SET_MANIFEST_OUTPUT
     || captured
@@ -343,6 +348,28 @@ fn trusted_change_set_outputs(completion: &JobCompletion) -> Result<Vec<TrustedF
       CHANGE_SET_PATCH_MEDIA_TYPE,
       patch.size_bytes,
       &patch.sha256,
+    )?);
+  }
+  if let Some(observation) = &captured.observation {
+    observation.output.validate().map_err(OutputError::Invalid)?;
+    if observation.file.name != "capture-observation.json" {
+      return Err(OutputError::Invalid(
+        "trusted ChangeSet capture returned an unexpected observation file".to_owned(),
+      ));
+    }
+    files.push(TrustedFileOutput::new(
+      captured.root.join(&observation.file.name),
+      OutputUploadMetadata {
+        run_id: CHANGE_SET_CAPTURE_PRODUCER_ID,
+        task_id: CHANGE_SET_CAPTURE_PRODUCER_ID,
+        kind: OutputKind::Report,
+        name: observation.output.name.clone(),
+        content_type: None,
+        report_format: Some(observation.output.schema.identity.clone()),
+        transport_content_type: "application/octet-stream".to_owned(),
+        size_bytes: observation.file.size_bytes,
+        sha256: observation.file.sha256.clone(),
+      },
     )?);
   }
   Ok(files)
@@ -456,12 +483,25 @@ pub enum JobLifecycleError {
   Output(#[from] OutputError),
 }
 
+/// Installed adapter composition that binds an execution owner to one current lease.
+/// Binding is an in-memory operation: authority, binary checks and I/O remain
+/// behind the Job executor's signed admission and original cancellation window.
+pub trait FactoryToolExecutionProvider: Send + Sync {
+  /// Captures the current fence without authorizing or starting an operation.
+  fn bind(
+    &self,
+    registration: &Registration,
+    lease: &LeaseAssignment,
+  ) -> Arc<dyn octacity_job::FactoryToolExecutionOwner>;
+}
+
 /// Dependencies that run one verified lease without exposing transport to the executor.
 pub struct JobLifecycle {
   coordinator: Arc<dyn CoordinatorClient>,
   cache_coordinator: Arc<dyn CacheSessionCoordinator>,
   registration: Registration,
   executor: Arc<JobExecutor>,
+  factory_tools: Option<Arc<dyn FactoryToolExecutionProvider>>,
   outputs: Arc<dyn OutputPublisher>,
   capacity: HostCapacity,
   config: JobLifecycleConfig,
@@ -486,10 +526,18 @@ impl JobLifecycle {
       cache_coordinator,
       registration,
       executor,
+      factory_tools: None,
       outputs,
       capacity,
       config,
     })
+  }
+
+  /// Installs an explicit trusted provider; ordinary Jobs never invoke its owner.
+  #[must_use]
+  pub fn with_factory_tools(mut self, provider: Arc<dyn FactoryToolExecutionProvider>) -> Self {
+    self.factory_tools = Some(provider);
+    self
   }
 
   /// Executes, cleans, durably reports, and completes one verified lease.
@@ -574,19 +622,25 @@ impl JobLifecycle {
     let spec = verified.spec;
     let protected_inputs = lease.protected_inputs.clone();
     let job_cancellation = cancellation.clone();
+    let owner = self
+      .factory_tools
+      .as_ref()
+      .map(|provider| provider.bind(&self.registration, &lease));
     let job = tokio::spawn(async move {
-      executor
-        .execute(
-          ExecuteJobRequest {
-            spec,
-            source_credentials: BTreeMap::new(),
-            cache_grant,
-            protected_inputs,
-          },
-          job_cancellation,
-          &event_sender,
-        )
-        .await
+      let request = ExecuteJobRequest {
+        spec,
+        source_credentials: BTreeMap::new(),
+        cache_grant,
+        protected_inputs,
+      };
+      match owner {
+        Some(owner) => {
+          executor
+            .execute_with_factory_tools(request, owner, job_cancellation, &event_sender)
+            .await
+        }
+        None => executor.execute(request, job_cancellation, &event_sender).await,
+      }
     });
     let mut active = ActiveExecution {
       snapshots: snapshot_sender,
@@ -937,4 +991,4 @@ fn unix_now_millis() -> u64 {
 
 #[cfg(test)]
 #[path = "lifecycle_tests.rs"]
-mod tests;
+pub(crate) mod tests;

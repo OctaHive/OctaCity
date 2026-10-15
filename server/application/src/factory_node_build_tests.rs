@@ -11,6 +11,221 @@ fn time(value: i64) -> octacity_server_domain::Timestamp {
   octacity_server_domain::Timestamp::from_unix_millis(value).unwrap()
 }
 
+pub(crate) async fn admit_pending_build(
+  builds: &Arc<Builds>,
+  intent: &FlowBuildIntent,
+  admitted: &AdmittedFlow,
+  schema: &FlowDataSchema,
+) {
+  let FactoryNodeBuildStep::Waiting(execution) = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)))
+    .observe_or_dispatch(intent, admitted, schema, ownership(intent), time(31))
+    .await
+    .expect("admission retains its receipt before terminal observation")
+  else {
+    panic!("fresh admission must require a subsequent observation pass");
+  };
+  assert_eq!(execution.build_id(), builds.acceptance.build_id);
+  assert_eq!(execution.attempt_id(), builds.acceptance.attempt_id);
+  assert_eq!(execution.jobs(), builds.acceptance.job_ids);
+  assert_eq!(builds.requests.lock().unwrap().len(), 1);
+}
+
+#[test]
+fn verified_harness_failure_stops_a_node_even_when_the_ordinary_build_succeeded() {
+  struct VerifiedFailure;
+  #[async_trait::async_trait]
+  impl FactoryNodeBuildOutputSource for VerifiedFailure {
+    async fn terminal_usage(
+      &self,
+      _: octacity_server_domain::BuildId,
+      _: octacity_server_domain::AttemptId,
+    ) -> Result<BudgetUsage, OrdinaryBuildApplicationError> {
+      panic!("already verified consumption must not be read again");
+    }
+    async fn published_outputs(
+      &self,
+      _: octacity_server_domain::BuildId,
+      _: octacity_server_domain::AttemptId,
+      _: u64,
+    ) -> Result<FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError> {
+      Ok(FactoryNodeBuildOutputObservation::ExecutionStopped {
+        usage: BudgetUsage {
+          tokens: 23,
+          elapsed_millis: 2,
+          ..Default::default()
+        },
+      })
+    }
+  }
+  crate::factory_admission_tests::run_ready(async {
+    let (work, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    admit_pending_build(&builds, &intent, &admitted, &schema).await;
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+    let adapter = FactoryNodeBuildAdapter::new(builds, Arc::new(VerifiedFailure));
+    let step = adapter
+      .observe(FactoryNodeExecutionRequest {
+        run_id: intent.input().factory_run_id(),
+        admitted: &admitted,
+        work: &work,
+        input: intent.input(),
+        attempt: intent.node(),
+        build: Some(&intent),
+        ownership: ownership(&intent),
+        observed_at: time(31),
+      })
+      .await
+      .unwrap();
+    let FactoryNodeExecutionStep::ExecutionStopped { execution, usage } = step else {
+      panic!("a technical harness failure cannot create a configured semantic result");
+    };
+    assert!(execution.is_some());
+    assert_eq!(usage.tokens, 23);
+    assert_eq!(usage.attempts, 0);
+  });
+}
+
+#[test]
+fn installed_output_projection_accepts_an_unrelated_protocol_without_format_guessing() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    admit_pending_build(&builds, &intent, &admitted, &schema).await;
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+    let mut document = crate::factory_node_test_support::protocol_document(
+      &builds,
+      &intent.profile().result_output,
+      schema.reference(),
+      br#"{"wire_revision":19,"measurements":[9],"private_detail":"adapter-only text"}"#.to_vec(),
+      intent.profile().tool.clone(),
+      "unrelated.measurement.v19",
+    );
+    document.plugin = intent.profile().plugin.clone();
+    document.data = Some(FlowVerifiedBuildData::new(schema.clone(), serde_json::json!({"count":9})).unwrap());
+    let outputs = FactoryNodeBuildOutputs {
+      execution: FactoryNodeBuildExecutionFacts {
+        profile: intent.profile().clone(),
+        input_digest: intent.input().digest().unwrap(),
+        permissions: intent.permissions().clone(),
+        budget: intent.budget(),
+        deadline: intent.node().deadline(),
+      },
+      usage: BudgetUsage {
+        attempts: 1,
+        elapsed_millis: 1,
+        output_bytes: document.bytes.len() as u64,
+        ..Default::default()
+      },
+      documents: vec![document],
+      verified_at: time(30),
+      fresh_until: time(90),
+    };
+    let FactoryNodeBuildStep::Completed(completed) =
+      FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(Some(outputs.clone()))))
+        .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+        .await
+        .unwrap()
+    else {
+      panic!("an explicitly verified projection must complete");
+    };
+    assert_eq!(completed.record.payload().value(), &serde_json::json!({"count":9}));
+    let mut unverified = outputs;
+    unverified.documents[0].data = None;
+    assert!(
+      FactoryNodeBuildAdapter::new(builds, Arc::new(Outputs(Some(unverified))))
+        .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+        .await
+        .is_err(),
+      "common execution must not guess a provider's envelope layout"
+    );
+  });
+}
+
+#[test]
+fn codex_structured_result_retains_raw_artifact_identity_without_copying_harness_metadata() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    admit_pending_build(&builds, &intent, &admitted, &schema).await;
+    *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
+    let bytes = br#"{"format_version":1,"outcome":"completed","structured_result":{"count":9},"harness_identifiers":{"session_id":"private-harness-session"},"usage":{"input_tokens":2,"output_tokens":3}}"#.to_vec();
+    let raw_digest = FactoryDigest::content_sha256(&bytes);
+    let mut document = crate::factory_node_test_support::protocol_document(
+      &builds,
+      &intent.profile().result_output,
+      schema.reference(),
+      bytes,
+      intent.profile().tool.clone(),
+      "octa.codex.result.v1",
+    );
+    document.plugin = intent.profile().plugin.clone();
+    crate::project_codex_node_output(&mut document, &schema).unwrap();
+    let artifact_id = document.record.identity().artifact_id;
+    let outputs = FactoryNodeBuildOutputs {
+      execution: FactoryNodeBuildExecutionFacts {
+        profile: intent.profile().clone(),
+        input_digest: intent.input().digest().unwrap(),
+        permissions: intent.permissions().clone(),
+        budget: intent.budget(),
+        deadline: intent.node().deadline(),
+      },
+      usage: BudgetUsage {
+        attempts: 1,
+        elapsed_millis: 1,
+        tokens: 5,
+        cost_micro_units: 1,
+        output_bytes: document.bytes.len() as u64,
+      },
+      documents: vec![document],
+      verified_at: time(30),
+      fresh_until: time(90),
+    };
+    let FactoryNodeBuildStep::Completed(completed) =
+      FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(Some(outputs))))
+        .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+        .await
+        .unwrap()
+    else {
+      panic!("schema-validated structured result must complete");
+    };
+    assert_eq!(completed.record.payload().value(), &serde_json::json!({"count":9}));
+    assert!(
+      !serde_json::to_string(completed.record.payload())
+        .unwrap()
+        .contains("private-harness-session")
+    );
+    assert_eq!(
+      completed.record.build_provenance().unwrap().outputs()[0]
+        .artifact
+        .artifact_id(),
+      artifact_id
+    );
+    assert_eq!(
+      completed.record.build_provenance().unwrap().outputs()[0]
+        .artifact
+        .content_digest(),
+      raw_digest
+    );
+    let provenance = completed.record.build_provenance().unwrap();
+    let mut substituted = provenance.outputs().to_vec();
+    substituted[0].data = Some(FlowVerifiedBuildData::new(schema.clone(), serde_json::json!({"count":7})).unwrap());
+    assert!(
+      completed
+        .record
+        .clone()
+        .with_build_provenance(
+          FlowBuildProvenance::new(provenance.profile().clone(), substituted).unwrap(),
+          admitted.closure().definition(intent.input().definition()).unwrap(),
+        )
+        .is_err(),
+      "retained projected facts must equal the node's accepted payload"
+    );
+  });
+}
+
 #[test]
 fn ordinary_verification_build_receives_the_exact_admitted_plan_without_implementation_context() {
   crate::factory_admission_tests::run_ready(async {
@@ -203,6 +418,7 @@ fn configured_node_accepts_only_retained_results_bound_to_its_actual_build_and_s
       let (_, admitted, schema, input, node) = execution_fixture(kind);
       let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
       let builds = Arc::new(Builds::new());
+      admit_pending_build(&builds, &intent, &admitted, &schema).await;
       *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
       let mut document = crate::factory_node_test_support::document(
         &builds,
@@ -343,6 +559,7 @@ fn independently_verified_evidence_is_required_by_configuration_and_retained_wit
       .unwrap();
     let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
     let builds = Arc::new(Builds::new());
+    admit_pending_build(&builds, &intent, &admitted, &schema).await;
     *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
     let mut report = crate::factory_node_test_support::document(
       &builds,
@@ -415,6 +632,113 @@ fn independently_verified_evidence_is_required_by_configuration_and_retained_wit
     assert_eq!(
       done.record.metadata().unwrap()["build"]["outputs"]["audit.evidence"]["data"]["payload"]["value"]["verified"],
       serde_json::json!(true)
+    );
+  });
+}
+
+#[test]
+fn admission_time_advancing_during_create_returns_waiting_with_the_accepted_execution() {
+  use octacity_server_domain::{AttemptId, BuildId, JobId, Timestamp};
+  use octacity_server_store::{AttemptRecord, BuildQueryStore, BuildRecord, JobRecord, StoreError};
+  use std::sync::{
+    OnceLock,
+    atomic::{AtomicI64, Ordering},
+  };
+
+  struct Clock(AtomicI64);
+  impl FactoryExecutionClock for Clock {
+    fn now(&self) -> Result<Timestamp, ApplicationError> {
+      Ok(time(self.0.load(Ordering::SeqCst)))
+    }
+  }
+  struct Admission {
+    clock: Arc<Clock>,
+    accepted: OnceLock<Builds>,
+  }
+  #[async_trait::async_trait]
+  impl OrdinaryBuildApplication for Admission {
+    async fn factory_build_for_operation(
+      &self,
+      operation: FactoryDigest,
+    ) -> Result<Option<FactoryBuildAcceptance>, OrdinaryBuildApplicationError> {
+      match self.accepted.get() {
+        Some(builds) => builds.factory_build_for_operation(operation).await,
+        None => Ok(None),
+      }
+    }
+    async fn create_factory_build(
+      &self,
+      request: CreateFactoryBuild,
+    ) -> Result<FactoryBuildAcceptance, OrdinaryBuildApplicationError> {
+      // Admission I/O completes after the observer entered. Persist the same
+      // actual clock value used by ordinary acceptance, never future metadata.
+      assert_eq!(self.clock.now().unwrap(), time(31));
+      self.clock.0.store(32, Ordering::SeqCst);
+      assert!(self.accepted.set(Builds::new_at(self.clock.now().unwrap())).is_ok());
+      self.accepted.get().unwrap().create_factory_build(request).await
+    }
+  }
+  #[async_trait::async_trait]
+  impl BuildQueryStore for Admission {
+    async fn build(&self, id: BuildId) -> Result<BuildRecord, StoreError> {
+      self.accepted.get().unwrap().build(id).await
+    }
+    async fn attempt(&self, id: AttemptId) -> Result<AttemptRecord, StoreError> {
+      self.accepted.get().unwrap().attempt(id).await
+    }
+    async fn latest_attempt(&self, id: BuildId) -> Result<AttemptRecord, StoreError> {
+      self.accepted.get().unwrap().latest_attempt(id).await
+    }
+    async fn job(&self, id: JobId) -> Result<JobRecord, StoreError> {
+      self.accepted.get().unwrap().job(id).await
+    }
+  }
+
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
+    let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 7).unwrap();
+    let clock = Arc::new(Clock(AtomicI64::new(31)));
+    let admission = Arc::new(Admission {
+      clock: clock.clone(),
+      accepted: OnceLock::new(),
+    });
+    let step = FactoryNodeBuildAdapter::new(admission.clone(), Arc::new(Outputs(None)))
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), clock.now().unwrap())
+      .await
+      .expect("ordinary admission finishing after entry must retain its pending execution");
+    let FactoryNodeBuildStep::Waiting(execution) = step else {
+      panic!("a nonterminal ordinary Build must wait without reading outputs");
+    };
+    let saved = admission.accepted.get().unwrap();
+    assert_eq!(clock.now().unwrap(), time(32));
+    assert_eq!(
+      admission.build(execution.build_id()).await.unwrap().created_at,
+      time(32)
+    );
+    assert_eq!(execution.build_id(), saved.acceptance.build_id);
+    assert_eq!(execution.attempt_id(), saved.acceptance.attempt_id);
+    assert_eq!(execution.jobs(), saved.acceptance.job_ids);
+    assert_eq!(execution.operation_id(), intent.operation_id().unwrap());
+    let restarted = FactoryNodeBuildAdapter::new(admission.clone(), Arc::new(Outputs(None)));
+    assert!(
+      restarted
+        .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+        .await
+        .is_err(),
+      "an existing Build cannot be observed using a time before its admission"
+    );
+    let FactoryNodeBuildStep::Waiting(recovered) = restarted
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), clock.now().unwrap())
+      .await
+      .expect("the next fresh fenced pass observes the retained execution")
+    else {
+      panic!("pending execution must still wait");
+    };
+    assert_eq!(recovered, execution);
+    assert_eq!(
+      saved.requests.lock().unwrap().len(),
+      1,
+      "observation must not create another Build"
     );
   });
 }
@@ -505,6 +829,7 @@ fn expired_semantic_evidence_is_retained_for_configured_gates_to_dispose() {
     let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
     let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
     let builds = Arc::new(Builds::new());
+    admit_pending_build(&builds, &intent, &admitted, &schema).await;
     *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
     let mut report = crate::factory_node_test_support::document(
       &builds,
@@ -553,6 +878,7 @@ fn ordinary_retries_keep_actual_attempt_and_job_provenance_and_failures_do_not_s
       let (_, admitted, schema, input, node) = execution_fixture(kind);
       let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
       let builds = Arc::new(Builds::new());
+      admit_pending_build(&builds, &intent, &admitted, &schema).await;
       *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
       let (attempt, job) = crate::factory_node_test_support::complete_ordinary_retry(&builds);
       let mut report = crate::factory_node_test_support::document(
@@ -676,9 +1002,10 @@ struct TerminalConsumption {
 #[test]
 fn failed_build_executor_requires_measured_consumption_without_provider_results() {
   crate::factory_admission_tests::run_ready(async {
-    let (work, admitted, _, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
+    let (work, admitted, schema, input, node) = execution_fixture(FlowNodeKind::BuildCommand);
     let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
     let builds = Arc::new(Builds::new());
+    admit_pending_build(&builds, &intent, &admitted, &schema).await;
     *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Failed;
     for available in [false, true] {
       let adapter = FactoryNodeBuildAdapter::new(
@@ -782,7 +1109,7 @@ impl FactoryNodeBuildOutputSource for TerminalConsumption {
     _: octacity_server_domain::BuildId,
     _: octacity_server_domain::AttemptId,
     _: u64,
-  ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError> {
+  ) -> Result<FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError> {
     panic!("technical cancellation cannot parse provider results")
   }
 }
@@ -946,6 +1273,7 @@ fn a_configured_json_artifact_can_supply_the_node_result_without_becoming_a_repo
       execution_fixture_with_output_kind(FlowNodeKind::BuildCommand, EvidenceOutputKind::Artifact);
     let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
     let builds = Arc::new(Builds::new());
+    admit_pending_build(&builds, &intent, &admitted, &schema).await;
     *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
     let mut document = crate::factory_node_test_support::document_kind(
       &builds,
@@ -1339,4 +1667,38 @@ fn ordinary_build_receives_the_exact_frozen_trusted_action_selection() {
       "accepted-candidate"
     );
   });
+}
+#[test]
+fn codex_result_projection_accepts_the_released_binary_report_type_without_changing_identity() {
+  let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
+  let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 7).unwrap();
+  let builds = Builds::new();
+  let bytes = br#"{"format_version":1,"outcome":"completed","structured_result":{"count":9},"harness_identifiers":{},"usage":{"input_tokens":2,"output_tokens":3}}"#.to_vec();
+  let mut document = crate::factory_node_test_support::protocol_document(
+    &builds,
+    &intent.profile().result_output,
+    schema.reference(),
+    bytes.clone(),
+    intent.profile().tool.clone(),
+    "octa.codex.result.v1",
+  );
+  let prior = document.record;
+  let mut identity = prior.identity().clone();
+  identity.media_type = octacity_server_artifacts::ArtifactMediaType::new("application/octet-stream").unwrap();
+  document.record = octacity_server_artifacts::ArtifactRecord::restore(
+    identity.clone(),
+    prior.state(),
+    prior.version(),
+    prior.created_at(),
+    prior.published_at(),
+    prior.deleted_at(),
+  )
+  .unwrap();
+  crate::project_codex_node_output(&mut document, &schema).unwrap();
+  assert_eq!(document.record.identity(), &identity);
+  assert_eq!(document.bytes, bytes);
+  assert_eq!(
+    document.data.as_ref().unwrap().payload().value(),
+    &serde_json::json!({"count":9})
+  );
 }

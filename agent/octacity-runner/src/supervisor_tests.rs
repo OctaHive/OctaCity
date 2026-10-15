@@ -27,6 +27,8 @@ use octacity_execution::{
 #[derive(Clone, Copy)]
 enum Scenario {
   Success,
+  FinalOwnerAccounting,
+  MissingPluginProjection,
   Cancelled,
   BadHello,
   Silent,
@@ -77,7 +79,11 @@ impl ExecutionBackend for FakeBackend {
     } else {
       drop(runner_stderr);
     }
-    tokio::spawn(fake_runner(runner_input, runner_output, self.scenario));
+    if matches!(self.scenario, Scenario::MissingPluginProjection) {
+      drop((runner_input, runner_output));
+    } else {
+      tokio::spawn(fake_runner(runner_input, runner_output, self.scenario));
+    }
     Ok(Box::new(FakeExecution {
       io: Some(ExecutionIo {
         stdin: Box::pin(agent_stdin) as ExecutionWriter,
@@ -87,8 +93,11 @@ impl ExecutionBackend for FakeBackend {
       paths: ExecutionPaths {
         workspace: request.workspace,
         data_dir: request.data_dir,
-        plugins_dir: runner.plugins_dir.clone(),
-        plugin_lock: runner.plugin_lock.clone(),
+        plugin_projection: if matches!(self.scenario, Scenario::MissingPluginProjection) {
+          None
+        } else {
+          runner.plugin_projection.clone()
+        },
         cache: None,
       },
       destroyed: self.destroyed.clone(),
@@ -96,6 +105,8 @@ impl ExecutionBackend for FakeBackend {
       exit_code: match self.scenario {
         Scenario::Cancelled => 130,
         Scenario::Success
+        | Scenario::FinalOwnerAccounting
+        | Scenario::MissingPluginProjection
         | Scenario::BadHello
         | Scenario::Silent
         | Scenario::HelloThenSilent
@@ -123,6 +134,11 @@ impl RunningExecution for FakeExecution {
   }
 
   fn take_io(&mut self) -> Result<ExecutionIo, ExecutionError> {
+    if matches!(self.scenario, Scenario::MissingPluginProjection) {
+      return Err(ExecutionError::Backend(
+        "stream accessed without plugin projection".to_owned(),
+      ));
+    }
     self.io.take().ok_or(ExecutionError::IoTaken)
   }
 
@@ -145,6 +161,16 @@ impl RunningExecution for FakeExecution {
       network_received_bytes: None,
       network_transmitted_bytes: None,
     })
+  }
+
+  async fn sample_final_usage(&mut self) -> Result<ResourceUsage, ExecutionError> {
+    let mut usage = self.sample_usage().await?;
+    if matches!(self.scenario, Scenario::FinalOwnerAccounting) {
+      // This fixture owns 15 ms of auxiliary CPU beyond the main's 2 ms.
+      // Only the terminal owner boundary seals and includes that execution.
+      usage.cpu_time_ms = 17;
+    }
+    Ok(usage)
   }
 
   async fn wait(&mut self) -> Result<ExecutionExit, ExecutionError> {
@@ -947,4 +973,61 @@ async fn maps_delivery_stop_reasons_and_keeps_the_first_reason() {
       .await
       .is_err()
   );
+}
+
+#[tokio::test]
+async fn refuses_missing_runner_plugin_projection_before_taking_streams_and_destroys() {
+  let workspace = tempfile::tempdir().unwrap();
+  std::fs::create_dir(workspace.path().join("data")).unwrap();
+  let destroyed = Arc::new(AtomicBool::new(false));
+  let backend = FakeBackend {
+    destroyed: destroyed.clone(),
+    killed: Arc::new(AtomicBool::new(false)),
+    scenario: Scenario::MissingPluginProjection,
+    cleanup_fails: false,
+  };
+  let (sender, _receiver) = mpsc::channel(8);
+  let error = supervise(
+    &installation(),
+    &backend,
+    job(&workspace.path().canonicalize().unwrap()),
+    CancellationToken::new(),
+    &sender,
+    &RunnerSupervisionPolicy::default(),
+  )
+  .await
+  .unwrap_err();
+  assert!(matches!(error, RunnerSupervisionError::Invalid(_)), "{error:?}");
+  assert!(destroyed.load(Ordering::SeqCst));
+}
+
+#[tokio::test]
+async fn terminal_completion_uses_the_execution_owners_sealed_resource_snapshot() {
+  let workspace = tempfile::tempdir().unwrap();
+  std::fs::create_dir(workspace.path().join("data")).unwrap();
+  let destroyed = Arc::new(AtomicBool::new(false));
+  let backend = FakeBackend {
+    destroyed: destroyed.clone(),
+    killed: Arc::new(AtomicBool::new(false)),
+    scenario: Scenario::FinalOwnerAccounting,
+    cleanup_fails: false,
+  };
+  let (sender, _receiver) = mpsc::channel(8);
+  let completion = supervise(
+    &installation(),
+    &backend,
+    job(&workspace.path().canonicalize().unwrap()),
+    CancellationToken::new(),
+    &sender,
+    &RunnerSupervisionPolicy::default(),
+  )
+  .await
+  .unwrap();
+  assert_eq!(completion.status, RunStatus::Succeeded);
+  assert_eq!(
+    completion.final_usage.cpu_time_ms, 17,
+    "terminal usage includes owned auxiliary execution"
+  );
+  assert_eq!(completion.final_usage.elapsed_ms, 10);
+  assert!(destroyed.load(Ordering::SeqCst));
 }

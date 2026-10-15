@@ -37,8 +37,10 @@ fn runner(root: &Path) -> RunnerProgram {
   let release = root.join("release");
   RunnerProgram {
     executable: release.join("octa-runner"),
-    plugins_dir: release.join("plugins"),
-    plugin_lock: release.join("Octa.lock"),
+    plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+      directory: release.join("plugins"),
+      lock: release.join("Octa.lock"),
+    }),
     release_root: release,
     external_executables: BTreeMap::new(),
   }
@@ -497,8 +499,10 @@ async fn reports_native_usage_and_one_shot_process_state() {
     paths: ExecutionPaths {
       workspace: root.path().to_owned(),
       data_dir: root.path().to_owned(),
-      plugins_dir: root.path().to_owned(),
-      plugin_lock: root.path().join("Octa.lock"),
+      plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+        directory: root.path().to_owned(),
+        lock: root.path().join("Octa.lock"),
+      }),
       cache: None,
     },
     cgroup,

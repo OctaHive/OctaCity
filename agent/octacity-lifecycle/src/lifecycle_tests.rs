@@ -394,6 +394,14 @@ struct LifecycleExecution {
   exit_code: i32,
 }
 
+pub(crate) fn execution_fixture(
+  paths: ExecutionPaths,
+  io: Option<ExecutionIo>,
+  exit_code: i32,
+) -> Box<dyn RunningExecution> {
+  Box::new(LifecycleExecution { io, paths, exit_code })
+}
+
 #[async_trait]
 impl ExecutionBackend for LifecycleBackend {
   async fn start(
@@ -415,21 +423,20 @@ impl ExecutionBackend for LifecycleBackend {
       self.wait_for_cancel,
       self.usage_observed.clone(),
     ));
-    Ok(Box::new(LifecycleExecution {
-      io: Some(ExecutionIo {
+    Ok(execution_fixture(
+      ExecutionPaths {
+        workspace: request.workspace,
+        data_dir: request.data_dir,
+        plugin_projection: runner.plugin_projection.clone(),
+        cache: request.cache.as_ref().map(ExecutionCacheMounts::projected_paths),
+      },
+      Some(ExecutionIo {
         stdin: Box::pin(agent_stdin) as ExecutionWriter,
         stdout: Box::pin(agent_stdout) as ExecutionReader,
         stderr: Box::pin(runner_stderr) as ExecutionReader,
       }),
-      paths: ExecutionPaths {
-        workspace: request.workspace,
-        data_dir: request.data_dir,
-        plugins_dir: runner.plugins_dir.clone(),
-        plugin_lock: runner.plugin_lock.clone(),
-        cache: request.cache.as_ref().map(ExecutionCacheMounts::projected_paths),
-      },
-      exit_code: if self.wait_for_cancel { 130 } else { 0 },
-    }))
+      if self.wait_for_cancel { 130 } else { 0 },
+    ))
   }
 
   async fn cleanup_orphans(&self) -> Result<(), ExecutionError> {
@@ -800,3 +807,5 @@ fn lifecycle_fixture(
 
 include!("lifecycle_tests/cache_and_output.rs");
 include!("lifecycle_tests/delivery_and_recovery.rs");
+
+include!("lifecycle_tests/tool_owner.rs");

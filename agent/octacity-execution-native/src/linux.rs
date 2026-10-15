@@ -154,6 +154,9 @@ impl ExecutionBackend for NativeBackend {
     if cancellation.is_cancelled() {
       return Err(ExecutionError::Cancelled);
     }
+    request.require_unanchored_factory_workspace()?;
+    request.require_whole_job_disk_accounting()?;
+    runner.require_plugin_projection()?;
     runner.validate()?;
     request.validate()?;
     if let Some(cache) = &request.cache {
@@ -201,18 +204,26 @@ impl ExecutionBackend for NativeBackend {
       Path::new(NATIVE_OCTA_ROOT_PATH),
       "runner executable",
     )?;
-    let guest_plugins = project_guest_path(
-      &runner.release_root,
-      &runner.plugins_dir,
-      Path::new(NATIVE_OCTA_ROOT_PATH),
-      "runner plugins",
-    )?;
-    let guest_plugin_lock = project_guest_path(
-      &runner.release_root,
-      &runner.plugin_lock,
-      Path::new(NATIVE_OCTA_ROOT_PATH),
-      "runner plugin lock",
-    )?;
+    let guest_plugin_projection = runner
+      .plugin_projection
+      .as_ref()
+      .map(|plugins| {
+        Ok::<_, ExecutionError>(octacity_execution::ExecutionPluginProjection {
+          directory: project_guest_path(
+            &runner.release_root,
+            &plugins.directory,
+            Path::new(NATIVE_OCTA_ROOT_PATH),
+            "runner plugins",
+          )?,
+          lock: project_guest_path(
+            &runner.release_root,
+            &plugins.lock,
+            Path::new(NATIVE_OCTA_ROOT_PATH),
+            "runner plugin lock",
+          )?,
+        })
+      })
+      .transpose()?;
     let mut masked_job_files = request
       .workload_identity
       .iter()
@@ -334,8 +345,7 @@ impl ExecutionBackend for NativeBackend {
       paths: ExecutionPaths {
         workspace: PathBuf::from(NATIVE_WORKSPACE_PATH),
         data_dir: guest_data_dir,
-        plugins_dir: guest_plugins,
-        plugin_lock: guest_plugin_lock,
+        plugin_projection: guest_plugin_projection,
         cache: request
           .cache
           .as_ref()

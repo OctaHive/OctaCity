@@ -21,7 +21,9 @@ use std::{
 
 use async_trait::async_trait;
 use microsandbox::{
-  Backend, ExecControl, ExecEvent, LocalBackend, NetworkPolicy, Sandbox, sandbox::RlimitResource, with_backend,
+  Backend, ExecControl, ExecEvent, LocalBackend, NetworkPolicy, Sandbox,
+  sandbox::{MountBuilder, RlimitResource, SecurityProfile},
+  with_backend,
 };
 use octacity_execution::{
   CACHE_CA_CERTIFICATE_PATH, CACHE_DIRECTORY_PATH, CACHE_TOKEN_PATH, ExecutionArchitecture, ExecutionCacheMounts,
@@ -47,7 +49,7 @@ mod execution;
 mod plan;
 
 use execution::{MicrosandboxExecution, pump_events, pump_stdin};
-use plan::{SandboxPlan, canonical_runtime_file, directory_size_async};
+use plan::{SandboxPlan, canonical_runtime_file, directory_size_roots_async};
 
 const STREAM_BUFFER_BYTES: usize = 64 * 1024;
 const MEBIBYTE: u64 = 1024 * 1024;
@@ -192,8 +194,24 @@ impl MicrosandboxEngine {
 
 #[async_trait]
 impl OciEngine for MicrosandboxEngine {
+  fn factory_tool_projection_root(&self) -> Option<PathBuf> {
+    Some(PathBuf::from("/opt/octacity/tools"))
+  }
+
   fn capabilities(&self) -> Vec<OciCapability> {
     GUEST_CAPABILITY.into_iter().collect()
+  }
+
+  fn supports_private_tool_channel(&self) -> bool {
+    true
+  }
+
+  fn supports_factory_workspace_anchor(&self) -> bool {
+    true
+  }
+
+  fn supports_owned_writable_mount_accounting(&self) -> bool {
+    true
   }
 
   async fn start(
@@ -222,6 +240,8 @@ impl OciEngine for MicrosandboxEngine {
         "execution workspace_root does not match the Microsandbox backend work_root",
       ));
     }
+    let factory_owner = factory_guest_owner(&request)?;
+    let factory_user = factory_owner.map(|(uid, gid)| format!("{uid}:{gid}"));
     self.configure_runtime()?;
     let plan = before_deadline(
       deadline,
@@ -243,38 +263,82 @@ impl OciEngine for MicrosandboxEngine {
           .metrics_sample_interval(self.metrics_sample_interval)
           .label(OWNER_LABEL, &self.agent_id)
           .volume(&plan.guest_release, |mount| {
-            mount.bind(&runner.release_root).readonly().nosuid().nodev()
+            factory_mount_owner(mount, factory_owner)
+              .bind(&runner.release_root)
+              .readonly()
+              .nosuid()
+              .nodev()
           });
+        if factory_owner.is_some() {
+          // Non-root execution alone does not prevent later setuid/file-capability
+          // elevation. This also pins no_new_privs for the runner and descendants.
+          builder = builder.security(SecurityProfile::Restricted);
+        }
+        if let Some(channel) = request
+          .factory
+          .as_ref()
+          .and_then(|factory| factory.tool_channel.as_ref())
+        {
+          builder = builder.vsock(channel.host_socket(), channel.guest_port());
+        }
         if let Some(workspace_anchor) = &plan.workspace_anchor {
           // Microsandbox applies parent mounts before nested mounts. The
           // read-only anchor supplies only their empty destination directories,
           // keeping the rest of the job root outside the guest.
           builder = builder.volume(&plan.guest_job_root, |mount| {
-            mount.bind(workspace_anchor).readonly().noexec().nosuid().nodev()
+            factory_mount_owner(mount, factory_owner)
+              .bind(workspace_anchor)
+              .readonly()
+              .noexec()
+              .nosuid()
+              .nodev()
           });
         }
         for writable in &plan.writable_mounts {
           builder = builder.volume(&writable.guest, |mount| {
-            mount.bind(&writable.host).quota(writable.quota_mib).nosuid().nodev()
+            factory_mount_owner(mount, factory_owner)
+              .bind(&writable.host)
+              .quota(writable.quota_mib)
+              .nosuid()
+              .nodev()
           });
         }
         for readonly in &plan.read_only_mounts {
           builder = builder.volume(&readonly.guest, |mount| {
-            mount.bind(&readonly.host).readonly().nosuid().nodev()
+            factory_mount_owner(mount, factory_owner)
+              .bind(&readonly.host)
+              .readonly()
+              .nosuid()
+              .nodev()
           });
         }
         if let Some(identity) = &plan.workload_identity {
           builder = builder.volume(WORKLOAD_IDENTITY_PATH, |mount| {
-            mount.bind(identity).readonly().nosuid().nodev()
+            factory_mount_owner(mount, factory_owner)
+              .bind(identity)
+              .readonly()
+              .nosuid()
+              .nodev()
           });
         }
         if let Some(protected_inputs) = &plan.protected_inputs {
           builder = builder.volume(FACTORY_PROTECTED_INPUT_ROOT, |mount| {
-            mount.bind(protected_inputs).readonly().noexec().nosuid().nodev()
+            factory_mount_owner(mount, factory_owner)
+              .bind(protected_inputs)
+              .readonly()
+              .noexec()
+              .nosuid()
+              .nodev()
           });
         }
         for (_, executable, guest_path) in &plan.external_executables {
-          builder = builder.volume(guest_path, |mount| mount.bind(executable).readonly().nosuid().nodev());
+          builder = builder.volume(guest_path, |mount| {
+            factory_mount_owner(mount, factory_owner)
+              .bind(executable)
+              .readonly()
+              .nosuid()
+              .nodev()
+          });
         }
         for directory in &plan.masked_job_directories {
           builder = builder.volume(directory, |mount| {
@@ -283,18 +347,28 @@ impl OciEngine for MicrosandboxEngine {
         }
         if let Some(cache) = &plan.cache {
           builder = builder.volume(CACHE_DIRECTORY_PATH, |mount| {
-            mount
+            factory_mount_owner(mount, factory_owner)
               .bind(&cache.mounts.local_directory)
               .quota(cache.quota_mib)
               .nosuid()
               .nodev()
           });
           if let Some(token) = &cache.mounts.token_file {
-            builder = builder.volume(CACHE_TOKEN_PATH, |mount| mount.bind(token).readonly().nosuid().nodev());
+            builder = builder.volume(CACHE_TOKEN_PATH, |mount| {
+              factory_mount_owner(mount, factory_owner)
+                .bind(token)
+                .readonly()
+                .nosuid()
+                .nodev()
+            });
           }
           if let Some(certificate) = &cache.mounts.ca_certificate_file {
             builder = builder.volume(CACHE_CA_CERTIFICATE_PATH, |mount| {
-              mount.bind(certificate).readonly().nosuid().nodev()
+              factory_mount_owner(mount, factory_owner)
+                .bind(certificate)
+                .readonly()
+                .nosuid()
+                .nodev()
             });
           }
         }
@@ -324,6 +398,9 @@ impl OciEngine for MicrosandboxEngine {
     }
     let exec = sandbox.exec_stream_with(&plan.guest_executable, |mut options| {
       options = options.stdin_pipe().cwd(&plan.guest_workspace);
+      if let Some(user) = &factory_user {
+        options = options.user(user.as_str());
+      }
       if let Some(process_limit) = plan.process_limit {
         options = options.rlimit(RlimitResource::Nproc, u64::from(process_limit));
       }
@@ -370,8 +447,7 @@ impl OciEngine for MicrosandboxEngine {
       paths: ExecutionPaths {
         workspace: PathBuf::from(&plan.guest_workspace),
         data_dir: plan.guest_data_dir,
-        plugins_dir: plan.guest_plugins_dir,
-        plugin_lock: plan.guest_plugin_lock,
+        plugin_projection: plan.guest_plugin_projection,
         cache: plan.cache.as_ref().map(|cache| cache.mounts.projected_paths()),
       },
       exit_receiver: Some(exit_receiver),
@@ -380,7 +456,9 @@ impl OciEngine for MicrosandboxEngine {
       event_task,
       cleanup_timeout: self.cleanup_timeout,
       started: Instant::now(),
-      host_job_root: plan.host_job_root,
+      deadline,
+      metrics_sample_interval: self.metrics_sample_interval,
+      disk_accounting_roots: plan.disk_accounting_roots,
       memory_peak_bytes: 0,
       disk_peak_bytes: 0,
     }))
@@ -428,6 +506,40 @@ impl OciEngine for MicrosandboxEngine {
       }
     }
     first_error.map_or(Ok(()), Err)
+  }
+}
+
+// Preserve private host permissions while presenting Factory bind files to the
+// same non-root guest owner used for exec. Ordinary jobs retain SDK defaults.
+fn factory_mount_owner(mount: MountBuilder, owner: Option<(u32, u32)>) -> MountBuilder {
+  match owner {
+    Some((uid, gid)) => mount.owner(uid, gid),
+    None => mount,
+  }
+}
+
+fn factory_guest_owner(request: &StartExecution) -> Result<Option<(u32, u32)>, ExecutionError> {
+  if request.factory.is_none() {
+    return Ok(None);
+  }
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::MetadataExt as _;
+    // Match the trusted private runtime ownership. The guest gets no model- or
+    // Flow-selected user, and setuid drops root's process-limit exemptions.
+    let owner = std::fs::metadata(&request.workspace_root).map_err(ExecutionError::Io)?;
+    if owner.uid() == 0 {
+      return Err(unavailable(
+        "Factory process limits require a non-root runtime owner; root ownership mapping is not qualified",
+      ));
+    }
+    Ok(Some((owner.uid(), owner.gid())))
+  }
+  #[cfg(not(unix))]
+  {
+    Err(unavailable(
+      "Factory process ownership is not qualified on this platform",
+    ))
   }
 }
 
@@ -486,7 +598,22 @@ fn network_policy(access: &NetworkAccess) -> Result<Option<NetworkPolicy>, Execu
     NetworkAccess::Restricted { allowed_hosts } => NetworkPolicy::builder()
       .default_deny()
       .egress(|rules| rules.tcp().udp().port(53).allow_host())
-      .egress(|rules| rules.tcp().allow_domains(allowed_hosts.iter().cloned()))
+      .egress(|rules| {
+        rules.tcp();
+        for host in allowed_hosts {
+          // The SDK synthesizes this reserved alias from each sandbox's
+          // gateway, outside its ordinary DNS cache. Keep that translation
+          // inside this provider adapter and require an explicit host grant.
+          if host == "host.microsandbox.internal" {
+            rules.allow_host();
+          } else if host.parse::<std::net::IpAddr>().is_ok() {
+            rules.allow().ip(host);
+          } else {
+            rules.allow().domain(host);
+          }
+        }
+        rules
+      })
       .build()
       .map(Some)
       .map_err(|error| unavailable(format!("invalid Microsandbox network policy: {error}"))),

@@ -86,6 +86,7 @@ pub struct FactoryReconciler<S> {
   concurrency: NonZeroU16,
   clock: Arc<dyn crate::FactoryExecutionClock>,
   flow: Arc<dyn crate::FactoryFlowCoordinator>,
+  phase_pools: Option<Arc<dyn crate::FactoryPhasePoolCoordination>>,
 }
 
 impl<S> FactoryReconciler<S>
@@ -113,7 +114,15 @@ where
       concurrency,
       clock: Arc::new(crate::SystemFactoryExecutionClock),
       flow,
+      phase_pools: None,
     })
+  }
+
+  /// Adds bounded native admission before claiming Runs. Disabled runtimes never install it.
+  #[must_use]
+  pub fn with_phase_pool_selector(mut self, selector: Arc<dyn crate::FactoryPhasePoolCoordination>) -> Self {
+    self.phase_pools = Some(selector);
+    self
   }
 
   #[cfg(test)]
@@ -143,6 +152,9 @@ where
   ) -> Result<FactoryReconciliationBatchOutcome, FactoryReconciliationError> {
     if shutdown.is_requested() {
       return Ok(FactoryReconciliationBatchOutcome::default());
+    }
+    if let Some(selector) = &self.phase_pools {
+      selector.select_once(&self.owner, observed_at, claim_expires_at).await?;
     }
     let claims = self
       .store

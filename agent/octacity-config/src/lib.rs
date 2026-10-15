@@ -23,7 +23,10 @@ use tracing::{debug, info};
 
 const MAX_CONFIG_BYTES: u64 = 1024 * 1024;
 
+mod protected_reader;
 mod validation;
+
+pub use protected_reader::{ProtectedReaderBridgeConfig, ProtectedReaderConfig};
 
 use validation::*;
 
@@ -63,6 +66,10 @@ pub struct AgentConfig {
   /// Optional operator-selected provider for trusted ChangeSet capture.
   #[serde(default)]
   pub change_set_capture: Option<ChangeSetCaptureConfig>,
+  /// Optional separately installed, pinned reader for supervised tool actions.
+  /// Configuration alone does not qualify or enable controlled execution.
+  #[serde(default)]
+  pub protected_reader: Option<ProtectedReaderConfig>,
   /// Workload identity profile names mapped to restricted rotating token files.
   #[serde(default)]
   pub workload_identity_profiles: BTreeMap<String, PathBuf>,
@@ -125,6 +132,12 @@ pub struct AgentConfig {
   /// jobs continue to use their existing runtime policy.
   #[serde(default)]
   pub factory_permissions: Option<FactoryPermissionSetV3>,
+  /// Operator-installed logical credential profiles and their private value files.
+  ///
+  /// Configuration contains file references only. Optional files are loaded by
+  /// the executable composition root when Factory execution is enabled.
+  #[serde(default)]
+  pub factory_credential_profiles: BTreeMap<String, PathBuf>,
   /// HTTPS origins allowed for output uploads.
   pub allowed_upload_origins: Vec<String>,
   /// Maximum filesystem entries traversed in one directory artifact.
@@ -599,6 +612,14 @@ impl AgentConfig {
 
     // Overlapping roots would let job cleanup or workspace writes reach agent
     // state, installed Octa binaries, or source-plugin executables.
+    let configured_roots = [
+      self.work_root.clone(),
+      self.state_root.clone(),
+      self.octa_release_root.clone(),
+      self.source_plugins_dir.clone(),
+      self.cache.root.clone(),
+    ];
+    let configured_reader_root = self.protected_reader.as_ref().map(|reader| reader.release_root.clone());
     let roots = [
       ("work_root", canonical_directory("work_root", &self.work_root)?),
       ("state_root", canonical_directory("state_root", &self.state_root)?),
@@ -618,6 +639,9 @@ impl AgentConfig {
     self.octa_release_root = roots[2].1.clone();
     self.source_plugins_dir = roots[3].1.clone();
     self.cache.root = roots[4].1.clone();
+    if let Some(reader) = &mut self.protected_reader {
+      reader.validate(&roots, credential_parent)?;
+    }
 
     let mut executable_paths = BTreeSet::new();
     let writable_roots = [
@@ -659,6 +683,13 @@ impl AgentConfig {
         return invalid("workload identity profile names must not contain control characters");
       }
       *source = canonical_regular_file("workload identity source", source)?;
+      if self
+        .protected_reader
+        .as_ref()
+        .is_some_and(|reader| source.starts_with(&reader.release_root))
+      {
+        return invalid("protected_reader distribution must not contain workload identity tokens");
+      }
       validate_private_file_permissions("workload identity source", source)?;
       validate_trusted_owner("workload identity source", source)?;
       let parent = source
@@ -761,6 +792,49 @@ impl AgentConfig {
       permissions
         .validate()
         .map_err(|error| ConfigError::Invalid(format!("invalid factory_permissions: {error}")))?;
+    }
+    for (profile, path) in &mut self.factory_credential_profiles {
+      if profile.is_empty()
+        || profile.len() > octacity_protocol::MAX_FACTORY_WIRE_IDENTITY_BYTES
+        || !profile
+          .bytes()
+          .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+      {
+        return invalid("invalid Factory credential profile identity");
+      }
+      let parent = path
+        .parent()
+        .ok_or_else(|| ConfigError::Invalid("invalid Factory credential profile reference".to_owned()))?;
+      // Inactive references are metadata only: an optional Factory dependency
+      // must not be provisioned merely to start ordinary CI. Full canonical and
+      // private-file validation still precedes enabling or loading credentials.
+      let parent = if self.factory_permissions.is_some()
+        || !path.is_absolute()
+        || path
+          .components()
+          .any(|part| matches!(part, std::path::Component::ParentDir | std::path::Component::CurDir))
+      {
+        canonical_directory("Factory credential profile parent", parent)
+          .map_err(|_| ConfigError::Invalid("Factory credential profile reference is invalid".to_owned()))?
+      } else {
+        parent.to_owned()
+      };
+      if roots.iter().any(|(_, root)| parent.starts_with(root))
+        || configured_roots.iter().any(|root| parent.starts_with(root))
+        || configured_reader_root
+          .as_ref()
+          .is_some_and(|root| parent.starts_with(root))
+        || self
+          .protected_reader
+          .as_ref()
+          .is_some_and(|reader| parent.starts_with(&reader.release_root))
+      {
+        return invalid("Factory credential profiles must be outside job and installation storage");
+      }
+      let name = path
+        .file_name()
+        .ok_or_else(|| ConfigError::Invalid("invalid Factory credential profile reference".to_owned()))?;
+      *path = parent.join(name);
     }
 
     if self.allowed_upload_origins.is_empty() {

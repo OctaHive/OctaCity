@@ -38,7 +38,7 @@ pub use action::{FlowActionBinding, MAX_FLOW_ACTION_PARAMETER_BYTES};
 pub use build::{FlowBuildBinding, FlowBuildProfile};
 pub use data::{
   FlowDataSchema, FlowFieldSchema, FlowPayload, FlowValueSchema, MAX_FLOW_DATA_BYTES, MAX_FLOW_SCHEMA_BYTES,
-  MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS,
+  MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS, MAX_FLOW_VARIANT_NAME_BYTES,
 };
 pub use gate::{FlowGateBinding, MAX_FLOW_GATE_PARAMETER_BYTES};
 pub use input::{FlowInputPreparation, FlowNodeInput, FlowRecordReference};

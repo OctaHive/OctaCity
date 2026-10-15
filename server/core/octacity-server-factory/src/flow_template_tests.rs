@@ -2,6 +2,55 @@ use crate::flow_test_support::*;
 use crate::*;
 
 #[test]
+fn decision_signal_template_requires_an_exact_installed_action_before_publication() {
+  let mut template = supplied_base_flow_template();
+  let choice = &mut template.nodes[0];
+  choice.kind = FlowNodeKind::DecisionSignal;
+  choice.build_profile = None;
+  choice.capture_write_paths = None;
+  choice.capture_deliverables = None;
+  choice.gate = None;
+  choice.action = Some(
+    FlowActionBinding::new(
+      ImmutableReference::new(
+        key("arbitrary.signal.adapter"),
+        key("v7"),
+        FactoryDigest::from_bytes([19; 32]),
+      ),
+      key("evaluate"),
+      serde_json::json!({"profile":"configured.measurement"}),
+    )
+    .unwrap(),
+  );
+  let profiles = template
+    .nodes
+    .iter()
+    .filter_map(|node| node.build_profile.as_ref())
+    .map(|name| (name.clone(), binding(octacity_server_domain::ProjectId::generate())))
+    .collect();
+  let published = template
+    .instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
+    .unwrap();
+  assert_eq!(
+    published
+      .definition
+      .nodes()
+      .iter()
+      .find(|node| node.kind() == FlowNodeKind::DecisionSignal)
+      .unwrap()
+      .action(),
+    template.nodes[0].action.as_ref()
+  );
+  template.nodes[0].action = None;
+  assert!(
+    template
+      .instantiate(FlowDefinitionId::generate(), FlowDefinitionVersion::INITIAL, &profiles)
+      .is_err(),
+    "a Signal with no installed operation cannot be published as executable"
+  );
+}
+
+#[test]
 fn modular_templates_publish_identically_without_interpreting_node_or_file_names() {
   let original: FlowDefinitionTemplate = crate::flow_test_support::supplied_base_flow_template();
   let mut root = serde_json::to_value(&original).unwrap();

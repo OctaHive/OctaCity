@@ -478,6 +478,7 @@ pub(crate) async fn list_published(
   let visibility = crate::read_visibility::sql_read_visibility(query.visibility.view(), |id| id.as_uuid());
   sqlx::query_as::<_, ArtifactUploadRow>(upload_query!(
     "artifact.build_id = $1 AND artifact.state = 'published' AND \
+     ($5::UUID IS NULL OR artifact.attempt_id = $5) AND \
      ($2 OR artifact.id = ANY($3::uuid[])) AND \
      ((artifact.artifact_type = 'artifact' AND build.artifacts_visible) OR \
       (artifact.artifact_type = 'report' AND build.reports_visible)) \
@@ -487,6 +488,7 @@ pub(crate) async fn list_published(
   .bind(visibility.all)
   .bind(visibility.identities)
   .bind(i64::from(query.limit))
+  .bind(query.attempt_id.map(|id| id.as_uuid()))
   .fetch_all(pool)
   .await
   .map_err(unavailable)?

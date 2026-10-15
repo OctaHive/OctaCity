@@ -100,17 +100,15 @@ fn map_policy_store_error(error: StoreError) -> EffectiveProjectPolicySourceErro
 /// Default context provider backed by the backend-neutral store query ports.
 pub struct StoreBackedManualTriggerContext<S, P> {
   store: Arc<S>,
-  policies: Arc<P>,
-  toolchain: JobSpecToolchainPolicy,
+  context: crate::StoreBackedBuildExecutionContext<S, S, P>,
 }
 
-impl<S, P> StoreBackedManualTriggerContext<S, P> {
+impl<S: ConfigurationStore + PipelineStore, P: EffectiveProjectPolicySource> StoreBackedManualTriggerContext<S, P> {
   /// Creates a context provider from immutable store queries and policy resolution.
   pub fn new(store: Arc<S>, policies: Arc<P>, toolchain: JobSpecToolchainPolicy) -> Self {
     Self {
+      context: crate::StoreBackedBuildExecutionContext::new(store.clone(), store.clone(), policies, toolchain),
       store,
-      policies,
-      toolchain,
     }
   }
 }
@@ -132,39 +130,18 @@ where
       .require_enabled_trigger(trigger, kind, target)
       .await
       .map_err(ManualTriggerContextError::Store)?;
-    let configuration = self
-      .store
-      .build_configuration_version(target.configuration_id, target.configuration_version)
+    self
+      .context
+      .load_for_configuration(target.configuration_id, target.configuration_version)
       .await
-      .map_err(ManualTriggerContextError::Store)?;
-    let repository = self
-      .store
-      .repository_version(
-        configuration.definition.repository_id,
-        configuration.definition.repository_version,
-      )
-      .await
-      .map_err(ManualTriggerContextError::Store)?;
-    let pipeline = self
-      .store
-      .pipeline_version(
-        configuration.definition.pipeline_id,
-        configuration.definition.pipeline_version,
-      )
-      .await
-      .map_err(ManualTriggerContextError::Store)?;
-    let effective_policy = self
-      .policies
-      .effective_policy(configuration.project_id)
-      .await
-      .map_err(ManualTriggerContextError::Policy)?;
-    Ok(ManualTriggerContext {
-      configuration,
-      repository,
-      pipeline,
-      effective_policy,
-      job_spec_toolchain: self.toolchain.clone(),
-    })
+      .map_err(|error| match error {
+        crate::BuildExecutionContextError::Store(error) => ManualTriggerContextError::Store(error),
+        crate::BuildExecutionContextError::Policy(error) => ManualTriggerContextError::Policy(error),
+        crate::BuildExecutionContextError::Invalid => ManualTriggerContextError::Store(StoreError::InvalidInput {
+          operation: octacity_server_store::StoreOperation::ReadBuildConfigurationVersion,
+          source: octacity_server_store::StoreInputError::InvalidBuildConfiguration,
+        }),
+      })
   }
 }
 

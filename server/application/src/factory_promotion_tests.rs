@@ -124,6 +124,7 @@ fn trusted_action_build_completion_retains_actual_build_provenance() {
     let mut configured = Builds::new();
     configured.acceptance.effective_policy_digest = intent.permissions().digest();
     let builds = Arc::new(configured);
+    crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &schema).await;
     *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
     let out = outputs(&builds, &intent, &schema, serde_json::json!({"count":9}));
     let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(Some(out))));
@@ -193,6 +194,7 @@ fn promotion_completion_rejects_a_substituted_or_partial_observation_before_comm
       let mut configured = Builds::new();
       configured.acceptance.effective_policy_digest = intent.permissions().digest();
       let builds = Arc::new(configured);
+      crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &schema).await;
       *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
       let mut result = observation(&plan, intent.input());
       if bad == 0 {
@@ -268,6 +270,7 @@ fn promotion_cannot_accept_measurements_after_the_retained_receipt_was_published
       let mut configured = Builds::new();
       configured.acceptance.effective_policy_digest = intent.permissions().digest();
       let builds = Arc::new(configured);
+      crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &schema).await;
       *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
       let mut out = outputs(
         &builds,
@@ -352,6 +355,7 @@ fn build_completion_charges_aggregate_usage_to_admission_instead_of_the_local_fl
     let mut configured = Builds::new();
     configured.acceptance.effective_policy_digest = intent.permissions().digest();
     let builds = Arc::new(configured);
+    crate::factory_node_build_tests::admit_pending_build(&builds, &intent, &admitted, &schema).await;
     *builds.state.lock().unwrap() = octacity_server_orchestrator::BuildState::Succeeded;
     let out = outputs(&builds, &intent, &schema, serde_json::json!({"count":9}));
     let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(Some(out))));

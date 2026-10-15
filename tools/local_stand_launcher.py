@@ -41,6 +41,7 @@ from pinned_source_archive import SourceArchiveError
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 COMPOSE_FILE = REPOSITORY / "compose.yaml"
+FACTORY_COMPOSE_FILE = REPOSITORY / "deployment/local-stand/factory.compose.yaml"
 MANIFEST = REPOSITORY / "deployment/local-stand/inputs.json"
 ALLOWLIST = REPOSITORY / "deployment/local-stand/staging-allowlist.json"
 AGENT_FIXTURE = REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in"
@@ -104,7 +105,19 @@ def _compose_environment(root: Path, https_port: int) -> dict[str, str]:
     }
 
 
-def _compose_command(*arguments: str) -> list[str]:
+def _compose_command(root: Path, *arguments: str) -> list[str]:
+    profile = root / "config/server/factory-profiles.json"
+    overlay: list[str] = []
+    if profile.exists() or profile.is_symlink():
+        try:
+            state.read_regular_file(
+                profile, "installed Factory profile catalog",
+                max_bytes=server_configurator.MAX_FACTORY_PROFILE_BYTES,
+                modes=frozenset({state.PRIVATE_FILE_MODE}),
+            )
+        except state.StateError as error:
+            raise LocalStandError(str(error)) from error
+        overlay = ["--file", str(FACTORY_COMPOSE_FILE)]
     return [
         "docker",
         "compose",
@@ -112,6 +125,7 @@ def _compose_command(*arguments: str) -> list[str]:
         PROJECT_NAME,
         "--file",
         str(COMPOSE_FILE),
+        *overlay,
         *arguments,
     ]
 
@@ -126,7 +140,7 @@ def _run_compose(
     timeout_seconds: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
 ) -> subprocess.CompletedProcess[str]:
     try:
-        command = _compose_command(*arguments)
+        command = _compose_command(root, *arguments)
         if not capture_output:
             return subprocess.run(
                 command,
@@ -305,16 +319,34 @@ def _stop_halves(
 
 
 def _up(arguments: argparse.Namespace) -> dict[str, object]:
+    if (arguments.factory_signal_connectors is not None or arguments.factory_delivery_bundle is not None) and arguments.factory_profiles is None:
+        raise LocalStandError("Factory connectors require an explicit Factory profile")
     root = state.resolve_safe_root(arguments.root, REPOSITORY, Path.home())
     origin = _resolved_origin(arguments)
+    installed_agent_profile = root / "config/factory-agent-profile.toml"
+    if arguments.factory_agent_profile is None and (installed_agent_profile.exists() or installed_agent_profile.is_symlink()):
+        raise LocalStandError("Factory Agent is already installed; supply --factory-agent-profile or reset the disposable stand")
+    if arguments.factory_agent_profile is not None:
+        try:
+            agent_configurator.read_factory_agent_profile(arguments.factory_agent_profile)
+        except agent_configurator.AgentConfigurationError as error:
+            raise LocalStandError(str(error)) from error
     initializer.initialize(root, repository=REPOSITORY, openssl=arguments.openssl)
     with lifecycle.LifecycleState(root) as owner:
         native = _prepare_native_installation(root)
+        if arguments.factory_agent_profile is not None:
+            try:
+                agent_configurator.preflight_factory_agent_profile(root, native.path, arguments.factory_agent_profile)
+            except agent_configurator.AgentConfigurationError as error:
+                raise LocalStandError(str(error)) from error
         server_configurator.generate_server_configuration(
             root,
             native.path,
             repository=REPOSITORY,
             openssl=arguments.openssl,
+            factory_profiles=arguments.factory_profiles,
+            factory_signal_connectors=arguments.factory_signal_connectors,
+            factory_delivery_bundle=arguments.factory_delivery_bundle,
         )
         _build_images(native)
         _run_compose(root, arguments.https_port, ("config", "--quiet"))
@@ -347,6 +379,7 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
                 repository=REPOSITORY,
                 openssl=arguments.openssl,
                 startup_timeout_seconds=arguments.agent_wait_seconds,
+                factory_agent_profile=arguments.factory_agent_profile,
             )
         except BaseException as cause:
             try:
@@ -671,6 +704,13 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="must match the gateway origin derived from --https-port",
     )
     up.add_argument("--openssl", default="openssl")
+    up.add_argument(
+        "--factory-profiles", type=Path,
+        help="explicit private native Factory profile catalog; omitted disables Factory",
+    )
+    up.add_argument("--factory-agent-profile", type=Path, help="separate private local Factory Agent policy")
+    up.add_argument("--factory-signal-connectors", type=Path, help="separate private installed Decision Signal connector catalog")
+    up.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")
     up.add_argument(
         "--compose-wait-seconds",
         type=_positive_bounded_seconds,

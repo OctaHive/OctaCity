@@ -224,10 +224,24 @@ pub enum RunnerSupervisionError {
 pub async fn supervise(
   runner: &RunnerInstallation,
   backend: &dyn ExecutionBackend,
+  job: RunnerJobRequest,
+  cancellation: CancellationToken,
+  events: &mpsc::Sender<RunnerStreamItem>,
+  policy: &RunnerSupervisionPolicy,
+) -> Result<RunnerCompletion, RunnerSupervisionError> {
+  supervise_with_private_variables(runner, backend, job, cancellation, events, policy, None).await
+}
+
+/// Supplies authorized operator values through the transient runner command,
+/// independently of the signed public execution variables and source contents.
+pub async fn supervise_with_private_variables(
+  runner: &RunnerInstallation,
+  backend: &dyn ExecutionBackend,
   mut job: RunnerJobRequest,
   cancellation: CancellationToken,
   events: &mpsc::Sender<RunnerStreamItem>,
   policy: &RunnerSupervisionPolicy,
+  private_variables: Option<crate::AuthorizedRunnerPrivateVariables>,
 ) -> Result<RunnerCompletion, RunnerSupervisionError> {
   job.validate()?;
   policy.validate()?;
@@ -242,14 +256,24 @@ pub async fn supervise(
   if job.execution.max_duration.is_zero() {
     return Err(RunnerSupervisionError::StartupTimeout);
   }
+  if let Some(variables) = &private_variables {
+    variables.verify_for_job(&job)?;
+    variables.redact(&mut job.redactions);
+  }
   let program = runner.program_with_external_executables(&job.external_executables);
   let mut execution = backend
     .start(&program, job.execution.clone(), cancellation.clone())
     .await?;
-  let io = match execution.take_io() {
+  let io_result = if execution.paths().plugin_projection.is_none() {
+    Err(RunnerSupervisionError::Invalid(
+      "runner requires a projected plugin directory and lock".to_owned(),
+    ))
+  } else {
+    execution.take_io().map_err(RunnerSupervisionError::Execution)
+  };
+  let io = match io_result {
     Ok(io) => io,
-    Err(error) => {
-      let operation = RunnerSupervisionError::Execution(error);
+    Err(operation) => {
       return match execution.destroy().await {
         Ok(()) => Err(operation),
         Err(cleanup) => Err(RunnerSupervisionError::OperationAndCleanup {
@@ -264,7 +288,7 @@ pub async fn supervise(
   let stderr_task = tokio::spawn(read_bounded(io.stderr, MAX_RUNNER_STDERR_BYTES));
   let result = lifecycle::drive(
     &mut *execution,
-    (io.stdin, io.stdout),
+    (io.stdin, io.stdout, private_variables),
     &mut job,
     deadline,
     cancellation,

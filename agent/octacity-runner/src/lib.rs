@@ -9,12 +9,15 @@
 #![warn(missing_docs)]
 
 mod installation;
+mod private_variables;
 mod protocol;
 mod supervisor;
 
+pub use private_variables::{AuthorizedRunnerPrivateVariables, MAX_MANAGED_OCTAFILE_BYTES, RunnerPrivateVariables};
+
 pub use installation::{
   ConfiguredExternalExecutable, RunnerCapabilities, RunnerInstallation, RunnerInstallationError, RunnerPlugin,
-  VerifiedExternalExecutable,
+  VerifiedExternalExecutable, verify_standalone_program,
 };
 pub use octa_runner_protocol::{RUNNER_EVENT_SCHEMA_VERSION, RUNNER_PROTOCOL_VERSION, RunStatus};
 #[cfg(feature = "fuzzing")]
@@ -23,5 +26,5 @@ pub use protocol::{MAX_RUNNER_OUTPUT_FRAME_BYTES, decode_message_frame};
 pub use protocol::{RunnerEvent, RunnerMessage, RunnerProtocolError};
 pub use supervisor::{
   RunnerCacheSession, RunnerCompletion, RunnerJobRequest, RunnerRedactions, RunnerStreamItem, RunnerSupervisionError,
-  RunnerSupervisionPolicy, TerminationReason, supervise,
+  RunnerSupervisionPolicy, TerminationReason, supervise, supervise_with_private_variables,
 };

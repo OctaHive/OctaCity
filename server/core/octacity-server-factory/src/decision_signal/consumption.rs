@@ -296,6 +296,7 @@ pub fn consume_routing_signal(
       field: "routing baseline",
     });
   }
+  ensure_observed_failure(&observation)?;
   let normalized = normalize_observation(request, observation);
   let recommendation = normalized
     .result
@@ -324,6 +325,7 @@ pub fn consume_tool_risk_signal(
       field: "tool-risk purpose",
     });
   }
+  ensure_observed_failure(&observation)?;
   let normalized = normalize_observation(request, observation);
   let recommendation = normalized
     .result
@@ -346,6 +348,15 @@ struct NormalizedObservation {
   result: Option<DecisionSignalProviderResult>,
 }
 
+fn ensure_observed_failure(observation: &DecisionSignalProviderObservation) -> Result<(), FactoryError> {
+  if matches!(observation, DecisionSignalProviderObservation::Failure(failure) if failure.usage().is_none()) {
+    return Err(FactoryError::InvalidDecisionSignal {
+      field: "unobserved provider outcome",
+    });
+  }
+  Ok(())
+}
+
 fn normalize_observation(
   request: &DecisionSignalProviderRequest,
   observation: DecisionSignalProviderObservation,
@@ -361,7 +372,9 @@ fn normalize_observation(
     }
     DecisionSignalProviderObservation::Failure(failure) if failure.is_valid_for(request) => NormalizedObservation {
       state: failure.state(),
-      usage: failure.usage(),
+      usage: failure
+        .usage()
+        .expect("unobserved failures are rejected before normalization"),
       result: None,
     },
     DecisionSignalProviderObservation::Result(_) | DecisionSignalProviderObservation::Failure(_) => {

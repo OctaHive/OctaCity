@@ -42,6 +42,29 @@ fn factory_authoring_contract_exposes_schema_and_mapping_nesting_limits() {
 }
 
 #[test]
+fn factory_authoring_contract_describes_bounded_external_tags_without_graph_key_rules() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let shape = document["components"]["schemas"]["FactoryFlowValueSchema"]["oneOf"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|shape| shape["properties"]["type"]["const"] == "externally_tagged")
+    .expect("typed external tags are an editable published data shape");
+  let variants = &shape["properties"]["variants"];
+  assert_eq!(variants["minProperties"], 1);
+  assert_eq!(variants["maxProperties"], 64);
+  assert_eq!(variants["propertyNames"]["x-max-utf8-bytes"], 128);
+  assert_eq!(variants["propertyNames"]["maxLength"], 128);
+  assert_eq!(
+    variants["additionalProperties"]["oneOf"],
+    json!([
+      {"type":"null"}, {"$ref":"#/components/schemas/FactoryFlowValueSchema"}
+    ])
+  );
+  assert_eq!(shape["additionalProperties"], false);
+}
+
+#[test]
 fn factory_build_summary_preserves_its_operation_without_a_trigger_cause() {
   let document = json!({
     "id":"build-1", "project_id":"project-1", "configuration_id":"configuration-1",

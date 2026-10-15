@@ -6,7 +6,7 @@ use octacity_server_factory::{
   DecisionSignalProvider, DecisionSignalProviderCapability, DecisionSignalProviderFailure,
   DecisionSignalProviderFuture, DecisionSignalProviderRequest, DecisionSignalProviderResult,
   DecisionSignalQuestionCriteria, DecisionSignalQuestionDomain, DecisionSignalQuestionKind, DecisionSignalState,
-  FactoryKey,
+  FactoryKey, NetworkHost,
 };
 use reqwest::{
   Client, StatusCode, Url,
@@ -17,6 +17,9 @@ use thiserror::Error;
 use zeroize::Zeroizing;
 
 const MAX_RESPONSE_BYTES: u64 = 4 * 1024 * 1024;
+const MAX_DEPLOYMENT_BYTES: usize = 4 * 1024 * 1024;
+const MAX_ROOT_CERTIFICATES: usize = 8;
+const MAX_ROOT_CERTIFICATE_BYTES: usize = 16 * 1024;
 const MAX_JEV_QUESTIONS: usize = 20;
 const MAX_JEV_CHOICE_LABELS: usize = 24;
 const MAX_JEV_INSTRUCTIONS_BYTES: usize = 1_000;
@@ -79,12 +82,64 @@ impl JevBillingPolicy {
 /// JEV HTTP adapter for one operator-pinned exact model capability.
 pub struct JevDecisionSignalProvider {
   capability: DecisionSignalProviderCapability,
+  destinations: [NetworkHost; 1],
   endpoint: Url,
   billing: JevBillingPolicy,
   transport: Arc<dyn JevTransport>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct JevDeploymentConfiguration {
+  version: u16,
+  endpoint: String,
+  capability: DecisionSignalProviderCapability,
+  credit_cost_micro_units: u64,
+  timeout_milliseconds: u64,
+  #[serde(default)]
+  root_certificates_pem: Vec<String>,
+}
+
 impl JevDecisionSignalProvider {
+  /// Installs an adapter from bounded, versioned operator-owned JSON without
+  /// contacting the provider. Credentials are resolved separately by the host;
+  /// inline secrets and unknown fields are rejected with fixed diagnostics.
+  /// Optional `root_certificates_pem` merges at most eight individual PEM roots
+  /// (16 KiB each) with system trust, preserving HTTPS hostname verification.
+  pub fn from_deployment_json(bytes: &[u8], api_key: JevApiKey) -> Result<Self, JevAdapterError> {
+    if bytes.len() > MAX_DEPLOYMENT_BYTES {
+      return Err(JevAdapterError::InvalidConfiguration);
+    }
+    let config: JevDeploymentConfiguration =
+      serde_json::from_slice(bytes).map_err(|_| JevAdapterError::InvalidConfiguration)?;
+    if config.version != 1 {
+      return Err(JevAdapterError::InvalidConfiguration);
+    }
+    if config.root_certificates_pem.len() > MAX_ROOT_CERTIFICATES {
+      return Err(JevAdapterError::InvalidConfiguration);
+    }
+    let mut roots = Vec::with_capacity(config.root_certificates_pem.len());
+    for pem in config.root_certificates_pem {
+      if pem.len() > MAX_ROOT_CERTIFICATE_BYTES {
+        return Err(JevAdapterError::InvalidConfiguration);
+      }
+      let mut certificates =
+        reqwest::Certificate::from_pem_bundle(pem.as_bytes()).map_err(|_| JevAdapterError::InvalidConfiguration)?;
+      if certificates.len() != 1 {
+        return Err(JevAdapterError::InvalidConfiguration);
+      }
+      roots.append(&mut certificates);
+    }
+    Self::build(
+      &config.endpoint,
+      api_key,
+      config.capability,
+      JevBillingPolicy::new(config.credit_cost_micro_units)?,
+      Duration::from_millis(config.timeout_milliseconds),
+      roots,
+    )
+  }
+
   /// Creates a production adapter for the canonical HTTPS decision endpoint.
   pub fn new(
     endpoint: &str,
@@ -93,7 +148,7 @@ impl JevDecisionSignalProvider {
     billing: JevBillingPolicy,
     timeout: Duration,
   ) -> Result<Self, JevAdapterError> {
-    Self::build(endpoint, api_key, capability, billing, timeout, true)
+    Self::build(endpoint, api_key, capability, billing, timeout, Vec::new())
   }
 
   fn build(
@@ -102,10 +157,10 @@ impl JevDecisionSignalProvider {
     capability: DecisionSignalProviderCapability,
     billing: JevBillingPolicy,
     timeout: Duration,
-    require_https: bool,
+    roots: Vec<reqwest::Certificate>,
   ) -> Result<Self, JevAdapterError> {
     let endpoint = Url::parse(endpoint).map_err(|_| JevAdapterError::InvalidConfiguration)?;
-    if (require_https && endpoint.scheme() != "https")
+    if endpoint.scheme() != "https"
       || endpoint.cannot_be_a_base()
       || endpoint.username() != ""
       || endpoint.password().is_some()
@@ -123,6 +178,7 @@ impl JevDecisionSignalProvider {
       return Err(JevAdapterError::InvalidConfiguration);
     }
 
+    let destination = endpoint_destination(&endpoint)?;
     let mut bearer = Zeroizing::new(String::with_capacity("Bearer ".len() + api_key.0.len()));
     bearer.push_str("Bearer ");
     bearer.push_str(api_key.0.as_str());
@@ -136,10 +192,12 @@ impl JevDecisionSignalProvider {
       .default_headers(headers)
       .timeout(timeout)
       .redirect(reqwest::redirect::Policy::none())
+      .tls_certs_merge(roots)
       .build()
       .map_err(|_| JevAdapterError::ClientConstruction)?;
     Ok(Self {
       capability,
+      destinations: [destination],
       endpoint,
       billing,
       transport: Arc::new(ReqwestTransport { client }),
@@ -153,8 +211,10 @@ impl JevDecisionSignalProvider {
     transport: Arc<dyn JevTransport>,
   ) -> Result<Self, JevAdapterError> {
     let endpoint = Url::parse(endpoint).map_err(|_| JevAdapterError::InvalidConfiguration)?;
+    let destination = endpoint_destination(&endpoint)?;
     Ok(Self {
       capability,
+      destinations: [destination],
       endpoint,
       billing: JevBillingPolicy::new(1).expect("test billing policy is valid"),
       transport,
@@ -170,15 +230,15 @@ impl JevDecisionSignalProvider {
     request: &DecisionSignalProviderRequest,
   ) -> Result<DecisionSignalProviderResult, DecisionSignalProviderFailure> {
     if !self.matches(request) {
-      return Err(failure(request, DecisionSignalState::Invalid));
+      return Err(undispatched_failure(request, DecisionSignalState::Invalid));
     }
     let body = match request_body(request) {
       Some(body) => body,
-      None => return Err(failure(request, DecisionSignalState::Invalid)),
+      None => return Err(undispatched_failure(request, DecisionSignalState::Invalid)),
     };
     let body = match serde_json::to_vec(&body) {
       Ok(body) => body,
-      Err(_) => return Err(failure(request, DecisionSignalState::Invalid)),
+      Err(_) => return Err(undispatched_failure(request, DecisionSignalState::Invalid)),
     };
     let idempotency_key = request.id().as_uuid().to_string();
     let response = match self.transport.post(&self.endpoint, &idempotency_key, body).await {
@@ -189,7 +249,7 @@ impl JevDecisionSignalProvider {
     if response.status == StatusCode::CONFLICT {
       return self.observe_conflict(request, response).await;
     }
-    self.decode_response(request, response)
+    self.decode_response(request, response, None)
   }
 
   #[expect(
@@ -224,7 +284,7 @@ impl JevDecisionSignalProvider {
       _ => return Err(failure(request, DecisionSignalState::Invalid)),
     };
     match self.transport.get(&status).await {
-      Ok(response) => self.decode_response(request, response),
+      Ok(response) => self.decode_response(request, response, Some(&conflict.request_id)),
       Err(JevTransportError::TimedOut) => Err(failure(request, DecisionSignalState::TimedOut)),
       Err(JevTransportError::Unavailable) => Err(failure(request, DecisionSignalState::Unavailable)),
     }
@@ -238,6 +298,7 @@ impl JevDecisionSignalProvider {
     &self,
     request: &DecisionSignalProviderRequest,
     response: JevHttpResponse,
+    expected_request_id: Option<&str>,
   ) -> Result<DecisionSignalProviderResult, DecisionSignalProviderFailure> {
     if !response.status.is_success() {
       return Err(failure(request, classify_status(response.status)));
@@ -248,6 +309,7 @@ impl JevDecisionSignalProvider {
       Err(_) => return Err(failure(request, DecisionSignalState::Invalid)),
     };
     if !valid_request_id(&wire.id)
+      || expected_request_id.is_some_and(|expected| expected != wire.id)
       || wire.model != request.model().identity().as_str()
       || wire.model_version != request.model().version().as_str()
       || wire.provider != JEV_PROVIDER_IDENTITY
@@ -312,8 +374,9 @@ impl fmt::Debug for JevDecisionSignalProvider {
   fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     formatter
       .debug_struct("JevDecisionSignalProvider")
-      .field("capability", &self.capability)
-      .field("endpoint", &self.endpoint)
+      .field("provider_digest", &self.capability.provider().digest())
+      .field("adapter_digest", &self.capability.adapter().digest())
+      .field("model_digest", &self.capability.model().digest())
       .finish_non_exhaustive()
   }
 }
@@ -323,9 +386,18 @@ impl DecisionSignalProvider for JevDecisionSignalProvider {
     &self.capability
   }
 
+  fn network_destinations(&self) -> Option<&[NetworkHost]> {
+    Some(&self.destinations)
+  }
+
   fn evaluate<'a>(&'a self, request: &'a DecisionSignalProviderRequest) -> DecisionSignalProviderFuture<'a> {
     Box::pin(self.dispatch(request))
   }
+}
+
+fn endpoint_destination(endpoint: &Url) -> Result<NetworkHost, JevAdapterError> {
+  let host = endpoint.host_str().ok_or(JevAdapterError::InvalidConfiguration)?;
+  NetworkHost::new(host.trim_matches(['[', ']'])).map_err(|_| JevAdapterError::InvalidConfiguration)
 }
 
 #[derive(Serialize)]
@@ -604,6 +676,20 @@ fn classify_transport_error(error: reqwest::Error) -> JevTransportError {
 }
 
 fn failure(request: &DecisionSignalProviderRequest, state: DecisionSignalState) -> DecisionSignalProviderFailure {
+  DecisionSignalProviderFailure::unobserved(
+    request.id(),
+    request.provider().clone(),
+    request.adapter().clone(),
+    request.model().clone(),
+    state,
+  )
+  .expect("adapter failures never use the completed state")
+}
+
+fn undispatched_failure(
+  request: &DecisionSignalProviderRequest,
+  state: DecisionSignalState,
+) -> DecisionSignalProviderFailure {
   DecisionSignalProviderFailure::new(
     request.id(),
     request.provider().clone(),

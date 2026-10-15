@@ -17,6 +17,10 @@ pub struct FactoryNodeBuildOutputDocument {
   pub record: ArtifactRecord,
   /// Exact retained bytes, bounded before allocation by the output source.
   pub bytes: Vec<u8>,
+  /// Schema-validated facts projected by the installed output verifier.
+  /// Absent for outputs whose retained bytes are already the declared JSON.
+  /// Wire formats remain inside the selected capability adapter.
+  pub data: Option<FlowVerifiedBuildData>,
   /// Exact schema attested by the trusted output verifier, never inferred from the report format or request.
   pub schema: ImmutableReference,
   /// Executed tool identity from the frozen Job, never from provider JSON.
@@ -30,7 +34,8 @@ pub struct FactoryNodeBuildOutputDocument {
 pub struct FactoryNodeBuildOutputs {
   /// Actual frozen execution selection reconstructed from ordinary Job facts.
   pub execution: FactoryNodeBuildExecutionFacts,
-  /// Complete bounded published outputs for the observed Attempt.
+  /// Schema-verified outputs eligible for the common result and evidence.
+  /// Private harness records remain ordinary Build Artifacts; usage covers them.
   pub documents: Vec<FactoryNodeBuildOutputDocument>,
   /// Measured Node Attempt consumption, including all ordinary Build retries.
   pub usage: BudgetUsage,
@@ -38,6 +43,18 @@ pub struct FactoryNodeBuildOutputs {
   pub verified_at: Timestamp,
   /// Exclusive freshness deadline, covered by Artifact retention.
   pub fresh_until: Timestamp,
+}
+
+/// Verified capability observation, independent of the ordinary process exit status.
+#[derive(Clone, Eq, PartialEq)]
+pub enum FactoryNodeBuildOutputObservation {
+  /// Exact schema-bound data and independently verified execution facts.
+  Verified(Box<FactoryNodeBuildOutputs>),
+  /// The capability failed technically; no semantic result or transition exists.
+  ExecutionStopped {
+    /// Measured aggregate resources; Node Attempt creation already charged attempts.
+    usage: BudgetUsage,
+  },
 }
 
 /// Owner-verified execution facts, read from immutable Jobs rather than provider reports.
@@ -74,7 +91,7 @@ pub trait FactoryNodeBuildOutputSource: Send + Sync {
     build: BuildId,
     attempt: AttemptId,
     max_bytes: u64,
-  ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError>;
+  ) -> Result<FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError>;
 }
 
 use crate::factory_build::MAX_FACTORY_BUILD_JOBS as MAX_BUILD_JOBS;
@@ -104,8 +121,11 @@ pub enum FactoryNodeBuildStep {
     build_id: BuildId,
     /// Latest Attempt, including ordinary retries.
     attempt_id: AttemptId,
-    /// Failed or cancelled execution state.
+    /// Observed ordinary state. A successful process may still have a verified
+    /// capability failure without a semantic node result.
     state: octacity_server_orchestrator::BuildState,
+    /// Already verified aggregate consumption; ordinary failures recover it separately.
+    usage: Option<BudgetUsage>,
   },
   /// Verified common result and completion for one fenced owner transaction.
   Completed(Box<FactoryNodeBuildCompletion>),
@@ -219,9 +239,10 @@ where
         build_id,
         attempt_id,
         state,
+        usage: None,
       }),
       BuildObservation::Succeeded(observed) => {
-        let outputs = self
+        let observation = self
           .outputs
           .published_outputs(
             observed.build_id,
@@ -230,6 +251,24 @@ where
           )
           .await
           .map_err(build_error)?;
+        let outputs = match observation {
+          FactoryNodeBuildOutputObservation::Verified(outputs) => *outputs,
+          FactoryNodeBuildOutputObservation::ExecutionStopped { usage } => {
+            if usage.attempts != 0 || usage.validate(intent.budget()).is_err() {
+              return Err(ApplicationError::invalid());
+            }
+            return Ok(FactoryNodeBuildStep::ExecutionStopped {
+              execution: Box::new(
+                FlowBuildExecution::new(intent, observed.build_id, observed.attempt_id, observed.jobs)
+                  .map_err(invalid)?,
+              ),
+              build_id: observed.build_id,
+              attempt_id: observed.attempt_id,
+              state: octacity_server_orchestrator::BuildState::Succeeded,
+              usage: Some(usage),
+            });
+          }
+        };
         let done = complete_node(intent, admitted, schema, &observed, outputs, ownership, at)?;
         Ok(FactoryNodeBuildStep::Completed(Box::new(done)))
       }
@@ -492,11 +531,7 @@ fn complete_node(
     intent.profile().result_tool(),
     &intent.profile().plugin,
   )?;
-  let payload = FlowPayload::new(
-    schema,
-    serde_json::from_slice(&document.bytes).map_err(|_| ApplicationError::invalid())?,
-  )
-  .map_err(invalid)?;
+  let payload = FlowPayload::new(schema, output_value(document, schema.reference())?).map_err(invalid)?;
   if let Some(selected) = intent.verification_check() {
     let observation: VerificationObservation =
       serde_json::from_value(payload.value().clone()).map_err(|_| ApplicationError::invalid())?;
@@ -513,7 +548,7 @@ fn complete_node(
     producer: document_producer(document),
     verified_at: outputs.verified_at,
     fresh_until: outputs.fresh_until,
-    data: None,
+    data: document.data.clone(),
   }];
   for requirement in &node.build().ok_or_else(ApplicationError::invalid)?.evidence {
     let evidence = selected_document(
@@ -537,11 +572,8 @@ fn complete_node(
           .data_schema(requirement.schema())
           .ok_or_else(ApplicationError::invalid)?;
         Some(
-          FlowVerifiedBuildData::new(
-            contract.clone(),
-            serde_json::from_slice(&evidence.bytes).map_err(|_| ApplicationError::invalid())?,
-          )
-          .map_err(invalid)?,
+          FlowVerifiedBuildData::new(contract.clone(), output_value(evidence, requirement.schema())?)
+            .map_err(invalid)?,
         )
       } else {
         None
@@ -668,7 +700,9 @@ pub(super) fn selected_document<'a>(
   let document = selected.next().ok_or_else(ApplicationError::invalid)?;
   let matches_type = match (&document.record.identity().artifact_type, kind) {
     (ArtifactType::Artifact, EvidenceOutputKind::Artifact) => true,
-    (ArtifactType::Report(format), EvidenceOutputKind::Report) => format.as_str() == schema.identity().as_str(),
+    (ArtifactType::Report(format), EvidenceOutputKind::Report) => {
+      document.data.is_some() || format.as_str() == schema.identity().as_str()
+    }
     _ => false,
   };
   if selected.next().is_some()
@@ -680,6 +714,17 @@ pub(super) fn selected_document<'a>(
     return Err(ApplicationError::invalid());
   }
   Ok(document)
+}
+
+fn output_value(
+  document: &FactoryNodeBuildOutputDocument,
+  schema: &ImmutableReference,
+) -> Result<serde_json::Value, ApplicationError> {
+  match &document.data {
+    Some(data) if data.payload().schema() == schema => Ok(data.payload().value().clone()),
+    Some(_) => Err(ApplicationError::invalid()),
+    None => serde_json::from_slice(&document.bytes).map_err(|_| ApplicationError::invalid()),
+  }
 }
 pub(super) fn artifact_reference(
   document: &FactoryNodeBuildOutputDocument,
@@ -733,10 +778,21 @@ pub(super) async fn observe_build<B: OrdinaryBuildApplication + BuildQueryStore>
   {
     Some(accepted) => accepted,
     None if at >= node.deadline() => return Err(ApplicationError::invalid()),
-    None => builds
-      .create_factory_build(request.clone())
-      .await
-      .map_err(build_error)?,
+    None => {
+      let accepted = builds
+        .create_factory_build(request.clone())
+        .await
+        .map_err(build_error)?;
+      validate_acceptance(&accepted, request.effective_permissions.digest())?;
+      // Admission can finish after this pass's observation time. Retain its
+      // atomically verified receipt first; the next fenced owner pass observes
+      // the Build using its own fresh time rather than manufacturing one here.
+      return Ok(BuildObservation::Waiting(ObservedBuild {
+        build_id: accepted.build_id,
+        attempt_id: accepted.attempt_id,
+        jobs: accepted.job_ids,
+      }));
+    }
   };
   observe_accepted_build(builds, &request, accepted, at).await
 }
@@ -894,7 +950,7 @@ where
       FactoryNodeBuildStep::Waiting(execution) => Ok(crate::FactoryNodeExecutionStep::Waiting {
         execution: Some(execution),
       }),
-      FactoryNodeBuildStep::ExecutionStopped { execution, .. } => {
+      FactoryNodeBuildStep::ExecutionStopped { execution, usage, .. } => {
         let accepted = self
           .builds
           .factory_build_for_operation(intent.operation_id().map_err(invalid)?)
@@ -915,11 +971,14 @@ where
             execution: Some(execution),
           });
         }
-        let usage = self
-          .outputs
-          .terminal_usage(execution.build_id(), execution.attempt_id())
-          .await
-          .map_err(build_error)?;
+        let usage = match usage {
+          Some(usage) => usage,
+          None => self
+            .outputs
+            .terminal_usage(execution.build_id(), execution.attempt_id())
+            .await
+            .map_err(build_error)?,
+        };
         Ok(crate::FactoryNodeExecutionStep::ExecutionStopped {
           execution: Some(execution),
           usage,

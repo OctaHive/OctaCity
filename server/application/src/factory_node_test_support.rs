@@ -2,10 +2,12 @@
 #[path = "../../core/octacity-server-factory/src/flow_test_support.rs"]
 pub(crate) mod fixtures;
 use crate::{
-  CreateFactoryBuild, FactoryBuildAcceptance, FactoryNodeBuildOutputDocument, FactoryNodeBuildOutputSource,
-  FactoryNodeBuildOutputs, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
+  CreateFactoryBuild, FactoryBuildAcceptance, FactoryNodeBuildExecutionFacts, FactoryNodeBuildOutputDocument,
+  FactoryNodeBuildOutputSource, FactoryNodeBuildOutputs, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
 };
 use async_trait::async_trait;
+use octacity_protocol::*;
+use octacity_server_artifacts::*;
 use octacity_server_domain::{
   AttemptId, AttemptNumber, AttemptVersion, BuildId, BuildVersion, PipelineId, PipelineVersion, RepositoryVersion,
 };
@@ -27,6 +29,55 @@ pub(crate) fn clock() -> std::sync::Arc<dyn crate::FactoryExecutionClock> {
     }
   }
   std::sync::Arc::new(FixtureClock)
+}
+
+/// Drives the separate durable admission and observation turns in graph tests.
+/// Human and external waits remain visible; this performs at most two passes.
+pub(crate) async fn reconcile_admission_then_observe(
+  owner: &dyn crate::FactoryFlowCoordinator,
+  store: &dyn octacity_server_store::FactoryRunStore,
+  run: FactoryRunId,
+  claim: FactoryDigest,
+  at: octacity_server_domain::Timestamp,
+) -> Result<crate::FactoryFlowStep, crate::ApplicationError> {
+  let before = store.factory_run_snapshot(run).await?;
+  let first = owner.reconcile_flow(run, claim, at).await?;
+  if first != crate::FactoryFlowStep::Waiting {
+    return Ok(first);
+  }
+  let admitted = store.factory_run_snapshot(run).await?;
+  if admitted.flow.data.build_executions == before.flow.data.build_executions {
+    return Ok(first);
+  }
+  assert_eq!(
+    admitted.flow.data.build_executions.len(),
+    before.flow.data.build_executions.len() + 1
+  );
+  for previous in &before.flow.data.build_executions {
+    assert!(admitted.flow.data.build_executions.contains(previous));
+  }
+  assert_eq!(admitted.flow.data.build_intents, before.flow.data.build_intents);
+  let added = admitted
+    .flow
+    .data
+    .build_executions
+    .iter()
+    .find(|execution| !before.flow.data.build_executions.contains(execution))
+    .unwrap();
+  let intent = admitted
+    .flow
+    .data
+    .build_intents
+    .iter()
+    .find(|intent| intent.node().id() == added.node_attempt_id())
+    .unwrap();
+  assert_eq!(added.operation_id(), intent.operation_id().unwrap());
+  assert!(!added.jobs().is_empty());
+  let observed = owner.reconcile_flow(run, claim, at).await?;
+  let after = store.factory_run_snapshot(run).await?;
+  assert_eq!(after.flow.data.build_intents, admitted.flow.data.build_intents);
+  assert_eq!(after.flow.data.build_executions, admitted.flow.data.build_executions);
+  Ok(observed)
 }
 
 pub(crate) struct Builds {
@@ -253,7 +304,7 @@ impl FactoryNodeBuildOutputSource for Outputs {
     build: octacity_server_domain::BuildId,
     attempt: octacity_server_domain::AttemptId,
     _: u64,
-  ) -> Result<FactoryNodeBuildOutputs, OrdinaryBuildApplicationError> {
+  ) -> Result<crate::FactoryNodeBuildOutputObservation, OrdinaryBuildApplicationError> {
     let outputs = self.0.clone().expect("pending Build cannot publish results");
     assert!(
       outputs
@@ -261,7 +312,7 @@ impl FactoryNodeBuildOutputSource for Outputs {
         .iter()
         .all(|doc| doc.record.identity().build_id == build && doc.record.identity().attempt_id == attempt)
     );
-    Ok(outputs)
+    Ok(crate::FactoryNodeBuildOutputObservation::Verified(Box::new(outputs)))
   }
 }
 
@@ -283,7 +334,7 @@ pub(crate) fn document_kind(
   tool: ImmutableReference,
   kind: EvidenceOutputKind,
 ) -> FactoryNodeBuildOutputDocument {
-  document_kind_at(builds, name, schema, bytes, tool, kind, builds.created_at)
+  document_kind_at(builds, name, schema, bytes, tool, kind, builds.created_at, None)
 }
 
 // Observation receipts become immutable when their measurement window finishes,
@@ -304,9 +355,34 @@ pub(crate) fn document_at(
     tool,
     EvidenceOutputKind::Report,
     published_at,
+    None,
   )
 }
 
+pub(crate) fn protocol_document(
+  builds: &Builds,
+  name: &FactoryKey,
+  schema: &ImmutableReference,
+  bytes: Vec<u8>,
+  tool: ImmutableReference,
+  report_format: &str,
+) -> FactoryNodeBuildOutputDocument {
+  document_kind_at(
+    builds,
+    name,
+    schema,
+    bytes,
+    tool,
+    EvidenceOutputKind::Report,
+    builds.created_at,
+    Some(report_format),
+  )
+}
+
+#[expect(
+  clippy::too_many_arguments,
+  reason = "published output fixture binds metadata and independent schema attestation"
+)]
 fn document_kind_at(
   builds: &Builds,
   name: &FactoryKey,
@@ -315,6 +391,7 @@ fn document_kind_at(
   tool: ImmutableReference,
   kind: EvidenceOutputKind,
   published_at: octacity_server_domain::Timestamp,
+  report_format: Option<&str>,
 ) -> FactoryNodeBuildOutputDocument {
   use octacity_server_artifacts::*;
   let (attempt_id, job_id) = {
@@ -333,7 +410,7 @@ fn document_kind_at(
     logical_name: octacity_server_domain::ArtifactName::new(name.as_str()).unwrap(),
     artifact_type: match kind {
       EvidenceOutputKind::Report => {
-        ArtifactType::Report(ArtifactReportFormat::new(schema.identity().as_str()).unwrap())
+        ArtifactType::Report(ArtifactReportFormat::new(report_format.unwrap_or(schema.identity().as_str())).unwrap())
       }
       EvidenceOutputKind::Artifact => ArtifactType::Artifact,
     },
@@ -357,6 +434,7 @@ fn document_kind_at(
   FactoryNodeBuildOutputDocument {
     record,
     bytes,
+    data: None,
     schema: schema.clone(),
     tool,
     plugin: reference("runner"),
@@ -511,4 +589,82 @@ pub(crate) fn input_with_candidate_context(
   )
   .unwrap();
   (input, updated)
+}
+
+pub(crate) fn capture_outputs(intent: &FlowBuildIntent, builds: &Builds, base: &str) -> FactoryNodeBuildOutputs {
+  let tool = reference("git.capture");
+  let bundle = b"trusted fixture bundle\n".to_vec();
+  let manifest = CapturedChangeSetManifestV1 {
+    cumulative_changes: None,
+    format_version: 1,
+    base_revision: base.to_owned(),
+    candidate_revision: "captured-revision".to_owned(),
+    node_attempt_id: intent.node().id().to_string(),
+    capture_tool: FactoryImmutableReferenceV3 {
+      identity: tool.identity().as_str().to_owned(),
+      version: tool.version().as_str().to_owned(),
+      sha256: tool.digest().to_string(),
+    },
+    changed_paths: vec![],
+    bundle: CapturedChangeSetFileV1 {
+      name: CHANGE_SET_BUNDLE_OUTPUT.to_owned(),
+      size_bytes: bundle.len() as u64,
+      sha256: FactoryDigest::content_sha256(&bundle).to_string(),
+    },
+    patch: None,
+  };
+  let mut manifest = serde_json::to_vec(&manifest).unwrap();
+  manifest.push(b'\n');
+  let lease = octacity_server_domain::LeaseId::generate();
+  let schema = reference("capture.artifacts");
+  let documents = [
+    (CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_BUNDLE_MEDIA_TYPE, bundle),
+    (CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_MANIFEST_MEDIA_TYPE, manifest),
+  ]
+  .into_iter()
+  .map(|(name, media, bytes)| {
+    let mut doc = crate::factory_node_test_support::document_kind(
+      builds,
+      &fixtures::key(name),
+      &schema,
+      bytes,
+      tool.clone(),
+      EvidenceOutputKind::Artifact,
+    );
+    doc.plugin = intent.profile().plugin.clone();
+    let mut identity = doc.record.identity().clone();
+    identity.lease_id = lease;
+    identity.media_type = ArtifactMediaType::new(media).unwrap();
+    let record = ArtifactRecord::pending(identity.clone(), builds.created_at).unwrap();
+    let record = record
+      .transition(
+        &identity,
+        record.version(),
+        ArtifactEvent::BeginVerification,
+        builds.created_at,
+      )
+      .unwrap();
+    doc.record = record
+      .transition(&identity, record.version(), ArtifactEvent::Publish, builds.created_at)
+      .unwrap();
+    doc
+  })
+  .collect::<Vec<_>>();
+  FactoryNodeBuildOutputs {
+    execution: FactoryNodeBuildExecutionFacts {
+      profile: intent.profile().clone(),
+      input_digest: intent.input().digest().unwrap(),
+      permissions: intent.permissions().clone(),
+      budget: intent.budget(),
+      deadline: intent.node().deadline(),
+    },
+    usage: BudgetUsage {
+      attempts: 1,
+      output_bytes: documents.iter().map(|doc| doc.bytes.len() as u64).sum(),
+      ..Default::default()
+    },
+    documents,
+    verified_at: builds.created_at,
+    fresh_until: time(1000),
+  }
 }

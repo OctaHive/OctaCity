@@ -275,16 +275,33 @@ where
         .artifact_id
         .parse::<ArtifactId>()
         .map_err(|_| AgentArtifactError::InvalidRequest)?;
-      let upload = self.store.published_artifact(artifact_id).await?;
-      let identity = upload.artifact.identity();
-      if identity.size_bytes != protected.size_bytes
-        || identity.digest.to_string() != protected.sha256
-        || identity.media_type.as_str() != protected.media_type
-        || upload.transport_media_type.as_str() != protected.media_type
+      let published = self.store.published_execution_input(artifact_id).await?;
+      if published.size_bytes != protected.size_bytes
+        || published.digest.to_string() != protected.sha256
+        || published.media_type.as_str() != protected.media_type
       {
         return Err(AgentArtifactError::Integrity);
       }
-      let object = artifact_object(&upload)?;
+      let lifetime = if let Some(expires_at) = published.expires_at {
+        let remaining = expires_at
+          .unix_millis()
+          .checked_sub(observed_at.unix_millis())
+          .filter(|remaining| *remaining > 0)
+          .ok_or(AgentArtifactError::Expired)?;
+        lifetime.min(Duration::from_millis(
+          u64::try_from(remaining).map_err(|_| AgentArtifactError::InvalidRequest)?,
+        ))
+      } else {
+        lifetime
+      };
+      let object = ArtifactObject::new(
+        published.artifact_id,
+        published.upload_id,
+        published.size_bytes,
+        published.digest.to_string(),
+        published.media_type.as_str(),
+      )
+      .map_err(|_| AgentArtifactError::Integrity)?;
       self.bytes.verify_published(&object).await?;
       let authorization = self.bytes.authorize_download(&object, lifetime).await?;
       if authorization.expires_in > lifetime {
@@ -508,6 +525,7 @@ where
     let uploads = self
       .store
       .list_published_artifacts(ListPublishedArtifacts {
+        attempt_id: None,
         build_id: query.build_id,
         limit: query.limit,
         visibility: grant

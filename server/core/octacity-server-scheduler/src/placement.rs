@@ -56,6 +56,8 @@ pub fn is_compatible_with_contract(
       requirements,
       policy.runtime,
       template.required_factory_enforcement(),
+      template.requires_factory_workspace_anchor(),
+      template.required_tool_control().is_some(),
     )
     && capabilities_match(inventory, requirements, requirements.runtime_class.is_legacy())
     && inventory.octa.version == policy.octa.version
@@ -124,6 +126,8 @@ fn backend_is_available(
   requirements: &JobRequirements,
   runtime_policy: &JobRuntimePolicy,
   required_factory_enforcement: Option<&[FactoryEnforcementCapabilityV3]>,
+  requires_workspace_anchor: bool,
+  requires_controlled_tools: bool,
 ) -> bool {
   let platform = PlatformSpec {
     os: requirements.operating_system,
@@ -141,7 +145,13 @@ fn backend_is_available(
     }
     return inventory.executions.iter().any(|execution| {
       execution.satisfies(&runtime.target)
-        && factory_enforcement_matches(inventory, execution, required_factory_enforcement)
+        && factory_enforcement_matches(
+          inventory,
+          execution,
+          required_factory_enforcement,
+          requires_workspace_anchor,
+          requires_controlled_tools,
+        )
         && snapshot.backends.iter().any(|health| {
           health.backend == execution.provider.as_str()
             && health.execution.as_ref() == Some(execution)
@@ -172,10 +182,14 @@ fn factory_enforcement_matches(
   inventory: &AgentInventory,
   execution: &ExecutionCapabilityV2,
   required: Option<&[FactoryEnforcementCapabilityV3]>,
+  requires_workspace_anchor: bool,
+  requires_controlled_tools: bool,
 ) -> bool {
   required.is_none_or(|required| {
     inventory.factory_executions.iter().any(|candidate| {
       candidate.execution == *execution
+        && (!requires_workspace_anchor || candidate.workspace_anchor)
+        && (!requires_controlled_tools || candidate.controlled_tools)
         && required
           .iter()
           .all(|capability| candidate.enforcement.binary_search(capability).is_ok())
@@ -290,11 +304,11 @@ mod tests {
   use std::collections::{BTreeMap, BTreeSet};
 
   use octacity_protocol::{
-    BLOCKING_TOOL_AUTHORIZATION_CAPABILITY, BackendHealth, BackendHealthStatus, ExecutionCapabilityV2,
-    ExecutionContractRange, ExecutionMode, ExecutionTargetV2, FactoryEnforcementCapabilityV3,
-    FactoryExecutionCapabilityV3, FactoryToolControlModeV3, FactoryToolControlV3, HostCapacity, HostSnapshot,
-    JobSpecV3, NetworkPolicy, OctaInventory, OctaSpec, OutputLimits, PlatformArchitecture, PlatformOs,
-    RuntimeCapability, RuntimeSpec, RuntimeSpecV2, SourcePluginInventory, guarantees_for,
+    BackendHealth, BackendHealthStatus, ExecutionCapabilityV2, ExecutionContractRange, ExecutionMode,
+    ExecutionTargetV2, FactoryEnforcementCapabilityV3, FactoryExecutionCapabilityV3, FactoryToolControlModeV3,
+    FactoryToolControlV3, HostCapacity, HostSnapshot, JobSpecV3, NetworkPolicy, OctaInventory, OctaSpec, OutputLimits,
+    PlatformArchitecture, PlatformOs, RuntimeCapability, RuntimeSpec, RuntimeSpecV2, SourcePluginInventory,
+    guarantees_for,
   };
   use octacity_server_domain::{BuildId, ImmutableRevision, PipelineNodeId, RepositoryLocator};
   use octacity_server_job::{
@@ -369,8 +383,12 @@ mod tests {
     };
     let control = FactoryToolControlV3 {
       plugin: "codex".to_owned(),
-      capability: BLOCKING_TOOL_AUTHORIZATION_CAPABILITY.to_owned(),
+      capability: "fixture.blocking-tool-authorization.v1".to_owned(),
       mode: FactoryToolControlModeV3::ToolRisk,
+      response_limits: octacity_protocol::FactoryToolResponseLimitsV3 {
+        per_call_bytes: 32,
+        total_bytes: 64,
+      },
     };
     let mut installed = vec![TaskPluginInventory {
       name: "codex".to_owned(),
@@ -385,7 +403,7 @@ mod tests {
     assert!(plugins_match(&installed, &required, "linux-amd64", None));
     installed[0]
       .capabilities
-      .push(BLOCKING_TOOL_AUTHORIZATION_CAPABILITY.to_owned());
+      .push("fixture.blocking-tool-authorization.v1".to_owned());
     assert!(plugins_match(&installed, &required, "linux-amd64", Some(&control)));
   }
 
@@ -505,15 +523,29 @@ mod tests {
         immutable_images: true,
       };
       inventory.factory_executions = vec![FactoryExecutionCapabilityV3 {
+        workspace_anchor: false,
+        controlled_tools: false,
         execution: execution.clone(),
         enforcement: required.to_vec(),
       }];
-      assert!(factory_enforcement_matches(&inventory, &execution, Some(&required)));
+      assert!(factory_enforcement_matches(
+        &inventory,
+        &execution,
+        Some(&required),
+        false,
+        false
+      ));
     }
 
     inventory.factory_executions[0].enforcement.pop();
     let execution = inventory.factory_executions[0].execution.clone();
-    assert!(!factory_enforcement_matches(&inventory, &execution, Some(&required),));
+    assert!(!factory_enforcement_matches(
+      &inventory,
+      &execution,
+      Some(&required),
+      false,
+      false
+    ));
   }
 
   #[test]
@@ -549,6 +581,8 @@ mod tests {
     inventory.runtimes.clear();
     inventory.executions = vec![execution.clone()];
     inventory.factory_executions = vec![FactoryExecutionCapabilityV3 {
+      workspace_anchor: false,
+      controlled_tools: false,
       execution: execution.clone(),
       enforcement: canonical.required_enforcement.clone(),
     }];
@@ -598,6 +632,62 @@ mod tests {
     };
 
     assert!(is_compatible(&inventory, &snapshot, &requirements, &template));
+    let mut anchored = canonical.clone();
+    anchored.execution.workspace_root = Some(octacity_protocol::FACTORY_WORKSPACE_ROOT.to_owned());
+    let anchored_template = managed_template(&anchored);
+    assert!(!is_compatible(&inventory, &snapshot, &requirements, &anchored_template));
+    inventory.factory_executions[0].workspace_anchor = true;
+    assert!(is_compatible(&inventory, &snapshot, &requirements, &anchored_template));
+    let mut foreign_route = inventory.factory_executions[0].clone();
+    foreign_route.execution.provider = octacity_protocol::ExecutionProviderId::new("another-qualified-vm").unwrap();
+    inventory.factory_executions[0].workspace_anchor = false;
+    inventory.factory_executions.push(foreign_route);
+    assert!(!is_compatible(&inventory, &snapshot, &requirements, &anchored_template));
+    inventory.factory_executions.pop();
+    inventory.factory_executions[0].workspace_anchor = true;
+    let mut controlled = canonical.clone();
+    controlled.permissions.tools = vec![octacity_protocol::FactoryImmutableReferenceV3 {
+      identity: "installed-read-operation".to_owned(),
+      version: "1".to_owned(),
+      sha256: "a".repeat(64),
+    }];
+    let control = FactoryToolControlV3 {
+      plugin: "codex".to_owned(),
+      capability: "fixture.blocking-tool-authorization.v1".to_owned(),
+      mode: FactoryToolControlModeV3::ToolRisk,
+      response_limits: octacity_protocol::FactoryToolResponseLimitsV3 {
+        per_call_bytes: 32,
+        total_bytes: 64,
+      },
+    };
+    inventory.octa.plugins[0].capabilities.push(control.capability.clone());
+    controlled.execution.tool_control = Some(control);
+    let controlled_template = managed_template(&controlled);
+    assert!(
+      !is_compatible(&inventory, &snapshot, &requirements, &controlled_template),
+      "an installed plugin mechanism does not compose an Agent-owned tool controller"
+    );
+    assert!(is_compatible(&inventory, &snapshot, &requirements, &template));
+    inventory.factory_executions[0].controlled_tools = true;
+    assert!(is_compatible(
+      &inventory,
+      &snapshot,
+      &requirements,
+      &controlled_template
+    ));
+    let mut other = inventory.factory_executions[0].clone();
+    other.execution.provider = octacity_protocol::ExecutionProviderId::new("another-controlled-route").unwrap();
+    inventory.factory_executions[0].controlled_tools = false;
+    inventory.factory_executions.push(other);
+    assert!(!is_compatible(
+      &inventory,
+      &snapshot,
+      &requirements,
+      &controlled_template
+    ));
+    inventory.factory_executions.pop();
+    inventory.factory_executions[0].controlled_tools = true;
+
     inventory.factory_executions[0].enforcement.pop();
     assert!(!is_compatible(&inventory, &snapshot, &requirements, &template));
   }

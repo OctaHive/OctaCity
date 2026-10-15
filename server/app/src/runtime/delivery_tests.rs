@@ -73,7 +73,7 @@ fn fixture_for(
     candidate: CandidateSubject::new(
       ExactSubject::new(project, repository, ImmutableRevision::new("1".repeat(40)).unwrap()),
       ImmutableRevision::new("2".repeat(40)).unwrap(),
-      FactoryDigest::from_bytes([2; 32]),
+      FactoryDigest::from_bytes([9; 32]),
     ),
     bundle: FactoryArtifactReference::new(ArtifactId::generate(), FactoryDigest::from_bytes([3; 32]), 100).unwrap(),
     manifest: FactoryArtifactReference::new(ArtifactId::generate(), FactoryDigest::from_bytes([2; 32]), 100).unwrap(),
@@ -122,7 +122,7 @@ impl FactoryDeliveryMaterializer for Material {
     inputs: &FactoryDeliveryInputs,
   ) -> Result<(), ApplicationError> {
     assert_eq!(inputs.bundle.sha256, request.bundle.content_digest().to_string());
-    assert_eq!(inputs.manifest.sha256, request.candidate.changeset_digest().to_string());
+    assert_eq!(inputs.manifest.sha256, request.manifest.content_digest().to_string());
     assert_ne!(inputs.bundle.handle, inputs.manifest.handle);
     self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     Ok(())
@@ -218,6 +218,7 @@ async fn hosted_publication(repair_required: bool, distinct_operations: bool) {
     assert_eq!(material.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     return;
   }
+  assert_ne!(request.candidate.changeset_digest(), request.manifest.content_digest());
   let publication = publisher
     .publish(&request)
     .await

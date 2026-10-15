@@ -29,6 +29,38 @@ fn node(kind: FlowNodeKind) -> FlowNodeDefinition {
 }
 
 #[test]
+fn decision_signal_pins_an_exact_installed_operation_and_survives_definition_round_trip() {
+  let binding = FlowActionBinding::new(
+    reference("installed.signal.adapter"),
+    key("evaluate"),
+    serde_json::json!({"profile": "independent.routing.v7"}),
+  )
+  .unwrap();
+  let signal = node(FlowNodeKind::DecisionSignal).with_action(binding.clone()).unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: FlowDefinitionId::generate(),
+    version: FlowDefinitionVersion::INITIAL,
+    input_schema: None,
+    entry: signal.key().clone(),
+    nodes: vec![signal.clone()],
+    transitions: vec![FlowTransition::new(
+      signal.key().clone(),
+      signal.outcomes()[0].key().clone(),
+      FlowTransitionTarget::Terminal(key("finished")),
+    )],
+    terminals: vec![FlowTerminalDefinition::new(key("finished"), reference("action.result"))],
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: FlowExecutionPolicy::new(signal.budget(), FactoryPermissionSet::deny_all(), 1).unwrap(),
+  })
+  .unwrap();
+  let restored: FlowDefinition = serde_json::from_slice(&serde_json::to_vec(&definition).unwrap()).unwrap();
+  assert_eq!(restored.node(signal.key()).unwrap().action(), Some(&binding));
+  assert!(node(FlowNodeKind::BuildCommand).with_action(binding.clone()).is_err());
+  assert!(node(FlowNodeKind::DeterministicGate).with_action(binding).is_err());
+}
+
+#[test]
 fn trusted_action_pins_extensible_plugin_parameters_without_a_status_enum() {
   let parameters = serde_json::json!({"status": "Ожидает уточнения", "notify": false});
   let binding = FlowActionBinding::new(reference("work-reporter"), key("set_status"), parameters.clone()).unwrap();

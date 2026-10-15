@@ -87,6 +87,10 @@ pub(crate) async fn run_loaded(
     components.host.capacity().clone(),
     lifecycle_config(&components.validated.config),
   )?;
+  let lifecycle = match &components.factory_tools {
+    Some(provider) => lifecycle.with_factory_tools(provider.clone()),
+    None => lifecycle,
+  };
 
   loop {
     let admission_started = Instant::now();
@@ -255,6 +259,8 @@ mod tests {
     #[derive(Default)]
     pub(super) struct DrainCoordinator {
       pub(super) admission: Mutex<Vec<bool>>,
+      pub(super) assignment: Mutex<Option<LeaseAssignment>>,
+      pub(super) completed: Mutex<Vec<CompleteLeaseRequest>>,
     }
 
     #[async_trait]
@@ -282,6 +288,13 @@ mod tests {
         _cancellation: CancellationToken,
       ) -> Result<AcquireLeaseResponse, CoordinatorError> {
         self.admission.lock().unwrap().push(accept_jobs);
+        if let Some(lease) = self.assignment.lock().unwrap().take() {
+          return Ok(AcquireLeaseResponse::Lease {
+            protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
+            request_id: "request-coverage".to_owned(),
+            lease: Box::new(lease),
+          });
+        }
         Ok(AcquireLeaseResponse::Drain {
           protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
           request_id: "request-coverage".to_owned(),
@@ -291,33 +304,40 @@ mod tests {
       async fn heartbeat(
         &self,
         _registration: &Registration,
-        _lease: &LeaseAssignment,
+        lease: &LeaseAssignment,
         _snapshot: &HostSnapshot,
         _capacity: &HostCapacity,
         _lease_safety_margin: Duration,
         _cancellation: CancellationToken,
       ) -> Result<HeartbeatDirective, CoordinatorError> {
-        unreachable!("a drained worker has no active lease")
+        Ok(HeartbeatDirective::Continue {
+          expires_at: lease.expires_at,
+        })
       }
 
       async fn append_events(
         &self,
         _registration: &Registration,
         _lease: &LeaseAssignment,
-        _events: &[AttemptEventEnvelope],
+        events: &[AttemptEventEnvelope],
         _cancellation: CancellationToken,
       ) -> Result<AppendEventsResponse, CoordinatorError> {
-        unreachable!("a drained worker has no event stream")
+        Ok(AppendEventsResponse {
+          protocol_version: octacity_protocol::COORDINATOR_PROTOCOL_VERSION,
+          request_id: "request-coverage".to_owned(),
+          acknowledged_sequence: events.last().unwrap().stream_sequence,
+        })
       }
 
       async fn complete_lease(
         &self,
         _registration: &Registration,
         _lease: &LeaseAssignment,
-        _completion: &CompleteLeaseRequest,
+        completion: &CompleteLeaseRequest,
         _cancellation: CancellationToken,
       ) -> Result<(), CoordinatorError> {
-        unreachable!("a drained worker cannot complete a lease")
+        self.completed.lock().unwrap().push(completion.clone());
+        Ok(())
       }
     }
   }
@@ -397,6 +417,7 @@ mod tests {
       source_plugins_dir: state.path().join("sources"),
       tool_executables: Default::default(),
       change_set_capture: None,
+      protected_reader: None,
       workload_identity_profiles: Default::default(),
       cache: octacity_config::CacheConfig {
         root: state.path().join("cache"),
@@ -433,6 +454,7 @@ mod tests {
       allow_unrestricted_network: false,
       allowed_network_hosts: Vec::new(),
       factory_permissions: None,
+      factory_credential_profiles: std::collections::BTreeMap::new(),
       allowed_upload_origins: Vec::new(),
       max_archive_entries: 1,
       upload_timeout_seconds: 1,
@@ -549,4 +571,5 @@ mod tests {
     assert!(!components.validated.config.state_root.join("jobs").exists());
     assert_eq!(*coordinator.admission.lock().unwrap(), vec![false]);
   }
+  include!("app_tool_owner_tests.rs");
 }

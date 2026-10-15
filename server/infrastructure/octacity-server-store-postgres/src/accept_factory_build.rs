@@ -2,9 +2,12 @@
 
 use crate::database::{number, unavailable};
 use octacity_server_domain::{AttemptId, BuildId, EntityKind, JobId};
-use octacity_server_factory::FactoryDigest;
+use octacity_server_factory::{FactoryDigest, FactoryKey};
 use octacity_server_job::JobSpecSigner;
-use octacity_server_store::{AcceptFactoryBuild, AcceptedFactoryBuild, FactoryBuildOrigin, StoreError, StoreOperation};
+use octacity_server_store::{
+  AcceptFactoryBuild, AcceptedFactoryBuild, AuditActorKind, FactoryAuditFact, FactoryBuildOrigin, StoreError,
+  StoreOperation,
+};
 use sqlx::{PgPool, Postgres, Transaction};
 
 type AcceptanceRow = (uuid::Uuid, uuid::Uuid, Vec<uuid::Uuid>, Vec<u8>, Vec<u8>);
@@ -111,6 +114,22 @@ pub(crate) async fn accept(
     request.attempt_id,
     &request.jobs,
     request.accepted_at,
+  )
+  .await?;
+  crate::factory_run::insert_audit(
+    &mut transaction,
+    &FactoryAuditFact::new(
+      request.intent.input().factory_run_id(),
+      AuditActorKind::Worker,
+      Some(FactoryDigest::sha256(
+        "octacity.factory.audit-worker.v1",
+        &[request.ownership.owner().as_str().as_bytes()],
+      )),
+      FactoryKey::new("factory.build.accepted").map_err(|_| StoreError::Unavailable)?,
+      operation,
+      FactoryKey::new("accepted").map_err(|_| StoreError::Unavailable)?,
+      request.accepted_at,
+    ),
   )
   .await?;
   transaction.commit().await.map_err(unavailable)?;

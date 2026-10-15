@@ -21,7 +21,7 @@ pub(crate) async fn read_snapshot(pool: &PgPool, run_id: FactoryRunId) -> Result
   Ok(snapshot)
 }
 
-pub(super) async fn read_snapshot_in_transaction(
+pub(crate) async fn read_snapshot_in_transaction(
   transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>,
   run_id: FactoryRunId,
 ) -> Result<FactoryRunSnapshot, StoreError> {

@@ -5,7 +5,7 @@ use crate::{FactoryError, FactoryKey, ImmutableReference};
 /// Maximum serialized parameter bytes in one operator-published action binding.
 pub const MAX_FLOW_ACTION_PARAMETER_BYTES: usize = 8 * 1024;
 
-/// Immutable plugin extension of the existing `trusted_action` primitive.
+/// Immutable installed operation for `trusted_action` or `decision_signal`.
 ///
 /// Action names and parameter schemas belong to the exact plugin version.
 /// Parameters carry configuration, never credentials or routing authority.

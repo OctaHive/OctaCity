@@ -1,0 +1,19 @@
+# Applied by tools/local-stand only when a private Factory catalog is installed.
+# Provider connector processes and their credentials remain explicit installations.
+services:
+  server:
+    tmpfs:
+      - /run/octacity-secrets:size=320m,mode=0700
+      - /run/octacity-delivery:exec,size=512m,mode=0700
+    volumes:
+      - type: bind
+        source: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/server
+        target: /run/octacity-factory-connectors
+        read_only: true
+    secrets:
+      - source: factory-profiles
+        target: factory-profiles.json
+
+secrets:
+  factory-profiles:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/server/factory-profiles.json

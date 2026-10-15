@@ -391,8 +391,10 @@ fn inventories_and_matches_a_cross_platform_release_without_importing_octa() {
     RunnerProgram {
       release_root: installation.root.clone(),
       executable: installation.executable.clone(),
-      plugins_dir: installation.plugins_dir.clone(),
-      plugin_lock: installation.default_plugin_lock.clone(),
+      plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+        directory: installation.plugins_dir.clone(),
+        lock: installation.default_plugin_lock.clone()
+      }),
       external_executables: BTreeMap::new(),
     }
   );

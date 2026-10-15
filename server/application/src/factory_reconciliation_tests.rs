@@ -305,6 +305,14 @@ fn an_in_flight_transition_finishes_after_a_peer_snapshot_fails() {
 
 #[async_trait]
 impl FactoryPhasePoolStore for MeasuredStore {
+  async fn ready_phase_policies(
+    &self,
+    after: Option<FactoryDigest>,
+    limit: u16,
+  ) -> Result<Vec<FactoryDigest>, StoreError> {
+    self.inner.ready_phase_policies(after, limit).await
+  }
+
   async fn phase_pool_selection_for_claim(
     &self,
     run: octacity_server_factory::FactoryRunId,
@@ -406,5 +414,266 @@ fn an_admitted_flow_continues_without_reloading_its_configuration() {
     let snapshot = store.factory_run_snapshot(run_id).await.unwrap();
     assert_eq!(snapshot.flow.attempts.len(), 1);
     assert_eq!(snapshot.flow.attempts[0].node_key().as_str(), "legal_review");
+  });
+}
+
+#[test]
+fn native_owner_selects_ready_phase_nodes_and_finishes_after_worker_restart() {
+  run_to_completion(async {
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    let admission = crate::factory_flow_tests::bounded_fixture(false, true);
+    let run_id = admission.run.id();
+    let audit = octacity_server_store::testing::management_mutation_with_request((), "native-phase-worker")
+      .audit()
+      .clone();
+    store.seed_factory_run(admission, digest(83), &audit).unwrap();
+    let shutdown = FactoryReconciliationShutdown::new();
+    for pass in 0..50 {
+      let at = 10 + pass;
+      // Recreate the owner on every pass; selection must not depend on a
+      // process-private queue or a hand-written phase selection call.
+      let flow = Arc::new(crate::FactoryFlowRunner::new(
+        store.clone(),
+        Arc::new(NoExternalEffects),
+        Arc::new(ConfiguredInputs),
+        Arc::new(FixedClock(time(at + 1))),
+      ));
+      let selector = Arc::new(crate::FactoryPhasePoolSelector::new(store.clone(), Default::default(), 1).unwrap());
+      let worker = FactoryReconciler::with_clock(
+        store.clone(),
+        key("worker.phase"),
+        1,
+        1,
+        Arc::new(FixedClock(time(at + 1))),
+        flow,
+      )
+      .unwrap()
+      .with_phase_pool_selector(selector);
+      worker.run_once(time(at), time(at + 8), &shutdown).await.unwrap();
+      let snapshot = store.factory_run_snapshot(run_id).await.unwrap();
+      if snapshot.run.state().is_terminal() {
+        break;
+      }
+    }
+    let snapshot = store.factory_run_snapshot(run_id).await.unwrap();
+    assert_eq!(
+      snapshot.run.state(),
+      octacity_server_factory::FactoryRunState::Completed
+    );
+    let pooled = snapshot
+      .flow
+      .attempts
+      .iter()
+      .filter(|attempt| {
+        snapshot.admitted_flow.closure().definitions().iter().any(|definition| {
+          definition
+            .node(attempt.node_key())
+            .is_some_and(|node| node.phase_pool().is_some())
+        })
+      })
+      .count();
+    assert_eq!(pooled, 2, "each bounded repeat receives a fresh admitted selection");
+  });
+}
+
+#[test]
+fn a_selected_phase_survives_owner_expiry_before_the_attempt_starts() {
+  run_to_completion(async {
+    use crate::FactoryPhasePoolCoordination as _;
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    let admission = crate::factory_flow_tests::bounded_fixture(false, true);
+    let run_id = admission.run.id();
+    let audit = octacity_server_store::testing::management_mutation_with_request((), "phase-recovery")
+      .audit()
+      .clone();
+    store.seed_factory_run(admission, digest(84), &audit).unwrap();
+    let shutdown = FactoryReconciliationShutdown::new();
+    for pass in 0..10 {
+      let at = 10 + pass;
+      reconciler(store.clone(), "worker.prepare", 1, 1, at + 1)
+        .run_once(time(at), time(at + 8), &shutdown)
+        .await
+        .unwrap();
+      if !store.ready_phase_policies(None, 1).await.unwrap().is_empty() {
+        break;
+      }
+    }
+    crate::FactoryPhasePoolSelector::new(store.clone(), Default::default(), 1)
+      .unwrap()
+      .select_once(&key("worker.selected"), time(100), time(110))
+      .await
+      .unwrap();
+    let selected = store.factory_run_snapshot(run_id).await.unwrap();
+    let original = store
+      .phase_pool_selection_for_claim(run_id, selected.current_claim.as_ref().unwrap().id)
+      .await
+      .unwrap()
+      .expect("capacity is durably selected before dispatch");
+    assert!(
+      !selected
+        .flow
+        .attempts
+        .iter()
+        .any(|attempt| attempt.node_key() == &original.entry.input.node)
+    );
+    let replacement = store
+      .claim_factory_runs(ClaimFactoryRuns::new(key("worker.replacement"), time(110), time(130), 1).unwrap())
+      .await
+      .unwrap()
+      .remove(0);
+    let recovered = store
+      .phase_pool_selection_for_claim(run_id, replacement.record.id)
+      .await
+      .unwrap()
+      .expect("a new current owner resumes the retained reservation without a second selection");
+    assert_eq!(recovered, original);
+    assert!(
+      store
+        .phase_pool_selection_for_claim(run_id, digest(85))
+        .await
+        .unwrap()
+        .is_none()
+    );
+    for pass in 0..4 {
+      let at = 110 + pass;
+      let worker = reconciler(store.clone(), "worker.replacement", 1, 1, at + 1);
+      worker.run_once(time(at), time(130), &shutdown).await.unwrap();
+    }
+    let resumed = store.factory_run_snapshot(run_id).await.unwrap();
+    let completed = resumed
+      .flow
+      .attempts
+      .iter()
+      .filter(|attempt| {
+        attempt.node_key() == &original.entry.input.node
+          && resumed
+            .flow
+            .completions
+            .iter()
+            .any(|completion| completion.node_attempt_id() == attempt.id())
+      })
+      .count();
+    assert_eq!(
+      completed, 1,
+      "the recovered owner dispatches and completes the reserved target"
+    );
+    let audits = store
+      .list_factory_run_diagnostics(
+        ListFactoryRunDiagnostics::new(
+          run_id,
+          octacity_server_store::FactoryRunDiagnosticKind::Audit,
+          None,
+          100,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(audits.items.iter().filter(|record| matches!(record,
+      octacity_server_store::FactoryRunDiagnosticRecord::Audit(fact) if fact.operation.as_str() == "factory.phase_selected"
+    )).count(), 1);
+  });
+}
+
+#[test]
+fn phase_admission_accepts_the_full_installed_executor_catalog_bound() {
+  let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+  let capabilities = (0..crate::MAX_FACTORY_EXECUTOR_BINDINGS)
+    .map(|index| {
+      octacity_server_factory::ImmutableReference::new(key(&format!("installed-{index}")), key("v1"), digest(60))
+    })
+    .collect::<std::collections::BTreeSet<_>>();
+  assert!(crate::FactoryPhasePoolSelector::new(store, capabilities.clone(), 1).is_ok());
+  assert!(
+    SelectPhasePool {
+      policy_digest: digest(90),
+      request_id: digest(91),
+      owner: key("worker.full-catalog"),
+      observed_at: time(1),
+      expires_at: time(2),
+      capabilities,
+      limit: 1,
+    }
+    .validate()
+    .is_ok()
+  );
+}
+
+#[test]
+fn native_phase_pass_does_not_skip_policies_when_its_batch_fills_early() {
+  run_to_completion(async {
+    use crate::FactoryPhasePoolCoordination as _;
+    use octacity_server_factory::{AdmittedFlow, FactoryPermissionSet, FlowAdmissionLimits};
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    let mut runs = Vec::new();
+    for policy_index in 0..3 {
+      for _ in 0..2 {
+        let mut admission = crate::factory_flow_tests::bounded_fixture(false, true);
+        let mut pools = admission.flow.pool_settings().clone();
+        let settings = pools.values_mut().next().unwrap();
+        settings.policy.max_wip = 2;
+        settings.policy.max_project_wip = 2;
+        settings.policy.budget =
+          octacity_server_factory::BudgetLimit::new(16, 10000, 1000 - policy_index, 10000, 10000).unwrap();
+        let policy = settings.policy.digest();
+        admission.flow = AdmittedFlow::new(
+          admission.flow.closure().clone(),
+          FlowAdmissionLimits::product_defaults(2, admission.flow.limits().budget(), FactoryPermissionSet::deny_all())
+            .unwrap(),
+          admission.flow.root_run().clone(),
+          admission.flow.initial_cycle().clone(),
+          admission.flow.wip_limits(),
+        )
+        .unwrap()
+        .with_data_schemas(admission.flow.data_schemas().to_vec())
+        .unwrap()
+        .with_pool_settings(pools)
+        .unwrap();
+        let run = admission.run.id();
+        let audit = octacity_server_store::testing::management_mutation_with_request((), "phase-pagination")
+          .audit()
+          .clone();
+        store.seed_factory_run(admission, digest(93), &audit).unwrap();
+        runs.push((policy, run));
+      }
+    }
+    let shutdown = FactoryReconciliationShutdown::new();
+    for pass in 0..20 {
+      let at = 10 + pass;
+      reconciler(store.clone(), "worker.prepare", 6, 6, at + 1)
+        .run_once(time(at), time(at + 8), &shutdown)
+        .await
+        .unwrap();
+      if store.ready_phase_policies(None, 10).await.unwrap().len() == 3 {
+        break;
+      }
+    }
+    let policies = store.ready_phase_policies(None, 10).await.unwrap();
+    assert_eq!(
+      policies.len(),
+      3,
+      "three independently admitted policy queues are ready"
+    );
+    let selector = crate::FactoryPhasePoolSelector::new(store.clone(), Default::default(), 2).unwrap();
+    selector
+      .select_once(&key("worker.selector"), time(100), time(200))
+      .await
+      .unwrap();
+    selector
+      .select_once(&key("worker.selector"), time(101), time(201))
+      .await
+      .unwrap();
+    for (policy, run) in runs {
+      let snapshot = store.factory_run_snapshot(run).await.unwrap();
+      let selection = match snapshot.current_claim {
+        Some(claim) => store.phase_pool_selection_for_claim(run, claim.id).await.unwrap(),
+        None => None,
+      };
+      assert_eq!(
+        selection.is_some(),
+        policies[..2].contains(&policy),
+        "the next pass resumes at the next unprocessed policy"
+      );
+    }
   });
 }

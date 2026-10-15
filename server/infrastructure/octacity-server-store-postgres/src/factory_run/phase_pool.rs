@@ -250,6 +250,7 @@ pub(crate) async fn select_phase_ready(
     .execute(&mut *transaction)
     .await
     .map_err(unavailable)?;
+  let mut audits = Vec::with_capacity(selected.len());
   for selection in &selected {
     let entry = &selection.entry;
     let claim = selection.run_claim();
@@ -267,6 +268,7 @@ pub(crate) async fn select_phase_ready(
       request.observed_at,
     );
     insert_audit(&mut transaction, &audit).await?;
+    audits.push(audit.id);
     sqlx::query("UPDATE factory_run_current SET claim_id = $1 WHERE run_id = $2")
       .bind(claim.id.as_bytes().as_slice())
       .bind(entry.input.run_id.as_uuid())
@@ -279,6 +281,26 @@ pub(crate) async fn select_phase_ready(
       .bind(claim.id.as_bytes().as_slice()).bind(Json(selection)).bind(i64::from(entry.input.generation)).execute(&mut *transaction).await.map_err(unavailable)?;
   }
   transaction.commit().await.map_err(unavailable)?;
+  for (selection, audit) in selected.iter().zip(audits) {
+    let entry = &selection.entry;
+    tracing::info!(
+      event.name = "octacity.factory.pool.selected",
+      factory.run.id = %entry.input.run_id,
+      factory.flow.id = %entry.input.flow_run_id,
+      factory.cycle.id = %entry.input.cycle_id,
+      factory.node.digest = %FactoryDigest::sha256("octacity.factory.trace-node.v1", &[entry.input.node.as_str().as_bytes()]),
+      factory.node.generation = entry.input.generation,
+      factory.pool.policy.digest = %entry.policy_digest,
+      factory.pool.entry.id = %entry.id,
+      factory.pool.selection.digest = %selection.input_digest,
+      factory.pool.request.id = %selection.request_id,
+      factory.claim.id = %selection.run_claim().id,
+      factory.claim.fence = %selection.claim.fence().digest(),
+      factory.claim.expires_ms = selection.claim.expires_at().unix_millis(),
+      factory.audit.id = %audit,
+      "Factory pool selection committed"
+    );
+  }
   Ok(selected)
 }
 
@@ -390,9 +412,45 @@ pub(crate) async fn selection_for_claim(
     sqlx::query_scalar("SELECT selection FROM factory_phase_pool_selections WHERE run_id=$1 AND claim_id=$2")
       .bind(run.as_uuid())
       .bind(claim.as_bytes().as_slice())
-      .fetch_optional(connection)
+      .fetch_optional(&mut *connection)
       .await
       .map_err(unavailable)?;
+  if selection.is_none() {
+    // A new current owner resumes the original capacity reservation. No row or
+    // claim in the immutable selection is rewritten, and arbitrary claim IDs
+    // cannot obtain this fallback.
+    let recovered: Option<Json<PhasePoolSelection>> = sqlx::query_scalar(
+      "SELECT selected.selection FROM factory_phase_pool_selections selected \
+       JOIN factory_run_current current ON current.run_id = selected.run_id \
+       JOIN factory_runs run ON run.id = selected.run_id \
+       JOIN factory_run_claims original ON original.id = selected.claim_id \
+       WHERE selected.run_id = $1 AND current.claim_id = $2 AND run.visible \
+         AND run.state NOT IN ('cancelled','completed') AND ( \
+           (NOT EXISTS (SELECT 1 FROM factory_node_attempts node LEFT JOIN factory_flow_inputs frozen \
+             ON frozen.run_id = node.run_id AND frozen.id = node.input_digest \
+             WHERE node.run_id = selected.run_id AND node.workflow_cycle_id = selected.cycle_id \
+               AND node.node_key = selected.node_key AND (frozen.generation = selected.generation OR frozen.id IS NULL)) \
+             AND selected.cycle_id = (SELECT id FROM factory_workflow_cycles \
+               WHERE flow_run_id = selected.flow_run_id ORDER BY cycle_number DESC LIMIT 1)) \
+           OR EXISTS (SELECT 1 FROM factory_node_attempts node LEFT JOIN factory_flow_inputs frozen \
+             ON frozen.run_id = node.run_id AND frozen.id = node.input_digest \
+             WHERE node.run_id = selected.run_id AND node.workflow_cycle_id = selected.cycle_id \
+               AND node.node_key = selected.node_key AND (frozen.generation = selected.generation OR frozen.id IS NULL) \
+               AND NOT EXISTS (SELECT 1 FROM factory_node_attempt_completions result WHERE result.node_attempt_id = node.id) \
+               AND NOT EXISTS (SELECT 1 FROM factory_node_stops stop WHERE stop.node_attempt_id = node.id))) \
+       ORDER BY original.claimed_at DESC, selected.entry_id DESC LIMIT 1")
+      .bind(run.as_uuid()).bind(claim.as_bytes().as_slice())
+      .fetch_optional(connection).await.map_err(unavailable)?;
+    return recovered
+      .map(|Json(selection)| {
+        if selection.entry.input.run_id == run {
+          Ok(selection)
+        } else {
+          Err(StoreError::Unavailable)
+        }
+      })
+      .transpose();
+  }
   selection
     .map(|Json(selection)| {
       if selection.entry.input.run_id == run && selection.run_claim().id == claim {
@@ -460,4 +518,39 @@ pub(crate) async fn list_phase_ready_entries(
     items,
     next_cursor,
   })
+}
+
+pub(crate) async fn ready_phase_policies(
+  pool: &PgPool,
+  after: Option<FactoryDigest>,
+  limit: u16,
+) -> Result<Vec<FactoryDigest>, StoreError> {
+  if limit == 0 || limit > MAX_PHASE_POOL_BATCH {
+    return Err(invalid());
+  }
+  let ids: Vec<Vec<u8>> = sqlx::query_scalar(
+    "SELECT policy.id FROM factory_phase_pool_policies policy \
+     WHERE ($1::bytea IS NULL OR policy.id > $1) AND EXISTS ( \
+       SELECT 1 FROM factory_phase_pool_entries entry JOIN factory_runs run ON run.id = entry.run_id \
+       WHERE entry.policy_id = policy.id AND run.visible AND run.state NOT IN ('cancelled','completed') \
+         AND entry.run_version = run.version AND NOT EXISTS ( \
+           SELECT 1 FROM factory_phase_pool_selections selected WHERE selected.run_id = entry.run_id \
+             AND selected.flow_run_id = entry.flow_run_id AND selected.cycle_id = entry.cycle_id \
+             AND selected.node_key = entry.node_key AND selected.generation = entry.generation)) \
+     ORDER BY policy.id LIMIT $2",
+  )
+  .bind(after.map(|digest| digest.as_bytes().to_vec()))
+  .bind(i64::from(limit))
+  .fetch_all(pool)
+  .await
+  .map_err(unavailable)?;
+  ids
+    .into_iter()
+    .map(|bytes| {
+      bytes
+        .try_into()
+        .map(FactoryDigest::from_bytes)
+        .map_err(|_| StoreError::Unavailable)
+    })
+    .collect()
 }

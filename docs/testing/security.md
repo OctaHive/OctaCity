@@ -52,10 +52,57 @@ narrowest possible path-and-rule exception with a reason and a regression test;
 global rule disablement is not acceptable. Runtime leakage remains covered by
 the security contract matrix and redaction tests because a repository scanner
 cannot observe generated logs, events, artifacts, or diagnostics.
+The Agent filesystem/supply-chain security contract also runs
+`octacity-lifecycle`, including the public hook-parser redaction and lease-bound
+broker cancellation tests. Those portable tests accompany, rather than replace,
+the released-backend qualification described in the threat model.
 
 The checked-in configuration has one such exception: the pinned Octa source
 contains a public test-only TLS private-key fixture used by cache protocol
 tests. Only the `private-key` rule at that exact fixture path is exempted.
+
+## Factory adversarial contracts
+
+`python3 tools/security_matrix.py run --evidence-dir /tmp/octacity-security`
+includes the `factory-authority` group. It executes the Factory core and
+Decision Signal connector tests, including definition closure, context,
+evidence and provider identity negatives. The existing application and Agent
+groups exercise their public dispatch, result, filesystem and broker boundaries.
+A failing group fails the matrix while retaining all group outcomes and logs.
+Run these tests even when Factory is disabled in the deployment: disabled mode
+must not bypass the authority checks or turn an unsupported route into Host
+execution.
+
+The coverage map below identifies the owning tests, not logical Flow or node
+names. Test inputs may use arbitrary names; runtime dispatch selects installed
+immutable capabilities.
+
+| Attack | Executable contract and required refusal |
+| --- | --- |
+| Prompt injection | Core `task_contract_tests::prompt_injected_fragments_are_non_authoritative_supplemental_context`: repository instructions remain data; `model_results_cannot_smuggle_control_or_apply_self_modification` rejects invented authority. |
+| Repository-controlled Flow changes | Core `flow_data_tests::persisted_admission_rejects_a_replacement_definition_even_with_the_same_flow_version` refuses a fresh valid closure whose digest differs from the retained root Run. |
+| Undeclared routes | Core `flow_interpreter_tests::interpreter_uses_only_the_declared_outcome_route_from_authoritative_facts` refuses an invented outcome. |
+| Recursive or unbounded execution | Core `rejects_provider_created_edges_recursion_and_unbounded_cycles` and `rejects_node_fanout_wip_and_budget_beyond_admission_bounds` refuse unsafe admission. |
+| Context-edge leakage | Core `interpreter_carries_only_declared_context_and_data_into_the_successor` withholds predecessor data without an explicit projection. |
+| Protected-test disclosure | Application `factory_node_capture_tests::candidate_context_keeps_binary_source_inputs_out_of_declared_model_text` excludes private source inputs; physical input projection contracts verify absence from the guest. |
+| Provider/model substitution | Core `decision_signal_tests::request_requires_exact_provider_model_semantics_and_purpose` and application `factory_node_build_tests::verification_dispatch_rejects_endpoint_substitution_and_embedded_credentials` refuse substituted identities. |
+| Path/mount escape | Core `permission_tests::command_and_path_intersection_rejects_incompatible_or_lookalike_authority` and Agent guest capture contracts deny paths outside the signed scope. |
+| Credential crossing | Application `factory_credentials_tests::coding_cannot_materialize_delivery_identity` and `factory_codex_tests::compiler_rejects_cross_stage_credentials_and_writable_evaluation_source` refuse another role's authority. |
+| Forged evidence | Application `factory_review_planning_tests::identical_evidence_json_without_trusted_facts_cannot_create_a_review_plan` refuses evidence-shaped JSON without trusted provenance. |
+| ChangeSet tampering | Application `factory_node_capture_tests::candidate_materialization_requires_the_explicit_frozen_context_and_retained_artifacts` and `stored_candidate_context_rejects_short_retention_foreign_capture_and_late_owner_expiry` refuse mismatched or unavailable retained inputs. |
+| Stale cycles/fences | Core `lifecycle_decision_tests::claims_reject_stale_fences_and_exclusive_deadlines` refuses expired ownership; restored admission rechecks its initial cycle, and application observers recheck authority after output I/O. |
+| Duplicate side effects | Application `factory_flow_action_tests::exact_candidate_publication_recovers_a_lost_response_without_another_write` and `factory_decision_signal_tests::retrying_an_unknown_signal_within_the_deadline_cannot_dispatch_the_provider_again` preserve one logical operation. |
+| Unqualified fallback | Core `permission_tests::unknown_and_unenforceable_authority_fail_closed` and Agent `execution_v2::never_falls_back_to_host_for_a_factory_job` deny dispatch without the exact qualified route. |
+
+Portable tests establish logical authority, not physical isolation. Run the
+[released Factory backend contracts](backend-contracts.md) with the pinned
+Octa release and the selected backend to establish filesystem and process
+behavior. Their hostile repository fixture must attempt real reads and writes;
+an unconfined fixture run must demonstrate that the same probes can succeed.
+Canaries must remain absent from retained logs, events, reports and failure
+diagnostics. Keep the full nested-flow restart/promotion pilot and qualification
+of other operating systems as separate release requirements; a local negative
+contract cannot substitute for them.
 
 ## Protocol fuzzing
 

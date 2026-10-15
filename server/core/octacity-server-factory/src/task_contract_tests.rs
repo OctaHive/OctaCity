@@ -232,6 +232,17 @@ fn model_results_cannot_smuggle_control_or_apply_self_modification() {
 }
 
 #[test]
+fn a_data_only_call_can_freeze_an_explicit_empty_context_manifest() {
+  let subject = exact_subject();
+  let empty = ContextManifest::new(ContextManifestId::generate(), subject.clone(), digest(20), vec![])
+    .expect("a configured data-only call must not acquire implicit context to satisfy a minimum count");
+  assert_eq!(empty.subject(), &subject);
+  assert!(empty.entries().is_empty());
+  let restored: ContextManifest = serde_json::from_slice(&empty.canonical_bytes().unwrap()).unwrap();
+  assert_eq!(empty, restored);
+}
+
+#[test]
 fn manifests_and_envelopes_have_canonical_order_and_stable_bytes() {
   let subject = exact_subject();
   let first = artifact(10);

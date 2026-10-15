@@ -193,8 +193,10 @@ fn creates_a_restricted_oci_spec_and_guest_paths() {
   let runner = RunnerProgram {
     release_root: release.clone(),
     executable: release.join("octa-runner"),
-    plugins_dir: release.join("plugins"),
-    plugin_lock: release.join("plugins.lock"),
+    plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+      directory: release.join("plugins"),
+      lock: release.join("plugins.lock"),
+    }),
     external_executables: std::collections::BTreeMap::from([(
       "OCTA_CODEX_EXECUTABLE".to_owned(),
       external_executable.clone(),
@@ -338,8 +340,10 @@ fn projects_the_factory_layout_without_a_writable_parent_mount() {
   let runner = RunnerProgram {
     release_root: release.clone(),
     executable: release.join("octa-runner"),
-    plugins_dir: release.join("plugins"),
-    plugin_lock: release.join("Octa.lock"),
+    plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+      directory: release.join("plugins"),
+      lock: release.join("Octa.lock"),
+    }),
     external_executables: BTreeMap::new(),
   };
   let mut request = StartExecution {
@@ -350,6 +354,9 @@ fn projects_the_factory_layout_without_a_writable_parent_mount() {
     workload_identity: None,
     cache: None,
     factory: Some(FactoryExecutionLayout {
+      workspace_anchor: false,
+      disk_accounting: octacity_execution::ExecutionDiskAccounting::WholeJob,
+      tool_channel: None,
       protected_inputs: protected.clone(),
       source: source.clone(),
       source_visible: true,

@@ -113,6 +113,19 @@ pub fn verify_factory_node_change_set(
   capture_tool: &ImmutableReference,
   observed_at: Timestamp,
 ) -> Result<ChangeSet, FactoryChangeSetError> {
+  verify_factory_node_change_set_manifest(intent, execution, outputs, capture_tool, observed_at)
+    .map(|(candidate, _)| candidate)
+}
+
+/// Reuses the complete candidate verification before adapter-owned instruction
+/// limits inspect the trusted manifest; no second byte read or parser is needed.
+pub(crate) fn verify_factory_node_change_set_manifest(
+  intent: &FlowBuildIntent,
+  execution: &FlowBuildExecution,
+  outputs: &FactoryNodeBuildOutputs,
+  capture_tool: &ImmutableReference,
+  observed_at: Timestamp,
+) -> Result<(ChangeSet, CapturedChangeSetManifestV1), FactoryChangeSetError> {
   let checked = FlowBuildExecution::new(
     intent,
     execution.build_id(),
@@ -177,8 +190,9 @@ pub fn verify_factory_node_change_set(
       candidate.candidate_revision()
     });
   validate_manifest(&manifest, intent.node().id().to_string(), base.as_str(), &output)?;
+  validate_direct_source_scope(intent, &manifest)?;
   verify_deliverables(intent, &manifest)?;
-  captured_candidate(
+  let candidate = captured_candidate(
     intent,
     execution,
     &manifest,
@@ -190,7 +204,8 @@ pub fn verify_factory_node_change_set(
       output.manifest.identity.artifact_id,
       FactoryDigest::from_bytes(output.manifest.identity.digest.as_bytes()),
     ),
-  )
+  )?;
+  Ok((candidate, manifest))
 }
 
 /// Recovers a candidate from an owner-retained capture result after restart.
@@ -336,11 +351,15 @@ fn recover_candidate(
         || output.producer.job_id() != manifest_output.producer.job_id()
         || output.producer.tool() != capture_tool
         || output.producer.plugin() != &intent.profile().plugin
-        || output.verified_at > record.observed_at())
+        // The primary Report may precede independently published capture
+        // evidence. Its publication time is not the verification deadline.
+        || output.verified_at >= intent.node().deadline()
+        || output.verified_at >= output.fresh_until)
     })
   {
     return Err(invalid());
   }
+  validate_direct_source_scope(intent, &manifest)?;
   verify_deliverables(intent, &manifest)?;
   captured_candidate(
     intent,
@@ -361,15 +380,12 @@ fn captured_candidate(
   bundle: (ArtifactId, FactoryDigest),
   document: (ArtifactId, FactoryDigest),
 ) -> Result<ChangeSet, FactoryChangeSetError> {
-  let digest = FactoryDigest::sha256(
-    "octacity.factory.changeset.v1",
-    &[
-      manifest.base_revision.as_bytes(),
-      manifest.candidate_revision.as_bytes(),
-      &bundle.1.as_bytes(),
-      &document.1.as_bytes(),
-    ],
-  );
+  let digest = FactoryDigest::from_lower_hex(
+    &manifest
+      .candidate_digest(&document.1.to_string())
+      .map_err(|_| FactoryChangeSetError::InvalidEvidence)?,
+  )
+  .map_err(|_| FactoryChangeSetError::InvalidEvidence)?;
   let subject = CandidateSubject::new(
     intent.input().subject().clone(),
     ImmutableRevision::new(manifest.candidate_revision.clone()).map_err(|_| FactoryChangeSetError::InvalidEvidence)?,
@@ -476,6 +492,24 @@ pub(super) fn validate_manifest(
     }
     _ => Err(FactoryChangeSetError::InvalidEvidence),
   }
+}
+
+fn validate_direct_source_scope(
+  intent: &FlowBuildIntent,
+  manifest: &CapturedChangeSetManifestV1,
+) -> Result<(), FactoryChangeSetError> {
+  if let Some(prefixes) = &intent.profile().capture_write_paths {
+    for change in &manifest.changed_paths {
+      let path = octacity_server_factory::FactoryRepositoryPath::new(&change.path)
+        .map_err(|_| FactoryChangeSetError::InvalidEvidence)?;
+      if !prefixes.iter().any(|prefix| path.is_within(prefix)) {
+        return Err(FactoryChangeSetError::InvalidEvidence);
+      }
+    }
+  }
+  // Cumulative changes include earlier candidates and are governed by their
+  // retained lineage/deliverable contracts, rather than this operation's prefix.
+  Ok(())
 }
 
 fn file_matches(expected: &CapturedChangeSetFileV1, actual: &VerifiedFactoryArtifact) -> bool {

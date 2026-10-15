@@ -25,12 +25,14 @@ mod artifact;
 mod coordinator;
 mod execution;
 mod factory;
+mod protected_read;
 mod tool_action;
 
 pub use artifact::*;
 pub use coordinator::*;
 pub use execution::*;
 pub use factory::*;
+pub use protected_read::*;
 pub use tool_action::*;
 
 /// Signed JobSpec wire version supported by this crate.

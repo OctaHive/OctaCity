@@ -27,8 +27,33 @@ pub struct OciCapability {
 /// Concrete OCI lifecycle implementation hidden behind [`OciBackend`].
 #[async_trait]
 pub trait OciEngine: Send + Sync {
+  /// Read-only root used for independently verified operator executables.
+  /// Absence disables the controlled reader composition for this engine.
+  fn factory_tool_projection_root(&self) -> Option<std::path::PathBuf> {
+    None
+  }
+
   /// Returns the exact combinations this configured engine can enforce.
   fn capabilities(&self) -> Vec<OciCapability>;
+
+  /// Whether this engine projects the trusted private guest-to-host stream.
+  /// This transport capability does not qualify controlled tool execution.
+  fn supports_private_tool_channel(&self) -> bool {
+    false
+  }
+
+  /// Whether admission, enforcement and sampling use this execution's actual
+  /// writable mounts when a Factory partition requests that technical scope.
+  /// This resource capability does not qualify controlled tool execution.
+  fn supports_owned_writable_mount_accounting(&self) -> bool {
+    false
+  }
+
+  /// Whether this engine provides the empty read-only parent workspace while
+  /// exposing only individually admitted child mounts.
+  fn supports_factory_workspace_anchor(&self) -> bool {
+    false
+  }
 
   /// Starts an OCI execution or rolls back every partially created resource.
   async fn start(
@@ -82,8 +107,34 @@ impl OciBackend {
   }
 }
 
+/// Returns the fixed executable projection only when this exact engine provides
+/// both the private channel and independent writable-allocation accounting.
+/// Installation of a lease-owned tool controller remains a separate requirement.
+pub fn qualified_factory_tool_projection(engine: &dyn OciEngine) -> Option<std::path::PathBuf> {
+  if !engine.supports_private_tool_channel() || !engine.supports_owned_writable_mount_accounting() {
+    return None;
+  }
+  engine.factory_tool_projection_root().filter(|path| path.is_absolute())
+}
+
 #[async_trait]
 impl ExecutionBackend for OciBackend {
+  fn factory_tool_projection(&self, target: &ExecutionTarget) -> Option<std::path::PathBuf> {
+    let ExecutionTarget::Oci {
+      platform,
+      isolation: OciIsolation::Hypervisor,
+      ..
+    } = target
+    else {
+      return None;
+    };
+    let engine = self.engines.get(*self.routes.get(&OciCapability {
+      platform: *platform,
+      isolation: OciIsolation::Hypervisor,
+    })?)?;
+    qualified_factory_tool_projection(engine.as_ref())
+  }
+
   async fn start(
     &self,
     runner: &RunnerProgram,
@@ -108,6 +159,27 @@ impl ExecutionBackend for OciBackend {
       .get(&capability)
       .and_then(|index| self.engines.get(*index))
       .ok_or_else(|| ExecutionError::Unavailable(format!("no OCI engine provides {capability:?}")))?;
+    if request
+      .factory
+      .as_ref()
+      .is_some_and(|factory| factory.tool_channel.is_some())
+      && !engine.supports_private_tool_channel()
+    {
+      return Err(ExecutionError::Unavailable(
+        "OCI engine does not provide a private tool-action stream".to_owned(),
+      ));
+    }
+    if request.factory.as_ref().is_some_and(|factory| {
+      factory.disk_accounting == octacity_execution::ExecutionDiskAccounting::OwnedWritableMounts
+    }) && !engine.supports_owned_writable_mount_accounting()
+    {
+      return Err(ExecutionError::Unavailable(
+        "OCI engine does not provide owned writable-mount accounting".to_owned(),
+      ));
+    }
+    if !engine.supports_factory_workspace_anchor() {
+      request.require_unanchored_factory_workspace()?;
+    }
     engine.start(runner, request, cancellation).await
   }
 
@@ -226,8 +298,10 @@ mod tests {
     let runner = RunnerProgram {
       release_root: PathBuf::from("/release"),
       executable: PathBuf::from("/release/octa-runner"),
-      plugins_dir: PathBuf::from("/release/plugins"),
-      plugin_lock: PathBuf::from("/release/plugins.lock"),
+      plugin_projection: Some(octacity_execution::ExecutionPluginProjection {
+        directory: PathBuf::from("/release/plugins"),
+        lock: PathBuf::from("/release/plugins.lock"),
+      }),
       external_executables: std::collections::BTreeMap::new(),
     };
     (temporary, request, runner)
@@ -310,5 +384,187 @@ mod tests {
     let error = backend.cleanup_orphans().await.unwrap_err().to_string();
     assert!(error.contains("process cleanup"));
     assert!(error.contains("hypervisor cleanup"));
+  }
+
+  #[cfg(unix)]
+  fn factory_execution_request(
+    disk_accounting: octacity_execution::ExecutionDiskAccounting,
+  ) -> (tempfile::TempDir, StartExecution, RunnerProgram) {
+    use std::os::unix::fs::PermissionsExt as _;
+    let (temporary, mut request, runner) = execution_request(OciIsolation::Hypervisor);
+    std::fs::set_permissions(&request.workspace_root, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let job = request.workspace_root.join("job");
+    std::fs::create_dir(&job).unwrap();
+    let source = job.join("source");
+    let scratch = job.join("scratch");
+    let output = job.join("output");
+    let protected = job.join("protected");
+    for path in [&source, &scratch, &output, &protected] {
+      std::fs::create_dir(path).unwrap();
+    }
+    std::fs::set_permissions(&protected, std::fs::Permissions::from_mode(0o500)).unwrap();
+    request.workspace = source.clone();
+    request.data_dir = scratch.clone();
+    request.factory = Some(octacity_execution::FactoryExecutionLayout {
+      workspace_anchor: false,
+      disk_accounting,
+      protected_inputs: protected,
+      source,
+      source_visible: false,
+      source_read_only: true,
+      source_writable_paths: vec![],
+      tool_channel: None,
+      scratch,
+      output,
+      process_limit: 4,
+    });
+    (temporary, request, runner)
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn refuses_a_private_tool_channel_before_starting_an_unqualified_engine() {
+    use std::os::unix::{fs::PermissionsExt as _, net::UnixListener};
+    let engine = Arc::new(FailingEngine {
+      capability: capability(OciIsolation::Hypervisor),
+      starts: AtomicUsize::new(0),
+      cleanup_error: None,
+    });
+    let backend = OciBackend::new(vec![engine.clone()]).unwrap();
+    let (_temporary, mut request, runner) =
+      factory_execution_request(octacity_execution::ExecutionDiskAccounting::WholeJob);
+    let socket = request.workspace_root.join("tool.sock");
+    let _listener = UnixListener::bind(&socket).unwrap();
+    std::fs::set_permissions(&socket, std::fs::Permissions::from_mode(0o600)).unwrap();
+    request.factory.as_mut().unwrap().tool_channel =
+      Some(octacity_execution::FactoryToolChannel::new(socket, 5001).unwrap());
+    request
+      .validate()
+      .expect("valid channel reaches the engine capability gate");
+    let error = backend
+      .start(&runner, request, CancellationToken::new())
+      .await
+      .err()
+      .unwrap();
+    assert!(matches!(error, ExecutionError::Unavailable(_)));
+    assert_eq!(engine.starts.load(Ordering::SeqCst), 0);
+  }
+
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn refuses_owned_writable_accounting_before_starting_an_unqualified_engine() {
+    let engine = Arc::new(FailingEngine {
+      capability: capability(OciIsolation::Hypervisor),
+      starts: AtomicUsize::new(0),
+      cleanup_error: None,
+    });
+    let backend = OciBackend::new(vec![engine.clone()]).unwrap();
+    let (_temporary, request, runner) =
+      factory_execution_request(octacity_execution::ExecutionDiskAccounting::OwnedWritableMounts);
+    request.validate().unwrap();
+    let error = backend
+      .start(&runner, request, CancellationToken::new())
+      .await
+      .err()
+      .unwrap();
+    assert!(matches!(error, ExecutionError::Unavailable(_)), "{error:?}");
+    assert_eq!(engine.starts.load(Ordering::SeqCst), 0);
+  }
+  #[cfg(unix)]
+  #[tokio::test]
+  async fn refuses_an_anchored_workspace_before_starting_an_unqualified_engine() {
+    let engine = Arc::new(FailingEngine {
+      capability: capability(OciIsolation::Hypervisor),
+      starts: AtomicUsize::new(0),
+      cleanup_error: None,
+    });
+    let backend = OciBackend::new(vec![engine.clone()]).unwrap();
+    let (_temporary, mut request, runner) =
+      factory_execution_request(octacity_execution::ExecutionDiskAccounting::WholeJob);
+    request.factory.as_mut().unwrap().workspace_anchor = true;
+    assert!(matches!(
+      backend.start(&runner, request, CancellationToken::new()).await,
+      Err(ExecutionError::Unavailable(_))
+    ));
+    assert_eq!(engine.starts.load(Ordering::SeqCst), 0);
+  }
+}
+
+#[cfg(test)]
+mod controlled_projection_tests {
+  use super::*;
+  use octacity_execution::{ExecutionArchitecture, ExecutionOs};
+  use std::path::PathBuf;
+  struct ReaderEngine {
+    platform: ExecutionPlatform,
+    enabled: bool,
+  }
+  #[async_trait]
+  impl OciEngine for ReaderEngine {
+    fn capabilities(&self) -> Vec<OciCapability> {
+      vec![OciCapability {
+        platform: self.platform,
+        isolation: OciIsolation::Hypervisor,
+      }]
+    }
+    fn supports_private_tool_channel(&self) -> bool {
+      self.enabled
+    }
+    fn supports_owned_writable_mount_accounting(&self) -> bool {
+      self.enabled
+    }
+    fn factory_tool_projection_root(&self) -> Option<PathBuf> {
+      Some(PathBuf::from("/installed/readonly-tools"))
+    }
+    async fn start(
+      &self,
+      _: &RunnerProgram,
+      _: StartExecution,
+      _: CancellationToken,
+    ) -> Result<Box<dyn RunningExecution>, ExecutionError> {
+      panic!("qualification must precede execution")
+    }
+    async fn cleanup_orphans(&self) -> Result<(), ExecutionError> {
+      Ok(())
+    }
+  }
+  #[test]
+  fn controlled_tool_projection_requires_the_exact_selected_route_and_all_physical_controls() {
+    let qualified = ExecutionPlatform {
+      os: ExecutionOs::Linux,
+      architecture: ExecutionArchitecture::Arm64,
+    };
+    let unqualified = ExecutionPlatform {
+      os: ExecutionOs::Linux,
+      architecture: ExecutionArchitecture::Amd64,
+    };
+    let backend = OciBackend::new(vec![
+      Arc::new(ReaderEngine {
+        platform: qualified,
+        enabled: true,
+      }),
+      Arc::new(ReaderEngine {
+        platform: unqualified,
+        enabled: false,
+      }),
+    ])
+    .unwrap();
+    let target = |platform, isolation| ExecutionTarget::Oci {
+      reference: format!("image@sha256:{}", "ab".repeat(32)),
+      platform,
+      isolation,
+    };
+    assert_eq!(
+      backend.factory_tool_projection(&target(qualified, OciIsolation::Hypervisor)),
+      Some(PathBuf::from("/installed/readonly-tools"))
+    );
+    assert_eq!(
+      backend.factory_tool_projection(&target(unqualified, OciIsolation::Hypervisor)),
+      None
+    );
+    assert_eq!(
+      backend.factory_tool_projection(&target(qualified, OciIsolation::Process)),
+      None
+    );
   }
 }
