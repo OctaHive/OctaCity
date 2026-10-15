@@ -62,6 +62,8 @@ struct CancellationAwareOutputPublisher {
 
 struct BlockingOutputPublisher {
   started: Arc<AtomicBool>,
+  freeze_delay: Duration,
+  publication_started: Arc<StdMutex<Option<std::time::Instant>>>,
 }
 
 struct FailingOutputPublisher;
@@ -170,10 +172,12 @@ impl OutputPublisher for BlockingOutputPublisher {
     _request: FreezeOutputs<'_>,
     _cancellation: CancellationToken,
   ) -> Result<FrozenOutputs, OutputError> {
+    tokio::time::sleep(self.freeze_delay).await;
     Ok(FrozenOutputs::empty())
   }
 
   async fn publish(&self, _request: PublishOutputs<'_>, cancellation: CancellationToken) -> Result<(), OutputError> {
+    *self.publication_started.lock().unwrap() = Some(std::time::Instant::now());
     self.started.store(true, Ordering::SeqCst);
     cancellation.cancelled().await;
     Err(OutputError::Cancelled)

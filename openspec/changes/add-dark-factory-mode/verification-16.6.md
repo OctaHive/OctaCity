@@ -235,8 +235,9 @@ to the corrected performance gate.
   it does not qualify Factory execution on Windows.
 - [Final code CI at 3d62d85](https://github.com/OctaHive/OctaCity/actions/runs/38822065162)
   includes the platform-aware private-credential assertions and exact Shadow
-  read budget. Both stand jobs and Console passed; Windows strict Clippy and
-  rustdoc passed. Full portable and coverage outcomes remain pending.
+  read budget. Both stand jobs, Console, macOS quality and coverage passed;
+  Windows strict Clippy and rustdoc passed. Windows portable tests exposed the
+  two follow-ups below. Ubuntu quality remains pending.
 - [Final-code released Host matrix](https://github.com/OctaHive/OctaCity/actions/runs/38822065251)
   passed all three platforms and its aggregate evidence job.
 
@@ -256,3 +257,48 @@ The original runs cannot attest to the corrections. Final platform outcomes
 for the corrected source must be recorded before closing the task. Optional
 self-hosted Apple VF, macOS Microsandbox and Windows WHP jobs skipped by the
 hosted suite are not treated as successful backend qualifications.
+
+## Windows follow-up: canonical capture and fencing test timing
+
+[Windows quality at 3d62d85](https://github.com/OctaHive/OctaCity/actions/runs/38822065162/job/116720737705)
+passed the platform-aware private-credential assertions, then failed two
+lifecycle tests. Trusted capture rejected private Git repository initialization
+when supplied with canonical host paths. Existing ChangeSet tests using ordinary
+host paths passed in the same Windows run. A new public `ChangeSetCapturer`
+regression supplies canonical workspace and destination paths (including a space)
+and requires an actual candidate manifest and bundle. It passed locally; its
+Windows Red is being collected in the test-only commit `4aad301` via
+[automatic branch CI](https://github.com/OctaHive/OctaCity/actions/runs/38826409924).
+No production capture-path fix is claimed or implemented before that result.
+
+The other failure was the five-second whole-lifecycle timeout in
+`fencing_during_output_publication_keeps_the_lease_loss_reason`. A controlled
+six-second output-freeze delay reproduced the same `Elapsed` locally before
+publication began. The fixture now records the actual publication start;
+preparation has a separate bounded outer timeout, and lifecycle completion must
+still occur within five seconds of publication start. Both immediate and delayed
+freeze cases must return `LeaseLost(Fenced)` without acknowledging completion.
+This changes test timing only; production lease policy, performance budgets and
+qualification guards remain unchanged. Windows confirmation remains pending.
+
+```shell
+cargo test -p octacity-lifecycle --lib -j 2
+# Baseline: 47 passed on macOS before fixture changes.
+cargo test -p octacity-lifecycle \
+  fencing_during_output_publication_keeps_the_lease_loss_reason --lib -j 2 -- \
+  --exact lifecycle::tests::fencing_during_output_publication_keeps_the_lease_loss_reason
+# Red with the six-second pre-publication delay: Elapsed, 0 passed / 1 failed.
+# Green after measuring the publication phase: both delay cases passed.
+cargo test -p octacity-lifecycle --lib -j 2
+# Regression: 47 passed, 0 failed.
+cargo test -p octacity-changeset --lib -j 2
+# 17 passed on macOS, including canonical capture; Windows result pending.
+cargo clippy -p octacity-lifecycle -p octacity-changeset --all-targets --locked -j 2 -- -D warnings
+# Passed.
+```
+
+Receipts in `/tmp/octacity-166-evidence`: `windows-followup-lifecycle-baseline`,
+`fencing-delayed-freeze-red`, `fencing-delayed-freeze-green`,
+`windows-followup-lifecycle-regression`, `canonical-capture-local`,
+`canonical-capture-suite` and `windows-followup-clippy`. The Windows source log is
+`github-windows-3d.log`. These follow-ups do not complete tasks 16.6 or 16.7.

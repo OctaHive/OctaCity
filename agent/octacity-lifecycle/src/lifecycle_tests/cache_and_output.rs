@@ -366,36 +366,54 @@ async fn cancellation_does_not_discard_outputs_produced_before_runner_exit() {
 
 #[tokio::test]
 async fn fencing_during_output_publication_keeps_the_lease_loss_reason() {
-  let state_root = tempfile::tempdir().unwrap();
-  let work_root = tempfile::tempdir().unwrap();
-  let started = Arc::new(AtomicBool::new(false));
-  let coordinator = Arc::new(LifecycleCoordinator {
-    fence_after_output_starts: Some(started.clone()),
-    ..LifecycleCoordinator::default()
-  });
-  let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
-    coordinator.clone(),
-    Arc::new(BlockingOutputPublisher { started }),
-    state_root.path(),
-    work_root.path(),
-    false,
-  );
+  for freeze_delay in [Duration::ZERO, Duration::from_secs(6)] {
+    let state_root = tempfile::tempdir().unwrap();
+    let work_root = tempfile::tempdir().unwrap();
+    let started = Arc::new(AtomicBool::new(false));
+    let publication_started = Arc::new(StdMutex::new(None));
+    let coordinator = Arc::new(LifecycleCoordinator {
+      fence_after_output_starts: Some(started.clone()),
+      ..LifecycleCoordinator::default()
+    });
+    let (_cache_root, lifecycle, lease, snapshot) = lifecycle_fixture(
+      coordinator.clone(),
+      Arc::new(BlockingOutputPublisher {
+        started,
+        freeze_delay,
+        publication_started: publication_started.clone(),
+      }),
+      state_root.path(),
+      work_root.path(),
+      false,
+    );
 
-  let error = tokio::time::timeout(
-    Duration::from_secs(5),
-    lifecycle.run(lease, snapshot, CancellationToken::new()),
-  )
-  .await
-  .unwrap()
-  .unwrap_err();
+    // Bound setup separately from the fencing response; slow disk work before
+    // publication must not consume the reaction deadline checked below.
+    let error = tokio::time::timeout(
+      Duration::from_secs(30),
+      lifecycle.run(lease, snapshot, CancellationToken::new()),
+    )
+    .await
+    .unwrap()
+    .unwrap_err();
 
-  assert_eq!(
-    error.to_string(),
-    JobLifecycleError::LeaseLost(LeaseMonitorOutcome::Fenced).to_string()
-  );
-  assert!(matches!(
-    error,
-    JobLifecycleError::LeaseLost(LeaseMonitorOutcome::Fenced)
-  ));
-  assert!(coordinator.completions.lock().unwrap().is_empty());
+    assert!(
+      publication_started
+        .lock()
+        .unwrap()
+        .expect("publication must start")
+        .elapsed()
+        < Duration::from_secs(5),
+      "fencing must finish within five seconds after publication starts"
+    );
+    assert_eq!(
+      error.to_string(),
+      JobLifecycleError::LeaseLost(LeaseMonitorOutcome::Fenced).to_string()
+    );
+    assert!(matches!(
+      error,
+      JobLifecycleError::LeaseLost(LeaseMonitorOutcome::Fenced)
+    ));
+    assert!(coordinator.completions.lock().unwrap().is_empty());
+  }
 }
