@@ -10,8 +10,28 @@ use octacity_protocol::{
   FactoryToolResponseLimitsV3, MAX_FACTORY_TOOL_RESPONSE_BYTES, ProtectedReadChannelOperationV1,
   ProtectedReadChannelRequestV1,
 };
+use tokio::io::{AsyncRead, AsyncReadExt};
 
 use super::*;
+
+const MAX_TOOL_ACTION_CHANNEL_BYTES: usize = 4 * 1024 * 1024;
+
+// One big-endian u32 length and bounded JSON request, shared by both channel
+// operations. Only the versioned neutral request is accepted.
+async fn read_tool_action_frame(
+  mut input: impl AsyncRead + Unpin,
+) -> Result<ProtectedReadChannelRequestV1, AgentToolActionBrokerError> {
+  let size = input.read_u32().await.map_err(|_| AgentToolActionBrokerError::Denied)? as usize;
+  if size == 0 || size > MAX_TOOL_ACTION_CHANNEL_BYTES {
+    return Err(AgentToolActionBrokerError::Denied);
+  }
+  let mut bytes = vec![0; size];
+  input
+    .read_exact(&mut bytes)
+    .await
+    .map_err(|_| AgentToolActionBrokerError::Denied)?;
+  serde_json::from_slice(&bytes).map_err(|_| AgentToolActionBrokerError::Denied)
+}
 
 /// Installed reader that owns the physical operation and consumes its proof.
 ///
@@ -81,12 +101,9 @@ impl ProtectedReadDispatcher {
   /// checks return an empty response without physical I/O or byte reservation.
   /// Every read revalidates the exact proposal; receipt and dispatch share one
   /// deadline and cancellation scope, with at most one coordinator call.
-  pub async fn read_channel(
-    &self,
-    input: impl tokio::io::AsyncRead + Unpin,
-  ) -> Result<Vec<u8>, AgentToolActionBrokerError> {
+  pub async fn read_channel(&self, input: impl AsyncRead + Unpin) -> Result<Vec<u8>, AgentToolActionBrokerError> {
     let dispatch = async {
-      let request: ProtectedReadChannelRequestV1 = read_tool_action_frame(input).await?;
+      let request = read_tool_action_frame(input).await?;
       if request.schema_version != 1 {
         return Err(AgentToolActionBrokerError::Denied);
       }

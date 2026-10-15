@@ -138,6 +138,95 @@ mod protected_read_dispatcher_tests {
   }
 
   #[tokio::test]
+  async fn private_reader_authorization_waits_for_the_fenced_answer_without_reading() {
+    use tokio::io::AsyncWriteExt as _;
+
+    let coordinator = Arc::new(BlockingCoordinator::new(FactoryToolActionDispositionV3::Allow));
+    let dispatcher = ProtectedReadDispatcher::new(
+      read_broker(coordinator.clone(), CancellationToken::new()),
+      Arc::new(CancellingReader),
+      64,
+      reader_response_limits(),
+    )
+    .unwrap();
+    let body = serde_json::to_vec(&serde_json::json!({
+      "schema_version":1,"operation":"authorize","proposal":read_proposal()
+    }))
+    .unwrap();
+    let (mut producer, consumer) = tokio::io::duplex(4096);
+    let response = tokio::spawn(async move { dispatcher.read_channel(consumer).await });
+    producer.write_u32(u32::try_from(body.len()).unwrap()).await.unwrap();
+    producer.write_all(&body).await.unwrap();
+    coordinator.entered.notified().await;
+    assert!(
+      !response.is_finished(),
+      "preflight must wait for the fenced disposition"
+    );
+    let wire = serde_json::to_string(&coordinator.requests.lock().unwrap()[0]).unwrap();
+    assert!(!wire.contains("/workspace/source/input"));
+    coordinator.release.notify_one();
+    assert!(
+      response.await.unwrap().unwrap().is_empty(),
+      "authorization returns no file bytes"
+    );
+  }
+
+  #[tokio::test]
+  async fn private_reader_rejects_incomplete_malformed_oversized_and_unversioned_frames() {
+    let body = serde_json::to_vec(&read_proposal()).unwrap();
+    let mut unversioned = u32::try_from(body.len()).unwrap().to_be_bytes().to_vec();
+    unversioned.extend(body);
+    let frames = [
+      vec![0, 0],
+      vec![0, 0, 0, 0],
+      vec![0, 0, 0, 1, b'{'],
+      vec![0, 0, 0, 3, b'{'],
+      u32::MAX.to_be_bytes().to_vec(),
+      unversioned,
+    ];
+    for frame in frames {
+      let coordinator = Arc::new(BlockingCoordinator::new(FactoryToolActionDispositionV3::Allow));
+      coordinator.release.notify_one();
+      let dispatcher = ProtectedReadDispatcher::new(
+        read_broker(coordinator.clone(), CancellationToken::new()),
+        Arc::new(CancellingReader),
+        64,
+        reader_response_limits(),
+      )
+      .unwrap();
+      assert_eq!(
+        dispatcher.read_channel(frame.as_slice()).await.unwrap_err(),
+        AgentToolActionBrokerError::Denied
+      );
+      assert!(coordinator.requests.lock().unwrap().is_empty());
+    }
+  }
+
+  #[tokio::test]
+  async fn private_reader_lease_cancellation_interrupts_a_blocked_frame_read() {
+    use std::task::{Context, Poll, Waker};
+
+    let coordinator = Arc::new(BlockingCoordinator::new(FactoryToolActionDispositionV3::Allow));
+    let cancellation = CancellationToken::new();
+    let dispatcher = ProtectedReadDispatcher::new(
+      read_broker(coordinator.clone(), cancellation.clone()),
+      Arc::new(CancellingReader),
+      64,
+      reader_response_limits(),
+    )
+    .unwrap();
+    let (_producer, consumer) = tokio::io::duplex(4);
+    let mut response = Box::pin(dispatcher.read_channel(consumer));
+    assert!(matches!(
+      response.as_mut().poll(&mut Context::from_waker(Waker::noop())),
+      Poll::Pending
+    ));
+    cancellation.cancel();
+    assert_eq!(response.await.unwrap_err(), AgentToolActionBrokerError::Cancelled);
+    assert!(coordinator.requests.lock().unwrap().is_empty());
+  }
+
+  #[tokio::test]
   async fn dispatcher_consumes_exact_authority_before_reading_the_installed_backend() {
     let directory = tempfile::tempdir().unwrap();
     let file = directory.path().join("input");

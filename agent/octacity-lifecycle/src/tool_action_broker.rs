@@ -9,29 +9,9 @@ use octacity_protocol::{
   LeaseAssignment,
 };
 use thiserror::Error;
-use tokio::{
-  io::{AsyncRead, AsyncReadExt},
-  time::timeout,
-};
+use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-
-const MAX_TOOL_ACTION_CHANNEL_BYTES: usize = 4 * 1024 * 1024;
-
-async fn read_tool_action_frame<T: serde::de::DeserializeOwned>(
-  mut input: impl AsyncRead + Unpin,
-) -> Result<T, AgentToolActionBrokerError> {
-  let size = input.read_u32().await.map_err(|_| AgentToolActionBrokerError::Denied)? as usize;
-  if size == 0 || size > MAX_TOOL_ACTION_CHANNEL_BYTES {
-    return Err(AgentToolActionBrokerError::Denied);
-  }
-  let mut bytes = vec![0; size];
-  input
-    .read_exact(&mut bytes)
-    .await
-    .map_err(|_| AgentToolActionBrokerError::Denied)?;
-  serde_json::from_slice(&bytes).map_err(|_| AgentToolActionBrokerError::Denied)
-}
 
 #[path = "protected_read_dispatcher.rs"]
 mod protected_read_dispatcher;
@@ -115,25 +95,6 @@ impl AgentToolActionBroker {
       deadline,
       cancellation,
     })
-  }
-
-  /// Reads one private Agent-owned channel frame and authorizes its exact action.
-  /// The frame is a big-endian u32 byte length followed by at most 4 MiB of
-  /// the neutral v3 proposal JSON. The channel must remain private to the
-  /// trusted dispatcher; it carries transient arguments, never credentials.
-  /// Reading and authorization share one deadline and cancellation scope.
-  pub async fn authorize_channel(
-    &self,
-    input: impl AsyncRead + Unpin,
-  ) -> Result<AuthorizedFactoryToolAction, AgentToolActionBrokerError> {
-    let authorize = async {
-      let proposal = read_tool_action_frame(input).await?;
-      self.authorize(proposal).await
-    };
-    tokio::select! {
-      () = self.cancellation.cancelled() => Err(AgentToolActionBrokerError::Cancelled),
-      result = timeout(self.deadline, authorize) => result.map_err(|_| AgentToolActionBrokerError::TimedOut)?,
-    }
   }
 
   /// Blocks until the server decides and the Agent revalidates the exact action.
@@ -223,86 +184,6 @@ mod tests {
   use super::*;
 
   const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
-
-  #[tokio::test]
-  async fn private_channel_authorization_binds_the_complete_neutral_action_before_release() {
-    use tokio::io::AsyncWriteExt;
-    let coordinator = Arc::new(BlockingCoordinator::new(FactoryToolActionDispositionV3::Allow));
-    let broker = broker(coordinator.clone(), Duration::from_secs(30), CancellationToken::new());
-    let (mut oversized, bounded_input) = tokio::io::duplex(4);
-    oversized.write_all(&u32::MAX.to_be_bytes()).await.unwrap();
-    drop(oversized);
-    assert!(matches!(
-      broker.authorize_channel(bounded_input).await,
-      Err(AgentToolActionBrokerError::Denied)
-    ));
-    assert!(coordinator.requests.lock().unwrap().is_empty());
-    let expected = proposal();
-    let bytes = serde_json::to_vec(&expected).unwrap();
-    let (mut producer, consumer) = tokio::io::duplex(4096);
-    let action = tokio::spawn(async move { broker.authorize_channel(consumer).await });
-    producer
-      .write_all(&(u32::try_from(bytes.len()).unwrap()).to_be_bytes())
-      .await
-      .unwrap();
-    producer.write_all(&bytes).await.unwrap();
-    coordinator.entered.notified().await;
-    assert!(
-      !action.is_finished(),
-      "the channel cannot release a proposal before the fenced server answer"
-    );
-    let wire = serde_json::to_string(&coordinator.requests.lock().unwrap()[0]).unwrap();
-    assert!(!wire.contains("/workspace/source"));
-    assert!(!wire.contains("cargo test"));
-    coordinator.release.notify_one();
-    assert_eq!(action.await.unwrap().unwrap().into_proposal(), expected);
-  }
-
-  #[tokio::test]
-  async fn incomplete_or_malformed_private_frames_never_contact_the_coordinator() {
-    use tokio::io::AsyncWriteExt;
-    let frames = [
-      vec![0, 0],
-      vec![0, 0, 0, 0],
-      vec![0, 0, 0, 1, b'{'],
-      vec![0, 0, 0, 3, b'{'],
-    ];
-    for frame in frames {
-      let coordinator = Arc::new(BlockingCoordinator::new(FactoryToolActionDispositionV3::Allow));
-      let broker = broker(coordinator.clone(), Duration::from_secs(30), CancellationToken::new());
-      let (mut producer, consumer) = tokio::io::duplex(32);
-      producer.write_all(&frame).await.unwrap();
-      drop(producer);
-      assert!(matches!(
-        broker.authorize_channel(consumer).await,
-        Err(AgentToolActionBrokerError::Denied)
-      ));
-      assert!(coordinator.requests.lock().unwrap().is_empty());
-    }
-  }
-
-  #[tokio::test]
-  async fn lease_cancellation_interrupts_a_blocked_private_frame_read() {
-    use std::{
-      future::Future,
-      task::{Context, Poll, Waker},
-    };
-    let coordinator = Arc::new(BlockingCoordinator::new(FactoryToolActionDispositionV3::Allow));
-    let cancellation = CancellationToken::new();
-    let broker = broker(coordinator.clone(), Duration::from_secs(30), cancellation.clone());
-    let (_producer, consumer) = tokio::io::duplex(4);
-    let mut authorization = Box::pin(broker.authorize_channel(consumer));
-    assert!(matches!(
-      authorization.as_mut().poll(&mut Context::from_waker(Waker::noop())),
-      Poll::Pending
-    ));
-    cancellation.cancel();
-    assert!(matches!(
-      authorization.await,
-      Err(AgentToolActionBrokerError::Cancelled)
-    ));
-    assert!(coordinator.requests.lock().unwrap().is_empty());
-  }
 
   struct BlockingCoordinator {
     entered: Notify,
