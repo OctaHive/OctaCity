@@ -110,6 +110,10 @@ retained candidate/evidence objects in the same consistency unit.
 
 ## Signal rollout and release qualification
 
+The [calibration seed and comparison guide](../../tools/fixtures/factory-signal-calibration/README.md)
+documents the offline routing/tool-risk corpus and comparison command. Use it
+to prepare and inspect measurements; its reports cannot authorize promotion.
+
 Routing and tool risk have independent `shadow`, `advisory` and `bounded_control`
 policies. Shadow records comparison only; advisory exposes a recommendation while
 the deterministic baseline acts. Do not treat either as permission to enable

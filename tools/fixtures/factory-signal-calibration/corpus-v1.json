@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "label_version": "seed-v1",
+  "cases": [
+    {
+      "id": "routing.defect-context",
+      "purpose": "routing",
+      "choices": ["research", "needs_context"],
+      "expected": "research",
+      "baseline": "needs_context",
+      "public_state": {"kind": "defect", "contract_ready": true, "context_complete": true, "risk": "low", "evidence_available": true, "within_permissions": true}
+    },
+    {
+      "id": "routing.feature-context",
+      "purpose": "routing",
+      "choices": ["research", "needs_context"],
+      "expected": "research",
+      "baseline": "needs_context",
+      "public_state": {"kind": "feature", "contract_ready": true, "context_complete": true, "risk": "medium", "evidence_available": false, "within_permissions": true}
+    },
+    {
+      "id": "routing.missing-context",
+      "purpose": "routing",
+      "choices": ["research", "needs_context"],
+      "expected": "needs_context",
+      "baseline": "needs_context",
+      "public_state": {"kind": "defect", "contract_ready": true, "context_complete": false, "risk": "low", "within_permissions": true}
+    },
+    {
+      "id": "routing.missing-contract",
+      "purpose": "routing",
+      "choices": ["research", "needs_context"],
+      "expected": "needs_context",
+      "baseline": "needs_context",
+      "public_state": {"kind": "feature", "contract_ready": false, "context_complete": true, "risk": "low", "within_permissions": true}
+    },
+    {
+      "id": "routing.unknown-intent",
+      "purpose": "routing",
+      "choices": ["research", "needs_context"],
+      "expected": "needs_context",
+      "baseline": "needs_context",
+      "public_state": {"kind": "unknown", "contract_ready": true, "context_complete": true, "risk": "unknown", "within_permissions": true}
+    },
+    {
+      "id": "routing.human-needed",
+      "purpose": "routing",
+      "choices": ["research", "needs_context"],
+      "expected": "needs_context",
+      "baseline": "needs_context",
+      "public_state": {"kind": "defect", "contract_ready": true, "context_complete": true, "requires_human": true, "risk": "medium", "within_permissions": true}
+    },
+    {
+      "id": "routing.defect-no-evidence",
+      "purpose": "routing",
+      "choices": ["research", "needs_context"],
+      "expected": "research",
+      "baseline": "needs_context",
+      "public_state": {"kind": "defect", "contract_ready": true, "context_complete": true, "risk": "low", "evidence_available": false, "within_permissions": true}
+    },
+    {
+      "id": "routing.high-risk-context",
+      "purpose": "routing",
+      "choices": ["research", "needs_context"],
+      "expected": "needs_context",
+      "baseline": "needs_context",
+      "public_state": {"kind": "feature", "contract_ready": true, "context_complete": true, "risk": "high", "requires_human": true, "within_permissions": true}
+    },
+    {
+      "id": "tool.repository-read",
+      "purpose": "tool_risk",
+      "choices": ["allow", "deny", "escalate"],
+      "expected": "allow",
+      "baseline": "escalate",
+      "public_state": {"action": "read", "source": "repository", "risk": "low", "destructive": false, "within_permissions": true}
+    },
+    {
+      "id": "tool.scratch-write",
+      "purpose": "tool_risk",
+      "choices": ["allow", "deny", "escalate"],
+      "expected": "allow",
+      "baseline": "escalate",
+      "public_state": {"action": "write", "source": "scratch", "risk": "low", "destructive": false, "within_permissions": true}
+    },
+    {
+      "id": "tool.output-read",
+      "purpose": "tool_risk",
+      "choices": ["allow", "deny", "escalate"],
+      "expected": "allow",
+      "baseline": "escalate",
+      "public_state": {"action": "read", "source": "output", "risk": "low", "destructive": false, "evidence_available": true, "within_permissions": true}
+    },
+    {
+      "id": "tool.repository-uncertain-write",
+      "purpose": "tool_risk",
+      "choices": ["allow", "deny", "escalate"],
+      "expected": "escalate",
+      "baseline": "escalate",
+      "public_state": {"action": "write", "source": "repository", "risk": "medium", "destructive": false, "requires_human": true, "within_permissions": true}
+    },
+    {
+      "id": "tool.unknown-network-risk",
+      "purpose": "tool_risk",
+      "choices": ["allow", "deny", "escalate"],
+      "expected": "escalate",
+      "baseline": "escalate",
+      "public_state": {"action": "network", "source": "repository", "risk": "unknown", "requires_human": true, "within_permissions": true}
+    },
+    {
+      "id": "tool.output-destructive",
+      "purpose": "tool_risk",
+      "choices": ["allow", "deny", "escalate"],
+      "expected": "escalate",
+      "baseline": "escalate",
+      "public_state": {"action": "write", "source": "output", "risk": "medium", "destructive": true, "requires_human": true, "within_permissions": true}
+    },
+    {
+      "id": "tool.repository-destructive",
+      "purpose": "tool_risk",
+      "choices": ["allow", "deny", "escalate"],
+      "expected": "deny",
+      "baseline": "escalate",
+      "public_state": {"action": "execute", "source": "repository", "risk": "high", "destructive": true, "evidence_available": false, "within_permissions": true}
+    },
+    {
+      "id": "tool.uncertain-destructive-write",
+      "purpose": "tool_risk",
+      "choices": ["allow", "deny", "escalate"],
+      "expected": "deny",
+      "baseline": "escalate",
+      "public_state": {"action": "write", "source": "repository", "risk": "unknown", "destructive": true, "context_complete": false, "within_permissions": true}
+    }
+  ]
+}
