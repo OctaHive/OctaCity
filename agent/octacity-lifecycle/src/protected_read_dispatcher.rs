@@ -62,6 +62,7 @@ pub struct ProtectedReadDispatcher {
 }
 
 impl ProtectedReadDispatcher {
+  #[cfg(unix)]
   pub(super) fn channel_scope(&self) -> (std::time::Duration, CancellationToken) {
     (self.broker.deadline, self.broker.cancellation.child_token())
   }

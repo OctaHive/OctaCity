@@ -17,7 +17,7 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 29] = [
+const FACTORY_TABLES: [&str; 33] = [
   "factory_audit_links",
   "factory_configuration_versions",
   "factory_configuration_flow_definitions",
@@ -47,6 +47,10 @@ const FACTORY_TABLES: [&str; 29] = [
   "factory_runs",
   "factory_work_envelopes",
   "factory_workflow_cycles",
+  "factory_execution_input_manifests",
+  "factory_execution_inputs",
+  "factory_decision_signal_requests",
+  "factory_decision_signal_receipts",
 ];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
 const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [
@@ -1042,7 +1046,7 @@ async fn idempotency_shape_can_be_restored_without_merging(pool: &sqlx::PgPool) 
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
-async fn unreleased_factory_schema_contains_only_the_common_execution_journal() {
+async fn unreleased_factory_schema_has_no_parallel_stage_execution_journal() {
   let database = TestDatabase::migrated().await;
   let obsolete: Vec<String> = sqlx::query_scalar(
     "SELECT table_name::text FROM information_schema.tables WHERE table_schema='public' AND table_name = ANY($1) ORDER BY table_name",
@@ -1055,12 +1059,11 @@ async fn unreleased_factory_schema_contains_only_the_common_execution_journal() 
     "factory_evidence_manifests", "factory_evaluation_plans", "factory_assessments",
     "factory_decision_assessments", "factory_decisions", "factory_escalations",
     "factory_delivery_attempts", "factory_reporting_attempts",
-    "factory_decision_signal_requests", "factory_decision_signal_receipts",
   ])
   .fetch_all(&database.pool).await.unwrap();
   database.cleanup().await;
   assert!(
     obsolete.is_empty(),
-    "capability data belongs in configured node results: {obsolete:?}"
+    "stage-specific execution must use the common node journal: {obsolete:?}"
   );
 }

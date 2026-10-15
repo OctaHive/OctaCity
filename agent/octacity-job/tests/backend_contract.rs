@@ -223,7 +223,8 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
     })
     .expect("Microsandbox backend configuration must be usable"),
   );
-  run_oci_v2_contract(OciV2Contract {
+  // Keep the complete v2/v3 scenario off the ordinary test thread's stack.
+  Box::pin(run_oci_v2_contract(OciV2Contract {
     engine,
     provider: MICROSANDBOX_ENGINE_NAME,
     mode: ExecutionMode::Virtualization,
@@ -238,7 +239,7 @@ async fn microsandbox_backend_satisfies_the_real_runner_contract() {
       denied_host: required_network_host("OCTACITY_CONTRACT_MICROSANDBOX_DENIED_HOST"),
     },
     factory_enforcement: Some(&FactoryEnforcementCapabilityV3::ALL),
-  })
+  }))
   .await;
 }
 
@@ -268,7 +269,7 @@ async fn containerd_isolation_provider_satisfies_the_real_runner_contract() {
     .expect("containerd engine configuration must be usable"),
   );
   let platform = linux_platform();
-  run_oci_v2_contract(OciV2Contract {
+  Box::pin(run_oci_v2_contract(OciV2Contract {
     engine,
     provider: "containerd",
     mode: ExecutionMode::Isolation,
@@ -280,7 +281,7 @@ async fn containerd_isolation_provider_satisfies_the_real_runner_contract() {
     target_platform: platform,
     probe: OciProbe::DisabledNetwork,
     factory_enforcement: Some(&FactoryEnforcementCapabilityV3::ALL),
-  })
+  }))
   .await;
 }
 
@@ -310,7 +311,7 @@ async fn apple_vf_isolation_provider_satisfies_the_real_runner_contract() {
     .validate_connection()
     .await
     .expect("Apple container service must be running");
-  run_oci_v2_contract(OciV2Contract {
+  Box::pin(run_oci_v2_contract(OciV2Contract {
     engine,
     provider: APPLE_VF_PROVIDER_NAME,
     mode: ExecutionMode::Isolation,
@@ -322,7 +323,7 @@ async fn apple_vf_isolation_provider_satisfies_the_real_runner_contract() {
     target_platform: linux_platform(),
     probe: OciProbe::DisabledNetwork,
     factory_enforcement: None,
-  })
+  }))
   .await;
 }
 
@@ -1008,6 +1009,7 @@ fn protected_transfer(body: &[u8], origin: &str) -> ProtectedInputTransferV3 {
 
 async fn exercise_factory_contract(executor: &JobExecutor, spec: JobSpecV3, protected_input: ProtectedInputTransferV3) {
   let resource_limits = spec.permissions.resources;
+  let expected_target = spec.runtime.target.clone();
   let (sender, mut receiver) = mpsc::channel(128);
   let completion = executor
     .execute(
@@ -1029,6 +1031,11 @@ async fn exercise_factory_contract(executor: &JobExecutor, spec: JobSpecV3, prot
   }
   assert!(saw_event, "Factory runner must emit at least one event");
   assert_eq!(completion.runner().status, RunStatus::Succeeded);
+  let evidence = completion
+    .execution()
+    .expect("Factory execution must retain qualified backend evidence");
+  assert_eq!(evidence.target, expected_target);
+  assert_ne!(evidence.provider.as_str(), HOST_BACKEND_NAME);
   assert_no_factory_output_declarations(&completion.runner().results);
   assert!(completion.runner().final_usage.memory_peak_bytes <= resource_limits.memory_bytes);
   assert!(completion.runner().final_usage.disk_peak_bytes <= resource_limits.disk_bytes);

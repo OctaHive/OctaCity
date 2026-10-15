@@ -1,0 +1,136 @@
+# Task 16.6: ordinary CI/CD compatibility and qualified v3 contracts
+
+Status: in progress. Task 16.6 remains unchecked until the corrected revision
+passes the required GitHub Actions contracts, including Windows and Linux
+containerd/Microsandbox. No Factory platform is qualified by a skipped job.
+
+## Revision and environment
+
+- Product source: `b974557645e6134f73fd8edbc86b96a9385043f8`, with the local
+  compatibility corrections described below.
+- Rust `1.99.0`; macOS ARM64 host; PostgreSQL `18.6` in a separate disposable
+  container; separate MinIO service. The existing local Factory stand is not
+  stopped or reconfigured.
+- Octa `0.5.1`, revision `e0a3c65fe010220c5a8162c52368b7c8f624ddb5`.
+- Microsandbox `0.7.6`, verified ARM64 agentd digest
+  `f858a7b227308b40e06387b99c5f9a99f5fb9f1aeaa70f47080a8998b87dd2ba`.
+- Real VM contracts reuse the exact operator-installed firmware, image and
+  private runtime roots qualified by 16.5. Operator packages assembled here
+  use the normal checksummed distribution format with current development
+  binaries; they are not a previously published release.
+- Local logs and command/exit-code receipts are retained under
+  `/tmp/octacity-166-evidence/`. Credentials and private environment files are
+  not copied into this change.
+
+## Confirmed local contracts
+
+| Boundary | Observed result | Evidence |
+| --- | --- | --- |
+| Protocol, inventory, Job executor, placement, Agent API and REST | 259 passed | `portable-macos.log` |
+| Ordinary Build admission, CQRS, store and Agent registration | 49 passed | `ordinary-builds.log` |
+| Headless REST and PostgreSQL pipeline, Factory disabled and enabled-but-unused | 2 passed | `headless-postgres.log` |
+| Migrations, ordinary retention and Factory retention | 5 + 4 + 7 passed after fixture correction | `postgres-green.log` |
+| Lifecycle and protected reader | 47 passed before and after Unix-only helper gating | `lifecycle-baseline.log`, `lifecycle-green.log` |
+| Real macOS Host execution and cancellation | 1 passed | `backend-host-macos.log` |
+| Real Microsandbox v2/v3 positive and negative contracts | 1 passed with an explicit 2 MiB test stack | `backend-stack-green.log` |
+| Release installation and compatibility harness | 22 passed | `release-harness.log` |
+| Final release fixture regression | 22 harness + 23 fixture tests passed; 8 provisioned scenarios ignored | `release-fixtures-final.log` |
+| Packaged ordinary CI/CD matrix on a real Microsandbox VM, Factory disabled | 1 passed in 66.57 seconds | `ordinary-release.log`, `ordinary-release/microsandbox-matrix.json` |
+| UI scripts and unit tests | 26 + 397 passed | `ui-unit.log` |
+| Browser navigation, commands, accessibility and visual contracts | 69 passed | `ui-browser-macos.log` |
+| Repository tools, including default stand lifecycle and platform exclusions | 417 run, 8 environment-gated skips | `tools-macos.log` |
+| Immutable stand inputs and bounded build contexts | passed | `stand-inputs.log`, `stand-context.log` |
+| Workspace architecture | passed: 59 packages, 237 edges | `architecture.log` |
+| Strict Clippy for all changed packages, all targets/features | passed | `clippy.log` |
+| Formatting and strict OpenSpec validation | passed | `format-final.log`, `openspec.log` |
+
+The packaged ordinary matrix exercises manual admission and exact replay,
+scheduled and internal downstream Builds, cancellation, distinct retry Attempts,
+server/Agent recovery, remote-cache trust, Artifact download identity, log search,
+two separately enrolled Agents and cleanup. No Factory Configuration or model
+credential is installed. Its optional ordinary Codex fixture is explicitly off.
+
+The protocol suite checks unchanged canonical v1/v2 bytes, old-Agent eligibility
+for ordinary Jobs, and rejection of v3 Host fallback. Placement and executor
+tests reject missing semantic capabilities before source acquisition or spawn.
+The real v3 contract additionally compares the execution evidence with the
+signed target and rejects Host provider evidence. Windows WHP preview and
+Apple VF do not gain v3 qualification from these results.
+
+## Corrections driven by the compatibility runs
+
+### Migration expectations
+
+The initial PostgreSQL run passed Factory retention but failed three migration
+checks. Their table inventory predated migrations 56–58, and the obsolete
+stage-journal blacklist incorrectly included the durable Decision Signal
+request/receipt tables. The test inventory now explicitly includes the four
+input/Signal tables, while retaining exact schema equality, previous-schema
+absence, primary-key, foreign-key, document-bound, upgrade, reentrancy and
+snapshot rollback checks. No migration or production store behavior changed.
+
+The same command went from Red (three migration failures) to Green (all sixteen
+selected migration/retention tests passing):
+
+```shell
+cargo test --locked --jobs 2 -p octacity-server-store-postgres \
+  --test migrations --test retention --test factory_retention \
+  -- --ignored --test-threads=2
+```
+
+### Real backend test stack
+
+The original real Microsandbox test aborted with stack overflow locally and on
+the Linux Actions runner. Extending its v3 assertions to require exact backend
+evidence reproduced the same Red. Boxing the complete OCI scenario at the test
+entry points removes its large nested Future from the test thread stack.
+Production executor/backend code, enforcement requirements, negative cases and
+resource bounds are unchanged. An enlarged stack was used only as a diagnostic;
+the final Green explicitly uses the ordinary 2 MiB stack:
+
+```shell
+RUST_MIN_STACK=2097152 cargo test --locked --jobs 2 -p octacity-job \
+  --test backend_contract microsandbox_backend_satisfies_the_real_runner_contract \
+  -- --ignored --exact --nocapture
+```
+
+Evidence: `backend-stack-red.log`, `backend-stack-green.log`.
+
+### Windows compilation scope
+
+Windows strict Clippy rejected `ProtectedReadDispatcher::channel_scope` as
+unused. Its sole consumer is the Unix private channel. The helper now has the
+same `cfg(unix)` scope; no workload behavior or permission policy changes.
+Existing lifecycle tests passed before and after this refactoring. Windows
+verification of the corrected source still requires Actions.
+
+### Release fixture TLS provider
+
+A new HTTPS round-trip test first reproduced a panic when both Rustls crypto
+provider features were present. The cache proxy now chooses its provider on
+its own server builder, without modifying process-global provider state.
+The Green verifies the exact upstream response through the declared CA and
+rejects the same server without that CA:
+
+```shell
+cargo test --locked --jobs 2 -p octacity-release-harness \
+  --test release_vertical_slice cache_proxy_supports_tls_with_its_declared_ca \
+  -- --nocapture
+```
+
+Evidence: `cache-tls-red.log`, `cache-tls-green.log`. This changes a release-test
+fixture, not the product's TLS configuration.
+
+## GitHub Actions evidence
+
+- [Portable CI, console and local-stand gates](https://github.com/OctaHive/OctaCity/actions/runs/38807864983)
+  run the original `b9745576` source. Windows strict Clippy exposed the helper
+  scope issue above; both local-stand staging/container jobs passed.
+- [Cross-platform packaged Host contracts](https://github.com/OctaHive/OctaCity/actions/runs/38807865077)
+  cover Linux AMD64, macOS ARM64 and Windows AMD64 at `b9745576`.
+- [Operator-dispatched hosted backend matrix](https://github.com/OctaHive/OctaCity/actions/runs/38808334710)
+  uses the same exact revision. The Linux Microsandbox job reproduced the
+  default-stack overflow; the corrected source needs its own run.
+
+These runs cannot attest to uncommitted corrections. Final platform outcomes
+for the corrected source must be recorded before closing the task.
