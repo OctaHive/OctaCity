@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from tools.tests.fixture_environment import fixture_environment
 
 FIXTURE = Path(__file__).resolve().parents[2] / "server/tests/octacity-release-harness/fixtures/factory/pilot-cli.mjs"
@@ -24,11 +25,13 @@ class FactoryPilotCliTests(unittest.TestCase):
                 "--config=hooks.PreToolUse=[{ hooks = [{ command = " + json.dumps("'" + str(hook) + "'") +
                 ", statusMessage = \"Authorizing tool action\", timeout = 60, type = \"command\" }] }]"])
         arguments.extend(["--model=installed-fixture", f"--output-schema={schema}", "-"])
-        return subprocess.run(
+        completed = subprocess.run(
             arguments,
-            input=prompt, text=True, capture_output=True, timeout=30, cwd=directory,
+            input=prompt.encode("utf-8"), capture_output=True, timeout=30, cwd=directory,
             env=fixture_environment(OPENAI_API_KEY="fixture-credential-canary"),
         )
+        return subprocess.CompletedProcess(completed.args, completed.returncode,
+                                           completed.stdout.decode("utf-8"), completed.stderr.decode("utf-8"))
 
     def test_compatibility_probe_is_a_finite_credentialless_operation(self):
         result = subprocess.run([NODE, str(FIXTURE), "--version"], text=True, capture_output=True, timeout=5,
@@ -45,6 +48,27 @@ class FactoryPilotCliTests(unittest.TestCase):
                 {"payload": {"value": {"text": text}}})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual((Path(directory) / "public/approved/contract.txt").read_text(), text)
+            self.assertFalse((Path(directory) / "instruction-executed").exists())
+            self.assertIs(json.loads(result.stdout.splitlines()[-1])["result"], True)
+            self.assertEqual(result.stderr, "")
+
+    def test_windows_stdin_transport_preserves_framing_and_exact_projected_bytes(self):
+        execute = subprocess.run
+
+        def windows_stdin(arguments, **options):
+            # Exercise Windows text-mode pipe translation on other hosts too.
+            if os.name != "nt" and isinstance(options.get("input"), str):
+                options["input"] = options["input"].replace("\n", "\r\n")
+            return execute(arguments, **options)
+
+        with tempfile.TemporaryDirectory() as directory:
+            text = "literal Ж $(touch instruction-executed)\r\nnext\n"
+            with patch("subprocess.run", side_effect=windows_stdin):
+                result = self.invoke(directory, {"fixture_version": 1, "result": True,
+                    "files": [{"path": "public/contract.txt", "text": {"$input": "/payload/value/text"}}]},
+                    {"payload": {"value": {"text": text}}})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual((Path(directory) / "public/contract.txt").read_bytes(), text.encode("utf-8"))
             self.assertFalse((Path(directory) / "instruction-executed").exists())
             self.assertIs(json.loads(result.stdout.splitlines()[-1])["result"], True)
             self.assertEqual(result.stderr, "")
