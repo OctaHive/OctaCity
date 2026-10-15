@@ -109,6 +109,15 @@ tombstone remain for audit correlation. Physical Artifact deletion remains
 owned by the ordinary Build-retention workflow after no live Factory reference
 remains.
 
+Capture the complete current database schema rather than an older explicit
+Factory-table allowlist. Nested Flow journals, frozen execution-input manifests
+and input metadata, and Decision Signal request/receipt records belong to that
+same snapshot. Preserve their referenced compiler/input bytes in object storage
+and the exact private profile/connector configuration through the separately
+protected configuration backup. A model session, provider account history or
+Console local preferences cannot replace any of these recovery inputs. See
+[Factory recovery](factory.md#provider-failure-cancellation-and-recovery).
+
 ## Search projection choices
 
 Build-log search is derived data. Operators may restore its PostgreSQL tables

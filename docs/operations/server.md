@@ -5,6 +5,13 @@ and incident-recovery contract for the first OctaCity server release. The
 management API has no operator authentication: network isolation is an
 authorization boundary, not an optional hardening step.
 
+Factory is an explicit optional installation over the same server and ordinary
+Build execution. Follow [Factory operations](factory.md) for installation,
+independent readiness, manual Work, provider failure, recovery and qualification.
+Its absence or provider degradation must not disable healthy ordinary CI/CD;
+shared database, signing and storage failures retain their ordinary readiness
+requirements.
+
 ## Transport and listener topology
 
 The server currently accepts HTTP on its four independently configured

@@ -10,6 +10,7 @@ Documents that explain ownership, trust boundaries, and extension points:
 
 - [Server architecture and ownership](architecture/server.md)
 - [Server extension seams](architecture/extension-seams.md)
+- [Factory integration follow-ups](architecture/factory-extension-boundaries.md)
 - [Server and Agent threat model](architecture/threat-model.md)
 
 ## Operations
@@ -19,6 +20,7 @@ Runbooks for deploying and maintaining released components:
 - [Local Apple Silicon stand](operations/local-stand.md)
 - [Operator console deployment](operations/operator-console.md)
 - [Server operations](operations/server.md)
+- [Optional Factory operations and qualification](operations/factory.md)
 - [Agent operations](operations/agent.md)
 - [Backup, restore, and reconciliation](operations/backup-restore.md)
 - [Schema migrations and rollback](operations/schema-migrations.md)

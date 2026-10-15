@@ -38,3 +38,41 @@ required released ordinary/Factory slices must be recorded against their exact
 source revisions before this task is checked. A skipped backend is not a
 qualification. Real-model calibration and bounded-control promotion retain
 task 16.8's independent gates.
+
+## Operations and reference updates
+
+Added `docs/operations/factory.md` for default/opt-in mode selection, independent
+readiness, exact profile/Agent preparation, the current Artifact-based Work
+journey, guarded intent versus owner completion, classified provider failure,
+cancellation/restart, backup consistency and separate release/rollout gates.
+Updated the documentation index, architecture, threat model, server and stand
+operations, Console journey, backup/restore, management REST, transport v1,
+JobSpec v3 and backend qualification references to connect those contracts.
+Relative link destinations were checked. The guide identifies quickstart,
+Work-card and concrete ticket integrations as follow-ups rather than installed
+behavior, and distinguishes provider-wire fixtures from real-model calibration.
+
+## Dependency and license scans
+
+All commands below passed against the unchanged committed lockfiles:
+
+```shell
+cargo audit
+cargo audit --file fuzz/Cargo.lock
+cargo deny --locked check licenses sources
+cargo deny --locked --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml \
+  check licenses sources
+# cargo-audit 0.22.2; cargo-deny 0.20.2.
+
+# In ui/, using the packageManager version without install scripts:
+npm exec --yes --ignore-scripts --package=pnpm@12.8.1 -- \
+  pnpm audit --audit-level low
+# No known vulnerabilities found.
+```
+
+The preinstalled global pnpm 9 and old Corepack launcher could not read/launch
+the pinned manager; those environment failures are not audit outcomes. The
+successful UI audit used pnpm 12.8.1. Logs are `audit-production`, `audit-fuzz`,
+`licenses-production`, `licenses-fuzz`, and `ui-audit-pinned.log` in the task
+evidence directory. No dependency, audit exception or package-manager policy
+was changed to obtain these results.

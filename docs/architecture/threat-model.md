@@ -343,3 +343,13 @@ lint allowances:
 The release workflow calls the first three workflows directly, so a manually
 dispatched or tagged release cannot publish merely because a separate workflow
 was green on an older revision.
+
+Factory release evidence must identify both the ordinary Factory-disabled mode
+and the explicitly installed mode, exact source/plugin/backend identities, and
+the negative cases in the [qualification runbook](../operations/factory.md#signal-rollout-and-release-qualification).
+Keep provider-wire fixture conformance separate from labeled real-model
+calibration. Shadow/advisory observations, model confidence, a successful
+implementation Build or an external label cannot authorize bounded control,
+acceptance or delivery. Exact provider/model promotion and immediate
+demotion/fallback need their own retained evidence; another adapter cannot
+inherit those approvals from a structurally similar probability field.

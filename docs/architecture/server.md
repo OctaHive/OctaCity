@@ -289,6 +289,11 @@ independent; failures of shared server dependencies still make Factory
 unavailable. Critical conditions for the two readiness scopes have disjoint
 identities, even when a dependency name is shared.
 
+The [Factory operations guide](../operations/factory.md) maps this installation
+to readiness, exact manual intake, guarded operator intent, recovery and the
+independent ordinary/Factory release gates. Specification publication alone
+does not establish backend or provider/model qualification.
+
 Owner transition audit facts are committed with the journal, budget and outbox
 under the current fence. Their request digest binds the complete accepted
 append, frozen contexts, execution provenance and budget usage. Structured

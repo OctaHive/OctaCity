@@ -250,6 +250,10 @@ for its wider ordinary CI/CD checks.
 
 ### Optional Factory installation
 
+Use [Factory operations](factory.md) for the mode/readiness distinction and the
+operator journey. A demonstration or healthy stand does not replace the exact
+source revision's release, real-backend and provider/model qualification gates.
+
 Ordinary `tools/local-stand up` keeps Factory disabled without an installed
 catalog. To opt in manually, supply an operator
 owned native profile catalog with mode `0600`:

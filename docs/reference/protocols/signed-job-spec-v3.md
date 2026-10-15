@@ -543,3 +543,17 @@ Consumers perform these steps in order:
 Steps 5 and 6 can only reject or narrow signed authority. No provider name,
 repository file, model output, transfer grant, or local fallback can widen the
 signed v3 intent.
+
+## Qualification and ordinary compatibility
+
+Retain the actual signed target and non-Host backend identity in real-backend
+completion evidence; successful fixture dispatch alone cannot qualify v3.
+Exercise both permitted behavior and refusal of missing or widened permissions
+on the selected backend. A preview, skipped runner or ordinary v2 pass is not
+a substitute. The v1/v2 canonical fixtures and ordinary Agent/Build contracts
+remain separate required gates under Factory-disabled configuration.
+
+The [Factory operations guide](../../operations/factory.md) distinguishes those
+mode and qualification boundaries, provider rollout, recovery and exact retained
+evidence. Changing a provider/model recommendation never changes this signed
+execution authority.

@@ -739,6 +739,12 @@ available and Factory publication/admission reports capability unavailability.
 An exact mutation replay returns its original result before resolving current
 catalogue or mutable source state again.
 
+The [Factory operations journey](../operations/factory.md#admit-and-follow-one-work-item)
+connects publication, Artifact-based manual intake, bounded diagnostics and
+guarded controls. The current API does not install the separately proposed
+direct-text quickstart, Work discussion card, external ticket poller or Reporter.
+Their future adapters must preserve this same admission and control authority.
+
 | Method | Path under `/api/v1` | Purpose |
 | --- | --- | --- |
 | GET | `/projects/{project_id}/factory-configuration-choices` | Bounded visible choices; optional `kind`, `after`, `limit` |

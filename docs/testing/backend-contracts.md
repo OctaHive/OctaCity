@@ -1,5 +1,14 @@
 # Real execution-backend contract tests
 
+The [Factory operations and qualification guide](../operations/factory.md)
+connects these contracts with independent ordinary CI/CD and opt-in Factory
+readiness. Record the actual source revision, package/plugin identities,
+selected suite, outcomes and artifact names for each claim. Push runs packaged
+Host contracts; the complete hosted Linux and performance matrix requires the
+scheduled or explicitly selected suite. Skipped self-hosted jobs establish no
+platform qualification, and provider-wire fixtures establish no real-model
+calibration or bounded-control approval.
+
 The portable workspace suite tests orchestration with an in-memory backend.
 The retained backend contract suite additionally runs a real signed job, real
 `octa-runner`, and the same Octafile through direct Host execution, legacy

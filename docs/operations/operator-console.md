@@ -203,6 +203,12 @@ hostname whose other applications are not ready for HTTPS-only operation.
 
 ## Factory workbench
 
+For a task-oriented walkthrough from prepared inputs to an exact result, start
+with [Admit and follow one Work item](factory.md#admit-and-follow-one-work-item).
+This workbench exposes the current advanced configuration and Artifact-based
+intake. The proposed text quickstart and unified Work card are follow-up work;
+they are not required controls hidden elsewhere in this interface.
+
 Open `/factory` from the Factory activity. Its explorer lazily loads visible
 Projects, Factory Configurations and Runs in bounded pages. Run links remain
 stable at `/factory/:factoryRunId`; lifecycle, configuration, source, decision,

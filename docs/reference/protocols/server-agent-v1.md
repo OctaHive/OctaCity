@@ -56,6 +56,8 @@ POST /api/v1/agents/register
 - exact Native or OCI platform/isolation routes;
 - the negotiated execution-contract range and separately qualified v2
   host/isolation/virtualization routes;
+- separately qualified Factory v3 routes and their complete semantic
+  enforcement capabilities, where installed;
 - installed Octa runner digest and supported schemas/protocols;
 - digest-verified task and source plugins.
 
@@ -63,6 +65,13 @@ Source-plugin operator settings and credentials are deliberately absent. The
 server returns an opaque `registration_id` representing this process epoch and
 its retry-delay ceiling. Registration inventory is advisory scheduling data;
 the agent still enforces every signed job requirement locally.
+
+The transport version remains v1 independently of signed JobSpec execution
+versions. Existing v1/v2 Agents remain eligible for ordinary compatible Jobs;
+they do not inherit Factory capability. Placement must skip an incompatible
+Factory Job without blocking unrelated ordinary work, and v3 must never fall
+back to Host or another unqualified route. The exact inventory and pre-spawn
+checks are specified in [signed JobSpec v3](signed-job-spec-v3.md).
 
 ## Lease acquisition
 
