@@ -133,7 +133,7 @@ async fn missing_installed_factory_credentials_stop_before_inputs_source_or_spaw
 }
 
 #[tokio::test]
-async fn installed_private_credentials_reach_only_the_runner_and_are_redacted_from_results() {
+async fn installed_private_credentials_obey_rooted_read_support_and_stay_redacted() {
   let mut fixture = credential_job_fixture().await;
   let private_canary = "operator-private-credential-canary";
   let profile = FactoryCredentialProfile::new(
@@ -148,7 +148,7 @@ async fn installed_private_credentials_reach_only_the_runner_and_are_redacted_fr
   let (events, mut receiver) = mpsc::channel(128);
   let drain =
     tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move { while receiver.recv().await.is_some() {} }));
-  let completion = fixture
+  let result = fixture
     .executor
     .execute(
       ExecuteJobRequest {
@@ -160,21 +160,36 @@ async fn installed_private_credentials_reach_only_the_runner_and_are_redacted_fr
       CancellationToken::new(),
       &events,
     )
-    .await
-    .unwrap();
-  assert_eq!(completion.runner().status, RunStatus::Succeeded);
-  assert_eq!(
-    completion.runner().results,
-    vec![serde_json::json!({
-      "variables":{"PRIVATE_AUTH":"[redacted]"},"secrets_profile":null
-    })],
-    "local logical credentials supply exactly their declared private input; the key never becomes a repository filename"
-  );
-  assert!(!format!("{:?}", completion.runner()).contains(private_canary));
+    .await;
+  #[cfg(unix)]
+  {
+    let completion = result.unwrap();
+    assert_eq!(completion.runner().status, RunStatus::Succeeded);
+    assert_eq!(
+      completion.runner().results,
+      vec![serde_json::json!({
+        "variables":{"PRIVATE_AUTH":"[redacted]"},"secrets_profile":null
+      })],
+      "local logical credentials supply exactly their declared private input; the key never becomes a repository filename"
+    );
+    assert!(!format!("{:?}", completion.runner()).contains(private_canary));
+    assert_eq!(fixture.starts.load(Ordering::SeqCst), 1);
+    completion.cleanup().await.unwrap();
+  }
+  #[cfg(windows)]
+  {
+    // The independent runner proof uses a rooted read, which is deliberately
+    // unqualified on Windows. An installed secret cannot bypass that proof.
+    let failure = result.expect_err("unqualified rooted reads must fail before backend start");
+    assert!(matches!(failure.error(), JobError::Runner(error)
+      if matches!(error.as_ref(), octacity_runner::RunnerSupervisionError::Invalid(message)
+        if message == "private overrides do not match immutable task declarations")));
+    assert!(!format!("{failure:?}").contains(private_canary));
+    assert_eq!(fixture.starts.load(Ordering::SeqCst), 0);
+    failure.cleanup().await.unwrap();
+  }
   assert_eq!(fixture.downloads.load(Ordering::SeqCst), 1);
   assert_eq!(fixture.source_calls.load(Ordering::SeqCst), 1);
-  assert_eq!(fixture.starts.load(Ordering::SeqCst), 1);
-  completion.cleanup().await.unwrap();
   fixture.server.abort();
   drain.abort();
   let _ = fixture.server.await;

@@ -6,7 +6,7 @@ containerd/Microsandbox. No Factory platform is qualified by a skipped job.
 
 ## Revision and environment
 
-- Corrected source: `52ea44971e04be77ae4db946bb6c6cf8da0915e5` on
+- Initial corrected source: `52ea44971e04be77ae4db946bb6c6cf8da0915e5` on
   `codex/factory-compatibility-16-6`, based on
   `b974557645e6134f73fd8edbc86b96a9385043f8`.
 - Rust `1.99.0`; macOS ARM64 host; PostgreSQL `18.6` in a separate disposable
@@ -139,6 +139,28 @@ cargo test --locked --jobs 2 -p octacity-job --lib -- --test-threads=2
 Evidence: `factory-credentials-portability-baseline.log`,
 `factory-transfer-expiry-red.log`, `factory-transfer-expiry-green.log`.
 
+Windows at `e8fbb5b` passed the expiry correction, then reached the runner's
+independent rooted-read proof. `RootedReadDirectory` explicitly refuses Windows
+because that physical boundary is not qualified there. The test had wrongly
+expected a successful synthetic Factory execution on every OS. It now keeps
+the successful secret-injection/redaction assertions on Unix and asserts the
+existing safe refusal, zero backend starts and absence of the secret in failure
+diagnostics on Windows. No rooted-read guard, capability or qualification was
+changed. The existing Unix behavior passed before the test-fixture correction;
+all 51 Job tests passed afterward. Final Windows verification remains pending.
+
+```shell
+cargo test --locked --jobs 2 -p octacity-job --lib \
+  installed_private_credentials_reach_only_the_runner_and_are_redacted_from_results \
+  -- --nocapture
+# Before fixture refactoring: passed on macOS; Windows Actions showed refusal.
+cargo test --locked --jobs 2 -p octacity-job --lib -- --test-threads=2
+# After refactoring: 51 passed on macOS; Windows refusal assertions await CI.
+```
+
+Receipts: `github-windows-e8.log`, `credential-rooted-scope-baseline`,
+`credential-rooted-scope-green` and `credential-rooted-scope-clippy`.
+
 ### Release fixture TLS provider
 
 A new HTTPS round-trip test first reproduced a panic when both Rustls crypto
@@ -193,7 +215,30 @@ to the corrected performance gate.
   run `52ea44971e04be77ae4db946bb6c6cf8da0915e5`; Windows exposed the additional
   rooted-reader test-fixture scope issue. Other results are pending.
 - [Corrected operator-dispatched hosted backend matrix](https://github.com/OctaHive/OctaCity/actions/runs/38810688530)
-  runs the same corrected revision, with the `hosted` suite; results are pending.
+  runs the same corrected revision, with the `hosted` suite. Real Linux
+  Microsandbox and containerd direct v2/v3 and packaged ordinary slices passed,
+  as did all three released Host platforms, lifecycle, failure and security
+  matrices. Linux Native direct and packaged functional slices passed; its
+  performance gate failed on the collection-order metric corrected above.
+  The aggregate evidence job therefore correctly failed. The old report remains
+  rejected; it has not been rewritten to claim a passing performance gate.
+- [Follow-up main CI](https://github.com/OctaHive/OctaCity/actions/runs/38818531599)
+  runs `e8fbb5bb28214bdb0c576cf13ec7f30f554a50ed`, including the Unix fixture
+  scopes, host-absolute OCI path, bounded transfer expiry and queue metric
+  corrections. Windows workspace Clippy and strict rustdoc passed; portable
+  tests exposed the incorrect rooted-read positive described above. Both stand configuration jobs
+  passed. Console's locked checks, 397 unit tests, 69 browser tests and packaged
+  browser slice also passed. Final portable/coverage outcomes remain pending.
+- [Released Host contracts at e8fbb5b](https://github.com/OctaHive/OctaCity/actions/runs/38818531579)
+  passed Linux AMD64, macOS ARM64 and Windows AMD64, including the aggregate
+  evidence job. This run contains the final queue, OCI and expiry corrections;
+  it does not qualify Factory execution on Windows.
+
+The push-triggered backend workflow runs released Host contracts only. It does
+not establish a fresh full Linux Native/containerd/Microsandbox or performance
+qualification. A later operator-dispatched or scheduled full run must qualify
+the complete corrected revision. No browser dispatch is attempted by this
+session, as requested by the operator.
 
 The original runs cannot attest to the corrections. Final platform outcomes
 for the corrected source must be recorded before closing the task. Optional
