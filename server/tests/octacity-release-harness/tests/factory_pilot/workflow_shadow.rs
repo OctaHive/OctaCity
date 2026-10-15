@@ -10,6 +10,39 @@ fn key(name: &str) -> FactoryKey {
   FactoryKey::new(name).unwrap()
 }
 
+fn tool_response_limits() -> octacity_protocol::FactoryToolResponseLimitsV3 {
+  // This scenario reads the eight-byte original, unlike the five-byte controlled fixture.
+  octacity_protocol::FactoryToolResponseLimitsV3 {
+    per_call_bytes: 8,
+    total_bytes: 8,
+  }
+}
+
+#[test]
+fn shadow_reader_allows_the_original_baseline_but_refuses_a_larger_response() {
+  let directory = tempfile::tempdir().unwrap();
+  fs::write(directory.path().join("original"), b"baseline").unwrap();
+  fs::write(directory.path().join("oversized"), b"baseline!").unwrap();
+  let reader = octacity_private_fs::RootedReadDirectory::open(directory.path()).unwrap();
+  let limits = tool_response_limits();
+  limits.validate().unwrap();
+  assert_eq!(
+    reader
+      .read_bounded(Path::new("original"), limits.per_call_bytes)
+      .unwrap(),
+    b"baseline"
+  );
+  assert_eq!(
+    reader.read_bounded(Path::new("original"), limits.total_bytes).unwrap(),
+    b"baseline"
+  );
+  assert!(
+    reader
+      .read_bounded(Path::new("oversized"), limits.per_call_bytes)
+      .is_err()
+  );
+}
+
 fn tool_budget(policy: FactoryCodexToolRiskPolicy) -> BudgetLimit {
   let attempts = policy.signal_allowance().max_attempts().checked_add(1).unwrap();
   BudgetLimit::new(attempts, 120_000, 10000, 10000, 8 * 1024 * 1024).unwrap()
@@ -89,6 +122,7 @@ impl Shadow {
     )
     .unwrap();
     let mut tools = workflow_tools::InstalledTools::install(&install, &mut model, backend).await;
+    model.profile.tool_response_limits = Some(tool_response_limits());
     // Existing installed fixture recommends the final label. Deliberately disagree
     // with the independently authorized rooted-read baseline without controlling it.
     let choices = DecisionSignalChoices::try_new(vec![key("a-allow"), key("z-deny")]).unwrap();
