@@ -111,11 +111,15 @@ class FactorySignalCalibrationTests(unittest.TestCase):
         })
 
     def test_report_rejects_signal_authority_in_shadow_and_advisory(self):
+        result, shadow = self.evaluate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        previous = self.root / "shadow.json"
+        previous.write_text(json.dumps(shadow), encoding="utf-8")
         for mode in ["shadow", "advisory"]:
             with self.subTest(mode=mode):
                 self.observations["mode"] = mode
                 self.observations["observations"][0]["final_disposition"] = "research"
-                result, report = self.evaluate()
+                result, report = self.evaluate(previous if mode == "advisory" else None)
                 self.assertEqual(result.returncode, 2)
                 self.assertIsNone(report)
                 self.assertEqual(result.stderr.strip(), "invalid calibration input")
