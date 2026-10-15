@@ -552,9 +552,11 @@ requires a fresh execution claim. Binding construction validates immutable profi
 identity and output contracts without dependency I/O. Loading additional deployment
 JSON roles is a separate configuration concern.
 
-`FactoryWorkStatusAction` accepts an arbitrary configured status. A connector
-projects that value onto its own representation: GitHub uses a label and Jira
-uses a native status. A research observation never automatically changes an
+`FactoryWorkStatusAction` accepts an arbitrary configured status. A future
+connector can project that value onto its own representation: a GitHub label
+or a Jira native status. Concrete Work Source/Reporter adapters and an
+Octa-local JEV task remain [separate follow-ups](factory-extension-boundaries.md).
+A research observation never automatically changes an
 external status. Operators insert a status action, notification or another
 plugin action on the desired outcome path. Connector credentials and SDK
 objects stay outside Flow contracts; exact host and credential grants are
