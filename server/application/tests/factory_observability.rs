@@ -237,22 +237,10 @@ fn node_transition_audit_distinguishes_exact_frozen_contexts_at_the_same_run_ver
         )
         .await
         .unwrap();
-      let audit = page
-        .items
-        .iter()
-        .find_map(|row| match row {
-          FactoryRunDiagnosticRecord::Audit(fact) if fact.operation.as_str() == "factory.node.advance" => Some(fact),
-          _ => None,
-        })
-        .unwrap();
       let text = String::from_utf8(captured.lock().unwrap().clone()).unwrap();
       assert!(
         text.contains("octacity.factory.transition.committed"),
         "committed transitions must emit safe structured diagnostics"
-      );
-      assert!(
-        text.contains(&audit.id.to_string()),
-        "trace correlation must identify the same committed audit fact"
       );
       assert!(text.contains(&fixture.admission.run.id().to_string()));
       assert!(text.contains("factory.run.version"));
@@ -267,6 +255,19 @@ fn node_transition_audit_distinguishes_exact_frozen_contexts_at_the_same_run_ver
             && event["fields"]["factory.input.digest"] == input_digest.to_string()
         })
         .unwrap();
+      // Diagnostics are ordered by digest, and several transitions share the
+      // operation. Correlate the audit with this exact frozen input's commit.
+      let audit = page
+        .items
+        .iter()
+        .find_map(|row| match row {
+          FactoryRunDiagnosticRecord::Audit(fact) if frozen["span"]["factory.audit.id"] == fact.id.to_string() => {
+            Some(fact)
+          }
+          _ => None,
+        })
+        .expect("the frozen input trace must identify its committed audit fact");
+      assert_eq!(audit.operation.as_str(), "factory.node.advance");
       assert_eq!(
         frozen["fields"]["factory.context.policy.digest"],
         expected_context_policy.to_string()
