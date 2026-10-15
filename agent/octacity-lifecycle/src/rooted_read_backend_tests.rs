@@ -1,3 +1,4 @@
+#[cfg(unix)]
 mod rooted_read_backend_tests {
   use super::*;
   use crate::{ProtectedReadInventory, ProtectedReadRecipe, RootedProtectedReadBackend};
@@ -18,7 +19,6 @@ mod rooted_read_backend_tests {
     }
   }
 
-  #[cfg(unix)]
   #[tokio::test]
   async fn an_inventoried_rooted_reader_executes_only_the_exact_authorized_read() {
     use protected_read_dispatcher_tests::{read_broker, read_proposal};

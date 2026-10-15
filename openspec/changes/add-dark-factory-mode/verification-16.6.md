@@ -6,8 +6,9 @@ containerd/Microsandbox. No Factory platform is qualified by a skipped job.
 
 ## Revision and environment
 
-- Product source: `b974557645e6134f73fd8edbc86b96a9385043f8`, with the local
-  compatibility corrections described below.
+- Corrected source: `52ea44971e04be77ae4db946bb6c6cf8da0915e5` on
+  `codex/factory-compatibility-16-6`, based on
+  `b974557645e6134f73fd8edbc86b96a9385043f8`.
 - Rust `1.99.0`; macOS ARM64 host; PostgreSQL `18.6` in a separate disposable
   container; separate MinIO service. The existing local Factory stand is not
   stopped or reconfigured.
@@ -102,7 +103,14 @@ Windows strict Clippy rejected `ProtectedReadDispatcher::channel_scope` as
 unused. Its sole consumer is the Unix private channel. The helper now has the
 same `cfg(unix)` scope; no workload behavior or permission policy changes.
 Existing lifecycle tests passed before and after this refactoring. Windows
-verification of the corrected source still requires Actions.
+Actions at `52ea449` confirmed that warning was resolved, then exposed unused
+imports and `FixedInventory` in the rooted-reader test module. That module's
+only test was already Unix-only; the same platform condition now covers its
+fixtures too. All 47 lifecycle tests passed before and after moving this
+condition (`lifecycle-fixtures-baseline.log`, `lifecycle-fixtures-green.log`).
+These are compilation-scope corrections without new executable behavior;
+existing behavioral tests are retained. Final Windows verification requires
+Actions on the follow-up revision.
 
 ### Release fixture TLS provider
 
@@ -130,7 +138,15 @@ fixture, not the product's TLS configuration.
   cover Linux AMD64, macOS ARM64 and Windows AMD64 at `b9745576`.
 - [Operator-dispatched hosted backend matrix](https://github.com/OctaHive/OctaCity/actions/runs/38808334710)
   uses the same exact revision. The Linux Microsandbox job reproduced the
-  default-stack overflow; the corrected source needs its own run.
+  default-stack overflow; the Linux Native packaged matrix also reproduced the
+  ambiguous Rustls provider panic.
+- [Corrected portable CI, console and local-stand gates](https://github.com/OctaHive/OctaCity/actions/runs/38810267781)
+  run `52ea44971e04be77ae4db946bb6c6cf8da0915e5`; Windows exposed the additional
+  rooted-reader test-fixture scope issue. Other results are pending.
+- [Corrected operator-dispatched hosted backend matrix](https://github.com/OctaHive/OctaCity/actions/runs/38810688530)
+  runs the same corrected revision, with the `hosted` suite; results are pending.
 
-These runs cannot attest to uncommitted corrections. Final platform outcomes
-for the corrected source must be recorded before closing the task.
+The original runs cannot attest to the corrections. Final platform outcomes
+for the corrected source must be recorded before closing the task. Optional
+self-hosted Apple VF, macOS Microsandbox and Windows WHP jobs skipped by the
+hosted suite are not treated as successful backend qualifications.
