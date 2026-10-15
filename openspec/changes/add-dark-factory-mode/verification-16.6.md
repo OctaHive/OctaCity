@@ -129,6 +129,28 @@ cargo test --locked --jobs 2 -p octacity-release-harness \
 Evidence: `cache-tls-red.log`, `cache-tls-green.log`. This changes a release-test
 fixture, not the product's TLS configuration.
 
+### Queue-latency measurement order
+
+The corrected Linux Native direct and packaged contracts passed, but its
+performance gate reported a 6,904 ms queue sample against the unchanged
+5,000 ms limit. The recorder selected the first Job in management collection
+order, which can be a dependent Job after its predecessor already executed.
+A regression drives the serialized measurement boundary with the dependent
+first and then reverses the same Jobs: the first order returned 6,000 ms
+instead of the independently specified 100 ms initial acquisition delay.
+The recorder now selects the earliest preparation timestamp across Jobs;
+both orders produce 100 ms. No scheduling behavior or performance budget changes.
+
+```shell
+cargo test --locked --jobs 2 -p octacity-release-harness \
+  --test release_vertical_slice \
+  queue_latency_uses_the_first_lease_instead_of_job_list_order -- --nocapture
+```
+
+Evidence: `queue-measurement-red.log`, `queue-measurement-green.log`.
+The old measurements remain rejected; only a fresh released run can attest
+to the corrected performance gate.
+
 ## GitHub Actions evidence
 
 - [Portable CI, console and local-stand gates](https://github.com/OctaHive/OctaCity/actions/runs/38807864983)

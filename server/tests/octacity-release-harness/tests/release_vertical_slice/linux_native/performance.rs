@@ -91,12 +91,13 @@ pub(super) fn record_run(recorder: &mut Recorder, run: &BuildRun) {
     .jobs
     .iter()
     .flat_map(events)
-    .find(|event| {
+    .filter(|event| {
       event["payload"]["source"] == "agent"
         && event["payload"]["event"]["type"] == "state_changed"
         && event["payload"]["event"]["state"] == "preparing"
     })
-    .and_then(|event| event["occurred_at_unix_ms"].as_i64())
+    .filter_map(|event| event["occurred_at_unix_ms"].as_i64())
+    .min()
   {
     recorder.sample(
       "queue_acquisition_latency_ms",
@@ -367,6 +368,42 @@ fn registration_request(name: &str, request_id: &str, operating_system: &str, ar
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[test]
+  fn queue_latency_uses_the_first_lease_instead_of_job_list_order() {
+    let mut run = BuildRun {
+      build: json!({"created_at_unix_ms": 1_000}),
+      attempt: json!({}),
+      // Management collection order need not match DAG execution order. The
+      // dependent Job starts only after its predecessor has finished work.
+      jobs: vec![
+        json!({"events": {"items": [{
+          "occurred_at_unix_ms": 7_000,
+          "payload": {"source": "agent", "event": {"type": "state_changed", "state": "preparing"}}
+        }]}}),
+        json!({"events": {"items": [{
+          "occurred_at_unix_ms": 1_100,
+          "payload": {"source": "agent", "event": {"type": "state_changed", "state": "preparing"}}
+        }]}}),
+      ],
+    };
+    let temporary = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+      let mut recorder = Recorder::new("native");
+      record_run(&mut recorder, &run);
+      recorder.write(temporary.path());
+      let report: Value =
+        serde_json::from_slice(&fs::read(temporary.path().join("performance-measurements.json")).unwrap()).unwrap();
+      let queue = report["measurements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|measurement| measurement["name"] == "queue_acquisition_latency_ms")
+        .unwrap();
+      assert_eq!(queue["samples"], json!([100.0]));
+      run.jobs.reverse();
+    }
+  }
 
   #[test]
   fn registration_fixture_is_a_valid_protocol_document() {
