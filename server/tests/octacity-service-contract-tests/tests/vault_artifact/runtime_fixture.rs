@@ -157,8 +157,7 @@ impl ExecutionBackend for HostRunnerBackend {
       paths: ExecutionPaths {
         workspace: request.workspace,
         data_dir: request.data_dir,
-        plugins_dir: runner.plugins_dir.clone(),
-        plugin_lock: runner.plugin_lock.clone(),
+        plugin_projection: runner.plugin_projection.clone(),
         cache: None,
       },
       reaped: false,

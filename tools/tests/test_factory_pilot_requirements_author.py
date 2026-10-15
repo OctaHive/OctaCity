@@ -6,11 +6,13 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tools.tests.fixture_environment import fixture_environment
 
 FIXTURE = Path(__file__).resolve().parents[2] / "server/tests/octacity-release-harness/fixtures/factory/requirements-author.mjs"
 NODE = shutil.which("node")
 
 
+@unittest.skipUnless(os.name == "posix", "the packaged pilot author is qualified for Unix paths and symlinks")
 class FactoryPilotRequirementsAuthorTests(unittest.TestCase):
     def setUp(self):
         self.assertIsNotNone(NODE, "restore the existing Node runtime before implementing the author")
@@ -33,7 +35,7 @@ class FactoryPilotRequirementsAuthorTests(unittest.TestCase):
 
     def invoke(self, relative="private-contract.json"):
         return subprocess.run([NODE, str(FIXTURE), str(self.frozen), str(self.output), relative],
-                              capture_output=True, text=True, timeout=10, env={"PATH": os.defpath})
+                              capture_output=True, text=True, timeout=10, env=fixture_environment())
 
     def test_real_frozen_requirements_generate_the_exact_private_assertion(self):
         result = self.invoke()

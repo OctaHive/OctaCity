@@ -11,6 +11,7 @@ import unittest
 FIXTURE = Path(__file__).resolve().parents[2] / "server/tests/octacity-release-harness/fixtures/factory/codex-author-cli.sh"
 
 
+@unittest.skipUnless(os.name == "posix", "the author fixture requires a Unix shell and filesystem")
 class FactoryCodexAuthorFixtureTests(unittest.TestCase):
     def test_adversarial_probe_records_real_outcomes_without_executing_repository_instructions(self):
         with tempfile.TemporaryDirectory() as temporary:

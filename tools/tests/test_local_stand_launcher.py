@@ -247,6 +247,7 @@ class LocalStandLauncherTests(unittest.TestCase):
         initialize.assert_not_called()
         compose.assert_not_called()
 
+    @unittest.skipUnless(os.name == "posix", "private Factory bundles require POSIX ownership and modes")
     def test_all_compose_operations_reuse_only_an_installed_private_factory_bundle(self):
         profile = self.root / "config/server/factory-profiles.json"
         profile.parent.mkdir(parents=True)

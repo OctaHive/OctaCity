@@ -379,6 +379,7 @@ class NativeStandStagingTests(unittest.TestCase):
         ]
         return document, reader, executable, pin, arguments
 
+    @unittest.skipUnless(os.name == "posix", "protected reader staging requires POSIX ownership and modes")
     def test_public_install_cli_stages_a_separate_pinned_guest_reader(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

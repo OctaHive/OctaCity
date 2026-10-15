@@ -2,7 +2,7 @@
 from __future__ import annotations
 import importlib.util
 import json
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 import subprocess
 import tempfile
 import unittest
@@ -15,6 +15,11 @@ SPEC.loader.exec_module(BUILDER)
 
 class PilotImageTests(unittest.TestCase):
     def test_executor_builds_exact_sources_and_returns_only_verified_imported_digest(self):
+        for executable in (PurePosixPath("/operator/msb"), PureWindowsPath("C:/operator/msb.exe")):
+            with self.subTest(executable=str(executable)):
+                self.assert_executor_builds_exact_sources(executable)
+
+    def assert_executor_builds_exact_sources(self, executable):
         inputs = json.loads((ROOT / "deployment/local-stand/inputs.json").read_text())
         digest = "sha256:" + "b" * 64
         calls = []
@@ -26,7 +31,7 @@ class PilotImageTests(unittest.TestCase):
                 calls.append(args)
                 stdout = json.dumps({"digest":digest,"architecture":"arm64","os":"linux"}) if "inspect" in args else ""
                 return subprocess.CompletedProcess(args,0,stdout,"")
-            image = BUILDER.prepare_image(inputs, Path("/operator/msb"), work, execute=execute)
+            image = BUILDER.prepare_image(inputs, executable, work, execute=execute)
             self.assertEqual(image,"local.octacity/factory-pilot@"+digest)
             dockerfile = (work / "Dockerfile").read_text()
             self.assertIn("FROM "+inputs["images"]["node"]["reference"]+" AS node",dockerfile)
@@ -34,11 +39,11 @@ class PilotImageTests(unittest.TestCase):
             self.assertNotIn("RUN ",dockerfile)
             self.assertIn("--platform=linux/arm64",calls[0])
             self.assertEqual(calls[1][0:3],["docker","image","save"])
-            self.assertEqual(calls[2][0:2],["/operator/msb","load"])
-            self.assertEqual(calls[3][0:3],["/operator/msb","image","inspect"])
+            self.assertEqual(calls[2][0:2],[str(executable),"load"])
+            self.assertEqual(calls[3][0:3],[str(executable),"image","inspect"])
             self.assertIn(image,calls[4])
             self.assertIn(image,calls[5])
-            self.assertEqual(calls[6][0:2],["/operator/msb","save"])
+            self.assertEqual(calls[6][0:2],[str(executable),"save"])
 
     def test_mutable_or_injected_sources_refuse_before_any_executor_or_context_write(self):
         import copy
@@ -67,7 +72,7 @@ class PilotImageTests(unittest.TestCase):
                     if "inspect" in args:
                         inspections+=1
                         if inspections == 2: metadata.update(changed)
-                    if args[0:2] == ["/operator/msb","save"]:
+                    if args[1:2] == ["save"]:
                         self.fail("foreign imported image reached qualified export")
                     return subprocess.CompletedProcess(args,0,json.dumps(metadata),"")
                 with self.assertRaises(ValueError):

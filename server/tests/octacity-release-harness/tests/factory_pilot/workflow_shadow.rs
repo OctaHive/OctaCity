@@ -20,8 +20,11 @@ fn tool_budget_retains_a_model_attempt_after_the_independent_signal_reservation(
   let policy: FactoryCodexToolRiskPolicy = serde_json::from_value(json!({
     "policy_digest":FactoryDigest::content_sha256(b"two declared provider calls"),
     "signal_allowance":BudgetLimit::new(2, 20000, 2000, 2000, 32768).unwrap()
-  })).unwrap();
-  let model = policy.model_budget(tool_budget(policy)).expect("independent model share remains available");
+  }))
+  .unwrap();
+  let model = policy
+    .model_budget(tool_budget(policy))
+    .expect("independent model share remains available");
   assert_eq!(model.max_attempts(), 1);
   assert!(model.max_tokens() > 0);
 }

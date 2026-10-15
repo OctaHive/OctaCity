@@ -12,6 +12,7 @@ import unittest
 FIXTURE = Path(__file__).resolve().parents[2] / "server/tests/octacity-release-harness/fixtures/factory/codex-cli.sh"
 
 
+@unittest.skipUnless(os.name == "posix", "the Codex fixture requires a Unix shell")
 class FactoryCodexFixtureTests(unittest.TestCase):
     def test_compatibility_probe_reports_the_pinned_executable_version(self):
         result = subprocess.run(["/bin/sh", str(FIXTURE), "--version"], capture_output=True, text=True, check=False, timeout=5)

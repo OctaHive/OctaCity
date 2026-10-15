@@ -1276,6 +1276,19 @@ The fixture accepts a bounded installed JSON program. It does not dispatch on
 Flow names, node names or model roles. Changes to the embedded program require
 rebuilding the executable; its actual SHA-256 is pinned in the installed profile.
 
+The shell CLI fixtures and `requirements-author.mjs` are qualified on Unix.
+Their Python process contracts run on Linux/macOS and explicitly skip Windows,
+matching the Unix-only Rust pilot. This includes the author's native path and
+symlink checks; it does not establish a Windows filesystem security boundary.
+`test_factory_fixture_platforms.py` verifies that Windows discovery skips these
+contracts before invoking external tools. Other portable Factory tool tests
+continue to run on Windows.
+Unix shebang hook probes and host-state checks that require POSIX ownership or
+permission bits use method-level platform guards. Portable Node process tests
+retain `SystemRoot` in their otherwise isolated environment so Windows can
+initialize its loader and crypto provider; ambient credentials and runtime
+options are not inherited.
+
 ```shell
 CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
   cargo test --locked -p octacity-release-harness --test factory_pilot \

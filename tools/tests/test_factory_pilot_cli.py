@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+from tools.tests.fixture_environment import fixture_environment
 
 FIXTURE = Path(__file__).resolve().parents[2] / "server/tests/octacity-release-harness/fixtures/factory/pilot-cli.mjs"
 NODE = shutil.which("node")
@@ -26,12 +27,12 @@ class FactoryPilotCliTests(unittest.TestCase):
         return subprocess.run(
             arguments,
             input=prompt, text=True, capture_output=True, timeout=30, cwd=directory,
-            env={"PATH": os.defpath, "OPENAI_API_KEY": "fixture-credential-canary"},
+            env=fixture_environment(OPENAI_API_KEY="fixture-credential-canary"),
         )
 
     def test_compatibility_probe_is_a_finite_credentialless_operation(self):
         result = subprocess.run([NODE, str(FIXTURE), "--version"], text=True, capture_output=True, timeout=5,
-                                env={"PATH": os.defpath})
+                                env=fixture_environment())
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertEqual(result.stdout, "codex-cli 0.161.0\n")
         self.assertEqual(result.stderr, "")
@@ -113,6 +114,7 @@ class FactoryPilotCliTests(unittest.TestCase):
                 self.assertEqual(rejected.stderr, "finite model fixture rejected its invocation\n")
 
 
+    @unittest.skipUnless(os.name == "posix", "the installed reader fixture uses a Unix shebang executable")
     def test_tool_read_uses_the_injected_hook_then_the_real_mcp_contract(self):
         import sys
         with tempfile.TemporaryDirectory() as directory:
@@ -144,6 +146,7 @@ else:
             self.assertEqual(result.stderr, "")
             self.assertNotIn("fixture-credential-canary", result.stdout + result.stderr)
 
+    @unittest.skipUnless(os.name == "posix", "the installed reader fixture uses a Unix shebang executable")
     def test_denied_hook_never_dispatches_the_tool_or_writes_requested_files(self):
         import sys
         with tempfile.TemporaryDirectory() as directory:
@@ -164,6 +167,7 @@ print(json.dumps({"hookSpecificOutput":{"hookEventName":"PreToolUse","permission
             self.assertFalse((Path(directory) / "unexpected-dispatch").exists())
             self.assertFalse((Path(directory) / "unexpected-write").exists())
 
+    @unittest.skipUnless(os.name == "posix", "the installed reader fixture uses a Unix shebang executable")
     def test_tool_client_allows_cold_reader_startup_within_the_hook_deadline(self):
         import sys
         with tempfile.TemporaryDirectory() as directory:

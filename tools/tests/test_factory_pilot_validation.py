@@ -1,12 +1,12 @@
 """Trusted finite validation reads real inputs through the installed Node CLI."""
 import hashlib
 import json
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+from tools.tests.fixture_environment import fixture_environment
 
 FIXTURE = Path(__file__).resolve().parents[2] / "server/tests/octacity-release-harness/fixtures/factory/protected-validator.mjs"
 NODE = shutil.which("node")
@@ -65,7 +65,7 @@ class FactoryPilotValidationTests(unittest.TestCase):
         return subprocess.run([NODE, str(FIXTURE), str(self.invocation_path), str(self.frozen_path),
                                str(self.inventory_path), str(self.private), str(self.candidate),
                                str(self.primary), str(self.facts)], capture_output=True, text=True,
-                              timeout=10, env={"PATH": os.defpath})
+                              timeout=10, env=fixture_environment())
 
     def test_actual_private_assertion_produces_two_exact_reports_with_distinct_input_digests(self):
         result = self.invoke()
