@@ -1515,7 +1515,26 @@ fn capture_causality() -> FactoryCausalityV3 {
   }
 }
 
+#[test]
+fn protected_transfer_fixtures_have_a_bounded_future_expiry() {
+  let before = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+  let inputs = transfers(&factory_spec().protected_inputs);
+  let after = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).unwrap();
+  for transfer in inputs {
+    assert!(u128::from(transfer.capability.expires_at_unix_ms) > before.as_millis());
+    assert!(u128::from(transfer.capability.expires_at_unix_ms) <= after.as_millis() + 60_000);
+  }
+}
+
 fn transfers(manifest: &ProtectedInputManifestV3) -> Vec<ProtectedInputTransferV3> {
+  let expires_at_unix_ms = u64::try_from(
+    SystemTime::now()
+      .duration_since(SystemTime::UNIX_EPOCH)
+      .unwrap()
+      .as_millis(),
+  )
+  .unwrap()
+    + 60_000;
   manifest
     .inputs
     .iter()
@@ -1525,7 +1544,7 @@ fn transfers(manifest: &ProtectedInputManifestV3) -> Vec<ProtectedInputTransferV
       capability: ArtifactTransferCapability {
         url: "https://artifacts.invalid/protected".to_owned(),
         required_headers: BTreeMap::new(),
-        expires_at_unix_ms: u64::MAX,
+        expires_at_unix_ms,
       },
     })
     .collect()

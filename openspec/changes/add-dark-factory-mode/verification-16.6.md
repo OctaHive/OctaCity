@@ -120,6 +120,25 @@ root to the engine and expected result. No production path check or backend
 qualification changes. The original test passed on macOS before the fixture
 refactoring; the full OCI library suite is rerun afterward.
 
+Windows at `d6fd0d1` passed that OCI correction, then exposed an unrepresentable
+download-capability date in the private-credential Job fixture. Its shared
+transfer helper used `u64::MAX` milliseconds; Windows `SystemTime::checked_add`
+correctly refused it before download. A portable regression first reproduced
+the unbounded expiry locally. The helper now issues a real one-minute future
+expiry. Production expiry/credential checks and Windows backend qualification
+are unchanged. The original credential test passed locally before the change.
+
+```shell
+cargo test --locked --jobs 2 -p octacity-job --lib \
+  protected_transfer_fixtures_have_a_bounded_future_expiry -- --nocapture
+# Red: the u64::MAX fixture exceeded the independent one-minute bound.
+cargo test --locked --jobs 2 -p octacity-job --lib -- --test-threads=2
+# Green includes the transfer-expiry and private-credential behavioral tests.
+```
+
+Evidence: `factory-credentials-portability-baseline.log`,
+`factory-transfer-expiry-red.log`, `factory-transfer-expiry-green.log`.
+
 ### Release fixture TLS provider
 
 A new HTTPS round-trip test first reproduced a panic when both Rustls crypto
