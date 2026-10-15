@@ -35,7 +35,7 @@ containerd/Microsandbox. No Factory platform is qualified by a skipped job.
 | Real macOS Host execution and cancellation | 1 passed | `backend-host-macos.log` |
 | Real Microsandbox v2/v3 positive and negative contracts | 1 passed with an explicit 2 MiB test stack | `backend-stack-green.log` |
 | Release installation and compatibility harness | 22 passed | `release-harness.log` |
-| Final release fixture regression | 22 harness + 23 fixture tests passed; 8 provisioned scenarios ignored | `release-fixtures-final.log` |
+| Release fixture regression after the queue correction | 22 harness + 24 fixture tests passed; 8 provisioned scenarios ignored | `release-fixtures-queue-regression.log` |
 | Packaged ordinary CI/CD matrix on a real Microsandbox VM, Factory disabled | 1 passed in 66.57 seconds | `ordinary-release.log`, `ordinary-release/microsandbox-matrix.json` |
 | UI scripts and unit tests | 26 + 397 passed | `ui-unit.log` |
 | Browser navigation, commands, accessibility and visual contracts | 69 passed | `ui-browser-macos.log` |
@@ -233,6 +233,18 @@ to the corrected performance gate.
   passed Linux AMD64, macOS ARM64 and Windows AMD64, including the aggregate
   evidence job. This run contains the final queue, OCI and expiry corrections;
   it does not qualify Factory execution on Windows.
+- [Final code CI at 3d62d85](https://github.com/OctaHive/OctaCity/actions/runs/38822065162)
+  includes the platform-aware private-credential assertions and exact Shadow
+  read budget. Both stand jobs and Console passed; Windows strict Clippy and
+  rustdoc passed. Full portable and coverage outcomes remain pending.
+- [Final-code released Host matrix](https://github.com/OctaHive/OctaCity/actions/runs/38822065251)
+  passed all three platforms and its aggregate evidence job.
+
+The fresh independent packaged ordinary matrix passed again in 64.61 seconds
+using the current checksummed candidates built from `0b3c48b`. The composed
+packaged Factory pilot also passed in 654.33 seconds after the eight-byte Shadow
+fixture correction. Their exact environments, commands, scope and retained
+receipts are recorded in `verification-16.7.md`.
 
 The push-triggered backend workflow runs released Host contracts only. It does
 not establish a fresh full Linux Native/containerd/Microsandbox or performance

@@ -76,3 +76,209 @@ successful UI audit used pnpm 12.8.1. Logs are `audit-production`, `audit-fuzz`,
 `licenses-production`, `licenses-fuzz`, and `ui-audit-pinned.log` in the task
 evidence directory. No dependency, audit exception or package-manager policy
 was changed to obtain these results.
+
+## Workspace, tools and public documentation
+
+```shell
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked --jobs 2 --workspace --all-features
+# 1,879 passed; 0 failed; 205 provisioned/environment scenarios ignored.
+# 222 test-result groups; 1,020.23 seconds.
+
+python3 -m unittest discover -s tools/tests -v
+# 429 run, 6 environment-gated skips, 0 failures; 67.44 seconds.
+
+RUSTDOCFLAGS='-D missing_docs' CARGO_PROFILE_DEV_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo doc --locked --jobs 2 --workspace --all-features --no-deps
+# passed; 41.22 seconds.
+cargo fmt --all -- --check
+python3 tools/check_architecture.py
+# passed; 59 packages, 237 dependency edges.
+```
+
+The full Rust run preceded the final transfer-expiry fixture regression. Its
+follow-up `cargo test --locked --jobs 2 -p octacity-job --lib --
+--test-threads=2` passed all 51 tests, including the newly added expiry case;
+strict Clippy for that package also passed. This follow-up is documented with
+its Red/Green command in `verification-16.6.md`. The new offline calibration
+CLI followed independent Red/Green slices, documented in `verification-16.8.md`;
+all 12 CLI tests are included in the 429-tool regression. No ignored provisioned
+test is counted as a successful backend run.
+
+Receipts: `workspace-final-baseline`, `factory-transfer-expiry-green`,
+`tools-calibration-final`, `docs-strict-final`, `format-final-qualification`,
+`architecture-final`, `specs-final` and `openspec-final`. Documentation-only
+changes have no executable behavior for TDD; their validation is specification,
+link, formatting and public-documentation checks.
+
+The existing advisory-authority negative was tightened to supply a valid prior
+shadow report, so it cannot pass merely because that precondition was missing.
+This test-fixture refactoring changes no CLI behavior. The complete 12-test
+module passed before and after; `tools-calibration-preconditions` then repeated
+the full 429-tool regression successfully (six skips, 66.42 seconds).
+
+## Secret scanning and bounded fuzzing
+
+Gitleaks 8.30.1 scanned the committed source archive at
+`3d62d85bc83b53000fb228f3afb97c98ec8f2a27`, including the new calibration tool,
+tests and seed corpus, without findings. The separately scanned Octa source is
+the pinned `e0a3c65fe010220c5a8162c52368b7c8f624ddb5`; it also passed. Existing
+scanner rules and the exact test-only TLS-key exception were unchanged. The
+downloaded scanner checksum was verified against its release asset digest.
+
+All four protocol fuzz targets passed with cargo-fuzz 0.13.2 and pinned
+`nightly-2026-10-01`, each using the workflow's 30-second bound and separate
+task-local corpus/artifact directories:
+
+| Target | Executions | Result |
+| --- | ---: | --- |
+| `server-agent-json` | 57,615 | passed |
+| `runner-json` | 452,775 | passed |
+| `source-plugin` | 943,846 | passed |
+| `server-protocols` | 557,559 | passed |
+
+```shell
+RUSTUP_TOOLCHAIN=nightly-2026-10-01 CARGO_BUILD_JOBS=2 \
+  cargo fuzz run TARGET /tmp/octacity-166-evidence/fuzz/corpus/TARGET -- \
+  -max_total_time=30 \
+  -artifact_prefix=/tmp/octacity-166-evidence/fuzz/artifacts/TARGET/
+```
+
+The first build failed because local Apple clang could not locate SDK libc++
+headers (`cassert`/`cstdint`). A standalone include probe reproduced it; adding
+the installed SDK's libc++ include directory and sysroot through task-local
+`CXXFLAGS` restored the build. That environment failure is not fuzzing evidence
+or a behavioral Red. No repository compiler/configuration exception was added.
+The successful logs/receipts are `fuzz-<target>`; Gitleaks receipts are
+`gitleaks-code-final` and `gitleaks-octa-final`. Fuzzing is bounded
+decoder coverage and does not replace runtime isolation or adversarial tests.
+
+## Fresh candidate package verification
+
+Built Server, Agent and Git source plugin with locked dependencies at
+`0b3c48b7af136c412783afca8b9047145b96ae70`, then assembled deterministic
+macOS ARM64 candidate packages with the normal packaging tools. Source plugin
+metadata comes from that built executable. Both manifests retain the exact
+source revision; every listed checksum was independently verified (Server six
+files, Agent nine). These are current development-binary candidates in the
+release distribution format, not published optimized releases. No release tag
+was created.
+
+Receipts: `package-current-build`, `package-current` and
+`current-packages/verification.json`. Final platform outcomes remain separate
+required results until recorded below.
+
+## Shadow pilot response budget regression
+
+The first fresh composed pilot failed after 205.68 seconds, with six successful
+ordinary Builds and one failed tool Job. The original Source contains the
+eight-byte text `baseline`; the standalone controlled-tool fixture contains
+five-byte `facts`. The Shadow scenario inherited that standalone fixture's
+five-byte response ceiling. The Agent correctly denied the oversized read;
+its independent permission and byte-budget checks were not weakened.
+
+Existing fast pilot contracts passed before and after extracting the unchanged
+fixture limit (six passed, eleven provisioned scenarios ignored). A new test
+then used the public `RootedReadDirectory` boundary with an eight-byte original
+and nine-byte overrun. It failed on the valid original under the old limit
+(`InvalidData: regular file exceeds its read bound`). Only this Shadow scenario
+now declares an eight-byte per-call and total limit. The test then accepted the
+whole original and refused the overrun; all seven fast pilot tests and strict
+harness Clippy passed. The standalone five-byte fixture remains unchanged.
+
+```shell
+cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  shadow_reader_allows_the_original_baseline_but_refuses_a_larger_response \
+  -- --nocapture
+# Red before the fixture correction; Green after it.
+cargo test --locked --jobs 2 -p octacity-release-harness \
+  --test factory_pilot -- --test-threads=2
+# Green: 7 passed, 11 provisioned scenarios ignored.
+cargo clippy --locked --jobs 2 -p octacity-release-harness \
+  --all-targets --all-features -- -D warnings
+# passed.
+```
+
+Receipts: `factory-pilot-response-limit-red`, `pilot-fixtures-before-limit`,
+`pilot-limit-extraction`, `pilot-response-limit-red`, `pilot-response-limit-green`
+and `pilot-limit-clippy`. The earlier incorrect sibling installation layout was
+also corrected before this run; its immediate environment failure is retained
+as `factory-pilot-installation-environment` and is not behavioral Red evidence.
+
+## Fresh composed packaged Factory pilot
+
+After the Shadow fixture correction, the complete composed contract passed in
+654.33 seconds: one test passed, zero failed or ignored. It uses the fresh
+checksummed Server/Agent candidates built from `0b3c48b`, the pinned Octa,
+qualified real Microsandbox image, disposable PostgreSQL/object storage and the
+existing immutable reader, model, verifier, Git delivery and deployment fixture
+installations. The harness includes the response-limit correction committed
+as `3d62d85`. No source compilation or package verification was skipped.
+
+```shell
+python3 /tmp/octacity-166-run-pilot-current.py
+# Invokes, with the private qualified environment and current sibling packages:
+cargo test --locked --jobs 2 -p octacity-release-harness --test factory_pilot \
+  -- --ignored --exact \
+  packaged_nested_criteria_drive_private_tests_before_review_delivery_and_promotion \
+  --nocapture --test-threads=1
+# 1 passed; 654.33 seconds in the test, 675.94 seconds including compilation.
+```
+
+The assertions verify A's 23 completions and 12 ordinary Jobs, B's reversed
+optional phases (nine completions, four Jobs), and C without those phases
+(seven completions, two Jobs): 39 completions and 18 Jobs including bootstrap.
+They cover actual accepted-criteria/private-test lineage, candidate capture,
+an independent verifier Agent, retained EvidenceManifest/EvaluationPlan/
+Assessment/Decision, HTTPS Git review and lost-response replay, actual staged
+candidate deployment/readback, disagreeing routing/tool-risk Shadow signals,
+and unchanged immutable records and append-only audit after Server and both
+Agents restart. Logs and the command/exit/duration receipt are retained as
+`factory-pilot-current.log` and `.json`; package manifest/checksum evidence is
+retained separately. Private temporary runtime state is cleaned by the test.
+
+The provider wire and model are hermetic installed fixtures. CI/CD delivery and
+staged-deployment promotion in this journey do not qualify real JEV behavior or
+authorize Signal bounded-control promotion. Task 16.8 remains independent.
+
+## Fresh independent ordinary CI/CD slice
+
+The same current candidate installation also passed the real packaged macOS
+Microsandbox ordinary matrix with Factory disabled: one test passed, zero failed
+or ignored, in 64.61 seconds. The optional ordinary Codex fixture was disabled;
+no Factory Configuration or model credential was installed in this scenario.
+
+```shell
+python3 /tmp/octacity-166-run-ordinary-current.py
+# Invokes with current sibling packages and OCTACITY_RELEASE_CODEX_FIXTURE=0:
+cargo test --locked --jobs 2 -p octacity-release-harness \
+  --test release_vertical_slice -- --ignored --exact \
+  released_macos_microsandbox_matrix_satisfies_the_end_to_end_contract \
+  --nocapture --test-threads=1
+```
+
+This covers manual admission/replay, scheduled and downstream Builds,
+cancellation, distinct retry Attempts, Server/Agent recovery, TLS remote-cache
+trust, Artifact download identity, log search, two Agents and cleanup. Retained
+evidence: `ordinary-current.log`, `ordinary-current.json` and
+`ordinary-current/microsandbox-matrix.json`. The packaged Factory and ordinary
+results are independent; neither relies on a model's claimed outcome.
+
+## Hosted Console and adversarial evidence
+
+The [main Console job at e8fbb5b](https://github.com/OctaHive/OctaCity/actions/runs/38818531599/job/116709134183)
+passed locked dependency installation, generated-contract checks, formatting,
+lint/type/build checks, 397 unit tests, 69 Playwright tests and the packaged
+browser release slice. Its log is retained as `github-console-e8.log`.
+
+The [hosted security matrix at 52ea449](https://github.com/OctaHive/OctaCity/actions/runs/38810688530/job/116682911848)
+passed the complete matrix, including Factory authority negatives; its log is
+`github-security-matrix.log`. This is evidence at the stated revision, not a
+substitute for a fresh complete backend qualification of the later corrections.
+
+The [final-code Console job at 3d62d85](https://github.com/OctaHive/OctaCity/actions/runs/38822065162/job/116720737781)
+also passed. Both final-code stand jobs and the [complete released Host matrix](https://github.com/OctaHive/OctaCity/actions/runs/38822065251)
+passed. Portable Rust tests and coverage are still being observed. The source is
+already fast-forwarded into `main`. Task 16.7 remains unchecked pending the
+remaining exact-source qualification gates, including fresh full Linux Native
+performance evidence; no performance threshold or qualification policy changed.
