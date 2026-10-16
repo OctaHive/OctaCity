@@ -4,7 +4,7 @@ Tasks 12.4–12.7 extend the common immutable Flow/Build contracts. A promotion
 strategy is an operator-owned value understood by the installed deployment
 capability, rather than a Factory runtime enum or business-node switch. The
 editable example is documented in
-[`promotion-flow/README.md`](../../../config/factory/flows/promotion-flow/README.md).
+[`promotion-flow/README.md`](../../../../config/factory/flows/promotion-flow/README.md).
 
 `PromotionPlan` binds the original admitted closure/limits, complete frozen
 input including cycle and generation, exact candidate from trusted Context,

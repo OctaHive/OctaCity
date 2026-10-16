@@ -34,7 +34,7 @@ The documented beta model alias `gpt-6-luna` is explicitly bound as
 `unversioned-shadow-v1`, an experiment sentinel, not an immutable model snapshot.
 The adapter denies advisory/bounded-control before dispatch. No real model
 approval or artificial snapshot identity is inferred from an HTTPS fixture.
-The [operator guide](../../../docs/operations/openai-decisions-shadow.md)
+The [operator guide](../../../../docs/operations/openai-decisions-shadow.md)
 records private-file installation, the reserved key path, the experiment plan
 and the remaining live collection/promotion work. The offline comparison CLI
 remains unchanged; this increment does not add a live corpus collector.

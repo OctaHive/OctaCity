@@ -80,8 +80,8 @@ The matrix is grounded in these current implementations:
 - OctaCity Job graph collection, validation, and reconciliation:
   `server/core/octacity-server-orchestrator/src/reconcile.rs`;
 - Factory target semantics:
-  `openspec/changes/add-dark-factory-mode/design.md` and
-  `openspec/changes/add-dark-factory-mode/specs/server/dark-factory/spec.md`.
+  `openspec/changes/archive/2026-10-16-add-dark-factory-mode/design.md` and
+  `openspec/specs/server/dark-factory/spec.md`.
 
 The Octa source references identify external review evidence. They are not
 OctaCity build inputs or runtime dependencies.

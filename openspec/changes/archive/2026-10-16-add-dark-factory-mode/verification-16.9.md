@@ -4,7 +4,7 @@ Status: complete for this slice's documented exclusion and extension-boundary
 requirements. No concrete ticket poller/webhook, GitHub/GitLab/Jira Work Source
 or Reporter, or Octa-local JEV plugin is implemented or release-qualified here.
 
-[Factory integration follow-ups](../../../docs/architecture/factory-extension-boundaries.md)
+[Factory integration follow-ups](../../../../docs/architecture/factory-extension-boundaries.md)
 records candidate discovery, scoped admission/replay, arbitrary configured
 status/label/resolution projection, shared GitHub plugin capabilities with
 separate contracts/credentials, and a local task's Job-only authority. Its

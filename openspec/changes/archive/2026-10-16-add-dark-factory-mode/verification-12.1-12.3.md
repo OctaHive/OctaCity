@@ -5,7 +5,7 @@ immutable Flow/Build contracts. Node keys, classes, ordering, quorum, projection
 profiles, thresholds and transitions remain configuration. The runtime has no
 business-stage dispatch. The supplied nested template and tool installation
 contract are documented in
-[`verification-flow/README.md`](../../../config/factory/flows/verification-flow/README.md).
+[`verification-flow/README.md`](../../../../config/factory/flows/verification-flow/README.md).
 
 The common plan binds the original admission, actual Flow invocation and workflow
 cycle, exact candidate, immutable policy and its projection recipes, profiles and

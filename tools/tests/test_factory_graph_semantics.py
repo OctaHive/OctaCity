@@ -11,7 +11,7 @@ REPOSITORY = Path(__file__).resolve().parents[2]
 MATRIX = REPOSITORY / "docs/planning/proposals/dark-factory-flow-graph-semantics.md"
 SPECIFICATION = (
     REPOSITORY
-    / "openspec/changes/add-dark-factory-mode/specs/server/dark-factory/spec.md"
+    / "openspec/specs/server/dark-factory/spec.md"
 )
 CORPUS = (
     REPOSITORY
