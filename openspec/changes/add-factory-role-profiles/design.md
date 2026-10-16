@@ -1,0 +1,170 @@
+## Context
+
+See [proposal.md](proposal.md) for motivation and scope. The existing implementation already separates execution from Factory coordination:
+
+- `server/core/octacity-server-factory/src/flow/build.rs` pins one `FlowBuildBinding` before definition hashing, including executable/plugin/model, task digest, ordinary Build configuration, outputs, and capture constraints.
+- `server/app/src/runtime/factory_profile_file.rs` loads operator-installed model execution profiles. `server/application/src/factory_codex_materializer.rs` matches those profiles to frozen Build intents and applies credential-purpose, capture, review, permission, and cost qualification. These installed technical profiles are not editable Project role definitions.
+- Configured node inputs, bounded predicates, explicit Context projections, ordinary Build intent/outbox publication, and fenced Node Attempts already serve arbitrary logical stages. `factory_configuration_choices.rs` exposes Project-authorized installed choices; `factory_control.rs` records idempotent preconditioned control intents.
+- Decision Signal contracts and receipts already exist in the Factory core, with provider transports in `octacity-server-decision-signal`, `octacity-server-decision-signal-jev`, and `octacity-server-decision-signal-openai`. Current technical purposes are routing and tool risk. Existing routing choices are Flow edges, so a profile ID must not be disguised as a route.
+- The Console has guided execution-profile/Flow editors, Work admission, Run commands, and safe diagnostics. The adjacent quickstart, Work card, and GitHub source changes are independent and are not prerequisites for this feature.
+
+The reference [Agentic OpenSpec](https://sourcecraft.dev/deepsweet/agentic-openspec/browse/README.md?rev=main) separates shared role instructions from normal/pro model settings. Its concrete provider/model matrix is illustrative, not a requirement or a release default for OctaCity.
+
+## Goals / Non-Goals
+
+**Goals:**
+
+- Make role, execution profile, and selection policy separately versioned concepts, scoped to a Project and resolved to one complete invocation.
+- Support the agreed three selection modes and stage-local reserve/manual recovery over arbitrary compatible candidates.
+- Preserve exact execution, Context isolation, bounded resources, replay, and the existing lifecycle owner under selection and operator races.
+- Reuse the provider bridge while keeping profile selection, Factory routing, and existing tool-risk policy separate.
+
+**Non-Goals:**
+
+- A universal decision engine, generic business-policy DSL, role-driven graph generation, or a new execution path.
+- Installing model providers/software from role content, shared live inheritance between Projects, or changing Agent/JobSpec wire protocols.
+- Automatically upgrading a failed invocation to pro, replacing a selected profile after dispatch, or rebuilding admitted configuration from current catalog values.
+- Adding new external decision-system integrations, an Octa-local JEV plugin, mandatory global action queues, or bulk approval controls.
+
+## Decisions
+
+### 1. Use explicit Factory terms and one level of profile composition
+
+| Term | Meaning and ownership |
+| --- | --- |
+| Factory Role | Project-owned versioned responsibility and shared instruction definition; unrelated to the enrolled worker `Agent` |
+| Role Profile | Project-owned versioned complete configuration bound to one exact role version and qualified installed execution choices |
+| Role Template | Release-owned copy-on-create starting content; neither a live parent nor an execution grant |
+| Profile Selection Policy | Immutable configuration on one declared Flow stage: candidates, mode, criteria, recovery, and optional Decision API contract |
+| Profile Selection Record | Attempt-bound immutable input/result/provenance, including superseded choices and accepted operator intents |
+| Execution Package | Retained effective invocation settings, rules, skill content, explicit Context, and digests used to compile one ordinary Build |
+
+Roles have stable identities and append-only versions. Profiles have their own stable identities under one role, and every version pins an exact role version. Updating a role cannot implicitly alter profiles; an operator explicitly republishes affected profiles and then the Flow/configuration selecting them. Shared responsibility instructions plus profile additions are the only composition level; no recursive inheritance, automatic ancestor-role lookup, or latest-version resolution at execution.
+
+The starter templates are `coder` with `default` and `pro`, `reviewer` with `default`, and `architect` with `default`. Their display labels may be `coder`/`coder-pro`, but names select no behavior. Model/reasoning choices come from installed capability catalogs. Normal and pro may share a model and differ in reasoning effort; they may also differ in skills, tool subsets, or resource limits within the same stage contract. Template copies record template identity/version/digest, are edited independently, and are not auto-created for all existing Projects.
+
+Alternative considered: make normal/pro a global performance tier, a business-role enum, or a per-stage field override. Those cannot express arbitrary Project specialists cleanly and make effective configuration harder to audit. Select a whole published profile instead.
+
+### 2. Keep editable definitions above installed technical authority
+
+A published profile references compatible operator-installed model/harness, plugin/executable, ordinary Build configuration, credential purpose, tool capabilities, and cost/usage policy. It adds bounded supported model/reasoning parameters, exact instruction content, skills and dependencies, context requirements, and narrower resource/tool ceilings. No secret value, installation path, network credential, or unrestricted process configuration is a role field.
+
+Publication validates the complete normalized content and returns exact references. Referenced skill/rule bytes must already be available through authorized retained content or trusted installed bundles. This feature does not add a broad upload API, run package managers, execute skill setup hooks, or follow URLs from SKILL text. Skill resources are an explicit complete dependency closure with safe relative destinations, file/count/byte ceilings, immutable content digests, and no credential-bearing environment inheritance.
+
+Use small operation-shaped store ports for role/profile publication, exact reads, and authorized pages. Memory and PostgreSQL implementations share the public behavioral contract. New migrations add role/profile identity/version/current-pointer and selection/control persistence without changing existing Run/Build identities. Allocate migration numbers at implementation time because other changes are adding migrations concurrently.
+
+### 3. Pin a finite alternative set before admission
+
+Add an optional profile-selection binding for model-backed nodes, mutually exclusive with the existing static Build binding. The stage pins one role version, a bounded ordered map of candidate keys to exact profile versions and compiled technical bindings, input projections, selection mode/criteria, failure policy, and limits. Node result schema, deliverables, capture constraints, candidate purpose, and credential purpose remain the stage contract and must be satisfied by every candidate.
+
+Publication/validation resolves the entire candidate closure and rejects hidden or foreign references, unsupported model settings, missing context, conflicting skill destinations, and unenforceable requirements. It proves a bound for selection cost plus the maximum permitted candidate/reserve execution and retries under enclosing Factory budgets. Resource maxima are not summed across mutually exclusive profiles; actual selection cost and one selected execution are charged. The number of candidates and all byte/operation limits are explicit bounded server contracts, published to clients; Decision API candidates respect the existing finite-choice limit (currently 2–32). A single candidate uses manual/fixed or rules mode rather than issuing a meaningless provider choice request.
+
+Admission retains the normalized selection closure and input projections with the immutable Flow. Profile changes require publishing a new configuration for later admissions. Runtime selection instantiates exactly one permitted `FlowBuildBinding` in the ordinary Build intent and retains its selection identity; it does not rewrite the hashed Flow or add nodes/edges. Old definitions omit this binding and use the existing static path.
+
+Alternative considered: represent each candidate as a separately routed business node. That duplicates task/evidence contracts and conflates profile changes with lifecycle transitions. A bounded pre-dispatch choice keeps those authorities distinct.
+
+### 4. Materialize and verify a complete execution package
+
+The trusted compiler constructs an ordered effective package from:
+
+1. Applicable Project rules for the exact admitted repository revision and explicitly pinned Project policy/instruction inputs.
+2. Exact shared role instructions and profile instructions/settings.
+3. Exact selected skill content and supporting dependencies.
+4. Stage task, accepted requirements, deliverable/result contract, and only explicitly authorized Context projections.
+
+Project rules remain controlling relative to role/profile content; instructions do not grant permission or waive mandatory repository workflow. Preserve source/layer identity in the package so an auditor can identify where a rule came from. Do not claim semantic proof that an LLM will obey TDD: retain required rules and use existing deterministic/protected validation gates for observable outcomes.
+
+The compiler hashes the canonical effective model settings, rules, instructions, skill tree, task, result contract, and technical execution references into a versioned package identity. Extend retained Task Envelope/Build provenance internally and compile through ordinary Octa task parameters and allowed retained-input transfer. Existing task digest/matching must cover effective role settings so profiles sharing an executable or model cannot accidentally match each other's invocation.
+
+Materialize selected skill files read-only where the qualified harness expects them, isolated from unrelated installed/user skills and configuration. Verify their digests before spawn; do not fall back to global skills if a file is unavailable. Model settings must be supported and actually passed to the pinned harness; record requested/effective model identity without falsely claiming provider snapshot immutability. Hidden tests, transcripts, credentials, and sibling outputs remain outside Context/mount grants. A review profile retains its separately qualified read-only/evaluator path; a role called `reviewer` cannot authorize writable coding execution.
+
+### 5. Separate the three profile selection mechanisms
+
+| Mode | Inputs and behavior | Selection provenance |
+| --- | --- | --- |
+| `manual` | Exact configured candidate, admission override, or pending operator choice | Actor/command when supplied, exact profile, target and accepted intent |
+| `rules` | Ordered bounded predicates over explicit typed inputs; first true rule selects a pinned candidate | Policy/rule identity and canonical projected input digest |
+| `decision_api` | Bounded semantic criteria and redacted projected context, finite candidate map, exact qualified provider policy | Provider observation/receipt, separate profile-consumption result and policy |
+
+Rules reuse existing typed expression operations, not the routing decision policy. A catch-all must be explicit. Missing required data is a failure, distinct from a false predicate; an existence guard is the explicit way to handle optional inputs. For example, a retained complexity observation of `high` can map to pro, followed by an explicit ordinary-complexity rule; a missing observation invokes failure handling. No arbitrary scripts, provider-generated predicates, ambient repository discovery, or live metadata lookups are evaluated by the selector.
+
+An authorized manual override has priority before Build dispatch commitment and bypasses automatic selection. Admission overrides bind an exact declared stage address (root Flow reference, nested call-site path, node key) in the admitted closure. As a proposed initial default, that override applies to each bounded execution of that declared stage in the Run, including a new cycle/repeat; each execution gets its own attempt-bound record. A live override instead targets one concrete pending/undispatched occurrence. The initial API does not add wildcard Projects, future mutable Flow aliases, or unpinned profiles.
+
+Invalid explicit commands are rejected and never silently converted to another choice. Successful pre-dispatch supersession appends a record; it cannot erase an earlier provider/manual result. Already committed Build intents, including an unknown-response dispatch, cannot be overridden. Execution failure is handled by the existing retry/rework contract, not by selection recovery.
+
+### 6. Share the provider bridge, not a universal decision engine
+
+The agreed two consumers are **Factory route selection** and **Role Profile selection**. Existing tool-risk use also remains purpose-specific and unchanged.
+
+```text
+Factory routing policy ----> Decision provider bridge ----> JEV / other adapter
+                                     ^
+Profile selection policy ------------+
+
+Each policy validates and applies its own returned observation.
+The bridge owns neither Flow transitions nor profile dispatch.
+```
+
+Reuse the existing registry/transport boundary for capability discovery, bounded requests, exact provider/model identity, deadlines, observed usage, error normalization, and recoverable request/observation retention. Add the technical `profile_selection` purpose explicitly to capability and request contracts, rather than sending profile choices as routing edges. Provider wire formats stay in adapters.
+
+The new profile consumer belongs to the profile-selection domain/application boundary. It maps finite answer keys to pinned profile references, validates stage eligibility and resources, and records a typed profile-selection disposition. Routing keeps its own edge validation/consumption; tool risk keeps its allow/deny/escalate semantics. Share receipt encoding and transport helpers where useful, but do not introduce a catch-all `decide(kind, payload)` business dispatcher, common mutable decision state machine, or cross-consumer fallback policy. Existing retained receipt formats must remain readable; new purpose-specific data is versioned/tagged and cannot be misread as an existing route disposition.
+
+JEV and a fake conformance adapter must explicitly advertise and qualify profile selection. Qualification/calibration is keyed by provider, adapter, model, purpose, question/criteria set, and consuming policy; a routing qualification cannot authorize profile control. Other installed adapters remain unselectable for this purpose until they declare and pass the same contract. The first release need not add another external integration.
+
+Retain rollout semantics. `shadow`/`advisory` require an explicit pinned deterministic baseline candidate and cannot change it. A controlling recommendation requires qualified `bounded_control`; an unusable required signal becomes a typed selection failure. Keep the lower signal's fail-closed denial/escalation distinct from the enclosing stage recovery: an explicitly configured reserve is a separate deterministic choice with its own provenance, not permission inferred from a failed provider response. Cancellation or an expired enclosing deadline cannot use reserve recovery.
+
+### 7. Make selection recovery stage-local and one level deep
+
+Failure policy is a closed tagged choice: `reserve_profile(exact_candidate)` or `manual_selection`. Record safe failure codes for missing input, no match, invalid result/choice, provider unavailability/timeout, inadequate calibrated confidence, and unavailable candidate. The reserve must be among the stage's pinned compatible candidates and may be more or less expensive than the default within the already validated ceiling. If it is currently unusable, move directly to manual selection; do not recurse, query another provider, or use a newer model implicitly.
+
+This policy handles inability to select a dispatchable profile before Build commitment. It does not recover from exhausted hard budgets, cancellation, expired deadlines, or failed model execution. Ordinary capacity waiting after an accepted Build remains the Placement Scheduler's concern; temporary absence of an idle worker is not evidence that the profile is incompatible and must not trigger a reserve switch.
+
+Pending manual state references the existing logical node/attempt and a bounded selection generation. Persist it through a narrow extension of the generic node/control journal, with no synthetic HumanGate nodes or business-phase enum. A choice is an operator control intent, not a model result or stage completion. The current fenced owner alone consumes it, commits the final package/ordinary Build intent, and advances the lifecycle.
+
+### 8. Commit selection and dispatch under the existing ownership boundary
+
+Retain canonical projected selection inputs and a stable selection operation identity before external I/O. Reserve finite provider cost under the same stage/Run ceiling and preserve its original deadline. A restart observes/replays the same provider operation or terminal failure; it never obtains fresh context or re-asks merely because it lost memory. If a provider outcome is unobservable, record that uncertainty and follow the configured recovery; a late result cannot supersede an accepted manual/reserve selection.
+
+Owner and control transactions atomically recheck Run version, current cycle/attempt, cancellation/deadline, selection generation, effective current authority, and fence as appropriate. Manual acceptance records an immutable intent, supersedes eligible prior undispatched selection, and invalidates an in-flight automatic result's right to commit. Exact replay is checked before requiring a new mutation, while current authorization/visibility remains required. Two different commands against the same precondition yield one winner.
+
+The selected record and dispatch intent/outbox are committed consistently so recovery cannot create a Build for an unrecorded profile. Link selection -> package -> ordinary Build operation -> accepted Build/Attempt/Job identities. Retain all superseded records. Idempotent dispatch recovery and ordinary Build retries reuse the committed selection; any new bounded rework Node Attempt gets a new operation bound to its declared stage inputs and the pinned policy.
+
+Waiting and polling do not allocate execution attempts or repeatedly spend model tokens. Deadline, retention, budget reservation/settlement, cancellation, and WIP behavior remain explicit under the enclosing Factory limits. On expiry or cancellation the wait becomes non-actionable; a late command cannot revive it. If all candidates lose current eligibility, diagnostics retain the reason and show no executable choice rather than relaxing policy.
+
+### 9. Add narrow REST and Console surfaces
+
+Use Project/role-owned bounded collections, exact-version reads, normalized validation, and publish/replace commands. Proposed `/api/v1` resource shapes are Project role/template collections, role-owned profile collections, and exact role/profile version resources. Reuse the Factory configuration validate/publish surface for stage policies. Extend Work admission with an optional bounded override map keyed by exact stage address, and add a dedicated pre-dispatch profile-selection control command on the exact Run/node occurrence. Final route names follow existing REST resource conventions; none is an arbitrary Run-state or profile-property patch endpoint.
+
+All mutations use existing audited management handlers, idempotency, and strong current-version preconditions. Template instantiation publishes its reviewed role/profile set atomically under one intent, avoiding partial copies after response loss. Definition validation is side-effect-free and does not contact a model or resolve credentials. Safe pages expose metadata; dedicated authorized detail/content reads may expose editable instructions with no-store handling. Hidden dependencies are excluded before counts/cursors and compatibility output. Operator choices and provider receipts do not bypass current authorization revocation.
+
+Extend the existing Factory Console section with role/profile lists and typed editors, stage mode/candidate/criteria/recovery editing, admission overrides, current pending manual selection, and selection provenance in Run diagnostics. Reuse `ExecutionProfiles`, Flow bindings, Work form, commands, query notices, and immutable confirmed-intent helpers rather than introducing a separate agent control panel. Rules and JEV modes are distinct from routing configuration. Model/task content remains out of local storage, URLs, analytics, and generic errors; drafts are memory-only. Preserve English/Russian labels, keyboard/focus behavior, and narrow layouts.
+
+This feature exposes its pending choices directly through Run diagnostics and controls. If the separate Work card/action view is later present, it can project the same typed pending action; this change neither depends on that proposal nor introduces another authoritative queue.
+
+## Risks / Trade-offs
+
+- **Editable profiles can appear to install arbitrary agent behavior** -> Restrict execution to qualified installed capabilities, explicit bundle contents, and enforced stage/Project ceilings; names and skill prose grant nothing.
+- **Many versioned dependencies increase authoring work** -> Provide normalized validation and copied starter templates, retain explicit version review, and avoid live inheritance that would break reproducibility.
+- **Provider confidence can be misleading** -> Require purpose-specific semantics/qualification and separate calibration from routing; support shadow observation and explicit reserve/manual recovery.
+- **Selection can race with manual overrides or provider callbacks** -> Fence automatic publication and serialize control/dispatch commitment with append-only supersession and stable operation identities.
+- **Skill support differs by pinned harness** -> Validate actual materialization and effective settings through released process-level tests; unsupported features fail before dispatch rather than silently degrading.
+- **Current provider/model APIs may expose moving aliases** -> Freeze requested/effective installation facts and package bytes; expose any provider snapshot limitations honestly.
+- **New metadata can break exhaustive old decoders** -> Keep existing static contracts/retained records readable and version new purpose-specific fields; require compatible server components before enabling new configurations.
+
+## Migration Plan
+
+1. Establish behavioral baselines for existing static Flows, control/dispatch, routing/tool-risk receipts, review isolation, and ordinary CI/CD. Add characterization before any uncovered shared refactoring.
+2. Add reentrant migrations and memory/PostgreSQL operation-shaped ports for immutable definitions, selection inputs/history, and pending controls. Add schema capability/version checks before reading/writing new executable configurations. Do not rewrite existing definitions or admitted Runs.
+3. Install template/catalog and validation support, then qualify complete profile package materialization and its generic ordinary Build path. Old deployments keep the static path and need no role catalog or Decision API to be ready.
+4. Add manual and rules selection, durable recovery, explicit controls, and their restart/race contracts. Add `profile_selection` provider capability, JEV conformance and independent qualification only after those deterministic behaviors pass.
+5. Publish additive REST/OpenAPI/generated clients and Console workflows. Enable a new profile-selecting Flow only after every candidate/reserve, required skill transfer, and provider control policy is installed and validated.
+6. Roll back by preventing new role-selecting admissions and disabling new UI authoring; drain/cancel active new-format Runs under a compatible binary. Retain referenced role/profile/package/receipt content with existing Run/Build retention and holds. Do not run an older decoder against live new-format Runs or delete their history. Re-enable from retained state without replaying selection.
+7. Validate, sync, and archive only this change after implementation and release qualification; do not modify or implicitly complete neighboring proposals.
+
+## Verification Strategy
+
+Implement each observable behavior with repository-mandated Red/Green at a public domain, application, store, HTTP, or released process boundary, one small behavior at a time. Record the failing command/outcome before implementation and its passing outcome afterward; environment failures do not establish Red. Documentation-only edits use validation rather than executable tests.
+
+Use deterministic fixtures with independently specified expected profile choices and digests, plus shared memory/PostgreSQL operation contracts. Cover template independence, arbitrary roles, same-model/different-reasoning profiles, rule ordering/missing input, provider purpose/criteria isolation, both stage failure policies, unusable reserves, all manual/automatic/dispatch races, restart and lost responses, cancellation/deadlines/budget settlement, visibility/revocation, and exact package materialization. Assert chosen ordinary Build/Job inputs and no extra dispatch, not just successful compilation or helper calls.
+
+Required regressions include routing/tool-risk unchanged behavior, static Flow and ordinary CI/CD compatibility, read-only evaluation, protected-test exclusion, capture/evidence/gate authority, and API replay/precondition contracts. Console component/browser journeys cover template copy, custom profile, each mode, reserve/manual recovery, stale choices, localization/accessibility, and no browser persistence of sensitive content. Retain a released harness pilot proving actual skills/rules/settings reach the selected invocation and substituted packages cannot run.
