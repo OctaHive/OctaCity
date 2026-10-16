@@ -25,6 +25,10 @@ impl Fixture {
   pub async fn reply(response: Option<serde_json::Value>, status: u16, delay_millis: u64) -> Self {
     let mut ca = rcgen::CertificateParams::new(Vec::<String>::new()).unwrap();
     ca.is_ca = rcgen::IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    // Distinguish the issuer from the leaf: identical default names make
+    // native chain builders classify the leaf as self-signed.
+    ca.distinguished_name
+      .push(rcgen::DnType::CommonName, "OctaCity OpenAI fixture root");
     ca.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
     let issuer = rcgen::CertifiedIssuer::self_signed(ca, rcgen::KeyPair::generate().unwrap()).unwrap();
     let key = rcgen::KeyPair::generate().unwrap();

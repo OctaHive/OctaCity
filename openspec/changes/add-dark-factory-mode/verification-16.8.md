@@ -101,6 +101,33 @@ No external dependency version changed. These are local results for the new
 adapter increment, not a reassignment of task 16.6/16.7's earlier exact-source
 GitHub qualification or evidence of a new live backend/model experiment.
 
+## Windows HTTPS fixture correction
+
+The exact-source `b5da11ae195fc6da60a43b68d5f4f25da4109943`
+[Windows quality job](https://github.com/OctaHive/OctaCity/actions/runs/38874030163/job/116884654820)
+provided a behavioral Red: 4 OpenAI tests passed and 5 HTTPS-dependent tests
+failed with transport failures instead of their expected typed responses.
+The same nine tests passed locally on macOS before the correction. The JEV
+adapter's 12 tests passed in that Windows job.
+
+The OpenAI fixture used rcgen's identical default Distinguished Name for its
+CA and leaf certificate. Independently verifying the actual generated chain
+with `openssl verify -purpose sslserver -verify_hostname localhost -CAfile
+probe-ca.pem probe-leaf.pem` reproduced a chain failure, exit 2, reporting
+`self-signed certificate`. Changing only the CA Common Name to
+`OctaCity OpenAI fixture root` made that verification pass, exit 0. Temporary
+certificate-capture instrumentation was removed. This is a fixture correction;
+production transport, TLS/hostname checks, timeout budgets, failure assertions
+and replay policy did not change.
+
+After the correction, the existing public provider tests passed locally:
+`cargo test --locked -j 2 -p octacity-server-decision-signal
+-p octacity-server-decision-signal-jev -p octacity-server-decision-signal-openai`
+(registry 1, JEV 12, OpenAI 9). Task-local evidence includes
+`windows-b5-red.log`, `windows-tls-chain-{red,green}.log`, and
+`windows-tls-local-regressions.log`. Windows Green remains required before
+archiving; a local chain result is not a Windows qualification result.
+
 ## Implemented preparation
 
 Added `tools/fixtures/factory-signal-calibration/corpus-v1.json`: eight routing
