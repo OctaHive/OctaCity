@@ -1,6 +1,10 @@
 # Task 16.7: documentation, specification sync and release gates
 
-Status: in progress. Task 16.7 is not completed by specification sync alone.
+Status: complete. Final-source portable CI, coverage, stand, Console and the
+complete hosted backend suite, including security and performance, passed.
+The final qualification section below supersedes earlier pending observations
+and reconciles exact-source results with the retained independent package
+journeys. Task 16.8's real-model qualification remains open.
 
 ## Specification synchronization
 
@@ -343,3 +347,47 @@ security, both stand jobs and Console passed in
 Windows quality, remaining platform quality and coverage for `1aa1aa4` are
 still being observed. Tasks 16.6 and 16.7 remain unchecked until their complete
 required qualification is confirmed, including fresh Linux Native performance.
+
+## Final main CI and release-gate reconciliation
+
+Exact `main` source `55f53681eefea823e13dcfa38cb0cc6ae6edb23a` passed
+[complete hosted CI](https://github.com/OctaHive/OctaCity/actions/runs/38839218319),
+[security scanning](https://github.com/OctaHive/OctaCity/actions/runs/38839218293)
+and the [three-platform released Host matrix](https://github.com/OctaHive/OctaCity/actions/runs/38839218349).
+All required hosted CI jobs succeeded, including strict Clippy/rustdoc,
+formatting, portable Rust tests, locked Console and both hosted stand modes.
+The self-hosted stand was skipped and is not counted as evidence.
+
+| Rust quality platform | Passed | Failed | Ignored |
+| --- | ---: | ---: | ---: |
+| Windows | 1,701 | 0 | 167 |
+| Ubuntu | 1,893 | 0 | 205 |
+| macOS | 1,883 | 0 | 205 |
+
+Each platform emitted 222 test-result groups. Coverage passed the unchanged
+80% line floor at 86.81% lines (83.60% regions, 79.67% functions). Logs are
+`github-main-55-{windows,ubuntu,macos,coverage}.log`; their digests and counts
+are retained in `main-55-qualification-summary.json`.
+
+The operator's [full hosted backend run](https://github.com/OctaHive/OctaCity/actions/runs/38863523207)
+uses the same exact source. Native, containerd, Microsandbox, all three released
+Host targets, lifecycle, failure injection and the complete security-boundary
+matrix passed, including the previously missing fresh Native performance
+evaluation. The final `backend-evidence` aggregate also passed, confirming all
+required backend evidence; the workflow concluded `success`. Individual results,
+unchanged budgets and hosted exclusions are recorded in `verification-16.6.md`.
+
+The independent packaged Factory and Factory-disabled ordinary journeys above
+remain valid for production source `1aa1aa4`: its subsequent diff to `55f5368`
+contains only documentation and the platform-aware `cfg(test)` ServerConfig
+fixture. No production executable, dependency lockfile or package input changed.
+Their checksums, 728.29 s / 68.32 s test results and hermetic-model limitation
+remain explicit. This reconciliation does not claim a published release or real
+JEV promotion, and task 16.8 remains open.
+
+This evidence update changes documentation only; executable TDD does not apply.
+Strict change validation, all eleven main specifications and whitespace checks
+passed before commit. Tasks 16.6 and 16.7 are checked complete; the change stays
+active with 120 of 121 tasks complete because real JEV calibration in task 16.8
+is still unavailable. No external connector or UI follow-up is folded into this
+qualification.

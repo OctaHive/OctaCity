@@ -1,8 +1,11 @@
 # Task 16.6: ordinary CI/CD compatibility and qualified v3 contracts
 
-Status: in progress. Task 16.6 remains unchecked until the corrected revision
-passes the required GitHub Actions contracts, including Windows and Linux
-containerd/Microsandbox. No Factory platform is qualified by a skipped job.
+Status: complete for the required compatibility scope at
+`55f53681eefea823e13dcfa38cb0cc6ae6edb23a`. Final-source Windows, Linux and macOS
+quality and the complete hosted backend suite, including security, failure
+injection and performance, passed. The final qualification section below
+supersedes earlier pending observations. No Factory platform is qualified by a
+skipped job.
 
 ## Revision and environment
 
@@ -414,3 +417,65 @@ Receipts: `server-offline-profile-baseline`,
 ordinary package journeys at `1aa1aa4` also passed; their exact source, checksums,
 commands, timings and setup limitations are recorded in `verification-16.7.md`.
 Neither task 16.6 nor 16.7 is marked complete by these individual Windows Greens.
+
+## Final-source hosted qualification
+
+The operator dispatched suite `hosted` on `main` at exact source
+`55f53681eefea823e13dcfa38cb0cc6ae6edb23a`:
+[backend contracts](https://github.com/OctaHive/OctaCity/actions/runs/38863523207).
+This is the complete hosted suite, independently of the earlier push-only Host
+run. The agent did not dispatch the workflow or change its schedule, budgets,
+backend guards or qualification criteria.
+
+| Boundary | Final-source result | Job |
+| --- | --- | --- |
+| Linux Native direct runner and packaged ordinary matrix | passed; packaged test 77.90 s | [116851084399](https://github.com/OctaHive/OctaCity/actions/runs/38863523207/job/116851084399) |
+| Linux containerd direct runner and packaged ordinary matrix | passed; packaged test 17.15 s | [116851084345](https://github.com/OctaHive/OctaCity/actions/runs/38863523207/job/116851084345) |
+| Linux Microsandbox direct runner and packaged ordinary matrix | passed; packaged test 59.40 s | [116851084407](https://github.com/OctaHive/OctaCity/actions/runs/38863523207/job/116851084407) |
+| Released Host: Linux AMD64, macOS ARM64, Windows AMD64 | all three passed | [workflow](https://github.com/OctaHive/OctaCity/actions/runs/38863523207) |
+| Lifecycle matrix | passed | [116851084322](https://github.com/OctaHive/OctaCity/actions/runs/38863523207/job/116851084322) |
+| Complete failure-injection matrix | passed | [116851084261](https://github.com/OctaHive/OctaCity/actions/runs/38863523207/job/116851084261) |
+| Complete security-boundary matrix | passed | [116851084359](https://github.com/OctaHive/OctaCity/actions/runs/38863523207/job/116851084359) |
+| Required backend evidence aggregate | passed | [116871846769](https://github.com/OctaHive/OctaCity/actions/runs/38863523207/job/116871846769) |
+
+The entire workflow completed successfully. The final aggregate confirmed that
+every required backend produced successful evidence. Security emitted 119 Rust
+test-result groups (1,969 passed, zero failed, 61 ignored); failure injection
+emitted 88 groups (968 passed, zero failed, 66 ignored). These counts include
+overlapping package suites and are not unique-test totals. Ignored tests are
+not counted as executed negative or backend contracts.
+
+The fresh Linux Native performance evaluation passed all sixteen unchanged
+budgets after the earliest-preparing queue measurement correction. Queue
+acquisition p95 was 681 ms against 5,000 ms; log-index lag was 4,457 ms against
+5,000 ms; backend startup was 2,484 ms against 15,000 ms. The 100-Agent soak
+reported zero errors. This supplies the previously missing fresh performance
+evidence; it does not relax any threshold.
+
+The same exact source passed
+[main CI](https://github.com/OctaHive/OctaCity/actions/runs/38839218319):
+Windows 1,701, Ubuntu 1,893 and macOS 1,883 Rust tests passed, with zero failures
+on each platform. Hosted stand and locked Console jobs passed. Ignored
+provisioned scenarios and the skipped self-hosted stand are not qualifications.
+The Windows canonical capture, trusted-output freeze, fencing and platform-aware
+offline-profile assertions all passed in the complete Windows job.
+
+Hosted suite exclusions remain explicit: macOS Microsandbox, Apple VF, Windows
+WHP preview and the separately gated Vault artifact contract were skipped.
+They receive no new qualification from this run; earlier independently retained
+macOS packaged contracts keep their exact source/environment scope. Host
+success does not grant Factory execution capability on Windows or bypass
+required v3 enforcement. Real JEV calibration remains task 16.8.
+
+Completed job logs are retained as `github-backend-55-{native,containerd,
+microsandbox,lifecycle,failure,security,aggregate,host-linux,host-macos,
+host-windows}.log` under the
+task-local evidence directory. `backend-55-qualified-boundaries.json` retains
+log digests and observed test/performance summaries; the Actions jobs retain
+their workflow artifacts. No credentials or private runtime configuration are
+included in this report.
+
+Task 16.6 is complete based on this final-source hosted qualification together
+with the independently retained ordinary/Factory macOS package journeys and
+compatibility checks above. The closing commit changes only evidence and task
+checkboxes; executable inputs remain those qualified at the stated revisions.
