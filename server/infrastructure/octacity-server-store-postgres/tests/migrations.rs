@@ -1073,3 +1073,51 @@ async fn unreleased_factory_schema_has_no_parallel_stage_execution_journal() {
     "stage-specific execution must use the common node journal: {obsolete:?}"
   );
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn poll_page_upgrade_preserves_legacy_progress_and_keeps_database_documents_bounded() {
+  let database = TestDatabase::empty().await;
+  MIGRATOR.run_to(61, &database.pool).await.unwrap();
+  let project = uuid::Uuid::new_v4();
+  let source = uuid::Uuid::new_v4();
+  sqlx::query(
+    "INSERT INTO projects(id,name,version,created_at,updated_at) VALUES ($1,'legacy poll fixture',1,now(),now())",
+  )
+  .bind(project)
+  .execute(&database.pool)
+  .await
+  .unwrap();
+  let legacy = serde_json::json!({"progress":{"window_start":0,"window_end":100,"continuation":"private-legacy-position","reconciliation":false}});
+  sqlx::query("INSERT INTO factory_source_scans(kind,id,project_id,document) VALUES ('input',$1,$2,$3)")
+    .bind(source)
+    .bind(project)
+    .bind(sqlx::types::Json(&legacy))
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
+  let restored: sqlx::types::Json<serde_json::Value> =
+    sqlx::query_scalar("SELECT document FROM factory_source_scans WHERE id=$1")
+      .bind(source)
+      .fetch_one(&database.pool)
+      .await
+      .unwrap();
+  assert_eq!(restored.0, legacy);
+  for invalid in [
+    serde_json::json!([]),
+    serde_json::json!({"payload":"x".repeat(8421377)}),
+  ] {
+    let error = sqlx::query("UPDATE factory_source_scans SET document=$1 WHERE id=$2")
+      .bind(sqlx::types::Json(invalid))
+      .bind(source)
+      .execute(&database.pool)
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.as_database_error().and_then(|e| e.code()).as_deref(),
+      Some("23514")
+    );
+  }
+  database.cleanup().await;
+}

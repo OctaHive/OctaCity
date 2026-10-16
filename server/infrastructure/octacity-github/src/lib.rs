@@ -5,13 +5,18 @@
 mod api;
 mod candidate;
 mod config;
+mod issue_pagination;
 pub mod issue_selector;
+mod issue_source;
 mod protocol_io;
+mod work_config;
+mod work_protocol;
 use config::Config;
 use octacity_delivery_protocol::{Command, Failure, FailureClass, Outcome, Request};
 pub use protocol_io::serve;
 use std::path::Path;
 use tokio_util::sync::CancellationToken;
+pub use work_config::{AuthorizedIssueAccess, GithubWorkProvider};
 
 /// One installed GitHub provider plugin. Capability roles share transport/configuration,
 /// while the requested protocol and installed credential class remain authoritative.

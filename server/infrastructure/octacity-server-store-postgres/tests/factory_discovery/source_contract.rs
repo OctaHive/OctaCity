@@ -1,7 +1,8 @@
 use super::*;
 use octacity_server_factory::{
   WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceGroup, WorkSourceGroupId,
-  WorkSourceInput, WorkSourceInputContext, WorkSourceInputDraft, WorkSourceInputId, WorkSourceRepositoryRef,
+  WorkSourceGroupVersion, WorkSourceInput, WorkSourceInputContext, WorkSourceInputDraft, WorkSourceInputId,
+  WorkSourceInputVersion, WorkSourceRepositoryRef,
 };
 use octacity_server_store::AdmitPreparedWorkSource;
 use octacity_server_store::{ClaimWorkSourceScan, WorkSourceProgress, WorkSourceScanTarget};
@@ -62,7 +63,8 @@ async fn source_publication_is_atomic_owned_and_retains_exact_versions_in_both_s
     .unwrap();
   for provider in ["github", "gitlab", "jira", "custom-tracker"] {
     let input = input(&configuration, &repository, provider);
-    let group = WorkSourceGroup::publish(WorkSourceGroupId::generate(), project, vec![input.clone()]).unwrap();
+    let grouped = self::input(&configuration, &repository, provider);
+    let group = WorkSourceGroup::publish(WorkSourceGroupId::generate(), project, vec![grouped]).unwrap();
     for is_postgres in [false, true] {
       let store: &dyn FactorySourceStore = if is_postgres { &postgres } else { &memory };
       publication_contract(store, &input, &group, foreign).await;
@@ -91,19 +93,510 @@ async fn source_publication_is_atomic_owned_and_retains_exact_versions_in_both_s
         .unwrap(),
       group
     );
+    let worker_input = self::input(&configuration, &repository, provider);
+    let worker_group =
+      WorkSourceGroup::publish(WorkSourceGroupId::generate(), project, vec![worker_input.clone()]).unwrap();
+    worker_contract(&memory, &worker_input, &worker_group).await;
+    worker_contract(&PostgresStore::new(source_pool.clone()), &worker_input, &worker_group).await;
+    for backend in [&memory as &dyn FactorySourceStore, &postgres] {
+      retired_group_member_contract(backend, &configuration, &repository, provider).await;
+      regrouped_preparation_contract(backend, &configuration, &repository, provider).await;
+    }
     let extra = self::input(&configuration, &repository, provider);
     source_artifact_contract(&memory, &extra, &configuration, None).await;
     source_artifact_contract(&postgres, &extra, &configuration, Some(&postgres)).await;
+    let polling_input = self::input(&configuration, &repository, provider);
+    let expected_polling = polling_progress_contract(&postgres, &polling_input).await;
+    assert_eq!(
+      polling_progress_contract(&memory, &polling_input).await,
+      expected_polling
+    );
+    let restarted = PostgresStore::new(source_pool.clone());
+    let restored = restarted
+      .claim_source_scan(ClaimWorkSourceScan {
+        project_id: project,
+        target: WorkSourceScanTarget::Input {
+          id: polling_input.id(),
+          version: polling_input.version(),
+        },
+        owner: key("restarted-polling-store"),
+        now: time(1000),
+        until: time(1100),
+      })
+      .await
+      .unwrap()
+      .unwrap();
+    assert_eq!(restored.progress, Some(expected_polling));
+    for backend in [
+      &restarted as &dyn FactorySourceStore,
+      &memory as &dyn FactorySourceStore,
+    ] {
+      assert_eq!(backend.expire_source_poll_pages(time(1999), 1).await.unwrap(), 0);
+      assert_eq!(backend.expire_source_poll_pages(time(2000), 1).await.unwrap(), 1);
+      assert_eq!(backend.expire_source_poll_pages(time(2001), 1).await.unwrap(), 0);
+      assert!(
+        backend
+          .claim_source_scan(ClaimWorkSourceScan {
+            project_id: project,
+            target: restored.claim.target,
+            owner: key("after-cache-expiry"),
+            now: time(2001),
+            until: time(2100)
+          })
+          .await
+          .unwrap()
+          .unwrap()
+          .progress
+          .is_none()
+      );
+    }
   }
   use octacity_server_store::testing::MutationEvidenceProbe as _;
   let evidence = memory.mutation_evidence_counts().await;
-  assert_eq!(evidence.idempotency, 17);
-  assert_eq!(evidence.audit, 17);
-  assert_eq!(evidence.outbox, 17);
+  assert_eq!(evidence.idempotency, 21);
+  assert_eq!(evidence.audit, 21);
+  assert_eq!(evidence.outbox, 21);
   let counts: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM factory_runs),(SELECT count(*) FROM audit_facts),(SELECT count(*) FROM idempotency_records)").fetch_one(&database.pool).await.unwrap();
-  assert_eq!(counts, (16, 17, 17));
+  assert_eq!(counts, (20, 21, 21));
   source_pool.close().await;
   database.cleanup().await;
+}
+
+async fn regrouped_preparation_contract(
+  store: &dyn FactorySourceStore,
+  configuration: &FactoryConfiguration,
+  repository: &PublishedRepository,
+  provider: &str,
+) {
+  let input = input(configuration, repository, provider);
+  store
+    .publish_work_sources(PublishWorkSources {
+      project_id: input.project_id(),
+      inputs: vec![WorkSourceInputChange {
+        expected_version: None,
+        input: input.clone(),
+      }],
+      group: None,
+    })
+    .await
+    .unwrap();
+  let old = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target: WorkSourceScanTarget::Input {
+        id: input.id(),
+        version: input.version(),
+      },
+      owner: key("before-group"),
+      now: time(1),
+      until: time(10),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  let reserved = store
+    .reserve_source_preparation(ReserveWorkSourcePreparation {
+      claim: old.claim.clone(),
+      input_id: input.id(),
+      item: WorkSourceItem {
+        resource: octacity_server_factory::ExternalWorkIdentity::new("container-native").unwrap(),
+        item: octacity_server_factory::ExternalWorkIdentity::new("regrouped-ticket").unwrap(),
+      },
+      snapshot: b"original immutable observation".to_vec(),
+      now: time(2),
+    })
+    .await
+    .unwrap();
+  let group = WorkSourceGroup::publish(WorkSourceGroupId::generate(), input.project_id(), vec![input.clone()]).unwrap();
+  store
+    .publish_work_sources(PublishWorkSources {
+      project_id: input.project_id(),
+      inputs: vec![],
+      group: Some(WorkSourceGroupChange {
+        expected_version: None,
+        group: group.clone(),
+      }),
+    })
+    .await
+    .unwrap();
+  assert!(store.source_scan_members(old.claim.clone(), time(3)).await.is_err());
+  let current = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target: WorkSourceScanTarget::Group {
+        id: group.id(),
+        version: group.version(),
+      },
+      owner: key("current-group"),
+      now: time(10),
+      until: time(30),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(
+    store
+      .pending_source_preparations(input.project_id(), current.claim.target, None, 1)
+      .await
+      .unwrap(),
+    vec![reserved.clone()],
+    "current members recover the original input even when its scan provenance changes"
+  );
+  let progress = WorkSourceProgress {
+    polling: None,
+    window_start: time(1),
+    window_end: time(9),
+    continuation: None,
+    reconciliation: false,
+  };
+  assert!(
+    store
+      .checkpoint_source_scan(current.claim.clone(), time(11), None, progress.clone())
+      .await
+      .is_err(),
+    "a regrouped pending item must still block uncovered progress"
+  );
+  let original = admission_from_configuration(
+    uuid::Uuid::new_v4().as_u128(),
+    uuid::Uuid::new_v4().as_u128(),
+    "regrouped",
+    12,
+    configuration,
+    repository,
+  );
+  let intent = FactoryWorkAdmissionIntent {
+    project_id: input.project_id(),
+    configuration_id: configuration.reference().id(),
+    configuration_version: configuration.reference().version(),
+    repository_id: repository.id,
+    repository_version: repository.version,
+    external_identity: reserved
+      .admission_identity(octacity_server_store::ManagementSecurityScope::trusted_network())
+      .external_identity,
+    source: octacity_server_store::RepositorySourceSelection::DefaultReference,
+    artifacts: original.work.artifacts().clone(),
+    classification: WorkClassification::new(
+      original.work.priority(),
+      original.work.risk(),
+      original.work.metadata().clone(),
+    ),
+    idempotency_key: idempotency(&format!("regrouped-{}", input.id())),
+    admitted_at: time(12),
+  };
+  let mut publish = PublishSourcePreparationIntent {
+    claim: old.claim,
+    preparation_id: reserved.id,
+    intent,
+    now: time(3),
+  };
+  assert!(
+    store.publish_source_preparation_intent(publish.clone()).await.is_err(),
+    "old standalone owners remain revoked"
+  );
+  let outsider = self::input(configuration, repository, provider);
+  let unrelated_group = WorkSourceGroup::publish(
+    WorkSourceGroupId::generate(),
+    input.project_id(),
+    vec![outsider.clone()],
+  )
+  .unwrap();
+  store
+    .publish_work_sources(PublishWorkSources {
+      project_id: input.project_id(),
+      inputs: vec![WorkSourceInputChange {
+        expected_version: None,
+        input: outsider,
+      }],
+      group: Some(WorkSourceGroupChange {
+        expected_version: None,
+        group: unrelated_group.clone(),
+      }),
+    })
+    .await
+    .unwrap();
+  let unrelated = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target: WorkSourceScanTarget::Group {
+        id: unrelated_group.id(),
+        version: unrelated_group.version(),
+      },
+      owner: key("unrelated-group"),
+      now: time(10),
+      until: time(30),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  publish.claim = unrelated.claim;
+  publish.now = time(11);
+  assert!(
+    store.publish_source_preparation_intent(publish.clone()).await.is_err(),
+    "a current owner of another group cannot adopt a nonmember's preparation"
+  );
+  publish.claim = current.claim.clone();
+  publish.now = time(12);
+  let prepared = store.publish_source_preparation_intent(publish).await.unwrap();
+  let admitted = store
+    .admit_prepared_source_work(
+      AdmitPreparedWorkSource {
+        claim: current.claim.clone(),
+        preparation_id: prepared.id,
+        now: time(13),
+      },
+      management_mutation_with_request(
+        prepared_admission(&prepared, configuration),
+        format!("regrouped-{}", input.id()),
+      ),
+    )
+    .await
+    .unwrap();
+  let recovered = store.source_preparation(input.project_id(), reserved.id).await.unwrap();
+  assert_eq!(recovered.snapshot, reserved.snapshot);
+  assert_eq!(recovered.target, reserved.target);
+  assert_eq!(recovered.admission.unwrap().run_id, admitted.admission.run.id());
+  store
+    .checkpoint_source_scan(current.claim, time(14), None, progress)
+    .await
+    .unwrap();
+}
+
+async fn retired_group_member_contract(
+  store: &dyn FactorySourceStore,
+  configuration: &FactoryConfiguration,
+  repository: &PublishedRepository,
+  provider: &str,
+) {
+  for removed in [false, true] {
+    let original = input(configuration, repository, provider);
+    let other = input(configuration, repository, provider);
+    let group = WorkSourceGroup::publish(
+      WorkSourceGroupId::generate(),
+      original.project_id(),
+      vec![original.clone(), other.clone()],
+    )
+    .unwrap();
+    store
+      .publish_work_sources(PublishWorkSources {
+        project_id: original.project_id(),
+        inputs: vec![original.clone(), other.clone()]
+          .into_iter()
+          .map(|input| WorkSourceInputChange {
+            expected_version: None,
+            input,
+          })
+          .collect(),
+        group: Some(WorkSourceGroupChange {
+          expected_version: None,
+          group: group.clone(),
+        }),
+      })
+      .await
+      .unwrap();
+    let old = store
+      .claim_source_scan(ClaimWorkSourceScan {
+        project_id: original.project_id(),
+        target: WorkSourceScanTarget::Group {
+          id: group.id(),
+          version: group.version(),
+        },
+        owner: key("before-disable"),
+        now: time(1),
+        until: time(100),
+      })
+      .await
+      .unwrap()
+      .unwrap();
+    let retained = store
+      .reserve_source_preparation(ReserveWorkSourcePreparation {
+        claim: old.claim.clone(),
+        input_id: original.id(),
+        item: WorkSourceItem {
+          resource: octacity_server_factory::ExternalWorkIdentity::new("container-native").unwrap(),
+          item: octacity_server_factory::ExternalWorkIdentity::new("retired-pending").unwrap(),
+        },
+        snapshot: b"private original snapshot".to_vec(),
+        now: time(2),
+      })
+      .await
+      .unwrap();
+    let mut draft = original.definition().clone();
+    draft.enabled = false;
+    let capability = WorkSourceCapability {
+      project_id: original.project_id(),
+      role: WorkSourceCapabilityRole::Source,
+      binding: draft.source.clone(),
+    };
+    let disabled = original
+      .replace(
+        WorkSourceInputVersion::new(2).unwrap(),
+        draft,
+        WorkSourceInputContext {
+          target: configuration,
+          repository: &original.definition().repository,
+          source: Some(&capability),
+          reporter: None,
+        },
+      )
+      .unwrap();
+    let members = if removed {
+      vec![other.clone()]
+    } else {
+      vec![disabled.clone(), other.clone()]
+    };
+    let updated = group.replace(WorkSourceGroupVersion::new(2).unwrap(), members).unwrap();
+    store
+      .publish_work_sources(PublishWorkSources {
+        project_id: original.project_id(),
+        inputs: vec![WorkSourceInputChange {
+          expected_version: Some(original.version()),
+          input: disabled,
+        }],
+        group: Some(WorkSourceGroupChange {
+          expected_version: Some(group.version()),
+          group: updated.clone(),
+        }),
+      })
+      .await
+      .unwrap();
+    assert!(store.source_scan_members(old.claim, time(3)).await.is_err());
+    let current = store
+      .claim_source_scan(ClaimWorkSourceScan {
+        project_id: original.project_id(),
+        target: WorkSourceScanTarget::Group {
+          id: updated.id(),
+          version: updated.version(),
+        },
+        owner: key("after-disable"),
+        now: time(100),
+        until: time(200),
+      })
+      .await
+      .unwrap()
+      .unwrap();
+    assert!(
+      store
+        .pending_source_preparations(original.project_id(), current.claim.target, None, 64)
+        .await
+        .unwrap()
+        .is_empty(),
+      "retired members must not block enabled group inputs"
+    );
+    store
+      .checkpoint_source_scan(
+        current.claim,
+        time(101),
+        None,
+        WorkSourceProgress {
+          polling: None,
+          window_start: time(1),
+          window_end: time(4),
+          continuation: None,
+          reconciliation: false,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      store
+        .source_preparation(original.project_id(), retained.id)
+        .await
+        .unwrap(),
+      retained,
+      "disabled or removed preparation remains unchanged until ordinary retention"
+    );
+  }
+}
+
+async fn polling_progress_contract(store: &dyn FactorySourceStore, input: &WorkSourceInput) -> WorkSourceProgress {
+  use octacity_server_store::{WorkSourcePendingPage, WorkSourcePollPass, WorkSourcePollingState};
+  store
+    .publish_work_sources(PublishWorkSources {
+      project_id: input.project_id(),
+      inputs: vec![WorkSourceInputChange {
+        expected_version: None,
+        input: input.clone(),
+      }],
+      group: None,
+    })
+    .await
+    .unwrap();
+  let target = WorkSourceScanTarget::Input {
+    id: input.id(),
+    version: input.version(),
+  };
+  let scan = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target,
+      owner: key("polling-one"),
+      now: time(500),
+      until: time(510),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  let progress = WorkSourceProgress {
+    window_start: time(480),
+    window_end: time(500),
+    continuation: Some("private-current-page".into()),
+    reconciliation: false,
+    polling: Some(WorkSourcePollingState {
+      scan_id: digest(77),
+      finished: false,
+      pending_page: Some(WorkSourcePendingPage {
+        candidates: vec![
+          serde_json::json!({"body":"x".repeat(50_000),"title":"private retained task","labels":["arbitrary-label"],"native_item":"opaque-item"}),
+        ],
+        next_cursor: Some("private-next-page".into()),
+        expires_at: time(2000),
+      }),
+      other_pass: Some(WorkSourcePollPass {
+        scan_id: digest(78),
+        window_start: time(0),
+        window_end: time(490),
+        continuation: Some("private-full-page".into()),
+        reconciliation: true,
+        finished: false,
+      }),
+      reconciliation_due_at: time(1000),
+      switch_after_page: false,
+    }),
+  };
+  store
+    .checkpoint_source_scan(scan.claim.clone(), time(501), None, progress.clone())
+    .await
+    .unwrap();
+  let takeover = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target,
+      owner: key("polling-two"),
+      now: time(510),
+      until: time(520),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(takeover.progress, Some(progress.clone()));
+  assert!(
+    store
+      .checkpoint_source_scan(scan.claim, time(511), Some(progress.clone()), progress.clone())
+      .await
+      .is_err()
+  );
+  assert!(
+    store
+      .checkpoint_source_scan(takeover.claim.clone(), time(511), None, progress.clone())
+      .await
+      .is_err()
+  );
+  store
+    .checkpoint_source_scan(takeover.claim, time(511), Some(progress.clone()), progress.clone())
+    .await
+    .unwrap();
+  assert!(!format!("{progress:?}").contains("private"));
+  progress
 }
 
 async fn source_artifact_contract(
@@ -593,6 +1086,7 @@ async fn fenced_admission_contract(
       .is_empty()
   );
   let progress = WorkSourceProgress {
+    polling: None,
     window_start: time(1),
     window_end: time(9),
     continuation: None,
@@ -767,6 +1261,7 @@ async fn preparation_contract(store: &dyn FactorySourceStore, input: &WorkSource
       .is_err()
   );
   let progress = WorkSourceProgress {
+    polling: None,
     window_start: time(1),
     window_end: time(9),
     continuation: Some("next-page".into()),
@@ -828,6 +1323,7 @@ async fn scan_contract(
     competing.owner = key("worker-two");
     assert!(store.claim_source_scan(competing.clone()).await.unwrap().is_none());
     let progress = WorkSourceProgress {
+      polling: None,
       window_start: time(1),
       window_end: time(9),
       continuation: Some("opaque-page:2".into()),
@@ -942,10 +1438,13 @@ async fn publication_contract(
 ) {
   let publication = PublishWorkSources {
     project_id: input.project_id(),
-    inputs: vec![WorkSourceInputChange {
-      expected_version: None,
-      input: input.clone(),
-    }],
+    inputs: std::iter::once(input.clone())
+      .chain(group.members().iter().cloned())
+      .map(|input| WorkSourceInputChange {
+        expected_version: None,
+        input,
+      })
+      .collect(),
     group: Some(WorkSourceGroupChange {
       expected_version: None,
       group: group.clone(),
@@ -967,7 +1466,10 @@ async fn publication_contract(
   new["id"] = serde_json::to_value(new_id).unwrap();
   let fresh = serde_json::from_value::<WorkSourceInput>(new).unwrap();
   let mut conflicting = publication.clone();
-  conflicting.inputs[0].input = fresh;
+  conflicting.inputs = vec![WorkSourceInputChange {
+    expected_version: None,
+    input: fresh,
+  }];
   assert!(store.publish_work_sources(conflicting).await.is_err());
   assert!(
     store
@@ -1063,7 +1565,7 @@ async fn replacement_contract(
     )
     .unwrap();
   let changed_group = group
-    .replace(WorkSourceGroupVersion::new(2).unwrap(), vec![changed.clone()])
+    .replace(WorkSourceGroupVersion::new(2).unwrap(), group.members().to_vec())
     .unwrap();
   let replacement = PublishWorkSources {
     project_id: input.project_id(),
@@ -1085,6 +1587,7 @@ async fn replacement_contract(
         time(82),
         group_claim.progress,
         WorkSourceProgress {
+          polling: None,
           window_start: time(1),
           window_end: time(9),
           continuation: None,
@@ -1144,6 +1647,7 @@ async fn replacement_contract(
         time(82),
         first.progress,
         WorkSourceProgress {
+          polling: None,
           window_start: time(1),
           window_end: time(9),
           continuation: None,
@@ -1418,4 +1922,186 @@ fn prepared_admission(
     run,
     admitted_at: intent.admitted_at,
   }
+}
+
+async fn worker_contract(store: &dyn FactorySourceStore, input: &WorkSourceInput, group: &WorkSourceGroup) {
+  use octacity_server_store::{WorkSourceFailure, WorkSourceSchedule};
+  store
+    .publish_work_sources(PublishWorkSources {
+      project_id: input.project_id(),
+      inputs: vec![WorkSourceInputChange {
+        expected_version: None,
+        input: input.clone(),
+      }],
+      group: None,
+    })
+    .await
+    .unwrap();
+  let independent = WorkSourceScanTarget::Input {
+    id: input.id(),
+    version: input.version(),
+  };
+  assert!(
+    store
+      .source_scan_targets(input.project_id(), None, 64)
+      .await
+      .unwrap()
+      .contains(&independent)
+  );
+  let old = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target: independent,
+      owner: key("before-group"),
+      now: time(1),
+      until: time(100),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  store
+    .publish_work_sources(PublishWorkSources {
+      project_id: input.project_id(),
+      inputs: vec![],
+      group: Some(WorkSourceGroupChange {
+        expected_version: None,
+        group: group.clone(),
+      }),
+    })
+    .await
+    .unwrap();
+  assert!(
+    store.source_scan_members(old.claim, time(2)).await.is_err(),
+    "group publication revokes standalone effects under the same Project lock"
+  );
+  assert!(
+    store
+      .claim_source_scan(ClaimWorkSourceScan {
+        project_id: input.project_id(),
+        target: independent,
+        owner: key("standalone-denied"),
+        now: time(2),
+        until: time(100)
+      })
+      .await
+      .is_err()
+  );
+  let target = WorkSourceScanTarget::Group {
+    id: group.id(),
+    version: group.version(),
+  };
+  let targets = store.source_scan_targets(input.project_id(), None, 64).await.unwrap();
+  assert!(targets.contains(&target));
+  assert!(!targets.contains(&independent));
+  let mut paged = vec![];
+  let mut after = None;
+  loop {
+    let page = store.source_scan_targets(input.project_id(), after, 1).await.unwrap();
+    if page.is_empty() {
+      break;
+    }
+    after = page.last().copied();
+    paged.extend(page);
+  }
+  assert_eq!(paged, targets);
+  for limit in [0, 65] {
+    assert!(
+      store
+        .source_scan_targets(input.project_id(), None, limit)
+        .await
+        .is_err()
+    );
+  }
+  let first = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target,
+      owner: key("worker.first"),
+      now: time(10),
+      until: time(100),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(
+    store.source_scan_members(first.claim.clone(), time(11)).await.unwrap(),
+    vec![input.clone()]
+  );
+  let item = WorkSourceItem {
+    resource: octacity_server_factory::ExternalWorkIdentity::new("container-native").unwrap(),
+    item: octacity_server_factory::ExternalWorkIdentity::new("ticket-native").unwrap(),
+  };
+  assert!(matches!(
+    store
+      .select_source_input(first.claim.clone(), time(11), item, vec![input.id()])
+      .await
+      .unwrap(),
+    octacity_server_factory::WorkSourceSelection::Selected(_)
+  ));
+  let schedule = WorkSourceSchedule {
+    retry_at: time(200),
+    attempts: 1,
+    failure: Some(WorkSourceFailure::RateLimited),
+    exhausted: false,
+  };
+  store
+    .finish_source_scan(first.claim.clone(), time(12), schedule.clone())
+    .await
+    .unwrap();
+  assert_eq!(
+    store.source_scan_schedule(input.project_id(), target).await.unwrap(),
+    Some(schedule)
+  );
+  assert!(
+    store
+      .claim_source_scan(ClaimWorkSourceScan {
+        project_id: input.project_id(),
+        target,
+        owner: key("too-early"),
+        now: time(199),
+        until: time(300)
+      })
+      .await
+      .unwrap()
+      .is_none()
+  );
+  let second = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target,
+      owner: key("restart"),
+      now: time(200),
+      until: time(300),
+    })
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(second.last_selection.unwrap().matching_inputs, vec![input.id()]);
+  assert!(store.source_scan_members(first.claim, time(201)).await.is_err());
+  store
+    .finish_source_scan(
+      second.claim,
+      time(201),
+      WorkSourceSchedule {
+        retry_at: time(201),
+        attempts: 3,
+        failure: Some(WorkSourceFailure::Unavailable),
+        exhausted: true,
+      },
+    )
+    .await
+    .unwrap();
+  assert!(
+    store
+      .claim_source_scan(ClaimWorkSourceScan {
+        project_id: input.project_id(),
+        target,
+        owner: key("exhausted"),
+        now: time(400),
+        until: time(500)
+      })
+      .await
+      .unwrap()
+      .is_none()
+  );
 }

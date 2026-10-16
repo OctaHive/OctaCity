@@ -23,6 +23,7 @@ async fn reserved(
     item: ExternalWorkIdentity::new("native-42").unwrap(),
   };
   let snapshot = WorkSourceSnapshot {
+    selection_matches: vec![],
     item: item.clone(),
     display_id: "TRACK-42".into(),
     update_identity: "update-A".into(),

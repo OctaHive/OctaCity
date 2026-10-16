@@ -15,11 +15,11 @@
 
 ## 3. GitHub Source Capability and Polling
 
-- [ ] 3.1 Add independently advertised versioned Source/Reporter process contracts using the verified adapter host; drive Red/Green wire/process tests for closed bounded messages, protocol negotiation, cancellation/deadlines, wrong credential classes and independent Delivery compatibility.
-- [ ] 3.2 Extend the existing GitHub provider's installed configuration and credential resolution for separately scoped Issue read/write grants; drive Red/Green tests for exact repository/network ceilings, private files, grant substitution, immutable configuration drift and secret-free diagnostics before provider calls.
-- [ ] 3.3 Drive repository Issue listing against controlled HTTPS peers: Red then Green for pagination, local selector enforcement, pull-request exclusion, stable item identity, malformed/oversized responses, private CA/hostname verification and forbidden redirects/pagination hosts.
-- [ ] 3.4 Drive bounded polling and retained progress with an injected clock and controlled provider/store boundaries: Red then Green for item/page/byte limits, restart mid-page, equal timestamps, overlapping windows, fair reconciliation, repeated observation and no skipped candidate after partial failure.
-- [ ] 3.5 Drive worker composition with Red/Green tests for exact enabled inputs/group revisions, bounded concurrency, rate-limit/backoff, timeout, shutdown and unavailable-provider diagnostics; verify disabled/absent inputs and ordinary CI/CD/manual admission require no GitHub calls or credentials.
+- [x] 3.1 Add independently advertised versioned Source/Reporter process contracts using the verified adapter host; drive Red/Green wire/process tests for closed bounded messages, protocol negotiation, cancellation/deadlines, wrong credential classes and independent Delivery compatibility.
+- [x] 3.2 Extend the existing GitHub provider's installed configuration and credential resolution for separately scoped Issue read/write grants; drive Red/Green tests for exact repository/network ceilings, private files, grant substitution, immutable configuration drift and secret-free diagnostics before provider calls.
+- [x] 3.3 Drive repository Issue listing against controlled HTTPS peers: Red then Green for pagination, local selector enforcement, pull-request exclusion, stable item identity, malformed/oversized responses, private CA/hostname verification and forbidden redirects/pagination hosts.
+- [x] 3.4 Drive bounded polling and retained progress with an injected clock and controlled provider/store boundaries: Red then Green for item/page/byte limits, restart mid-page, equal timestamps, overlapping windows, fair reconciliation, repeated observation and no skipped candidate after partial failure.
+- [x] 3.5 Drive worker composition with Red/Green tests for exact enabled inputs/group revisions, bounded concurrency, rate-limit/backoff, timeout, shutdown and unavailable-provider diagnostics; verify disabled/absent inputs and ordinary CI/CD/manual admission require no GitHub calls or credentials.
 
 ## 4. GitHub Reporter Integration
 

@@ -46,11 +46,16 @@ mod factory_candidate_context;
 mod factory_source_admission;
 mod factory_source_input_retention;
 mod factory_source_mapping;
+mod factory_source_polling;
 mod factory_source_preparation;
 pub use factory_source_input_retention::{FactorySourceInputRetentionWorker, SourceInputCleanupPage};
 pub use factory_source_mapping::{
   MappedWorkSource, SourceAcceptanceMapping, SourceMappingFailure, WorkSourceMapping, WorkSourceSnapshot,
   map_work_source_snapshot,
+};
+pub use factory_source_polling::{
+  FactorySourceCandidateProcessor, FactorySourcePageReader, FactorySourcePoller, SourcePollOutcome, SourcePollPage,
+  SourcePollRequest, SourcePollingPolicy,
 };
 pub use factory_source_preparation::{FactoryWorkSourcePreparer, SourcePreparationOutcome, SourcePreparationSettings};
 mod factory_stored_candidate_context;

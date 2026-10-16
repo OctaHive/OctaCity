@@ -1,0 +1,439 @@
+//! Optional provider-neutral source worker composition; no forge SDK or manual-ingress dependency.
+use octacity_artifact_store::ArtifactBytePublisher;
+use octacity_server_application::*;
+use octacity_server_domain::{EntityKind, ProjectId};
+use octacity_server_factory::*;
+use octacity_server_store::*;
+use octacity_server_work_source::WorkAdapterRegistry;
+use octacity_work_source_protocol::{ConfigurationReference, ResourceAccess};
+use std::{sync::Arc, time::Duration};
+use tokio_util::sync::CancellationToken;
+#[path = "work_source_admission.rs"]
+mod admission;
+#[path = "work_source_process.rs"]
+mod process;
+use admission::SourceCandidateBridge;
+use process::SourcePageBridge;
+
+/// Runtime-owned ports; credentials remain opaque, resolved only by the verified plugin.
+pub struct FactorySourceWorkerDependencies<S, B> {
+  /// Existing authoritative source/admission journal.
+  pub store: Arc<S>,
+  /// Private immutable input publication.
+  pub bytes: Arc<B>,
+  /// Existing revision resolution; replay precedes this port.
+  pub revisions: Arc<dyn RevisionResolver>,
+  /// Explicit installation-owner management authorization policy.
+  pub authorization: Arc<dyn ManagementAuthorizationPolicy>,
+  /// Content-verified source executable inventory.
+  pub registry: Arc<WorkAdapterRegistry>,
+  /// Trusted execution time.
+  pub clock: Arc<dyn FactoryExecutionClock>,
+}
+/// Independently bounded provider execution under the existing Factory worker policy.
+#[derive(Clone, Copy)]
+pub struct FactorySourceWorkerSettings {
+  /// Polling cadence, backoff, supervisor circuit, batch and concurrency ceilings.
+  pub worker: crate::FactoryRuntimeConfig,
+  /// Positive per-target failure budget, independent of the supervisor's circuit cooldown.
+  pub max_attempts: u16,
+  /// One original provider operation's absolute deadline.
+  pub operation_timeout: Duration,
+  /// Time for verified process cancellation and tree cleanup.
+  pub cancellation_grace: Duration,
+}
+/// Trusted immutable Source settings selected by exact binding, independent of the provider name.
+#[derive(Clone)]
+pub struct FactorySourceProfile {
+  /// Permitted OctaCity Project.
+  pub project_id: ProjectId,
+  /// Exact installed source settings; mutable ticket data cannot choose them.
+  pub binding: WorkSourceBinding,
+  /// Exact content-verified plugin executable.
+  pub plugin: ImmutableReference,
+  /// Frozen provider transport/configuration profile.
+  pub provider_configuration: FactoryDigest,
+  /// Independently scoped read handle and native ticket container.
+  pub resource: ResourceAccess,
+  /// Exact provider-owned selector.
+  pub selection: ConfigurationReference,
+  /// Actual permitted provider hosts; never derived from a ticket.
+  pub network_hosts: Vec<String>,
+  /// Independently accepted installation-owner attribution.
+  pub context: ManagementRequestContext,
+  /// Explicit immutable input mapping and source policy.
+  pub preparation: SourcePreparationSettings,
+  /// Finite normalized discovery limits and reconciliation policy.
+  pub polling: SourcePollingPolicy,
+}
+/// Explicit deployment opt-in. An absent installation starts no source worker.
+pub struct FactorySourceInstallation {
+  /// Projects authorized for bounded discovery, including unavailable bindings.
+  pub projects: Vec<ProjectId>,
+  /// Exact supported bindings; absence is an input-local unavailable outcome.
+  pub profiles: Vec<FactorySourceProfile>,
+  /// Explicit worker ceilings.
+  pub settings: FactorySourceWorkerSettings,
+}
+/// Safe pass counters. Provider text and credentials are never diagnostics.
+#[derive(Default, Debug, Eq, PartialEq)]
+pub struct FactorySourceWorkerOutcome {
+  /// Source targets actually claimed.
+  pub claimed: u16,
+  /// Targets whose finite polling slice completed.
+  pub completed: u16,
+  /// Targets durably deferred or blocked after an isolated failure.
+  pub deferred: u16,
+}
+/// Bounded worker over the existing source journal and ordinary admission.
+pub struct FactorySourceWorker<S, B> {
+  dependencies: Arc<FactorySourceWorkerDependencies<S, B>>,
+  installation: Arc<FactorySourceInstallation>,
+  discovery: tokio::sync::Mutex<(usize, Option<WorkSourceScanTarget>)>,
+}
+impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> FactorySourceWorker<S, B> {
+  /// Constructs explicit source support without fetching tokens or contacting a provider.
+  pub fn new(
+    dependencies: FactorySourceWorkerDependencies<S, B>,
+    installation: FactorySourceInstallation,
+  ) -> Result<Self, ApplicationError> {
+    let settings = installation.settings;
+    settings.worker.validate().map_err(|_| ApplicationError::invalid())?;
+    if settings.max_attempts == 0
+      || settings.operation_timeout.is_zero()
+      || settings
+        .operation_timeout
+        .saturating_add(settings.cancellation_grace.saturating_mul(2))
+        >= settings.worker.claim_lifetime()
+      || settings.worker.batch_size() > 64
+      || installation.projects.len() > 64
+      || installation.profiles.len() > MAX_FACTORY_EXECUTOR_BINDINGS
+      || installation
+        .projects
+        .iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .len()
+        != installation.projects.len()
+    {
+      return Err(ApplicationError::invalid());
+    }
+    for (index, profile) in installation.profiles.iter().enumerate() {
+      if !installation.projects.contains(&profile.project_id)
+        || profile.preparation.mapping.source != profile.binding
+        || installation.profiles[..index]
+          .iter()
+          .any(|p| p.project_id == profile.project_id && p.binding == profile.binding)
+      {
+        return Err(ApplicationError::invalid());
+      }
+    }
+    Ok(Self {
+      dependencies: Arc::new(dependencies),
+      installation: Arc::new(installation),
+      discovery: tokio::sync::Mutex::new((0, None)),
+    })
+  }
+  /// Runs one finite slice; absence or pre-cancellation performs no provider activity.
+  pub async fn run_once(
+    &self,
+    cancellation: CancellationToken,
+  ) -> Result<FactorySourceWorkerOutcome, ApplicationError> {
+    let mut outcome = FactorySourceWorkerOutcome::default();
+    if cancellation.is_cancelled() {
+      return Ok(outcome);
+    }
+    let settings = self.installation.settings;
+    if self.installation.projects.is_empty() {
+      return Ok(outcome);
+    }
+    let targets = {
+      let mut cursor = self.discovery.lock().await;
+      let project = self.installation.projects[cursor.0];
+      let targets = self
+        .dependencies
+        .store
+        .source_scan_targets(project, cursor.1, settings.worker.batch_size())
+        .await?;
+      if targets.len() == usize::from(settings.worker.batch_size()) {
+        cursor.1 = targets.last().copied();
+      } else {
+        cursor.0 = (cursor.0 + 1) % self.installation.projects.len();
+        cursor.1 = None;
+      }
+      targets.into_iter().map(|target| (project, target)).collect::<Vec<_>>()
+    };
+    for chunk in targets.chunks(usize::from(settings.worker.concurrency())) {
+      if cancellation.is_cancelled() {
+        break;
+      }
+      let mut tasks = tokio::task::JoinSet::new();
+      for (project, target) in chunk {
+        let d = self.dependencies.clone();
+        let installation = self.installation.clone();
+        let cancellation = cancellation.clone();
+        let project = *project;
+        let target = *target;
+        tasks.spawn(async move { poll_target(d, installation, project, target, cancellation).await });
+      }
+      while let Some(result) = tasks.join_next().await {
+        let one = result.map_err(|_| ApplicationError::unavailable())??;
+        outcome.claimed += one.claimed;
+        outcome.completed += one.completed;
+        outcome.deferred += one.deferred;
+      }
+    }
+    Ok(outcome)
+  }
+}
+
+async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static>(
+  d: Arc<FactorySourceWorkerDependencies<S, B>>,
+  installation: Arc<FactorySourceInstallation>,
+  project: ProjectId,
+  target: WorkSourceScanTarget,
+  cancellation: CancellationToken,
+) -> Result<FactorySourceWorkerOutcome, ApplicationError> {
+  let mut outcome = FactorySourceWorkerOutcome::default();
+  let settings = installation.settings;
+  if cancellation.is_cancelled() {
+    return Ok(outcome);
+  }
+  let now = d.clock.now()?;
+  let until = octacity_server_domain::Timestamp::from_unix_millis(
+    now.unix_millis() + settings.worker.claim_lifetime().as_millis() as i64,
+  )
+  .map_err(|_| ApplicationError::invalid())?;
+  let Some(scan) = d
+    .store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: project,
+      target,
+      owner: FactoryKey::new(format!("source.{}", uuid::Uuid::new_v4())).map_err(|_| ApplicationError::invalid())?,
+      now,
+      until,
+    })
+    .await?
+  else {
+    return Ok(outcome);
+  };
+  outcome.claimed += 1;
+  let operation_cancel = cancellation.child_token();
+  let pass = async {
+    let members = d.store.source_scan_members(scan.claim.clone(), d.clock.now()?).await?;
+    let profiles = profiles_for(&installation.profiles, &members)?;
+    let mut polling = common_polling(&profiles)?;
+    let reader = Arc::new(SourcePageBridge {
+      store: d.store.clone(),
+      registry: d.registry.clone(),
+      profiles: profiles.clone(),
+      clock: d.clock.clone(),
+      settings,
+      cancellation: operation_cancel.clone(),
+    });
+    let processor = Arc::new(SourceCandidateBridge {
+      store: d.store.clone(),
+      bytes: d.bytes.clone(),
+      revisions: d.revisions.clone(),
+      authorization: d.authorization.clone(),
+      registry: d.registry.clone(),
+      profiles: installation.profiles.clone(),
+      clock: d.clock.clone(),
+      cancellation: operation_cancel.clone(),
+      settings,
+    });
+    let pending_limit = polling.max_items.min(64);
+    let pending = d
+      .store
+      .pending_source_preparations(project, scan.claim.target, None, pending_limit)
+      .await?;
+    for retained in &pending {
+      let input = members
+        .iter()
+        .find(|m| m.id() == retained.input.id() && m.definition().enabled)
+        .ok_or_else(ApplicationError::capability_unavailable)?;
+      retained.require_selected_owner(&scan.claim, input)?;
+      processor
+        .finish_preparation(scan.claim.clone(), input, retained.clone())
+        .await?;
+    }
+    polling.max_items = polling.max_items.saturating_sub(pending.len() as u16);
+    if pending.len() == usize::from(pending_limit) {
+      return Ok(());
+    }
+    let poller = FactorySourcePoller::new(d.store.clone(), reader, processor, d.clock.clone(), polling)?;
+    poller.run_once(scan.clone()).await?;
+    Ok::<(), ApplicationError>(())
+  };
+  tokio::pin!(pass);
+  let result = tokio::select! {
+    biased;
+    ()=cancellation.cancelled()=>Err(WorkSourceFailure::Cancelled),
+    ()=tokio::time::sleep(settings.worker.claim_lifetime().saturating_sub(settings.cancellation_grace.saturating_mul(2)))=>Err(WorkSourceFailure::Timeout),
+    result=&mut pass=>Ok(result),
+  };
+  let result = match result {
+    Ok(result) => result,
+    Err(class) => {
+      operation_cancel.cancel();
+      let _ = tokio::time::timeout(settings.cancellation_grace, &mut pass).await;
+      Err(ApplicationError::SourceDependency {
+        class,
+        retry_after_millis: None,
+      })
+    }
+  };
+  let at = d.clock.now()?;
+  let schedule = match &result {
+    Ok(()) => {
+      outcome.completed += 1;
+      WorkSourceSchedule {
+        retry_at: add(at, settings.worker.poll_interval())?,
+        attempts: 0,
+        failure: None,
+        exhausted: false,
+      }
+    }
+    Err(error) => {
+      outcome.deferred += 1;
+      let (class, hint) = failure(error);
+      let previous = scan.schedule.as_ref().map_or(0, |v| v.attempts);
+      let budget_neutral = matches!(
+        class,
+        WorkSourceFailure::Cancelled | WorkSourceFailure::AdmissionCapacity | WorkSourceFailure::RetentionPending
+      );
+      let attempts = if budget_neutral {
+        previous
+      } else {
+        previous.saturating_add(1)
+      };
+      let retry = DurableRetryPolicy::new(
+        settings.max_attempts,
+        settings.worker.poll_interval().as_millis() as u64,
+        settings.worker.retry_policy().max_backoff().as_millis() as u64,
+      )
+      .map_err(|_| ApplicationError::invalid())?;
+      let earliest = hint
+        .map(|millis| add(at, Duration::from_millis(u64::from(millis))))
+        .transpose()?;
+      let next = if budget_neutral {
+        Some(add(at, settings.worker.poll_interval())?)
+      } else {
+        retry.retry_not_before(attempts, at, earliest)
+      };
+      WorkSourceSchedule {
+        retry_at: next.unwrap_or(at),
+        attempts,
+        failure: Some(class),
+        exhausted: next.is_none()
+          || matches!(
+            class,
+            WorkSourceFailure::InvalidConfiguration | WorkSourceFailure::ProtocolFault | WorkSourceFailure::Conflict
+          ),
+      }
+    }
+  };
+  // A definition change may revoke this owner while the provider is in flight.
+  // Such an owner must not write diagnostics into the replacement's state.
+  match d.store.finish_source_scan(scan.claim.clone(), at, schedule).await {
+    Ok(()) | Err(StoreError::Conflict { .. }) => {}
+    Err(error) => return Err(error.into()),
+  }
+
+  Ok(outcome)
+}
+
+fn add(
+  at: octacity_server_domain::Timestamp,
+  delay: Duration,
+) -> Result<octacity_server_domain::Timestamp, ApplicationError> {
+  octacity_server_domain::Timestamp::from_unix_millis(
+    at.unix_millis()
+      .checked_add(i64::try_from(delay.as_millis()).map_err(|_| ApplicationError::invalid())?)
+      .ok_or_else(ApplicationError::invalid)?,
+  )
+  .map_err(|_| ApplicationError::invalid())
+}
+fn failure(error: &ApplicationError) -> (WorkSourceFailure, Option<u32>) {
+  match error {
+    ApplicationError::SourceDependency {
+      class,
+      retry_after_millis,
+    } => (*class, *retry_after_millis),
+    ApplicationError::CapabilityUnavailable => (WorkSourceFailure::Unavailable, None),
+    ApplicationError::Store(StoreError::Unavailable) => (WorkSourceFailure::Transient, None),
+    ApplicationError::Store(StoreError::Conflict {
+      entity: EntityKind::FactoryRun,
+    }) => (WorkSourceFailure::AdmissionCapacity, None),
+    ApplicationError::Store(_) => (WorkSourceFailure::Conflict, None),
+    _ => (WorkSourceFailure::InvalidConfiguration, None),
+  }
+}
+
+fn profiles_for(
+  profiles: &[FactorySourceProfile],
+  members: &[WorkSourceInput],
+) -> Result<Vec<FactorySourceProfile>, ApplicationError> {
+  members
+    .iter()
+    .filter(|v| v.definition().enabled)
+    .map(|input| {
+      profiles
+        .iter()
+        .find(|p| p.project_id == input.project_id() && p.binding == input.definition().source)
+        .cloned()
+        .ok_or_else(ApplicationError::capability_unavailable)
+    })
+    .collect()
+}
+fn selection_digest(selection: &ConfigurationReference) -> Result<FactoryDigest, ApplicationError> {
+  Ok(FactoryDigest::content_sha256(
+    &serde_json::to_vec(selection).map_err(|_| ApplicationError::invalid())?,
+  ))
+}
+fn common_polling(profiles: &[FactorySourceProfile]) -> Result<SourcePollingPolicy, ApplicationError> {
+  let mut result = profiles.first().ok_or_else(ApplicationError::invalid)?.polling.clone();
+  for p in profiles.iter().skip(1).map(|p| &p.polling) {
+    result.page_items = result.page_items.min(p.page_items);
+    result.max_pages = result.max_pages.min(p.max_pages);
+    result.max_items = result.max_items.min(p.max_items);
+    result.max_bytes = result.max_bytes.min(p.max_bytes);
+    result.max_page_bytes = result.max_page_bytes.min(p.max_page_bytes);
+    result.retention_millis = result.retention_millis.min(p.retention_millis);
+    result.overlap_millis = result.overlap_millis.max(p.overlap_millis);
+    result.reconciliation_interval_millis = result
+      .reconciliation_interval_millis
+      .min(p.reconciliation_interval_millis);
+  }
+  Ok(result)
+}
+
+fn require_running(cancellation: &CancellationToken) -> Result<(), ApplicationError> {
+  if cancellation.is_cancelled() {
+    Err(ApplicationError::SourceDependency {
+      class: WorkSourceFailure::Cancelled,
+      retry_after_millis: None,
+    })
+  } else {
+    Ok(())
+  }
+}
+
+/// Optional runtime lifecycle boundary; Source failures remain local to each input.
+#[async_trait::async_trait]
+pub trait FactorySourceRuntime: Send + Sync {
+  /// Installed bounds used by the existing worker supervisor.
+  fn settings(&self) -> FactorySourceWorkerSettings;
+  /// Runs a bounded pass and drains cancellation before returning.
+  async fn poll(&self, cancellation: CancellationToken) -> Result<FactorySourceWorkerOutcome, ApplicationError>;
+}
+#[async_trait::async_trait]
+impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> FactorySourceRuntime
+  for FactorySourceWorker<S, B>
+{
+  fn settings(&self) -> FactorySourceWorkerSettings {
+    self.installation.settings
+  }
+  async fn poll(&self, cancellation: CancellationToken) -> Result<FactorySourceWorkerOutcome, ApplicationError> {
+    self.run_once(cancellation).await
+  }
+}

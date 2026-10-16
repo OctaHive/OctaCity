@@ -41,8 +41,14 @@ pub struct FactoryProfileRuntimeInstaller {
   catalog: FactoryRuntimeProfileCatalog,
   readiness: Arc<dyn FactoryRuntimeReadiness>,
   outbox: Vec<Arc<dyn FactoryOutboxDispatcher>>,
+  work_sources: Option<Arc<dyn super::FactorySourceRuntime>>,
 }
 impl FactoryProfileRuntimeInstaller {
+  /// Enables independent Source polling; availability never gates manual Factory admission.
+  pub fn with_work_sources(mut self, worker: Arc<dyn super::FactorySourceRuntime>) -> Self {
+    self.work_sources = Some(worker);
+    self
+  }
   /// Rejects ambiguous Projects, foreign Build choices and profiles missing
   /// their exact Project-owned Build choice before I/O.
   pub fn new(
@@ -55,6 +61,7 @@ impl FactoryProfileRuntimeInstaller {
       catalog,
       readiness,
       outbox,
+      work_sources: None,
     })
   }
 }
@@ -234,6 +241,7 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
       outbox_dispatchers: self.outbox.clone(),
       tool_authorizer,
       output_finalizer: None,
+      work_sources: self.work_sources.clone(),
     })
   }
 }

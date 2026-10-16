@@ -87,8 +87,24 @@ impl ServerRuntime {
       resources.postgres.clone(),
       resources.job_spec_signer.clone(),
     ));
-    let (registration_store, factory) =
-      super::factory::assemble(&config, &mut resources, placement_store.clone(), installer).await?;
+    let revision_resolver: Arc<dyn RevisionResolver> = match config.vcs_adapter_registry() {
+      Some(registry) => Arc::new(HostedRevisionResolver::new(
+        Arc::new(VcsAdapterRegistry::discover(registry).map_err(ServerRuntimeError::VcsRegistry)?),
+        config.vcs_integrations(),
+        config.vcs_operation_timeout(),
+        config.vcs_cancellation_grace(),
+        cancellation.child_token(),
+      )),
+      None => Arc::new(octacity_server_application::ExactRevisionResolver),
+    };
+    let (registration_store, factory) = super::factory::assemble(
+      &config,
+      &mut resources,
+      placement_store.clone(),
+      installer,
+      revision_resolver.clone(),
+    )
+    .await?;
     let log_search_index = Arc::new(PostgresLogSearchIndex::new(resources.postgres.clone()));
     let notification_pool = resources.postgres.clone();
     let registration_service = Arc::new(
@@ -132,16 +148,6 @@ impl ServerRuntime {
       )),
       (None, None) => None,
       _ => unreachable!("validated webhook configuration is all-or-none"),
-    };
-    let revision_resolver: Arc<dyn RevisionResolver> = match config.vcs_adapter_registry() {
-      Some(registry) => Arc::new(HostedRevisionResolver::new(
-        Arc::new(VcsAdapterRegistry::discover(registry).map_err(ServerRuntimeError::VcsRegistry)?),
-        config.vcs_integrations(),
-        config.vcs_operation_timeout(),
-        config.vcs_cancellation_grace(),
-        cancellation.child_token(),
-      )),
-      None => Arc::new(octacity_server_application::ExactRevisionResolver),
     };
     let webhook_retry_policy = DurableRetryPolicy::new(
       webhook_delivery_policy.max_attempts(),
@@ -432,6 +438,12 @@ impl ServerRuntime {
             resources.object_storage.clone(),
           ),
           input_retention_health,
+          source_retention: octacity_server_application::FactorySourceInputRetentionWorker::new(
+            registration_store.clone(),
+            resources.object_storage.clone(),
+            retention_policy.retrying().worker().poll_interval(),
+          )
+          .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,
           manual_trigger_retries,
           manual_trigger_retry_owner: WorkerOwner::new(format!("manual-trigger:worker:{}", uuid::Uuid::new_v4()))
             .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?,

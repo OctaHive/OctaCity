@@ -115,7 +115,9 @@ pub trait FactorySourceStore: crate::FactoryAdmissionStore {
     guard: AdmitPreparedWorkSource,
     request: crate::ManagementMutation<crate::AdmitFactoryWork>,
   ) -> Result<crate::FactoryAdmissionMutationOutcome, StoreError>;
-  /// Lists a bounded private pending page in stable operation order across worker restarts.
+  /// Lists a bounded private pending page for the current enabled members, in stable operation order.
+  /// Original scan provenance does not prevent recovery after an input joins or leaves a group.
+  /// Disabled/removed members remain retained but cannot block this target's progress.
   async fn pending_source_preparations(
     &self,
     project: ProjectId,
@@ -139,6 +141,41 @@ pub trait FactorySourceStore: crate::FactoryAdmissionStore {
     project: ProjectId,
     id: FactoryDigest,
   ) -> Result<WorkSourcePreparation, StoreError>;
+  /// Lists at most 64 current enabled independent inputs/groups, excluding grouped members.
+  /// An obsolete group blocks independent fallback until its revision is repaired.
+  async fn source_scan_targets(
+    &self,
+    project: ProjectId,
+    after: Option<WorkSourceScanTarget>,
+    limit: u16,
+  ) -> Result<Vec<WorkSourceScanTarget>, StoreError>;
+  /// Resolves the exact current enabled selection under this live owner, without a provider call.
+  async fn source_scan_members(
+    &self,
+    claim: WorkSourceScanClaim,
+    now: octacity_server_domain::Timestamp,
+  ) -> Result<Vec<WorkSourceInput>, StoreError>;
+  /// Retains one selection disposition and returns only a current, uniquely selected input.
+  async fn select_source_input(
+    &self,
+    claim: WorkSourceScanClaim,
+    now: octacity_server_domain::Timestamp,
+    item: WorkSourceItem,
+    matched: Vec<WorkSourceInputId>,
+  ) -> Result<octacity_server_factory::WorkSourceSelection, StoreError>;
+  /// Retains scheduling under the current fence, without advancing discovery progress.
+  async fn finish_source_scan(
+    &self,
+    claim: WorkSourceScanClaim,
+    now: octacity_server_domain::Timestamp,
+    schedule: crate::WorkSourceSchedule,
+  ) -> Result<(), StoreError>;
+  /// Reads safe scheduling facts for exactly this Project and retained target definition.
+  async fn source_scan_schedule(
+    &self,
+    project: ProjectId,
+    target: WorkSourceScanTarget,
+  ) -> Result<Option<crate::WorkSourceSchedule>, StoreError>;
   /// Claims only the current enabled selection; a live lease returns no claim.
   async fn claim_source_scan(&self, request: ClaimWorkSourceScan) -> Result<Option<WorkSourceScan>, StoreError>;
   /// Advances only a covered position under the current owner and version precondition.
@@ -149,6 +186,12 @@ pub trait FactorySourceStore: crate::FactoryAdmissionStore {
     expected: Option<WorkSourceProgress>,
     progress: WorkSourceProgress,
   ) -> Result<(), StoreError>;
+  /// Clears at most `limit` expired private pages, including disabled inputs; resets covered progress.
+  async fn expire_source_poll_pages(
+    &self,
+    now: octacity_server_domain::Timestamp,
+    limit: u16,
+  ) -> Result<usize, StoreError>;
   /// Publishes all versions or none, rejecting stale preconditions and foreign dependencies.
   async fn publish_work_sources(&self, request: PublishWorkSources) -> Result<(), StoreError>;
   /// Reads an exact immutable Project-owned input, including disabled historical versions.
@@ -199,6 +242,9 @@ impl WorkSourceScanTarget {
 #[derive(Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkSourceProgress {
+  /// Optional private retained polling details; absent in historical checkpoint documents.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub polling: Option<crate::WorkSourcePollingState>,
   /// Inclusive beginning of the covered update window.
   pub window_start: octacity_server_domain::Timestamp,
   /// Frozen upper update boundary for this pass.
@@ -228,6 +274,9 @@ impl WorkSourceProgress {
         .is_some_and(|v| v.is_empty() || v.len() > 4096 || v.chars().any(char::is_control))
     {
       return Err(source_conflict());
+    }
+    if let Some(polling) = &self.polling {
+      polling.validate(self)?;
     }
     Ok(())
   }
@@ -267,6 +316,12 @@ pub struct WorkSourceScanClaim {
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkSourceScan {
+  /// Last bounded classification, retained independently of covered page progress.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub last_selection: Option<crate::WorkSourceSelectionRecord>,
+  /// Optional durable retry/cadence state; historical rows omit this field.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub schedule: Option<crate::WorkSourceSchedule>,
   /// Complete ownership proof.
   pub claim: WorkSourceScanClaim,
   /// Covered position, reset when the definition changes.
@@ -284,13 +339,27 @@ pub fn next_source_scan(
   if current.is_some_and(|v| v.claim.until > request.now) {
     return Ok(None);
   }
+  if current
+    .filter(|v| v.claim.target == request.target)
+    .and_then(|v| v.schedule.as_ref())
+    .is_some_and(|s| s.exhausted || request.now < s.retry_at)
+  {
+    return Ok(None);
+  }
   let fence = current
     .map_or(Some(1), |v| v.claim.fence.checked_add(1))
     .ok_or_else(source_conflict)?;
   let progress = current
     .filter(|v| v.claim.target == request.target)
     .and_then(|v| v.progress.clone());
+  let schedule = current
+    .filter(|v| v.claim.target == request.target)
+    .and_then(|v| v.schedule.clone());
   Ok(Some(WorkSourceScan {
+    last_selection: current
+      .filter(|v| v.claim.target == request.target)
+      .and_then(|v| v.last_selection.clone()),
+    schedule,
     claim: WorkSourceScanClaim {
       project_id: request.project_id,
       target: request.target,
@@ -453,8 +522,7 @@ impl WorkSourcePreparation {
   pub fn with_intent(&self, request: PublishSourcePreparationIntent) -> Result<Self, StoreError> {
     let intent = &request.intent;
     let definition = self.input.definition();
-    if self.target.identity() != request.claim.target.identity()
-      || self.input.project_id() != request.claim.project_id
+    if self.input.project_id() != request.claim.project_id
       || self.id != request.preparation_id
       || intent.project_id != self.input.project_id()
       || intent.configuration_id != definition.target.id()
@@ -527,7 +595,6 @@ impl WorkSourcePreparation {
   ) -> Result<(), StoreError> {
     let intent = self.intent.as_ref().ok_or_else(source_conflict)?;
     if self.id != guard.preparation_id
-      || self.target.identity() != guard.claim.target.identity()
       || self.input.project_id() != guard.claim.project_id
       || self.admission_probe(request.probe.source_scope.security_scope.clone())? != request.probe
       || self.input.definition().target != *request.work.configuration()
@@ -568,6 +635,8 @@ pub struct WorkSourceIssueAssociation {
 impl WorkSourcePreparation {
   /// A new scan owner may resume original intent only for the same stable selected
   /// input and installed resource. The old claim itself never regains authority.
+  /// The store must resolve `selected` under the current target's live fence first;
+  /// the original scan target remains provenance, not recovery authority.
   pub fn require_selected_owner(
     &self,
     claim: &WorkSourceScanClaim,
@@ -577,7 +646,6 @@ impl WorkSourcePreparation {
     let current = &selected.definition().source;
     if self.input.project_id() != claim.project_id
       || selected.project_id() != claim.project_id
-      || self.target.identity() != claim.target.identity()
       || self.input.id() != selected.id()
       || !selected.definition().enabled
       || original.installation.identity() != current.installation.identity()

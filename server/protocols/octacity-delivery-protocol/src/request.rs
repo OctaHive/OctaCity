@@ -175,30 +175,7 @@ impl DeliveryIntent {
     ] {
       field(value)?;
     }
-    if self.network_hosts.is_empty() || self.network_hosts.len() > 256 {
-      return Err(ProtocolError::Invalid);
-    }
-    let mut unique = std::collections::BTreeSet::new();
-    for host in &self.network_hosts {
-      field(host)?;
-      let canonical_ip = host
-        .parse::<std::net::IpAddr>()
-        .is_ok_and(|address| address.to_string() == *host);
-      let canonical_dns = host.len() <= 253
-        && host.bytes().any(|byte| byte.is_ascii_lowercase())
-        && host.split('.').all(|label| {
-          !label.is_empty()
-            && label.len() <= 63
-            && !label.starts_with('-')
-            && !label.ends_with('-')
-            && label
-              .bytes()
-              .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
-        });
-      if (!canonical_ip && !canonical_dns) || !unique.insert(host) {
-        return Err(ProtocolError::Invalid);
-      }
-    }
+    common::require_network_hosts(&self.network_hosts).map_err(|_| ProtocolError::Invalid)?;
     if self.base_revision == self.candidate_revision
       || self.target.base_reference == self.target.candidate_reference
       || self.manifest.sha256 != self.changeset_digest

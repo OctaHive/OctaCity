@@ -11,6 +11,9 @@ use std::collections::BTreeMap;
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkSourceSnapshot {
+  /// Provider selector observations bound to the verified page; never Factory target authority.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub selection_matches: Vec<octacity_server_factory::FactoryDigest>,
   /// Verified native container and item identity.
   pub item: WorkSourceItem,
   /// Human-facing ticket number or key, used only as provenance.

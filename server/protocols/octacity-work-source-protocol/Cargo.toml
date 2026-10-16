@@ -1,0 +1,18 @@
+[package]
+name = "octacity-work-source-protocol"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Independent provider-neutral Work Source and Reporter process contracts"
+
+[dependencies]
+octacity-adapter-protocol = { path = "../octacity-adapter-protocol" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+octacity-delivery-protocol = { path = "../octacity-delivery-protocol" }

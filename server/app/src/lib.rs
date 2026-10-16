@@ -27,3 +27,8 @@ pub use runtime::{
   RuntimeAssemblyError, ServerRuntime, ServerRuntimeError, load_factory_signal_connectors, rebuild_log_search,
   reconcile_restored_state, validate_runtime_files,
 };
+
+pub use runtime::{
+  FactorySourceInstallation, FactorySourceProfile, FactorySourceRuntime, FactorySourceWorker,
+  FactorySourceWorkerDependencies, FactorySourceWorkerOutcome, FactorySourceWorkerSettings,
+};

@@ -10,6 +10,8 @@ use std::sync::Arc;
 pub struct SourceInputCleanupPage {
   /// Preparations whose exact physical objects and private snapshot were cleared.
   pub completed: usize,
+  /// Expired private polling pages cleared independently of artifact preparation progress.
+  pub poll_pages_expired: usize,
   /// Preparations left retryable after an isolated deletion or acknowledgement failure.
   pub failed: usize,
   /// Exclusive continuation; completed tombstones are revisited on later sweeps for late writes.
@@ -35,6 +37,7 @@ impl<S: WorkSourceArtifactStore, B: ArtifactStore + ?Sized> FactorySourceInputRe
     })
   }
   /// Deletes at most two objects per preparation and at most `limit` preparations.
+  /// Also purges at most `min(limit, 64)` expired private polling pages.
   /// Failure acknowledges nothing for that preparation; restart safely repeats deletion.
   pub async fn run_once(
     &self,
@@ -43,6 +46,7 @@ impl<S: WorkSourceArtifactStore, B: ArtifactStore + ?Sized> FactorySourceInputRe
     limit: u16,
   ) -> Result<SourceInputCleanupPage, ApplicationError> {
     let expired = self.store.expired_source_preparations(now, after, limit).await?;
+    let poll_pages_expired = self.store.expire_source_poll_pages(now, limit.min(64)).await?;
     let next_cursor = if expired.len() == usize::from(limit) {
       expired.last().map(|v| v.preparation_id)
     } else {
@@ -59,6 +63,7 @@ impl<S: WorkSourceArtifactStore, B: ArtifactStore + ?Sized> FactorySourceInputRe
     }
     Ok(SourceInputCleanupPage {
       completed,
+      poll_pages_expired,
       failed,
       next_cursor,
     })

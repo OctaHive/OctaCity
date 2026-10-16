@@ -45,7 +45,11 @@ mod notifications;
 mod telemetry;
 mod vcs;
 mod webhook;
+mod work_source;
 mod workers;
+pub use work_source::*;
+#[cfg(all(test, unix))]
+mod work_source_tests;
 
 pub use assembly::{RuntimeAssemblyError, validate_runtime_files};
 pub use error::{DurableWorkerError, ServerRuntimeError};

@@ -1,0 +1,29 @@
+{
+  "family": "source",
+  "message": {
+    "protocol_version": 1,
+    "request_id": "scan-request-1",
+    "command": {
+      "operation": "scan",
+      "payload": {
+        "scan_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configuration_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "resource": {
+          "resource_id": "native-container",
+          "resource_locator": "installed-ticket-space",
+          "credential": { "class": "work_source_read", "handle": "private-source-grant" }
+        },
+        "selection": {
+          "identity": "arbitrary-installed-selector",
+          "sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        "network_hosts": ["tracker.invalid"],
+        "cursor": null,
+        "window": { "from_millis": 100, "until_millis": 200 },
+        "max_items": 100,
+        "max_snapshot_bytes": 1048576,
+        "max_page_bytes": 4194304
+      }
+    }
+  }
+}

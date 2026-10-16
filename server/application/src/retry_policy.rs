@@ -30,6 +30,19 @@ impl DurableRetryPolicy {
     })
   }
 
+  /// Keeps the existing finite retry budget while respecting a separately validated remote lower bound.
+  /// Unlike a suggested delay, `not_before` cannot be shortened by the local backoff ceiling.
+  pub fn retry_not_before(
+    self,
+    attempt: u16,
+    failed_at: Timestamp,
+    not_before: Option<Timestamp>,
+  ) -> Option<Timestamp> {
+    self
+      .retry_at(attempt, failed_at)
+      .map(|local| local.max(not_before.unwrap_or(local)))
+  }
+
   pub(crate) fn retry_at(self, attempt: u16, failed_at: Timestamp) -> Option<Timestamp> {
     self.retry_at_with_hint(attempt, failed_at, None)
   }

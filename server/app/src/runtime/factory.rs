@@ -15,9 +15,34 @@ pub struct FactoryRuntimeResources {
   pub objects: Arc<octacity_artifact_s3::S3ArtifactStore>,
   /// Exact server-approved source and Octa toolchain snapshot.
   pub toolchain: JobSpecToolchainPolicy,
+  /// Shared installed VCS resolver; Source and manual admission use the same policy.
+  pub revisions: Arc<dyn octacity_server_application::RevisionResolver>,
 }
 
 impl FactoryRuntimeResources {
+  /// Opts in to provider-neutral polling using native journals, private objects and ordinary admission.
+  /// Construction does not contact a provider or resolve credentials.
+  pub fn source_worker(
+    &self,
+    installation: super::FactorySourceInstallation,
+    registry: Arc<octacity_server_work_source::WorkAdapterRegistry>,
+    authorization: Arc<dyn octacity_server_application::ManagementAuthorizationPolicy>,
+  ) -> Result<Arc<dyn super::FactorySourceRuntime>, FactoryRuntimeInstallationError> {
+    super::FactorySourceWorker::new(
+      super::FactorySourceWorkerDependencies {
+        store: self.runs.clone(),
+        bytes: self.objects.clone(),
+        revisions: self.revisions.clone(),
+        authorization,
+        registry,
+        clock: Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      },
+      installation,
+    )
+    .map(|worker| Arc::new(worker) as Arc<dyn super::FactorySourceRuntime>)
+    .map_err(|_| FactoryRuntimeInstallationError::Invalid)
+  }
+
   /// Installs a content-pinned deterministic review join over the native journal.
   /// Construction performs no evaluator or external-service I/O.
   pub fn evaluation_decision_executor(
@@ -404,6 +429,8 @@ pub struct FactoryRuntimeInstallation {
   pub tool_authorizer: Option<Arc<dyn octacity_server_application::LeaseBoundToolActionAuthorizer>>,
   /// Optional server-derived publication under the actual current Job Lease.
   pub output_finalizer: Option<Arc<dyn octacity_server_application::AgentOutputFinalizer>>,
+  /// Optional Source polling, isolated from manual admission and capability readiness.
+  pub work_sources: Option<Arc<dyn super::FactorySourceRuntime>>,
 }
 
 /// Secret-safe deployment installation failure.
@@ -455,6 +482,7 @@ pub(super) struct InstalledFactoryWorker {
   pub(super) owner: octacity_server_application::FactoryReconciler<PostgresStore>,
   pub(super) health: Arc<crate::readiness::WorkerHealth>,
   pub(super) outbox: Vec<InstalledFactoryOutbox>,
+  pub(super) work_sources: Option<Arc<dyn super::FactorySourceRuntime>>,
   pub(super) tool_authorizer: Arc<dyn octacity_server_application::LeaseBoundToolActionAuthorizer>,
   pub(super) output_finalizer: Option<Arc<dyn octacity_server_application::AgentOutputFinalizer>>,
 }
@@ -488,6 +516,7 @@ pub(super) async fn assemble(
   resources: &mut super::assembly::RuntimeResources,
   placement_store: Arc<PostgresAuthoritativeStore>,
   installer: Option<Arc<dyn FactoryRuntimeInstaller>>,
+  revisions: Arc<dyn octacity_server_application::RevisionResolver>,
 ) -> Result<(Arc<PostgresStore>, Option<InstalledFactoryWorker>), super::ServerRuntimeError> {
   use super::ServerRuntimeError;
   use crate::readiness::WorkerHealth;
@@ -499,6 +528,7 @@ pub(super) async fn assemble(
         builds: placement_store.clone(),
         objects: resources.object_storage.clone(),
         toolchain: resources.job_spec_toolchain.clone(),
+        revisions,
       }),
     )
     .await
@@ -573,6 +603,7 @@ pub(super) async fn assemble(
         health,
         outbox: install_outbox(installed.outbox_dispatchers, policy, &mut resources.readiness),
         output_finalizer: installed.output_finalizer,
+        work_sources: installed.work_sources,
         tool_authorizer: installed
           .tool_authorizer
           .unwrap_or_else(|| Arc::new(octacity_server_application::FailClosedToolActionAuthorizer)),

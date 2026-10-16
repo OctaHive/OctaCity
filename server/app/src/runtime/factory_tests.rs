@@ -39,6 +39,7 @@ pub(super) fn resources() -> FactoryRuntimeResources {
     )),
     objects: Arc::new(objects),
     toolchain,
+    revisions: Arc::new(ExactRevisionResolver),
   }
 }
 
@@ -1473,6 +1474,37 @@ async fn native_profile_installation_exposes_only_its_project_catalog_without_de
   };
   let installer = FactoryProfileRuntimeInstaller::new(catalog.clone(), Arc::new(Ready), vec![]).unwrap();
   let installed = installer.install(resources()).await.unwrap();
+  assert!(
+    installed.work_sources.is_none(),
+    "manual Factory installations opt out without provider requirements"
+  );
+  let root = tempfile::tempdir().unwrap();
+  let source = resources()
+    .source_worker(
+      FactorySourceInstallation {
+        projects: vec![project],
+        profiles: vec![],
+        settings: FactorySourceWorkerSettings {
+          worker: toml::from_str(
+            "poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2",
+          )
+          .unwrap(),
+          max_attempts: 3,
+          operation_timeout: Duration::from_millis(100),
+          cancellation_grace: Duration::from_millis(50),
+        },
+      },
+      Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(root.path()).unwrap()),
+      Arc::new(TrustedNetworkManagementPolicy),
+    )
+    .unwrap();
+  let opted_in = FactoryProfileRuntimeInstaller::new(catalog.clone(), Arc::new(Ready), vec![])
+    .unwrap()
+    .with_work_sources(source)
+    .install(resources())
+    .await
+    .unwrap();
+  assert!(opted_in.work_sources.is_some());
   assert_eq!(installed.executors.len(), 1);
   assert_eq!(installed.executors[0].0, FlowNodeKind::Reasoning);
   assert_eq!(

@@ -25,6 +25,14 @@ pub enum ApplicationFailure {
 /// Transport-independent failure from a typed application handler.
 #[derive(Debug, Error)]
 pub enum ApplicationError {
+  /// Safe source dependency facts, preserving an original provider retry lower bound.
+  #[error("source dependency failed: {class:?}")]
+  SourceDependency {
+    /// Closed provider-neutral failure; never raw provider diagnostics.
+    class: octacity_server_store::WorkSourceFailure,
+    /// Validated delay in milliseconds, at most one hour for installed Work protocols.
+    retry_after_millis: Option<u32>,
+  },
   /// Typed application input violated a command-specific invariant.
   #[error("application input is invalid")]
   InvalidInput,
@@ -71,6 +79,7 @@ impl ApplicationError {
   #[must_use]
   pub const fn classification(&self) -> ApplicationFailure {
     match self {
+      Self::SourceDependency { .. } => ApplicationFailure::Unavailable,
       Self::InvalidInput | Self::FactoryValidation(_) => ApplicationFailure::Invalid,
       Self::CapabilityUnavailable => ApplicationFailure::CapabilityUnavailable,
       Self::PreconditionFailed => ApplicationFailure::PreconditionFailed,

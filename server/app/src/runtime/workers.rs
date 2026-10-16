@@ -40,6 +40,10 @@ pub(super) struct DurableWorkers {
     octacity_artifact_s3::S3ArtifactStore,
   >,
   pub(super) input_retention_health: Arc<WorkerHealth>,
+  pub(super) source_retention: octacity_server_application::FactorySourceInputRetentionWorker<
+    PostgresStore,
+    octacity_artifact_s3::S3ArtifactStore,
+  >,
   pub(super) manual_trigger_retries: ManualTriggerRetryWorker,
   pub(super) manual_trigger_retry_owner: WorkerOwner,
   pub(super) manual_trigger_retry_health: Arc<WorkerHealth>,
@@ -112,6 +116,13 @@ pub(super) fn spawn_durable_workers(
     retention_policy,
     cancellation.child_token(),
   );
+  let source_retention = spawn_source_input_retention_worker(
+    workers.source_retention,
+    retention_policy.retrying().worker().poll_interval(),
+    retention_policy.retrying().worker().claim_lifetime(),
+    retention_policy.object_batch_size().min(64),
+    cancellation.child_token(),
+  );
   let input_retention = spawn_input_retention_worker(
     workers.input_retention,
     workers.input_retention_health,
@@ -151,8 +162,12 @@ pub(super) fn spawn_durable_workers(
     )
   });
   let mut factory_outbox = vec![];
+  let mut source_task = None;
   let factory = workers.factory.map(|installed| {
     let policy = config.factory().expect("validated enabled owner policy");
+    source_task = installed
+      .work_sources
+      .map(|worker| spawn_factory_source_worker(worker, cancellation.child_token()));
     for outbox in installed.outbox {
       factory_outbox.push(spawn_factory_outbox_worker(
         outbox.dispatcher,
@@ -170,10 +185,14 @@ pub(super) fn spawn_durable_workers(
     (LOG_INDEX_WORKER_NAME, log_indexing),
     (RETENTION_WORKER_NAME, retention),
     (INPUT_RETENTION_WORKER_NAME, input_retention),
+    ("factory-source-retention", source_retention),
     (MANUAL_TRIGGER_RETRY_WORKER_NAME, manual_trigger_retries),
   ];
   if let Some(task) = factory {
     tasks.push((FACTORY_WORKER_NAME, task));
+  }
+  if let Some(task) = source_task {
+    tasks.push(("factory-source", task));
   }
   for task in factory_outbox {
     tasks.push(("factory-outbox", task));
@@ -735,6 +754,87 @@ pub(super) fn spawn_factory_outbox_worker(
       async move { dispatcher.dispatch_once(at).await }
     },
     |_| {},
+  )
+}
+
+// Source health is deliberately excluded from Factory admission readiness.
+pub(super) fn spawn_factory_source_worker(
+  worker: Arc<dyn super::FactorySourceRuntime>,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  let settings = worker.settings();
+  let policy = settings.worker;
+  let pass_cancel = cancellation.clone();
+  spawn_worker_loop(
+    WorkerIdentity::new("factory-source", WorkerKind::Factory).with_retry(policy.retry_policy()),
+    Arc::new(WorkerHealth::new(
+      "factory-source",
+      policy.poll_interval().saturating_add(policy.claim_lifetime()),
+    )),
+    policy.poll_interval(),
+    policy.claim_lifetime(),
+    cancellation,
+    move |_, _| {
+      let worker = worker.clone();
+      let cancellation = pass_cancel.clone();
+      async move { worker.poll(cancellation).await }
+    },
+    |outcome| {
+      if outcome.claimed > 0 {
+        info!(
+          claimed = outcome.claimed,
+          completed = outcome.completed,
+          deferred = outcome.deferred,
+          "source polling advanced"
+        );
+      }
+    },
+  )
+}
+
+// Always scheduled, including when Source polling or Factory itself is disabled.
+pub(super) fn spawn_source_input_retention_worker<S, B>(
+  worker: octacity_server_application::FactorySourceInputRetentionWorker<S, B>,
+  poll: Duration,
+  claim: Duration,
+  limit: u16,
+  cancellation: CancellationToken,
+) -> JoinHandle<()>
+where
+  S: octacity_server_store::WorkSourceArtifactStore + 'static,
+  B: octacity_artifact_store::ArtifactStore + 'static,
+{
+  let worker = Arc::new(worker);
+  let cursor = Arc::new(tokio::sync::Mutex::new(None));
+  spawn_worker_loop(
+    WorkerIdentity::new("factory-source-retention", WorkerKind::Factory),
+    Arc::new(WorkerHealth::new(
+      "factory-source-retention",
+      poll.saturating_add(claim),
+    )),
+    poll,
+    claim,
+    cancellation,
+    move |at, _| {
+      let worker = worker.clone();
+      let cursor = cursor.clone();
+      async move {
+        let mut cursor = cursor.lock().await;
+        let result = worker.run_once(at, *cursor, limit).await?;
+        *cursor = result.next_cursor;
+        Ok::<_, octacity_server_application::ApplicationError>(result)
+      }
+    },
+    |outcome| {
+      if outcome.completed > 0 || outcome.poll_pages_expired > 0 || outcome.failed > 0 {
+        info!(
+          completed = outcome.completed,
+          pages = outcome.poll_pages_expired,
+          failed = outcome.failed,
+          "expired source inputs reconciled"
+        );
+      }
+    },
   )
 }
 

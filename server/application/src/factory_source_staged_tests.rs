@@ -392,6 +392,7 @@ fn staged_source_labels_never_bypass_configured_eligibility_or_business_duplicat
           item: ExternalWorkIdentity::new("native-42").unwrap(),
         };
         let snapshot = WorkSourceSnapshot {
+          selection_matches: vec![],
           item: item.clone(),
           display_id: "TASK-42".into(),
           update_identity: "upstream-stage-observed".into(),

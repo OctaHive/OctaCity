@@ -15,6 +15,7 @@ pub(crate) struct GithubApi {
   base: url::Url,
   owner: String,
   repository: String,
+  version: String,
 }
 pub(crate) struct Observation {
   pub(crate) receipt: DeliveryReceipt,
@@ -40,38 +41,18 @@ impl GithubApi {
     Ok(())
   }
   pub(crate) fn new(config: &Config, repo: &Repository, credential: &Credential) -> Result<Self, FailureClass> {
-    let mut bearer = Zeroizing::new(String::from("Bearer "));
-    bearer.push_str(&credential.token);
-    let mut authorization = HeaderValue::from_str(&bearer).map_err(|_| FailureClass::Permanent)?;
-    authorization.set_sensitive(true);
-    let mut headers = HeaderMap::new();
-    headers.insert(AUTHORIZATION, authorization);
-    headers.insert("accept", HeaderValue::from_static("application/vnd.github+json"));
-    headers.insert(
-      "x-github-api-version",
-      HeaderValue::from_str(&config.api_version).map_err(|_| FailureClass::Permanent)?,
-    );
-    let client = Client::builder()
-      .tls_certs_merge(config.api_root_certificates.iter().cloned())
-      .default_headers(headers)
-      .user_agent("octacity-github")
-      .timeout(std::time::Duration::from_secs(30))
-      .redirect(reqwest::redirect::Policy::none())
-      .retry(reqwest::retry::never())
-      .build()
-      .map_err(|_| FailureClass::Permanent)?;
-    // No SDK retry, redirect or tracing features: the Delivery contract owns
-    // observe-before-retry and prevents token/URL exposure in diagnostics.
-    let client = octocrab::Octocrab::builder()
-      .base_uri(config.api_base.as_str())
-      .map_err(|_| FailureClass::Permanent)?
-      .build_with_reqwest(client)
-      .map_err(|_| FailureClass::Permanent)?;
     Ok(Self {
-      client,
+      client: client(
+        &config.api_base,
+        &config.api_version,
+        &config.api_root_certificates,
+        credential,
+      )
+      .map_err(|_| FailureClass::Permanent)?,
       base: config.api_base.clone(),
       owner: repo.owner.clone(),
       repository: repo.name.clone(),
+      version: config.api_version.clone(),
     })
   }
   pub(crate) async fn observe(&self, intent: &DeliveryIntent) -> Result<Option<DeliveryReceipt>, FailureClass> {
@@ -229,13 +210,19 @@ impl GithubApi {
   ) -> Result<Option<Value>, FailureClass> {
     // Raw SDK responses retain status/pagination and let us bound the body
     // before deserializing. The SDK's convenience JSON methods buffer freely.
-    let response = match method {
-      Method::GET => self.client._get(url.as_str()).await,
-      Method::POST => self.client._post(url.as_str(), body.as_ref()).await,
-      Method::PATCH => self.client._patch(url.as_str(), body.as_ref()).await,
-      _ => return Err(FailureClass::InvalidRequest),
+    if !matches!(method, Method::GET | Method::POST | Method::PATCH) {
+      return Err(FailureClass::InvalidRequest);
     }
-    .map_err(|_| FailureClass::Transient)?;
+    let request = self
+      .client
+      .build_request(http::Request::builder().method(method).uri(url.as_str()), body.as_ref())
+      .map_err(|_| FailureClass::Permanent)?;
+    let request = pin_version(request, &self.version).map_err(|_| FailureClass::Permanent)?;
+    let response = self
+      .client
+      .execute(request)
+      .await
+      .map_err(|_| FailureClass::Transient)?;
     match response.status() {
       StatusCode::NOT_FOUND => return Ok(None),
       StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => return Err(FailureClass::Permanent),
@@ -311,4 +298,54 @@ pub(crate) fn branch(reference: &str) -> Result<&str, FailureClass> {
     return Err(FailureClass::InvalidRequest);
   }
   Ok(name)
+}
+
+/// Shared pinned SDK transport; role-specific authorization precedes construction.
+pub(crate) fn client(
+  base: &url::Url,
+  version: &str,
+  roots: &[reqwest::Certificate],
+  credential: &Credential,
+) -> Result<octocrab::Octocrab, crate::GithubConfigError> {
+  let mut bearer = Zeroizing::new(String::from("Bearer "));
+  bearer.push_str(&credential.token);
+  let mut authorization = HeaderValue::from_str(&bearer).map_err(|_| crate::GithubConfigError)?;
+  authorization.set_sensitive(true);
+  let mut headers = HeaderMap::new();
+  headers.insert(AUTHORIZATION, authorization);
+  headers.insert("accept", HeaderValue::from_static("application/vnd.github+json"));
+  headers.insert(
+    "x-github-api-version",
+    HeaderValue::from_str(version).map_err(|_| crate::GithubConfigError)?,
+  );
+  let client = Client::builder()
+    .tls_certs_merge(roots.iter().cloned())
+    .default_headers(headers)
+    .user_agent("octacity-github")
+    .timeout(std::time::Duration::from_secs(30))
+    .redirect(reqwest::redirect::Policy::none())
+    .retry(reqwest::retry::never())
+    .build()
+    .map_err(|_| crate::GithubConfigError)?;
+  // No SDK retry, redirect or tracing features: the Delivery contract owns
+  // observe-before-retry and prevents token/URL exposure in diagnostics.
+  let client = octocrab::Octocrab::builder()
+    .base_uri(base.as_str())
+    .map_err(|_| crate::GithubConfigError)?
+    .build_with_reqwest(client)
+    .map_err(|_| crate::GithubConfigError)?;
+  Ok(client)
+}
+
+pub(crate) fn pin_version<B>(
+  mut request: http::Request<B>,
+  version: &str,
+) -> Result<http::Request<B>, crate::GithubConfigError> {
+  // The SDK appends its compiled-in version during build_request. Replace it,
+  // rather than append another version or rely on reqwest's fallback headers.
+  request.headers_mut().insert(
+    "x-github-api-version",
+    HeaderValue::from_str(version).map_err(|_| crate::GithubConfigError)?,
+  );
+  Ok(request)
 }

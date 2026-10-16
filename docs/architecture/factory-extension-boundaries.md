@@ -1,9 +1,10 @@
 # Factory integration follow-ups
 
-The current Factory slice admits Work through the management application and
-executes an immutable Flow. External ticket discovery, concrete GitHub/GitLab/
-Jira Work Source and Work Reporter adapters, and an Octa-local JEV task plugin
-remain separate implementation changes. The GitHub Delivery capability does
+Factory admits Work through the management application and executes an immutable
+Flow. Optional provider-neutral polling composes the verified Source process with
+the same admission journal. GitHub implements read-only discovery; GitLab/Jira
+can implement the same boundary. Concrete Reporter effects and an Octa-local JEV
+task plugin remain separate implementation changes. The GitHub Delivery capability does
 not install any of those capabilities.
 
 ## Ownership and authority
@@ -20,6 +21,25 @@ Provider SDKs, pagination tokens, webhook signatures, retry headers, and provide
 status names belong in the adapter. The Flow owner consumes typed observations
 and declared outcomes; it must not acquire a GitHub issue-state enum, Jira
 workflow, provider payload, or special business-stage dispatcher.
+
+`octacity-work-source-protocol` defines independently advertised Source and
+Reporter roles and version ranges; `octacity-server-work-source` runs their
+closed normalized messages through the existing verified adapter host. A source
+range cannot disable a compatible Reporter role or confer Delivery authority.
+Native ticket containers are independent of the target code Repository, while
+selectors and effect mappings stay behind exact installed references. Neither
+protocol can submit a management identity, admit Work or drive Flow transitions.
+See the [process contract](../reference/protocols/work-source-reporter-v1.md) for
+wire bounds, credential separation, negotiation and cancellation. The existing
+GitHub provider validates independent Issue read/write installations through
+private `github-work.toml` and scoped grant files, sharing API/private-file
+validation helpers with Delivery. It checks exact native container, profile and
+network ceilings before resolving a token. This provider-specific configuration
+adds no GitHub types to Factory; other providers own their installation formats.
+GitHub Source reads one bounded HTTPS page, applies its pinned selector locally
+and emits opaque native item identities. Pagination, provider DTOs and TLS/API
+configuration remain in that plugin. Reporter effects remain a separate integration;
+Source activation is an explicit trusted runtime installation.
 
 ## Ticket discovery and admission
 
@@ -72,10 +92,9 @@ multiple matches return ambiguous input identities without a selected target.
 Other groups remain independent; labels and pipeline names confer no implicit
 exclusivity. GitLab/Jira adapters can use their own native observation and
 predicate types through the same selection interface. These pure checks neither
-reserve admission identities nor change running Work. The future store/worker
-integration must resolve the current group and commit selection/admission under
-the same transaction and scan fence; an in-memory revision check alone does not
-provide durable ownership or lock external tracker edits.
+reserve admission identities nor change running Work. The store resolves the current
+group and commits selection and admission under the existing Project lock and scan
+fence. This durable ownership cannot lock concurrent external tracker edits.
 
 `FactoryWorkAdmissionIntent` carries the common normalized admission inputs.
 `AdmitManualFactoryWorkCommand` remains its compatible management entry point,
@@ -225,10 +244,93 @@ and wrap the cursor when a sweep ends so failed records are retried.
 
 The installed authorization port has no default implementation and is not
 exposed as a management REST command or provider process message. Concrete
-process/grant verification, selection reevaluation and worker activation remain
-separate integration tasks. Worker composition must
-use the prepared admission seam and authorize reads before exposing diagnostics.
+process/grant verification and selection reevaluation are composed by the optional
+Source worker. It uses the prepared admission seam; diagnostic readers still must
+authorize access before exposing retained source state.
 The existing manual endpoint is not a ticket poller.
+
+## Bounded source polling
+
+`FactorySourcePoller` runs one finite application slice with an injected clock,
+trusted item/page/byte budgets and two provider-neutral ports: a normalized page
+reader and a candidate processor. The processor uses existing fenced selection,
+preparation and admission; success means durable admission/replay or a classified
+disposition. The poller has no second duplicate registry. Concrete verified
+process composition, group selection, scheduling, backoff and shutdown belong to
+the worker integration, not to this polling state machine.
+
+A complete bounded page is frozen in the existing private scan record before
+candidate effects. Checkpoints remove only settled candidates; the covered opaque
+continuation advances after the last one. A partial failure or lease takeover
+resumes the original snapshots. Candidate retries retain the same page deadline;
+the existing retention worker also clears expired pages, including disabled
+inputs. Expiry resets progress for a conservative rescan. Legacy checkpoints
+without an original pass context also restart from epoch. Existing admission
+identities make those repeated observations safe.
+
+Incremental windows are inclusive and overlap the last completed boundary.
+A periodic full pass alternates pages with incremental discovery under the same
+finite budgets. Each lane retains its own scan identity, window and continuation;
+updated timestamps never stand in for admission identity. Budgets count canonical
+normalized JSON bytes; the verified process/provider separately bounds raw wire
+bytes. No private snapshot or opaque cursor is a diagnostic. Manual management
+admission continues independently of these optional source ports.
+
+## Optional Source worker composition
+
+`FactorySourceWorker` binds the application poller to the verified Work adapter
+registry and existing source/admission/Artifact journals. Exact installed profiles
+supply read handles, provider-owned selectors, mapping, Project attribution and
+source policy. No GitHub SDK, label vocabulary or native state enters Factory.
+For exclusive groups, every enabled member is resolved at its frozen version;
+all selectors share one observation, and the strictest member budgets apply.
+Zero/multiple matches retain safe filtered/ambiguous selection without admission.
+
+Discovery lists only current enabled standalone inputs or exact current groups;
+group members are never scheduled independently, including obsolete groups. A
+bounded page cursor visits the next target/Project on later passes, while the
+existing durable scan claim prevents duplicate owners. Batch/concurrency settings
+bound each pass. Retries retain safe per-target class, attempt count, earliest
+retry and exhaustion in the existing scan record. Source uses the explicitly
+installed `FactorySourceWorkerSettings.max_attempts` as its positive per-target
+failure budget, independently of the supervisor's consecutive-failure circuit
+threshold; success resets it and an
+immutable definition replacement resets exhausted state. Provider retry lower
+bounds are never shortened to the local exponential backoff ceiling. Classified
+invalid/protocol/conflict results require definition repair. Cancellation retains
+the budget rather than spending an attempt. Ordinary Factory WIP backpressure
+also retains the prepared item and retry budget; capacity does not disable a
+Source or republish its immutable inputs. Expired preparations wait for the
+independent retention sweep without spending attempts; cleaned/rejected originals
+are settled as retained dispositions, never remapped or renewed from a new poll.
+
+Pending original preparations are settled in bounded pages before new discovery.
+Recovery and checkpointing consider the target's current enabled input identities.
+Disabled or removed members cannot block the remaining members; their original
+preparations stay private until ordinary retention. Joining or leaving a group
+does not change preparation identity or the original scan provenance. Recovery
+requires membership under the current claim and the same installed resource;
+an old owner or an unrelated group cannot resume those preparations.
+A frozen intent is reused across replacement/restart; an unfinished mapping needs
+its original exact installed profile. Each admission/replay checks current input,
+Project/group fence, verified executable/version/profile and current private read
+grant through Source `authorize`; pending unmapped snapshots receive that check
+before byte publication too. Ordinary admission independently verifies management
+permissions, exact target/repository policy, WIP and duplicate identity. Whole
+slice deadlines reserve cancellation/settlement time inside the claim window;
+provider operations retain their own original process deadlines and tree cleanup.
+
+Trusted deployments build a Source with `FactoryRuntimeResources::source_worker`
+and attach it using `FactoryProfileRuntimeInstaller::with_work_sources`, or the
+existing `FactoryRuntimeInstallation.work_sources` extension. Absence is the
+normal default. The supervisor runs Source independently; provider availability
+is excluded from Factory/manual admission readiness. Provider-specific installer
+formats and Console activation are subsequent tasks. Manual Factory input and
+ordinary CI/CD require no Source installation, provider token or provider call.
+
+Private input/page retention is always scheduled, even without Source polling or
+with Factory disabled. It uses a bounded wrapping sweep and the existing retention
+cadence for late-write checks; cleanup resolves no tracker grant or provider.
 
 ## Configured status projection
 

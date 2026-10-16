@@ -43,6 +43,10 @@ mod factory_admission_port;
 mod factory_source_artifact;
 pub use factory_source_artifact::*;
 mod factory_source;
+mod factory_source_worker;
+pub use factory_source_worker::*;
+mod factory_source_poll;
+pub use factory_source_poll::*;
 #[cfg(any(test, feature = "test-support"))]
 mod factory_source_artifact_testing;
 pub use factory_source::*;

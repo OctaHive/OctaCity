@@ -98,23 +98,12 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
       return Err(source_conflict());
     }
     let state = self.lock()?;
+    state.sources.require_current(project, target)?;
     Ok(
       state
         .sources
-        .preparations
-        .values()
-        .filter(|v| {
-          v.input.project_id() == project
-            && v.target.identity() == target.identity()
-            && v.admission.is_none()
-            && !v.snapshot.is_empty()
-            && !state
-              .sources
-              .materializations
-              .get(&v.id)
-              .is_some_and(|m| m.rejection.is_some() || m.cleaned_at.is_some())
-            && after.is_none_or(|cursor| v.id > cursor)
-        })
+        .pending_preparations(project, target)
+        .filter(|v| after.is_none_or(|cursor| v.id > cursor))
         .take(usize::from(limit))
         .cloned()
         .collect(),
@@ -187,6 +176,144 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
       .cloned()
       .ok_or_else(source_conflict)
   }
+  async fn source_scan_members(
+    &self,
+    claim: crate::WorkSourceScanClaim,
+    now: octacity_server_domain::Timestamp,
+  ) -> Result<Vec<WorkSourceInput>, StoreError> {
+    let state = self.lock()?;
+    state.sources.require_current(claim.project_id, claim.target)?;
+    crate::require_source_scan(
+      state
+        .sources
+        .scans
+        .get(&claim.target.identity())
+        .ok_or_else(source_conflict)?,
+      &claim,
+      now,
+    )?;
+    match claim.target {
+      crate::WorkSourceScanTarget::Input { id, .. } => Ok(vec![state.sources.selected_input(&claim, id)?]),
+      crate::WorkSourceScanTarget::Group { id, version } => Ok(
+        state
+          .sources
+          .groups
+          .get(&(id, version))
+          .ok_or_else(source_conflict)?
+          .members()
+          .to_vec(),
+      ),
+    }
+  }
+  async fn select_source_input(
+    &self,
+    claim: crate::WorkSourceScanClaim,
+    now: octacity_server_domain::Timestamp,
+    item: crate::WorkSourceItem,
+    matched: Vec<WorkSourceInputId>,
+  ) -> Result<octacity_server_factory::WorkSourceSelection, StoreError> {
+    let mut state = self.lock()?;
+    state.sources.require_current(claim.project_id, claim.target)?;
+    let members = match claim.target {
+      crate::WorkSourceScanTarget::Input { id, .. } => vec![state.sources.selected_input(&claim, id)?],
+      crate::WorkSourceScanTarget::Group { id, version } => state
+        .sources
+        .groups
+        .get(&(id, version))
+        .ok_or_else(source_conflict)?
+        .members()
+        .to_vec(),
+    };
+    let scan = state
+      .sources
+      .scans
+      .get_mut(&claim.target.identity())
+      .ok_or_else(source_conflict)?;
+    crate::record_source_selection(scan, &claim, now, members, item, matched)
+  }
+  async fn finish_source_scan(
+    &self,
+    claim: crate::WorkSourceScanClaim,
+    now: octacity_server_domain::Timestamp,
+    schedule: crate::WorkSourceSchedule,
+  ) -> Result<(), StoreError> {
+    let mut state = self.lock()?;
+    state.sources.require_current(claim.project_id, claim.target)?;
+    let scan = state
+      .sources
+      .scans
+      .get_mut(&claim.target.identity())
+      .ok_or_else(source_conflict)?;
+    crate::require_source_scan(scan, &claim, now)?;
+    scan.schedule = Some(schedule);
+    scan.claim.until = now;
+    Ok(())
+  }
+  async fn source_scan_schedule(
+    &self,
+    project: ProjectId,
+    target: crate::WorkSourceScanTarget,
+  ) -> Result<Option<crate::WorkSourceSchedule>, StoreError> {
+    Ok(
+      self
+        .lock()?
+        .sources
+        .scans
+        .get(&target.identity())
+        .filter(|s| s.claim.project_id == project && s.claim.target == target)
+        .and_then(|s| s.schedule.clone()),
+    )
+  }
+  async fn source_scan_targets(
+    &self,
+    project: ProjectId,
+    after: Option<crate::WorkSourceScanTarget>,
+    limit: u16,
+  ) -> Result<Vec<crate::WorkSourceScanTarget>, StoreError> {
+    if !(1..=64).contains(&limit) {
+      return Err(source_conflict());
+    }
+    let state = self.lock()?;
+    let sources = &state.sources;
+    let mut inputs = BTreeMap::new();
+    let mut groups = BTreeMap::new();
+    for input in sources.inputs.values().filter(|v| v.project_id() == project) {
+      inputs.insert(input.id(), input);
+    }
+    for group in sources.groups.values().filter(|v| v.project_id() == project) {
+      groups.insert(group.id(), group);
+    }
+    let mut targets = Vec::new();
+    for input in inputs.values() {
+      if input.definition().enabled
+        && !groups
+          .values()
+          .any(|g| g.members().iter().any(|m| m.id() == input.id()))
+      {
+        targets.push(crate::WorkSourceScanTarget::Input {
+          id: input.id(),
+          version: input.version(),
+        });
+      }
+    }
+    for group in groups.values() {
+      let target = crate::WorkSourceScanTarget::Group {
+        id: group.id(),
+        version: group.version(),
+      };
+      if sources.require_current(project, target).is_ok() {
+        targets.push(target);
+      }
+    }
+    targets.sort_by_key(|v| v.identity());
+    Ok(
+      targets
+        .into_iter()
+        .filter(|v| after.is_none_or(|a| v.identity() > a.identity()))
+        .take(usize::from(limit))
+        .collect(),
+    )
+  }
   async fn claim_source_scan(
     &self,
     request: crate::ClaimWorkSourceScan,
@@ -210,17 +337,12 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
     progress.validate()?;
     let mut state = self.lock()?;
     state.sources.require_current(claim.project_id, claim.target)?;
-    if state.sources.preparations.values().any(|v| {
-      v.input.project_id() == claim.project_id
-        && v.target.identity() == claim.target.identity()
-        && v.admission.is_none()
-        && !v.snapshot.is_empty()
-        && !state
-          .sources
-          .materializations
-          .get(&v.id)
-          .is_some_and(|m| m.rejection.is_some() || m.cleaned_at.is_some())
-    }) {
+    if state
+      .sources
+      .pending_preparations(claim.project_id, claim.target)
+      .next()
+      .is_some()
+    {
       return Err(source_conflict());
     }
     let scan = state
@@ -234,6 +356,33 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
     }
     scan.progress = Some(progress);
     Ok(())
+  }
+  async fn expire_source_poll_pages(
+    &self,
+    now: octacity_server_domain::Timestamp,
+    limit: u16,
+  ) -> Result<usize, StoreError> {
+    if !(1..=64).contains(&limit) {
+      return Err(source_conflict());
+    }
+    let mut state = self.lock()?;
+    let mut count = 0;
+    for scan in state.sources.scans.values_mut() {
+      if count == usize::from(limit) {
+        break;
+      }
+      if scan
+        .progress
+        .as_ref()
+        .and_then(|p| p.polling.as_ref())
+        .and_then(|p| p.pending_page.as_ref())
+        .is_some_and(|p| p.expires_at <= now)
+      {
+        scan.progress = None;
+        count += 1;
+      }
+    }
+    Ok(count)
   }
   async fn publish_work_sources(&self, request: PublishWorkSources) -> Result<(), StoreError> {
     request.validate()?;
@@ -329,6 +478,33 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
 }
 
 impl SourceMemoryState {
+  fn pending_preparations(
+    &self,
+    project: ProjectId,
+    target: crate::WorkSourceScanTarget,
+  ) -> impl Iterator<Item = &crate::WorkSourcePreparation> {
+    self.preparations.values().filter(move |preparation| {
+      let member = match target {
+        crate::WorkSourceScanTarget::Input { id, version } if id == preparation.input.id() => {
+          self.inputs.get(&(id, version))
+        }
+        crate::WorkSourceScanTarget::Group { id, version } => self
+          .groups
+          .get(&(id, version))
+          .and_then(|group| group.members().iter().find(|m| m.id() == preparation.input.id())),
+        _ => None,
+      };
+      preparation.input.project_id() == project
+        && member.is_some_and(|m| m.definition().enabled)
+        && preparation.admission.is_none()
+        && !preparation.snapshot.is_empty()
+        && !self
+          .materializations
+          .get(&preparation.id)
+          .is_some_and(|m| m.rejection.is_some() || m.cleaned_at.is_some())
+    })
+  }
+
   pub(super) fn selected_input(
     &self,
     claim: &crate::WorkSourceScanClaim,
@@ -362,6 +538,13 @@ impl SourceMemoryState {
           .max_by_key(|v| v.version())
           .ok_or_else(source_conflict)?;
         if input.project_id() != project || input.version() != version || !input.definition().enabled {
+          return Err(source_conflict());
+        }
+        let mut groups = BTreeMap::new();
+        for group in self.groups.values().filter(|g| g.project_id() == project) {
+          groups.insert(group.id(), group);
+        }
+        if groups.values().any(|g| g.members().iter().any(|m| m.id() == id)) {
           return Err(source_conflict());
         }
       }

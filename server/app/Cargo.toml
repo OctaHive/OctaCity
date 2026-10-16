@@ -35,6 +35,8 @@ octacity-server-webhook = { path = "../infrastructure/octacity-server-webhook" }
 octacity-server-vcs = { path = "../infrastructure/octacity-server-vcs" }
 octacity-vcs-protocol = { path = "../protocols/octacity-vcs-protocol" }
 octacity-delivery-protocol = { path = "../protocols/octacity-delivery-protocol" }
+octacity-server-work-source = { path = "../infrastructure/octacity-server-work-source" }
+octacity-work-source-protocol = { path = "../protocols/octacity-work-source-protocol" }
 octacity-server-delivery = { path = "../infrastructure/octacity-server-delivery" }
 octacity-webhook-provider-protocol = { path = "../protocols/octacity-webhook-provider-protocol" }
 serde.workspace = true

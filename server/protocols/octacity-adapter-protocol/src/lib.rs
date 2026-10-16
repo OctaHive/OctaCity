@@ -79,6 +79,33 @@ pub fn require_sha256(value: &str) -> Result<(), ValidationFailure> {
   }
 }
 
+/// Requires a nonempty bounded set of unique canonical DNS names or IP literals.
+/// Schemes, ports, wildcards and redirect destinations are not network authority.
+pub fn require_network_hosts(hosts: &[String]) -> Result<(), ValidationFailure> {
+  if hosts.is_empty() || hosts.len() > 256 {
+    return Err(ValidationFailure::LimitExceeded);
+  }
+  let mut unique = std::collections::BTreeSet::new();
+  for host in hosts {
+    let canonical_ip = host.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.to_string() == *host);
+    let canonical_dns = host.len() <= 253
+      && host.bytes().any(|byte| byte.is_ascii_lowercase())
+      && host.split('.').all(|label| {
+        !label.is_empty()
+          && label.len() <= 63
+          && !label.starts_with('-')
+          && !label.ends_with('-')
+          && label
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+      });
+    if (!canonical_ip && !canonical_dns) || !unique.insert(host) {
+      return Err(ValidationFailure::InvalidText);
+    }
+  }
+  Ok(())
+}
+
 /// Decodes one strict protocol-owned JSON representation.
 pub fn decode_json<T: DeserializeOwned>(message: &[u8]) -> Result<T, ValidationFailure> {
   serde_json::from_slice(message).map_err(|_| ValidationFailure::MalformedMessage)

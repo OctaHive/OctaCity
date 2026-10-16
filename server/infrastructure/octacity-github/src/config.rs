@@ -54,6 +54,13 @@ pub(crate) struct Credential {
 fn secret<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Zeroizing<String>, D::Error> {
   String::deserialize(d).map(Zeroizing::new)
 }
+impl std::fmt::Debug for Credential {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("Credential")
+      .field("class", &self.class)
+      .finish_non_exhaustive()
+  }
+}
 impl Config {
   pub(crate) fn verify_git(&self) -> Result<(), GithubConfigError> {
     verify_executable(&self.git_path, &self.git_sha256)
@@ -64,25 +71,8 @@ impl Config {
     let bytes = read_private(&directory.join("github-plugin.toml"), 64 * 1024)?;
     let wire: Wire =
       toml::from_str(std::str::from_utf8(&bytes).map_err(|_| GithubConfigError)?).map_err(|_| GithubConfigError)?;
-    let api_base = https(&wire.api_base)?;
-    if wire.api_root_certificates_pem.len() > 8 {
-      return Err(GithubConfigError);
-    }
-    let mut api_root_certificates = Vec::with_capacity(wire.api_root_certificates_pem.len());
-    for pem in wire.api_root_certificates_pem {
-      if pem.len() > 16 * 1024 {
-        return Err(GithubConfigError);
-      }
-      let certificates = reqwest::Certificate::from_pem_bundle(pem.as_bytes()).map_err(|_| GithubConfigError)?;
-      if certificates.len() != 1 {
-        return Err(GithubConfigError);
-      }
-      api_root_certificates.extend(certificates);
-    }
+    let api = api_settings(wire.api_base, wire.api_version, wire.api_root_certificates_pem)?;
     if wire.config_version != 1
-      || wire.api_version.is_empty()
-      || wire.api_version.len() > 32
-      || wire.api_version.chars().any(char::is_control)
       || !wire.git_path.is_absolute()
       || wire.repositories.is_empty()
       || wire.repositories.len() > 128
@@ -99,30 +89,15 @@ impl Config {
     }
     let git_path = wire.git_path.canonicalize().map_err(|_| GithubConfigError)?;
     verify_executable(&git_path, &wire.git_sha256)?;
-    let private = |path: &Path| {
-      if path.as_os_str().is_empty()
-        || path.is_absolute()
-        || !path.components().all(|c| matches!(c, Component::Normal(_)))
-      {
-        return Err(GithubConfigError);
-      }
-      let selected = directory.join(path);
-      private_directory(&selected)?;
-      let selected = selected.canonicalize().map_err(|_| GithubConfigError)?;
-      if !selected.starts_with(&directory) {
-        return Err(GithubConfigError);
-      }
-      Ok(selected)
-    };
     Ok(Self {
       digest: hex::encode(Sha256::digest(&*bytes)),
-      api_base,
-      api_version: wire.api_version,
-      api_root_certificates,
+      api_base: api.base,
+      api_version: api.version,
+      api_root_certificates: api.root_certificates,
       git_path,
       git_sha256: wire.git_sha256,
-      credential_directory: private(&wire.credential_directory)?,
-      input_directory: private(&wire.input_directory)?,
+      credential_directory: private_subdirectory(&directory, &wire.credential_directory)?,
+      input_directory: private_subdirectory(&directory, &wire.input_directory)?,
       repositories: wire.repositories,
     })
   }
@@ -157,22 +132,12 @@ impl Config {
     if repo.repository_id != intent.repository.repository_id {
       return Err(GithubConfigError);
     }
-    let path = self.credential_directory.join(format!(
-      "{}.json",
-      hex::encode(Sha256::digest(&intent.repository.credential.handle))
-    ));
-    let bytes = read_private(&path, 64 * 1024)?;
-    let credential: Credential = serde_json::from_slice(&bytes).map_err(|_| GithubConfigError)?;
-    if credential.class != "delivery_write"
-      || credential.token.is_empty()
-      || credential.token.len() > 8192
-      || credential.token.chars().any(char::is_control)
-      || credential.repositories.len() > 128
-      || !credential.repositories.contains(&intent.repository.repository_locator)
-    {
-      return Err(GithubConfigError);
-    }
-    Ok(credential)
+    read_credential(
+      &self.credential_directory,
+      "delivery_write",
+      &intent.repository.credential.handle,
+      &intent.repository.repository_locator,
+    )
   }
 }
 fn verify_executable(path: &Path, expected: &str) -> Result<(), GithubConfigError> {
@@ -225,7 +190,7 @@ pub(crate) fn read_private(path: &Path, maximum: u64) -> Result<Zeroizing<Vec<u8
   }
   Ok(bytes)
 }
-fn private_directory(path: &Path) -> Result<(), GithubConfigError> {
+pub(crate) fn private_directory(path: &Path) -> Result<(), GithubConfigError> {
   let metadata = fs::symlink_metadata(path).map_err(|_| GithubConfigError)?;
   if !metadata.file_type().is_dir() {
     return Err(GithubConfigError);
@@ -239,8 +204,71 @@ fn private_directory(path: &Path) -> Result<(), GithubConfigError> {
   }
   Ok(())
 }
-fn segment(value: &str) -> bool {
+pub(crate) fn segment(value: &str) -> bool {
   !value.is_empty() && value.len() <= 100 && value.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_.".contains(&b))
+}
+
+pub(crate) struct ApiSettings {
+  pub(crate) base: url::Url,
+  pub(crate) version: String,
+  pub(crate) root_certificates: Vec<reqwest::Certificate>,
+}
+pub(crate) fn api_settings(base: String, version: String, pems: Vec<String>) -> Result<ApiSettings, GithubConfigError> {
+  let base = https(&base)?;
+  if version.is_empty() || version.len() > 32 || version.chars().any(char::is_control) || pems.len() > 8 {
+    return Err(GithubConfigError);
+  }
+  let mut roots = Vec::with_capacity(pems.len());
+  for pem in pems {
+    if pem.len() > 16 * 1024 {
+      return Err(GithubConfigError);
+    }
+    let certificates = reqwest::Certificate::from_pem_bundle(pem.as_bytes()).map_err(|_| GithubConfigError)?;
+    if certificates.len() != 1 {
+      return Err(GithubConfigError);
+    }
+    roots.extend(certificates);
+  }
+  Ok(ApiSettings {
+    base,
+    version,
+    root_certificates: roots,
+  })
+}
+pub(crate) fn private_subdirectory(directory: &Path, relative: &Path) -> Result<PathBuf, GithubConfigError> {
+  if relative.as_os_str().is_empty()
+    || relative.is_absolute()
+    || !relative.components().all(|c| matches!(c, Component::Normal(_)))
+  {
+    return Err(GithubConfigError);
+  }
+  let selected = directory.join(relative);
+  private_directory(&selected)?;
+  let selected = selected.canonicalize().map_err(|_| GithubConfigError)?;
+  if !selected.starts_with(directory) {
+    return Err(GithubConfigError);
+  }
+  Ok(selected)
+}
+pub(crate) fn read_credential(
+  directory: &Path,
+  class: &str,
+  handle: &str,
+  repository: &str,
+) -> Result<Credential, GithubConfigError> {
+  let path = directory.join(format!("{}.json", hex::encode(Sha256::digest(handle))));
+  let bytes = read_private(&path, 64 * 1024)?;
+  let credential: Credential = serde_json::from_slice(&bytes).map_err(|_| GithubConfigError)?;
+  if credential.class != class
+    || credential.token.is_empty()
+    || credential.token.len() > 8192
+    || credential.token.chars().any(char::is_control)
+    || credential.repositories.len() > 128
+    || !credential.repositories.iter().any(|alias| alias == repository)
+  {
+    return Err(GithubConfigError);
+  }
+  Ok(credential)
 }
 fn https(value: &str) -> Result<url::Url, GithubConfigError> {
   let url = url::Url::parse(value).map_err(|_| GithubConfigError)?;

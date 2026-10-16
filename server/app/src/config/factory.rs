@@ -67,7 +67,7 @@ impl FactoryRuntimeConfig {
   pub const fn concurrency(self) -> u16 {
     self.concurrency
   }
-  pub(super) fn validate(self) -> Result<(), super::ServerConfigError> {
+  pub(crate) fn validate(self) -> Result<(), super::ServerConfigError> {
     let retry = self.retry_policy();
     if !super::WorkerPolicy::new(
       self.poll_interval_milliseconds,

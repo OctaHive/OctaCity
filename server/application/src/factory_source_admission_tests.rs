@@ -11,6 +11,8 @@ use octacity_server_store::{FactoryAdmissionStore, ReadFactoryAdmissionContext};
 
 #[path = "factory_source_mapping_tests.rs"]
 mod mapping;
+#[path = "factory_source_polling_tests.rs"]
+mod polling;
 #[path = "factory_source_replay_tests.rs"]
 mod retained_intent;
 

@@ -683,3 +683,63 @@ fn source_cleanup_schedules_rechecks_and_does_not_renew_duplicate_acknowledgemen
     assert_eq!(retained.expires_at, expires);
   });
 }
+
+#[test]
+fn existing_retention_worker_purges_expired_poll_pages_without_artifact_objects() {
+  run_ready(async {
+    let (store, preparation, claim) = reserved("jira").await;
+    let bytes = Arc::new(Bytes::default());
+    let cleaner =
+      crate::FactorySourceInputRetentionWorker::new(store.clone(), bytes, std::time::Duration::from_millis(1)).unwrap();
+    let expired = time(30 * 86400000 + 20);
+    cleaner.run_once(expired, None, 64).await.unwrap();
+    assert!(
+      store
+        .source_preparation(claim.project_id, preparation.id)
+        .await
+        .unwrap()
+        .snapshot
+        .is_empty()
+    );
+    let scan = store
+      .claim_source_scan(octacity_server_store::ClaimWorkSourceScan {
+        project_id: claim.project_id,
+        target: claim.target,
+        owner: key("retention-owner"),
+        now: expired,
+        until: time(expired.unix_millis() + 100),
+      })
+      .await
+      .unwrap()
+      .unwrap();
+    let progress:octacity_server_store::WorkSourceProgress=serde_json::from_value(serde_json::json!({
+      "window_start":0,"window_end":expired.unix_millis(),"continuation":null,"reconciliation":false,
+      "polling":{"scan_id":digest(1),"other_pass":null,"reconciliation_due_at":expired.unix_millis()+1000,"switch_after_page":false,"finished":false,
+        "pending_page":{"candidates":[{"title":"private pending snapshot"}],"next_cursor":"private-cursor","expires_at":expired.unix_millis()+1}}
+    })).unwrap();
+    store
+      .checkpoint_source_scan(scan.claim.clone(), expired, None, progress)
+      .await
+      .unwrap();
+    assert_eq!(
+      cleaner
+        .run_once(time(expired.unix_millis() + 1), None, 64)
+        .await
+        .unwrap()
+        .poll_pages_expired,
+      1
+    );
+    let next = store
+      .claim_source_scan(octacity_server_store::ClaimWorkSourceScan {
+        project_id: claim.project_id,
+        target: claim.target,
+        owner: key("next-owner"),
+        now: time(expired.unix_millis() + 100),
+        until: time(expired.unix_millis() + 200),
+      })
+      .await
+      .unwrap()
+      .unwrap();
+    assert!(next.progress.is_none());
+  });
+}

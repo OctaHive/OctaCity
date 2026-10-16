@@ -1,0 +1,21 @@
+[package]
+name = "octacity-server-work-source"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+description = "Verified provider-neutral Work Source and Reporter process host"
+
+[dependencies]
+octacity-work-source-protocol = { path = "../../protocols/octacity-work-source-protocol" }
+octacity-server-adapter-host = { path = "../octacity-server-adapter-host" }
+serde_json.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+sha2.workspace = true
+hex.workspace = true
+tempfile.workspace = true
+tokio.workspace = true

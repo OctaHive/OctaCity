@@ -120,3 +120,8 @@ this review follow-up does not start task 3.1.
 Glossary, documentation and SQL whitespace-only edits have no executable behavior
 to drive with TDD. Architecture, format, strict OpenSpec and diff checks validate
 the prose/formatting; behavioral changes and migration are covered above.
+
+## Source polling review
+
+The subsequent review of tasks 3.1–3.5 is recorded separately in
+[Source review corrections](verification-source-review-fixes.md).

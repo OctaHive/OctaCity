@@ -1,0 +1,27 @@
+{
+  "family": "reporter",
+  "message": {
+    "protocol_version": 1,
+    "request_id": "projection-request-1",
+    "command": {
+      "operation": "project",
+      "payload": {
+        "projection_id": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+        "configuration_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "resource": {
+          "resource_id": "native-container",
+          "resource_locator": "installed-ticket-space",
+          "credential": { "class": "work_reporter_write", "handle": "private-reporter-grant" }
+        },
+        "item_id": "native-item",
+        "display_id": "TASK-7",
+        "mapping": {
+          "identity": "arbitrary-installed-effects",
+          "sha256": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        },
+        "status": "needs-human-eyes",
+        "network_hosts": ["tracker.invalid"]
+      }
+    }
+  }
+}

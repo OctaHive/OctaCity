@@ -4206,10 +4206,13 @@ name = "octacity-github"
 version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
+ "chrono",
  "hex",
+ "http",
  "http-body-util",
  "octacity-delivery-protocol",
  "octacity-protocol",
+ "octacity-work-source-protocol",
  "octocrab",
  "processkit",
  "rcgen",
@@ -4489,8 +4492,10 @@ dependencies = [
  "octacity-server-store-postgres",
  "octacity-server-vcs",
  "octacity-server-webhook",
+ "octacity-server-work-source",
  "octacity-vcs-protocol",
  "octacity-webhook-provider-protocol",
+ "octacity-work-source-protocol",
  "reqwest",
  "rustix",
  "serde",
@@ -4902,6 +4907,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "octacity-server-work-source"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "octacity-server-adapter-host",
+ "octacity-work-source-protocol",
+ "serde_json",
+ "sha2 0.11.0",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
 name = "octacity-service-contract-tests"
 version = "0.1.0"
 dependencies = [
@@ -5016,6 +5035,17 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "octacity-adapter-protocol",
+ "serde",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "octacity-work-source-protocol"
+version = "0.1.0"
+dependencies = [
+ "octacity-adapter-protocol",
+ "octacity-delivery-protocol",
  "serde",
  "serde_json",
  "thiserror",
