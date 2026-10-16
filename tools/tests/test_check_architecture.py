@@ -54,6 +54,20 @@ def package_fixture(
 
 
 class ArchitecturePolicyTests(unittest.TestCase):
+    def test_decision_signal_adapters_are_independent_workspace_packages(self):
+        metadata = ARCHITECTURE.cargo_metadata(REPOSITORY)
+        packages = {package["name"]: package for package in metadata["packages"]}
+        registry = "octacity-server-decision-signal"
+        adapters = {"octacity-server-decision-signal-jev", "octacity-server-decision-signal-openai"}
+        self.assertTrue(adapters <= packages.keys(), "each provider must be a separate workspace crate")
+        for name in adapters | {registry}:
+            dependencies = {d["name"] for d in packages[name]["dependencies"]}
+            self.assertIn("octacity-server-factory", dependencies)
+            self.assertTrue(adapters.isdisjoint(dependencies), "providers and registry must not depend on adapters")
+        self.assertTrue({"reqwest", "tokio-rustls"}.isdisjoint(
+            {d["name"] for d in packages[registry]["dependencies"]}
+        ), "the registry must remain transport neutral")
+
     def test_windows_git_path_support_is_specific_to_changeset_capture(self):
         for name, expected in (
             ("octacity-changeset", []),

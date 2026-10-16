@@ -21,6 +21,7 @@ Runbooks for deploying and maintaining released components:
 - [Operator console deployment](operations/operator-console.md)
 - [Server operations](operations/server.md)
 - [Optional Factory operations and qualification](operations/factory.md)
+- [OpenAI Decisions shadow preparation](operations/openai-decisions-shadow.md)
 - [Agent operations](operations/agent.md)
 - [Backup, restore, and reconciliation](operations/backup-restore.md)
 - [Schema migrations and rollback](operations/schema-migrations.md)

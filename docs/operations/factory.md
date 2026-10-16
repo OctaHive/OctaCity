@@ -5,6 +5,10 @@ an immutable Flow owner over ordinary Builds; it does not install a second Job
 executor. Use this guide alongside [server operations](server.md),
 [Agent operations](agent.md), and the [local stand](local-stand.md).
 
+The separate [OpenAI Decisions shadow guide](openai-decisions-shadow.md)
+describes the optional adapter, private installation files and deferred live
+experiment. Installing it does not enable Factory or qualify a model.
+
 ## Choose and observe the mode
 
 | Observation | Meaning | Operator action |

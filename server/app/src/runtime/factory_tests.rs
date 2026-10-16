@@ -405,11 +405,11 @@ fn tool_risk_profile_fixture() -> FactoryToolRiskNodeProfile {
 async fn installed_signal_transport_cannot_contact_a_host_outside_its_bound_authority() {
   let connector = |endpoint: &str, capability: &DecisionSignalProviderCapability| {
     Arc::new(
-      octacity_server_decision_signal::JevDecisionSignalProvider::new(
+      octacity_server_decision_signal_jev::JevDecisionSignalProvider::new(
         endpoint,
-        octacity_server_decision_signal::JevApiKey::new("sk-glm5-network-scope-fixture".to_owned()).unwrap(),
+        octacity_server_decision_signal_jev::JevApiKey::new("sk-glm5-network-scope-fixture".to_owned()).unwrap(),
         capability.clone(),
-        octacity_server_decision_signal::JevBillingPolicy::new(1).unwrap(),
+        octacity_server_decision_signal_jev::JevBillingPolicy::new(1).unwrap(),
         Duration::from_millis(100),
       )
       .unwrap(),
@@ -496,6 +496,54 @@ async fn installed_tool_risk_catalog_retains_the_project_policy_for_agent_ingres
   let mut foreign = catalog;
   foreign.projects[0].0 = ProjectId::generate();
   assert!(FactoryProfileRuntimeInstaller::new(foreign, Arc::new(Ready), vec![]).is_err());
+}
+
+#[tokio::test]
+async fn private_signal_catalog_composes_the_openai_adapter_without_contacting_it() {
+  let directory = tempfile::tempdir().unwrap();
+  let mut capability = serde_json::to_value(signal_binding_fixture().plan.capability).unwrap();
+  capability["provider"]["identity"] = serde_json::json!("openai");
+  capability["adapter"]["identity"] = serde_json::json!("openai-decisions-http");
+  capability["model"]["identity"] = serde_json::json!("gpt-6-luna");
+  capability["model"]["version"] = serde_json::json!("unversioned-shadow-v1");
+  capability["probability_semantics"]["identity"] = serde_json::json!("openai-choice-probabilities");
+  capability["probability_semantics"]["version"] = serde_json::json!("v1");
+  let configuration = directory.path().join("openai.json");
+  let credential = directory.path().join("openai-key");
+  let catalog = directory.path().join("connectors.json");
+  std::fs::write(
+    &configuration,
+    serde_json::to_vec(&serde_json::json!({
+      "version":1,"endpoint":"https://api.openai.com/v1/decisions","capability":capability,
+      "timeout_milliseconds":1000,"input_cost_micro_units_per_million_tokens":100000
+    }))
+    .unwrap(),
+  )
+  .unwrap();
+  std::fs::write(&credential, "sk-proj-composition-private-canary\n").unwrap();
+  let mut document = serde_json::json!({"version":1,"connectors":[{
+    "kind":"openai-decisions","credential_profile":"openai-shadow",
+    "configuration_file":configuration,"credential_file":credential
+  }]});
+  std::fs::write(&catalog, serde_json::to_vec(&document).unwrap()).unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    for path in [&configuration, &credential, &catalog] {
+      std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+  }
+  let providers = load_factory_signal_connectors(&catalog).await.unwrap();
+  assert_eq!(providers.len(), 1);
+  assert_eq!(serde_json::to_value(providers[0].capability()).unwrap(), capability);
+  assert_eq!(providers[0].credential_profile().as_str(), "openai-shadow");
+  assert!(
+    !providers[0].has_observed_failure(),
+    "installation is not a remote health probe"
+  );
+  document["connectors"][0]["kind"] = serde_json::json!("unknown-adapter");
+  std::fs::write(&catalog, serde_json::to_vec(&document).unwrap()).unwrap();
+  assert!(load_factory_signal_connectors(&catalog).await.is_err());
 }
 
 #[tokio::test]

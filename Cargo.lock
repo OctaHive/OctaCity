@@ -4477,6 +4477,8 @@ dependencies = [
  "octacity-server-application",
  "octacity-server-artifacts",
  "octacity-server-decision-signal",
+ "octacity-server-decision-signal-jev",
+ "octacity-server-decision-signal-openai",
  "octacity-server-delivery",
  "octacity-server-domain",
  "octacity-server-factory",
@@ -4661,6 +4663,32 @@ dependencies = [
 
 [[package]]
 name = "octacity-server-decision-signal"
+version = "0.1.0"
+dependencies = [
+ "octacity-server-domain",
+ "octacity-server-factory",
+ "thiserror",
+]
+
+[[package]]
+name = "octacity-server-decision-signal-jev"
+version = "0.1.0"
+dependencies = [
+ "futures-util",
+ "octacity-server-domain",
+ "octacity-server-factory",
+ "rcgen",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror",
+ "tokio",
+ "tokio-rustls",
+ "zeroize",
+]
+
+[[package]]
+name = "octacity-server-decision-signal-openai"
 version = "0.1.0"
 dependencies = [
  "futures-util",

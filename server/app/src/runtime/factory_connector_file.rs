@@ -7,7 +7,7 @@ use std::{
   },
 };
 
-use octacity_server_decision_signal::{DecisionSignalProviderRegistry, install_decision_signal_connector};
+use octacity_server_decision_signal::DecisionSignalProviderRegistry;
 use octacity_server_factory::{
   DecisionSignalProvider, DecisionSignalProviderCapability, DecisionSignalProviderFuture,
   DecisionSignalProviderObservation, DecisionSignalProviderObservationFuture, DecisionSignalProviderRequest,
@@ -207,4 +207,32 @@ pub async fn load_factory_signal_connectors(
     DecisionSignalProviderRegistry::try_new(transports).map_err(|_| Invalid)?;
   }
   Ok(providers)
+}
+
+// Only the composition root chooses concrete providers. Registry/core never
+// import a provider implementation or decode its configuration.
+fn install_decision_signal_connector(
+  kind: &FactoryKey,
+  configuration: &[u8],
+  credential: String,
+) -> Result<Arc<dyn DecisionSignalProvider>, FactoryRuntimeInstallationError> {
+  use FactoryRuntimeInstallationError::Invalid;
+  let credential = zeroize::Zeroizing::new(credential);
+  match kind.as_str() {
+    "jev" => {
+      use octacity_server_decision_signal_jev::{JevApiKey, JevDecisionSignalProvider};
+      let key = JevApiKey::new(credential.to_string()).map_err(|_| Invalid)?;
+      Ok(Arc::new(
+        JevDecisionSignalProvider::from_deployment_json(configuration, key).map_err(|_| Invalid)?,
+      ))
+    }
+    "openai-decisions" => {
+      use octacity_server_decision_signal_openai::OpenAiDecisionSignalProvider;
+      Ok(Arc::new(
+        OpenAiDecisionSignalProvider::from_deployment_json(configuration, credential.to_string())
+          .map_err(|_| Invalid)?,
+      ))
+    }
+    _ => Err(Invalid),
+  }
 }

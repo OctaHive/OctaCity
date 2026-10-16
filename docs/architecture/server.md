@@ -657,6 +657,15 @@ never contacts the connector and records known zero consumption. The application
 and common Factory contracts contain no HTTP payload, SDK, endpoint or bearer
 format for JEV or another provider.
 
+Decision Signal transport implementations are separate crates:
+`octacity-server-decision-signal-jev` and
+`octacity-server-decision-signal-openai`. Both implement the existing
+`octacity-server-factory::DecisionSignalProvider` contract and depend on neither
+the other implementation nor the registry. The
+`octacity-server-decision-signal` crate contains only exact neutral discovery;
+it has no HTTP client, provider payload or credential parser. The server
+composition root selects an adapter for each private connector catalog entry.
+
 The JEV adapter accepts its own bounded versioned deployment JSON through
 `JevDecisionSignalProvider::from_deployment_json`. The host resolves its API key
 separately; inline credentials and unknown fields are rejected. Installation

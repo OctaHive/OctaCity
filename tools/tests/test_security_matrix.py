@@ -102,7 +102,8 @@ class SecurityMatrixTests(unittest.TestCase):
 
         executed = {argument for command in commands for argument in command}
         self.assertTrue(
-            {"octacity-server-factory", "octacity-server-decision-signal"} <= executed,
+            {"octacity-server-factory", "octacity-server-decision-signal",
+             "octacity-server-decision-signal-jev", "octacity-server-decision-signal-openai"} <= executed,
             "release security must execute graph/context/evidence and provider substitution negatives",
         )
 

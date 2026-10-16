@@ -75,6 +75,8 @@ CONTRACTS = (
             "cargo", "test", "--locked", "--all-features",
             "-p", "octacity-server-factory",
             "-p", "octacity-server-decision-signal",
+            "-p", "octacity-server-decision-signal-jev",
+            "-p", "octacity-server-decision-signal-openai",
         ),
     ),
     SecurityContract(

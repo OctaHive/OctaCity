@@ -25,6 +25,8 @@ octacity-server-api-webhook = { path = "../api/octacity-server-api-webhook" }
 octacity-server-application = { path = "../application" }
 octacity-server-domain = { path = "../core/octacity-server-domain" }
 octacity-server-decision-signal = { path = "../infrastructure/octacity-server-decision-signal" }
+octacity-server-decision-signal-jev = { path = "../infrastructure/octacity-server-decision-signal-jev" }
+octacity-server-decision-signal-openai = { path = "../infrastructure/octacity-server-decision-signal-openai" }
 octacity-server-job = { path = "../core/octacity-server-job" }
 octacity-server-factory = { path = "../core/octacity-server-factory" }
 octacity-server-store = { path = "../core/octacity-server-store" }

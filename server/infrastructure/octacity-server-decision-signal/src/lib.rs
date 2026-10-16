@@ -1,18 +1,8 @@
-//! Exact provider discovery and transport adapters for Decision Signals.
-//!
-//! The registry exposes only provider-neutral Factory contracts. JEV HTTP
-//! payloads and credentials remain private to this infrastructure crate.
-
+//! Provider-neutral exact Decision Signal discovery.
+//! Transport implementations are separate crates selected by the server composition root.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
-
-mod connector;
-mod jev;
 mod registry;
-
-pub use connector::{DecisionSignalConnectorError, install_decision_signal_connector};
-pub use jev::{JevAdapterError, JevApiKey, JevBillingPolicy, JevDecisionSignalProvider};
 pub use registry::{DecisionSignalProviderRegistry, DecisionSignalRegistryError};
-
 #[cfg(test)]
 mod tests;

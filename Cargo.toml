@@ -47,6 +47,8 @@ members = [
   "server/infrastructure/octacity-server-delivery",
   "server/infrastructure/octacity-server-adapter-host",
   "server/infrastructure/octacity-server-decision-signal",
+  "server/infrastructure/octacity-server-decision-signal-jev",
+  "server/infrastructure/octacity-server-decision-signal-openai",
   "server/infrastructure/octacity-server-store-postgres",
   "server/infrastructure/octacity-server-vcs",
   "server/infrastructure/octacity-server-webhook",
