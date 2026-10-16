@@ -32,7 +32,9 @@ impl Fixture {
     ca.key_usages = vec![rcgen::KeyUsagePurpose::KeyCertSign];
     let issuer = rcgen::CertifiedIssuer::self_signed(ca, rcgen::KeyPair::generate().unwrap()).unwrap();
     let key = rcgen::KeyPair::generate().unwrap();
-    let leaf = rcgen::CertificateParams::new(vec!["localhost".to_owned()])
+    // Match the bound address directly. A dual-stack localhost lookup can
+    // otherwise consume the failure test's deadline on IPv6-to-IPv4 fallback.
+    let leaf = rcgen::CertificateParams::new(vec!["127.0.0.1".to_owned()])
       .unwrap()
       .signed_by(&key, &issuer)
       .unwrap();
@@ -47,7 +49,7 @@ impl Fixture {
       .unwrap();
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let endpoint = format!(
-      "https://localhost:{}/v1/decisions",
+      "https://127.0.0.1:{}/v1/decisions",
       listener.local_addr().unwrap().port()
     );
     let acceptor = TlsAcceptor::from(Arc::new(config));

@@ -128,6 +128,35 @@ After the correction, the existing public provider tests passed locally:
 `windows-tls-local-regressions.log`. Windows Green remains required before
 archiving; a local chain result is not a Windows qualification result.
 
+### Literal IPv4 fixture endpoint and the 300 ms failure deadline
+
+The subsequent exact-source `3079300fd6337f0f8d3e9fd7e80260353f724952`
+[Windows job](https://github.com/OctaHive/OctaCity/actions/runs/38883383005/job/116915207584)
+passed 8 of 9 OpenAI tests, confirming the certificate correction. The mixed
+lost-response/rate-limit/timeout/refusal test remained Red: its 300 ms deadline
+produced `TimedOut` where `Unavailable` was expected. All other hosted CI jobs,
+coverage and the released Host matrix passed on that revision.
+
+The fixture listened only on IPv4 while advertising `localhost`. The locked
+HTTP connector's IPv6/IPv4 fallback delay is itself 300 ms, so address-family
+selection could consume that entire test deadline before a POST. The fixture
+now advertises its bound `127.0.0.1` address and issues the corresponding IP SAN.
+The hostname-mismatch case uses `localhost` against that IP-only certificate;
+its expected rejection is retained. Production transport and every original
+failure assertion, request count, replay check and timeout value remain intact,
+including the deliberate 300 ms timeout against a 1000 ms delayed response.
+
+Before changing the fixture, the public regression
+`openai_https_accepts_the_literal_address_owned_by_its_ipv4_fixture` failed:
+an explicit connection to the bound IPv4 address could not pass TLS with the
+old DNS-only certificate. After the matching IP SAN/endpoint correction it
+passed. The command was `cargo test --locked -j 2
+-p octacity-server-decision-signal-openai openai_https_accepts_the_literal_address
+-- --nocapture`; task-local logs are `ipv4-endpoint-red.log` (one failure),
+`ipv4-endpoint-green.log` (all 10 OpenAI tests passed),
+`ipv4-adapters-regressions.log` (registry 1, JEV 12, OpenAI 10 passed), and
+`ipv4-clippy.log`. Native Windows confirmation remains an archive prerequisite.
+
 ## Implemented preparation
 
 Added `tools/fixtures/factory-signal-calibration/corpus-v1.json`: eight routing

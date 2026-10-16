@@ -180,6 +180,24 @@ async fn openai_https_choice_preserves_request_semantics_and_measured_usage() {
 }
 
 #[tokio::test]
+async fn openai_https_accepts_the_literal_address_owned_by_its_ipv4_fixture() {
+  let fixture = https::Fixture::start(response()).await;
+  let mut config = configuration();
+  config["endpoint"] = serde_json::json!(fixture.endpoint.replace("localhost", "127.0.0.1"));
+  config["root_certificates_pem"] = serde_json::json!([fixture.root]);
+  let provider = install_openai(&serde_json::to_vec(&config).unwrap(), https::KEY.to_owned()).unwrap();
+  let request = openai_request(DecisionSignalMode::Shadow);
+  let result = provider
+    .evaluate(&request)
+    .await
+    .expect("the bound IPv4 address must be usable without DNS or IPv6 fallback");
+  assert_eq!(provider.network_destinations().unwrap()[0].as_str(), "127.0.0.1");
+  assert_eq!(result.request_id(), request.id());
+  assert_eq!(fixture.captured.lock().unwrap().len(), 1);
+  fixture.stop().await;
+}
+
+#[tokio::test]
 async fn openai_unversioned_model_cannot_leave_shadow_or_contact_a_provider_for_another_binding() {
   let fixture = https::Fixture::start(response()).await;
   let provider = installed(&fixture);
@@ -339,7 +357,7 @@ async fn openai_https_preserves_private_ca_hostname_and_response_bounds() {
     DecisionSignalState::Unavailable
   );
   config["root_certificates_pem"] = serde_json::json!([fixture.root]);
-  config["endpoint"] = serde_json::json!(fixture.endpoint.replace("localhost", "127.0.0.1"));
+  config["endpoint"] = serde_json::json!(fixture.endpoint.replace("127.0.0.1", "localhost"));
   let provider = install_openai(&serde_json::to_vec(&config).unwrap(), https::KEY.to_owned()).unwrap();
   assert_eq!(
     provider
