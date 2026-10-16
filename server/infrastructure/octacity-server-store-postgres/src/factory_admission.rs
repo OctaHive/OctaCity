@@ -1,15 +1,13 @@
-use std::str::FromStr as _;
-
 use octacity_server_domain::{EntityKind, RepositoryVersion, Timestamp};
 use octacity_server_factory::{
   AdmittedFlow, BudgetUsage, FactoryConfiguration, FactoryDigest, FactoryKey, FactoryLifecycleProgress, FactoryRun,
-  FactoryRunState, FactoryRunVersion, WorkEnvelope,
+  FactoryRunVersion, WorkEnvelope,
 };
 use octacity_server_store::{
-  AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionMutationOutcome, FactoryAdmissionProbe, FactoryAuditFact,
-  FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryOutboxRecord, ManagementMutation, MutationAuditContext,
-  MutationDisposition, PublishedFactoryAdmission, ReadFactoryAdmissionContext, StoreError, StoreInputError,
-  StoreOperation,
+  AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionIdentity, FactoryAdmissionMutationOutcome,
+  FactoryAdmissionProbe, FactoryAuditFact, FactoryBudgetRecord, FactoryLifecycleCheckpoint, FactoryOutboxRecord,
+  ManagementMutation, MutationAuditContext, MutationDisposition, PublishedFactoryAdmission,
+  ReadFactoryAdmissionContext, StoreError, StoreInputError, StoreOperation,
 };
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -17,7 +15,7 @@ use sqlx::{FromRow, PgPool, Postgres, Transaction, types::Json};
 
 use crate::{
   database::{classify, unavailable},
-  discovery::{positive, timestamp},
+  discovery::timestamp,
   mutation::{
     MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome, stable_record_id,
   },
@@ -37,9 +35,35 @@ struct AdmissionRow {
   configuration: Json<FactoryConfiguration>,
   intent_digest: Vec<u8>,
   run_id: uuid::Uuid,
-  state: String,
-  version: i64,
   admitted_at_millis: i64,
+}
+
+pub(crate) async fn recover(
+  pool: &PgPool,
+  identity: &FactoryAdmissionIdentity,
+) -> Result<Option<PublishedFactoryAdmission>, StoreError> {
+  let security_digest = FactoryDigest::sha256(
+    "octacity.factory.security-scope.v1",
+    &[identity.source_scope.security_scope.as_str().as_bytes()],
+  );
+  let row = sqlx::query_as::<_, AdmissionRow>(
+    "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
+            run.id AS run_id, \
+            FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
+     FROM factory_work_envelopes AS work \
+     JOIN factory_runs AS run ON run.work_envelope_id = work.id \
+     JOIN factory_configuration_versions AS configuration \
+       ON configuration.factory_configuration_id = run.factory_configuration_id \
+      AND configuration.version = run.factory_configuration_version \
+     WHERE work.source_kind = $1 AND work.security_scope_digest = $2 AND work.external_identity = $3",
+  )
+  .bind(identity.source_scope.source.as_str())
+  .bind(security_digest.as_bytes().as_slice())
+  .bind(identity.external_identity.as_str())
+  .fetch_optional(pool)
+  .await
+  .map_err(unavailable)?;
+  row.map(decode_admission).transpose()
 }
 
 pub(crate) async fn replay(
@@ -64,9 +88,16 @@ pub(crate) async fn replay(
     return Ok(Some(replay_outcome(outcome)?));
   }
 
+  replay_admission_identity(pool, probe).await
+}
+
+async fn replay_admission_identity<'e>(
+  executor: impl sqlx::PgExecutor<'e>,
+  probe: &FactoryAdmissionProbe,
+) -> Result<Option<FactoryAdmissionMutationOutcome>, StoreError> {
   let row = sqlx::query_as::<_, AdmissionRow>(
     "SELECT work.envelope, configuration.definition AS configuration, work.intent_digest, \
-            run.id AS run_id, run.state, run.version, \
+            run.id AS run_id, \
             FLOOR(EXTRACT(EPOCH FROM run.admitted_at) * 1000)::BIGINT AS admitted_at_millis \
      FROM factory_work_envelopes AS work \
      JOIN factory_runs AS run ON run.work_envelope_id = work.id \
@@ -78,7 +109,7 @@ pub(crate) async fn replay(
   .bind(probe.source_scope.source.as_str())
   .bind(security_scope_digest(probe).as_bytes().as_slice())
   .bind(probe.external_identity.as_str())
-  .fetch_optional(pool)
+  .fetch_optional(executor)
   .await
   .map_err(unavailable)?;
   let Some(row) = row else {
@@ -118,12 +149,52 @@ pub(crate) async fn admit(
   pool: &PgPool,
   request: ManagementMutation<AdmitFactoryWork>,
 ) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let probe = request.mutation().probe.clone();
+  match admit_once(pool, request, None).await {
+    Err(error @ (StoreError::Duplicate { .. } | StoreError::Conflict { .. })) => {
+      // Another observer may have won the existing unique admission identity.
+      // Compare the original intent, never substitute the loser's prepared Work.
+      match replay(pool, &probe).await? {
+        Some(receipt) => Ok(receipt),
+        None => Err(error),
+      }
+    }
+    result => result,
+  }
+}
+
+async fn admit_once(
+  pool: &PgPool,
+  request: ManagementMutation<AdmitFactoryWork>,
+  guard: Option<octacity_server_store::AdmitPreparedWorkSource>,
+) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
   let (request, audit) = request.into_parts();
   validate_admission(&request, &audit)?;
   let identity = mutation_identity(&request.probe, request.admitted_at, &audit)?;
   let mut transaction = match crate::mutation::begin(pool, &identity).await? {
     MutationStart::Fresh(transaction) => transaction,
-    MutationStart::Replay(outcome) => return replay_outcome(outcome),
+    MutationStart::Replay(outcome) => {
+      let outcome = replay_outcome(outcome)?;
+      if let Some(guard) = &guard {
+        crate::factory_source::correlate_replay(pool, guard, &request, &outcome.admission).await?;
+      }
+      return Ok(outcome);
+    }
+  };
+  let preparation = if let Some(guard) = &guard {
+    let preparation = crate::factory_source::lock_preparation(&mut transaction, guard, &request).await?;
+    // A receipt published before correlation (or by another observer) remains the
+    // existing authority. Discard the provisional transport row before attaching it.
+    if let Some(outcome) = replay_admission_identity(&mut *transaction, &request.probe).await? {
+      transaction.rollback().await.map_err(unavailable)?;
+      crate::factory_source::correlate_replay(pool, guard, &request, &outcome.admission).await?;
+      return Ok(outcome);
+    }
+    crate::factory_source_artifact::require_admission_inputs(&mut transaction, &preparation, &request, guard.now)
+      .await?;
+    Some(preparation)
+  } else {
+    None
   };
   let configuration = lock_configuration(&mut transaction, &request).await?;
   request.validate_configuration(&configuration)?;
@@ -253,6 +324,9 @@ pub(crate) async fn admit(
     disposition: MutationDisposition::Applied,
     admission,
   };
+  if let Some(preparation) = preparation {
+    crate::factory_source::correlate(&mut transaction, preparation, &outcome.admission).await?;
+  }
   crate::mutation::commit(
     transaction,
     &identity,
@@ -544,17 +618,10 @@ async fn insert_audit_link(
 fn decode_admission(row: AdmissionRow) -> Result<PublishedFactoryAdmission, StoreError> {
   let work = row.envelope.0;
   let configuration = row.configuration.0;
-  let state = FactoryRunState::from_str(&row.state).map_err(|_| StoreError::Unavailable)?;
-  let version = FactoryRunVersion::new(positive(row.version)?).map_err(|_| StoreError::Unavailable)?;
-  let run = FactoryRun::restore(
+  let run = FactoryRun::admitted(
     octacity_server_factory::FactoryRunId::from_uuid(row.run_id).map_err(|_| StoreError::Unavailable)?,
-    work.configuration().clone(),
     &work,
-    work.subject().clone(),
-    state,
-    version,
-  )
-  .map_err(|_| StoreError::Unavailable)?;
+  );
   let flow = AdmittedFlow::from_configuration(&configuration, &run).map_err(|_| StoreError::Unavailable)?;
   Ok(PublishedFactoryAdmission {
     work,
@@ -595,4 +662,23 @@ const fn not_found(entity: EntityKind) -> StoreError {
 
 const fn conflict(entity: EntityKind) -> StoreError {
   StoreError::Conflict { entity }
+}
+
+pub(crate) async fn admit_prepared(
+  pool: &PgPool,
+  guard: octacity_server_store::AdmitPreparedWorkSource,
+  request: ManagementMutation<AdmitFactoryWork>,
+) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let original = request.mutation().clone();
+  match admit_once(pool, request, Some(guard.clone())).await {
+    Err(error @ (StoreError::Duplicate { .. } | StoreError::Conflict { .. })) => {
+      if let Some(receipt) = replay(pool, &original.probe).await? {
+        crate::factory_source::correlate_replay(pool, &guard, &original, &receipt.admission).await?;
+        Ok(receipt)
+      } else {
+        Err(error)
+      }
+    }
+    result => result,
+  }
 }

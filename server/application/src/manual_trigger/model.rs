@@ -1,8 +1,6 @@
 use std::collections::BTreeMap;
 
-use octacity_server_domain::{
-  AttemptId, BuildId, ImmutableRevision, JobId, SourceReference, Timestamp, TriggerOccurrenceId,
-};
+use octacity_server_domain::{AttemptId, BuildId, JobId, Timestamp, TriggerOccurrenceId};
 use octacity_server_job::JobSpecDerivationError;
 use octacity_server_store::{
   PublishedRepository, StoreError, StoreInputError, TriggerDefinitionRef, TriggerEvaluationOutcome, TriggerTarget,
@@ -16,17 +14,7 @@ use crate::{
   ManagementResourceKind, ManagementResourceResult, MutationDisposition, management_security::instance_resource,
 };
 
-/// Source expression supplied by a trusted-network manual Build command.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(tag = "kind", content = "value", rename_all = "snake_case", deny_unknown_fields)]
-pub enum RepositorySourceSelection {
-  /// Resolve the immutable Repository version's configured default reference.
-  DefaultReference,
-  /// Resolve one explicitly allowed mutable branch or tag.
-  Reference(SourceReference),
-  /// Verify and use an explicitly supplied immutable revision.
-  ExactRevision(ImmutableRevision),
-}
+pub use octacity_server_store::RepositorySourceSelection;
 
 /// Backward-compatible name used by the existing manual Build command.
 pub type ManualSourceSelection = RepositorySourceSelection;

@@ -101,7 +101,7 @@ The logical aggregate of a Build's immutable execution configuration, ordered lo
 _Avoid_: Artifact, log archive
 
 **Artifact**:
-One produced file or machine-readable report within a Build Result, addressed by logical identity and immutable content identity.
+One immutable file or machine-readable document, addressed by logical identity and immutable content identity. It belongs either to a producing Build as part of its Build Result or to a Project as prepared Factory input.
 _Avoid_: Build Result, object-store object
 
 **Build Log**:

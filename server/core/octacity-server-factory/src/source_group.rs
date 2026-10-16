@@ -1,7 +1,7 @@
 //! Explicit, provider-neutral exclusive selection over pinned input definitions.
 
 use octacity_server_domain::ProjectId;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 
 use crate::{FactoryError, WorkSourceGroupId, WorkSourceGroupVersion, WorkSourceInput, WorkSourceInputId};
@@ -10,12 +10,32 @@ use crate::{FactoryError, WorkSourceGroupId, WorkSourceGroupVersion, WorkSourceI
 pub const MAX_WORK_SOURCE_GROUP_MEMBERS: usize = 64;
 
 /// Immutable Project-owned exclusive group with frozen member input definitions.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(try_from = "RetainedWorkSourceGroup")]
 pub struct WorkSourceGroup {
   id: WorkSourceGroupId,
   version: WorkSourceGroupVersion,
   project_id: ProjectId,
   members: Vec<WorkSourceInput>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedWorkSourceGroup {
+  id: WorkSourceGroupId,
+  version: WorkSourceGroupVersion,
+  project_id: ProjectId,
+  members: Vec<WorkSourceInput>,
+}
+
+impl TryFrom<RetainedWorkSourceGroup> for WorkSourceGroup {
+  type Error = FactoryError;
+
+  fn try_from(value: RetainedWorkSourceGroup) -> Result<Self, Self::Error> {
+    let mut group = Self::publish(value.id, value.project_id, value.members)?;
+    group.version = value.version;
+    Ok(group)
+  }
 }
 
 /// Selection disposition only; none of these outcomes admits Work.

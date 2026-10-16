@@ -1,6 +1,46 @@
 use super::*;
 use crate::{WorkSourceGroup, WorkSourceGroupId, WorkSourceGroupVersion, WorkSourceSelection};
 
+#[test]
+fn retained_source_versions_round_trip_without_accepting_foreign_or_invalid_members() {
+  let project = ProjectId::generate();
+  let group = WorkSourceGroup::publish(WorkSourceGroupId::generate(), project, inputs(project, "jira")).unwrap();
+  let group = group
+    .replace(WorkSourceGroupVersion::new(2).unwrap(), group.members().to_vec())
+    .unwrap();
+  let document = serde_json::to_value(&group).unwrap();
+  assert_eq!(
+    serde_json::from_value::<WorkSourceGroup>(document.clone()).unwrap(),
+    group
+  );
+  for field in [
+    "foreign_project",
+    "duplicate",
+    "empty",
+    "foreign_input",
+    "reporter",
+    "unknown",
+  ] {
+    let mut invalid = document.clone();
+    match field {
+      "foreign_project" => invalid["project_id"] = serde_json::to_value(ProjectId::generate()).unwrap(),
+      "duplicate" => invalid["members"][1] = invalid["members"][0].clone(),
+      "empty" => invalid["members"] = serde_json::json!([]),
+      "foreign_input" => {
+        invalid["members"][0]["definition"]["repository"]["project_id"] =
+          serde_json::to_value(ProjectId::generate()).unwrap()
+      }
+      "reporter" => {
+        invalid["members"][0]["definition"]["reporter"] =
+          serde_json::to_value(source(project, "gitlab").binding).unwrap();
+      }
+      "unknown" => invalid["members"][0]["credential"] = serde_json::json!("never-a-grant"),
+      _ => unreachable!(),
+    }
+    assert!(serde_json::from_value::<WorkSourceGroup>(invalid).is_err(), "{field}");
+  }
+}
+
 fn inputs(project: ProjectId, provider: &str) -> Vec<WorkSourceInput> {
   let repository = repository(project);
   ["first-selector", "second-selector"]

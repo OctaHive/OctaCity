@@ -209,8 +209,8 @@ pub(crate) async fn replace(
   Ok(outcome)
 }
 
-pub(crate) async fn read(
-  pool: &PgPool,
+pub(crate) async fn read<'e>(
+  executor: impl sqlx::PgExecutor<'e>,
   id: FactoryConfigurationId,
   version: FactoryConfigurationVersion,
 ) -> Result<PublishedFactoryConfiguration, StoreError> {
@@ -223,7 +223,7 @@ pub(crate) async fn read(
   )
   .bind(id.as_uuid())
   .bind(version_number(version)?)
-  .fetch_optional(pool)
+  .fetch_optional(executor)
   .await
   .map_err(unavailable)?
   .ok_or(StoreError::NotFound {

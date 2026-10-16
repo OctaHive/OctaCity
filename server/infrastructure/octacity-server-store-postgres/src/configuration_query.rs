@@ -8,8 +8,8 @@ use crate::{
   database::{number, unavailable},
 };
 
-pub(crate) async fn repository(
-  pool: &sqlx::PgPool,
+pub(crate) async fn repository<'e>(
+  executor: impl sqlx::PgExecutor<'e>,
   repository_id: RepositoryId,
   version: RepositoryVersion,
 ) -> Result<PublishedRepository, StoreError> {
@@ -24,7 +24,7 @@ pub(crate) async fn repository(
   )
   .bind(repository_id.as_uuid())
   .bind(version)
-  .fetch_optional(pool)
+  .fetch_optional(executor)
   .await
   .map_err(unavailable)?
   .ok_or(StoreError::NotFound {

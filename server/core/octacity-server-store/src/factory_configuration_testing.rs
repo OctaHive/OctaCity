@@ -19,14 +19,14 @@ use crate::testing::{
   recorded_management_audit,
 };
 use crate::{
-  AdmitFactoryWork, CreateFactoryConfiguration, FactoryAdmissionContext, FactoryAdmissionMutationOutcome,
-  FactoryAdmissionProbe, FactoryAdmissionStore, FactoryConfigurationAvailability, FactoryConfigurationMutationIntent,
-  FactoryConfigurationMutationOutcome, FactoryConfigurationStore, FactoryDiscoveryStore, FactoryRunListVisibility,
-  FactoryRunPage, FactoryRunSummary, FactoryWorkSourceScope, ListFactoryRuns, ListProjectFactoryConfigurations,
-  ManagementIdempotencyKey, ManagementMutation, MutationDisposition, PublishedFactoryAdmission,
-  PublishedFactoryConfiguration, PublishedRepository, ReadFactoryAdmissionContext, ReadVisibilityKind,
-  ReplaceFactoryConfiguration, ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation, StoreError,
-  StoreOperation,
+  AdmitFactoryWork, CreateFactoryConfiguration, FactoryAdmissionContext, FactoryAdmissionIdentity,
+  FactoryAdmissionMutationOutcome, FactoryAdmissionProbe, FactoryAdmissionStore, FactoryConfigurationAvailability,
+  FactoryConfigurationMutationIntent, FactoryConfigurationMutationOutcome, FactoryConfigurationStore,
+  FactoryDiscoveryStore, FactoryRunListVisibility, FactoryRunPage, FactoryRunSummary, FactoryWorkSourceScope,
+  ListFactoryRuns, ListProjectFactoryConfigurations, ManagementIdempotencyKey, ManagementMutation, MutationDisposition,
+  PublishedFactoryAdmission, PublishedFactoryConfiguration, PublishedRepository, ReadFactoryAdmissionContext,
+  ReadVisibilityKind, ReplaceFactoryConfiguration, ReplaceFactoryConfigurationError,
+  ReplayFactoryConfigurationMutation, StoreError, StoreOperation,
 };
 use crate::{CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary};
 
@@ -142,11 +142,12 @@ impl InMemoryFactoryConfigurationStore {
 
 #[derive(Default)]
 pub(super) struct FactoryConfigurationMemoryState {
-  projects: BTreeSet<ProjectId>,
+  pub(super) sources: crate::factory_source_testing::SourceMemoryState,
+  pub(super) projects: BTreeSet<ProjectId>,
   choices: BTreeMap<ProjectId, FactoryConfigurationChoices>,
   current_versions: BTreeMap<FactoryConfigurationId, FactoryConfigurationVersion>,
-  versions: BTreeMap<(FactoryConfigurationId, FactoryConfigurationVersion), PublishedFactoryConfiguration>,
-  repositories: BTreeMap<
+  pub(super) versions: BTreeMap<(FactoryConfigurationId, FactoryConfigurationVersion), PublishedFactoryConfiguration>,
+  pub(super) repositories: BTreeMap<
     (
       octacity_server_domain::RepositoryId,
       octacity_server_domain::RepositoryVersion,
@@ -390,6 +391,19 @@ impl FactoryConfigurationStore for InMemoryFactoryConfigurationStore {
 
 #[async_trait]
 impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
+  async fn recover_factory_admission(
+    &self,
+    identity: &FactoryAdmissionIdentity,
+  ) -> Result<Option<PublishedFactoryAdmission>, StoreError> {
+    let state = self.lock()?;
+    Ok(
+      state
+        .admissions
+        .get(&(identity.source_scope.clone(), identity.external_identity.clone()))
+        .map(|stored| stored.outcome.clone()),
+    )
+  }
+
   async fn replay_factory_admission(
     &self,
     probe: &FactoryAdmissionProbe,
@@ -428,80 +442,7 @@ impl FactoryAdmissionStore for InMemoryFactoryConfigurationStore {
     &self,
     request: ManagementMutation<AdmitFactoryWork>,
   ) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
-    let (request, audit) = request.into_parts();
-    request.validate(audit.security_scope())?;
-    let idempotency = audit.scoped_idempotency_key(&request.probe.idempotency_key);
-    let mut state = self.lock()?;
-    if let Some(outcome) = replay_admission(&state, &request.probe)? {
-      return Ok(outcome);
-    }
-    let configuration = state
-      .versions
-      .get(&(
-        request.work.configuration().id(),
-        request.work.configuration().version(),
-      ))
-      .ok_or_else(|| not_found(EntityKind::FactoryConfiguration))?;
-    let repository = state
-      .repositories
-      .get(&(request.work.subject().repository_id(), request.repository_version))
-      .ok_or_else(|| not_found(EntityKind::Repository))?;
-    if !configuration.configuration.is_enabled()
-      || configuration.configuration.reference() != request.work.configuration()
-      || repository.project_id != request.work.subject().project_id()
-    {
-      return Err(StoreError::invalid(
-        StoreOperation::AdmitFactoryWork,
-        crate::StoreInputError::InvalidFactoryAdmission,
-      ));
-    }
-    request.validate_configuration(&configuration.configuration)?;
-    let active_runs = state
-      .factory_runs
-      .values()
-      .filter(|stored| stored.run().configuration() == request.work.configuration() && stored.run().state().is_active())
-      .count();
-    if active_runs >= configuration.configuration.wip_limits().max_active_runs() as usize {
-      return Err(StoreError::Conflict {
-        entity: EntityKind::FactoryRun,
-      });
-    }
-    let outcome = PublishedFactoryAdmission {
-      work: request.work,
-      run: request.run,
-      flow: request.flow,
-      admitted_at: request.admitted_at,
-    };
-    if state.factory_runs.contains_key(&outcome.run.id()) {
-      return Err(StoreError::Duplicate {
-        entity: EntityKind::FactoryRun,
-      });
-    }
-    let stored_run = StoredFactoryRun::admitted(&outcome, request.probe.intent_digest, &audit)?;
-    let stored = StoredAdmission {
-      source_scope: request.probe.source_scope.clone(),
-      external_identity: request.probe.external_identity.clone(),
-      intent_digest: request.probe.intent_digest,
-      outcome: outcome.clone(),
-    };
-    state.admission_mutations.insert(idempotency.clone(), stored.clone());
-    state
-      .admissions
-      .insert((request.probe.source_scope, request.probe.external_identity), stored);
-    state.factory_runs.insert(outcome.run.id(), stored_run);
-    state
-      .evidence
-      .insert(format!("admit-factory-work:{}", idempotency.caller_key().as_str()));
-    state.audit.insert(recorded_management_audit(
-      &audit,
-      StoreOperation::AdmitFactoryWork,
-      EntityKind::FactoryRun,
-      outcome.run.id(),
-    ));
-    Ok(FactoryAdmissionMutationOutcome {
-      disposition: MutationDisposition::Applied,
-      admission: outcome,
-    })
+    admit_factory_work_locked(&mut *self.lock()?, request)
   }
 }
 
@@ -731,7 +672,7 @@ fn factory_run_summary(
   }))
 }
 
-fn replay_admission(
+pub(super) fn replay_admission(
   state: &FactoryConfigurationMemoryState,
   probe: &FactoryAdmissionProbe,
 ) -> Result<Option<FactoryAdmissionMutationOutcome>, StoreError> {
@@ -818,4 +759,83 @@ fn conflict() -> StoreError {
   StoreError::Conflict {
     entity: EntityKind::FactoryConfiguration,
   }
+}
+
+pub(super) fn admit_factory_work_locked(
+  state: &mut FactoryConfigurationMemoryState,
+  request: ManagementMutation<AdmitFactoryWork>,
+) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let (request, audit) = request.into_parts();
+  request.validate(audit.security_scope())?;
+  let idempotency = audit.scoped_idempotency_key(&request.probe.idempotency_key);
+  if let Some(outcome) = replay_admission(state, &request.probe)? {
+    return Ok(outcome);
+  }
+  let configuration = state
+    .versions
+    .get(&(
+      request.work.configuration().id(),
+      request.work.configuration().version(),
+    ))
+    .ok_or_else(|| not_found(EntityKind::FactoryConfiguration))?;
+  let repository = state
+    .repositories
+    .get(&(request.work.subject().repository_id(), request.repository_version))
+    .ok_or_else(|| not_found(EntityKind::Repository))?;
+  if !configuration.configuration.is_enabled()
+    || configuration.configuration.reference() != request.work.configuration()
+    || repository.project_id != request.work.subject().project_id()
+  {
+    return Err(StoreError::invalid(
+      StoreOperation::AdmitFactoryWork,
+      crate::StoreInputError::InvalidFactoryAdmission,
+    ));
+  }
+  request.validate_configuration(&configuration.configuration)?;
+  let active_runs = state
+    .factory_runs
+    .values()
+    .filter(|stored| stored.run().configuration() == request.work.configuration() && stored.run().state().is_active())
+    .count();
+  if active_runs >= configuration.configuration.wip_limits().max_active_runs() as usize {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::FactoryRun,
+    });
+  }
+  let outcome = PublishedFactoryAdmission {
+    work: request.work,
+    run: request.run,
+    flow: request.flow,
+    admitted_at: request.admitted_at,
+  };
+  if state.factory_runs.contains_key(&outcome.run.id()) {
+    return Err(StoreError::Duplicate {
+      entity: EntityKind::FactoryRun,
+    });
+  }
+  let stored_run = StoredFactoryRun::admitted(&outcome, request.probe.intent_digest, &audit)?;
+  let stored = StoredAdmission {
+    source_scope: request.probe.source_scope.clone(),
+    external_identity: request.probe.external_identity.clone(),
+    intent_digest: request.probe.intent_digest,
+    outcome: outcome.clone(),
+  };
+  state.admission_mutations.insert(idempotency.clone(), stored.clone());
+  state
+    .admissions
+    .insert((request.probe.source_scope, request.probe.external_identity), stored);
+  state.factory_runs.insert(outcome.run.id(), stored_run);
+  state
+    .evidence
+    .insert(format!("admit-factory-work:{}", idempotency.caller_key().as_str()));
+  state.audit.insert(recorded_management_audit(
+    &audit,
+    StoreOperation::AdmitFactoryWork,
+    EntityKind::FactoryRun,
+    outcome.run.id(),
+  ));
+  Ok(FactoryAdmissionMutationOutcome {
+    disposition: MutationDisposition::Applied,
+    admission: outcome,
+  })
 }

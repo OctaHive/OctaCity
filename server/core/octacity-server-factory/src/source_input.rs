@@ -90,13 +90,51 @@ pub struct WorkSourceInputContext<'a> {
 }
 
 /// Immutable Project-owned input version; replacement retains the stable identity.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(try_from = "RetainedWorkSourceInput")]
 pub struct WorkSourceInput {
   id: WorkSourceInputId,
   version: WorkSourceInputVersion,
   project_id: ProjectId,
   root_flow: FlowDefinitionRef,
   definition: WorkSourceInputDraft,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RetainedWorkSourceInput {
+  id: WorkSourceInputId,
+  version: WorkSourceInputVersion,
+  project_id: ProjectId,
+  root_flow: FlowDefinitionRef,
+  definition: WorkSourceInputDraft,
+}
+
+impl TryFrom<RetainedWorkSourceInput> for WorkSourceInput {
+  type Error = FactoryError;
+
+  fn try_from(value: RetainedWorkSourceInput) -> Result<Self, Self::Error> {
+    let definition = &value.definition;
+    if definition.target.project_id() != value.project_id
+      || definition.repository.project_id != value.project_id
+      || definition.reporter.as_ref().is_some_and(|reporter| {
+        reporter.installation != definition.source.installation || reporter.resource != definition.source.resource
+      })
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "retained source input",
+      });
+    }
+    // Restoring a document is not capability authorization. Publication and admission
+    // still resolve the exact target, repository and trusted installed capability.
+    Ok(Self {
+      id: value.id,
+      version: value.version,
+      project_id: value.project_id,
+      root_flow: value.root_flow,
+      definition: value.definition,
+    })
+  }
 }
 
 impl WorkSourceInput {

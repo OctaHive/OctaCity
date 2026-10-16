@@ -1,5 +1,8 @@
 mod support;
 
+#[path = "factory_discovery/source_contract.rs"]
+mod sources;
+
 use std::collections::BTreeSet;
 
 use octacity_server_domain::{
@@ -13,11 +16,11 @@ use octacity_server_factory::{
   WorkEnvelopeId, WorkPriority,
 };
 use octacity_server_store::{
-  AdmitFactoryWork, CreateFactoryConfiguration, FactoryAdmissionProbe, FactoryAdmissionStore as _,
-  FactoryConfigurationListVisibility, FactoryConfigurationMutationIntent, FactoryConfigurationStore as _,
-  FactoryDiscoveryStore as _, FactoryRunFilter, FactoryRunListVisibility, FactoryRunPage, FactoryWorkSourceScope,
-  IdempotencyKey, ListFactoryRuns, ListProjectFactoryConfigurations, PublishedRepository, ReplaceFactoryConfiguration,
-  RepositoryDefinition, RepositorySelectionPolicy,
+  AdmitFactoryWork, CreateFactoryConfiguration, FactoryAdmissionIdentity, FactoryAdmissionProbe,
+  FactoryAdmissionStore as _, FactoryConfigurationListVisibility, FactoryConfigurationMutationIntent,
+  FactoryConfigurationStore as _, FactoryDiscoveryStore as _, FactoryRunFilter, FactoryRunListVisibility,
+  FactoryRunPage, FactoryWorkSourceScope, IdempotencyKey, ListFactoryRuns, ListProjectFactoryConfigurations,
+  PublishedRepository, ReplaceFactoryConfiguration, RepositoryDefinition, RepositorySelectionPolicy,
   testing::{InMemoryFactoryConfigurationStore, management_mutation_with_request},
 };
 use octacity_server_store_postgres::PostgresStore;
@@ -645,6 +648,133 @@ async fn factory_configuration_admission_and_discovery_match_the_in_memory_contr
       .factory_run_summary(run_id(501), FactoryRunListVisibility::none())
       .await
       .is_err()
+  );
+
+  let identity = FactoryAdmissionIdentity {
+    source_scope: replay_probe.source_scope.clone(),
+    external_identity: replay_probe.external_identity.clone(),
+  };
+  let original = memory.recover_factory_admission(&identity).await.unwrap().unwrap();
+  assert_eq!(original, expected.admission);
+  sqlx::query("UPDATE factory_runs SET state = 'running', version = 2 WHERE id = $1")
+    .bind(run_id(501).as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  let restarted = PostgresStore::new(database.pool.clone());
+  assert_eq!(
+    restarted.recover_factory_admission(&identity).await.unwrap(),
+    Some(original.clone())
+  );
+  let mut later_transport = replay_probe.clone();
+  later_transport.idempotency_key = idempotency("after-run-progress");
+  assert_eq!(
+    restarted.replay_factory_admission(&later_transport).await.unwrap(),
+    memory.replay_factory_admission(&later_transport).await.unwrap()
+  );
+  let current = restarted
+    .factory_run_summary(run_id(501), FactoryRunListVisibility::all())
+    .await
+    .unwrap();
+  assert_eq!(current.state, octacity_server_factory::FactoryRunState::Running);
+  for field in ["source", "security scope", "item"] {
+    let mut foreign = identity.clone();
+    match field {
+      "source" => foreign.source_scope.source = key("other-source"),
+      "security scope" => {
+        foreign.source_scope.security_scope =
+          octacity_server_store::ManagementSecurityScope::new("other-scope").unwrap()
+      }
+      "item" => foreign.external_identity = ExternalWorkIdentity::new("other-item").unwrap(),
+      _ => unreachable!(),
+    }
+    assert_eq!(memory.recover_factory_admission(&foreign).await.unwrap(), None);
+    assert_eq!(restarted.recover_factory_admission(&foreign).await.unwrap(), None);
+  }
+  let mut conflicting = replay_probe.clone();
+  conflicting.intent_digest = digest(99);
+  assert!(memory.replay_factory_admission(&conflicting).await.is_err());
+  assert!(restarted.replay_factory_admission(&conflicting).await.is_err());
+  assert_eq!(
+    restarted.recover_factory_admission(&identity).await.unwrap(),
+    Some(original)
+  );
+
+  let mut observer_a =
+    admission_from_configuration(505, 605, "same-native-item", 40, &initial.configuration, &repository);
+  let mut observer_b =
+    admission_from_configuration(506, 606, "same-native-item", 41, &initial.configuration, &repository);
+  observer_b.work = WorkEnvelope::new(
+    observer_b.work.id(),
+    observer_b.work.configuration().clone(),
+    observer_b.work.external_identity().clone(),
+    observer_b.work.subject().clone(),
+    observer_a.work.artifacts().clone(),
+    WorkClassification::new(
+      WorkPriority::new(20).unwrap(),
+      RiskClass::Medium,
+      FactoryMetadata::default(),
+    ),
+  )
+  .unwrap();
+  observer_b.run = FactoryRun::admitted(observer_b.run.id(), &observer_b.work);
+  observer_b.flow =
+    octacity_server_factory::AdmittedFlow::from_configuration(&initial.configuration, &observer_b.run).unwrap();
+  observer_a.probe.source_scope.source = key("installed-source.fixture");
+  observer_b.probe.source_scope = observer_a.probe.source_scope.clone();
+  observer_b.probe.intent_digest = observer_a.probe.intent_digest;
+  let (first, second) = tokio::join!(
+    restarted.admit_factory_work(management_mutation_with_request(
+      observer_a.clone(),
+      "source-observer-a"
+    )),
+    restarted.admit_factory_work(management_mutation_with_request(observer_b, "source-observer-b")),
+  );
+  let first = first.unwrap();
+  let second = second.unwrap();
+  assert_eq!(first.admission, second.admission);
+  assert_ne!(first.disposition, second.disposition);
+  let observed_identity = FactoryAdmissionIdentity {
+    source_scope: observer_a.probe.source_scope,
+    external_identity: observer_a.probe.external_identity,
+  };
+  assert_eq!(
+    restarted.recover_factory_admission(&observed_identity).await.unwrap(),
+    Some(first.admission.clone())
+  );
+  let only_one = restarted
+    .list_factory_runs(
+      ListFactoryRuns::new(
+        Some(project_id),
+        FactoryRunFilter {
+          source: Some(key("installed-source.fixture")),
+          ..Default::default()
+        },
+        None,
+        20,
+        FactoryRunListVisibility::all(),
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(only_one.total, 1);
+  let mut replacement =
+    admission_from_configuration(507, 607, "same-native-item", 42, &initial.configuration, &repository);
+  replacement.probe.source_scope = observed_identity.source_scope.clone();
+  replacement.probe.intent_digest = digest(98);
+  assert!(
+    restarted
+      .admit_factory_work(management_mutation_with_request(
+        replacement,
+        "conflicting-source-reuse"
+      ))
+      .await
+      .is_err()
+  );
+  assert_eq!(
+    restarted.recover_factory_admission(&observed_identity).await.unwrap(),
+    Some(first.admission)
   );
 
   database.cleanup().await;

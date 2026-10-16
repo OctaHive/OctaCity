@@ -33,9 +33,22 @@ mod definition_port;
 mod error;
 mod external_trigger_model;
 mod external_trigger_port;
+mod factory_admission_intent;
+pub use factory_admission_intent::{
+  FactoryWorkAdmissionIntent, RepositorySourceSelection, factory_admission_intent_digest,
+  factory_source_admission_probe,
+};
 mod factory_admission_model;
 mod factory_admission_port;
+mod factory_source_artifact;
+pub use factory_source_artifact::*;
+mod factory_source;
+#[cfg(any(test, feature = "test-support"))]
+mod factory_source_artifact_testing;
+pub use factory_source::*;
 mod factory_build_acceptance;
+#[cfg(any(test, feature = "test-support"))]
+mod factory_source_testing;
 pub use factory_build_acceptance::{
   AcceptFactoryBuild, AcceptedFactoryBuild, CancelFactoryBuildExecution, FactoryBuildAcceptanceStore,
   FactoryBuildCancellationStore, MAX_FACTORY_BUILD_JOBS,
@@ -256,8 +269,8 @@ pub use external_trigger_port::{
   WebhookDeliveryAdmissionStore, WebhookDeliveryQueryStore, WebhookDeliveryWorkStore, WebhookIntegrationReader,
 };
 pub use factory_admission_model::{
-  AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionMutationOutcome, FactoryAdmissionProbe,
-  FactoryWorkSourceScope, PublishedFactoryAdmission, ReadFactoryAdmissionContext,
+  AdmitFactoryWork, FactoryAdmissionContext, FactoryAdmissionIdentity, FactoryAdmissionMutationOutcome,
+  FactoryAdmissionProbe, FactoryWorkSourceScope, PublishedFactoryAdmission, ReadFactoryAdmissionContext,
 };
 pub use factory_admission_port::FactoryAdmissionStore;
 pub use factory_configuration_model::{

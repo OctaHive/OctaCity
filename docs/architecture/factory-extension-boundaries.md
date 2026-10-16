@@ -77,12 +77,158 @@ integration must resolve the current group and commit selection/admission under
 the same transaction and scan fence; an in-memory revision check alone does not
 provide durable ownership or lock external tracker edits.
 
-The current manual command demonstrates those common admission invariants; it
-uses the management security scope and the `manual` source kind. A concrete
-connector needs its own installed ingress/identity contract. Do not impersonate
-another management scope or describe the manual endpoint as an installed
-ticket poller. Reusing the admission authority may require an additive adapter
-seam, but must not change the Flow interpreter or weaken its checks.
+`FactoryWorkAdmissionIntent` carries the common normalized admission inputs.
+`AdmitManualFactoryWorkCommand` remains its compatible management entry point,
+retaining the `manual` source kind, original intent digest, transport keys and
+replay-before-resolution order. Both entry points publish through the existing
+`FactoryAdmissionStore`; there is no additional admission or duplicate authority.
+
+`FactorySourceAdmissionHandlers` requires an explicit `FactorySourceAuthorizer`
+bound to a verified installation. That trusted server port resolves an exact
+enabled input, Source capability and accepted installation-owner management
+context on every invocation. Ticket data supplies none of those authority facts.
+The handler checks the resolved input identity/version, capability role/scope
+and exact Project/Configuration/Repository selections, then checks Project and
+dependency visibility plus execution permission before probing replay. Revoked
+visibility therefore cannot disclose an earlier source admission receipt.
+
+New source admission also checks the exact Configuration digest/root Flow and
+Repository pin against authoritative definitions before VCS resolution. The
+Repository content pin is SHA-256 of the normalized JSON serialization of its
+published `RepositoryDefinition`. Installation/Project-derived source and
+transport namespaces isolate source requests from manual identities even when
+an installation is named `manual`; callers cannot supply either namespace.
+Audit retains the context accepted by the trusted authorizer, rather than an
+actor claimed in a ticket. GitHub/GitLab/Jira provider DTOs stay outside this path.
+
+`FactorySourceItem` carries bounded opaque native container/item identities.
+The trusted authorizer verifies the native container against the pinned resource
+definition; an operator resource reference is not itself a native repository or
+tracker project id. Native ids retain their exact spelling and case, independently
+of any provider's label matching rules.
+
+The application derives the external admission identity from installation,
+native container, native item and stable input identity using a domain-separated,
+length-framed digest. Project/installation and accepted security scope partition
+the source namespace. Input/configuration versions, labels, task content,
+observation times and credentials are absent from the item identity. Source
+transport retry keys also include that derived item identity, so independently
+configured inputs do not collide on a shared polling transport key.
+
+`FactorySourceAdmissionHandlers::recover` checks current source authority and
+Project execution access, then reads the original receipt through
+`FactoryAdmissionStore::recover_factory_admission`. Before returning it, it
+checks visibility of the retained Work's Configuration, Repository and Artifacts.
+Discovery calls this lookup before preparing fresh artifacts or resolving a
+mutable repository base. An admitted item therefore keeps its original Work,
+Flow, base revision and artifacts after a body/label edit, input replacement or
+credential/configuration rotation. Explicitly submitting a changed full intent
+under the same identity still conflicts and cannot replace that Work.
+
+Memory and PostgreSQL read the same existing admission authority; recovery
+reserves nothing and adds no deduplication table. Concurrent identical observers
+converge through atomic publication and strict replay, while conflicting intents
+preserve the winner. Both may resolve VCS before one wins; recovery does not
+provide ownership of unadmitted preparation. Recovered and replayed receipts
+retain the initial admission projection even after Run progress; ordinary Run
+queries continue to expose the actual current state.
+
+`FactorySourceStore` atomically publishes bounded input/group version batches
+with current-version preconditions, exact stored target/repository validation,
+and Project ownership. PostgreSQL migration 0059 adds only input versions, group
+versions, scan leases/progress, and private preparation/correlation records.
+Existing Work admission identities and retained Runs remain authoritative.
+
+An input or exclusive group scan pins its current definition and receives a
+bounded lease with a monotonically increasing fence across definition versions.
+Every fresh reservation, intent publication, admission and checkpoint rechecks
+the current definition and complete lease in the same transaction. A replacement
+invalidates old owners; disabled inputs and groups with no enabled members cannot
+acquire a scan. PostgreSQL serializes these short source transactions on the
+owning Project row and reuses the transaction connection for dependency/replay
+reads, including with a one-connection pool. No provider or VCS I/O belongs in
+these transactions.
+
+Preparation reserves the first bounded private snapshot and stable operation
+identity before artifact or VCS work. Normalization then freezes the complete
+provider-neutral `FactoryWorkAdmissionIntent`. Worker takeover reuses both;
+changed observations cannot replace them. A new definition's current owner may
+resume the original pinned intent for the same stable selected input and
+installed resource. Group selection must be reevaluated under the new group's
+current revision; an old group claim cannot publish a disposition. Definition
+replacement resets scan progress but retains original preparation provenance.
+
+`admit_prepared_source_work` checks that the submitted Work and probe repeat
+that retained intent, then atomically publishes through existing admission and
+records its original Work/Run association. Recovery of an admission committed
+before correlation attaches the existing receipt under a current fence, without
+another Work, idempotency outcome, audit or outbox fact. Private pending pages
+support restart; checkpoints reject unfinished preparations in their scan.
+Safe bounded Issue associations return original input versions and Work/Run ids
+without reading snapshot bytes. Their common Issue identity excludes input
+identity, while admission remains scoped to each stable input.
+
+`FactorySourceAdmissionHandlers::admit_prepared` connects that fenced store
+operation to ordinary admission. It accepts the current installed input and
+original preparation identity, rather than a replacement Work payload. Project
+visibility is checked before private preparation lookup; all original selected
+dependencies are authorized before replay or VCS resolution. Fresh Work shares
+the manual/source Repository and immutable configuration validation path. After
+VCS returns, trusted owner time is read again before atomic publication.
+
+Direct and prepared ingress share one canonical source admission probe constructor.
+Exact replay retains current authorization and scan ownership checks but needs
+no retained private bytes; artifact expiry is a gate only for fresh Work.
+Snapshot/mapping/store validation uses shared named source input byte and lifetime
+ceilings. Installed settings may narrow those ceilings; ticket data cannot raise them.
+
+Each independently configured input can admit the same native item once to its
+own exact target and retain their common Issue correlation. Input replacement
+and changed labels recover the original Work/Run and journal. Admission adds no
+accepted assessment evidence from labels: the target Flow still executes its
+configured eligibility and business duplicate gates. Ordinary manual commands
+keep their own namespace and need no installed Source, scan claim or provider.
+
+`FactoryWorkSourcePreparer` maps the first retained normalized snapshot into
+immutable private task and acceptance documents. Its mapping is pinned to the
+exact installed Source binding and selects an explicit text field, entire body
+or named body section for acceptance. Missing required data and byte ceilings
+produce safe classified dispositions; text is never truncated or used to choose
+credentials, repository targets, profiles, priority or Flow transitions. Labels
+and update identities remain provenance. There is no comment, attachment or
+linked-resource fetch capability in this mapper.
+
+Source materialization reserves exact object identities and cleanup metadata
+before byte I/O. Fenced publication exposes the complete verified pair; restart
+keeps the first snapshot, mapping digest, object identities, publication time
+and admission intent. Inputs are owned by the Project/source preparation and
+have no fabricated producing Build or Agent. Explicit context reads and protected
+Agent input transfers accept these private publications, while ordinary output
+and evidence reads still require ordinary Build publication. Context readers
+receive only `SourceArtifactQueryStore`, without scan or admission methods.
+
+Private snapshots have a hard 30-day bound. The configured materialization
+lifetime (at most 30 days) can shorten it and never renews on retry. Fresh
+admission and context reads reject expired inputs. The bounded
+`FactorySourceInputRetentionWorker` deletes reserved physical objects before
+clearing snapshot bytes, including unpublished writes and rejected/raw orphans.
+Initial expiry and due late-write reconciliation are separate indexed selections.
+Cleanup isolates per-preparation failures and returns both the failure count and
+page cursor; a failed object cannot block the rest of a sweep. Raw/rejected
+preparations with no objects leave the queue after cleanup. Byte reservations
+keep a configurable recheck interval that grows with time since their first
+cleanup, preserving late-write protection without visiting all historical rows
+every sweep. Duplicate acknowledgements do not renew that schedule or rewrite
+the frozen preparation. Correlation and immutable provenance metadata survive.
+Worker composition must install the trusted recheck interval, observe failures
+and wrap the cursor when a sweep ends so failed records are retried.
+
+The installed authorization port has no default implementation and is not
+exposed as a management REST command or provider process message. Concrete
+process/grant verification, selection reevaluation and worker activation remain
+separate integration tasks. Worker composition must
+use the prepared admission seam and authorize reads before exposing diagnostics.
+The existing manual endpoint is not a ticket poller.
 
 ## Configured status projection
 

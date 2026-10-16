@@ -13,10 +13,19 @@ use crate::{
 /// Provider-neutral namespace that scopes an external Work identity.
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct FactoryWorkSourceScope {
-  /// Versioned Work Source adapter kind, such as the built-in `manual` source.
+  /// Application-owned Work Source namespace, such as the built-in `manual` source.
   pub source: FactoryKey,
   /// Accepted security partition for this source invocation.
   pub security_scope: ManagementSecurityScope,
+}
+
+/// Read-only identity lookup in the existing authoritative admission namespace.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FactoryAdmissionIdentity {
+  /// Trusted application-resolved source and security partition.
+  pub source_scope: FactoryWorkSourceScope,
+  /// Stable input-scoped item identity, independent of mutable observations.
+  pub external_identity: ExternalWorkIdentity,
 }
 
 /// Stable caller intent checked before any mutable source reference is resolved.
@@ -28,7 +37,7 @@ pub struct FactoryAdmissionProbe {
   pub external_identity: ExternalWorkIdentity,
   /// Digest of every admission input except the later resolved revision.
   pub intent_digest: FactoryDigest,
-  /// Transport replay identity supplied by the management client.
+  /// Transport replay identity normalized by the application ingress.
   pub idempotency_key: IdempotencyKey,
 }
 

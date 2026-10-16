@@ -24,6 +24,9 @@ use octacity_server_store::{
 };
 use uuid::Uuid;
 
+#[path = "factory_source_admission_tests.rs"]
+mod installed_sources;
+
 use crate::{
   AdmitManualFactoryWorkCommand, ApplicationFailure, AuthorizedCommandHandler, FactoryAdmissionHandlers,
   ManagementAction, ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,

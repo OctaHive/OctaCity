@@ -17,7 +17,13 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 33] = [
+const FACTORY_TABLES: [&str; 39] = [
+  "factory_source_inputs",
+  "factory_source_groups",
+  "factory_source_scans",
+  "factory_source_preparations",
+  "factory_source_materializations",
+  "factory_source_input_objects",
   "factory_audit_links",
   "factory_configuration_versions",
   "factory_configuration_flow_definitions",

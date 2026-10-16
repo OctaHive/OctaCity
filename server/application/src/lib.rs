@@ -43,6 +43,16 @@ mod factory_artifact_reader;
 mod factory_build;
 mod factory_build_service;
 mod factory_candidate_context;
+mod factory_source_admission;
+mod factory_source_input_retention;
+mod factory_source_mapping;
+mod factory_source_preparation;
+pub use factory_source_input_retention::{FactorySourceInputRetentionWorker, SourceInputCleanupPage};
+pub use factory_source_mapping::{
+  MappedWorkSource, SourceAcceptanceMapping, SourceMappingFailure, WorkSourceMapping, WorkSourceSnapshot,
+  map_work_source_snapshot,
+};
+pub use factory_source_preparation::{FactoryWorkSourcePreparer, SourcePreparationOutcome, SourcePreparationSettings};
 mod factory_stored_candidate_context;
 pub use factory_stored_candidate_context::{
   FactoryNodeCandidateContextSource, FactoryRetainedCandidateContextSource, FactoryStoredCandidateContextSource,
@@ -51,7 +61,7 @@ mod factory_execution_input_publisher;
 mod factory_execution_input_retention;
 pub use factory_artifact_flow_inputs::FactoryArtifactFlowInputs;
 pub use factory_artifact_reader::{
-  FactoryArtifactReader, FactoryNodeContextSource, FactoryRetainedArtifact, ReadFactoryArtifact,
+  FactoryArtifactReader, FactoryNodeContextSource, FactoryRetainedArtifact, FactoryRetainedInput, ReadFactoryArtifact,
 };
 pub use factory_build_service::{FactoryBuildMaterializer, FactoryOrdinaryBuildService};
 pub use factory_candidate_context::{
@@ -382,7 +392,9 @@ pub use external_trigger::{
   WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
   WebhookVerificationError, WebhookVerificationFailure, WebhookVerificationRequirements,
 };
-pub use factory_admission::{AdmitManualFactoryWorkCommand, FactoryAdmissionHandlers, FactoryAdmissionOutcome};
+pub use factory_admission::{
+  AdmitManualFactoryWorkCommand, FactoryAdmissionHandlers, FactoryAdmissionOutcome, FactoryWorkAdmissionIntent,
+};
 pub use factory_build::{
   CancelFactoryBuild, CreateFactoryBuild, FactoryBuildAcceptance, FactoryBuildObservation, FactoryBuildPolicyLayers,
   FactoryCandidateMaterialization, FactoryNodeBuildCausality, OrdinaryBuildApplication, OrdinaryBuildApplicationError,
@@ -441,6 +453,10 @@ pub use factory_node_capture::{
 pub use factory_node_capture_build::FactoryNodeCaptureBuildAdapter;
 pub use factory_reconciliation::{
   FactoryReconciler, FactoryReconciliationBatchOutcome, FactoryReconciliationError, FactoryReconciliationShutdown,
+};
+pub use factory_source_admission::{
+  AdmitPreparedSourceFactoryWorkCommand, AdmitSourceFactoryWorkCommand, FactorySourceAdmissionHandlers,
+  FactorySourceAuthorization, FactorySourceAuthorizer, FactorySourceItem, RecoverSourceFactoryWorkCommand,
 };
 pub use factory_tool_action::{
   DeterministicToolActionRule, PreparedToolAction, ProtectedToolActionGate, ToolActionGateError, ToolRiskAssessment,

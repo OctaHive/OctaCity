@@ -53,6 +53,13 @@ impl FactoryConfigurationStore for PostgresStore {
 
 #[async_trait]
 impl FactoryAdmissionStore for PostgresStore {
+  async fn recover_factory_admission(
+    &self,
+    identity: &FactoryAdmissionIdentity,
+  ) -> Result<Option<PublishedFactoryAdmission>, StoreError> {
+    crate::factory_admission::recover(&self.pool, identity).await
+  }
+
   async fn replay_factory_admission(
     &self,
     probe: &FactoryAdmissionProbe,

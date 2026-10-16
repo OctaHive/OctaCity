@@ -7,11 +7,11 @@
 
 ## 2. Durable Admission Integration
 
-- [ ] 2.1 Preserve the baseline while extracting or adding the trusted source-neutral admission seam; drive installed-source authorization with Red/Green tests proving manual identities cannot be impersonated and Project/Repository/Configuration/artifact visibility checks remain effective.
-- [ ] 2.2 Drive input-scoped Issue identity and retained-intent recovery through the existing admission/store public boundary: Red then Green for exact replay before mutable revision resolution, concurrent observers, changed Issue content, label churn, token rotation, input replacement and conflicting identity reuse.
-- [ ] 2.3 Add only required input/group versions, source progress, pending preparation and Issue correlation persistence with additive migrations; drive Red/Green memory/PostgreSQL contract tests for atomic publication, ownership/fencing, migration compatibility, stale-owner rejection and restart without a second deduplication authority.
-- [ ] 2.4 Drive immutable Issue-to-Artifact mapping with Red/Green tests for bounded title/body provenance, explicit required acceptance mapping, missing/oversized input, stable preparation replay, private retention and orphan cleanup; verify no implicit comment/attachment fetch or task-provided authority.
-- [ ] 2.5 Drive staged admission through existing pipeline contracts: Red then Green for one Issue entering distinct assessment/implementation inputs once each, replacement not re-running admitted Work, common Issue correlation and preservation of existing eligibility/business duplicate handling.
+- [x] 2.1 Preserve the baseline while extracting or adding the trusted source-neutral admission seam; drive installed-source authorization with Red/Green tests proving manual identities cannot be impersonated and Project/Repository/Configuration/artifact visibility checks remain effective.
+- [x] 2.2 Drive input-scoped Issue identity and retained-intent recovery through the existing admission/store public boundary: Red then Green for exact replay before mutable revision resolution, concurrent observers, changed Issue content, label churn, token rotation, input replacement and conflicting identity reuse.
+- [x] 2.3 Add only required input/group versions, source progress, pending preparation and Issue correlation persistence with additive migrations; drive Red/Green memory/PostgreSQL contract tests for atomic publication, ownership/fencing, migration compatibility, stale-owner rejection and restart without a second deduplication authority.
+- [x] 2.4 Drive immutable Issue-to-Artifact mapping with Red/Green tests for bounded title/body provenance, explicit required acceptance mapping, missing/oversized input, stable preparation replay, private retention and orphan cleanup; verify no implicit comment/attachment fetch or task-provided authority.
+- [x] 2.5 Drive staged admission through existing pipeline contracts: Red then Green for one Issue entering distinct assessment/implementation inputs once each, replacement not re-running admitted Work, common Issue correlation and preservation of existing eligibility/business duplicate handling.
 
 ## 3. GitHub Source Capability and Polling
 

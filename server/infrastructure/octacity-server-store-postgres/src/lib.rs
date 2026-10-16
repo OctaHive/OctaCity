@@ -40,6 +40,8 @@ mod factory_retention;
 mod factory_run;
 mod factory_signal_receipt;
 mod factory_signal_request;
+mod factory_source;
+mod factory_source_artifact;
 mod internal_trigger;
 mod internal_trigger_definition;
 mod job_claim;

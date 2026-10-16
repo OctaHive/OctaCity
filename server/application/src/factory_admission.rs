@@ -1,52 +1,30 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use octacity_server_domain::{ProjectId, RepositoryId, RepositoryVersion, Timestamp};
+use octacity_server_domain::{ProjectId, RepositoryId, Timestamp};
 use octacity_server_factory::{
-  ExternalWorkIdentity, FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest, FactoryKey, FactoryRun,
-  FactoryRunId, WorkArtifacts, WorkClassification, WorkEnvelope, WorkEnvelopeId,
+  FactoryConfigurationId, FactoryDigest, FactoryKey, FactoryRun, FactoryRunId, WorkArtifacts, WorkEnvelope,
+  WorkEnvelopeId,
 };
 use octacity_server_store::{
   AdmitFactoryWork, FactoryAdmissionMutationOutcome, FactoryAdmissionProbe, FactoryAdmissionStore,
-  FactoryWorkSourceScope, IdempotencyKey, ReadFactoryAdmissionContext,
+  FactoryWorkSourceScope, ReadFactoryAdmissionContext,
 };
 
 use crate::{
   ApplicationError, Command, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
-  ManagementResourceKind, ManagementResourceResult, MutationDisposition, RepositorySourceSelection,
-  RevisionResolutionError, RevisionResolutionRequest, RevisionResolver,
+  ManagementResourceKind, ManagementResourceResult, MutationDisposition, RevisionResolutionError,
+  RevisionResolutionRequest, RevisionResolver,
   management_security::{audited_mutation, owned_collection_resource},
   manual_trigger::select_source,
 };
 
 const MANUAL_WORK_SOURCE: &str = "manual";
 
-/// Provider-neutral manual intent to admit one immutable Work Envelope.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct AdmitManualFactoryWorkCommand {
-  /// Existing Project that must own every selected definition.
-  pub project_id: ProjectId,
-  /// Exact immutable Factory Configuration selected for the run.
-  pub configuration_id: FactoryConfigurationId,
-  /// Exact immutable Factory Configuration version selected for the run.
-  pub configuration_version: FactoryConfigurationVersion,
-  /// Exact Repository identity selected as the Work subject.
-  pub repository_id: RepositoryId,
-  /// Exact immutable Repository definition version used for source resolution.
-  pub repository_version: RepositoryVersion,
-  /// Stable Work Source identity within the accepted management security scope.
-  pub external_identity: ExternalWorkIdentity,
-  /// Allowed mutable reference, configured default, or permitted exact revision.
-  pub source: RepositorySourceSelection,
-  /// Immutable task, acceptance, and optional specification Artifact references.
-  pub artifacts: WorkArtifacts,
-  /// Bounded priority, risk, and source metadata.
-  pub classification: WorkClassification,
-  /// Stable transport replay identity.
-  pub idempotency_key: IdempotencyKey,
-  /// Authoritative admission time.
-  pub admitted_at: Timestamp,
-}
+pub use octacity_server_store::FactoryWorkAdmissionIntent;
+
+/// Backward-compatible management command for the built-in manual source.
+pub type AdmitManualFactoryWorkCommand = FactoryWorkAdmissionIntent;
 
 impl Command for AdmitManualFactoryWorkCommand {
   type Outcome = FactoryAdmissionOutcome;
@@ -68,7 +46,7 @@ impl ManagementAuthorizationTarget for AdmitManualFactoryWorkCommand {
   }
 }
 
-/// Safe result of applying or replaying one manual Work admission.
+/// Safe result of applying or replaying one Work admission.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryAdmissionOutcome {
   /// Whether this invocation admitted Work or observed the original result.
@@ -85,7 +63,7 @@ pub struct FactoryAdmissionOutcome {
   pub admitted_at: Timestamp,
 }
 
-/// Manual Factory admission over one authoritative store and VCS seam.
+/// Common Factory admission over one authoritative store and VCS seam.
 pub struct FactoryAdmissionHandlers<S> {
   store: Arc<S>,
   revisions: Arc<dyn RevisionResolver>,
@@ -128,27 +106,88 @@ where
     command: AdmitManualFactoryWorkCommand,
   ) -> Result<FactoryAdmissionOutcome, Self::Error> {
     let probe = admission_probe(context, &command)?;
-    if let Some(outcome) = self.store.replay_factory_admission(&probe).await? {
-      return Ok(outcome.into());
-    }
+    self.admit_intent(context, command, probe, None).await
+  }
+}
 
+impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
+  pub(super) async fn authorize_source_intent(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: &FactoryWorkAdmissionIntent,
+  ) -> Result<(), ApplicationError> {
+    self.authorize_source_project(context, command.project_id).await?;
+    self.require_visible_dependencies(context, command).await
+  }
+
+  pub(super) async fn authorize_source_project(
+    &self,
+    context: &crate::ManagementRequestContext,
+    project_id: ProjectId,
+  ) -> Result<(), ApplicationError> {
+    crate::factory_configuration_choices::require_visible_reference(
+      self.policy.as_ref(),
+      context,
+      ManagementResourceKind::Project,
+      project_id,
+    )
+    .await?;
+    let resource = owned_collection_resource(
+      ManagementResourceKind::FactoryRun,
+      ManagementResourceKind::Project,
+      project_id,
+    )
+    .map_err(|_| ApplicationError::invalid())?;
+    let grant = self
+      .policy
+      .authorize(context, ManagementAction::Execute, &resource)
+      .await
+      .map_err(|_| ApplicationError::invalid())?;
+    if matches!(grant.visibility().view(), crate::ManagementVisibilityView::None) {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
+
+  async fn require_visible_dependencies(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: &FactoryWorkAdmissionIntent,
+  ) -> Result<(), ApplicationError> {
+    self
+      .require_visible_work_references(
+        context,
+        command.configuration_id,
+        command.repository_id,
+        &command.artifacts,
+      )
+      .await
+  }
+
+  async fn require_visible_work_references(
+    &self,
+    context: &crate::ManagementRequestContext,
+    configuration_id: FactoryConfigurationId,
+    repository_id: RepositoryId,
+    artifacts: &WorkArtifacts,
+  ) -> Result<(), ApplicationError> {
     crate::factory_configuration_choices::require_visible_reference(
       self.policy.as_ref(),
       context,
       ManagementResourceKind::FactoryConfiguration,
-      command.configuration_id,
+      configuration_id,
     )
     .await?;
     crate::factory_configuration_choices::require_visible_reference(
       self.policy.as_ref(),
       context,
       ManagementResourceKind::Repository,
-      command.repository_id,
+      repository_id,
     )
     .await?;
-    for artifact in std::iter::once(command.artifacts.task())
-      .chain(std::iter::once(command.artifacts.acceptance()))
-      .chain(command.artifacts.specifications())
+    for artifact in std::iter::once(artifacts.task())
+      .chain(std::iter::once(artifacts.acceptance()))
+      .chain(artifacts.specifications())
     {
       crate::factory_configuration_choices::require_visible_reference(
         self.policy.as_ref(),
@@ -158,6 +197,61 @@ where
       )
       .await?;
     }
+    Ok(())
+  }
+
+  pub(super) async fn recover_source(
+    &self,
+    context: &crate::ManagementRequestContext,
+    project_id: ProjectId,
+    identity: &octacity_server_store::FactoryAdmissionIdentity,
+  ) -> Result<Option<octacity_server_store::PublishedFactoryAdmission>, ApplicationError> {
+    self.authorize_source_project(context, project_id).await?;
+    let Some(receipt) = self.store.recover_factory_admission(identity).await? else {
+      return Ok(None);
+    };
+    if receipt.work.subject().project_id() != project_id || receipt.work.configuration().project_id() != project_id {
+      return Err(ApplicationError::invalid());
+    }
+    self
+      .require_visible_work_references(
+        context,
+        receipt.work.configuration().id(),
+        receipt.work.subject().repository_id(),
+        receipt.work.artifacts(),
+      )
+      .await?;
+    Ok(Some(receipt))
+  }
+
+  pub(super) async fn admit_intent(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: FactoryWorkAdmissionIntent,
+    probe: FactoryAdmissionProbe,
+    pinned_input: Option<&octacity_server_factory::WorkSourceInput>,
+  ) -> Result<FactoryAdmissionOutcome, ApplicationError> {
+    if let Some(outcome) = self.store.replay_factory_admission(&probe).await? {
+      return Ok(outcome.into());
+    }
+    let request = self.prepare_fresh_intent(context, command, probe, pinned_input).await?;
+    self
+      .store
+      .admit_factory_work(audited_mutation(context, request)?)
+      .await
+      .map(Into::into)
+      .map_err(Into::into)
+  }
+
+  /// Shared visibility, immutable pin and Repository resolution gates for fresh admission.
+  pub(super) async fn prepare_fresh_intent(
+    &self,
+    context: &crate::ManagementRequestContext,
+    command: FactoryWorkAdmissionIntent,
+    probe: FactoryAdmissionProbe,
+    pinned_input: Option<&octacity_server_factory::WorkSourceInput>,
+  ) -> Result<AdmitFactoryWork, ApplicationError> {
+    self.require_visible_dependencies(context, &command).await?;
     let admission_context = self
       .store
       .factory_admission_context(ReadFactoryAdmissionContext {
@@ -174,6 +268,20 @@ where
       || admission_context.repository.project_id != command.project_id
     {
       return Err(ApplicationError::invalid());
+    }
+    if let Some(input) = pinned_input {
+      let repository = &admission_context.repository;
+      let expected = &input.definition().repository;
+      let encoded = serde_json::to_vec(&repository.definition).map_err(|_| ApplicationError::invalid())?;
+      if input.definition().target != *configuration.reference()
+        || input.root_flow() != configuration.flow().closure.root()
+        || expected.project_id != repository.project_id
+        || expected.id != repository.id
+        || expected.version != repository.version
+        || expected.definition_digest != FactoryDigest::content_sha256(&encoded)
+      {
+        return Err(ApplicationError::invalid());
+      }
     }
     let source =
       select_source(&command.source, &admission_context.repository).map_err(|_| ApplicationError::invalid())?;
@@ -197,22 +305,14 @@ where
     let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
     let flow = octacity_server_factory::AdmittedFlow::from_configuration(configuration, &run)
       .map_err(|_| ApplicationError::invalid())?;
-    self
-      .store
-      .admit_factory_work(audited_mutation(
-        context,
-        AdmitFactoryWork {
-          probe,
-          repository_version: command.repository_version,
-          work,
-          run,
-          flow,
-          admitted_at: command.admitted_at,
-        },
-      )?)
-      .await
-      .map(Into::into)
-      .map_err(Into::into)
+    Ok(AdmitFactoryWork {
+      probe,
+      repository_version: command.repository_version,
+      work,
+      run,
+      flow,
+      admitted_at: command.admitted_at,
+    })
   }
 }
 
@@ -226,50 +326,40 @@ fn admission_probe(
       security_scope: context.security_scope().to_store(),
     },
     external_identity: command.external_identity.clone(),
-    intent_digest: admission_intent_digest(command),
+    intent_digest: octacity_server_store::factory_admission_intent_digest(
+      command,
+      "octacity.factory.manual-admission.v1",
+    ),
     idempotency_key: command.idempotency_key.clone(),
   })
 }
 
-fn admission_intent_digest(command: &AdmitManualFactoryWorkCommand) -> FactoryDigest {
-  let mut fields = vec![
-    command.project_id.to_string().into_bytes(),
-    command.configuration_id.to_string().into_bytes(),
-    command.configuration_version.get().to_string().into_bytes(),
-    command.repository_id.to_string().into_bytes(),
-    command.repository_version.get().to_string().into_bytes(),
-    command.external_identity.as_str().as_bytes().to_vec(),
-  ];
-  match &command.source {
-    RepositorySourceSelection::DefaultReference => fields.push(b"default_reference".to_vec()),
-    RepositorySourceSelection::Reference(reference) => {
-      fields.push(b"reference".to_vec());
-      fields.push(reference.as_str().as_bytes().to_vec());
-    }
-    RepositorySourceSelection::ExactRevision(revision) => {
-      fields.push(b"exact_revision".to_vec());
-      fields.push(revision.as_str().as_bytes().to_vec());
-    }
-  }
-  append_artifact_identity(&mut fields, command.artifacts.task());
-  append_artifact_identity(&mut fields, command.artifacts.acceptance());
-  for specification in command.artifacts.specifications() {
-    append_artifact_identity(&mut fields, specification);
-  }
-  fields.push(command.classification.priority().get().to_string().into_bytes());
-  fields.push(command.classification.risk().as_str().as_bytes().to_vec());
-  for (key, value) in command.classification.metadata().iter() {
-    fields.push(key.as_bytes().to_vec());
-    fields.push(value.as_bytes().to_vec());
-  }
-  let fields = fields.iter().map(Vec::as_slice).collect::<Vec<_>>();
-  FactoryDigest::sha256("octacity.factory.manual-admission.v1", &fields)
+pub(super) fn source_admission_probe(
+  context: &crate::ManagementRequestContext,
+  command: &FactoryWorkAdmissionIntent,
+  installation: &octacity_server_factory::ImmutableReference,
+) -> Result<FactoryAdmissionProbe, ApplicationError> {
+  let source_scope = installed_source_scope(context, command.project_id, installation)?;
+  octacity_server_store::factory_source_admission_probe(
+    octacity_server_store::FactoryAdmissionIdentity {
+      source_scope,
+      external_identity: command.external_identity.clone(),
+    },
+    command,
+  )
+  .map_err(Into::into)
 }
 
-fn append_artifact_identity(fields: &mut Vec<Vec<u8>>, artifact: &octacity_server_factory::FactoryArtifactReference) {
-  fields.push(artifact.artifact_id().to_string().into_bytes());
-  fields.push(artifact.content_digest().as_bytes().to_vec());
-  fields.push(artifact.encoded_size().to_be_bytes().to_vec());
+pub(super) fn installed_source_scope(
+  context: &crate::ManagementRequestContext,
+  project_id: ProjectId,
+  installation: &octacity_server_factory::ImmutableReference,
+) -> Result<FactoryWorkSourceScope, ApplicationError> {
+  let source = octacity_server_store::installed_source_namespace(project_id, installation.identity());
+  Ok(FactoryWorkSourceScope {
+    source,
+    security_scope: context.security_scope().to_store(),
+  })
 }
 
 fn map_revision_error(error: RevisionResolutionError) -> ApplicationError {

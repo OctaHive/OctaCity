@@ -77,7 +77,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryF
       };
       let retained = self
         .reader
-        .read(ReadFactoryArtifact {
+        .read_input(ReadFactoryArtifact {
           project_id: snapshot.work.subject().project_id(),
           artifact: artifact.clone(),
           maximum_bytes: remaining.min(MAX_ARTIFACT_READ_BYTES),
@@ -88,8 +88,6 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryF
       remaining = remaining
         .checked_sub(artifact.encoded_size())
         .ok_or_else(ApplicationError::invalid)?;
-      let provenance_bytes =
-        serde_json::to_vec(retained.record().identity()).map_err(|_| ApplicationError::invalid())?;
       entries.push(
         ContextManifestEntry::new(
           kind,
@@ -99,7 +97,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryF
           artifact.content_digest(),
           artifact.encoded_size(),
           FactorySafeText::new("Explicit immutable context selection").map_err(|_| ApplicationError::invalid())?,
-          FactoryDigest::sha256("octacity.factory.artifact-context-provenance.v1", &[&provenance_bytes]),
+          retained.provenance_digest(),
         )
         .map_err(|_| ApplicationError::invalid())?,
       );
