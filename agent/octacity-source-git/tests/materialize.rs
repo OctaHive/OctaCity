@@ -213,17 +213,15 @@ async fn agent_preserves_a_cancellation_requested_before_materialization() {
 #[cfg(unix)]
 #[tokio::test]
 async fn agent_forces_the_whole_plugin_process_group_down_after_cancel() {
-  use std::{os::unix::fs::PermissionsExt as _, time::Instant};
+  use std::time::Instant;
 
   let fixture = RepositoryFixture::new();
-  let slow_git = fixture._temp.path().join("slow-git");
-  fs::write(&slow_git, "#!/bin/sh\nsleep 30\n").unwrap();
-  fs::set_permissions(&slow_git, fs::Permissions::from_mode(0o755)).unwrap();
+  let slow_git = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/slow-git.sh");
   let mut plugin = fixture.installed_plugin();
-  plugin.manifest.settings.insert(
-    "git_path".to_owned(),
-    serde_json::Value::String(slow_git.to_string_lossy().into_owned()),
-  );
+  plugin
+    .manifest
+    .settings
+    .insert("git_path".to_owned(), serde_json::Value::String(slow_git.to_owned()));
   let cancellation = CancellationToken::new();
   let trigger = cancellation.clone();
   tokio::spawn(async move {
@@ -267,17 +265,13 @@ async fn agent_surfaces_a_plugin_validation_error() {
 #[cfg(unix)]
 #[tokio::test]
 async fn agent_enforces_the_source_operation_timeout() {
-  use std::os::unix::fs::PermissionsExt as _;
-
   let fixture = RepositoryFixture::new();
-  let slow_git = fixture._temp.path().join("slow-timeout-git");
-  fs::write(&slow_git, "#!/bin/sh\nsleep 30\n").unwrap();
-  fs::set_permissions(&slow_git, fs::Permissions::from_mode(0o755)).unwrap();
+  let slow_git = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/slow-git.sh");
   let mut plugin = fixture.installed_plugin();
-  plugin.manifest.settings.insert(
-    "git_path".to_owned(),
-    serde_json::Value::String(slow_git.to_string_lossy().into_owned()),
-  );
+  plugin
+    .manifest
+    .settings
+    .insert("git_path".to_owned(), serde_json::Value::String(slow_git.to_owned()));
   let error = plugin
     .materialize(
       fixture.host_request("timeout-source"),
@@ -294,16 +288,11 @@ async fn agent_enforces_the_source_operation_timeout() {
 #[cfg(unix)]
 #[tokio::test]
 async fn agent_rejects_a_handshake_that_differs_from_the_manifest() {
-  use std::os::unix::fs::PermissionsExt as _;
-
   let fixture = RepositoryFixture::new();
-  let wrong_plugin = fixture._temp.path().join("wrong-plugin");
-  fs::write(
-    &wrong_plugin,
-    "#!/bin/sh\nprintf '%s\\n' '{\"type\":\"hello\",\"protocol_version\":1,\"plugin_name\":\"other\",\"plugin_version\":\"0.1.0\"}'\n",
-  )
-  .unwrap();
-  fs::set_permissions(&wrong_plugin, fs::Permissions::from_mode(0o755)).unwrap();
+  let wrong_plugin = scripted_executable(
+    fixture._temp.path(),
+    "printf '%s\\n' '{\"type\":\"hello\",\"protocol_version\":1,\"plugin_name\":\"other\",\"plugin_version\":\"0.1.0\"}'\n",
+  );
   let mut plugin = fixture.installed_plugin();
   plugin.executable = wrong_plugin;
   let error = plugin
@@ -322,12 +311,16 @@ async fn agent_rejects_a_handshake_that_differs_from_the_manifest() {
 #[cfg(unix)]
 #[tokio::test]
 async fn source_deadline_includes_the_plugin_handshake() {
-  use std::{os::unix::fs::PermissionsExt as _, time::Instant};
+  use std::time::Instant;
 
   let fixture = RepositoryFixture::new();
-  let silent_plugin = fixture._temp.path().join("silent-plugin");
-  fs::write(&silent_plugin, "#!/bin/sh\nsleep 30\n").unwrap();
-  fs::set_permissions(&silent_plugin, fs::Permissions::from_mode(0o755)).unwrap();
+  let silent_plugin = scripted_executable(fixture._temp.path(), "sleep 30\n");
+  // Model Linux's transient writable-inode race deterministically: fixture
+  // data may remain writable, but the executable must be an immutable launcher.
+  let _body_writer = fs::OpenOptions::new()
+    .write(true)
+    .open(fixture._temp.path().join("fixture-body"))
+    .unwrap();
   let mut plugin = fixture.installed_plugin();
   plugin.executable = silent_plugin;
   let started = Instant::now();
@@ -341,20 +334,21 @@ async fn source_deadline_includes_the_plugin_handshake() {
     .await
     .unwrap_err();
 
-  assert!(error.to_string().contains("execution timeout"));
+  assert!(
+    matches!(error, octacity_source::SourceHostError::TimedOut { .. }),
+    "expected the handshake deadline, got {error:?}"
+  );
   assert!(started.elapsed() < Duration::from_secs(3));
 }
 
 #[cfg(unix)]
 #[tokio::test]
 async fn terminal_plugin_cannot_leave_a_descendant_holding_stderr_open() {
-  use std::{os::unix::fs::PermissionsExt as _, time::Instant};
+  use std::time::Instant;
 
   let fixture = RepositoryFixture::new();
-  let plugin_script = fixture._temp.path().join("background-plugin");
   let script = format!(
-    "#!/bin/sh\n\
-     printf '%s\\n' '{{\"type\":\"hello\",\"protocol_version\":1,\"plugin_name\":\"git\",\"plugin_version\":\"{}\"}}'\n\
+    "printf '%s\\n' '{{\"type\":\"hello\",\"protocol_version\":1,\"plugin_name\":\"git\",\"plugin_version\":\"{}\"}}'\n\
      IFS= read -r request\n\
      printf '%s\\n' '{{\"type\":\"accepted\",\"request_id\":\"background-source\"}}'\n\
      (sleep 30) >&2 &\n\
@@ -362,8 +356,7 @@ async fn terminal_plugin_cannot_leave_a_descendant_holding_stderr_open() {
     env!("CARGO_PKG_VERSION"),
     fixture.revision,
   );
-  fs::write(&plugin_script, script).unwrap();
-  fs::set_permissions(&plugin_script, fs::Permissions::from_mode(0o755)).unwrap();
+  let plugin_script = scripted_executable(fixture._temp.path(), &script);
   let mut plugin = fixture.installed_plugin();
   plugin.executable = plugin_script;
   let started = Instant::now();
@@ -416,6 +409,21 @@ async fn agent_rejects_an_invalid_request_id_without_starting_a_plugin() {
     .unwrap_err();
 
   assert!(error.to_string().contains("request_id must contain"));
+}
+
+#[cfg(unix)]
+fn scripted_executable(directory: &Path, body: &str) -> PathBuf {
+  use std::os::unix::fs::symlink;
+
+  // Keep the executed inode immutable, as in the source host's lifecycle fixtures.
+  fs::write(directory.join("fixture-body"), body).unwrap();
+  let executable = directory.join("fixture-source");
+  symlink(
+    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/scripted-source.sh"),
+    &executable,
+  )
+  .unwrap();
+  executable
 }
 
 fn find_git() -> PathBuf {
