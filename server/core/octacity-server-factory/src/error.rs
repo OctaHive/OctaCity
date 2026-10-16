@@ -5,6 +5,10 @@ use thiserror::Error;
 pub enum FactoryEntityKind {
   /// Immutable Factory Configuration identity.
   FactoryConfiguration,
+  /// Stable identity of a Project-owned Work Source input.
+  WorkSourceInput,
+  /// Stable identity of a Project-owned exclusive Work Source input group.
+  WorkSourceGroup,
   /// Immutable admitted Work Envelope.
   WorkEnvelope,
   /// Durable Factory Run.

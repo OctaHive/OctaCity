@@ -77,6 +77,16 @@ factory_id!(
   "Stable identity shared by immutable Factory Configuration versions."
 );
 factory_id!(
+  WorkSourceGroupId,
+  FactoryEntityKind::WorkSourceGroup,
+  "Stable identity shared by immutable exclusive Work Source group versions."
+);
+factory_id!(
+  WorkSourceInputId,
+  FactoryEntityKind::WorkSourceInput,
+  "Stable identity shared by immutable Work Source input versions."
+);
+factory_id!(
   WorkEnvelopeId,
   FactoryEntityKind::WorkEnvelope,
   "Opaque identity of one admitted immutable Work Envelope."

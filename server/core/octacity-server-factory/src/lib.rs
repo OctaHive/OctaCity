@@ -94,7 +94,16 @@ pub use verification_plan::{
 };
 #[cfg(test)]
 mod review_plan_tests;
+mod source_group;
+mod source_input;
+pub use source_group::{MAX_WORK_SOURCE_GROUP_MEMBERS, WorkSourceGroup, WorkSourceSelection, WorkSourceSelectionPass};
 mod subject;
+pub use source_input::{
+  WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceInput, WorkSourceInputContext,
+  WorkSourceInputDraft, WorkSourceRepositoryRef,
+};
+#[cfg(test)]
+mod source_input_tests;
 mod task_contract;
 #[cfg(test)]
 mod task_contract_tests;
@@ -173,7 +182,7 @@ pub use identity::{
   AssessmentId, ChangeSetId, ContextManifestId, DecisionId, DecisionSignalReceiptId, DecisionSignalRequestId,
   DeliveryAttemptId, EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRunId,
   FlowDefinitionId, FlowRunId, NodeAttemptId, ReportingAttemptId, RetrievalReceiptId, TaskEnvelopeId, WorkEnvelopeId,
-  WorkflowCycleId,
+  WorkSourceGroupId, WorkSourceInputId, WorkflowCycleId,
 };
 pub use journey::FactoryFlowConfiguration;
 pub use lifecycle::{
@@ -219,7 +228,7 @@ pub use value::{
   MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES,
   MAX_FACTORY_METADATA_KEY_BYTES, MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES,
   MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY, NodeAttemptNumber, ReportingAttemptNumber, WorkPriority,
-  WorkflowCycleNumber,
+  WorkSourceGroupVersion, WorkSourceInputVersion, WorkflowCycleNumber,
 };
 
 #[cfg(test)]

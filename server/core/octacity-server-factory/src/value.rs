@@ -179,6 +179,11 @@ sequence!(
 );
 sequence!(DecisionPolicyVersion, "Positive immutable Decision policy version.");
 sequence!(FactoryRunVersion, "Positive optimistic Factory Run version.");
+sequence!(WorkSourceInputVersion, "Positive immutable Work Source input version.");
+sequence!(
+  WorkSourceGroupVersion,
+  "Positive immutable exclusive Work Source group version."
+);
 sequence!(FlowDefinitionVersion, "Positive immutable Flow Definition version.");
 sequence!(NodeAttemptNumber, "Positive append-only Node Attempt number.");
 sequence!(WorkflowCycleNumber, "Positive append-only Workflow Cycle number.");

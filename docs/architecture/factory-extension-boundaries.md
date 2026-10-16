@@ -39,6 +39,44 @@ Discovery alone accepts no Work and starts no execution. The connector must:
 4. Observe the returned immutable Work/Run identities. An external label or
    webhook acknowledgement cannot stand in for the admission receipt.
 
+`WorkSourceInput` defines Project-owned immutable input versions. Publication
+checks exact Configuration and code Repository references against selected
+resources and freezes the target Configuration's root Flow. Replacement keeps
+the input identity, advances only one version, and retains the previous snapshot.
+Inputs default to disabled; activation requires an enabled target Configuration.
+
+The ticket container and code Repository are separate selections: a Jira
+project, GitLab repository, GitHub repository or another installed provider can
+supply Work for the selected code Repository. The core stores exact installation,
+capability, configuration and resource references. Provider selectors, input
+mappings and polling settings belong to the referenced adapter configuration;
+provider payloads and label/state enums do not enter the Flow interpreter.
+An optional Reporter requires its own exact Project-scoped capability for the
+same installation and ticket container. These pure publication checks consume
+trusted installed declarations; they do not resolve credentials, verify a
+provider process, persist a binding or start discovery workers.
+
+`WorkSourceGroup` publishes explicit Project-owned exclusive groups with stable
+identities, positive immutable revisions and 1–64 frozen input definitions.
+Members must have distinct stable input identities, belong to the same Project
+and select the same exact Source installation, capability and ticket container;
+their selector configurations and target code Repositories may differ. These
+scope checks make one provider observation meaningful to every member without
+assuming that the ticket container is a Git repository.
+
+A selection pass evaluates enabled members against one borrowed observation
+using the adapter's pinned selector configurations. It yields no disposition
+until `finish` verifies the complete frozen group against the resolved current
+group. Zero matches are filtered, one returns the exact selected input, and
+multiple matches return ambiguous input identities without a selected target.
+Other groups remain independent; labels and pipeline names confer no implicit
+exclusivity. GitLab/Jira adapters can use their own native observation and
+predicate types through the same selection interface. These pure checks neither
+reserve admission identities nor change running Work. The future store/worker
+integration must resolve the current group and commit selection/admission under
+the same transaction and scan fence; an in-memory revision check alone does not
+provide durable ownership or lock external tracker edits.
+
 The current manual command demonstrates those common admission invariants; it
 uses the management security scope and the `manual` source kind. A concrete
 connector needs its own installed ingress/identity contract. Do not impersonate

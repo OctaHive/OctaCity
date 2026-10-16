@@ -314,6 +314,128 @@ fn exact_scoped_replay_returns_one_run_before_resolving_mutable_state_again() {
   });
 }
 
+struct UnavailableResolver;
+
+#[async_trait]
+impl RevisionResolver for UnavailableResolver {
+  async fn resolve(
+    &self,
+    _request: RevisionResolutionRequest,
+  ) -> Result<octacity_server_domain::ImmutableRevision, RevisionResolutionError> {
+    Err(RevisionResolutionError::Unavailable)
+  }
+}
+
+#[test]
+fn replay_after_handler_restart_retains_the_original_intent_when_vcs_is_unavailable() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let request = command(project, configuration, repository_id);
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), Arc::new(RecordingResolver::default()));
+    let applied = admit(&handlers, request.clone()).await.unwrap();
+    let before = store.factory_run_snapshot(applied.factory_run_id).await.unwrap();
+    let restarted = FactoryAdmissionHandlers::new(store.clone(), Arc::new(UnavailableResolver));
+
+    let replayed = admit(
+      &restarted,
+      AdmitManualFactoryWorkCommand {
+        idempotency_key: IdempotencyKey::new("replay-after-restart").unwrap(),
+        admitted_at: time(100),
+        ..request.clone()
+      },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+      replayed,
+      crate::FactoryAdmissionOutcome {
+        disposition: MutationDisposition::Replayed,
+        ..applied.clone()
+      }
+    );
+
+    let fresh = admit(
+      &restarted,
+      AdmitManualFactoryWorkCommand {
+        external_identity: ExternalWorkIdentity::new("manual/fresh-work").unwrap(),
+        idempotency_key: IdempotencyKey::new("fresh-after-restart").unwrap(),
+        ..request
+      },
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(fresh.classification(), ApplicationFailure::Unavailable);
+    assert_eq!(
+      store.factory_run_snapshot(applied.factory_run_id).await.unwrap(),
+      before
+    );
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+    assert_eq!(store.management_audit_facts().await.len(), 1);
+  });
+}
+
+#[test]
+fn replacing_admitted_artifacts_conflicts_without_resolving_or_replacing_the_original_work() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let configuration = FactoryConfigurationId::generate();
+    let repository_id = RepositoryId::generate();
+    let store = seeded_store(
+      project,
+      configuration,
+      repository(project, repository_id, Some("refs/heads/main".parse().unwrap())),
+    );
+    let resolver = Arc::new(RecordingResolver::default());
+    let handlers = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let request = command(project, configuration, repository_id);
+    let applied = admit(&handlers, request.clone()).await.unwrap();
+    let before = store.factory_run_snapshot(applied.factory_run_id).await.unwrap();
+    let task = request.artifacts.task().clone();
+    let acceptance = request.artifacts.acceptance().clone();
+
+    for artifacts in [
+      WorkArtifacts::new(artifact(92), acceptance.clone(), vec![]).unwrap(),
+      WorkArtifacts::new(task.clone(), artifact(93), vec![]).unwrap(),
+      WorkArtifacts::new(task, acceptance, vec![artifact(94)]).unwrap(),
+    ] {
+      for idempotency_key in [
+        request.idempotency_key.clone(),
+        IdempotencyKey::new("changed-input-transport-attempt").unwrap(),
+      ] {
+        let error = admit(
+          &handlers,
+          AdmitManualFactoryWorkCommand {
+            artifacts: artifacts.clone(),
+            idempotency_key,
+            ..request.clone()
+          },
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.classification(), ApplicationFailure::Conflict);
+      }
+    }
+    assert_eq!(resolver.call_count(), 1);
+    assert_eq!(
+      store.factory_run_snapshot(applied.factory_run_id).await.unwrap(),
+      before
+    );
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+    assert_eq!(store.management_audit_facts().await.len(), 1);
+    assert_eq!(
+      admit(&handlers, request).await.unwrap().disposition,
+      MutationDisposition::Replayed
+    );
+  });
+}
+
 #[test]
 fn configuration_active_run_limit_is_enforced_atomically_without_blocking_replay() {
   run_ready(async {
@@ -459,16 +581,16 @@ pub(super) fn run_ready<T>(future: impl Future<Output = T>) -> T {
   }
 }
 
-struct HideSelectedRepository;
+struct HideSelectedDependency(ManagementResource);
 #[async_trait]
-impl ManagementAuthorizationPolicy for HideSelectedRepository {
+impl ManagementAuthorizationPolicy for HideSelectedDependency {
   async fn authorize(
     &self,
     _context: &ManagementRequestContext,
     _action: ManagementAction,
     resource: &ManagementResource,
   ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
-    if resource.kind() == crate::ManagementResourceKind::Repository {
+    if resource == &self.0 {
       Err(ManagementAuthorizationDenial::forbidden())
     } else {
       Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
@@ -476,7 +598,7 @@ impl ManagementAuthorizationPolicy for HideSelectedRepository {
   }
 }
 #[test]
-fn hidden_selected_repository_is_rejected_before_factory_revision_resolution() {
+fn hidden_selected_dependencies_are_rejected_before_factory_revision_resolution() {
   run_ready(async {
     let project = ProjectId::generate();
     let configuration = FactoryConfigurationId::generate();
@@ -491,22 +613,44 @@ fn hidden_selected_repository_is_rejected_before_factory_revision_resolution() {
       ),
     );
     let resolver = Arc::new(RecordingResolver::default());
-    let policy = Arc::new(HideSelectedRepository);
-    let handler = AuthorizedCommandHandler::new(
-      policy.clone(),
-      Arc::new(FactoryAdmissionHandlers::with_policy(
-        store.clone(),
-        resolver.clone(),
-        policy,
-      )),
-    );
-    let error = handler
-      .handle_command(&context(), command(project, configuration, repository_id))
-      .await
-      .unwrap_err();
-    assert!(matches!(error, ManagementHandlerError::Application(_)));
+    let mut request = command(project, configuration, repository_id);
+    request.artifacts = WorkArtifacts::new(
+      request.artifacts.task().clone(),
+      request.artifacts.acceptance().clone(),
+      vec![artifact(92)],
+    )
+    .unwrap();
+    use crate::ManagementResourceKind::{Artifact, FactoryConfiguration, Repository};
+    for (kind, identity) in [
+      (FactoryConfiguration, configuration.to_string()),
+      (Repository, repository_id.to_string()),
+      (Artifact, request.artifacts.task().artifact_id().to_string()),
+      (Artifact, request.artifacts.acceptance().artifact_id().to_string()),
+      (
+        Artifact,
+        request.artifacts.specifications()[0].artifact_id().to_string(),
+      ),
+    ] {
+      let resource =
+        ManagementResource::instance(kind, crate::ManagementResourceIdentity::new(identity).unwrap()).unwrap();
+      let policy = Arc::new(HideSelectedDependency(resource));
+      let handler = AuthorizedCommandHandler::new(
+        policy.clone(),
+        Arc::new(FactoryAdmissionHandlers::with_policy(
+          store.clone(),
+          resolver.clone(),
+          policy,
+        )),
+      );
+      let error = handler.handle_command(&context(), request.clone()).await.unwrap_err();
+      assert_eq!(
+        error.application().unwrap().classification(),
+        ApplicationFailure::Invalid
+      );
+    }
     assert_eq!(resolver.call_count(), 0);
     assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+    assert!(store.management_audit_facts().await.is_empty());
   });
 }
 

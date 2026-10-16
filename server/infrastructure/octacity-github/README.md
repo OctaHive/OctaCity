@@ -4,14 +4,59 @@
 capability. The separately planned Work Source, repository-read and Work Reporter
 capabilities extend this same package, installation and SDK transport. They do
 not create plugins for individual Flow stages. Their protocols and credential
-classes remain independent; automatic intake and a concrete reporter remain in
-task 16.9.
+classes remain independent; automatic intake and a concrete reporter are being
+implemented by the `add-github-work-source` change.
 
 The plugin uses [Octocrab](https://github.com/XAMPPRocky/octocrab) 0.54.3 over the
 existing reqwest transport, with default SDK features disabled. Automatic SDK
 retry, redirect, tracing and JWT features are disabled. Raw SDK responses are
 bounded before decoding. Scope, candidate verification and observe-before-retry
 remain OctaCity responsibilities rather than SDK assurances.
+
+## Issue selector configuration
+
+`issue_selector::IssueSelector` validates typed definitions through `new` or
+bounded JSON through `from_config`, and evaluates observed Issue state/labels
+locally through `matches`. A selector document has four required fields:
+
+```json
+{
+  "state": "open",
+  "all_of": ["ready-for-review"],
+  "any_of": ["documentation", "enhancement"],
+  "none_of": ["on hold"]
+}
+```
+
+State is explicitly `open`, `closed` or `all`. Every `all_of` label must be
+present; a nonempty `any_of` needs at least one observed alternative; no
+`none_of` label may be present. Three empty arrays remove the label restriction,
+including for unlabeled Issues. State filtering still applies. Names are whole
+literal labels, including spaces, Unicode and punctuation; there is no regex,
+search-query language or built-in approval/classification vocabulary.
+
+Local safety limits are 32 entries per predicate, 256 UTF-8 bytes per label
+and 64 KiB for the raw JSON document. These are adapter bounds, independent
+of GitHub service quotas. Empty/whitespace-only names, control characters,
+duplicates, required/excluded overlap and an alternatives set completely covered
+by exclusions are rejected. Partly excluded alternatives and overlap between
+required labels and alternatives remain valid. Unknown/missing fields,
+unsupported states and malformed documents are rejected by the checked decoder.
+Errors expose only a closed field/reason classification and never echo input.
+
+Local name comparisons use Unicode lowercase forms for matching, duplicate
+detection and contradiction checks while retaining configured spelling in
+serialized definitions. GitHub documents its label-name parameter as
+[case insensitive](https://docs.github.com/en/rest/issues/labels#remove-a-label-from-an-issue).
+The helper does not perform transliteration, whitespace trimming or regex
+interpretation of label names.
+
+This module performs configuration validation and pure matching. Source process
+advertisement, installed configuration publication, provider Issue listing,
+pull-request exclusion and worker activation have their own implementation
+tasks. The provider-neutral `WorkSourceInput` holds immutable configuration
+references; future GitLab/Jira adapters own their selector and state semantics
+without introducing GitHub enums into the Flow interpreter.
 
 ## Installation and protected material
 

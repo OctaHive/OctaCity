@@ -5,6 +5,7 @@
 mod api;
 mod candidate;
 mod config;
+pub mod issue_selector;
 mod protocol_io;
 use config::Config;
 use octacity_delivery_protocol::{Command, Failure, FailureClass, Outcome, Request};
