@@ -101,6 +101,27 @@ fn signal_connector_file_requires_an_explicit_factory_profile_installation() {
 }
 
 #[test]
+fn relative_offline_roots_do_not_rebase_installed_factory_files() {
+  let source = format!(
+    "factory_profiles_file='/run/secrets/factory-profiles.json'\nfactory_signal_connectors_file='/run/secrets/signal-connectors.json'\n{}\n[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n",
+    test_config_source()
+  );
+  let mut config = ServerConfig::parse_toml(&source).unwrap();
+  assert_eq!(
+    config.rebase_runtime_files(std::path::Path::new("offline-relative")),
+    Err("runtime-file validation root must be absolute".to_owned())
+  );
+  assert_eq!(
+    config.factory_profiles_file().unwrap(),
+    std::path::Path::new("/run/secrets/factory-profiles.json")
+  );
+  assert_eq!(
+    config.factory_signal_connectors_file().unwrap(),
+    std::path::Path::new("/run/secrets/signal-connectors.json")
+  );
+}
+
+#[test]
 fn deployment_factory_profile_file_is_explicit_and_rebased_with_runtime_files() {
   let workers =
     "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n";
@@ -124,16 +145,33 @@ fn deployment_factory_profile_file_is_explicit_and_rebased_with_runtime_files() 
     config.factory_profiles_file().unwrap(),
     std::path::Path::new("/run/secrets/factory-profiles.json")
   );
-  // Offline image validation relocates every absolute runtime file together.
-  config.rebase_runtime_files(std::path::Path::new("/offline")).unwrap();
-  assert_eq!(
-    config.factory_profiles_file().unwrap(),
-    std::path::Path::new("/offline/run/secrets/factory-profiles.json")
-  );
-  assert_eq!(
-    config.factory_signal_connectors_file().unwrap(),
-    std::path::Path::new("/offline/run/secrets/signal-connectors.json")
-  );
+  if cfg!(windows) {
+    // A Linux image root is not an absolute Windows validation root. Keep the
+    // configured files unchanged instead of admitting a drive-relative path.
+    assert_eq!(
+      config.rebase_runtime_files(std::path::Path::new("/offline")),
+      Err("runtime-file validation root must be absolute".to_owned())
+    );
+    assert_eq!(
+      config.factory_profiles_file().unwrap(),
+      std::path::Path::new("/run/secrets/factory-profiles.json")
+    );
+    assert_eq!(
+      config.factory_signal_connectors_file().unwrap(),
+      std::path::Path::new("/run/secrets/signal-connectors.json")
+    );
+  } else {
+    // Offline image validation relocates every absolute runtime file together.
+    config.rebase_runtime_files(std::path::Path::new("/offline")).unwrap();
+    assert_eq!(
+      config.factory_profiles_file().unwrap(),
+      std::path::Path::new("/offline/run/secrets/factory-profiles.json")
+    );
+    assert_eq!(
+      config.factory_signal_connectors_file().unwrap(),
+      std::path::Path::new("/offline/run/secrets/signal-connectors.json")
+    );
+  }
   assert!(
     ServerConfig::parse_toml(&format!(
       "factory_profiles_file='/private/config'\n{}",

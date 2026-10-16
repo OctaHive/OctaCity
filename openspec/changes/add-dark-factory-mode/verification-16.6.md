@@ -371,3 +371,46 @@ remain rejected for `octacity-source`. No layer edge or deferred SDK rule change
 The unchanged `05f1f2a` main has now also passed Ubuntu quality and coverage in
 [its CI run](https://github.com/OctaHive/OctaCity/actions/runs/38824269139).
 These results do not attest to the branch's subsequent Git-path corrections.
+
+## Windows capture Green and offline profile fixture follow-up
+
+[Windows quality at 1aa1aa4](https://github.com/OctaHive/OctaCity/actions/runs/38832053570/job/116752805373)
+confirmed that `captures_changes_from_canonical_host_paths`, the trusted capture
+output-freeze contract and the publication-relative fencing test all passed.
+This completes the observed Windows Red/Green cycle for canonical Git capture
+and confirms the fencing fixture correction. The whole quality job still failed
+later, in `deployment_factory_profile_file_is_explicit_and_rebased_with_runtime_files`;
+the retained log is `github-windows-git-paths.log`.
+
+That fixture passed Linux image root `/offline` to the public
+`ServerConfig::rebase_runtime_files` boundary on Windows. The production
+absolute-root guard correctly rejected it with
+`runtime-file validation root must be absolute`. The fixture now requires that
+exact refusal and unchanged profile/connector paths on Windows, while retaining
+the positive Linux-image relocation assertions on Unix and all cross-platform
+explicit-installation/empty-path assertions. No production rebase semantics,
+absolute-root guard or Windows container capability changed.
+
+Before the fixture correction, the existing Server tests passed locally and a
+new public characterization verified that an ordinary relative validation root
+is rejected without rebasing either installed Factory file. It passed before
+changing the existing fixture. The original Windows failure remains the observed
+Red for its incorrect platform assumption; Windows confirmation of the corrected
+fixture is pending.
+
+```shell
+cargo test -p octacity-server --lib --locked -j 2
+# Baseline: 86 passed on macOS, including the new guard characterization.
+cargo test -p octacity-server --lib --locked -j 2 \
+  relative_offline_roots_do_not_rebase_installed_factory_files
+# 1 passed before fixture refactoring.
+cargo test -p octacity-server --lib --locked -j 2
+# After fixture correction: 86 passed on macOS; Windows result pending.
+```
+
+Receipts: `server-offline-profile-baseline`,
+`server-offline-profile-guard-characterization` and
+`server-offline-profile-fixture-green`. Fresh composed Factory and independent
+ordinary package journeys at `1aa1aa4` also passed; their exact source, checksums,
+commands, timings and setup limitations are recorded in `verification-16.7.md`.
+Neither task 16.6 nor 16.7 is marked complete by these individual Windows Greens.
