@@ -267,9 +267,17 @@ when supplied with canonical host paths. Existing ChangeSet tests using ordinary
 host paths passed in the same Windows run. A new public `ChangeSetCapturer`
 regression supplies canonical workspace and destination paths (including a space)
 and requires an actual candidate manifest and bundle. It passed locally; its
-Windows Red is being collected in the test-only commit `4aad301` via
-[automatic branch CI](https://github.com/OctaHive/OctaCity/actions/runs/38826409924).
-No production capture-path fix is claimed or implemented before that result.
+Windows Red was confirmed in test-only commit `4aad301` by
+[automatic branch CI](https://github.com/OctaHive/OctaCity/actions/runs/38826409924/job/116734796661):
+13 passed, one failed with `ProviderRejected { step: "private repository initialization" }`.
+The same new regression failed independently on `61859ba` in
+[its Windows job](https://github.com/OctaHive/OctaCity/actions/runs/38826664515/job/116735597733).
+After both Reds, private repository initialization was changed to pass the
+repository path relative to the validated capture destination, which is already
+the command's working directory. Ownership, workspace-boundary, executable digest
+and capture-policy checks remain intact. Local regressions passed; Windows Green
+is pending, so the canonical-path correction is not yet qualified. A later Git
+operation could still expose another Windows path incompatibility.
 
 The other failure was the five-second whole-lifecycle timeout in
 `fencing_during_output_publication_keeps_the_lease_loss_reason`. A controlled
@@ -302,3 +310,16 @@ Receipts in `/tmp/octacity-166-evidence`: `windows-followup-lifecycle-baseline`,
 `windows-followup-lifecycle-regression`, `canonical-capture-local`,
 `canonical-capture-suite` and `windows-followup-clippy`. The Windows source log is
 `github-windows-3d.log`. These follow-ups do not complete tasks 16.6 or 16.7.
+
+The public canonical-path regression runs through the same `cargo test -p
+octacity-changeset --lib -j 2` boundary in Windows CI. Captured Red logs are
+`github-windows-canonical-red.log` and `github-windows-fencing-branch.log`.
+The relative-initialization follow-up uses the same ChangeSet and lifecycle
+commands above; local receipts are `canonical-relative-init-local` (17 passed),
+`canonical-relative-init-lifecycle` (47 passed) and `canonical-relative-init-clippy`.
+The branch's Windows Red occurs before lifecycle tests, so it cannot yet confirm
+the fencing timing correction. Separately, the unchanged `05f1f2a` main passed
+macOS quality and the complete
+[released Host matrix](https://github.com/OctaHive/OctaCity/actions/runs/38824269135).
+Its Windows quality repeated only the known canonical-path failure; the earlier
+fencing timeout did not recur on that run.

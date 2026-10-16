@@ -668,6 +668,10 @@ async fn initialize_private_repository(
     ));
   }
   let repository = repository
+    // Git for Windows does not accept Rust's canonical verbatim path here.
+    // The command already runs inside the validated capture destination.
+    .strip_prefix(destination)
+    .map_err(|_| CaptureError::Invalid("private Git repository is outside capture destination".to_owned()))?
     .to_str()
     .ok_or_else(|| CaptureError::Invalid("private Git repository path is not UTF-8".to_owned()))?;
   let object_format = format!("--object-format={object_format}");
