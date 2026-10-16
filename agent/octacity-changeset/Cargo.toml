@@ -9,6 +9,7 @@ description = "Trusted hook-free Git ChangeSet capture for OctaCity agents"
 
 [dependencies]
 async-trait.workspace = true
+dunce.workspace = true
 hex.workspace = true
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-private-fs = { path = "../octacity-private-fs" }

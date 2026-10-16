@@ -88,6 +88,9 @@ ROLE_ALLOWED_EXTERNAL_DEPENDENCIES = {
 # package-specific so another core crate cannot acquire private-key handling by
 # depending on the same libraries.
 PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
+    # Only trusted Git capture needs semantics-preserving Windows path spelling;
+    # this filesystem helper grants no provider or transport capability.
+    "octacity-changeset": frozenset({"dunce"}),
     # The single GitHub provider owns its SDK and bounded HTTP body handling.
     # Delivery/Source/Reporter contracts and the general engine remain neutral.
     "octacity-github": frozenset({"octocrab", "http-body-util"}),

@@ -54,6 +54,28 @@ def package_fixture(
 
 
 class ArchitecturePolicyTests(unittest.TestCase):
+    def test_windows_git_path_support_is_specific_to_changeset_capture(self):
+        for name, expected in (
+            ("octacity-changeset", []),
+            ("octacity-source", ["ARCH012_UNREVIEWED_EXTERNAL_DEPENDENCY"]),
+        ):
+            with self.subTest(package=name):
+                package = ARCHITECTURE.Package(
+                    name=name,
+                    manifest_path=REPOSITORY / "agent" / name / "Cargo.toml",
+                    role="agent",
+                    dependencies=(),
+                    external_dependencies=("dunce",),
+                    shared_contract=None,
+                    shared_consumers=(),
+                    shared_scaffold=False,
+                    shared_policy_valid=True,
+                )
+                violations = ARCHITECTURE.check(
+                    ARCHITECTURE.Graph(packages=(package,), edges=())
+                )
+                self.assertEqual([violation.code for violation in violations], expected)
+
     def test_application_trace_capture_is_test_only_and_package_specific(self):
         def violations(name, kinds):
             metadata = {"workspace_root": "/workspace", "packages": [{

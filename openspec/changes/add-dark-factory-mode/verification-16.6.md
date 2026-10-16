@@ -323,3 +323,51 @@ macOS quality and the complete
 [released Host matrix](https://github.com/OctaHive/OctaCity/actions/runs/38824269135).
 Its Windows quality repeated only the known canonical-path failure; the earlier
 fencing timeout did not recur on that run.
+
+### Next canonical-path Red: Git environment
+
+[Windows at 68026fd](https://github.com/OctaHive/OctaCity/actions/runs/38828997151/job/116743095428)
+passed private repository initialization, then the same public regression failed
+at `repository boundary verification` (13 passed, one failed). This confirms that
+the relative initialization change reached the next real Git operation; it is
+not a complete canonical-path Green. The retained log is
+`github-windows-relative-init.log`.
+
+The follow-up changes only the path representation supplied to Git's repository,
+work-tree, object-directory, index and hooks settings, and its bundle output
+argument. `dunce::simplified` removes Windows' verbatim prefix only when doing so
+preserves filesystem meaning, retaining it for reserved or otherwise unsafe
+names. Native filesystem validation and its canonical paths remain unchanged.
+The already locked `dunce` 1.0.5 becomes a direct ChangeSet dependency; no package
+version or checksum changes. The canonical-path public regression remains the
+Windows acceptance test, and Windows Green is still required.
+
+Local commands and receipts use the same public boundaries:
+
+```shell
+cargo test -p octacity-changeset --lib -j 2
+# 17 passed; receipt canonical-git-paths-local.
+cargo test -p octacity-lifecycle --lib --locked -j 2
+# 47 passed; receipt canonical-git-paths-lifecycle.
+cargo clippy -p octacity-changeset -p octacity-lifecycle --all-targets --locked -j 2 -- -D warnings
+# Passed; receipt canonical-git-paths-clippy.
+cargo deny --locked check licenses sources
+python3 tools/check_architecture.py
+# Passed; receipts canonical-git-paths-licenses / canonical-git-paths-architecture.
+python3 -m unittest tools.tests.test_check_architecture -v
+# 29 passed; receipt canonical-git-paths-policy-green.
+```
+
+The architecture gate initially rejected the new direct dependency as
+`ARCH012_UNREVIEWED_EXTERNAL_DEPENDENCY`. The implementation now records an
+explicit package-specific dependency decision, documented in
+`docs/architecture/extension-seams.md`, instead of adding the library to the
+global implementation inventory. Before changing policy, the new public checker
+test `test_windows_git_path_support_is_specific_to_changeset_capture` failed
+with that rejection (`canonical-git-paths-policy-red`). After the narrow decision,
+all 29 checker tests passed; the new test also requires the same dependency to
+remain rejected for `octacity-source`. No layer edge or deferred SDK rule changed.
+
+The unchanged `05f1f2a` main has now also passed Ubuntu quality and coverage in
+[its CI run](https://github.com/OctaHive/OctaCity/actions/runs/38824269139).
+These results do not attest to the branch's subsequent Git-path corrections.

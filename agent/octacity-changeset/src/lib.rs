@@ -465,7 +465,7 @@ impl GitChangeSetCapturer {
       [
         "bundle",
         "create",
-        bundle_path
+        dunce::simplified(&bundle_path)
           .to_str()
           .ok_or_else(|| CaptureError::Invalid("bundle path is not UTF-8".to_owned()))?,
         capture_ref.as_str(),
@@ -735,10 +735,15 @@ pub(crate) async fn git_bytes<const N: usize>(
     .env("GIT_CONFIG_NOSYSTEM", "1")
     .env("GIT_CONFIG_GLOBAL", null_device())
     .env("GIT_TERMINAL_PROMPT", "0")
-    .env("GIT_DIR", environment.repository)
-    .env("GIT_WORK_TREE", environment.workspace)
-    .env("GIT_ALTERNATE_OBJECT_DIRECTORIES", environment.source_objects)
-    .env("GIT_INDEX_FILE", environment.index)
+    // Change only the representation passed to Git, and only when removing
+    // Windows' verbatim prefix preserves the path's filesystem meaning.
+    .env("GIT_DIR", dunce::simplified(environment.repository))
+    .env("GIT_WORK_TREE", dunce::simplified(environment.workspace))
+    .env(
+      "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+      dunce::simplified(environment.source_objects),
+    )
+    .env("GIT_INDEX_FILE", dunce::simplified(environment.index))
     .env("GIT_AUTHOR_NAME", &environment.instruction.author_name)
     .env("GIT_AUTHOR_EMAIL", &environment.instruction.author_email)
     .env("GIT_AUTHOR_DATE", &timestamp)
@@ -749,7 +754,10 @@ pub(crate) async fn git_bytes<const N: usize>(
     .arg("-c")
     .arg("core.bare=false")
     .arg("-c")
-    .arg(format!("core.hooksPath={}", environment.hooks.display()))
+    .arg(format!(
+      "core.hooksPath={}",
+      dunce::simplified(environment.hooks).display()
+    ))
     .arg("-c")
     .arg("commit.gpgSign=false")
     .args(arguments)

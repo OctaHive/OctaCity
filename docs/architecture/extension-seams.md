@@ -126,6 +126,15 @@ another layer rule. Moving an extension into production requires an explicit
 architecture-policy change together with its implemented vertical slice; an
 empty crate or unused dependency is not acceptable evidence.
 
+Trusted ChangeSet capture has a package-specific `dunce` exception for passing
+canonical Windows paths to Git without changing their filesystem meaning.
+Version 1.0.5 was already locked, has no dependencies and offers Apache-2.0,
+MIT-0 or CC0-1.0 licensing. Its `simplified` function performs no I/O and retains
+verbatim paths when removing the prefix could change their meaning. Ownership and
+workspace-boundary validation still use native canonical paths. This exception
+does not admit `dunce` to other packages or change any deferred-provider rule;
+the architecture contract tests verify both acceptance and rejection.
+
 ### Factory result discovery facts
 
 A trusted `FactoryFlowActionPlugin` may return optional `FlowDiscoveryFacts` in
