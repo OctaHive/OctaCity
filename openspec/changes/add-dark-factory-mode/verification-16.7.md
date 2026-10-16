@@ -282,3 +282,64 @@ passed. Portable Rust tests and coverage are still being observed. The source is
 already fast-forwarded into `main`. Task 16.7 remains unchecked pending the
 remaining exact-source qualification gates, including fresh full Linux Native
 performance evidence; no performance threshold or qualification policy changed.
+
+## Fresh candidates after the Git path correction
+
+After the Windows canonical-path Reds documented in `verification-16.6.md`,
+rebuilt the locked Server, Agent and Git source plugin at
+`1aa1aa4e8316a26753cd86cb295de2d3a49aecf4`. The normal packaging tools produced
+new sibling macOS ARM64 candidates, with pinned Octa in the same installation
+directory. These are development binaries in the release distribution format;
+they are not published optimized releases. Independently verified every listed
+checksum: six Server files, nine Agent files and fourteen pinned Octa files.
+
+The Server executable SHA-256 remains
+`aea9b94c828be540c5960f940fa6d41f47543a04038f2a8924e20fab9a39d78f`;
+the rebuilt Agent is
+`947afb3a1cbfbe9a905b633424db1d6a10d3d36255fd45267dbe4ff85c8aa09d`.
+Both manifests bind the exact `1aa1aa4` source revision. Package build/create
+receipts are `canonical-package-build` and `canonical-package-create`;
+independent manifest/component verification is
+`/tmp/octacity-166-evidence/canonical-packages/verification.json`.
+
+Both independent packaged journeys passed again with this installation:
+
+```shell
+python3 /tmp/octacity-166-run-pilot-canonical.py
+# Same exact composed factory_pilot contract as above:
+# 1 passed, 0 failed/ignored; 728.29 seconds test / 729.19 seconds command.
+python3 /tmp/octacity-166-run-ordinary-canonical.py
+# Same exact released_macos_microsandbox matrix as above, Factory disabled:
+# 1 passed, 0 failed/ignored; 68.32 seconds test / 73.73 seconds command.
+```
+
+The composed journey retains all 39 completion / 18 ordinary Job assertions,
+private-test and capture lineage, independent verification, actual Git review
+and staged deployment/readback, restart/audit continuity and Shadow authority
+negatives described above. The ordinary matrix independently checks unchanged
+CI/CD behavior. Runtime model/provider fixtures remain hermetic; this does not
+qualify real JEV or authorize bounded control. No assertion or budget changed.
+
+Retained receipts/logs: `factory-pilot-canonical`, `ordinary-canonical`,
+`canonical-sequence`, and `ordinary-canonical/microsandbox-matrix.json`.
+The sequence removed only its two PostgreSQL/MinIO containers after verifying
+their exact ownership label and pinned image. Two setup failures are retained
+separately with `-layout-preflight` and `-storage-preflight` suffixes: the first
+used Octa from a different installation directory; the second lacked the fresh
+MinIO bucket. Restoring the sibling layout and expected bucket resolved them.
+These environment failures are not behavioral Reds or qualification outcomes;
+product readiness guards and timeouts remain unchanged.
+
+During package preparation, free space fell below 5 GiB. The task monitor
+validated the exact repository `target` path, owner and `CACHEDIR.TAG`, removed
+only that directory and reported 15.89 GiB free. Built candidate inputs had been
+retained independently; the harness then rebuilt successfully in 3m37s.
+
+The new dependency-policy test passed its own Red/Green cycle, and all 430
+repository-tool tests passed (six environment-gated skips). Latest source
+security, both stand jobs and Console passed in
+[branch CI](https://github.com/OctaHive/OctaCity/actions/runs/38832053570) and
+[security](https://github.com/OctaHive/OctaCity/actions/runs/38832053600).
+Windows quality, remaining platform quality and coverage for `1aa1aa4` are
+still being observed. Tasks 16.6 and 16.7 remain unchecked until their complete
+required qualification is confirmed, including fresh Linux Native performance.
