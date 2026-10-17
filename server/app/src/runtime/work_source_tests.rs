@@ -12,6 +12,8 @@ use std::{
   time::Duration,
 };
 use tokio_util::sync::CancellationToken;
+// Watchdogs bound test failures; process scheduling speed is not an admission contract.
+const TEST_WAIT: Duration = Duration::from_secs(30);
 struct Clock(AtomicI64);
 impl FactoryExecutionClock for Clock {
   fn now(&self) -> Result<Timestamp, ApplicationError> {
@@ -32,7 +34,12 @@ impl octacity_artifact_store::ArtifactBytePublisher for Bytes {
   }
 }
 fn settings() -> FactorySourceWorkerSettings {
-  FactorySourceWorkerSettings {worker:toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=5000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap(),max_attempts:3,operation_timeout:Duration::from_millis(500),cancellation_grace:Duration::from_millis(50)}
+  FactorySourceWorkerSettings {
+    worker: toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=60000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap(),
+    max_attempts: 3,
+    operation_timeout: Duration::from_secs(10),
+    cancellation_grace: Duration::from_secs(1),
+  }
 }
 #[tokio::test]
 async fn absent_inputs_and_precancelled_workers_never_require_a_provider_or_credentials() {
@@ -78,6 +85,33 @@ struct Fixture {
   profile: FactorySourceProfile,
 }
 impl Fixture {
+  async fn wait_for_provider_file(&self, name: &str) {
+    let path = self
+      .root
+      .path()
+      .join(self.profile.plugin.identity().as_str())
+      .join(name);
+    tokio::time::timeout(TEST_WAIT, async {
+      while !path.exists() {
+        tokio::time::sleep(Duration::from_millis(5)).await;
+      }
+    })
+    .await
+    .expect("the controlled provider must reach its requested phase");
+  }
+
+  fn release_provider(&self) {
+    std::fs::write(
+      self
+        .root
+        .path()
+        .join(self.profile.plugin.identity().as_str())
+        .join("release"),
+      b"release",
+    )
+    .unwrap();
+  }
+
   async fn enabled(provider: &str) -> Self {
     let root = tempfile::tempdir().unwrap();
     let dir = root.path().join(provider);
@@ -246,6 +280,35 @@ impl Fixture {
 }
 
 #[tokio::test]
+async fn admission_contract_fixtures_tolerate_slow_valid_provider_responses() {
+  let fixture = Fixture::enabled("jira").await;
+  let path = fixture.root.path().join("jira/mode.json");
+  let mut mode: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+  mode["delay"] = serde_json::json!(0.75);
+  std::fs::write(path, serde_json::to_vec(&mode).unwrap()).unwrap();
+  let outcome = fixture.worker().run_once(CancellationToken::new()).await.unwrap();
+  let schedule = fixture
+    .store
+    .source_scan_schedule(
+      fixture.input.project_id(),
+      WorkSourceScanTarget::Input {
+        id: fixture.input.id(),
+        version: fixture.input.version(),
+      },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(
+    (outcome.completed, outcome.deferred),
+    (1, 0),
+    "valid provider was deferred: {:?}",
+    schedule.failure
+  );
+  assert_eq!(fixture.runs().await.len(), 1);
+}
+
+#[tokio::test]
 async fn enabled_sources_use_verified_processes_and_ordinary_admission_for_every_provider() {
   for provider in ["github", "gitlab", "jira", "custom-tracker"] {
     let fixture = Fixture::enabled(provider).await;
@@ -334,7 +397,7 @@ async fn source_attempt_budget_is_independent_of_the_supervisor_circuit_threshol
     let mut policy = settings();
     policy.max_attempts = 4;
     policy.worker = toml::from_str(&format!(
-      "poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=5000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit={threshold}\ncircuit_open_milliseconds=200"
+      "poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=60000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit={threshold}\ncircuit_open_milliseconds=200"
     )).unwrap();
     let target = WorkSourceScanTarget::Input {
       id: fixture.input.id(),
@@ -584,11 +647,11 @@ async fn source_batches_are_bounded_concurrent_and_advance_past_the_first_page()
   }
   std::fs::write(
     fixture.root.path().join("jira/mode.json"),
-    br#"{"delay":0.15,"candidates":[]}"#,
+    br#"{"pause_scan":true,"candidates":[]}"#,
   )
   .unwrap();
   let mut policy = settings();
-  policy.worker=toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=5000\nbatch_size=2\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap();
+  policy.worker=toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=60000\nbatch_size=2\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap();
   let worker = FactorySourceWorker::new(
     FactorySourceWorkerDependencies {
       store: fixture.store.clone(),
@@ -605,7 +668,36 @@ async fn source_batches_are_bounded_concurrent_and_advance_past_the_first_page()
     },
   )
   .unwrap();
-  assert_eq!(worker.run_once(CancellationToken::new()).await.unwrap().completed, 2);
+  let worker = Arc::new(worker);
+  let first = worker.clone();
+  let pass = tokio::spawn(async move { first.run_once(CancellationToken::new()).await });
+  // Both provider processes must start before either can return, independent of CPU scheduling.
+  tokio::time::timeout(TEST_WAIT, async {
+    loop {
+      let events = std::fs::read_to_string(fixture.root.path().join("jira/events.jsonl")).unwrap_or_default();
+      let started = events
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .filter(|event| event["event"] == "start")
+        .count();
+      if started == 2 {
+        break;
+      }
+      tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+  })
+  .await
+  .expect("the configured concurrency must reach both provider processes");
+  fixture.release_provider();
+  assert_eq!(
+    tokio::time::timeout(TEST_WAIT, pass)
+      .await
+      .unwrap()
+      .unwrap()
+      .unwrap()
+      .completed,
+    2
+  );
   let mut active = 0;
   let mut peak = 0;
   for line in std::fs::read_to_string(fixture.root.path().join("jira/events.jsonl"))
@@ -655,19 +747,9 @@ async fn source_shutdown_drains_the_verified_process_without_spending_a_retry_or
   let cancel = cancellation.clone();
   let worker = fixture.worker();
   let pass = tokio::spawn(async move { worker.run_once(cancel).await });
-  tokio::time::timeout(Duration::from_secs(3), async {
-    while !fixture.root.path().join("jira/ready").exists() {
-      tokio::time::sleep(Duration::from_millis(5)).await;
-    }
-  })
-  .await
-  .unwrap();
+  fixture.wait_for_provider_file("ready").await;
   cancellation.cancel();
-  let result = tokio::time::timeout(Duration::from_secs(1), pass)
-    .await
-    .unwrap()
-    .unwrap()
-    .unwrap();
+  let result = tokio::time::timeout(TEST_WAIT, pass).await.unwrap().unwrap().unwrap();
   assert_eq!(result.deferred, 1);
   assert!(fixture.runs().await.is_empty());
   assert!(fixture.bytes.0.lock().unwrap().is_empty());
@@ -712,24 +794,22 @@ async fn source_shutdown_drains_the_verified_process_without_spending_a_retry_or
 
 #[tokio::test]
 async fn a_source_pass_deadline_bounds_revision_resolution_and_leaves_original_intent_recoverable() {
-  struct Stalled;
+  struct Stalled(Arc<tokio::sync::Notify>);
   #[async_trait::async_trait]
   impl RevisionResolver for Stalled {
     async fn resolve(&self, _: RevisionResolutionRequest) -> Result<ImmutableRevision, RevisionResolutionError> {
+      self.0.notify_one();
       std::future::pending().await
     }
   }
   let fixture = Fixture::enabled("jira").await;
-  let mut policy = settings();
-  policy.worker =
-    toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1500\nbatch_size=4\nconcurrency=2")
-      .unwrap();
-  policy.operation_timeout = Duration::from_millis(500);
+  let policy = settings();
+  let resolving = Arc::new(tokio::sync::Notify::new());
   let worker = FactorySourceWorker::new(
     FactorySourceWorkerDependencies {
       store: fixture.store.clone(),
       bytes: fixture.bytes.clone(),
-      revisions: Arc::new(Stalled),
+      revisions: Arc::new(Stalled(resolving.clone())),
       authorization: Arc::new(TrustedNetworkManagementPolicy),
       registry: Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
       clock: fixture.clock.clone(),
@@ -741,10 +821,19 @@ async fn a_source_pass_deadline_bounds_revision_resolution_and_leaves_original_i
     },
   )
   .unwrap();
-  let result = tokio::time::timeout(Duration::from_secs(3), worker.run_once(CancellationToken::new()))
+  let pass = tokio::spawn(async move { worker.run_once(CancellationToken::new()).await });
+  tokio::time::timeout(TEST_WAIT, resolving.notified())
+    .await
+    .expect("the original intent must reach VCS before exercising the pass deadline");
+  // Start virtual time only after real provider processes have completed preparation.
+  tokio::time::pause();
+  tokio::time::advance(policy.worker.claim_lifetime()).await;
+  let result = tokio::time::timeout(TEST_WAIT, pass)
     .await
     .expect("the complete source pass must have a finite deadline")
+    .unwrap()
     .unwrap();
+  tokio::time::resume();
   assert_eq!(result.deferred, 1);
   assert!(fixture.runs().await.is_empty());
   let target = WorkSourceScanTarget::Input {
@@ -837,7 +926,7 @@ async fn installed_source_polling_is_supervised_and_stops_with_the_runtime() {
   let fixture = Fixture::enabled("jira").await;
   let cancellation = CancellationToken::new();
   let task = super::workers::spawn_factory_source_worker(Arc::new(fixture.worker()), cancellation.clone());
-  tokio::time::timeout(Duration::from_secs(3), async {
+  tokio::time::timeout(TEST_WAIT, async {
     while fixture.runs().await.is_empty() {
       tokio::time::sleep(Duration::from_millis(5)).await;
     }
@@ -845,10 +934,7 @@ async fn installed_source_polling_is_supervised_and_stops_with_the_runtime() {
   .await
   .expect("the runtime must actually poll the explicitly installed Source");
   cancellation.cancel();
-  tokio::time::timeout(Duration::from_secs(1), task)
-    .await
-    .unwrap()
-    .unwrap();
+  tokio::time::timeout(TEST_WAIT, task).await.unwrap().unwrap();
   assert_eq!(fixture.runs().await.len(), 1);
 }
 
@@ -983,18 +1069,16 @@ async fn disabling_an_input_in_flight_revokes_preparation_and_admission() {
   let fixture = Fixture::enabled("jira").await;
   let path = fixture.root.path().join("jira/mode.json");
   let mut mode: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-  mode["delay"] = serde_json::json!(0.15);
+  mode["pause_scan"] = serde_json::json!(true);
   std::fs::write(path, serde_json::to_vec(&mode).unwrap()).unwrap();
   let worker = fixture.worker();
-  let pass = tokio::spawn(async move { worker.run_once(CancellationToken::new()).await });
-  tokio::time::timeout(Duration::from_secs(2), async {
-    while !fixture.root.path().join("jira/requests.jsonl").exists() {
-      tokio::time::sleep(Duration::from_millis(2)).await;
-    }
-  })
-  .await
-  .unwrap();
+  let mut pass = tokio::spawn(async move { worker.run_once(CancellationToken::new()).await });
+  tokio::select! {
+    () = fixture.wait_for_provider_file("ready") => {},
+    result = &mut pass => panic!("the provider must wait for revocation before replying: {result:?}"),
+  }
   fixture.replace_enabled(false).await;
+  fixture.release_provider();
   assert_eq!(pass.await.unwrap().unwrap().deferred, 1);
   assert!(fixture.runs().await.is_empty());
   assert!(fixture.bytes.0.lock().unwrap().is_empty());
@@ -1004,17 +1088,15 @@ async fn disabling_an_input_in_flight_revokes_preparation_and_admission() {
 async fn a_stalled_provider_is_timed_out_and_is_not_reported_as_an_empty_page() {
   let fixture = Fixture::enabled("jira").await;
   std::fs::write(fixture.root.path().join("jira/mode.json"), br#"{"hold":true}"#).unwrap();
-  assert_eq!(
-    tokio::time::timeout(
-      Duration::from_secs(2),
-      fixture.worker().run_once(CancellationToken::new())
-    )
-    .await
-    .unwrap()
-    .unwrap()
-    .deferred,
-    1
-  );
+  let worker = fixture.worker();
+  let pass = tokio::spawn(async move { worker.run_once(CancellationToken::new()).await });
+  fixture.wait_for_provider_file("ready").await;
+  tokio::time::pause();
+  tokio::time::advance(settings().operation_timeout).await;
+  // Let real child exit/reaping run before applying a watchdog to OS process cleanup.
+  tokio::time::resume();
+  let outcome = tokio::time::timeout(TEST_WAIT, pass).await.unwrap().unwrap().unwrap();
+  assert_eq!(outcome.deferred, 1);
   let schedule = fixture
     .store
     .source_scan_schedule(
@@ -1327,17 +1409,14 @@ async fn installing_an_exclusive_group_revokes_an_in_flight_standalone_scan() {
   let fixture = Fixture::enabled("jira").await;
   let path = fixture.root.path().join("jira/mode.json");
   let mut mode: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
-  mode["delay"] = serde_json::json!(0.15);
+  mode["pause_scan"] = serde_json::json!(true);
   std::fs::write(path, serde_json::to_vec(&mode).unwrap()).unwrap();
   let worker = fixture.worker();
-  let pass = tokio::spawn(async move { worker.run_once(CancellationToken::new()).await });
-  tokio::time::timeout(Duration::from_secs(2), async {
-    while !fixture.root.path().join("jira/requests.jsonl").exists() {
-      tokio::time::sleep(Duration::from_millis(2)).await;
-    }
-  })
-  .await
-  .unwrap();
+  let mut pass = tokio::spawn(async move { worker.run_once(CancellationToken::new()).await });
+  tokio::select! {
+    () = fixture.wait_for_provider_file("ready") => {},
+    result = &mut pass => panic!("the provider must wait for group publication before replying: {result:?}"),
+  }
   let group = WorkSourceGroup::publish(
     WorkSourceGroupId::generate(),
     fixture.input.project_id(),
@@ -1356,6 +1435,7 @@ async fn installing_an_exclusive_group_revokes_an_in_flight_standalone_scan() {
     })
     .await
     .unwrap();
+  fixture.release_provider();
   assert_eq!(
     pass.await.unwrap().unwrap().deferred,
     1,

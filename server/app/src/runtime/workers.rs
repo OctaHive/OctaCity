@@ -921,8 +921,35 @@ mod tests {
     task.await.unwrap();
   }
 
-  #[tokio::test]
+  #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
   async fn factory_worker_errors_emit_only_safe_classification_and_never_provider_text() {
+    const CHILD: &str = "OCTACITY_TEST_WORKER_LOG_CAPTURE_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+      // Tracing dispatch/callsite state is process-wide. Isolate the production-style
+      // global subscriber rather than serializing every unrelated worker test.
+      let output = tokio::time::timeout(
+        Duration::from_secs(30),
+        tokio::process::Command::new(std::env::current_exe().unwrap())
+          .args([
+            "--exact",
+            "runtime::workers::tests::factory_worker_errors_emit_only_safe_classification_and_never_provider_text",
+            "--nocapture",
+          ])
+          .env(CHILD, "1")
+          .kill_on_drop(true)
+          .output(),
+      )
+      .await
+      .expect("isolated worker logging check must finish")
+      .unwrap();
+      assert!(
+        output.status.success(),
+        "isolated worker logging check failed:\n{}\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+      );
+      return;
+    }
     struct Capture(Arc<std::sync::Mutex<Vec<u8>>>);
     impl std::io::Write for Capture {
       fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -940,7 +967,7 @@ mod tests {
       .with_ansi(false)
       .with_writer(move || Capture(writer.clone()))
       .finish();
-    let _guard = tracing::subscriber::set_default(subscriber);
+    tracing::subscriber::set_global_default(subscriber).unwrap();
     let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let passes = calls.clone();
     let cancel = CancellationToken::new();
@@ -971,7 +998,11 @@ mod tests {
     cancel.cancel();
     task.await.unwrap();
     let text = String::from_utf8(output.lock().unwrap().clone()).unwrap();
-    assert!(text.contains("durable worker pass failed"));
+    assert!(
+      text.contains("durable worker pass failed"),
+      "captured {} log bytes",
+      text.len()
+    );
     assert!(text.contains("unavailable"));
     for private in [
       "private-provider-token",

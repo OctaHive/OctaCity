@@ -2,6 +2,7 @@
 """Hermetic Source process peer. No network or credential resolution."""
 import fcntl
 import json
+import os
 import sys
 import time
 
@@ -17,6 +18,11 @@ with open('requests.jsonl', 'a', encoding='utf-8') as calls:
     calls.write(json.dumps(request) + '\n')
 mode = json.load(open('mode.json', encoding='utf-8'))
 intent = request['message']['command']['payload']
+if request['message']['command']['operation'] == 'scan' and mode.get('pause_scan'):
+    with open('ready', 'w', encoding='utf-8') as ready:
+        ready.write('ready')
+    while not os.path.exists('release'):
+        time.sleep(0.005)
 if request['message']['command']['operation'] == 'scan' and mode.get('hold'):
     with open('ready', 'w', encoding='utf-8') as ready:
         ready.write('ready')
