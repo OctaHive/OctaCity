@@ -16,12 +16,24 @@ use octacity_server_application::{
   GetIntegrationConnectionQuery, PublishIntegrationConnectionCommand, SetIntegrationConnectionStateCommand,
 };
 
+mod project_access;
+use octacity_server_application::{
+  GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, PublishIntegrationProjectAccessCommand,
+};
+pub(super) use project_access::{get_project_access, list_project_resources, publish_project_access};
 type Credentials = dyn AuthorizedManagementCommandHandler<ManageIntegrationCredentialCommand, Error = ApplicationError>;
 /// Endpoint capabilities are supplied by trusted composition, with application authorization.
 pub struct IntegrationManagementApplication {
   credentials: Option<Arc<Credentials>>,
   metadata: Option<MetadataEndpoints>,
   administration: Option<AdministrationEndpoints>,
+  project_access: Option<ProjectAccessEndpoints>,
+}
+struct ProjectAccessEndpoints {
+  publish:
+    Arc<dyn AuthorizedManagementCommandHandler<PublishIntegrationProjectAccessCommand, Error = ApplicationError>>,
+  get: Arc<dyn AuthorizedManagementQueryHandler<GetIntegrationProjectAccessQuery, Error = ApplicationError>>,
+  list: Arc<dyn AuthorizedManagementQueryHandler<ListIntegrationProjectResourcesQuery, Error = ApplicationError>>,
 }
 struct MetadataEndpoints {
   publish: Arc<dyn AuthorizedManagementCommandHandler<PublishIntegrationConnectionCommand, Error = ApplicationError>>,
@@ -38,6 +50,7 @@ impl IntegrationManagementApplication {
       credentials: None,
       metadata: None,
       administration: None,
+      project_access: None,
     }
   }
   /// Installs the separately authorized write-only credential service.
@@ -50,7 +63,23 @@ impl IntegrationManagementApplication {
       credentials: Some(credentials),
       metadata: None,
       administration: None,
+      project_access: None,
     }
+  }
+  /// Installs independently authorized Project grants and filtered use-resource discovery.
+  pub fn with_project_access<C, Q>(mut self, commands: Arc<C>, queries: Arc<Q>) -> Self
+  where
+    C: AuthorizedManagementCommandHandler<PublishIntegrationProjectAccessCommand, Error = ApplicationError> + 'static,
+    Q: AuthorizedManagementQueryHandler<GetIntegrationProjectAccessQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<ListIntegrationProjectResourcesQuery, Error = ApplicationError>
+      + 'static,
+  {
+    self.project_access = Some(ProjectAccessEndpoints {
+      publish: commands,
+      get: queries.clone(),
+      list: queries,
+    });
+    self
   }
   /// Installs metadata publication/inspection without granting Project use or exposing tokens.
   pub fn with_metadata<C, Q>(mut self, commands: Arc<C>, queries: Arc<Q>) -> Self

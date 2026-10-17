@@ -45,6 +45,8 @@ pub struct FactorySourceWorkerSettings {
 /// Trusted immutable Source settings selected by exact binding, independent of the provider name.
 #[derive(Clone)]
 pub struct FactorySourceProfile {
+  /// Explicit managed connection guard; absent only for existing operator-installed authority.
+  pub managed_access: Option<ManagedIntegrationAccess>,
   /// Permitted OctaCity Project.
   pub project_id: ProjectId,
   /// Exact installed source settings; mutable ticket data cannot choose them.
@@ -65,6 +67,27 @@ pub struct FactorySourceProfile {
   pub preparation: SourcePreparationSettings,
   /// Finite normalized discovery limits and reconciliation policy.
   pub polling: SourcePollingPolicy,
+}
+impl FactorySourceProfile {
+  /// Adopts managed current-grant checks without changing the pinned Source/Work identity.
+  pub fn with_managed_access(mut self, access: ManagedIntegrationAccess) -> Self {
+    self.managed_access = Some(access);
+    self
+  }
+  async fn authorize_access(&self) -> Result<(), ApplicationError> {
+    if let Some(access) = &self.managed_access {
+      access
+        .authorize_work_binding(
+          self.project_id,
+          &self.binding,
+          &self.plugin,
+          &self.resource.resource_id,
+          IntegrationPurpose::TaskRead,
+        )
+        .await?;
+    }
+    Ok(())
+  }
 }
 /// Explicit deployment opt-in. An absent installation starts no source worker.
 pub struct FactorySourceInstallation {

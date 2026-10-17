@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Publish explicit resource/purpose access for one Project.
+  PublishIntegrationProjectAccess,
   /// Publish immutable reusable integration connection metadata.
   PublishIntegrationConnection,
   /// Reserve safe integration administration and its stable recovery identity.

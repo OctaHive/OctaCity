@@ -17,6 +17,9 @@ impl<S: FactorySourceStore> FactorySourcePageReader for SourcePageBridge<S> {
       .source_scan_members(request.claim.clone(), self.clock.now()?)
       .await?;
     let profiles = profiles_for(&self.profiles, &members)?;
+    for profile in &profiles {
+      profile.authorize_access().await?;
+    }
     let profile = &profiles[0];
     if profiles.iter().any(|p| {
       p.plugin != profile.plugin

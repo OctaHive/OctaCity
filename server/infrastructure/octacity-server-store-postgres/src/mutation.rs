@@ -317,6 +317,7 @@ pub(crate) enum MutationKind {
   PublishBuildConfigurationVersion,
   PublishFactoryFlowDefinition,
   PublishIntegrationConnection,
+  PublishIntegrationProjectAccess,
   BeginIntegrationAdministration,
   CompleteIntegrationAdministration,
   AbandonIntegrationPreparation,
@@ -485,6 +486,12 @@ impl MutationKind {
         "publish-factory-flow-definition",
         "flow_definition",
         "factory.flow-version-published"
+      ),
+      Self::PublishIntegrationProjectAccess => metadata!(
+        b"octacity.publish-integration-project-access.v1\0",
+        "publish-integration-project-access",
+        "integration",
+        "integration.project-access.published"
       ),
       Self::PublishIntegrationConnection => metadata!(
         b"octacity.publish-integration-connection.v1\0",

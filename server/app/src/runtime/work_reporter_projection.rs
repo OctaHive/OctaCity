@@ -95,6 +95,21 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
     if remaining.is_zero() {
       return Err(ApplicationError::unavailable().into());
     }
+    if let Some(access) = &profile.managed_access {
+      access
+        .authorize_work_binding(
+          profile.draft.project_id,
+          &profile.binding,
+          &profile.draft.plugin,
+          &profile.draft.access.resource_id,
+          octacity_server_store::IntegrationPurpose::TaskUpdate,
+        )
+        .await
+        .map_err(|error| InvocationFailure {
+          error,
+          uncertain: false,
+        })?;
+    }
     let adapter = self
       .registry
       .resolve(

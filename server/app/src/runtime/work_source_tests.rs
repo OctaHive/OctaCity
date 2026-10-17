@@ -191,6 +191,7 @@ impl Fixture {
       },
     };
     let profile = FactorySourceProfile {
+      managed_access: None,
       project_id: project,
       binding: binding.clone(),
       plugin: ImmutableReference::new(key(provider), key("v1"), plugin_digest),
@@ -1838,4 +1839,155 @@ async fn expired_pending_snapshots_wait_for_retention_without_exhausting_or_resu
       .snapshot
       .is_empty()
   );
+}
+
+// Trusted installed fixture; private provider material is simulated only at the store boundary.
+async fn managed_access(
+  fixture: &Fixture,
+  binding: &WorkSourceBinding,
+  purpose: IntegrationPurpose,
+) -> (ManagedIntegrationAccess, IntegrationId) {
+  let id = IntegrationId::generate();
+  let credential = octacity_server_store::testing::integration_connection_fixture("custom-tracker")
+    .0
+    .resources[0]
+    .capabilities[0]
+    .credential
+    .clone();
+  let installed = InstalledIntegration {
+    installation: binding.installation.clone(),
+    provider: key("custom-tracker"),
+    adapter: fixture.profile.plugin.clone(),
+    endpoints: vec!["https://tracker.invalid/".into()],
+    authentication: vec![key("token")],
+    resources: vec![IntegrationResource {
+      reference: binding.resource.clone(),
+      native_id: ExternalWorkIdentity::new("native-container").unwrap(),
+      locator: ExternalWorkIdentity::new("private-container").unwrap(),
+      capabilities: vec![IntegrationCapability {
+        purpose,
+        capability: binding.capability.clone(),
+        configuration: binding.configuration.clone(),
+        credential: credential.clone(),
+      }],
+    }],
+  };
+  let resources = vec![IntegrationResourceSelection {
+    reference: binding.resource.clone(),
+    purposes: vec![purpose],
+  }];
+  fixture
+    .store
+    .publish_integration_connection(octacity_server_store::testing::management_mutation(
+      PublishIntegrationConnection {
+        intent: IntegrationConnectionIntent {
+          id,
+          expected_current_version: None,
+          draft: IntegrationConnectionDraft {
+            name: IntegrationName::new("Managed tracker").unwrap(),
+            installation: binding.installation.clone(),
+            endpoint: "https://tracker.invalid/".into(),
+            authentication: key("token"),
+            resources: resources.clone(),
+          },
+        },
+        installed,
+        idempotency_key: IdempotencyKey::new("managed-metadata").unwrap(),
+        published_at: time(1),
+      },
+    ))
+    .await
+    .unwrap();
+  let prepared = fixture
+    .store
+    .begin_integration_administration(octacity_server_store::testing::management_mutation(
+      BeginIntegrationAdministration {
+        intent: IntegrationAdministrationIntent {
+          id,
+          expected_metadata_version: IntegrationVersion::INITIAL,
+          expected_revision: 0,
+          action: IntegrationAdministrationAction::Credential {
+            reference: credential,
+            kind: serde_json::from_value(serde_json::json!("adopt")).unwrap(),
+            activate_connection: true,
+          },
+        },
+        idempotency_key: IdempotencyKey::new("managed-activate").unwrap(),
+        requested_at: time(2),
+      },
+    ))
+    .await
+    .unwrap();
+  fixture
+    .store
+    .complete_integration_administration(octacity_server_store::testing::management_mutation(prepared))
+    .await
+    .unwrap();
+  fixture
+    .store
+    .publish_integration_project_access(octacity_server_store::testing::management_mutation(
+      PublishIntegrationProjectAccess {
+        intent: IntegrationProjectAccessIntent {
+          connection_id: id,
+          connection_version: IntegrationVersion::INITIAL,
+          project_id: fixture.input.project_id(),
+          expected_current_version: None,
+          resources,
+        },
+        idempotency_key: IdempotencyKey::new("managed-project-grant").unwrap(),
+        published_at: time(3),
+      },
+    ))
+    .await
+    .unwrap();
+  (
+    ManagedIntegrationAccess::new(fixture.store.clone(), id, IntegrationVersion::INITIAL),
+    id,
+  )
+}
+
+#[tokio::test]
+async fn managed_source_rechecks_project_grants_before_provider_reads_after_revocation() {
+  let mut fixture = Fixture::enabled("custom-tracker").await;
+  let (access, id) = managed_access(&fixture, &fixture.profile.binding, IntegrationPurpose::TaskRead).await;
+  fixture.profile = fixture.profile.clone().with_managed_access(access);
+  assert_eq!(
+    fixture
+      .worker()
+      .run_once(CancellationToken::new())
+      .await
+      .unwrap()
+      .completed,
+    1
+  );
+  let original = fixture.runs().await;
+  assert_eq!(original.len(), 1);
+  let requests = fixture.root.path().join("custom-tracker/requests.jsonl");
+  let before = std::fs::read(&requests).unwrap();
+  fixture
+    .store
+    .publish_integration_project_access(octacity_server_store::testing::management_mutation(
+      PublishIntegrationProjectAccess {
+        intent: IntegrationProjectAccessIntent {
+          connection_id: id,
+          connection_version: IntegrationVersion::INITIAL,
+          project_id: fixture.input.project_id(),
+          expected_current_version: Some(IntegrationVersion::INITIAL),
+          resources: vec![],
+        },
+        idempotency_key: IdempotencyKey::new("revoke-managed-read").unwrap(),
+        published_at: time(110),
+      },
+    ))
+    .await
+    .unwrap();
+  fixture.clock.0.store(200, Ordering::SeqCst);
+  let result = fixture.worker().run_once(CancellationToken::new()).await.unwrap();
+  assert_eq!(result.deferred, 1);
+  assert_eq!(
+    std::fs::read(&requests).unwrap(),
+    before,
+    "revocation precedes any provider or credential use"
+  );
+  assert_eq!(fixture.runs().await, original);
 }

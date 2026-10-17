@@ -147,6 +147,14 @@ pub async fn verify_connection_publication<S: IntegrationConnectionStore>(store:
 
 #[derive(Default)]
 pub(super) struct IntegrationMemoryState {
+  access: std::collections::BTreeMap<
+    (octacity_server_domain::IntegrationId, octacity_server_domain::ProjectId),
+    PublishedIntegrationProjectAccess,
+  >,
+  access_mutations: std::collections::BTreeMap<
+    ManagementIdempotencyKey,
+    (IntegrationProjectAccessIntent, IntegrationProjectAccessOutcome),
+  >,
   administration: std::collections::BTreeMap<octacity_server_domain::IntegrationId, IntegrationAdministrationState>,
   operations: std::collections::BTreeMap<
     ManagementIdempotencyKey,
@@ -456,5 +464,76 @@ impl IntegrationAdministrationStore for crate::testing::InMemoryFactoryConfigura
     }
     *cleaned = true;
     Ok(())
+  }
+}
+
+#[async_trait::async_trait]
+impl IntegrationProjectAccessStore for crate::testing::InMemoryFactoryConfigurationStore {
+  async fn publish_integration_project_access(
+    &self,
+    request: ManagementMutation<PublishIntegrationProjectAccess>,
+  ) -> Result<IntegrationProjectAccessOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    let key = audit.scoped_idempotency_key(&request.idempotency_key);
+    let mut state = self.lock()?;
+    if let Some((intent, outcome)) = state.integrations.access_mutations.get(&key) {
+      if *intent != request.intent {
+        return Err(connection_conflict());
+      }
+      let mut replay = outcome.clone();
+      replay.disposition = MutationDisposition::Replayed;
+      return Ok(replay);
+    }
+    let intent = &request.intent;
+    if !state.projects.contains(&intent.project_id) {
+      return Err(connection_conflict());
+    }
+    let scope = (intent.connection_id, intent.project_id);
+    if state.integrations.current.get(&intent.connection_id) != Some(&intent.connection_version)
+      || state.integrations.access.get(&scope).map(|a| a.version) != intent.expected_current_version
+    {
+      return Err(connection_conflict());
+    }
+    let metadata = state
+      .integrations
+      .versions
+      .get(&(intent.connection_id, intent.connection_version))
+      .ok_or_else(connection_conflict)?;
+    let access = request.resolve(metadata)?;
+    let outcome = IntegrationProjectAccessOutcome {
+      disposition: MutationDisposition::Applied,
+      access: access.clone(),
+    };
+    state.integrations.access.insert(scope, access);
+    state
+      .integrations
+      .access_mutations
+      .insert(key.clone(), (request.intent.clone(), outcome.clone()));
+    state.evidence.insert(format!(
+      "publish-integration-project-access:{}:{}",
+      key.security_scope().as_str(),
+      key.caller_key()
+    ));
+    state.audit.insert(crate::testing::recorded_management_audit(
+      &audit,
+      StoreOperation::PublishIntegrationProjectAccess,
+      octacity_server_domain::EntityKind::Integration,
+      intent.connection_id,
+    ));
+    Ok(outcome)
+  }
+  async fn integration_project_access(
+    &self,
+    connection_id: octacity_server_domain::IntegrationId,
+    project_id: octacity_server_domain::ProjectId,
+  ) -> Result<Option<PublishedIntegrationProjectAccess>, StoreError> {
+    Ok(
+      self
+        .lock()?
+        .integrations
+        .access
+        .get(&(connection_id, project_id))
+        .cloned(),
+    )
   }
 }

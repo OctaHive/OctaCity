@@ -371,3 +371,110 @@ async fn connection_rest_publishes_and_inspects_provider_neutral_metadata_and_di
   }
   assert_eq!(peer.0.load(Ordering::SeqCst), 3);
 }
+
+fn project_access() -> serde_json::Value {
+  json!({"connection_id":"0199a6f4-d56c-7440-9aa2-6a320f862795","project_id":"0199a6f4-d56c-7440-9aa2-6a320f862796",
+    "connection_version":1,"version":1,"resources":[{"reference":exact("tickets"),"purposes":["task_read"]}],"published_at":10})
+}
+#[async_trait]
+impl ManagementCommandUseCase<PublishIntegrationProjectAccessCommand> for Peer {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    command: PublishIntegrationProjectAccessCommand,
+  ) -> Result<IntegrationProjectAccessOutcome, ApplicationError> {
+    assert_eq!(
+      command.request.intent.project_id.to_string(),
+      "0199a6f4-d56c-7440-9aa2-6a320f862796"
+    );
+    Ok(serde_json::from_value(json!({"disposition":"applied","access":project_access()})).unwrap())
+  }
+}
+#[async_trait]
+impl ManagementQueryUseCase<GetIntegrationProjectAccessQuery> for Peer {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    _: GetIntegrationProjectAccessQuery,
+  ) -> Result<Option<PublishedIntegrationProjectAccess>, ApplicationError> {
+    Ok(Some(serde_json::from_value(project_access()).unwrap()))
+  }
+}
+#[async_trait]
+impl ManagementQueryUseCase<ListIntegrationProjectResourcesQuery> for Peer {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    _: ListIntegrationProjectResourcesQuery,
+  ) -> Result<Vec<IntegrationResource>, ApplicationError> {
+    Ok(serde_json::from_value(metadata()["definition"]["resources"].clone()).unwrap())
+  }
+}
+#[tokio::test]
+async fn project_access_rest_is_protected_preconditioned_and_exposes_only_granted_resource_metadata() {
+  let peer = Arc::new(Peer::default());
+  let commands = Arc::new(AuthorizedCommandHandler::new(Arc::new(Policy), peer.clone()));
+  let queries = Arc::new(AuthorizedQueryHandler::new(Arc::new(Policy), peer));
+  let router = integration_management_routes(
+    IntegrationManagementApplication::new(commands.clone()).with_project_access(commands, queries),
+  );
+  let path =
+    "/api/v1/integrations/0199a6f4-d56c-7440-9aa2-6a320f862795/projects/0199a6f4-d56c-7440-9aa2-6a320f862796/access";
+  let intent = json!({"connection_id":"0199a6f4-d56c-7440-9aa2-6a320f862795","project_id":"0199a6f4-d56c-7440-9aa2-6a320f862796",
+    "connection_version":1,"expected_current_version":null,"resources":[{"reference":exact("tickets"),"purposes":["task_read"]}]});
+  for (verified, conditional, expected) in [
+    (false, true, StatusCode::FORBIDDEN),
+    (true, false, StatusCode::PRECONDITION_REQUIRED),
+    (true, true, StatusCode::OK),
+  ] {
+    let mut request = Request::builder()
+      .method("POST")
+      .uri(path)
+      .header("content-type", "application/json")
+      .header("idempotency-key", "grant-read");
+    if conditional {
+      request = request.header("if-none-match", "*");
+    }
+    let mut request = request.body(Body::from(json!({"intent":intent}).to_string())).unwrap();
+    if verified {
+      request.extensions_mut().insert(proof());
+    }
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), expected);
+    if expected == StatusCode::OK {
+      let body: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+      assert_eq!(body["access"]["version"], 1);
+      assert_eq!(body["access"]["resources"][0]["purposes"], json!(["task_read"]));
+    }
+  }
+  for url in [path.to_string(), path.replace("/access", "/resources")] {
+    let mut request = Request::builder().uri(url.clone()).body(Body::empty()).unwrap();
+    request.extensions_mut().insert(proof());
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body: serde_json::Value =
+      serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+    if url.ends_with("/resources") {
+      assert_eq!(body["resources"][0]["capabilities"][0]["purpose"], "task_read");
+      assert!(body["resources"][0]["capabilities"][0].get("credential").is_none());
+    } else {
+      assert_eq!(body["access"]["version"], 1);
+    }
+  }
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let operation = &document["paths"]["/api/v1/integrations/{integration_id}/projects/{project_id}/access"]["post"];
+  assert_eq!(operation["operationId"], "publishIntegrationProjectAccess");
+  assert_eq!(operation["security"], json!([{"ProtectedManagementIngress":[]}]));
+  assert_eq!(
+    document["components"]["schemas"]["IntegrationProjectAccess"]["properties"]["resources"]["maxItems"],
+    64
+  );
+}

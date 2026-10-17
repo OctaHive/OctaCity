@@ -792,3 +792,9 @@ mod integration_connection_port;
 pub use integration_connection_port::*;
 mod integration_administration;
 pub use integration_administration::*;
+
+#[cfg(any(test, feature = "test-support"))]
+mod integration_project_access_tests;
+
+mod integration_project_access;
+pub use integration_project_access::*;

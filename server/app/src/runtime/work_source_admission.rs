@@ -192,6 +192,7 @@ impl<S: FactorySourceStore> FactorySourceAuthorizer for SourceAuthority<S> {
           && v.definition().source == self.profile.binding
       })
       .ok_or_else(ApplicationError::invalid)?;
+    self.profile.authorize_access().await?;
     use octacity_work_source_protocol::{Request, source};
     require_running(&self.cancellation)?;
     let wire = Request::Source(source::Request {

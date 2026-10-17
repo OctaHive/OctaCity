@@ -614,3 +614,20 @@ impl IntegrationAdministrationStore for PostgresStore {
     crate::integration_administration::acknowledge(&self.pool, request).await
   }
 }
+
+#[async_trait]
+impl IntegrationProjectAccessStore for PostgresStore {
+  async fn publish_integration_project_access(
+    &self,
+    request: ManagementMutation<PublishIntegrationProjectAccess>,
+  ) -> Result<IntegrationProjectAccessOutcome, StoreError> {
+    crate::integration_project_access::publish(&self.pool, request).await
+  }
+  async fn integration_project_access(
+    &self,
+    connection_id: IntegrationId,
+    project_id: octacity_server_domain::ProjectId,
+  ) -> Result<Option<PublishedIntegrationProjectAccess>, StoreError> {
+    crate::integration_project_access::read(&self.pool, connection_id, project_id).await
+  }
+}

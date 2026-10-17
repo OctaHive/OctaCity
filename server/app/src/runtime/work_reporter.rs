@@ -1,7 +1,7 @@
 //! Optional provider-neutral projection through the verified Reporter process and existing outbox.
 use octacity_server_application::{
-  ApplicationError, FactoryExecutionClock, FactoryWorkStatusProjector, FactoryWorkStatusRequest, WorkSourceSnapshot,
-  validate_accepted_factory_status_request,
+  ApplicationError, FactoryExecutionClock, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
+  ManagedIntegrationAccess, WorkSourceSnapshot, validate_accepted_factory_status_request,
 };
 use octacity_server_domain::ProjectId;
 use octacity_server_factory::*;
@@ -41,6 +41,7 @@ pub struct FactoryReporterProfileDraft {
 /// Immutable reporting settings whose complete contents participate in the selected binding.
 #[derive(Clone)]
 pub struct FactoryReporterProfile {
+  managed_access: Option<ManagedIntegrationAccess>,
   binding: WorkSourceBinding,
   draft: FactoryReporterProfileDraft,
 }
@@ -78,6 +79,7 @@ impl FactoryReporterProfile {
       FactoryDigest::sha256("octacity.factory.reporter-profile.v1", &[&bytes]),
     );
     Ok(Self {
+      managed_access: None,
       binding: WorkSourceBinding {
         installation: draft.installation.clone(),
         capability: draft.capability.clone(),
@@ -86,6 +88,11 @@ impl FactoryReporterProfile {
       },
       draft,
     })
+  }
+  /// Attaches current managed Project grants without changing accepted source identity or mapping.
+  pub fn with_managed_access(mut self, access: ManagedIntegrationAccess) -> Self {
+    self.managed_access = Some(access);
+    self
   }
   /// Exact binding to publish in a source input; replacing any profile fact changes its identity.
   pub fn binding(&self) -> &WorkSourceBinding {

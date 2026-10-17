@@ -60,12 +60,14 @@ const FACTORY_TABLES: [&str; 41] = [
   "factory_decision_signal_requests",
   "factory_decision_signal_receipts",
 ];
-const INTEGRATION_TABLES: [&str; 5] = [
+const INTEGRATION_TABLES: [&str; 7] = [
   "integration_connections",
   "integration_connection_versions",
   "integration_administration",
   "integration_administration_operations",
   "integration_credential_owners",
+  "integration_project_access",
+  "integration_project_access_versions",
 ];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
 const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [

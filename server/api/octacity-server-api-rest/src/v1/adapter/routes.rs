@@ -354,9 +354,13 @@ fn registered_integration_routes() -> ManagementRoutes<Arc<super::integrations::
   use super::integrations::*;
   use octacity_server_application::{
     CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery, GetIntegrationConnectionQuery,
-    ManageIntegrationCredentialCommand, PublishIntegrationConnectionCommand, SetIntegrationConnectionStateCommand,
+    GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, ManageIntegrationCredentialCommand,
+    PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand, SetIntegrationConnectionStateCommand,
   };
   ManagementRoutes::new()
+    .post::<PublishIntegrationProjectAccessCommand, _, _>("publishIntegrationProjectAccess", publish_project_access)
+    .get::<GetIntegrationProjectAccessQuery, _, _>("getIntegrationProjectAccess", get_project_access)
+    .get::<ListIntegrationProjectResourcesQuery, _, _>("listIntegrationProjectResources", list_project_resources)
     .post::<ManageIntegrationCredentialCommand, _, _>("manageIntegrationCredential", submit_credentials)
     .post::<PublishIntegrationConnectionCommand, _, _>("publishIntegrationConnection", publish_metadata)
     .get::<GetIntegrationConnectionQuery, _, _>("getIntegrationConnection", get_metadata)

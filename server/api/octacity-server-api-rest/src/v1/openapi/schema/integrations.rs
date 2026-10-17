@@ -55,7 +55,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   );
   let draft = object(
     json!({"name":name,"installation":pin(),"endpoint":text(2048),"authentication":text(128),
-    "resources":array(object(json!({"reference":pin(),"purposes":array(purpose,4)}), &["reference","purposes"]),64)}),
+    "resources":array(object(json!({"reference":pin(),"purposes":array(purpose.clone(),4)}), &["reference","purposes"]),64)}),
     &["name", "installation", "endpoint", "authentication", "resources"],
   );
   let metadata_intent = object(
@@ -68,6 +68,53 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   );
   schemas.insert("IntegrationConnection".into(), object(json!({"id":identity(),"version":positive(),"digest":reference("FactoryDigest"),"definition":definition,"published_at_unix_ms":{"type":"integer"}}), &["id","version","digest","definition","published_at_unix_ms"]));
   schemas.insert("IntegrationConnectionMutation".into(), object(json!({"disposition":{"type":"string","enum":["applied","replayed"]},"connection":reference("IntegrationConnection")}), &["disposition","connection"]));
+  let grant_resources = array(
+    object(
+      json!({"reference":pin(),"purposes":array(purpose.clone(),4)}),
+      &["reference", "purposes"],
+    ),
+    octacity_server_application::MAX_INTEGRATION_RESOURCES,
+  );
+  let grant_intent = object(
+    json!({"connection_id":identity(),"project_id":identity(),"connection_version":positive(),
+    "expected_current_version":{"type":["integer","null"],"minimum":1},"resources":grant_resources}),
+    &[
+      "connection_id",
+      "project_id",
+      "connection_version",
+      "expected_current_version",
+      "resources",
+    ],
+  );
+  schemas.insert(
+    "IntegrationProjectAccessPublication".into(),
+    object(json!({"intent":grant_intent}), &["intent"]),
+  );
+  schemas.insert("IntegrationProjectAccess".into(),object(json!({"connection_id":identity(),"project_id":identity(),"connection_version":positive(),"version":positive(),"resources":grant_resources,"published_at_unix_ms":{"type":"integer"}}),
+    &["connection_id","project_id","connection_version","version","resources","published_at_unix_ms"]));
+  schemas.insert("IntegrationProjectAccessMutation".into(),object(json!({"disposition":{"type":"string","enum":["applied","replayed"]},"access":reference("IntegrationProjectAccess")}), &["disposition","access"]));
+  schemas.insert(
+    "IntegrationProjectAccessState".into(),
+    object(
+      json!({"access":{"anyOf":[reference("IntegrationProjectAccess"),{"type":"null"}]}}),
+      &["access"],
+    ),
+  );
+  let usable_capability = object(
+    json!({"purpose":purpose,"capability":pin(),"configuration":pin()}),
+    &["purpose", "capability", "configuration"],
+  );
+  let usable_resource = object(
+    json!({"reference":pin(),"native_id":text(1024),"locator":text(1024),"capabilities":array(usable_capability,4)}),
+    &["reference", "native_id", "locator", "capabilities"],
+  );
+  schemas.insert(
+    "IntegrationProjectResources".into(),
+    object(
+      json!({"resources":array(usable_resource,octacity_server_application::MAX_INTEGRATION_RESOURCES)}),
+      &["resources"],
+    ),
+  );
   let credential_action = object(
     json!({"operation":{"const":"credential"},"reference":credential,"kind":{"type":"string","enum":["provision","adopt","rotate","revoke"]},"activate_connection":{"type":"boolean","default":false}}),
     &["operation", "reference", "kind"],

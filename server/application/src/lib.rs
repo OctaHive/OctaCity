@@ -734,3 +734,9 @@ pub use integration_connection::{
   GetIntegrationConnectionQuery, IntegrationConnectionHandlers, MAX_INTEGRATION_NAME_BYTES,
   PublishIntegrationConnectionCommand,
 };
+
+#[cfg(test)]
+mod integration_project_access_tests;
+
+mod integration_project_access;
+pub use integration_project_access::*;

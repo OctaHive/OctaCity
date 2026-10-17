@@ -624,6 +624,8 @@ pub use crate::integration_administration_tests::{
 
 pub use crate::integration_connection_testing::{integration_connection_fixture, verify_connection_publication};
 
+pub use crate::integration_project_access_tests::{verify_project_grant_replay, verify_project_grant_subset};
+
 #[cfg(test)]
 mod evidence_identity_tests {
   use super::*;

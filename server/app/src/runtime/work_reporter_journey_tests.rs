@@ -702,3 +702,54 @@ fn original_intent(call: &serde_json::Value) -> &serde_json::Value {
   let payload = &call["message"]["command"]["payload"];
   payload.get("intent").unwrap_or(payload)
 }
+
+#[tokio::test]
+async fn managed_reporter_revocation_blocks_retained_retry_without_rewriting_work_or_flow() {
+  let (fixture, profile) = fixture("custom-tracker").await;
+  let (access, id) = managed_access(&fixture, profile.binding(), IntegrationPurpose::TaskUpdate).await;
+  let profile = profile.with_managed_access(access);
+  let projector = hosted(&fixture, vec![profile]);
+  let run = queue(&fixture, projector.clone()).await;
+  let before = fixture.store.factory_run_snapshot(run).await.unwrap();
+  let dir = fixture.root.path().join("custom-tracker");
+  std::fs::write(
+    dir.join("reporter-mode.json"),
+    br#"{"failure":{"class":"transient","retry_after_millis":200}}"#,
+  )
+  .unwrap();
+  let worker = FactoryWorkStatusOutboxWorker::new(
+    fixture.store.clone(),
+    std::collections::BTreeMap::from([(capability(), projector as Arc<dyn FactoryWorkStatusProjector>)]),
+    FactoryReporterWorkerSettings::new(key("managed-reporter"), 10000, 4).unwrap(),
+    fixture.clock.clone(),
+  )
+  .unwrap();
+  assert_eq!(worker.run_once(time(120)).await.unwrap().retrying, 1);
+  let captured = std::fs::read(dir.join("reporter-requests.jsonl")).unwrap();
+  fixture
+    .store
+    .publish_integration_project_access(octacity_server_store::testing::management_mutation(
+      PublishIntegrationProjectAccess {
+        intent: IntegrationProjectAccessIntent {
+          connection_id: id,
+          connection_version: IntegrationVersion::INITIAL,
+          project_id: fixture.input.project_id(),
+          expected_current_version: Some(IntegrationVersion::INITIAL),
+          resources: vec![],
+        },
+        idempotency_key: IdempotencyKey::new("revoke-managed-write").unwrap(),
+        published_at: time(200),
+      },
+    ))
+    .await
+    .unwrap();
+  std::fs::write(dir.join("reporter-mode.json"), b"{}").unwrap();
+  fixture.clock.0.store(320, Ordering::SeqCst);
+  assert_eq!(worker.run_once(time(320)).await.unwrap().claimed, 1);
+  assert_eq!(std::fs::read(dir.join("reporter-requests.jsonl")).unwrap(), captured);
+  assert!(!dir.join("reporter-applied").exists());
+  let after = fixture.store.factory_run_snapshot(run).await.unwrap();
+  assert_eq!(after.work, before.work);
+  assert_eq!(after.run, before.run);
+  assert_eq!(after.flow, before.flow);
+}

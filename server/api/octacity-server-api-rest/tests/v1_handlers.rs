@@ -1305,6 +1305,9 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("/api/v1/factory-phase-ready?policy_digest={}&limit=1","ab".repeat(32)),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/factory-phase-ready?policy_digest={}&limit=1","ab".repeat(32)),None),
     // Protected administration rejects even well-routed requests before body parsing/policy.
+    empty_request("POST", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/access"), None),
+    empty_request("GET", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/access"), None),
+    empty_request("GET", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/resources"), None),
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/credentials"), None),
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/versions"), None),
     empty_request("GET", &format!("/api/v1/integrations/{integration_id}"), None),

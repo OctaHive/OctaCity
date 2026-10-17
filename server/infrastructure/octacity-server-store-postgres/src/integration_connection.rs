@@ -119,8 +119,8 @@ pub(crate) async fn publish(
   crate::mutation::commit(transaction, &identity, facts, encode_outcome(&outcome)?).await?;
   Ok(outcome)
 }
-pub(crate) async fn read(
-  pool: &PgPool,
+pub(crate) async fn read<'e>(
+  executor: impl sqlx::Executor<'e, Database = sqlx::Postgres>,
   id: IntegrationId,
   version: Option<IntegrationVersion>,
 ) -> Result<PublishedIntegrationConnection, StoreError> {
@@ -134,7 +134,7 @@ pub(crate) async fn read(
   )
   .bind(id.as_uuid())
   .bind(version)
-  .fetch_optional(pool)
+  .fetch_optional(executor)
   .await
   .map_err(unavailable)?;
   let (version, digest, Json(connection)) = row.ok_or(StoreError::NotFound {
