@@ -1,57 +1,90 @@
 ## ADDED Requirements
 
-### Requirement: Unified URL-addressable Work card
-The Console SHALL provide one directly addressable card for an admitted Work with safe overview, operator discussion, execution history, checks/results, and required operator actions. It SHALL preserve exact Work/Run/Flow/cycle/attempt/candidate identities and link to existing advanced Factory and Build views. Work, selected tab, bounded filters, and diagnostic target SHALL round-trip through URLs; discussion bodies, typed response values, prompts, and private transfer URLs SHALL not. Existing Run deep links SHALL remain valid, and original task input access SHALL keep its independent authorization/download boundary.
+### Requirement: Task navigation and manual creation precede execution setup
+The Console SHALL provide a task-oriented list and manual-create entry point within the existing product shell. The list SHALL show human-readable keys and safe titles with bounded Project/business-status/priority/source/execution/synchronization filters. Manual creation SHALL ask for title, description and optional acceptance/metadata using generated bounds and SHALL work without an integration, repository or Factory Configuration. Saving SHALL open the canonical Issue card without starting execution. Missing execution prerequisites SHALL be explained at the explicit start action rather than blocking task creation.
 
-#### Scenario: Operator follows Work from a Run or Project
-- **WHEN** a visible Work is selected from existing discovery
-- **THEN** the card exposes its original immutable subject and existing Run with directly addressable history/check/action sections without a new admission
+#### Scenario: First task is created in an unconfigured Project
+- **WHEN** an operator creates a valid manual task before configuring Factory or providers
+- **THEN** the task appears under its human-readable key and opens its card with no Run and a clear execution-setup entry point
 
-#### Scenario: Operator refreshes a historical attempt
-- **WHEN** a card URL selects an earlier attempt or candidate
-- **THEN** the selected historical record remains visible with its original identity and is not mislabeled as current evidence or an actionable current request
+#### Scenario: Provider is unavailable
+- **WHEN** an external source cannot be reached
+- **THEN** local task navigation and manual creation remain available and affected linked tasks show their scoped synchronization condition
 
-### Requirement: Discussion and execution input are visibly separate
-The Console SHALL present plain-text operator comments/replies with server attribution and timestamps, an explicit operator-only purpose, UTF-8 limits, and independent append feedback. Posting a comment SHALL not be presented as answering a human gate, approving a candidate, or sending a message to an agent. A clarification action SHALL open a separate typed form for the server-provided declared gate/schema and require existing target-specific confirmation. Unsubmitted comments and response values SHALL remain only in component memory and be discarded on leave/reload; no discussion payload or replay key SHALL be stored in browser persistence, analytics, URLs, or logs.
+### Requirement: Canonical Issue card presents task execution and source state separately
+The Console SHALL provide one URL-addressable Issue card with Overview, Activity, Runs, Results and Actions sections, exact historical selection, and links to original inputs and existing advanced Run/Build/log views. It SHALL separately display task business metadata, all active executions/current steps, available AI execution profile/model and assigned enrolled worker, and source link/synchronization health. Queued/unassigned/parallel/unavailable facts SHALL be explicit. Editable requirements SHALL show their revision and source ownership; no task-status edit SHALL be presented as verification acceptance or a Factory state setter.
 
-#### Scenario: Operator posts an approval-like comment
-- **WHEN** the comment says that a result is approved or contains an agent mention
-- **THEN** the Console records it as discussion only and shows no successful Factory control outcome
+#### Scenario: Two pipelines have processed the same Issue
+- **WHEN** the operator opens the task after assessment and implementation executions
+- **THEN** both Runs remain visible in the same card with exact input revisions, individual outcomes and separately accessible logs
 
-#### Scenario: Operator answers a clarification
-- **WHEN** a current queue item exposes a declared human response contract
-- **THEN** the Console renders its bounded typed inputs, confirms the exact target/version, and submits an ordinary Factory control command separately from comment append
+#### Scenario: Operator selects a historical result
+- **WHEN** its URL identifies an earlier execution/candidate
+- **THEN** refresh preserves that historical selection and does not label it current proof or an actionable current request
 
-#### Scenario: Comment submission loses its response
-- **WHEN** a confirmed append's transport response is lost while the intent is active
-- **THEN** retry uses the same frozen text/parent and idempotency key, preserves input while pending, and does not silently append again with a new key
+### Requirement: Issue edits and execution start are distinct reviewed commands
+The Console SHALL support preconditioned revision editing and a separate pipeline execution action. The start form SHALL select visible authorized targets, show the exact reviewed requirements revision, input mapping and resolved configuration/repository choices, and explain missing acceptance or execution prerequisites. Submission SHALL use a frozen confirmed intent and show pending input preparation/admission until the exact Work/Run link is returned. Transport retries SHALL preserve its original request. A later deliberate execution SHALL create a new request while node retry uses existing Run controls. Unsubmitted sensitive values and request keys SHALL remain in component memory only.
 
-### Requirement: Check and history presentation preserves result authority
-The card SHALL render server-published exact execution and evidence state with non-color labels and candidate/attempt correlation. It SHALL distinguish completed execution, pending required checks, failed/indeterminate/missing evidence, superseded results, and accepted Decisions. Incomplete pages, unavailable records, and stale observations SHALL remain explicit. The UI SHALL not infer acceptance, promotion, retry eligibility, or queue completion from comments, model text, local state, or probability.
+#### Scenario: Requirements change while execution runs
+- **WHEN** an operator saves a new task revision
+- **THEN** the card shows that revision and labels active execution as using the previous snapshot without restarting or modifying it
 
-#### Scenario: Model reports success before verification
-- **WHEN** a model-backed Build finishes and verification still has required pending or failed branches
-- **THEN** the card shows separate execution and verification outcomes and does not mark the Work accepted
+#### Scenario: Execution start loses its response
+- **WHEN** a confirmed request's transport acknowledgement is lost
+- **THEN** the Console resumes the same request/status receipt and opens its original Run without a fresh command identity
 
-#### Scenario: Background refresh fails
-- **WHEN** an execution, checks, discussion, or actions refresh fails after showing data
-- **THEN** previous data remains visibly stale, unsafe confirmation is disabled until refreshed, and empty/successful state is not fabricated
+#### Scenario: Reviewed version is stale
+- **WHEN** the server rejects an edit or start request after another revision committed
+- **THEN** the Console preserves the in-memory review context, shows the conflict and requires fresh review instead of silently substituting content
 
-### Requirement: Shared actionable decision queue uses guarded controls
-The Console SHALL offer bounded Project/global decision views and the same Work-scoped items in the card. It SHALL show server-classified reason, exact target/contract, deadline, candidate where required, and permitted choices; opening an item SHALL navigate to its canonical Work context. Submission SHALL use existing immutable confirmed-intent handling, one key per reviewed intent, current strong Run precondition, duplicate prevention, and targeted refresh. Recorded intent, owner processing, completed response, expiry, and supersession SHALL remain distinct. The queue SHALL be shared operational work rather than a personal unread inbox, and SHALL not change the existing header notification-center categories.
+### Requirement: Source ownership and synchronization conflicts are understandable
+Linked task views SHALL show provider/resource display context, source link, supported managed fields/directions, last successful observation, pending updates and safe blocked/conflict/exhaustion reasons. Source-owned fields SHALL be visibly read-only with an explanation. Explicit attachment of a manual task SHALL use authorized existing connection/resource choices and ownership review; conflicts SHALL not merge task histories. Mapping and connection setup SHALL link to their existing management surfaces without asking for tokens in the task. Resolution SHALL show exact observed/desired values and submit only currently authorized preconditioned choices.
 
-#### Scenario: Operator opens an actionable item
-- **WHEN** the operator selects a visible waiting human gate or eligible retry
-- **THEN** the card identifies its exact Run/Flow/cycle/attempt and renders only the current server-declared command and response contract
+#### Scenario: Triage succeeded but source update is pending
+- **WHEN** the external provider is unavailable after an accepted Triage result
+- **THEN** the card separately shows completed execution and pending synchronization without presenting the check as failed
 
-#### Scenario: Another operator already answered
-- **WHEN** confirmation receives a stale/precondition conflict because another intent was recorded
-- **THEN** the Console preserves review context, refreshes the authoritative item, and requires a new explicit review rather than resubmitting against a newer attempt
+#### Scenario: Source has changed a managed field concurrently
+- **WHEN** the server exposes a synchronization conflict
+- **THEN** the UI shows its managed-field scope and supported resolution rather than an unconditional overwrite/retry action
 
-#### Scenario: Control intent is accepted but owner has not progressed
-- **WHEN** the existing command returns a recorded-intent receipt
-- **THEN** the actionable item disappears or is marked no longer actionable and the card displays awaiting owner processing without claiming a successful node or delivery
+#### Scenario: Installed adapter lacks a requested operation
+- **WHEN** the operator configures an unsupported field direction or absent provider
+- **THEN** the UI explains the unavailable capability and does not imply that generic integration metadata implements it
 
-#### Scenario: Collaboration is absent or keyboard navigation is used
-- **WHEN** the feature is unavailable or the operator uses supported narrow/keyboard-only layouts
-- **THEN** existing Factory/CI views remain usable and available card/queue functionality retains localization, focus, semantic labels, and bounded query/error behavior
+### Requirement: Activity discussion does not imply agent chat
+Activity SHALL combine bounded safe execution/synchronization event references and operator-only plain-text discussion with actual server attribution and timestamps. Comments/replies SHALL use generated limits, separate append feedback and scoped replay; agent mentions or approval-like text SHALL remain non-executable discussion. Human clarification SHALL open a separate typed form for an exact declared gate. Bodies/response values SHALL not enter browser persistence, URLs, analytics or generic notifications, and unfinished drafts SHALL be discarded on leave/reload.
+
+#### Scenario: Operator writes an agent mention
+- **WHEN** a comment asks an agent to start work or approve a result
+- **THEN** it appears as operator discussion with no execution/control success indicator
+
+#### Scenario: Comment acknowledgement is lost
+- **WHEN** the active append is retried
+- **THEN** it uses the same frozen body/parent/key, preserves pending feedback and creates no duplicate comment
+
+### Requirement: Results and operator actions retain exact execution authority
+The card SHALL render exact server-published execution, evidence and Decision facts with non-color labels, distinguishing pending/failed/missing/indeterminate/superseded/accepted outcomes. Issue metadata, model text and previous-execution success SHALL not establish current acceptance. Shared Project/global and Issue-scoped action views SHALL use server-classified exact targets/contracts and existing guarded commands with Run preconditions. Recorded intent, owner processing and completed action SHALL remain distinct; the view SHALL not collapse multiple executions into one approve-task action or change the notification-center contract.
+
+#### Scenario: Required verification has not passed
+- **WHEN** an implementation Build succeeds but a required current check is missing or failed
+- **THEN** the card shows technical completion and the unresolved check without declaring accepted work
+
+#### Scenario: Another operator answered a gate
+- **WHEN** a confirmed response receives a stale/precondition conflict
+- **THEN** the UI refreshes its exact target and requires new review without upgrading or retargeting the intent
+
+#### Scenario: Response is recorded before owner consumption
+- **WHEN** the existing control returns an accepted intent receipt
+- **THEN** the item is no longer unanswered and the card shows awaiting owner processing rather than node completion
+
+### Requirement: Task views preserve bounded access and legacy journeys
+Every task/card section SHALL use bounded REST queries with explicit loading/empty/stale/forbidden/not-found/conflict/unavailable states and independent observation coverage. Refresh failure SHALL retain visible stale data rather than invent success or an empty queue. Polling SHALL stop or back off when inactive/terminal as appropriate. Existing Run URLs, Artifact-based intake, Factory authoring and ordinary CI/CD SHALL remain usable. Supported keyboard/focus, English/Russian localization and narrow layouts SHALL cover create/edit/start/source-review/card/action journeys.
+
+#### Scenario: Card refresh partially fails
+- **WHEN** history, synchronization or results cannot refresh
+- **THEN** the affected section is visibly stale/incomplete and unsafe confirmation is disabled until fresh review
+
+#### Scenario: Operator follows an old Run URL
+- **WHEN** its Issue association is available or still awaiting backfill
+- **THEN** the original diagnostics remain reachable and an available Issue link is additive rather than required

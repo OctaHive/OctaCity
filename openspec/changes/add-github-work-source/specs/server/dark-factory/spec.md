@@ -12,7 +12,7 @@ The server SHALL support Project-owned immutable versions of pipeline Work Sourc
 - **THEN** it can enter ordinary admission under that input's policy but its labels do not substitute for accepted assessment evidence or required pipeline gates
 
 ### Requirement: Repeated Issue observations reuse admission within a stable input scope
-Admission SHALL reuse its authoritative replay and atomic Work/Run publication for external sources. A scoped Work identity SHALL include the authorized installation/repository/item identity and stable input-binding identity, so one Issue can enter distinct configured pipelines without poll retries creating additional Runs for either input. Poll timestamps, Issue edits, label removal/readdition, credential rotation and ordinary binding/configuration version replacement SHALL NOT create a new Work identity. A new intentional processing cycle SHALL require an explicit authorized new input identity; changing a selector SHALL NOT silently reprocess previously admitted Issues. Conflicting reuse of an admitted identity SHALL preserve the original Work and return a safe conflict rather than replace its intent.
+Admission SHALL reuse its authoritative replay and atomic Work/Run publication for external sources. A scoped Work identity SHALL include the authorized installation/repository/item identity and stable input-binding identity, so one Issue can enter distinct configured pipelines without poll retries creating additional Runs for either input. Poll timestamps, Issue edits, label removal/readdition, credential rotation and ordinary binding/configuration version replacement SHALL NOT create a new Work identity. A new intentional automatic-intake processing cycle SHALL require an explicit authorized new input identity; changing a selector SHALL NOT silently reprocess previously admitted Issues. A separately specified explicit internal-Issue execution request SHALL retain its own reviewed request/admission identity rather than changing an automatic input's replay key. Conflicting reuse of an admitted identity SHALL preserve the original Work and return a safe conflict rather than replace its intent.
 
 #### Scenario: Poll response is lost after assessment admission
 - **WHEN** an assessment input observes the same Issue after a lost response, label change or restart
@@ -25,6 +25,25 @@ Admission SHALL reuse its authoritative replay and atomic Work/Run publication f
 #### Scenario: Input version is replaced
 - **WHEN** an operator changes a target configuration or polling selector while preserving the input's identity
 - **THEN** an already admitted Issue keeps its original result and does not receive an implicit new processing cycle
+
+#### Scenario: Operator later requests execution from an internal task card
+- **WHEN** an enabled internal-Issue capability accepts a new reviewed execution request for the same native task
+- **THEN** its distinct explicit request uses ordinary admission without resetting the existing automatic input identity or treating an external edit as that request
+
+### Requirement: Native task observations remain independent of admission and optional cards
+Factory Source integration SHALL retain trusted native task correlation separately from input-scoped Work identity: owning Project/security partition, installation namespace, native container and item identity SHALL identify the external task without a pipeline input, display name, credential or mutable label. A bounded execution-neutral observation seam SHALL preserve native correlation, freshness evidence and separately authorized snapshot provenance for optional internal-Issue consumers. Observation or consumer availability SHALL NOT itself admit Work, change existing Work inputs or grant reporting authority. Existing automatic inputs SHALL operate without an internal Issue capability. Persistent Issue creation/revisions, association uniqueness, standalone import/link refresh and explicit card execution requests SHALL remain owned by `add-factory-work-card`.
+
+#### Scenario: Assessment and implementation refer to the same external task
+- **WHEN** their distinct configured inputs observe one native item in the same Project/security scope
+- **THEN** they expose the same native correlation and distinct original Work/Run identities suitable for one optional internal Issue without changing either admission scope
+
+#### Scenario: Task card consumer is absent
+- **WHEN** the deployment has no enabled internal-Issue consumer
+- **THEN** existing intake/reporting and manual Artifact admission continue without card creation, extra provider reads or a dependency on task-card storage
+
+#### Scenario: Linked task needs refresh after it stops matching an execution selector
+- **WHEN** a separately enabled and authorized card refresh consumer requests an observation of that native task
+- **THEN** the Source observation boundary does not treat the execution selector or prior admission as a task-read prohibition, while that observation alone starts no Run
 
 ### Requirement: Staged label-selected pipelines use declarative routing
 Operators SHALL be able to configure an unrestricted or filtered Issue input for one pipeline, project its declared outcomes to arbitrary configured labels, and configure separate inputs matching those labels and any additional configured predicates for distinct target pipelines. No particular label, assessment step, business classification or number of pipelines SHALL be mandatory. The server SHALL support explicit mutually exclusive input groups: a candidate matching more than one member in the same group SHALL receive an observable ambiguous disposition and SHALL NOT be admitted to either target. Inputs outside that group SHALL remain independent. A published group revision SHALL freeze its member selectors for each selection pass. No connector SHALL infer a target from the spelling of a label or implement another duplicate-analysis pipeline.

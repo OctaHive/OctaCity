@@ -1,6 +1,6 @@
 ## Purpose
 
-Defines configurable GitHub Issue discovery and non-authoritative status reporting that connect pipeline inputs to ordinary Factory admission while preserving source scope, replay and lifecycle authority.
+Defines configurable GitHub Issue discovery, reusable bounded native task observations and non-authoritative status reporting while preserving source scope, ordinary admission replay and lifecycle authority.
 
 ## ADDED Requirements
 
@@ -50,7 +50,7 @@ The Source SHALL submit a bounded Issue snapshot containing stable provider inst
 - **THEN** the input records a safe rejected or deferred candidate disposition and starts no Run with fabricated or partial requirements
 
 ### Requirement: GitHub reporting maps configured values to scoped Issue effects
-The Reporter SHALL translate arbitrary configured Work status values through an exact versioned mapping of managed-label additions/removals and optional Issue open/close state. It SHALL accept those actions from any configured intermediate, nested or terminal stage without waiting for the entire pipeline to complete. It SHALL preserve unrelated labels, reject conflicting mappings and unconfigured status values, and require explicit Issue-write authority separate from Source-read and Delivery authority. `approved`, `rejected`, `bug` and `feature-request` SHALL have no intrinsic meaning in the adapter. Status projection SHALL originate only from accepted configured Factory actions and SHALL NOT accept arbitrary writes from Issue prose or model output.
+The Reporter SHALL translate arbitrary configured Work status values through an exact versioned mapping of managed-label additions/removals and optional Issue open/close state. It SHALL accept those actions from any configured intermediate, nested or terminal stage without waiting for the entire pipeline to complete. It SHALL preserve unrelated labels, reject conflicting mappings and unconfigured status values, and require explicit Issue-write authority separate from Source-read and Delivery authority. `approved`, `rejected`, `bug` and `feature-request` SHALL have no intrinsic meaning in the adapter. Work-backed status projection in this change SHALL originate only from accepted configured Factory actions and SHALL NOT accept arbitrary writes from Issue prose or model output. Additional internal-Issue command producers SHALL require their separately specified authorization and retained intent boundary; generic connection metadata or a card association SHALL NOT authorize them.
 
 #### Scenario: Assessment is approved
 - **WHEN** an accepted status action requests a configured value mapped to adding `approved` and removing `rejected`
@@ -63,6 +63,21 @@ The Reporter SHALL translate arbitrary configured Work status values through an 
 #### Scenario: Status mapping is absent
 - **WHEN** a reporting action requests a value absent from its pinned mapping
 - **THEN** projection fails safely without guessing a label, closing the Issue or changing the accepted Factory result
+
+#### Scenario: Internal task association changes after an action was accepted
+- **WHEN** a card later attaches a source or replaces its mapping while a Work-backed operation is pending
+- **THEN** reporting retains its originally authorized native target/effects and current grant checks rather than resolving a replacement target from the card
+
+### Requirement: GitHub observations can serve optional execution-neutral consumers
+The installed Source read boundary SHALL provide bounded authorized native task observations independently of a consumer's pipeline matching decision. Its application-facing observation SHALL preserve verified installation/container/item identity, human display context, update/freshness evidence and bounded title/body digest or retained-input provenance without leaking secrets or GitHub wire types into shared task/Factory contracts. Repeated admission SHALL keep its original snapshot while a separately authorized consumer can observe fresh source data. Source access SHALL respect current task-read grants, installed network/resource ceilings, rate limits and bounded reconciliation for filtered, already admitted or closed linked tasks. This seam SHALL NOT create an internal Issue, require a Factory target for observation consumption, implicitly enable refresh or start a new admission; the card change owns those policies.
+
+#### Scenario: A task is edited after its first admission
+- **WHEN** an authorized optional consumer obtains a fresh bounded observation of that same native task
+- **THEN** it receives fresh source provenance while ordinary input replay returns the original Work/Run and leaves its input Artifacts unchanged
+
+#### Scenario: Read authority is revoked before linked-task refresh
+- **WHEN** an optional consumer requests an observation without current task-read authority
+- **THEN** no protected GitHub read occurs, the result is safely classified and no broader token or execution-input grant is used as fallback
 
 ### Requirement: Reporting recovery preserves authoritative history and managed-label ordering
 Reporting SHALL use the existing durable independently fenced projection mechanism with stable operation identities, original deadlines and bounded retries. An uncertain response SHALL be observed before further writes. Partial multi-request updates SHALL converge only the original desired effects unless superseded by a newer authorized intent. The Reporter SHALL reject known-stale operations for the same Issue and overlapping managed fields before dispatch and SHALL reconcile late in-flight effects toward the newest authorized projection within its bounds, reporting exhaustion or external conflicts rather than claiming atomic external ordering. Projection failure SHALL NOT roll back accepted Work, and a later matching label observation SHALL authorize only a new ordinary admission rather than mutate an existing Run.

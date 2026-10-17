@@ -4,15 +4,17 @@ See [proposal.md](proposal.md) for motivation and the [GitHub source contract](s
 
 Implementation baseline and remaining seams:
 
-- `server/application/src/factory_admission.rs` preserves manual admission and replay-before-resolution; tasks 1–4.4 have added separately authorized source admission and reporting without changing manual identity.
+- `server/application/src/factory_admission.rs` preserves manual admission and replay-before-resolution; completed tasks 1–4.5 have added separately authorized source admission and reporting without changing manual identity.
 - `server/core/octacity-server-store/src/factory_admission_model.rs` already scopes external identities by source and accepted security scope and retains immutable admission intent. Extend that authority; do not add a second deduplication database or reimplement the pipeline's business duplicate analysis.
 - `server/application/src/factory_work_status_outbox.rs` already dispatches accepted `set_status` effects under independent outbox fences and retry policy through `FactoryWorkStatusProjector`.
-- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Operator-installed Work configuration and token files exist; reusable connection/Project-access management and administrative secret setup remain to be implemented.
+- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Completed tasks 5.1–5.5 provide reusable connection metadata, protected credential publication, recoverable authorized administration/REST, explicit Project/resource/purpose grants with managed Source/Reporter enforcement, and bounded read-only connection checks through independently advertised provider operations. Input management and Console integration remain pending from 5.6 onward.
 - Existing VCS configuration uses integration identities and private credential handles, while the secret domain separates logical references from transient values. Reuse these contracts where applicable; do not expose Job-secret delegation as authority to manage provider credentials.
 - `ui/src/features/factory/ConfigurationEditor.tsx` already selects visible Factory dependencies through generated REST types. Add an input section there or in its adjacent configuration detail rather than create a second pipeline designer.
 - `ui/src/features/factory/FlowGraphEditor.tsx` and `FlowBindings.tsx` already author ordinary trusted-action bindings; use those surfaces for stage-local source effects.
 
 The existing [extension boundaries](../../../docs/architecture/factory-extension-boundaries.md) deliberately reserved this change. The approved generic Flow and non-authoritative reporting contracts remain controlling.
+
+The revised `add-factory-work-card` plans a persistent internal Issue above immutable Work. In this document, **external task** means the native GitHub Issue (or another installed provider's task); **internal Issue** means that optional Project-owned card. Existing references to an Issue's labels/state describe the external task unless explicitly qualified. This update preserves all completed task entries and verification evidence; the new handoff seam is pending work, not a claim about the implemented Source protocol.
 
 ## Goals / Non-Goals
 
@@ -22,6 +24,7 @@ The existing [extension boundaries](../../../docs/architecture/factory-extension
 - Attach an operator-configured Issue source to a pipeline input and make its selectors, exact target and reporting effects inspectable before activation.
 - Support the same Issue across independently configured assessment and implementation inputs while reusing existing admission, eligibility, duplicate handling, Flow execution and reporting.
 - Keep GitHub payloads and network access in the GitHub provider; retain authorization and durable orchestration in the server.
+- Reuse authorized native observations for optional internal-task consumers without making pipeline execution depend on cards or duplicating Source/Reporter machinery.
 
 **Non-Goals:**
 
@@ -29,6 +32,7 @@ The existing [extension boundaries](../../../docs/architecture/factory-extension
 - No webhook ingress, GitHub Projects board/status-field API, Issue comment/attachment crawling, automatic label creation, arbitrary search-query language, or cross-forge implementation in this slice. Polling plus Issue labels and optional open/closed state supplies the requested behavior.
 - No new business duplicate detector, credential entry in pipeline forms, implicit re-run on an Issue edit, live paid-model qualification, automatic merge, redesign of the whole console, or manipulation of the user's running stand.
 - No general-purpose secret vault, browser plugin installation or promise of native GitLab/Jira or OAuth/App authentication in this slice. GitHub token authentication is the initial concrete administrative path; other installed adapters can advertise their own supported mechanisms.
+- No internal Issue aggregate, revision editor, card execution request, standalone import/link-refresh lifecycle, field-ownership resolver or card UI in this change; those belong to `add-factory-work-card`. Manual Issue creation stays independent of integrations when that capability is available.
 
 ## Decisions
 
@@ -62,7 +66,7 @@ A runnable example configuration will illustrate the following mappings. **Every
 
 Assessment uses ordinary configured eligibility/duplicate/classification nodes. Its accepted trusted actions can project configured approval and classification label groups; the source neither assesses nor classifies tickets. The operator can instead use entirely different labels, more stages, a single pipeline, or unrestricted intake. The same controls exist through REST and the console.
 
-### 3. Reuse replay with an input-scoped stable Issue identity
+### 3. Preserve input-scoped Work admission identity
 
 The trusted connector installation resolves its allowed Project and source security scope. Refactor manual admission only after existing public behavior passes; extract or add a source-neutral application entry that preserves visibility, immutable definitions, input validation, replay-before-resolution, audit and atomic publication. Do not accept arbitrary claimed management identities from the provider process.
 
@@ -70,7 +74,7 @@ Construct a canonical admission identity from source installation, repository im
 
 For repeated observations, recover the retained intent before preparing a new candidate: a changed Issue body must not cause an exact replay request with fresh artifacts or a new mutable base resolution. New candidates freeze title/body, selected labels/state, update identity and explicit task/acceptance mapping into bounded Artifacts; they then use existing admission. Durable pending preparation and input-owner fencing preserve the first accepted intent across crashes before or after admission. Artifact staging uses stable operation identity and bounded retention/cleanup. Missing acceptance data follows the configured mapping's declared failure, never fabricated criteria.
 
-An Issue admitted once to the assessment input may subsequently be admitted once to a distinct implementation input. Repeated observations, relabeling and input replacement cannot re-run either. Existing pipeline business duplicate checks still run when that pipeline first processes Work. The source identity distinguishes intended stages, not a mechanism to bypass those checks. Diagnostics correlate both admissions to the same Issue. An intentional fresh processing cycle requires an explicit new input identity; ordinary retry stays the existing Run/attempt mechanism.
+An external task admitted once to the assessment input may subsequently be admitted once to a distinct implementation input. Repeated observations, relabeling and input replacement cannot re-run either. Existing pipeline business duplicate checks still run when that pipeline first processes Work. The source identity distinguishes intended inputs, not a mechanism to bypass those checks. Diagnostics correlate both admissions to the same external task. An intentional fresh **automatic intake** cycle requires an explicit authorized new input identity; ordinary retry stays the existing Run/attempt mechanism. A later manual execution from an internal Issue uses that card's distinct explicit execution-request/admission identity, not a new automatic input or a changed native observation.
 
 Alternative: use only Issue ID, blocking every later pipeline; or use Issue update/version/labels as dedup keys, creating loops after our own writes. Both fail the requested staged flow.
 
@@ -87,6 +91,10 @@ Extend the existing GitHub plugin with separate Source and Reporter protocol ent
 Use repository Issue listing rather than unrestricted Search. GitHub's [Issues API](https://docs.github.com/en/rest/issues/issues#list-repository-issues) returns pull requests as well as Issues; reject records carrying `pull_request`. Apply local selector validation after decoding bounded responses. Pagination links are untrusted and must stay within the installed host/repository policy. Honor [GitHub retry guidance](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api), original deadlines and finite retries.
 
 Retain per-input/group progress, scan windows, pending candidate intents, owner/fence and safe dispositions. Drain pages within configured per-pass limits; checkpoint only covered work. Use overlapping update windows plus periodic fair bounded full reconciliation, stable observation identities and existing admission replay. Do not assume timestamps or ETags alone provide exactly-once intake or a provider snapshot. Bound concurrency, bytes, pages and retries; expose backlog/cursor age rather than scan without a ceiling. Disabled inputs start no new preparation/admission; already committed Work and pending reporting keep their original policies.
+
+Retain a narrow execution-neutral observation seam over these installed Source operations. An observation carries trusted Project/security scope, installation/native resource/item identity, display context, freshness evidence and bounded snapshot/input provenance; GitHub wire DTOs and secrets stay inside their existing boundaries. Pipeline matching and Work admission consume observations separately. Observations of already admitted tasks must not be suppressed solely by admission replay or exposed only through the last accepted Work snapshot. Existing Work continues to use its original frozen inputs.
+
+The card change owns explicit import/link-refresh configuration and its durable task updates, including refresh of retained links that no longer match an execution selector. It must reuse the authorized Source read/observation and bounded progress/reconciliation contracts. A nonmatching/closed external task is not deleted from an internal card, and an observation alone is not a Run request. Disabling an execution input stops its admissions; separately configured link refresh can continue only with its own enabled policy and current read grants. No optional consumer means no card mutations or extra provider reads, and existing intake does not wait for card availability. Do not add an unbounded cache, implicit observer subscription or second provider polling implementation here.
 
 ### 6. Report configured desired effects through the existing outbox
 
@@ -123,6 +131,8 @@ repository-label catalog page with exact-name fallback; no persistent cache or
 unbounded pagination is introduced.
 
 Share the existing reporting retry/outbox authority; add only the correlation/order state needed for external effects. Freeze adapter/mapping versions per intent. Neither projection completion nor GitHub labels reconstruct accepted Factory evidence. A matching downstream input still creates ordinary Work under its own gates; importing an upstream accepted artifact would require an explicit trusted provenance mapping, not interpreting the word `approved` as evidence.
+
+Task-card field ownership and conflict resolution remain in `add-factory-work-card`, which consumes existing Reporter observations/receipts and reuses this outbox. This change authorizes Work-backed configured Factory actions; any future Issue metadata command is a separately validated producer owned by the card change, not permission inferred from a link, comment or mutable card status. Retain the original native target, action and mapping at acceptance: later card association or mapping replacement cannot retarget a pending operation or retroactively authorize reporting from an unlinked execution. An unavailable provider changes reporting health, not accepted execution or the future task's verification result.
 
 ### 7. Reusable integrations, Project access and pipeline selection
 
@@ -228,7 +238,35 @@ Keep drafts/preview data in memory and complete English/Russian and keyboard flo
 The existing Flow editor exposes per-outcome label additions/removals and review of
 pinned mappings at intermediate, nested and terminal stages. No action means no
 write. Reporting progress stays associated with its originating action independently
-of overall Run completion. No Work-card or quickstart redesign is required.
+of overall Run completion. The task card consumes these same facts when enabled;
+this change does not implement its editor, run-history view or synchronization controls.
+
+Distinguish automatic input setup from importing/updating an internal task and from
+an explicit card execution request. Pipeline input selectors still select an exact
+execution target; they are not the global task synchronization policy. Source preview
+remains read-only even with cards enabled: it cannot create an Issue/revision, attach
+a source, dispatch reporting or reserve execution. Diagnostics can expose an optional
+authorized internal Issue link once the card supplies one; absent/backfilling cards
+retain native correlation and existing Work/Run links with no read-time creation.
+Manual Artifact intake remains available now; manual Issue creation and execution
+belong to the card capability and require no GitHub connection. No credential form
+or duplicate task-creation form is added to pipeline setup.
+
+### 10. Preserve task identity separately from Work admission identity
+
+| Identity | Scope and purpose | Includes pipeline input identity? |
+| --- | --- | --- |
+| Native task correlation | Project/security partition plus trusted installation, native container and item; shared with optional internal Issue association | No |
+| Automatic Work admission | Existing source scope, native task and stable input binding; one accepted Work/Run per input | Yes |
+| Explicit Issue execution request | Card-owned frozen Issue revision and exact target; deliberate later execution | No; uses a distinct request identity |
+
+Display numbers, names, URLs, labels and credentials are not identity keys. Separate
+inputs can process the same external task once each and later attach to one internal
+Issue without changing completed admission records. Grouping/backfill and unique
+Issue associations remain the card change's responsibility, not another deduplication
+database here. Repeated observations or our own label writes cannot create a new
+Issue execution request. A second provider-neutral fake consumer must demonstrate
+the same handoff without a GitHub-specific branch in Factory.
 
 ## Risks / Trade-offs
 
@@ -243,6 +281,7 @@ of overall Run completion. No Work-card or quickstart redesign is required.
 - [Task text is private or adversarial] → Bounded private Artifacts, explicit mapping and permissions, no implicit resource fetching, safe diagnostic projections and secret-redaction tests.
 - [Cross-pipeline identity accidentally disables existing duplicate policy] → Assert that staged inputs reuse original admission/lifecycle contracts and configured eligibility checks rather than accept classification from labels.
 - [Provider outage blocks Factory] → Input-scoped deferred progress and independent reporting; ordinary Builds and manual intake remain available.
+- [Task refresh accidentally replays execution or splits a card per input] → Separate native correlation, optional observation consumption and input-scoped admission; keep card creation/uniqueness in its owning change and qualify both connected and absent-consumer paths.
 
 ## Migration Plan
 
@@ -252,3 +291,10 @@ of overall Run completion. No Work-card or quickstart redesign is required.
 4. Validate and preview sample inputs, then enable a controlled disposable-repository pilot with fixture assessment outputs. Verify first admission, status projection, downstream selection, restart/lost responses and ordinary CI/CD without paid model calls. Live GitHub writes require an explicitly selected test repository and credentials; no user's repository is used implicitly. Hermetic HTTPS/process conformance is required independently and is not called live account qualification.
 5. Enable real inputs only after their provider-boundary qualification and operator review. Retain exact source/plugin/configuration evidence and ordinary CI/CD regression results.
 6. Roll back by disabling inputs to stop new admissions and pausing the affected Reporter dispatch if required; retain pending intents, cursors, Work and audit. Existing Runs continue under their pinned definitions. Do not drop state or reverse externally applied labels automatically; reconcile later using the retained mapping and newest intent.
+
+Card adoption is an additive follow-up: expose the qualified observation/correlation
+seam and optional links without changing Work identities, enabling import/refresh,
+or backfilling Issues in this deployment. `add-factory-work-card` owns those migrations
+and its own task-only pilot. The integration pilot qualifies the seam with a fake
+consumer and reruns with real cards only when that capability is implemented; card
+absence is not a blocker for the existing Source/admission/Reporter release path.

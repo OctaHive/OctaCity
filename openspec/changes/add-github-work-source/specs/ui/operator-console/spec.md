@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Pipeline inputs expose guided GitHub Issue selection
-The console SHALL allow an operator to configure GitHub Issues as a source at the selected Factory pipeline input, choosing an existing Project-authorized connection and external task container independently of the code Repository, visible installed capabilities, target configuration, Issue state, all-label, any-label and excluded-label sets, input mapping, optional exclusive group and enabled state. It SHALL explain empty label selection as unrestricted, provide bounded read-only preview and authoritative validation, and publish reviewed immutable replacements through the existing confirmed-intent workflow. The operator SHALL NOT need to write provider JSON, enter opaque resource identities or supply credentials in the pipeline editor. A missing connection or grant SHALL link to the separate Integrations administration/access flow without enabling unsupported choices. Selector drafts and preview payloads SHALL remain outside browser persistence.
+The console SHALL allow an operator to configure GitHub Issues as a source at the selected Factory pipeline input, choosing an existing Project-authorized connection and external task container independently of the code Repository, visible installed capabilities, target configuration, Issue state, all-label, any-label and excluded-label sets, input mapping, optional exclusive group and enabled state. It SHALL explain empty label selection as unrestricted, provide bounded read-only preview and authoritative validation, and publish reviewed immutable replacements through the existing confirmed-intent workflow. It SHALL explain that these predicates configure automatic execution intake rather than global internal-task import/refresh or a manual card execution request. The operator SHALL NOT need to write provider JSON, enter opaque resource identities or supply credentials in the pipeline editor. A missing connection or grant SHALL link to the separate Integrations administration/access flow without enabling unsupported choices. Selector drafts and preview payloads SHALL remain outside browser persistence.
 
 #### Scenario: Operator prepares assessment and implementation inputs
 - **WHEN** an operator configures an assessment input with no required labels and separate `approved + bug` and `approved + feature-request` inputs
@@ -25,6 +25,17 @@ The console SHALL expose guided configuration of arbitrary Work status values ma
 #### Scenario: Status projection is pending
 - **WHEN** a Run completed assessment but its GitHub update is retrying or exhausted
 - **THEN** the console shows those distinct facts and does not display the downstream pipeline as admitted without an authoritative admission receipt
+
+### Requirement: Integration UI interoperates with optional internal task cards
+Integration/source views SHALL keep external native task identity, automatic input admission and internal Issue identity distinct. They SHALL link to a task card only when REST returns an enabled visible association, preserve existing Work/Run navigation when no card is available, and avoid another Issue editor or synchronization conflict resolver in pipeline forms. When the task capability is enabled, manual Issue creation SHALL stay outside integration setup and require no provider connection; existing manual Artifact admission SHALL remain available independently. Preview SHALL be presented as read-only, not an import/create/synchronize action. Business task status, execution result and reporting health SHALL remain distinct in shared progress presentation.
+
+#### Scenario: Card capability is unavailable
+- **WHEN** an operator inspects native source correlation and admitted Work/Run records
+- **THEN** existing diagnostics remain usable without a mandatory Issue link, dead card action or task creation during navigation
+
+#### Scenario: Operator wants to create a task manually
+- **WHEN** an enabled task capability offers manual Issue creation without a provider connection
+- **THEN** integration UI does not redirect that journey through token setup, while pipeline manual admission keeps its existing independent path
 
 ### Requirement: Stage authoring exposes source label-update actions
 The console SHALL let an operator configure a source-update action for any declared stage outcome in the existing Flow editor, including intermediate and nested stages. The editor SHALL expose the original Issue source, permitted labels to add, labels to remove and the exact resulting mapping/effects, and SHALL persist them as ordinary immutable trusted-action configuration rather than a special stage implementation. Different outcomes SHALL support different effects, and stages without an action SHALL leave the Issue unchanged. No approval, rejection or classification vocabulary SHALL be mandatory.

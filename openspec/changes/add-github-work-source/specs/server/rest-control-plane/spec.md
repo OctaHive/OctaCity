@@ -12,7 +12,7 @@ The management REST API SHALL expose authorization-filtered discovery, inspectio
 - **THEN** the API returns the safe authorization or validation outcome without revealing hidden resources or activating the input
 
 ### Requirement: Source previews and diagnostics distinguish discovery from execution
-The management REST API SHALL expose bounded read-only selector previews and safe input/reporting diagnostics including effective selector, exact versions, last scan/progress, next retry, candidate dispositions and visible admitted Work/Run correlations. A preview SHALL use installed read authority, respect provider bounds and SHALL NOT reserve identities, advance production cursors, admit Work or write to GitHub. Diagnostics SHALL distinguish filtered, ambiguous, replayed, newly admitted, unavailable and projection-pending/exhausted states without claiming preview results or external labels are authoritative execution outcomes. Raw Issue bodies and provider secrets SHALL be excluded from preview and diagnostic summaries.
+The management REST API SHALL expose bounded read-only selector previews and safe input/reporting diagnostics including effective selector, exact versions, last scan/progress, next retry, candidate dispositions and visible admitted Work/Run correlations. A preview SHALL use installed read authority, respect provider bounds and SHALL NOT reserve identities, advance production cursors, admit Work or write to GitHub. It SHALL NOT create/edit an internal Issue, attach a source or commit a refresh observation to task state. Diagnostics SHALL distinguish filtered, ambiguous, replayed, newly admitted, unavailable and projection-pending/exhausted states without claiming preview results or external labels are authoritative execution outcomes. Raw Issue bodies and provider secrets SHALL be excluded from preview and diagnostic summaries.
 
 #### Scenario: Client previews an unrestricted label selector
 - **WHEN** a client previews a visible bounded `open` Issue source without required labels
@@ -21,6 +21,21 @@ The management REST API SHALL expose bounded read-only selector previews and saf
 #### Scenario: GitHub returns a rate limit
 - **WHEN** preview or discovery is deferred by the provider
 - **THEN** diagnostics expose a safe scoped retry time instead of reporting no matching Issues or global server failure
+
+#### Scenario: Preview runs with an internal-Issue consumer enabled
+- **WHEN** an operator previews candidates also known to the task-card capability
+- **THEN** preview creates no Issue/revision/association or synchronization intent and does not consume that capability's production refresh progress
+
+### Requirement: Source diagnostics preserve native and optional internal task correlation
+Source/reporting REST SHALL expose safe native task correlation separately from input-scoped Work/Run identity. An internal Issue reference SHALL be optional, supplied only by an enabled authoritative association capability and filtered by its current visibility. Missing or backfilling cards SHALL NOT block existing diagnostics or cause read-time task creation, guessed text-based association or hidden-task disclosure. Integration routes SHALL remain responsible for connections/grants, automatic inputs and supported stage effects; internal Issue creation/editing/execution and field-ownership/conflict-resolution commands SHALL use the task capability's own contracts. Manual task creation when that capability is enabled SHALL NOT require a connection or provider check.
+
+#### Scenario: One native task has two admitted pipeline inputs
+- **WHEN** an authorized client inspects both visible admissions
+- **THEN** it sees common native correlation and distinct Work/Run references, plus the same internal Issue link only when the enabled association is visible
+
+#### Scenario: Internal task association is hidden or unavailable
+- **WHEN** the source remains visible but no permitted card association can be returned
+- **THEN** diagnostics retain native and existing execution references without revealing the hidden task or fabricating an Issue
 
 ### Requirement: Stage source-update actions have typed configuration and provenance
 The management REST API SHALL support configuring and validating source label-update effects for individual declared Flow stage outcomes through existing versioned Flow/action publication. Clients SHALL be able to select the original source binding, visible Reporter mapping and explicit labels to add/remove without entering provider wire payloads or credentials. Publication SHALL freeze the resolved mapping and reject conflicting or unauthorized effects. Diagnostics SHALL correlate each queued/applied/failed projection to its originating stage, outcome and action identity, including intermediate stages before the Run is terminal.
@@ -71,7 +86,7 @@ The management API SHALL support explicit versioned Project access to selected c
 - **THEN** the API denies the operation without enumerating hidden provider resources or revealing credentials
 
 ### Requirement: Connection checks are bounded and read-only
-The management API SHALL expose a separately authorized bounded connection check that verifies installed configuration, authentication, permitted resource identity/access and supported capability readiness through the verified provider. It SHALL distinguish missing configuration/credential, denied authentication/access, unsupported or unverified capabilities, throttling and unavailability. It SHALL NOT mutate provider resources, grant authority, start workers, admit Work or advance production cursors. Write readiness that cannot be verified without mutation SHALL remain explicitly unverified rather than be asserted or tested with a write.
+The management API SHALL expose a separately authorized bounded connection check that verifies installed configuration, authentication, permitted resource identity/access and supported capability readiness through the verified provider. It SHALL distinguish missing configuration/credential, denied authentication/access, unsupported or unverified capabilities, throttling and unavailability. It SHALL NOT mutate provider resources, grant authority, start workers, admit Work or advance production cursors. An enabled internal-Issue consumer SHALL NOT turn a check into task creation, revision/association publication or synchronization progress. Write readiness that cannot be verified without mutation SHALL remain explicitly unverified rather than be asserted or tested with a write.
 
 #### Scenario: Reading is ready but writing is unverified
 - **WHEN** a read-only connection check confirms resource access but cannot prove task-update authority
