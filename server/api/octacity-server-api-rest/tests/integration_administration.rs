@@ -478,3 +478,98 @@ async fn project_access_rest_is_protected_preconditioned_and_exposes_only_grante
     64
   );
 }
+
+#[async_trait]
+impl ManagementQueryUseCase<CheckIntegrationConnectionQuery> for Peer {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    query: CheckIntegrationConnectionQuery,
+  ) -> Result<IntegrationConnectionCheckResult, ApplicationError> {
+    self.0.fetch_add(1, Ordering::SeqCst);
+    Ok(IntegrationConnectionCheckResult {
+      connection_id: query.id,
+      connection_version: query.version,
+      resource: query.resource,
+      native_id: serde_json::from_value(json!("native-container")).unwrap(),
+      locator: serde_json::from_value(json!("owner/project")).unwrap(),
+      purpose: query.purpose,
+      readiness: IntegrationCheckReadiness {
+        configuration: IntegrationCheckState::Ready,
+        authentication: IntegrationCheckState::Ready,
+        resource_access: IntegrationCheckState::Ready,
+        capability: IntegrationCheckState::Unverified,
+        retry_after_millis: None,
+      },
+    })
+  }
+}
+
+#[tokio::test]
+async fn read_only_connection_check_rest_is_protected_closed_and_uses_no_credentials_or_publication_headers() {
+  let peer = Arc::new(Peer::default());
+  let policy = Arc::new(Policy);
+  let commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), peer.clone()));
+  let queries = Arc::new(AuthorizedQueryHandler::new(policy, peer.clone()));
+  let router = integration_management_routes(IntegrationManagementApplication::new(commands).with_checks(queries));
+  let uri = "/api/v1/integrations/0199a6f4-d56c-7440-9aa2-6a320f862795/checks";
+  let payload = json!({"version":1,"resource":exact("tickets"),"purpose":"task_update"});
+  for verified in [false, true] {
+    let mut request = Request::builder()
+      .method("POST")
+      .uri(uri)
+      .header("content-type", "application/json")
+      .body(Body::from(payload.to_string()))
+      .unwrap();
+    if verified {
+      request.extensions_mut().insert(proof());
+    }
+    let response = router.clone().oneshot(request).await.unwrap();
+    assert_eq!(
+      response.status(),
+      if verified {
+        StatusCode::OK
+      } else {
+        StatusCode::FORBIDDEN
+      }
+    );
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let value: serde_json::Value =
+      serde_json::from_slice(&to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
+    if verified {
+      assert_eq!(value["purpose"], "task_update");
+      assert_eq!(value["native_id"], "native-container");
+      assert_eq!(value["readiness"]["capability"], "unverified");
+      for absent in ["credential", "token", "work_id", "input_id", "issue_id"] {
+        assert!(!value.to_string().contains(absent));
+      }
+    }
+  }
+  let mut invalid = payload;
+  invalid["credential"] = json!({"token":"private-rejected-check"});
+  let mut request = Request::builder()
+    .method("POST")
+    .uri(uri)
+    .header("content-type", "application/json")
+    .body(Body::from(invalid.to_string()))
+    .unwrap();
+  request.extensions_mut().insert(proof());
+  let response = router.oneshot(request).await.unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  assert!(
+    !String::from_utf8(to_bytes(response.into_body(), 16384).await.unwrap().to_vec())
+      .unwrap()
+      .contains("private-rejected-check")
+  );
+  assert_eq!(peer.0.load(Ordering::SeqCst), 1);
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let operation = &document["paths"]["/api/v1/integrations/{integration_id}/checks"]["post"];
+  assert_eq!(operation["operationId"], "checkIntegrationConnection");
+  assert!(!operation["security"].as_array().unwrap().is_empty());
+  assert_eq!(
+    document["components"]["schemas"]["IntegrationConnectionCheckRequest"]["additionalProperties"],
+    false
+  );
+}

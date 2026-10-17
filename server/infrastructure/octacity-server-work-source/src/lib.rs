@@ -8,8 +8,8 @@ use octacity_server_adapter_host::{
 };
 pub use octacity_server_adapter_host::{HostError, HostFailureClass, RegistryError};
 use octacity_work_source_protocol::{
-  AdapterManifest, Capabilities, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, ProtocolRange, ProtocolRanges, Request,
-  Response, decode_response, reporter, source,
+  AdapterManifest, Capabilities, MAX_REQUEST_BYTES, ProtocolRange, ProtocolRanges, Request, Response, decode_response,
+  reporter, source,
 };
 use std::{path::Path, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -79,7 +79,7 @@ impl InstalledWorkAdapter {
         .map(serde_json::to_vec)
         .transpose()
         .map_err(|_| invalid())?,
-      MAX_RESPONSE_BYTES,
+      request.max_response_bytes(),
     );
     execute_process(process, timeout, grace, cancellation, |frame| {
       decode_response(frame, &request).map_err(|error| error.to_string())
@@ -108,6 +108,7 @@ impl InstalledWorkAdapter {
         .map_err(|_| self.unsupported("source"))?;
         let (profile, scan_id) = match &request.command {
           source::Command::Scan(intent) => (&intent.configuration_digest, &intent.scan_id),
+          source::Command::Check(intent) if capabilities.check => (&intent.configuration_digest, &intent.check_id),
           source::Command::Authorize(intent) if capabilities.authorize => {
             (&intent.configuration_digest, &intent.scan_id)
           }
@@ -145,6 +146,23 @@ impl InstalledWorkAdapter {
         }
         .negotiate(protocol)
         .map_err(|_| self.unsupported("reporter"))?;
+        if let reporter::Command::Check(intent) = &request.command {
+          if !capabilities.check {
+            return Err(self.unsupported("connection check"));
+          }
+          if intent.configuration_digest != capabilities.configuration_digest {
+            return Err(invalid());
+          }
+          return Ok(capabilities.cancel.then(|| {
+            Request::Reporter(reporter::Request {
+              protocol_version: request.protocol_version,
+              request_id: cancel_request_id(&request.request_id),
+              command: reporter::Command::Cancel {
+                target_projection_id: intent.check_id.clone(),
+              },
+            })
+          }));
+        }
         let intent = match &request.command {
           reporter::Command::Observe(intent) if capabilities.observe => intent,
           reporter::Command::Inspect(intent) if capabilities.observe => intent,

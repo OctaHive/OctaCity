@@ -25,6 +25,8 @@ pub struct Request {
   deny_unknown_fields
 )]
 pub enum Command {
+  /// Read-only installed connection/resource readiness, without execution inputs.
+  Check(check::CheckIntent),
   /// Read current effects and opaque, conditional single-write steps.
   Inspect(Box<ProjectionIntent>),
   /// Execute at most one previously inspected conditional native write.
@@ -40,12 +42,12 @@ pub enum Command {
   },
 }
 impl Command {
-  /// Original immutable intent shared by all non-cancellation operations.
+  /// Original immutable projection intent; checks and cancellations have no task projection.
   pub fn intent(&self) -> Option<&ProjectionIntent> {
     match self {
       Self::Observe(intent) | Self::Project(intent) | Self::Inspect(intent) => Some(intent),
       Self::Apply(request) => Some(&request.intent),
-      Self::Cancel { .. } => None,
+      Self::Cancel { .. } | Self::Check(_) => None,
     }
   }
 }
@@ -172,6 +174,7 @@ impl Request {
     }
     field(&self.request_id)?;
     match &self.command {
+      Command::Check(intent) => intent.validate(CredentialClass::WorkReporterWrite),
       Command::Observe(intent) | Command::Project(intent) if self.protocol_version == PROTOCOL_VERSION => {
         intent.validate()
       }
@@ -200,6 +203,8 @@ pub struct Response {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", content = "payload", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
+  /// Safe read-only configuration/authentication/resource/capability observations.
+  Checked(check::CheckReport),
   /// Read-only native effects and conditional steps; this grants no write authority.
   Planned(ProjectionPlan),
   /// One step completed; the host must recheck order and inspect before another write.
@@ -263,6 +268,7 @@ impl Response {
     )
     .map_err(|_| ProtocolError::Invalid)?;
     match (&request.command, &self.outcome) {
+      (Command::Check(intent), Outcome::Checked(report)) => report.validate_for(intent),
       (_, Outcome::Failure(failure)) => failure.validate(),
       (Command::Inspect(intent), Outcome::Planned(plan)) => plan.validate_for(intent),
       (Command::Apply(step), Outcome::Progressed(plan)) => plan.validate_for(&step.intent),

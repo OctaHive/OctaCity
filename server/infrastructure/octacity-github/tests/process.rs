@@ -94,3 +94,31 @@ fn the_provider_process_correlates_a_bounded_delivery_cancellation_without_crede
   );
   assert!(output.stderr.is_empty());
 }
+
+#[test]
+fn missing_check_configuration_is_a_safe_diagnostic_without_other_protocol_fallback() {
+  for family in ["source", "reporter"] {
+    let mut wire: serde_json::Value = serde_json::from_slice(include_bytes!(
+      "../../../protocols/octacity-work-source-protocol/fixtures/check-v1.json"
+    ))
+    .unwrap();
+    wire["family"] = serde_json::json!(family);
+    wire["message"]["command"]["payload"]["resource"]["credential"]["class"] =
+      serde_json::json!(if family == "source" {
+        "work_source_read"
+      } else {
+        "work_reporter_write"
+      });
+    let request = octacity_work_source_protocol::decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
+    let output = work_exchange(&wire);
+    assert!(output.status.success());
+    let response = octacity_work_source_protocol::decode_response(&output.stdout, &request).unwrap();
+    let response = serde_json::to_value(response).unwrap();
+    assert_eq!(response["message"]["outcome"]["status"], "checked");
+    let report = &response["message"]["outcome"]["payload"];
+    assert_eq!(report["configuration"], "missing");
+    assert_eq!(report["authentication"], "unverified");
+    assert_eq!(report["capability"], "unverified");
+    assert!(output.stderr.is_empty());
+  }
+}

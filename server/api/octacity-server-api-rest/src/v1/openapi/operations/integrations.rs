@@ -1,10 +1,25 @@
 use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{
-  CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery, GetIntegrationConnectionQuery,
-  GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, ManageIntegrationCredentialCommand,
-  PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand, SetIntegrationConnectionStateCommand,
+  CheckIntegrationConnectionQuery, CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery,
+  GetIntegrationConnectionQuery, GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery,
+  ManageIntegrationCredentialCommand, PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand,
+  SetIntegrationConnectionStateCommand,
 };
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
+  operation!(
+    CheckIntegrationConnectionQuery,
+    "POST",
+    "/api/v1/integrations/{integration_id}/checks",
+    "checkIntegrationConnection",
+    "Integrations",
+    "Check authenticated native resource access without mutations, grants or input activation",
+    Some("IntegrationConnectionCheckRequest"),
+    "IntegrationConnectionCheckResult",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress(),
   operation!(
     PublishIntegrationProjectAccessCommand,
     "POST",

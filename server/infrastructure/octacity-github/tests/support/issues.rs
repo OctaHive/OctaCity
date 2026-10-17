@@ -41,6 +41,9 @@ pub struct Forge {
   pub requests: Arc<Mutex<Vec<String>>>,
   pub replies: Arc<Mutex<VecDeque<Reply>>>,
   pub repository: Arc<Mutex<Value>>,
+  // Connection diagnostics override metadata failures; listing fixtures use the default.
+  #[allow(dead_code)]
+  pub repository_reply: Arc<Mutex<Option<Reply>>>,
   pub changed: Arc<Notify>,
   #[allow(dead_code)]
   pub reporting: Arc<Mutex<Option<reporting::Issue>>>,
@@ -77,6 +80,8 @@ impl Forge {
     let replies = Arc::new(Mutex::new(VecDeque::<Reply>::new()));
     let repository = Arc::new(Mutex::new(json!({"id":1234})));
     let metadata = repository.clone();
+    let repository_reply = Arc::new(Mutex::new(None::<Reply>));
+    let metadata_reply = repository_reply.clone();
     let changed = Arc::new(Notify::new());
     let reporting = Arc::new(Mutex::new(None::<reporting::Issue>));
     let effects = reporting.clone();
@@ -122,7 +127,11 @@ impl Forge {
         captured.lock().await.push(request.clone());
         signal.notify_one();
         let reply = if repository {
-          Reply::json(metadata.lock().await.clone())
+          let override_reply = metadata_reply.lock().await.take();
+          match override_reply {
+            Some(reply) => reply,
+            None => Reply::json(metadata.lock().await.clone()),
+          }
         } else if let Some(issue) = effects.lock().await.as_mut() {
           issue.respond(&request)
         } else {
@@ -173,6 +182,7 @@ impl Forge {
       requests,
       replies,
       repository,
+      repository_reply,
       changed,
       reporting,
       task,

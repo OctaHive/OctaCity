@@ -16,7 +16,10 @@ use octacity_server_application::{
   GetIntegrationConnectionQuery, PublishIntegrationConnectionCommand, SetIntegrationConnectionStateCommand,
 };
 
+mod check;
 mod project_access;
+pub(super) use check::check_connection;
+use octacity_server_application::CheckIntegrationConnectionQuery;
 use octacity_server_application::{
   GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, PublishIntegrationProjectAccessCommand,
 };
@@ -28,6 +31,7 @@ pub struct IntegrationManagementApplication {
   metadata: Option<MetadataEndpoints>,
   administration: Option<AdministrationEndpoints>,
   project_access: Option<ProjectAccessEndpoints>,
+  checks: Option<Arc<dyn AuthorizedManagementQueryHandler<CheckIntegrationConnectionQuery, Error = ApplicationError>>>,
 }
 struct ProjectAccessEndpoints {
   publish:
@@ -51,6 +55,7 @@ impl IntegrationManagementApplication {
       metadata: None,
       administration: None,
       project_access: None,
+      checks: None,
     }
   }
   /// Installs the separately authorized write-only credential service.
@@ -64,7 +69,16 @@ impl IntegrationManagementApplication {
       metadata: None,
       administration: None,
       project_access: None,
+      checks: None,
     }
+  }
+  /// Installs separately authorized, bounded read-only diagnostics without activating inputs.
+  pub fn with_checks<Q>(mut self, queries: Arc<Q>) -> Self
+  where
+    Q: AuthorizedManagementQueryHandler<CheckIntegrationConnectionQuery, Error = ApplicationError> + 'static,
+  {
+    self.checks = Some(queries);
+    self
   }
   /// Installs independently authorized Project grants and filtered use-resource discovery.
   pub fn with_project_access<C, Q>(mut self, commands: Arc<C>, queries: Arc<Q>) -> Self

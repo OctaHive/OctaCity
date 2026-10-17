@@ -33,3 +33,5 @@ pub use runtime::{
   FactorySourceRuntime, FactorySourceWorker, FactorySourceWorkerDependencies, FactorySourceWorkerOutcome,
   FactorySourceWorkerSettings, HostedFactoryWorkStatusProjector,
 };
+
+pub use runtime::{HostedIntegrationConnectionChecker, IntegrationCheckProfile};

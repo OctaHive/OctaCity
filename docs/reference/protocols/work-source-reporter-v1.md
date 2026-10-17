@@ -114,6 +114,27 @@ is independent of new discovery and grants no management/admission permission.
 Cancellation uses the same original Source id. Older discovery-only plugins stay
 loadable but cannot supply the current grant check required by the polling worker.
 
+Both Source v1 and Reporter v1/v2 optionally support read-only `check`. Each role
+must advertise `check = true` in its own capability section; omission defaults to
+false and never enables a legacy adapter implicitly. A canonical request is
+`fixtures/check-v1.json`. It carries `check_id`, the pinned provider configuration,
+expected approved `endpoint`, exact resource/private role handle and trusted
+network ceiling. It has no selector, cursor, native item, mapping, Factory input
+or internal Issue identity. Reporter checks still require `work_reporter_write`;
+they cannot borrow Source, VCS or Delivery credentials. The endpoint is an expected
+installed target, not an arbitrary fetch URL.
+
+`checked` echoes check/profile/native-container identity and reports separate
+`configuration`, `authentication`, `resource_access` and `capability` states, plus
+an optional retry hint. States are `ready`, `missing`, `invalid`, `denied`,
+`conflict`, `unsupported`, `unverified`, `throttled` and `unavailable`. A Ready
+aspect requires its preceding aspect to be Ready. No raw provider diagnostics,
+token, handle or task snapshot is returned. An authenticated read does not prove
+write readiness: adapters report Unverified when read-only evidence is insufficient
+and never create a test Issue, label, branch or review. Checks grant no authority,
+activate no polling/admission and advance no production cursor. Cancellation
+addresses `check_id` using the role's existing cancellation target field.
+
 Reporter version 1 supports `observe`, `project` and `cancel`. Observe/project repeat the
 original projection id, exact container/item/display context, separate write
 handle, profile, installed mapping, arbitrary status and network ceiling. Native
@@ -150,7 +171,8 @@ deadlines, retry budgets, outbox ordering and admission/checkpoint authority.
 ## Bounds, privacy and lifecycle
 
 Requests are at most 64 KiB and responses at most 4 MiB, excluding the framing
-newline. A scan may narrow the complete received response ceiling, including JSON
+newline. Check responses have an independent 8192-byte ceiling, enforced by the
+process reader and decoder. A scan may narrow the complete received response ceiling, including JSON
 whitespace. Each page contains at most 100 candidates; each encoded candidate is
 at most 1 MiB. Titles are at most 4096 UTF-8 bytes; bodies/normalized field values
 at most 262144 bytes; fields at most 32; labels at most 64 with 256 bytes each.

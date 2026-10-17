@@ -33,6 +33,21 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["provider", "reference"],
   );
   let purpose = json!({"type":"string","enum":["task_read","task_update","repository_read","delivery"]});
+  schemas.insert(
+    "IntegrationConnectionCheckRequest".into(),
+    object(
+      json!({"version":positive(),"resource":pin(),"purpose":purpose}),
+      &["version", "resource", "purpose"],
+    ),
+  );
+  let readiness = || json!({"type":"string","enum":["ready","missing","invalid","denied","conflict","unsupported","unverified","throttled","unavailable"]});
+  schemas.insert("IntegrationCheckReadiness".into(), object(
+    json!({"configuration":readiness(),"authentication":readiness(),"resource_access":readiness(),"capability":readiness(),
+      "retry_after_millis":{"type":["integer","null"],"minimum":0,"maximum":3600000}}),
+    &["configuration","authentication","resource_access","capability","retry_after_millis"]));
+  schemas.insert("IntegrationConnectionCheckResult".into(), object(
+    json!({"connection_id":identity(),"connection_version":positive(),"resource":pin(),"native_id":text(1024),"locator":text(1024),"purpose":purpose,"readiness":reference("IntegrationCheckReadiness")}),
+    &["connection_id","connection_version","resource","native_id","locator","purpose","readiness"]));
   let capability = object(
     json!({"purpose":purpose,"capability":pin(),"configuration":pin(),"credential":credential}),
     &["purpose", "capability", "configuration", "credential"],

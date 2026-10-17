@@ -1,4 +1,6 @@
 //! Independent installed Issue scopes; no Delivery material or Git executable is required.
+#[path = "connection_check.rs"]
+mod checks;
 use crate::{
   GithubConfigError,
   config::{self, ApiSettings, Credential},
@@ -131,6 +133,30 @@ impl GithubWorkProvider {
     request: &Request,
     cancellation: tokio_util::sync::CancellationToken,
   ) -> octacity_work_source_protocol::Response {
+    if let Request::Source(source::Request {
+      command: source::Command::Check(intent),
+      request_id,
+      protocol_version,
+    }) = request
+    {
+      return octacity_work_source_protocol::Response::Source(source::Response {
+        protocol_version: *protocol_version,
+        request_id: request_id.clone(),
+        outcome: source::Outcome::Checked(self.check_connection(request, intent, cancellation).await),
+      });
+    }
+    if let Request::Reporter(reporter::Request {
+      command: reporter::Command::Check(intent),
+      request_id,
+      protocol_version,
+    }) = request
+    {
+      return octacity_work_source_protocol::Response::Reporter(reporter::Response {
+        protocol_version: *protocol_version,
+        request_id: request_id.clone(),
+        outcome: reporter::Outcome::Checked(self.check_connection(request, intent, cancellation).await),
+      });
+    }
     if let Request::Reporter(intent) = request {
       return self.report(request, intent, cancellation).await;
     }
@@ -283,6 +309,16 @@ impl GithubWorkProvider {
   /// Verifies role, pinned profile and native/network scope before resolving any private grant.
   /// This performs no provider I/O; concrete listing/projection consumes the retained access.
   pub fn prepare(&self, request: &Request) -> Result<AuthorizedIssueAccess, FailureClass> {
+    let (access, class) = self.validate_scope(request)?;
+    Ok(AuthorizedIssueAccess {
+      resource_id: access.resource_id.clone(),
+      credential: self.credential_for(access, class)?,
+    })
+  }
+  fn validate_scope<'a>(
+    &self,
+    request: &'a Request,
+  ) -> Result<(&'a octacity_work_source_protocol::ResourceAccess, &'static str), FailureClass> {
     request.validate().map_err(|_| FailureClass::InvalidRequest)?;
     let (profile, access, network, aliases, class) = match request {
       Request::Source(source::Request {
@@ -304,6 +340,26 @@ impl GithubWorkProvider {
         &intent.network_hosts,
         &self.capabilities.source_repositories,
         "work_source_read",
+      ),
+      Request::Source(source::Request {
+        command: source::Command::Check(intent),
+        ..
+      }) => (
+        &intent.configuration_digest,
+        &intent.resource,
+        &intent.network_hosts,
+        &self.capabilities.source_repositories,
+        "work_source_read",
+      ),
+      Request::Reporter(reporter::Request {
+        command: reporter::Command::Check(intent),
+        ..
+      }) => (
+        &intent.configuration_digest,
+        &intent.resource,
+        &intent.network_hosts,
+        &self.capabilities.reporter_repositories,
+        "work_reporter_write",
       ),
       Request::Reporter(request) if request.command.intent().is_some() => {
         let intent = request.command.intent().ok_or(FailureClass::Unsupported)?;
@@ -344,19 +400,22 @@ impl GithubWorkProvider {
     if !network.contains(&host) {
       return Err(FailureClass::InvalidRequest);
     }
+    Ok((access, class))
+  }
+  fn credential_for(
+    &self,
+    access: &octacity_work_source_protocol::ResourceAccess,
+    class: &str,
+  ) -> Result<Credential, FailureClass> {
     let credential_directory =
       config::private_subdirectory(&self.directory, &self.credential_directory).map_err(|_| FailureClass::Permanent)?;
-    let credential = config::read_credential(
+    config::read_credential(
       &credential_directory,
       class,
       &access.credential.handle,
       &access.resource_locator,
     )
-    .map_err(|_| FailureClass::Permanent)?;
-    Ok(AuthorizedIssueAccess {
-      resource_id: repository.repository_id.clone(),
-      credential,
-    })
+    .map_err(|_| FailureClass::Permanent)
   }
 }
 fn bounded(value: &str, maximum: usize) -> bool {

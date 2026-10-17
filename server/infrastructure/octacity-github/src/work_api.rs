@@ -6,12 +6,14 @@ use serde_json::Value;
 /// Closed transport failure; retry advice is data, never another SDK-side retry.
 pub(crate) struct WorkApiFailure {
   pub(crate) class: FailureClass,
+  pub(crate) status: Option<u16>,
   pub(crate) retry_after_millis: Option<u32>,
 }
 impl From<FailureClass> for WorkApiFailure {
   fn from(class: FailureClass) -> Self {
     Self {
       class,
+      status: None,
       retry_after_millis: None,
     }
   }
@@ -39,6 +41,7 @@ fn throttled(headers: &http::HeaderMap) -> WorkApiFailure {
   match delay {
     Some(delay) => WorkApiFailure {
       class: FailureClass::Transient,
+      status: None,
       retry_after_millis: Some(delay as u32),
     },
     None => FailureClass::Permanent.into(),
@@ -88,7 +91,13 @@ pub(crate) async fn request(
     reqwest::StatusCode::UNAUTHORIZED
     | reqwest::StatusCode::FORBIDDEN
     | reqwest::StatusCode::NOT_FOUND
-    | reqwest::StatusCode::UNPROCESSABLE_ENTITY => return Err(FailureClass::Permanent.into()),
+    | reqwest::StatusCode::UNPROCESSABLE_ENTITY => {
+      return Err(WorkApiFailure {
+        class: FailureClass::Permanent,
+        status: Some(response.status().as_u16()),
+        retry_after_millis: None,
+      });
+    }
     reqwest::StatusCode::CONFLICT => return Err(FailureClass::Conflict.into()),
     status if status.is_server_error() => return Err(FailureClass::Transient.into()),
     reqwest::StatusCode::OK => {}

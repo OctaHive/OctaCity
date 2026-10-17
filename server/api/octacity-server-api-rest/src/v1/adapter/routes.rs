@@ -352,12 +352,14 @@ pub fn router(application: ManagementApplication) -> Router {
 
 fn registered_integration_routes() -> ManagementRoutes<Arc<super::integrations::IntegrationManagementApplication>> {
   use super::integrations::*;
+  use octacity_server_application::CheckIntegrationConnectionQuery;
   use octacity_server_application::{
     CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery, GetIntegrationConnectionQuery,
     GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, ManageIntegrationCredentialCommand,
     PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand, SetIntegrationConnectionStateCommand,
   };
   ManagementRoutes::new()
+    .post::<CheckIntegrationConnectionQuery, _, _>("checkIntegrationConnection", check_connection)
     .post::<PublishIntegrationProjectAccessCommand, _, _>("publishIntegrationProjectAccess", publish_project_access)
     .get::<GetIntegrationProjectAccessQuery, _, _>("getIntegrationProjectAccess", get_project_access)
     .get::<ListIntegrationProjectResourcesQuery, _, _>("listIntegrationProjectResources", list_project_resources)

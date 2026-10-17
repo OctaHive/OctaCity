@@ -123,6 +123,29 @@ is made by `GithubWorkProvider::prepare`. Cancellation requires no Work grant.
 Reporter outbox composition is an explicit trusted runtime installation;
 ordinary manual Factory intake remains independent of these installations.
 
+### Read-only connection checks
+
+Source and Reporter advertise `check = true` independently in their verified
+`adapter.toml` capability sections. The check validates the expected API endpoint,
+pinned private profile, native resource and network ceiling before resolving the
+selected role's private credential. It reads repository metadata to authenticate
+and confirm the original native repository id. Source then performs one bounded
+Issue-list GET (`state=all&per_page=1`); no task snapshot or cursor is retained.
+Reporter performs only the metadata GET and leaves write capability Unverified,
+even when returned repository permissions include push/admin. No mutation or
+fallback to another credential is attempted. HTTP denial, throttling/retry advice
+and unavailability remain separate safe readiness facts.
+
+Trusted server composition supplies `IntegrationCheckProfile` and
+`HostedIntegrationConnectionChecker` to the application check handler and protected
+REST builder's `with_checks`. POST
+`/api/v1/integrations/{integration_id}/checks` accepts only the reviewed metadata
+version, resource reference and purpose. It requires separate connection
+administration, view and execute rights; it may check a configured inactive
+connection without enabling it or granting Project use. The response contains
+native resource choices and readiness, never credentials. Manual Factory intake
+and future manually created internal Issues need no connection check.
+
 ### Versioned status mappings
 
 `status_mapping::StatusMapping::from_config` validates adapter-owned JSON without

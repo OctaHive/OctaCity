@@ -27,6 +27,8 @@ pub struct Request {
   deny_unknown_fields
 )]
 pub enum Command {
+  /// Read-only installed connection/resource readiness, without execution inputs.
+  Check(check::CheckIntent),
   /// Reads one bounded page using the exact installed selector.
   Scan(Box<ScanIntent>),
   /// Checks current private installed read authority without listing or retaining tickets.
@@ -52,6 +54,8 @@ pub struct Response {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", content = "payload", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
+  /// Safe read-only configuration/authentication/resource/capability observations.
+  Checked(check::CheckReport),
   /// Safe classified failure, never an empty successful page.
   Failure(Failure),
   /// One complete private page; checkpointing and admission remain server-owned.
@@ -72,6 +76,7 @@ impl Request {
     }
     field(&self.request_id)?;
     match &self.command {
+      Command::Check(intent) => intent.validate(CredentialClass::WorkSourceRead),
       Command::Scan(intent) => intent.validate(),
       Command::Authorize(intent) => intent.validate(),
       Command::Cancel { target_scan_id } => digest(target_scan_id),
@@ -203,6 +208,7 @@ impl Response {
     )
     .map_err(|_| ProtocolError::Invalid)?;
     match (&self.outcome, &request.command) {
+      (Outcome::Checked(report), Command::Check(intent)) => report.validate_for(intent),
       (Outcome::Failure(failure), _) => failure.validate(),
       (Outcome::Authorized(access), Command::Authorize(intent))
         if access.scan_id == intent.scan_id

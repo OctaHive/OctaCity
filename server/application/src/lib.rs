@@ -740,3 +740,8 @@ mod integration_project_access_tests;
 
 mod integration_project_access;
 pub use integration_project_access::*;
+
+mod integration_check;
+#[cfg(test)]
+mod integration_check_tests;
+pub use integration_check::*;

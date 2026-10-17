@@ -126,6 +126,26 @@ async fn incompatible_source_does_not_disable_reporter_and_rejections_expose_no_
   assert_eq!(serde_json::to_value(observed).unwrap(), response);
 }
 
+fn connection_check(family: &str) -> Request {
+  let mut wire: Value = serde_json::from_slice(include_bytes!(
+    "../../../protocols/octacity-work-source-protocol/fixtures/check-v1.json"
+  ))
+  .unwrap();
+  wire["family"] = json!(family);
+  if family == "reporter" {
+    wire["message"]["command"]["payload"]["resource"]["credential"]["class"] = json!("work_reporter_write");
+  }
+  decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap()
+}
+fn advertise_checks(directory: &Path) {
+  let manifest = fs::read_to_string(directory.join("adapter.toml")).unwrap();
+  fs::write(
+    directory.join("adapter.toml"),
+    manifest.replace("cancel = true", "check = true\ncancel = true"),
+  )
+  .unwrap();
+}
+
 async fn ready(path: &Path) {
   tokio::time::timeout(Duration::from_secs(10), async {
     while !path.exists() {
@@ -139,9 +159,15 @@ async fn ready(path: &Path) {
 #[tokio::test]
 async fn cancellation_keeps_each_original_role_and_operation_and_reaps_descendants() {
   use octacity_server_work_source::HostFailureClass;
-  for request in [scan(), projection()] {
+  for request in [
+    scan(),
+    projection(),
+    connection_check("source"),
+    connection_check("reporter"),
+  ] {
     let (root, digest) = installed("provider");
     let dir = root.path().join("provider");
+    advertise_checks(&dir);
     fs::write(dir.join("hold"), "").unwrap();
     let registry = WorkAdapterRegistry::discover(root.path()).unwrap();
     let adapter = registry.resolve("provider", &digest).unwrap();
@@ -168,6 +194,11 @@ async fn cancellation_keeps_each_original_role_and_operation_and_reaps_descendan
     } else {
       ("target_projection_id", "projection_id")
     };
+    let id = if original["message"]["command"]["operation"] == "check" {
+      "check_id"
+    } else {
+      id
+    };
     assert_eq!(
       cancelled["message"]["command"]["payload"][target],
       original["message"]["command"]["payload"][id]
@@ -179,9 +210,15 @@ async fn cancellation_keeps_each_original_role_and_operation_and_reaps_descendan
 #[tokio::test]
 async fn both_roles_keep_absolute_deadlines_and_precancellation_never_starts_a_process() {
   use octacity_server_work_source::HostFailureClass;
-  for request in [scan(), projection()] {
+  for request in [
+    scan(),
+    projection(),
+    connection_check("source"),
+    connection_check("reporter"),
+  ] {
     let (root, digest) = installed("provider");
     let dir = root.path().join("provider");
+    advertise_checks(&dir);
     fs::write(dir.join("hold"), "").unwrap();
     let registry = WorkAdapterRegistry::discover(root.path()).unwrap();
     let adapter = registry.resolve("provider", &digest).unwrap();
@@ -421,4 +458,80 @@ async fn ordered_steps_require_explicit_v2_before_exposing_any_handle() {
     .await
     .unwrap();
   assert_eq!(serde_json::to_value(actual).unwrap(), response);
+}
+
+#[tokio::test]
+async fn read_only_connection_checks_require_explicit_advertisement_and_keep_each_providers_scope() {
+  for provider in ["gitlab", "jira", "custom-provider"] {
+    let (root, digest) = installed(provider);
+    let dir = root.path().join(provider);
+    for advertised in [false, true] {
+      if advertised {
+        let manifest = fs::read_to_string(dir.join("adapter.toml")).unwrap();
+        fs::write(
+          dir.join("adapter.toml"),
+          manifest.replace("cancel = true", "check = true\ncancel = true"),
+        )
+        .unwrap();
+      }
+      let registry = WorkAdapterRegistry::discover(root.path()).unwrap();
+      let adapter = registry.resolve(provider, &digest).unwrap();
+      for (family, class) in [("source", "work_source_read"), ("reporter", "work_reporter_write")] {
+        let wire = json!({"family":family,"message":{"protocol_version":1,"request_id":"check-request",
+          "command":{"operation":"check","payload":{"check_id":"a".repeat(64),"configuration_digest":"e".repeat(64),
+            "endpoint":"https://tracker.invalid/api/","resource":{"resource_id":"native-container",
+              "resource_locator":"installed-ticket-space","credential":{"class":class,"handle":"private-check-grant"}},"network_hosts":["tracker.invalid"]}}}});
+        let request = decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
+        let response = json!({"family":family,"message":{"protocol_version":1,"request_id":"check-request",
+          "outcome":{"status":"checked","payload":{"check_id":"a".repeat(64),"configuration_digest":"e".repeat(64),
+            "resource_id":"native-container","configuration":"ready","authentication":"ready","resource_access":"ready",
+            "capability":if family=="source" {"ready"} else {"unverified"},"retry_after_millis":null}}}});
+        fs::write(dir.join("response.json"), serde_json::to_vec(&response).unwrap()).unwrap();
+        let result = adapter
+          .execute(
+            request,
+            Duration::from_secs(10),
+            Duration::from_secs(1),
+            CancellationToken::new(),
+          )
+          .await;
+        if advertised {
+          assert_eq!(serde_json::to_value(result.unwrap()).unwrap(), response);
+          let captured: Value = serde_json::from_slice(&fs::read(dir.join("captured-request.json")).unwrap()).unwrap();
+          assert_eq!(captured, wire);
+        } else {
+          assert_eq!(
+            result.unwrap_err().class(),
+            octacity_server_work_source::HostFailureClass::Unsupported
+          );
+          assert!(!dir.join("captured-request.json").exists());
+        }
+      }
+    }
+  }
+}
+
+#[tokio::test]
+async fn connection_check_process_output_cannot_exceed_its_small_independent_ceiling() {
+  use octacity_server_work_source::HostFailureClass;
+  for family in ["source", "reporter"] {
+    let (root, digest) = installed("provider");
+    let directory = root.path().join("provider");
+    advertise_checks(&directory);
+    fs::write(directory.join("response.json"), vec![b' '; 8193]).unwrap();
+    let registry = WorkAdapterRegistry::discover(root.path()).unwrap();
+    let error = registry
+      .resolve("provider", &digest)
+      .unwrap()
+      .execute(
+        connection_check(family),
+        Duration::from_secs(10),
+        Duration::from_secs(1),
+        CancellationToken::new(),
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(error.class(), HostFailureClass::ProtocolFault);
+    assert!(!error.to_string().contains("private-check-grant"));
+  }
 }

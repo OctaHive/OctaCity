@@ -38,6 +38,8 @@ pub use factory::{
   FactoryRuntimeResources,
 };
 mod factory_profile_file;
+mod integration_check;
+pub use integration_check::{HostedIntegrationConnectionChecker, IntegrationCheckProfile};
 mod lifecycle;
 mod listeners;
 mod maintenance;
@@ -114,3 +116,6 @@ mod factory_command_runtime_tests;
 mod factory_delivery_file;
 #[cfg(test)]
 mod factory_evaluation_runtime_tests;
+
+#[cfg(all(test, unix))]
+mod integration_check_tests;

@@ -1,0 +1,26 @@
+{
+  "family": "source",
+  "message": {
+    "protocol_version": 1,
+    "request_id": "check-request",
+    "command": {
+      "operation": "check",
+      "payload": {
+        "check_id": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        "configuration_digest": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+        "endpoint": "https://tracker.invalid/api/",
+        "resource": {
+          "resource_id": "native-container",
+          "resource_locator": "installed-ticket-space",
+          "credential": {
+            "class": "work_source_read",
+            "handle": "private-check-grant"
+          }
+        },
+        "network_hosts": [
+          "tracker.invalid"
+        ]
+      }
+    }
+  }
+}

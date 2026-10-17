@@ -29,6 +29,9 @@ pub struct ProtocolRanges {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceCapabilities {
+  /// Explicit opt-in for bounded read-only connection diagnostics.
+  #[serde(default)]
+  pub check: bool,
   /// Explicit current installed read-grant check, independent of ticket discovery.
   #[serde(default)]
   pub authorize: bool,
@@ -50,6 +53,9 @@ pub enum IdempotencyMode {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReporterCapabilities {
+  /// Explicit opt-in for bounded read-only connection diagnostics.
+  #[serde(default)]
+  pub check: bool,
   /// Read exact current effect state without mutation.
   pub observe: bool,
   /// Converge exact installed effects.

@@ -11,6 +11,17 @@ pub(super) fn same_cancellation(original: &Request, bytes: &[u8]) -> bool {
   match (original, cancel) {
     (
       Request::Source(source::Request {
+        command: source::Command::Check(intent),
+        ..
+      }),
+      Request::Source(source::Request {
+        command: source::Command::Cancel { target_scan_id },
+        ..
+      }),
+    ) => intent.check_id == target_scan_id,
+
+    (
+      Request::Source(source::Request {
         command: source::Command::Scan(intent),
         ..
       }),
@@ -35,10 +46,12 @@ pub(super) fn same_cancellation(original: &Request, bytes: &[u8]) -> bool {
         command: reporter::Command::Cancel { target_projection_id },
         ..
       }),
-    ) => original
-      .command
-      .intent()
-      .is_some_and(|intent| intent.projection_id == target_projection_id),
+    ) => match &original.command {
+      reporter::Command::Check(intent) => intent.check_id == target_projection_id,
+      command => command
+        .intent()
+        .is_some_and(|intent| intent.projection_id == target_projection_id),
+    },
     _ => false,
   }
 }
@@ -84,6 +97,7 @@ pub(super) fn response(request: &Request, class: FailureClass) -> Response {
         source::Command::Cancel { target_scan_id } => source::Outcome::Acknowledged {
           scan_id: target_scan_id.clone(),
         },
+        source::Command::Check(intent) => source::Outcome::Checked(check_failure(intent, class)),
         source::Command::Scan(_) | source::Command::Authorize(_) => source::Outcome::Failure(unavailable()),
       },
     }),
@@ -91,6 +105,7 @@ pub(super) fn response(request: &Request, class: FailureClass) -> Response {
       protocol_version: request.protocol_version,
       request_id: request.request_id.clone(),
       outcome: match &request.command {
+        reporter::Command::Check(intent) => reporter::Outcome::Checked(check_failure(intent, class)),
         reporter::Command::Cancel { target_projection_id } => reporter::Outcome::Acknowledged {
           projection_id: target_projection_id.clone(),
         },
@@ -98,4 +113,18 @@ pub(super) fn response(request: &Request, class: FailureClass) -> Response {
       },
     }),
   }
+}
+
+fn check_failure(
+  intent: &octacity_work_source_protocol::check::CheckIntent,
+  class: FailureClass,
+) -> octacity_work_source_protocol::check::CheckReport {
+  use octacity_work_source_protocol::check::{CheckReport, CheckState};
+  let mut report = CheckReport::unverified(intent);
+  report.configuration = match class {
+    FailureClass::Unsupported => CheckState::Missing,
+    FailureClass::Transient | FailureClass::Cancelled => CheckState::Unavailable,
+    _ => CheckState::Invalid,
+  };
+  report
 }

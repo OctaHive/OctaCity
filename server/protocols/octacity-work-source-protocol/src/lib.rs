@@ -6,6 +6,7 @@ use octacity_adapter_protocol as common;
 use serde::{Deserialize, Serialize};
 
 mod access;
+pub mod check;
 pub mod reporter;
 pub mod source;
 pub use access::*;
@@ -92,6 +93,20 @@ pub enum Response {
   Reporter(reporter::Response),
 }
 impl Request {
+  /// Independent diagnostic ceiling; private discovery keeps its existing bound.
+  pub fn max_response_bytes(&self) -> usize {
+    match self {
+      Self::Source(source::Request {
+        command: source::Command::Check(_),
+        ..
+      })
+      | Self::Reporter(reporter::Request {
+        command: reporter::Command::Check(_),
+        ..
+      }) => check::MAX_CHECK_RESPONSE_BYTES,
+      _ => MAX_RESPONSE_BYTES,
+    }
+  }
   /// Validates the selected role before any protected handle is exposed.
   pub fn validate(&self) -> Result<(), ProtocolError> {
     match self {
@@ -120,7 +135,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request, ProtocolError> {
 }
 /// Decodes one closed response and verifies its original request scope.
 pub fn decode_response(bytes: &[u8], request: &Request) -> Result<Response, ProtocolError> {
-  common::require_message_size(bytes, MAX_RESPONSE_BYTES).map_err(|_| ProtocolError::LimitExceeded)?;
+  common::require_message_size(bytes, request.max_response_bytes()).map_err(|_| ProtocolError::LimitExceeded)?;
   if let Request::Source(source::Request {
     command: source::Command::Scan(intent),
     ..
