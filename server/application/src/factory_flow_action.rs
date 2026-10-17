@@ -215,6 +215,9 @@ impl crate::FactoryNodeExecutor for FactoryFlowActionAdapter {
 pub struct FactoryWorkStatusRequest {
   /// Idempotency key for one exact Flow action.
   pub operation_id: FactoryDigest,
+  /// Current independently fenced outbox dispatch authority; absent for synchronous actions.
+  /// Retries retain operation identity while receiving a new claim.
+  pub outbox_claim: Option<FactoryClaim>,
   /// Internal Work identity.
   pub work_id: WorkEnvelopeId,
   /// Source identity understood only by the selected connector.
@@ -330,6 +333,7 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
       .cancel_status(
         FactoryWorkStatusRequest {
           operation_id: request.operation_id,
+          outbox_claim: None,
           work_id: request.work_id,
           external_identity: request.external_identity.clone(),
           subject: request.subject.clone(),
@@ -373,6 +377,7 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
       .projector
       .set_status(FactoryWorkStatusRequest {
         operation_id: request.operation_id,
+        outbox_claim: None,
         work_id: request.work_id,
         external_identity: request.external_identity.clone(),
         subject: request.subject.clone(),

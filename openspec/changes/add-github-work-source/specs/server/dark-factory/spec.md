@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Pipeline Work Source input bindings are versioned and explicit
-The server SHALL support Project-owned immutable versions of pipeline Work Source input bindings selecting an installed source capability, bounded provider-specific selector, exact target Factory Configuration/root Flow, Repository source policy, input mapping and optional reporting mapping. Activating or replacing an input SHALL require authorized versioned configuration; the binding's stable identity SHALL survive ordinary replacement. Admission SHALL retain the exact binding and target versions. Provider labels SHALL remain selection data outside the Flow interpreter and SHALL NOT introduce phase-name dispatch or bypass existing eligibility, business duplicate, budget, permission or acceptance gates.
+The server SHALL support Project-owned immutable versions of pipeline Work Source input bindings selecting a reusable connection and native task resource authorized for that OctaCity Project, an installed source capability, bounded provider-specific selector, exact target Factory Configuration/root Flow, Repository source policy, input mapping and optional reporting mapping. Activating or replacing an input SHALL require authorized versioned configuration; the binding's stable identity SHALL survive ordinary replacement. Admission SHALL retain the exact binding and target versions. Provider labels SHALL remain selection data outside the Flow interpreter and SHALL NOT introduce phase-name dispatch or bypass existing eligibility, business duplicate, budget, permission or acceptance gates.
 
 #### Scenario: Operator changes the labels for a pipeline input
 - **WHEN** an operator publishes a replacement input selector with the current-version precondition
@@ -59,3 +59,22 @@ A Flow SHALL allow an operator to configure source-update actions after any sele
 #### Scenario: A stage has no configured source action
 - **WHEN** an intermediate or terminal stage completes without a selected source-update action
 - **THEN** its completion does not implicitly add, remove or infer any Issue label
+
+### Requirement: Reusable connections remain independent of pipeline routing and code repositories
+Factory SHALL let distinct pipeline inputs reuse the same authorized provider connection without copying credentials or changing their independent admission scopes. The connection, its external task container, the owning OctaCity Project and the code Repository SHALL remain distinct selections. Common connection/input contracts SHALL support open provider identities and opaque native resource references; provider-specific authentication, ticket predicates and native effects SHALL remain in installed adapters. Native support for a provider SHALL be advertised before it is offered as a usable input.
+
+#### Scenario: Several pipelines use one connection
+- **WHEN** assessment and implementation inputs select the same permitted connection and external container with different stable input identities
+- **THEN** they reuse connection credentials while preserving their own predicates, exact targets and ordinary one-admission-per-input replay
+
+#### Scenario: Task source and code host differ
+- **WHEN** compatible installed adapters and Project grants provide a task source from one provider and a code Repository from another
+- **THEN** pipeline configuration validates those resources independently without requiring a shared host, provider or external project name
+
+#### Scenario: A connection is renamed or its token is rotated
+- **WHEN** an administrator changes its display name or rotates a credential without changing its stable installation/resource scope
+- **THEN** existing inputs and admitted Work keep their identities and repeated polling does not create a new processing cycle
+
+#### Scenario: Manual input is selected
+- **WHEN** an operator creates manually entered Factory Work without configuring an integration
+- **THEN** ordinary admission remains available and does not attempt credential lookup, connection checks or provider calls

@@ -45,7 +45,11 @@ mod notifications;
 mod telemetry;
 mod vcs;
 mod webhook;
+mod work_reporter;
 mod work_source;
+pub use work_reporter::{FactoryReporterProfile, FactoryReporterProfileDraft, HostedFactoryWorkStatusProjector};
+#[cfg(test)]
+mod work_reporter_tests;
 mod workers;
 pub use work_source::*;
 #[cfg(all(test, unix))]

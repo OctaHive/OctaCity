@@ -633,12 +633,9 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
       .run
       .configuration();
     let configuration_wip_usage = configuration_wip_usage(&state.factory_runs, configuration);
-    let stored = state
-      .factory_runs
-      .get_mut(&request.run_id)
-      .ok_or(StoreError::NotFound {
-        entity: EntityKind::FactoryRun,
-      })?;
+    let stored = state.factory_runs.get(&request.run_id).ok_or(StoreError::NotFound {
+      entity: EntityKind::FactoryRun,
+    })?;
     validate_transition(stored, &request, selection.as_ref(), configuration_wip_usage)?;
     let mut next = stored.clone();
     next.append_transition(&request)?;
@@ -646,7 +643,8 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
       version: next.run.version(),
       current: next.current.clone(),
     };
-    *stored = next;
+    crate::factory_source_testing::record_projection_intents(&mut state, &next, &request)?;
+    state.factory_runs.insert(request.run_id, next);
     Ok(outcome)
   }
 

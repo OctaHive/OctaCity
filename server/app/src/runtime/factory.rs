@@ -20,6 +20,37 @@ pub struct FactoryRuntimeResources {
 }
 
 impl FactoryRuntimeResources {
+  /// Explicitly installs provider-neutral verified Reporter profiles through the existing outbox.
+  /// Construction performs no dependency I/O; manual intake and ordinary Builds require no profiles.
+  pub fn work_reporter_dispatcher(
+    &self,
+    profiles: Vec<super::FactoryReporterProfile>,
+    registry: Arc<octacity_server_work_source::WorkAdapterRegistry>,
+    settings: octacity_server_application::FactoryReporterWorkerSettings,
+    timeout: std::time::Duration,
+    grace: std::time::Duration,
+    cancellation: tokio_util::sync::CancellationToken,
+  ) -> Result<Arc<dyn octacity_server_application::FactoryOutboxDispatcher>, FactoryRuntimeInstallationError> {
+    let capabilities = profiles
+      .iter()
+      .map(|p| p.binding().capability.clone())
+      .collect::<std::collections::BTreeSet<_>>();
+    let projector = super::HostedFactoryWorkStatusProjector::new(
+      self.runs.clone(),
+      registry,
+      profiles,
+      Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      timeout,
+      grace,
+      cancellation,
+    )
+    .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+    let projector = Arc::new(projector) as Arc<dyn octacity_server_application::FactoryWorkStatusProjector>;
+    self.work_status_dispatcher(
+      capabilities.into_iter().map(|key| (key, projector.clone())).collect(),
+      settings,
+    )
+  }
   /// Opts in to provider-neutral polling using native journals, private objects and ordinary admission.
   /// Construction does not contact a provider or resolve credentials.
   pub fn source_worker(

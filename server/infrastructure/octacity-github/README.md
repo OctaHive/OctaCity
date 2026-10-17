@@ -1,8 +1,8 @@
 # Single GitHub provider plugin
 
-`octacity-github` owns GitHub provider translation. Delivery and read-only Work
-Source listing share this package, installation and SDK transport. Repository
-read and Work Reporter effects extend the same provider. Their protocols and
+`octacity-github` owns GitHub provider translation. Delivery, read-only Work
+Source listing and Work Reporter effects share this package, installation and
+SDK transport. Their protocols and
 credential classes remain independent; automatic intake and a concrete reporter
 are being implemented by the `add-github-work-source` change.
 
@@ -54,7 +54,7 @@ This module performs configuration validation and pure matching. Source/Reporter
 process contracts are defined in the [Work integration protocol](../../../docs/reference/protocols/work-source-reporter-v1.md).
 The same executable recognizes their independent families and cancellation,
 validates installed Issue grants and returns normalized Source pages. Reporter
-effects remain `unsupported` until installed mappings are implemented.
+effects require a separately enabled Reporter repository, write grant and pinned mapping.
 Installed configuration publication and worker activation have their own
 implementation tasks. The provider-neutral `WorkSourceInput` holds immutable configuration
 references; future GitLab/Jira adapters own their selector and state semantics
@@ -74,6 +74,7 @@ api_base = "https://api.github.com/"
 api_version = "2026-03-10"
 credential_directory = "credentials"
 selection_directory = "selections"
+mapping_directory = "mappings"
 
 [capabilities]
 source_repositories = ["project-tickets"]
@@ -119,8 +120,123 @@ Credential contents are excluded from the digest so token rotation keeps the
 profile pin valid. Optional `api_root_certificates_pem` has the same private-CA
 bounds described below and is included in the Work digest. No network request
 is made by `GithubWorkProvider::prepare`. Cancellation requires no Work grant.
-Status effects and worker activation are subsequent tasks;
+Reporter outbox composition is an explicit trusted runtime installation;
 ordinary manual Factory intake remains independent of these installations.
+
+### Versioned status mappings
+
+`status_mapping::StatusMapping::from_config` validates adapter-owned JSON without
+credentials or provider calls. A private `mappings/<sha256(mapping.identity)>.json`
+file is selected by an opaque installed identity and pinned by SHA-256 of its
+exact bytes in the existing Reporter `mapping` reference. Replacing that file
+cannot redirect an accepted intent; its digest must match on every invocation.
+
+```json
+{
+  "config_version": 1,
+  "managed_label_groups": {
+    "editorial": ["ready / review", "needs context"],
+    "category": ["documentation"]
+  },
+  "statuses": {
+    "needs-human-eyes": {
+      "add": ["ready / review", "documentation"],
+      "remove": ["needs context"]
+    },
+    "archive": {"add": [], "remove": [], "state": "closed"},
+    "resume": {"add": [], "remove": [], "state": "open"}
+  }
+}
+```
+
+Every name is editable. Exact status lookup has no approval/classification
+vocabulary. Omitted/null state preserves the current state; only explicit `open`
+or `closed` changes it. Groups declare disjoint ownership, not automatic
+exclusivity: only the selected status's explicit additions/removals are applied.
+State-only mappings can use an empty group map without inventing managed labels.
+Labels within an effect must belong to a managed group and cannot be repeated
+or occur on both sides, using the same Unicode lowercase comparison as selectors.
+Unknown fields/versions/states, duplicate group/status keys, overlapping groups,
+blank/control/oversized names and unmanaged labels are rejected. Literal `.` and
+`..` labels are unsupported because URL dot-segment normalization cannot safely
+address their individual removal endpoints.
+
+Local bounds are 64 KiB per document, 32 groups, 64 labels per group, 128 managed
+labels overall, 128 statuses, 64 additions/removals per status and 256 UTF-8 bytes
+per name/value. Installed mapping files/directories use the same private-file,
+regular-file and confinement checks as selectors. Source-only installations
+need no mapping directory.
+
+`observe` and `project` require the independent Issue-write grant and verify the
+native repository id, stable Issue id and human-facing number. Pull requests are
+rejected. Before any write, every label mentioned by the selected effect is
+checked against the repository; missing labels require operator repair, never
+automatic creation. The adapter uses GitHub's scoped
+[add/remove label endpoints](https://docs.github.com/en/rest/issues/labels)
+and optional [Issue state update](https://docs.github.com/en/rest/issues/issues#update-an-issue),
+preserving unrelated labels. It reads at most 100 current Issue labels and
+rejects incomplete/paginated observations without following provider URLs.
+Projection skips already satisfied effects and rereads the Issue and its labels
+before returning an exact `applied` receipt; a mismatch returns `conflict`.
+Observation is read-only and returns whether the pinned effects currently match.
+Transport retains bounded bodies, configured API/TLS trust, no redirects or SDK
+retries, closed failures and rate-limit hints. Host timeout/cancellation bounds
+the original operation. Multi-request writes are not atomic.
+
+Tasks 4.1–4.5 supply adapter validation/native effects, recovery qualification and optional composition of
+accepted `set_status` actions through the existing outbox. The provider-neutral
+`HostedFactoryWorkStatusProjector` resolves the original Work source and exact
+`FactoryReporterProfile` binding, verifies accepted action/claim and permission
+ceilings, then inspects/applies through Reporter v2 with the original operation
+identity. The trusted runtime installer can use
+`FactoryRuntimeResources::work_reporter_dispatcher`; construction performs no
+provider or credential I/O. Retries retain their original action deadline and
+finite attempt policy, honoring provider retry delays as lower bounds.
+Controlled HTTPS peers verify response loss after each removal/addition/state
+update, partial convergence and a fresh native process recovering the same intent.
+A lost, malformed or oversized successful write body, or invalid final read-back,
+leaves confirmation retryable under the original outbox policy. Every retry first
+observes; completed effects are skipped and unrelated labels remain untouched.
+Missing or invalid Project process responses are likewise uncertain, while an
+invalid Observe response cannot authorize a write. Exhaustion records failed
+reporting without undoing external effects or accepted Factory history.
+Reporter v2 advertises `max = 2` in `[protocol.reporter]`; Source remains v1.
+The hosted Factory bridge requires v2 without downgrade. Read-only `inspect`
+returns opaque managed fields and conditional steps; `apply` rechecks the original
+intent and current managed snapshot, then performs at most one DELETE, POST or
+PATCH and rereads the effects. It rejects consumed/drifted step tokens. Unrelated
+human labels do not invalidate the conditional snapshot and are never replaced.
+All members of an affected managed group must resolve to positive unique native
+repository label ids before any write. Each v2 invocation reads one bounded
+100-label repository catalog page and resolves selected labels absent from that
+page through exact-name lookups. It neither follows catalog pagination nor
+retains a cache across invocations, so fresh Issue reads and conditional checks
+remain unchanged. A four-invocation inspect/inspect/apply/inspect cycle for one
+change in a 64-label group uses 19 HTTP requests in the controlled peer.
+Field identities include both native label
+ids and normalized name aliases, preserving overlap across rename or same-name
+recreation. Every field also includes the canonical API base, native repository
+id and stable Issue id, independent of installation, credentials and mapping
+versions. Issue state is a separate field. Native ids/name drift in the managed
+Issue snapshot fails closed. These details remain private to this adapter.
+
+Durable per-item acceptance order, field ownership and unresolved write permits
+are shared across input bindings and installations by the Factory store.
+Confirmed typed rejections release their write permit; unknown remote completion
+retains its hazard. Every step is fenced;
+newest-state reconciliation handles known late old writes within original bounds.
+Unknown completion after expiry is an explicit conflict, not proof of remote
+quiescence. No remote compare-and-swap is claimed. Stage-local contracts qualify distinct
+configured success/escalation/failure effects before overall pipeline completion,
+nested-stage provenance and retry reuse. The native executable qualifies different
+arbitrary values within one pinned mapping, including removal-only effects and
+optional state change while preserving unrelated labels. A stage with no configured
+action writes nothing. Integration administration and management/Console authoring
+retain their subsequent tasks.
+Factory and the Work wire protocol retain opaque provider identities and arbitrary
+statuses, so GitLab, Jira and other adapters can own their native effects without
+adding GitHub labels or Issue-state enums to the shared execution model. Manual
+Factory admission remains available without a Source or Reporter installation.
 
 ### Read-only Issue pages
 

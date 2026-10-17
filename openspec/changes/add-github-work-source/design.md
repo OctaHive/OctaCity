@@ -2,12 +2,13 @@
 
 See [proposal.md](proposal.md) for motivation and the [GitHub source contract](specs/server/github-work-source/spec.md) for observable behavior.
 
-Observed implementation boundaries:
+Implementation baseline and remaining seams:
 
-- `server/application/src/factory_admission.rs` currently accepts `AdmitManualFactoryWorkCommand`, probes replay before repository resolution and publishes through `FactoryAdmissionStore`. It hardcodes the `manual` source, so an installed connector cannot safely masquerade as a manual caller.
+- `server/application/src/factory_admission.rs` preserves manual admission and replay-before-resolution; tasks 1–4.4 have added separately authorized source admission and reporting without changing manual identity.
 - `server/core/octacity-server-store/src/factory_admission_model.rs` already scopes external identities by source and accepted security scope and retains immutable admission intent. Extend that authority; do not add a second deduplication database or reimplement the pipeline's business duplicate analysis.
 - `server/application/src/factory_work_status_outbox.rs` already dispatches accepted `set_status` effects under independent outbox fences and retry policy through `FactoryWorkStatusProjector`.
-- `server/infrastructure/octacity-github` currently implements the Delivery protocol, private installed configuration and credentials, pinned Octocrab transport, and bounded verified process execution. It does not read Issues or implement a Work Reporter.
+- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Operator-installed Work configuration and token files exist; reusable connection/Project-access management and administrative secret setup remain to be implemented.
+- Existing VCS configuration uses integration identities and private credential handles, while the secret domain separates logical references from transient values. Reuse these contracts where applicable; do not expose Job-secret delegation as authority to manage provider credentials.
 - `ui/src/features/factory/ConfigurationEditor.tsx` already selects visible Factory dependencies through generated REST types. Add an input section there or in its adjacent configuration detail rather than create a second pipeline designer.
 - `ui/src/features/factory/FlowGraphEditor.tsx` and `FlowBindings.tsx` already author ordinary trusted-action bindings; use those surfaces for stage-local source effects.
 
@@ -17,6 +18,7 @@ The existing [extension boundaries](../../../docs/architecture/factory-extension
 
 **Goals:**
 
+- Configure a reusable provider connection once, explicitly grant selected resources/capabilities to OctaCity Projects, and select it from multiple pipelines without copying secrets.
 - Attach an operator-configured Issue source to a pipeline input and make its selectors, exact target and reporting effects inspectable before activation.
 - Support the same Issue across independently configured assessment and implementation inputs while reusing existing admission, eligibility, duplicate handling, Flow execution and reporting.
 - Keep GitHub payloads and network access in the GitHub provider; retain authorization and durable orchestration in the server.
@@ -25,13 +27,14 @@ The existing [extension boundaries](../../../docs/architecture/factory-extension
 
 - No hardcoded labels, universal approval vocabulary, defect/feature dispatcher, automatic model decision, or new Flow primitive.
 - No webhook ingress, GitHub Projects board/status-field API, Issue comment/attachment crawling, automatic label creation, arbitrary search-query language, or cross-forge implementation in this slice. Polling plus Issue labels and optional open/closed state supplies the requested behavior.
-- No new business duplicate detector, browser token entry, implicit re-run on an Issue edit, live paid-model qualification, automatic merge, redesign of the whole console, or manipulation of the user's running stand.
+- No new business duplicate detector, credential entry in pipeline forms, implicit re-run on an Issue edit, live paid-model qualification, automatic merge, redesign of the whole console, or manipulation of the user's running stand.
+- No general-purpose secret vault, browser plugin installation or promise of native GitLab/Jira or OAuth/App authentication in this slice. GitHub token authentication is the initial concrete administrative path; other installed adapters can advertise their own supported mechanisms.
 
 ## Decisions
 
 ### 1. A stable input binding selects an exact Factory target
 
-Introduce a Project-owned Work Source input aggregate with immutable versions and one current enabled version. Its stable identity survives selector and target-version edits. A version binds installed Source capability/configuration, repository, exact target Factory Configuration, source/base policy, bounded input mapping, selector, poll policy and optional Reporter mapping. The selected Factory Configuration already pins its root Flow closure. In this document, “pipeline input” means this entry into existing Factory execution, not a replacement for the ordinary CI/CD Pipeline aggregate.
+Introduce a Project-owned Work Source input aggregate with immutable versions and one current enabled version. Its stable identity survives selector and target-version edits. A version binds the exact authorized connection/resource and Project-access revision, installed Source capability/configuration, code Repository, exact target Factory Configuration, source/base policy, bounded input mapping, selector, poll policy and optional Reporter mapping. The reusable connection owns authentication; input selectors and Flow effects remain pipeline configuration. The selected Factory Configuration already pins its root Flow closure. In this document, “pipeline input” means this entry into existing Factory execution, not a replacement for the ordinary CI/CD Pipeline aggregate.
 
 Provider-neutral application records carry exact references and admission provenance. Typed GitHub selector configuration is validated by its installed capability; GitHub wire DTOs, issue-state enums and SDK types do not enter the Flow interpreter. Store new binding/progress facts through narrow existing-style ports, with additive PostgreSQL migrations and reusable contract tests. Factory-disabled deployments do not install or start these workers.
 
@@ -79,7 +82,7 @@ This avoids silently choosing a defect or feature pipeline when both label sets 
 
 ### 5. Polling first, with retained progress and reconciliation
 
-Extend the existing GitHub plugin with separate Source and Reporter protocol entry points, independently advertised capability versions and credential classes; reuse its common transport and verified host process mechanisms. Do not create a separate GitHub plugin per stage or allow the Delivery grant to authorize Issue operations. Source requires repository-scoped Issue-read authority; Reporter requires separately granted Issue-write authority. Secrets remain private installed handles, never Work metadata.
+Extend the existing GitHub plugin with separate Source and Reporter protocol entry points, independently advertised capability versions and credential classes; reuse its common transport and verified host process mechanisms. Do not create a separate GitHub plugin per stage or allow the Delivery grant to authorize Issue operations. Source requires repository-scoped Issue-read authority; Reporter requires separately granted Issue-write authority. Secrets resolve through private installed handles, never Work metadata. Integration administration provisions or adopts those handles through a trusted publisher; a provider installation does not itself grant Project access.
 
 Use repository Issue listing rather than unrestricted Search. GitHub's [Issues API](https://docs.github.com/en/rest/issues/issues#list-repository-issues) returns pull requests as well as Issues; reject records carrying `pull_request`. Apply local selector validation after decoding bounded responses. Pagination links are untrusted and must stay within the installed host/repository policy. Honor [GitHub retry guidance](https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api), original deadlines and finite retries.
 
@@ -93,18 +96,146 @@ Every stage's declared outcome can transition through an ordinary `trusted_actio
 
 Use the [GitHub label endpoints](https://docs.github.com/en/rest/issues/labels) to add/remove only managed labels, not replace the entire Issue label collection. Validate mapped labels using bounded repository choices and report missing/renamed labels; do not auto-create them. Multi-request projection is not atomic: retain original desired effects, inspect after unknown responses and converge partial progress. A durable per-Issue managed-group projection order shared by relevant reporters prevents a late older operation from restoring a superseded value. Recheck the current fence and latest authorized intent before each write; if an in-flight stale request lands late, reconciliation restores the newest desired state. Report unreconcilable external edits as conflicts rather than claim atomic compare-and-swap support from GitHub.
 
+Implementation of task 4.4 uses Reporter v2 read-only plans and separately fenced
+conditional single-write steps, with no downgrade to bulk v1. Each step is a
+commuting subset of the original desired effects. Providers own opaque managed
+field identities; GitHub includes native label-id and name-alias identities to
+retain overlap across rename/recreation. Native field digests namespace the
+canonical provider API instance, container and item, remaining stable across
+installations. Memory and PostgreSQL share a Project/native-container/item
+technical bucket across installations and assign an atomic
+per-item sequence with accepted action/outbox publication, independent of clocks
+or worker arrival. Immutable per-operation scopes, latest per-field heads and
+revisions, and unresolved write permits fence both mutation and final observation.
+Unknown newer scopes block older writes conservatively. Known disjoint fields
+remain independent. Unknown remote completion is not cleared merely because a
+client deadline expires; it becomes explicit conflict. Known late completion can
+release only its own permit. Valid typed definitive failures release that
+permit; unknown, invalid, cancelled or transient completion retains its hazard.
+Reconciliation never renews the original bounds.
+Legacy migration bootstrap is deterministic over retained timestamps/digests;
+historical commit order cannot be reconstructed. New acceptance uses a locked
+counter without rewriting accepted history. Bootstrap includes only configured
+status actions bound to the original source Reporter capability. Shared
+accepted-action provenance validation keeps store ordering and application
+dispatch consistent. GitHub v2 resolves affected groups through one bounded
+repository-label catalog page with exact-name fallback; no persistent cache or
+unbounded pagination is introduced.
+
 Share the existing reporting retry/outbox authority; add only the correlation/order state needed for external effects. Freeze adapter/mapping versions per intent. Neither projection completion nor GitHub labels reconstruct accepted Factory evidence. A matching downstream input still creates ordinary Work under its own gates; importing an upstream accepted artifact would require an explicit trusted provenance mapping, not interpreting the word `approved` as evidence.
 
-### 7. Guided management configuration and safe diagnostics
+### 7. Reusable integrations, Project access and pipeline selection
 
-Expose versioned bindings/groups through ordinary management commands, query and choice collections, validation and confirmed publication. Select installed resources by server-filtered aliases/references, not browser-entered tokens or raw adapter configuration. Expose typed label predicates, bounded repository label choices with explicit unavailable/missing states, input mapping and status effects. A bounded read-only preview performs real provider reads but cannot change production progress, reserve Work, write labels or create a Run.
+Use three distinct records and user journeys:
 
-Add a pipeline input section and source/reporting detail using existing Factory UI patterns. Show exact target, effective predicates, exclusive group, enabled state, safe last progress/retry, matching/disposition counts and visible Work/Run correlations. Preview exposes safe summaries rather than raw Issue bodies; errors distinguish no matches from unavailable/rate-limited or hidden data. Keep drafts in component memory, use current-version/idempotency helpers and complete English/Russian text. No redesign dependency on the separate Work-card or quickstart proposals.
+| Level | Owns | Does not select |
+| --- | --- | --- |
+| Integration connection | Stable identity, display name, open provider identity, installed adapter pin, endpoint, non-secret settings, credential references and supported capabilities | A pipeline target or its ticket predicates |
+| Project access | Exact connection/resources, permitted purposes and use/manage authorization for an OctaCity Project | Credentials or implicit access to every provider resource |
+| Pipeline input | Authorized connection/resource references, exact Factory target/code Repository, selectors, input mapping, poll policy and optional reporting effects | Authentication material or new provider authority |
 
-Extend the existing Flow action editor with typed per-outcome “labels to add / labels to remove” controls and a review of the pinned mapping and affected source. The UI must expose this at every stage, not only in pipeline input setup or final status configuration. Published action bindings remain ordinary graph nodes with the same permissions and finite outcomes as other trusted actions. Show queued/applied/exhausted reporting beside its originating stage, without delaying unrelated pipeline execution merely for external projection availability.
+The Integrations section is a reusable administration surface. Connection management
+and credential rotation require explicit integration-administration authority;
+Project-access publication requires authority over both the connection and target
+Project. Pipeline editors receive only safe choices already granted to their
+Project. A connection may serve several Projects through separate explicit grants;
+each Project may use it in several pipelines. Creation grants no implicit access.
+
+Keep provider identity open and expose only capabilities of verified installed
+adapters. GitHub is the native implementation here. Native GitLab/Jira adapters
+remain follow-ups, but common contracts/tests must accept their opaque identities
+and containers without a GitHub-specific branch in Factory. A GitHub owner/name,
+GitLab project or Jira project key is external resource context, not an OctaCity
+Project or the code Repository. Native immutable resource identity is authoritative;
+connection display names and provider resource names are not replay keys.
+
+Reuse existing VCS/Delivery references and grants where applicable, without
+changing their protocol or credential class. Task read, task update, repository
+read and Delivery remain separately granted even when shown under one connection.
+A token having remote write permission does not grant the pipeline that permission.
+
+### 8. Protected credential setup and immutable publication
+
+Integration administration supports a dedicated write-only GitHub token submission
+or adoption of an existing installed credential handle. Provider forms expose only
+advertised authentication methods. Raw values travel only in the protected secret
+submission request; they never enter ordinary connection/configuration payloads,
+returned representations, URLs, audit, logs, provider responses or Work. The UI
+keeps secret input transient, excludes it from persistence and query/mutation caches,
+and clears it after submission or leaving the form. Existing token contents cannot
+be retrieved; show configured/missing status and safe metadata only.
+
+Use a narrow credential-management port backed initially by the existing private
+provider credential-file mechanism. The trusted installation publisher owns paths,
+confinement, permissions, credential classes and bounded atomic replacement; the
+browser supplies neither paths nor executable bytes. Public connection/access
+records in the database retain only opaque credential references. Reuse existing
+logical-secret types where appropriate, but do not treat the Job grant provider as
+a provider-token vault. Managed token writes use authenticated protected transport
+and request-body redaction. Do not add a universal vault or deploy a new external
+secret service as a prerequisite. Externally installed handles remain supported
+without exporting their values to management clients.
+
+Provision private material before activating an immutable connection/profile
+version. Since database publication and private-file writes are not one transaction,
+use stable administrative operation identities, retained safe preparation state and
+bounded orphan cleanup: a partial write is never an active usable connection.
+Retries resume the same operation; replay of an old rotation returns its safe receipt
+without restoring the old token. Do not retain raw request bodies for idempotency.
+Rotation atomically replaces protected material behind the same logical purpose
+handle and preserves connection/input/item identity; it does not repin native scope
+or create Work. Endpoint, adapter, resource or capability changes require explicit
+versioned replacement and validation; they cannot redirect a pending accepted intent.
+
+Project grant revocation and connection disablement apply to subsequent protected
+operations, including retained-intent retries. Queued reporting keeps its accepted
+history and original finite policy but cannot use revoked write authority. No
+fallback credential or automatic switch to a replacement resource is allowed.
+Already admitted Work remains retained; other execution continues subject to its
+own permissions. Show dependents before retirement, retain referenced versions and
+safe audit, and collect private material only when no authorized retained consumer
+requires it. Revocation must not be undone by stale administrative replay.
+
+A connection check verifies bounded authenticated access and native resource identity
+through the verified provider. Report configuration, authentication, resource access,
+rate-limit/unavailable and capability results separately. It makes no test label,
+Issue, branch or review mutation, grants no new permission, starts no polling or
+admission and advances no production cursor. If write permission cannot be proven
+read-only, report unverified/unsupported rather than test a mutation or claim success.
+Endpoint validation and the trusted installation network ceiling precede credential
+access; arbitrary URLs, redirects and pagination cannot expand that ceiling.
+
+### 9. Guided pipeline configuration and safe diagnostics
+
+The normal path is Integrations → connection/credential setup → Project access →
+pipeline input. Pipeline forms select a permitted ready connection and native task
+container independently of the code Repository, then configure their predicates,
+exact target and effects. Show a link to connection administration for missing
+access, not a token field in the pipeline. Manual intake remains a peer choice
+requiring no provider configuration. Multiple pipelines reuse the same connection
+and logical credentials while retaining their distinct stable input identities.
+
+Expose versioned inputs/groups, connection/access choices and diagnostics through
+ordinary typed management commands, bounded queries and confirmed publication.
+Recheck current grants at validation, publication and each protected operation;
+client choices and earlier checks are not authority. A bounded source preview
+reads candidates but cannot change provider data, production cursors or admission.
+Keep task-read readiness separate from optional task-write/Delivery readiness.
+
+Use existing Factory configuration/detail patterns for effective selectors, exact
+versions, preview, source/reporting progress and visible Work/Run correlations.
+Keep drafts/preview data in memory and complete English/Russian and keyboard flows.
+The existing Flow editor exposes per-outcome label additions/removals and review of
+pinned mappings at intermediate, nested and terminal stages. No action means no
+write. Reporting progress stays associated with its originating action independently
+of overall Run completion. No Work-card or quickstart redesign is required.
 
 ## Risks / Trade-offs
 
+- [Credentials exposed by management] → Separate write-only administration, protected storage, redacted requests/receipts and UI memory-only inputs; test every read/audit/cache/error path for non-disclosure.
+- [Connection permission exceeds Project permission] → Explicit Project/resource/purpose grants checked before enumeration and every protected operation, with no implicit write access.
+- [Credential publication fails between storage and database] → Stable operation recovery, inactive preparations, atomic private replacement and bounded orphan cleanup.
+- [Revoked access or changed connection redirects pending work] → Current authorization plus retained immutable scope, safe dependency inspection and no fallback to another connection.
 - [Own label writes trigger new observations] → Stable binding-scoped admission keys and replay prevent loops; downstream bindings are intentional separate consumers.
 - [Filters change while discovery is paginated] → Pinned group/binding revisions, overlap and fair reconciliation; never treat an incomplete scan as complete.
 - [Multiple pipelines write the same status group] → Explicit managed groups, durable Issue-level ordering and conflict/convergence evidence; preserve unrelated human labels.
@@ -116,7 +247,8 @@ Extend the existing Flow action editor with typed per-outcome “labels to add /
 ## Migration Plan
 
 1. Add new input/progress/correlation state and capability contracts without altering existing manual admission identities, retained Runs or Delivery installation semantics. Test migrations and retained-row compatibility through existing store contracts.
-2. Deploy compatible server/plugin versions with source inputs disabled. Install separately scoped read/write grants and explicit repository/label mappings; expose only supported choices.
-3. Validate and preview sample inputs, then enable a controlled disposable-repository pilot with fixture assessment outputs. Verify first admission, status projection, downstream selection, restart/lost responses and ordinary CI/CD without paid model calls. Live GitHub writes require an explicitly selected test repository and credentials; no user's repository is used implicitly. Hermetic HTTPS/process conformance is required independently and is not called live account qualification.
-4. Enable real inputs only after their provider-boundary qualification and operator review. Retain exact source/plugin/configuration evidence and ordinary CI/CD regression results.
-5. Roll back by disabling inputs to stop new admissions and pausing the affected Reporter dispatch if required; retain pending intents, cursors, Work and audit. Existing Runs continue under their pinned definitions. Do not drop state or reverse externally applied labels automatically; reconcile later using the retained mapping and newest intent.
+2. Add connection/Project-access metadata and protected publication without starting workers. Explicitly adopt existing installed configurations/handles while retaining their original installation, native resource and input identities; migration must not enable inputs, widen grants or produce duplicate Work. Verify pending projections and ordinary VCS/Delivery/manual behavior.
+3. Deploy compatible server/plugin versions with source inputs disabled. Configure or adopt a named connection in Integrations, provision separate purpose credentials and explicit Project/resource grants, perform read-only checks, then select the connection at pipeline inputs. Expose only installed supported choices.
+4. Validate and preview sample inputs, then enable a controlled disposable-repository pilot with fixture assessment outputs. Verify first admission, status projection, downstream selection, restart/lost responses and ordinary CI/CD without paid model calls. Live GitHub writes require an explicitly selected test repository and credentials; no user's repository is used implicitly. Hermetic HTTPS/process conformance is required independently and is not called live account qualification.
+5. Enable real inputs only after their provider-boundary qualification and operator review. Retain exact source/plugin/configuration evidence and ordinary CI/CD regression results.
+6. Roll back by disabling inputs to stop new admissions and pausing the affected Reporter dispatch if required; retain pending intents, cursors, Work and audit. Existing Runs continue under their pinned definitions. Do not drop state or reverse externally applied labels automatically; reconcile later using the retained mapping and newest intent.

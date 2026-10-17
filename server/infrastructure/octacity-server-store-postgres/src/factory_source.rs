@@ -17,6 +17,33 @@ use sqlx::{Postgres, Transaction, types::Json};
 
 #[async_trait]
 impl FactorySourceStore for PostgresStore {
+  async fn coordinate_source_projection(
+    &self,
+    request: octacity_server_store::SourceProjectionRequest,
+  ) -> Result<octacity_server_store::SourceProjectionState, StoreError> {
+    crate::factory_source_projection::coordinate(self, request).await
+  }
+  async fn source_preparation_for_work(
+    &self,
+    project: ProjectId,
+    work: octacity_server_factory::WorkEnvelopeId,
+  ) -> Result<Option<WorkSourcePreparation>, StoreError> {
+    let documents: Vec<Vec<u8>> = sqlx::query_scalar(
+      "SELECT document FROM factory_source_preparations WHERE project_id=$1 AND work_id=$2 AND settled LIMIT 2",
+    )
+    .bind(project.as_uuid())
+    .bind(work.as_uuid())
+    .fetch_all(self.pool())
+    .await
+    .map_err(unavailable)?;
+    if documents.len() > 1 {
+      return Err(source_conflict());
+    }
+    documents
+      .first()
+      .map(|bytes| serde_json::from_slice(bytes).map_err(|_| StoreError::Unavailable))
+      .transpose()
+  }
   async fn source_issue_correlations(
     &self,
     project: ProjectId,

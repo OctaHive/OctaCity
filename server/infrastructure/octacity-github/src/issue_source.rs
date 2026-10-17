@@ -1,58 +1,16 @@
 //! Bounded GitHub DTO translation; no forge type enters Factory or the Work wire contract.
+use crate::work_api::{WorkApiFailure, read};
 use crate::{
   api,
   config::{ApiSettings, Credential},
   issue_selector::{IssueSelector, IssueState},
 };
-use http_body_util::BodyExt as _;
 use octacity_work_source_protocol::{
-  Candidate, FailureClass, MAX_RESPONSE_BYTES,
+  Candidate, FailureClass,
   source::{Page, ScanIntent},
 };
 use serde::Deserialize;
 use serde_json::Value;
-
-/// Closed transport failure; retry advice is data, never another SDK-side retry.
-pub(crate) struct SourceReadFailure {
-  pub(crate) class: FailureClass,
-  pub(crate) retry_after_millis: Option<u32>,
-}
-impl From<FailureClass> for SourceReadFailure {
-  fn from(class: FailureClass) -> Self {
-    Self {
-      class,
-      retry_after_millis: None,
-    }
-  }
-}
-fn throttled(headers: &http::HeaderMap) -> SourceReadFailure {
-  let delay = (|| {
-    let retry = match headers.get("retry-after") {
-      Some(v) => Some(v.to_str().ok()?.parse::<u64>().ok()?.checked_mul(1000)?),
-      None => None,
-    };
-    let reset = if headers.get("x-ratelimit-remaining").is_some_and(|v| v == "0") {
-      match headers.get("x-ratelimit-reset") {
-        Some(value) => {
-          let epoch = value.to_str().ok()?.parse::<u64>().ok()?.checked_mul(1000)?;
-          let now = u64::try_from(chrono::Utc::now().timestamp_millis()).ok()?;
-          Some(epoch.saturating_sub(now))
-        }
-        None => Some(60_000),
-      }
-    } else {
-      None
-    };
-    Some(retry.into_iter().chain(reset).max().unwrap_or(60_000)).filter(|v| *v <= 3_600_000)
-  })();
-  match delay {
-    Some(delay) => SourceReadFailure {
-      class: FailureClass::Transient,
-      retry_after_millis: Some(delay as u32),
-    },
-    None => FailureClass::Permanent.into(),
-  }
-}
 
 #[derive(Deserialize)]
 struct Issue {
@@ -76,7 +34,7 @@ pub(crate) async fn scan(
   credential: &Credential,
   intent: &ScanIntent,
   selectors: &[IssueSelector],
-) -> Result<Page, SourceReadFailure> {
+) -> Result<Page, WorkApiFailure> {
   let (page, context) = crate::issue_pagination::current(intent)?;
   let since = intent
     .window
@@ -184,61 +142,4 @@ pub(crate) async fn scan(
     matching_selections,
     next_cursor,
   })
-}
-async fn read(
-  client: &octocrab::Octocrab,
-  url: &url::Url,
-  version: &str,
-) -> Result<(Value, http::HeaderMap), SourceReadFailure> {
-  let request = client
-    .build_request(
-      http::Request::builder().method(reqwest::Method::GET).uri(url.as_str()),
-      None::<&Value>,
-    )
-    .map_err(|_| FailureClass::Permanent)?;
-  let request = api::pin_version(request, version).map_err(|_| FailureClass::Permanent)?;
-  let response = client.execute(request).await.map_err(|_| FailureClass::Transient)?;
-  match response.status() {
-    reqwest::StatusCode::TOO_MANY_REQUESTS => return Err(throttled(response.headers())),
-    reqwest::StatusCode::FORBIDDEN
-      if response
-        .headers()
-        .get("x-ratelimit-remaining")
-        .is_some_and(|value| value == "0")
-        || response.headers().contains_key("retry-after") =>
-    {
-      return Err(throttled(response.headers()));
-    }
-    reqwest::StatusCode::UNAUTHORIZED
-    | reqwest::StatusCode::FORBIDDEN
-    | reqwest::StatusCode::NOT_FOUND
-    | reqwest::StatusCode::UNPROCESSABLE_ENTITY => return Err(FailureClass::Permanent.into()),
-    reqwest::StatusCode::CONFLICT => return Err(FailureClass::Conflict.into()),
-    status if status.is_server_error() => return Err(FailureClass::Transient.into()),
-    reqwest::StatusCode::OK => {}
-    _ => return Err(FailureClass::ProtocolFault.into()),
-  }
-  if response
-    .headers()
-    .get("content-length")
-    .and_then(|value| value.to_str().ok())
-    .and_then(|value| value.parse::<u64>().ok())
-    .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
-  {
-    return Err(FailureClass::ProtocolFault.into());
-  }
-  let headers = response.headers().clone();
-  let mut bytes = Vec::new();
-  let mut body = response.into_body();
-  while let Some(frame) = body.frame().await {
-    let frame = frame.map_err(|_| FailureClass::Transient)?;
-    let Ok(chunk) = frame.into_data() else { continue };
-    if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
-      return Err(FailureClass::ProtocolFault.into());
-    }
-    bytes.extend_from_slice(&chunk);
-  }
-  serde_json::from_slice(&bytes)
-    .map(|value| (value, headers))
-    .map_err(|_| SourceReadFailure::from(FailureClass::ProtocolFault))
 }

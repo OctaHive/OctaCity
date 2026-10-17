@@ -155,6 +155,7 @@ pub use factory_candidate_publication::{
 };
 pub use factory_work_status_outbox::{
   FactoryOutboxDispatchSummary, FactoryOutboxDispatcher, FactoryReporterWorkerSettings, FactoryWorkStatusOutboxWorker,
+  validate_accepted_factory_status_request,
 };
 mod factory_candidate_deliverables;
 #[cfg(test)]

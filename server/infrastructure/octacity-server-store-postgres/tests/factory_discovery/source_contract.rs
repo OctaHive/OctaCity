@@ -1041,6 +1041,20 @@ async fn fenced_admission_contract(
     .await
     .unwrap();
   assert_eq!(
+    store
+      .source_preparation_for_work(input.project_id(), original.admission.work.id())
+      .await
+      .unwrap(),
+    Some(correlated.clone())
+  );
+  assert!(
+    store
+      .source_preparation_for_work(ProjectId::generate(), original.admission.work.id())
+      .await
+      .unwrap()
+      .is_none()
+  );
+  assert_eq!(
     correlated.admission.as_ref().unwrap().work_id,
     original.admission.work.id()
   );

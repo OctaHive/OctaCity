@@ -3,8 +3,9 @@
 Factory admits Work through the management application and executes an immutable
 Flow. Optional provider-neutral polling composes the verified Source process with
 the same admission journal. GitHub implements read-only discovery; GitLab/Jira
-can implement the same boundary. Concrete Reporter effects and an Octa-local JEV
-task plugin remain separate implementation changes. The GitHub Delivery capability does
+can implement the same boundary. Optional Reporter projection composes the same
+verified host with the existing outbox and durable managed-field ordering. An
+Octa-local JEV task plugin remains a separate implementation change. The GitHub Delivery capability does
 not install any of those capabilities.
 
 ## Ownership and authority
@@ -38,7 +39,8 @@ network ceilings before resolving a token. This provider-specific configuration
 adds no GitHub types to Factory; other providers own their installation formats.
 GitHub Source reads one bounded HTTPS page, applies its pinned selector locally
 and emits opaque native item identities. Pagination, provider DTOs and TLS/API
-configuration remain in that plugin. Reporter effects remain a separate integration;
+configuration remain in that plugin. GitHub Reporter implements pinned managed-label
+and optional Issue-state effects behind the same provider-neutral process boundary;
 Source activation is an explicit trusted runtime installation.
 
 ## Ticket discovery and admission
@@ -348,6 +350,108 @@ the authoritative node result. Its independent worker uses the original
 operation identity, frozen parameters, permission ceiling, deadline and retry
 budget. A lost acknowledgement is observed or replayed idempotently; retry,
 failure, or exhaustion cannot roll back or reopen the accepted node.
+
+`HostedFactoryWorkStatusProjector` binds this port to the verified Work Reporter
+host. `FactoryReporterProfile::new` content-pins the complete operator selection:
+Project, installation/capability/resource, executable digest, provider configuration,
+mapping, separate write handle/profile and required network hosts. Its exact
+binding is published as the input's optional Reporter. Token bytes never enter
+this profile, Work or the application. Retain original installed profile versions
+for pending projections; a replacement cannot silently substitute one.
+
+`source_preparation_for_work` reads the original settled Project/Work association
+from the existing source journal in memory and PostgreSQL. It returns no association
+for manual Work and never reads the current input version. The retained normalized
+snapshot supplies the original display key; missing private data fails closed
+rather than refetching mutable ticket content. Exact native resource/item identity
+and admitted Work context are checked before the mapping or grant reaches a process.
+
+`validate_accepted_factory_status_request` reconstructs only the accepted configured
+`set_status` request from the current claimed outbox row and immutable Flow record.
+The request carries its current outbox claim independently of the stable operation
+id. Pending/terminal rows, another claim, plugin, status, subject, permission set,
+budget or deadline cannot authorize a dispatch. The hosted projector requires the
+verified executable, network and secret-profile ceilings and rechecks accepted
+authority before projection. It always observes before requesting missing effects;
+the original operation, native item, provider profile and mapping are unchanged.
+
+Metadata resolution and every inspect/apply step share one finite operation window,
+narrowed by the original action/claim deadline and budget. Provider retry hints are
+lower bounds on the existing outbox retry policy, never a new attempt or deadline
+authority. Reporting failures remain local; they cannot reopen accepted Flow data
+or require a provider for manual admission. Synchronous action cancellation is
+not installed by this outbox-only projector; the verified host owns operation
+timeout/cancellation and process-tree cleanup.
+
+The trusted installer can explicitly construct the dispatcher with
+`FactoryRuntimeResources::work_reporter_dispatcher` and supply it through
+`FactoryRuntimeInstallation.outbox_dispatchers`. Construction performs no database,
+credential or provider I/O. An absent installation starts no Reporter worker.
+Controlled recovery tests cover missing/malformed Project responses, native HTTPS
+response loss after partial effects, and invalid final read-back. These uncertain
+results remain retryable within the original policy; a retry first observes the
+same intent. Invalid observations grant no write authority. Claim takeover during
+observation blocks the old owner's projection; takeover after apply or worker loss
+recovers by observation alone. Even exhaustion leaves accepted Work/Run/Flow
+records unchanged and never compensates external effects by rolling them back.
+Reporter v2 exposes opaque field digests and conditional single-write steps. The
+host never interprets native labels or states and refuses a version-1 downgrade.
+Each step applies a commuting subset of the frozen effects; nonconvergent native
+workflow transitions cannot use this contract. Current authority and the field
+order are checked before each mutation, rather than once before a bulk write.
+
+Task 4.4 adds a per-native-item sequence assigned atomically with accepted status
+publication in memory and PostgreSQL (migration 0063). Its technical bucket is
+Project plus a digest of opaque native container/item ids, shared across input
+bindings and installations. Admission and source correlation retain their
+installation-scoped identities. Per-operation immutable field metadata,
+latest per-field heads/generations and unresolved write permits remain technical
+ordering facts; accepted Flow records and the existing outbox retain authority.
+Unknown later scopes conservatively block older writes, including coincident
+opaque ids from different provider instances. Once their adapter-owned metadata
+is known, disjoint fields remain independent. Bounded journals retain at most 4096 heads and 128 unresolved
+permits per item. Hitting a bound reports conflict and grants no further write.
+
+A native observation is fenced on both sides by per-field revisions. Success
+requires stable matching effects, current ownership and known completion of
+older overlapping writes. Late old effects trigger newest-state reconciliation
+within the original deadline/output/retry bounds. An expired client deadline
+cannot prove remote completion: unresolved foreign writes remain conflicts,
+while known late completion may release only its original permit. Valid typed
+Conflict, Permanent, InvalidRequest and Unsupported responses release that
+permit; missing, invalid, cancelled or transient completion retains the hazard.
+Continuous
+human edits exhaust bounded reporting without changing Work/Run/Flow or replacing
+unrelated labels. GitHub uses native label-id and name-alias digests so renames
+and same-name recreation preserve overlap. Digests include the canonical API
+instance, native container and item, avoiding overlap between unrelated forges
+with coincident numeric ids while sharing fields across installations. Other
+providers supply their own
+opaque overlapping field identities. Native multi-request writes remain non-atomic.
+
+Migration 0063 bootstraps retained legacy accepted intents deterministically by
+their retained timestamps/digests; historical commit order cannot be recovered.
+Only the exact accepted source Reporter capability participates; unrelated
+configured status adapters are excluded. The application and stores share one
+accepted-action provenance check, including nested immutable definitions.
+Every new acceptance uses the locked counter. No Work or Flow history is rewritten.
+Tasks 4.2–4.5 are implemented/qualified. Stage-local reporting uses ordinary graph
+routes: a declared success, escalation or typed failure can select a trusted
+`set_status` action before the enclosing Flow finishes. Escalation is an arbitrary
+outcome key, not another primitive. Stage or terminal completion without a selected
+action queues nothing, including outcomes named `approved`.
+
+The outbox's `input_digest` identifies its exact accepted action record. That
+record retains the immutable definition, Flow Run, cycle and attempt. Explicit
+predecessor projections retain the source record digest/attempt and its accepted
+outcome; nested Flow parent-call identities disambiguate reused node keys. Reporting
+retry changes its independent claim, while preserving that accepted action and
+original operation. Neither successful delivery nor reporting failure advances or
+rewrites Flow. Qualification covers an update while a child Flow has not returned,
+then ordinary parent completion after reporting retry and owner reconstruction.
+Native labels/state remain behind the pinned mapping, and the shared graph/action
+contracts remain provider-neutral. Integrations administration, pipeline authoring
+and operator-facing activation retain their pending section-5 tasks.
 
 The GitHub implementation should extend the single `octacity-github` provider
 plugin with separately advertised Source, repository-read, Reporter and Delivery

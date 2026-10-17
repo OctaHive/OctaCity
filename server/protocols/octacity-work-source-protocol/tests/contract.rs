@@ -342,3 +342,51 @@ fn source_access_checks_are_read_scoped_and_cannot_substitute_container_or_profi
     serde_json::json!("work_reporter_write");
   assert!(octacity_work_source_protocol::decode_request(&serde_json::to_vec(&request).unwrap()).is_err());
 }
+
+#[test]
+fn ordered_reporter_negotiates_inspection_and_one_opaque_step_without_bulk_writes() {
+  let mut inspect: Value = serde_json::from_slice(include_bytes!("../fixtures/project-v1.json")).unwrap();
+  inspect["message"]["protocol_version"] = json!(2);
+  inspect["message"]["command"]["operation"] = json!("inspect");
+  let request = decode_request(&serde_json::to_vec(&inspect).unwrap()).expect("ordered inspection is supported");
+  let receipt = json!({"projection_id":"c".repeat(64),"resource_id":"native-container","item_id":"native-item",
+    "configuration_digest":"e".repeat(64),"mapping":{"identity":"arbitrary-installed-effects","sha256":"d".repeat(64)},
+    "status":"needs-human-eyes", "matches":false});
+  let plan = json!({"receipt":receipt,"fields":["a".repeat(64)],"steps":[{"fields":["a".repeat(64)],"token":"private-provider-step"}]});
+  let response = json!({"family":"reporter","message":{"protocol_version":2,"request_id":"projection-request-1",
+    "outcome":{"status":"planned","payload":plan}}});
+  assert!(decode_response(&serde_json::to_vec(&response).unwrap(), &request).is_ok());
+  let mut apply = inspect.clone();
+  apply["message"]["command"] =
+    json!({"operation":"apply","payload":{"intent":inspect["message"]["command"]["payload"],"step":plan["steps"][0]}});
+  let step = decode_request(&serde_json::to_vec(&apply).unwrap()).expect("one opaque step is supported");
+  assert!(!format!("{step:?}").contains("private-provider-step"));
+  let mut progressed = response.clone();
+  progressed["message"]["outcome"]["status"] = json!("progressed");
+  assert!(decode_response(&serde_json::to_vec(&progressed).unwrap(), &step).is_ok());
+  assert!(decode_response(&serde_json::to_vec(&progressed).unwrap(), &request).is_err());
+  for (pointer, value) in [
+    ("/message/outcome/payload/fields", json!(["not-a-field-digest"])),
+    ("/message/outcome/payload/steps/0/fields", json!(["b".repeat(64)])),
+    ("/message/outcome/payload/steps/0/token", json!("x".repeat(8193))),
+    ("/message/outcome/payload/receipt/matches", json!(true)),
+  ] {
+    let mut invalid = response.clone();
+    *invalid.pointer_mut(pointer).unwrap() = value;
+    assert!(
+      decode_response(&serde_json::to_vec(&invalid).unwrap(), &request).is_err(),
+      "{pointer}"
+    );
+  }
+  inspect["message"]["command"]["operation"] = json!("project");
+  assert!(
+    decode_request(&serde_json::to_vec(&inspect).unwrap()).is_err(),
+    "v2 cannot request an unguarded multi-write operation"
+  );
+  inspect["message"]["protocol_version"] = json!(1);
+  inspect["message"]["command"]["operation"] = json!("inspect");
+  assert!(
+    decode_request(&serde_json::to_vec(&inspect).unwrap()).is_err(),
+    "v1 remains closed"
+  );
+}

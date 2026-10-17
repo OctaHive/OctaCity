@@ -84,7 +84,7 @@ Reporting SHALL use the existing durable independently fenced projection mechani
 - **THEN** observation detects the mismatch and bounded reconciliation restores the newest desired projection or records an explicit conflict/exhaustion without rewriting Factory history
 
 ### Requirement: Capabilities and credentials remain independently scoped
-The installed GitHub provider SHALL advertise Source and Reporter separately from Delivery, enforce repository and network ceilings before accessing protected material, and reject credential-class substitution. Credentials SHALL remain in private operator-managed files and SHALL NOT appear in Work inputs, provider responses, REST, browser state, logs or diagnostics. A Source or Reporter outage SHALL remain scoped to its Factory inputs/effects and SHALL NOT disable ordinary Builds or require those capabilities for manual admission.
+The installed GitHub provider SHALL advertise Source and Reporter separately from Delivery, enforce repository and network ceilings before accessing protected material, and reject credential-class substitution. Credentials SHALL remain in protected server-side storage resolved through scoped private handles. Existing operator-installed private files SHALL remain supported. Management SHALL accept raw credentials only as transient input to the authorized write-only integration credential operation. Raw credentials SHALL NOT appear in Work inputs, provider responses, ordinary REST representations, persisted browser state, logs, audit or diagnostics. Pipeline editors SHALL select authorized connection/resource references without receiving or entering tokens. A Source or Reporter outage SHALL remain scoped to its Factory inputs/effects and SHALL NOT disable ordinary Builds or require those capabilities for manual admission.
 
 #### Scenario: Delivery credential is presented as an Issue source credential
 - **WHEN** a caller tries to use Delivery authority to read tickets or update labels without the separately permitted capability
@@ -93,3 +93,22 @@ The installed GitHub provider SHALL advertise Source and Reporter separately fro
 #### Scenario: GitHub source is not installed
 - **WHEN** a deployment runs ordinary Builds or manually admitted Factory Work without a GitHub input
 - **THEN** those workflows remain available without GitHub credentials or polling
+
+### Requirement: Managed GitHub connections preserve installed scope and identity
+GitHub connection administration SHALL configure a named connection using the installed adapter, permitted API endpoint, token authentication and explicitly selected native repository identities with owner/name display context. It SHALL provision or adopt independently scoped private credentials for enabled purposes and expose safe configuration/access readiness without returning token values. Repository enumeration and connection checks SHALL remain bounded, respect the trusted network ceiling and verify native repository identity before protected use. Unsupported authentication methods or capabilities SHALL NOT be advertised as usable. Native GitLab/Jira implementations SHALL NOT be implied by common connection metadata alone.
+
+#### Scenario: Administrator provisions an Issue-read connection
+- **WHEN** an authorized administrator submits a token for an allowed GitHub repository and enables only task reading
+- **THEN** the connection can be granted to an OctaCity Project for Issue discovery without granting Reporter or Delivery authority
+
+#### Scenario: Existing installed configuration is adopted
+- **WHEN** an administrator explicitly adopts a private installed GitHub configuration and scoped handles
+- **THEN** the managed connection retains its installation/native resource identities, requires no token read-back, and does not enable inputs or duplicate existing Work
+
+#### Scenario: Token rotates while reporting is pending
+- **WHEN** a credential is rotated behind the same permitted purpose handle
+- **THEN** pending reporting retains its original operation, native item, profile and mapping and uses the current permitted credential without resetting deadlines or creating Work
+
+#### Scenario: Connection or write access is revoked
+- **WHEN** a connection is disabled or its Project's task-update grant is revoked before the next dispatch
+- **THEN** that dispatch performs no new native mutation or credential fallback, while accepted Factory history remains retained under the original bounded reporting policy

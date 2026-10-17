@@ -1,31 +1,30 @@
 ## Why
 
-Factory currently accepts manual Work and can publish GitHub delivery branches and pull requests, but cannot discover GitHub Issues or project configured Work statuses back to them. Operators need to attach label-selected Issue sources to pipeline inputs, including an assessment pipeline followed by separate approved defect and feature pipelines, without implementing another lifecycle or duplicate-detection engine.
+Factory needs configurable external task sources and reusable provider connections so operators can configure access once and select it for several pipelines. GitHub Issues is the first native implementation; the connection and Project-access model must accommodate GitLab, Jira and other providers while preserving manual Factory intake and existing execution authority.
 
 ## What Changes
 
-- Add versioned, Project-owned Work Source input bindings that select an installed GitHub repository, bounded Issue-state and label predicates, and an exact target Factory Configuration/root Flow. An input belongs to its target pipeline; there is no deployment-wide hardcoded triage dispatcher.
-- Support all-label, any-label and excluded-label sets, including an explicitly unrestricted label selection. Supply a two-step example: assess previously unassessed Issues and report `approved` or `rejected`; independently admit `approved + bug` and `approved + feature-request` into different pipelines.
-- Extend the existing `octacity-github` provider plugin with independently advertised Source and Reporter capabilities, separate scoped credentials and protocol contracts, and bounded restart-safe polling. Webhook ingress is deferred.
-- Reuse authoritative Work admission, replay, repository resolution, configured eligibility/business duplicate checks, and the existing reporting outbox. Use a stable input-binding identity so the same Issue can enter assessment and implementation once each without polls, label churn or configuration replacement creating more runs.
-- Let every configured stage/outcome, including intermediate and nested stages, select a source-update action with explicit label additions/removals. Reuse ordinary trusted actions and the reporting outbox; do not restrict updates to pipeline completion or assessment. Translate arbitrary configured `set_status` values through exact managed-label mappings and optional Issue open/close effects; preserve unrelated labels and observe uncertain writes before replay.
-- Add typed management REST and guided console input configuration, validation/preview and safe Source/Reporter diagnostics. Credentials remain operator-installed; existing manual intake and ordinary CI/CD remain independent.
+- Add a dedicated provider-neutral **Integrations** section for named connections, installed provider selection, service endpoint, authentication, permitted external resources and safe connection checks. Add a separate privileged write-only secret setup/rotation path; pipeline forms select references and never request credentials.
+- Separate reusable connection configuration, explicit access for an OctaCity Project, and pipeline input configuration. Keep external ticket containers independent of the code Repository; a future Jira task source can target code in GitLab. Discover only installed capabilities and authorize task reads, task updates, repository reads and Delivery independently.
+- Add versioned Project-owned Work Source inputs selecting an authorized connection/resource, bounded predicates, exact Factory Configuration/root Flow and explicit input/reporting mappings. Preserve stable input identity across replacement and credential rotation; reuse ordinary admission, eligibility/business duplicate checks and the reporting outbox.
+- Extend the existing `octacity-github` plugin with independently scoped Source/Reporter capabilities and bounded restart-safe polling. GitHub is the concrete provider in this change; native GitLab/Jira adapters, additional authentication mechanisms and webhook ingress remain follow-ups.
+- Support arbitrary all/any/excluded labels and unrestricted selection, explicit exclusive groups and editable assessment-to-implementation examples. Let any configured stage/outcome enqueue pinned source effects through ordinary trusted actions, preserving unrelated labels and reconciling uncertain or superseded writes without changing accepted Factory history.
+- Add typed management REST, guided connection/access/input configuration, read-only preview and safe diagnostics. Existing manually installed credentials remain usable through an explicit adoption path. Manual intake and ordinary CI/CD remain independent of integrations.
 
 ## Capabilities
 
 ### New Capabilities
 
-- `server/github-work-source`: Installed GitHub Issue discovery, label selectors, bounded polling, normalized intake, pipeline-scoped replay and non-authoritative status reporting.
+- `server/github-work-source`: GitHub Issue discovery, scoped credentials, bounded polling, immutable intake and non-authoritative reporting.
 
 ### Modified Capabilities
 
-- `server/dark-factory`: Define stable pipeline input bindings, cross-pipeline Issue identity and source-update actions after arbitrary stage outcomes using existing admission and lifecycle authority.
-- `server/rest-control-plane`: Expose versioned source bindings, safe provider choices, bounded previews and connector diagnostics.
-- `ui/operator-console`: Configure source selectors at pipeline inputs and label-update actions on individual stage outcomes through typed guided forms.
+- `server/dark-factory`: Stable pipeline inputs referencing reusable authorized connections, distinct ticket/code resources, replay and stage-local source effects.
+- `server/rest-control-plane`: Versioned connection and Project-access management, protected secret submission/rotation, safe capability/resource choices, previews and diagnostics.
+- `ui/operator-console`: Dedicated Integrations administration and Project access, with reusable connection selection at pipeline inputs and typed stage-local effects.
 
 ## Impact
 
-- Extend `server/infrastructure/octacity-github`, common verified adapter/process contracts, the server composition root, application admission/status seams, and PostgreSQL-backed source progress/binding persistence as needed.
-- Extend management OpenAPI, generated clients, REST fixtures and `ui/src/features/factory` configuration surfaces; keep provider wire DTOs and credentials outside Factory core and the browser.
-- Add public-boundary TDD coverage for selectors, staged intake, existing replay/duplicates, reporter convergence, scopes, restart and failures; update operations/reference documentation and retain a controlled provider-boundary pilot.
-- No new provider SDK is planned: reuse the existing pinned Octocrab transport. No change to Agent execution, Flow primitives, paid model qualification or the user's running local stand.
+- Extend existing verified provider/process contracts, composition, application/store ports and additive PostgreSQL persistence for public connection/access metadata. Keep raw secrets in protected server-side credential storage, separate from serializable configuration, Work, audit and ordinary API responses.
+- Extend management OpenAPI, generated clients, REST fixtures, console navigation and integration/Factory forms. Test authorization, secret redaction, atomic publication/recovery, rotation/revocation, provider-neutral reuse and existing admission/Delivery behavior through public-boundary TDD.
+- Reuse the pinned GitHub transport and private credential installation mechanisms; do not introduce a general-purpose secret vault, provider SDK per stage, new Flow primitives, paid-model calls or changes to the user's running stand.

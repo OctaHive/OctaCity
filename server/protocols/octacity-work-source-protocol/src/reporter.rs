@@ -3,6 +3,8 @@ use crate::*;
 
 /// Supported Reporter version; Source and Delivery negotiate independently.
 pub const PROTOCOL_VERSION: u16 = 1;
+/// Single-write planning contract; the host checks durable authority between steps.
+pub const ORDERED_PROTOCOL_VERSION: u16 = 2;
 /// Exact request to observe/project one original accepted status intent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -23,6 +25,10 @@ pub struct Request {
   deny_unknown_fields
 )]
 pub enum Command {
+  /// Read current effects and opaque, conditional single-write steps.
+  Inspect(Box<ProjectionIntent>),
+  /// Execute at most one previously inspected conditional native write.
+  Apply(Box<StepRequest>),
   /// Inspect current effects before retrying an uncertain projection.
   Observe(Box<ProjectionIntent>),
   /// Converge only the pinned configured effects for the original item.
@@ -32,6 +38,97 @@ pub enum Command {
     /// Original trusted projection identity.
     target_projection_id: String,
   },
+}
+impl Command {
+  /// Original immutable intent shared by all non-cancellation operations.
+  pub fn intent(&self) -> Option<&ProjectionIntent> {
+    match self {
+      Self::Observe(intent) | Self::Project(intent) | Self::Inspect(intent) => Some(intent),
+      Self::Apply(request) => Some(&request.intent),
+      Self::Cancel { .. } => None,
+    }
+  }
+}
+/// One provider-owned conditional write, with no native DTOs in the host.
+/// Every step applies only a subset of the pinned desired effects. Steps of
+/// the same original projection must commute, including late uncertain writes;
+/// temporary or nonconvergent route changes cannot use this contract.
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectionStep {
+  /// Canonical opaque identities of all overlapping managed fields affected by this write.
+  pub fields: Vec<String>,
+  /// Private bounded provider token, pinned to the original intent and observed managed values.
+  pub token: String,
+}
+impl std::fmt::Debug for ProjectionStep {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("ProjectionStep")
+      .field("fields", &self.fields)
+      .finish_non_exhaustive()
+  }
+}
+impl ProjectionStep {
+  /// Validates bounds without interpreting the provider's private token.
+  pub fn validate(&self) -> Result<(), ProtocolError> {
+    fields(&self.fields, false)?;
+    common::require_bounded_text(&self.token, 8192).map_err(|_| ProtocolError::Invalid)
+  }
+}
+/// A single write authorized by the host after checking the current outbox fence and order.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StepRequest {
+  /// Frozen accepted operation and provider scope.
+  pub intent: ProjectionIntent,
+  /// Exact conditional step returned by inspection.
+  pub step: ProjectionStep,
+}
+/// Bounded read-only plan. A plan is provider data, never permission to write.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectionPlan {
+  /// Exact original scope and observed effect match.
+  pub receipt: ProjectionReceipt,
+  /// Opaque identities, stable across mappings/installations for the same native item.
+  /// Namespace the native provider instance/container/item to isolate coincident ids.
+  pub fields: Vec<String>,
+  /// Each entry performs at most one write after a separate host authorization.
+  pub steps: Vec<ProjectionStep>,
+}
+impl ProjectionPlan {
+  /// Rejects substitutions, unbounded plans and steps outside the declared field scope.
+  pub fn validate_for(&self, intent: &ProjectionIntent) -> Result<(), ProtocolError> {
+    self.receipt.validate_for(intent)?;
+    fields(&self.fields, true)?;
+    if self.steps.len() > 256
+      || self.receipt.matches != self.steps.is_empty()
+      || self.steps.iter().map(|step| step.token.len()).sum::<usize>() > 262_144
+    {
+      return Err(ProtocolError::Invalid);
+    }
+    let mut tokens = std::collections::BTreeSet::new();
+    for step in &self.steps {
+      step.validate()?;
+      if !tokens.insert(&step.token) || step.fields.iter().any(|field| !self.fields.contains(field)) {
+        return Err(ProtocolError::Invalid);
+      }
+    }
+    Ok(())
+  }
+}
+fn fields(values: &[String], empty: bool) -> Result<(), ProtocolError> {
+  if (!empty && values.is_empty()) || values.len() > if empty { 512 } else { 256 } {
+    return Err(ProtocolError::Invalid);
+  }
+  let mut seen = std::collections::BTreeSet::new();
+  for value in values {
+    digest(value)?;
+    if !seen.insert(value) {
+      return Err(ProtocolError::Invalid);
+    }
+  }
+  Ok(())
 }
 /// Frozen logical projection; native labels/transitions stay in the installed mapping.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -70,13 +167,21 @@ impl ProjectionIntent {
 impl Request {
   /// Rejects wrong role/version or invalid authority before provider execution.
   pub fn validate(&self) -> Result<(), ProtocolError> {
-    if self.protocol_version != PROTOCOL_VERSION {
+    if !matches!(self.protocol_version, PROTOCOL_VERSION | ORDERED_PROTOCOL_VERSION) {
       return Err(ProtocolError::IncompatibleVersion);
     }
     field(&self.request_id)?;
     match &self.command {
-      Command::Observe(intent) | Command::Project(intent) => intent.validate(),
+      Command::Observe(intent) | Command::Project(intent) if self.protocol_version == PROTOCOL_VERSION => {
+        intent.validate()
+      }
+      Command::Inspect(intent) if self.protocol_version == ORDERED_PROTOCOL_VERSION => intent.validate(),
+      Command::Apply(request) if self.protocol_version == ORDERED_PROTOCOL_VERSION => {
+        request.intent.validate()?;
+        request.step.validate()
+      }
       Command::Cancel { target_projection_id } => digest(target_projection_id),
+      _ => Err(ProtocolError::Invalid),
     }
   }
 }
@@ -95,6 +200,10 @@ pub struct Response {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", content = "payload", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Outcome {
+  /// Read-only native effects and conditional steps; this grants no write authority.
+  Planned(ProjectionPlan),
+  /// One step completed; the host must recheck order and inspect before another write.
+  Progressed(ProjectionPlan),
   /// Safe classified failure without raw provider diagnostics.
   Failure(Failure),
   /// Independently observed current effect state.
@@ -155,6 +264,8 @@ impl Response {
     .map_err(|_| ProtocolError::Invalid)?;
     match (&request.command, &self.outcome) {
       (_, Outcome::Failure(failure)) => failure.validate(),
+      (Command::Inspect(intent), Outcome::Planned(plan)) => plan.validate_for(intent),
+      (Command::Apply(step), Outcome::Progressed(plan)) => plan.validate_for(&step.intent),
       (Command::Observe(intent), Outcome::Observed(receipt)) => receipt.validate_for(intent),
       (Command::Project(intent), Outcome::Applied(receipt)) if receipt.matches => receipt.validate_for(intent),
       (Command::Cancel { target_projection_id }, Outcome::Acknowledged { projection_id })

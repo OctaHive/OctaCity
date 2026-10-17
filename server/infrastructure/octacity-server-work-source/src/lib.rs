@@ -140,14 +140,16 @@ impl InstalledWorkAdapter {
           .reporter
           .ok_or_else(|| self.unsupported("reporter"))?;
         ProtocolRange {
-          min: reporter::PROTOCOL_VERSION,
-          max: reporter::PROTOCOL_VERSION,
+          min: request.protocol_version,
+          max: request.protocol_version,
         }
         .negotiate(protocol)
         .map_err(|_| self.unsupported("reporter"))?;
         let intent = match &request.command {
           reporter::Command::Observe(intent) if capabilities.observe => intent,
+          reporter::Command::Inspect(intent) if capabilities.observe => intent,
           reporter::Command::Project(intent) if capabilities.project => intent,
+          reporter::Command::Apply(step) if capabilities.project => &step.intent,
           reporter::Command::Cancel { .. } if capabilities.cancel => return Ok(None),
           _ => return Err(self.unsupported("reporter operation")),
         };

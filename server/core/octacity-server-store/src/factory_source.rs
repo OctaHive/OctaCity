@@ -101,6 +101,21 @@ pub fn source_conflict() -> StoreError {
 /// Trusted persistence seam; callers resolve and authorize installed capabilities before publication.
 #[async_trait]
 pub trait FactorySourceStore: crate::FactoryAdmissionStore {
+  /// Coordinates technical single-write reporting under durable source-item ordering.
+  /// Backends without this capability fail closed without contacting a provider.
+  async fn coordinate_source_projection(
+    &self,
+    _request: crate::SourceProjectionRequest,
+  ) -> Result<crate::SourceProjectionState, StoreError> {
+    Err(StoreError::Unavailable)
+  }
+  /// Resolves the original settled source input for this exact Project-owned Work.
+  /// Manual/unassociated Work returns None; current input replacement is irrelevant.
+  async fn source_preparation_for_work(
+    &self,
+    project: ProjectId,
+    work: octacity_server_factory::WorkEnvelopeId,
+  ) -> Result<Option<WorkSourcePreparation>, StoreError>;
   /// Lists bounded safe stage associations without reading private candidate snapshots.
   async fn source_issue_correlations(
     &self,
@@ -514,6 +529,19 @@ pub struct PublishSourcePreparationIntent {
   pub now: octacity_server_domain::Timestamp,
 }
 impl WorkSourcePreparation {
+  /// Technical ordering bucket shared across installations for the same opaque native ids.
+  /// Admission/correlation retains its installation scope. Adapter field digests must
+  /// additionally namespace the actual provider instance, isolating coincident ids.
+  pub fn projection_item(&self) -> FactoryDigest {
+    FactoryDigest::sha256(
+      "octacity.factory.projection-item.v1",
+      &[
+        self.item.resource.as_str().as_bytes(),
+        self.item.item.as_str().as_bytes(),
+      ],
+    )
+  }
+
   /// Existing admission identity; definition versions and observation content are excluded.
   pub fn admission_identity(&self, security_scope: crate::ManagementSecurityScope) -> crate::FactoryAdmissionIdentity {
     source_admission_identity(&self.input, &self.item, security_scope)

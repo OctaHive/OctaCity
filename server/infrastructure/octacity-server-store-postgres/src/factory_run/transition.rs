@@ -31,6 +31,15 @@ pub(crate) async fn commit_transition(
       entity: octacity_server_domain::EntityKind::FactoryRun,
     });
   }
+  let projection_scope = if request
+    .outbox
+    .iter()
+    .any(|record| record.kind.as_str() == "work.status.projection")
+  {
+    crate::factory_source_projection::lock_for_run(&mut transaction, request.run_id).await?
+  } else {
+    None
+  };
   let locked = lock_run(&mut transaction, request.run_id).await?;
   validate_transition(&mut transaction, &locked, &request).await?;
 
@@ -43,6 +52,13 @@ pub(crate) async fn commit_transition(
   }
   update_projection(&mut transaction, &request).await?;
   update_run(&mut transaction, &request).await?;
+  crate::factory_source_projection::record_publications(
+    &mut transaction,
+    projection_scope.as_ref(),
+    request.run_id,
+    &request.outbox,
+  )
+  .await?;
   schedule_retention(&mut transaction, &request).await?;
   transaction.commit().await.map_err(unavailable)?;
   Ok(CommitFactoryRunTransitionOutcome {

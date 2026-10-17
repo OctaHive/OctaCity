@@ -76,9 +76,9 @@ include!("../../../application/src/factory_admission_test_fixture.rs");
 fn time(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
-struct Fixture {
+struct Fixture<S = InMemoryFactoryConfigurationStore> {
   root: tempfile::TempDir,
-  store: Arc<InMemoryFactoryConfigurationStore>,
+  store: Arc<S>,
   bytes: Arc<Bytes>,
   clock: Arc<Clock>,
   input: WorkSourceInput,
@@ -113,6 +113,9 @@ impl Fixture {
   }
 
   async fn enabled(provider: &str) -> Self {
+    Self::enabled_with_flow(provider, None).await
+  }
+  async fn enabled_with_flow(provider: &str, flow: Option<FactoryFlowConfiguration>) -> Self {
     let root = tempfile::tempdir().unwrap();
     let dir = root.path().join(provider);
     std::fs::create_dir(&dir).unwrap();
@@ -124,7 +127,7 @@ impl Fixture {
     let store = Arc::new(InMemoryFactoryConfigurationStore::new());
     let project = ProjectId::generate();
     store.seed_project(project).unwrap();
-    let config = configuration(project, FactoryConfigurationId::generate());
+    let config = configuration_with_flow(project, FactoryConfigurationId::generate(), flow);
     store
       .seed_factory_configuration_version(PublishedFactoryConfiguration {
         configuration: config.clone(),
@@ -236,13 +239,12 @@ impl Fixture {
       profile,
     }
   }
-  fn worker(&self) -> FactorySourceWorker<InMemoryFactoryConfigurationStore, Bytes> {
+}
+impl<S: WorkSourceArtifactStore + FactoryDiscoveryStore + 'static> Fixture<S> {
+  fn worker(&self) -> FactorySourceWorker<S, Bytes> {
     self.worker_with_settings(settings())
   }
-  fn worker_with_settings(
-    &self,
-    policy: FactorySourceWorkerSettings,
-  ) -> FactorySourceWorker<InMemoryFactoryConfigurationStore, Bytes> {
+  fn worker_with_settings(&self, policy: FactorySourceWorkerSettings) -> FactorySourceWorker<S, Bytes> {
     FactorySourceWorker::new(
       FactorySourceWorkerDependencies {
         store: self.store.clone(),
@@ -278,6 +280,9 @@ impl Fixture {
       .items
   }
 }
+
+#[path = "work_reporter_journey_tests.rs"]
+mod reporting;
 
 #[tokio::test]
 async fn admission_contract_fixtures_tolerate_slow_valid_provider_responses() {

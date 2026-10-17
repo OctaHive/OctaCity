@@ -112,7 +112,7 @@ impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
       let row = owned.record;
       let claim = row.claim.ok_or_else(ApplicationError::invalid)?;
       let snapshot = self.store.factory_run_snapshot(row.run_id).await?;
-      let material = self.material(&snapshot, &row, claim.expires_at(), at);
+      let material = self.material(&snapshot, &row, at);
       let settlement = match material {
         Err(_) => FactoryOutboxSettlement::Failed,
         Ok(ProjectionMaterial {
@@ -136,9 +136,16 @@ impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
                 FactoryOutboxSettlement::Delivered
               }
               Err(error) if transient(&error) && row.attempt + 1 < policy.max_attempts => {
+                let provider_delay = match &error {
+                  ApplicationError::SourceDependency {
+                    retry_after_millis: Some(delay),
+                    ..
+                  } => u64::from(*delay),
+                  _ => 0,
+                };
                 let retry = now
                   .unix_millis()
-                  .checked_add(policy.retry_delay_millis as i64)
+                  .checked_add(policy.retry_delay_millis.max(provider_delay) as i64)
                   .and_then(|n| Timestamp::from_unix_millis(n).ok());
                 match retry {
                   Some(retry) if retry < original_deadline => FactoryOutboxSettlement::RetryAt(retry),
@@ -172,77 +179,98 @@ impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
     }
     Ok(summary)
   }
-  fn record<'a>(
-    &self,
-    snapshot: &'a FactoryRunSnapshot,
-    row: &FactoryOutboxRecord,
-  ) -> Result<&'a FlowNodeRecord, ApplicationError> {
-    snapshot
-      .flow
-      .data
-      .records
-      .iter()
-      .find(|record| record.digest().ok() == Some(row.input_digest))
-      .ok_or_else(ApplicationError::invalid)
-  }
   fn material<'a>(
     &'a self,
     snapshot: &FactoryRunSnapshot,
     row: &FactoryOutboxRecord,
-    claim_end: Timestamp,
     at: Timestamp,
   ) -> Result<ProjectionMaterial<'a>, ApplicationError> {
-    let record = self.record(snapshot, row)?;
-    let attempt = snapshot
-      .flow
-      .attempts
-      .iter()
-      .find(|attempt| attempt.id() == record.node_attempt_id())
-      .ok_or_else(ApplicationError::invalid)?;
-    let node = snapshot
-      .admitted_flow
-      .closure()
-      .definition(record.input().definition())
-      .and_then(|definition| definition.node(record.input().node()))
-      .ok_or_else(ApplicationError::invalid)?;
-    let binding = node.action().ok_or_else(ApplicationError::invalid)?;
-    if node.kind() != FlowNodeKind::TrustedAction
-      || binding.action().as_str() != "set_status"
-      || attempt.execution() != &NodeExecutionIdentity::External(binding.plugin().clone())
-      || record.payload().value()["receipt"] != serde_json::json!(row.operation_id)
-      || !node.permissions().plugins().any(|allowed| allowed == binding.plugin())
-    {
-      return Err(ApplicationError::invalid());
-    }
-    let parameters: StatusParameters =
-      serde_json::from_value(binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
-    let policy = parameters.outbox.ok_or_else(ApplicationError::invalid)?;
-    policy.validate()?;
-    let projector = self
-      .projectors
-      .get(binding.plugin())
-      .ok_or_else(ApplicationError::invalid)?;
-    let deadline = attempt.deadline().min(claim_end);
-    if at >= deadline {
-      return Err(ApplicationError::invalid());
-    }
+    let material = accepted_status_material(snapshot, row, at)?;
     Ok(ProjectionMaterial {
-      request: FactoryWorkStatusRequest {
-        operation_id: row.operation_id,
-        work_id: snapshot.work.id(),
-        external_identity: snapshot.work.external_identity().clone(),
-        subject: snapshot.work.subject().clone(),
-        status: parameters.status,
-        permissions: node.permissions().clone(),
-        budget: node.budget(),
-        deadline,
-      },
-      policy,
-      projector,
-      original_deadline: attempt.deadline(),
+      request: material.request,
+      policy: material.policy,
+      projector: self
+        .projectors
+        .get(material.plugin)
+        .ok_or_else(ApplicationError::invalid)?,
+      original_deadline: material.original_deadline,
     })
   }
 }
+struct AcceptedStatusMaterial<'a> {
+  request: FactoryWorkStatusRequest,
+  policy: crate::factory_flow_action::FactoryReporterRetryPolicy,
+  plugin: &'a ImmutableReference,
+  original_deadline: Timestamp,
+}
+/// Verifies an exact source projection against accepted action history and the current live outbox claim.
+/// Pending, superseded, terminal, forged or expired requests cannot authorize provider effects.
+pub fn validate_accepted_factory_status_request(
+  snapshot: &FactoryRunSnapshot,
+  plugin: &ImmutableReference,
+  request: &FactoryWorkStatusRequest,
+  at: Timestamp,
+) -> Result<(), ApplicationError> {
+  let row = snapshot
+    .outbox
+    .iter()
+    .filter(|row| row.operation_id == request.operation_id)
+    .max_by_key(|row| {
+      let state = match row.state {
+        FactoryOutboxState::Pending => 0,
+        FactoryOutboxState::Claimed => 1,
+        FactoryOutboxState::Delivered | FactoryOutboxState::Failed => 2,
+      };
+      (row.attempt, state, row.recorded_at, row.id)
+    })
+    .ok_or_else(ApplicationError::invalid)?;
+  let material = accepted_status_material(snapshot, row, at)?;
+  if material.plugin != plugin || material.request != *request {
+    return Err(ApplicationError::invalid());
+  }
+  Ok(())
+}
+fn accepted_status_material<'a>(
+  snapshot: &'a FactoryRunSnapshot,
+  row: &FactoryOutboxRecord,
+  at: Timestamp,
+) -> Result<AcceptedStatusMaterial<'a>, ApplicationError> {
+  let claim = row.claim.ok_or_else(ApplicationError::invalid)?;
+  if row.state != FactoryOutboxState::Claimed || row.kind.as_str() != "work.status.projection" {
+    return Err(ApplicationError::invalid());
+  }
+  claim
+    .verify_fence(claim.fence(), at)
+    .map_err(|_| ApplicationError::invalid())?;
+  let claim_end = claim.expires_at();
+  let AcceptedFactoryStatusAction { attempt, node, binding } =
+    accepted_factory_status_action(snapshot, row).map_err(|_| ApplicationError::invalid())?;
+  let parameters: StatusParameters =
+    serde_json::from_value(binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
+  let policy = parameters.outbox.ok_or_else(ApplicationError::invalid)?;
+  policy.validate()?;
+  let deadline = attempt.deadline().min(claim_end);
+  if at >= deadline || row.attempt >= policy.max_attempts {
+    return Err(ApplicationError::invalid());
+  }
+  Ok(AcceptedStatusMaterial {
+    request: FactoryWorkStatusRequest {
+      operation_id: row.operation_id,
+      outbox_claim: Some(claim),
+      work_id: snapshot.work.id(),
+      external_identity: snapshot.work.external_identity().clone(),
+      subject: snapshot.work.subject().clone(),
+      status: parameters.status,
+      permissions: node.permissions().clone(),
+      budget: node.budget(),
+      deadline,
+    },
+    policy,
+    plugin: binding.plugin(),
+    original_deadline: attempt.deadline(),
+  })
+}
+
 #[async_trait::async_trait]
 impl<S: FactoryRunStore + 'static> FactoryOutboxDispatcher for FactoryWorkStatusOutboxWorker<S> {
   async fn dispatch_once(&self, at: Timestamp) -> Result<FactoryOutboxDispatchSummary, ApplicationError> {
@@ -250,5 +278,16 @@ impl<S: FactoryRunStore + 'static> FactoryOutboxDispatcher for FactoryWorkStatus
   }
 }
 fn transient(error: &ApplicationError) -> bool {
-  matches!(error, ApplicationError::Store(StoreError::Unavailable))
+  matches!(
+    error,
+    ApplicationError::Store(StoreError::Unavailable)
+      | ApplicationError::SourceDependency {
+        class: WorkSourceFailure::RateLimited
+          | WorkSourceFailure::Transient
+          | WorkSourceFailure::Unavailable
+          | WorkSourceFailure::Timeout
+          | WorkSourceFailure::Cancelled,
+        ..
+      }
+  )
 }

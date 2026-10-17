@@ -1,4 +1,4 @@
-# Work Source and Reporter process contracts v1
+# Work Source v1 and Reporter v1/v2 process contracts
 
 `octacity-work-source-protocol` owns two independently versioned contracts.
 `octacity-server-work-source` hosts them through the existing verified adapter
@@ -30,7 +30,7 @@ min = 1
 max = 1
 [protocol.reporter]
 min = 1
-max = 1
+max = 2
 
 [capabilities.source]
 authorize = true
@@ -51,7 +51,9 @@ Omit both sections for a role to leave it uninstalled. At least one role is
 required in a Work adapter entry. A Source range incompatible with the host
 does not disable a compatible Reporter range in the same valid installation.
 Each operation negotiates against its own range before exposing a protected
-handle. Version 1 selects version 1; invalid ranges fail closed. Negotiation
+handle. The requested version must be advertised exactly; invalid ranges fail closed.
+Source remains version 1. The Factory ordered projector requires Reporter version 2
+and never downgrades to a bulk version-1 write. Negotiation
 uses the verified operator manifest, not a provider-claimed unauthenticated hello.
 
 Reporter publication requires observation and `observe_before_retry`. Source
@@ -112,13 +114,33 @@ is independent of new discovery and grants no management/admission permission.
 Cancellation uses the same original Source id. Older discovery-only plugins stay
 loadable but cannot supply the current grant check required by the polling worker.
 
-Reporter supports `observe`, `project` and `cancel`. Observe/project repeat the
+Reporter version 1 supports `observe`, `project` and `cancel`. Observe/project repeat the
 original projection id, exact container/item/display context, separate write
 handle, profile, installed mapping, arbitrary status and network ceiling. Native
 labels/workflow transitions stay in the pinned mapping. `observed` reports whether
 current state matches it; `applied` requires a matching receipt. Responses echo
 the exact operation, native item, profile, mapping and value. They cannot select
 another item, rewrite a Factory result or turn partial effects into success.
+
+Reporter version 2 supports `inspect`, `apply` and `cancel`. It rejects version-1
+observe/project commands; version 1 rejects inspect/apply. Inspect carries the
+same frozen intent and returns `planned`: an exact receipt, opaque SHA-256 field
+identities and private conditional steps. Apply carries `{intent, step}`, checks
+the current managed values, performs at most one native mutation and returns a
+fresh `progressed` plan. A plan grants no write authority. Each step's fields
+must include every affected managed group; identities must overlap across mapping
+versions and relevant input bindings/installations for the same native item.
+Fields must also namespace the canonical provider instance, container and item
+to distinguish coincident native ids at unrelated providers. Native semantics
+stay in the adapter. Each step must apply a commuting subset of the original
+desired effects, including when it arrives late. Temporary transitions or workflow
+routes that cannot meet this condition require a different future contract.
+
+Plans allow up to 512 unique fields and 256 steps; each step has 1–256 unique
+fields contained in the plan and an at-most-8192-byte token. Combined tokens are
+at most 262144 bytes. Matching receipts have no remaining steps. Tokens are
+redacted from Debug and are private process data, never telemetry or stored
+Factory evidence. The existing total request/response ceilings still apply.
 
 Both roles return `acknowledged` only for their matching cancellation target.
 Failures carry only a closed class and optional bounded retry hint; they contain
@@ -159,8 +181,11 @@ Source scans resolve a private pinned selector and return one normalized Issue
 page with an opaque continuation, using the same pinned HTTPS SDK transport as
 Delivery. Native repository identity, local selector checks, pull-request
 exclusion, byte ceilings and strict pagination confinement precede candidate
-publication. Reporter effects remain `unsupported`; their mappings belong to
-subsequent implementation tasks. Source worker composition is an explicit
+publication. Reporter observe/project resolve a separate private version-1 mapping
+under an exact identity/digest and apply only its explicit managed-label and
+optional Issue-state effects. Missing repository labels require repair; unrelated
+labels are preserved and final effects must be observed before `applied`.
+Source worker composition is an explicit
 trusted runtime extension.
 Protocol support alone neither advertises an active Issue capability nor starts
 polling or provider writes.
@@ -176,4 +201,41 @@ Factory admission replay suppressing duplicate Work. The optional runtime Source
 worker composes verified reads/current grant checks, exact current group selection,
 retained preparation and ordinary admission under this fence. See the
 [composition boundary](../../architecture/factory-extension-boundaries.md#optional-source-worker-composition).
-Reporter effects and operator-facing activation remain subsequent tasks.
+Reporter outbox composition is an explicit trusted runtime installation through
+`HostedFactoryWorkStatusProjector` / `FactoryRuntimeResources::work_reporter_dispatcher`.
+It resolves the original settled Work source, checks the current accepted-action
+outbox claim and full permission ceiling, then inspects/applies using the original
+operation id and pinned provider/mapping identity under one bounded window.
+Provider retry hints narrow the existing outbox policy without renewing its deadline.
+A missing or invalid Apply response leaves effects uncertain; an invalid Inspect
+response cannot authorize a write. Valid typed Conflict, Permanent,
+InvalidRequest and Unsupported failures release the current write permit;
+transient, cancelled, missing or invalid completion remains uncertain.
+Expired owners cannot settle a replacement
+claim. A restarted worker rechecks actual effects without replaying accepted actions.
+
+The memory/PostgreSQL stores assign a per-native-item acceptance sequence atomically
+with the accepted action/outbox publication, independent of clocks and worker
+arrival. The technical bucket uses Project and opaque native container/item ids
+across installations; admission keeps its original installation scope.
+Provider instance isolation belongs to the opaque field identities.
+Opaque field heads and write hazards are technical correlation state,
+not a second Work/Flow authority. Unknown newer scopes block older writes;
+known disjoint scopes remain independent. Before every Apply the host revalidates
+accepted authority, the current outbox fence and field ownership. Per-field
+revisions fence the read window, including a write that begins and finishes
+between its two checks. Delivery requires a stable matching read with no
+unresolved older overlapping write. A late old write is corrected by the latest
+intent within its original time, output and retry bounds. Deadline expiry cannot
+cancel an already accepted remote request: unknown older completion remains an
+explicit conflict after its original window, never a falsely quiet observation.
+Known late completion may release only its original permit, without new write
+authority. No provider CAS or permanent protection from subsequent human edits
+is claimed. Conflict/exhaustion leaves accepted Work/Run/Flow unchanged.
+
+Native mapping semantics remain entirely inside each provider adapter; manual
+admission requires none of them. Stage-local actions use the same original
+projection contract before intermediate/nested pipeline completion; stage/action
+provenance stays in accepted Factory records rather than entering provider wire
+payloads or granting native routing authority. Integration administration and
+management/Console authoring retain their subsequent tasks.

@@ -370,3 +370,55 @@ async fn source_access_verification_requires_explicit_advertisement_before_expos
     })
   ));
 }
+
+#[tokio::test]
+async fn ordered_steps_require_explicit_v2_before_exposing_any_handle() {
+  use octacity_server_work_source::HostFailureClass;
+  let (root, digest) = installed("jira");
+  let directory = root.path().join("jira");
+  let mut wire = serde_json::to_value(projection()).unwrap();
+  wire["message"]["protocol_version"] = json!(2);
+  wire["message"]["command"]["operation"] = json!("inspect");
+  let request = decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
+  let old_registry = WorkAdapterRegistry::discover(root.path()).unwrap();
+  let old = old_registry.resolve("jira", &digest).unwrap();
+  let error = old
+    .execute(
+      request.clone(),
+      Duration::from_secs(3),
+      Duration::from_millis(50),
+      CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+  assert_eq!(error.class(), HostFailureClass::Unsupported);
+  assert!(!directory.join("captured-request.json").exists());
+  let manifest = fs::read_to_string(directory.join("adapter.toml")).unwrap();
+  fs::write(
+    directory.join("adapter.toml"),
+    manifest.replace(
+      "[protocol.reporter]\nmin = 1\nmax = 1",
+      "[protocol.reporter]\nmin = 1\nmax = 2",
+    ),
+  )
+  .unwrap();
+  let receipt = json!({"projection_id":"c".repeat(64),"resource_id":"native-container","item_id":"native-item",
+    "configuration_digest":"e".repeat(64),"mapping":{"identity":"arbitrary-installed-effects","sha256":"d".repeat(64)},
+    "status":"needs-human-eyes","matches":true});
+  let plan = json!({"receipt":receipt,"fields":["a".repeat(64)],"steps":[]});
+  let response = json!({"family":"reporter","message":{"protocol_version":2,"request_id":"projection-request-1",
+    "outcome":{"status":"planned","payload":plan}}});
+  fs::write(directory.join("response.json"), serde_json::to_vec(&response).unwrap()).unwrap();
+  let registry = WorkAdapterRegistry::discover(root.path()).unwrap();
+  let adapter = registry.resolve("jira", &digest).unwrap();
+  let actual = adapter
+    .execute(
+      request,
+      Duration::from_secs(3),
+      Duration::from_millis(50),
+      CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(serde_json::to_value(actual).unwrap(), response);
+}

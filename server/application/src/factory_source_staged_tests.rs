@@ -125,6 +125,21 @@ fn staged_prepared_admission_keeps_one_run_per_input_and_common_issue_for_every_
         assert_eq!(receipt.disposition, MutationDisposition::Applied);
         let retained = store.source_preparation(project, preparation.id).await.unwrap();
         assert_eq!(retained.admission.as_ref().unwrap().run_id, receipt.factory_run_id);
+        assert_eq!(
+          store
+            .source_preparation_for_work(project, receipt.work_envelope_id)
+            .await
+            .unwrap(),
+          Some(retained.clone()),
+          "reporting resolves the original immutable input, not the current source catalogue"
+        );
+        assert!(
+          store
+            .source_preparation_for_work(ProjectId::generate(), receipt.work_envelope_id)
+            .await
+            .unwrap()
+            .is_none()
+        );
         let snapshot = store.factory_run_snapshot(receipt.factory_run_id).await.unwrap();
         assert_eq!(snapshot.work.configuration(), &preparation.input.definition().target);
         assert_eq!(snapshot.work.artifacts(), &retained.intent.as_ref().unwrap().artifacts);

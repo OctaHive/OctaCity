@@ -5,6 +5,9 @@ use octacity_server_store::testing as store_testing;
 use octacity_server_store::*;
 use std::sync::{Arc, Mutex};
 
+#[path = "factory_stage_reporting_tests.rs"]
+mod stage_reporting;
+
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
@@ -212,6 +215,52 @@ fn reporter() -> Arc<Reporter> {
   })
 }
 
+struct AcceptedReporter {
+  store: Arc<store_testing::InMemoryFactoryConfigurationStore>,
+  run: FactoryRunId,
+  inner: Arc<Reporter>,
+}
+#[async_trait]
+impl FactoryWorkStatusProjector for AcceptedReporter {
+  async fn cancel_status(
+    &self,
+    _: FactoryWorkStatusRequest,
+    _: octacity_server_domain::Timestamp,
+  ) -> Result<Option<BudgetUsage>, ApplicationError> {
+    unreachable!()
+  }
+  async fn set_status(
+    &self,
+    request: FactoryWorkStatusRequest,
+  ) -> Result<(FactoryDigest, BudgetUsage), ApplicationError> {
+    let snapshot = self.store.factory_run_snapshot(self.run).await.unwrap();
+    validate_accepted_factory_status_request(&snapshot, &reference("reporter"), &request, at(25)).unwrap();
+    let mut changed = request.clone();
+    changed.status = FactorySafeText::new("unaccepted-value").unwrap();
+    assert!(validate_accepted_factory_status_request(&snapshot, &reference("reporter"), &changed, at(25)).is_err());
+    assert!(
+      validate_accepted_factory_status_request(&snapshot, &reference("another-plugin"), &request, at(25)).is_err()
+    );
+    assert!(
+      validate_accepted_factory_status_request(&snapshot, &reference("reporter"), &request, request.deadline).is_err()
+    );
+    let mut stale = request.clone();
+    stale.outbox_claim = Some(
+      FactoryClaim::new(
+        FactoryClaimFence::new(FactoryDigest::from_bytes([99; 32])),
+        at(20),
+        request.deadline,
+      )
+      .unwrap(),
+    );
+    assert!(
+      validate_accepted_factory_status_request(&snapshot, &reference("reporter"), &stale, at(25)).is_err(),
+      "the original operation identity cannot borrow another worker's claim"
+    );
+    self.inner.set_status(request).await
+  }
+}
+
 #[test]
 fn optional_status_reporting_is_queued_with_the_node_result_before_contacting_the_source() {
   crate::factory_admission_tests::run_ready(async {
@@ -299,7 +348,11 @@ fn optional_status_reporting_is_queued_with_the_node_result_before_contacting_th
       h.store.clone(),
       std::collections::BTreeMap::from([(
         reference("reporter"),
-        success.clone() as Arc<dyn FactoryWorkStatusProjector>,
+        Arc::new(AcceptedReporter {
+          store: h.store.clone(),
+          run: h.run,
+          inner: success.clone(),
+        }) as Arc<dyn FactoryWorkStatusProjector>,
       )]),
       settings,
       crate::factory_node_test_support::clock(),
@@ -314,6 +367,15 @@ fn optional_status_reporting_is_queued_with_the_node_result_before_contacting_th
       assert_eq!(requests[0].status.as_str(), "needs-human-eyes");
     }
     let final_snapshot = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert!(
+      validate_accepted_factory_status_request(
+        &final_snapshot,
+        &reference("reporter"),
+        &success.requests.lock().unwrap()[0],
+        at(25)
+      )
+      .is_err()
+    );
     assert_eq!(final_snapshot.run, snapshot.run);
     assert_eq!(final_snapshot.flow, snapshot.flow);
   });

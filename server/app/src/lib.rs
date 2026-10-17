@@ -29,6 +29,7 @@ pub use runtime::{
 };
 
 pub use runtime::{
-  FactorySourceInstallation, FactorySourceProfile, FactorySourceRuntime, FactorySourceWorker,
-  FactorySourceWorkerDependencies, FactorySourceWorkerOutcome, FactorySourceWorkerSettings,
+  FactoryReporterProfile, FactoryReporterProfileDraft, FactorySourceInstallation, FactorySourceProfile,
+  FactorySourceRuntime, FactorySourceWorker, FactorySourceWorkerDependencies, FactorySourceWorkerOutcome,
+  FactorySourceWorkerSettings, HostedFactoryWorkStatusProjector,
 };

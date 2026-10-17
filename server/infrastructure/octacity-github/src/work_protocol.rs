@@ -1,5 +1,5 @@
 //! Work protocol negotiation/terminal framing, independent of the existing Delivery capability.
-//! Issue reads and effect mappings are installed in their own integration slices.
+//! Issue reads and effect mappings use independently installed scopes.
 use crate::GithubWorkProvider;
 use octacity_work_source_protocol::{Failure, FailureClass, Request, Response, reporter, source};
 use std::path::Path;
@@ -30,15 +30,15 @@ pub(super) fn same_cancellation(original: &Request, bytes: &[u8]) -> bool {
       }),
     ) => intent.scan_id == target_scan_id,
     (
-      Request::Reporter(reporter::Request {
-        command: reporter::Command::Observe(intent) | reporter::Command::Project(intent),
-        ..
-      }),
+      Request::Reporter(original),
       Request::Reporter(reporter::Request {
         command: reporter::Command::Cancel { target_projection_id },
         ..
       }),
-    ) => intent.projection_id == target_projection_id,
+    ) => original
+      .command
+      .intent()
+      .is_some_and(|intent| intent.projection_id == target_projection_id),
     _ => false,
   }
 }
@@ -94,7 +94,7 @@ pub(super) fn response(request: &Request, class: FailureClass) -> Response {
         reporter::Command::Cancel { target_projection_id } => reporter::Outcome::Acknowledged {
           projection_id: target_projection_id.clone(),
         },
-        reporter::Command::Observe(_) | reporter::Command::Project(_) => reporter::Outcome::Failure(unavailable()),
+        _ => reporter::Outcome::Failure(unavailable()),
       },
     }),
   }

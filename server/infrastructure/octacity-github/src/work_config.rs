@@ -36,6 +36,7 @@ struct Wire {
   api_root_certificates_pem: Vec<String>,
   credential_directory: PathBuf,
   selection_directory: Option<PathBuf>,
+  mapping_directory: Option<PathBuf>,
   capabilities: Capabilities,
   repositories: BTreeMap<String, Repository>,
 }
@@ -46,6 +47,7 @@ pub struct GithubWorkProvider {
   api: ApiSettings,
   credential_directory: PathBuf,
   selection_directory: Option<PathBuf>,
+  mapping_directory: Option<PathBuf>,
   repositories: BTreeMap<String, Repository>,
   capabilities: Capabilities,
 }
@@ -104,11 +106,15 @@ impl GithubWorkProvider {
     if let Some(selections) = &wire.selection_directory {
       config::private_subdirectory(&directory, selections)?;
     }
+    if let Some(mappings) = &wire.mapping_directory {
+      config::private_subdirectory(&directory, mappings)?;
+    }
     Ok(Self {
       digest: hex::encode(Sha256::digest(&*bytes)),
       api: config::api_settings(wire.api_base, wire.api_version, wire.api_root_certificates_pem)?,
       credential_directory: wire.credential_directory,
       selection_directory: wire.selection_directory,
+      mapping_directory: wire.mapping_directory,
       directory,
       repositories: wire.repositories,
       capabilities: wire.capabilities,
@@ -118,13 +124,16 @@ impl GithubWorkProvider {
   pub fn configuration_digest(&self) -> &str {
     &self.digest
   }
-  /// Executes one bounded read-only Source operation; Reporter effects remain independently scoped.
+  /// Executes one scoped Source read or pinned Reporter effect with independent role authority.
   /// Private provider content is returned only as checked normalized candidates or closed failures.
   pub async fn execute(
     &self,
     request: &Request,
     cancellation: tokio_util::sync::CancellationToken,
   ) -> octacity_work_source_protocol::Response {
+    if let Request::Reporter(intent) = request {
+      return self.report(request, intent, cancellation).await;
+    }
     if let Request::Source(source::Request {
       request_id,
       command: source::Command::Authorize(intent),
@@ -192,7 +201,7 @@ impl GithubWorkProvider {
     };
     let result = tokio::select! {
       biased;
-      _ = cancellation.cancelled() => Err(crate::issue_source::SourceReadFailure::from(FailureClass::Cancelled)),
+      _ = cancellation.cancelled() => Err(crate::work_api::WorkApiFailure::from(FailureClass::Cancelled)),
       result = operation => result,
     };
     let mut response = source::Response {
@@ -219,6 +228,58 @@ impl GithubWorkProvider {
     }
     octacity_work_source_protocol::Response::Source(response)
   }
+  async fn report(
+    &self,
+    envelope: &Request,
+    request: &reporter::Request,
+    cancellation: tokio_util::sync::CancellationToken,
+  ) -> octacity_work_source_protocol::Response {
+    let operation = async {
+      let access = self.prepare(envelope)?;
+      let intent = request.command.intent().ok_or(FailureClass::Unsupported)?;
+      let mappings = self.mapping_directory.as_ref().ok_or(FailureClass::Unsupported)?;
+      let directory = config::private_subdirectory(&self.directory, mappings).map_err(|_| FailureClass::Permanent)?;
+      let path = directory.join(format!(
+        "{}.json",
+        hex::encode(Sha256::digest(&intent.mapping.identity))
+      ));
+      let bytes = config::read_private(&path, 64 * 1024).map_err(|_| FailureClass::Permanent)?;
+      if hex::encode(Sha256::digest(&*bytes)) != intent.mapping.sha256 {
+        return Err(FailureClass::Conflict.into());
+      }
+      let mapping = crate::status_mapping::StatusMapping::from_config(&bytes).map_err(|_| FailureClass::Permanent)?;
+      mapping.effects(&intent.status).map_err(|_| FailureClass::Unsupported)?;
+      let repository = self
+        .repositories
+        .get(&intent.resource.resource_locator)
+        .ok_or(FailureClass::InvalidRequest)?;
+      crate::issue_reporter::report(
+        &self.api,
+        &repository.owner,
+        &repository.name,
+        &access.credential,
+        request,
+        &mapping,
+      )
+      .await
+    };
+    let result = tokio::select! {
+      biased;
+      _ = cancellation.cancelled() => Err(crate::work_api::WorkApiFailure::from(FailureClass::Cancelled)),
+      result = operation => result,
+    };
+    octacity_work_source_protocol::Response::Reporter(reporter::Response {
+      protocol_version: request.protocol_version,
+      request_id: request.request_id.clone(),
+      outcome: match result {
+        Ok(outcome) => outcome,
+        Err(error) => reporter::Outcome::Failure(octacity_work_source_protocol::Failure {
+          class: error.class,
+          retry_after_millis: error.retry_after_millis,
+        }),
+      },
+    })
+  }
   /// Verifies role, pinned profile and native/network scope before resolving any private grant.
   /// This performs no provider I/O; concrete listing/projection consumes the retained access.
   pub fn prepare(&self, request: &Request) -> Result<AuthorizedIssueAccess, FailureClass> {
@@ -244,16 +305,16 @@ impl GithubWorkProvider {
         &self.capabilities.source_repositories,
         "work_source_read",
       ),
-      Request::Reporter(reporter::Request {
-        command: reporter::Command::Observe(intent) | reporter::Command::Project(intent),
-        ..
-      }) => (
-        &intent.configuration_digest,
-        &intent.resource,
-        &intent.network_hosts,
-        &self.capabilities.reporter_repositories,
-        "work_reporter_write",
-      ),
+      Request::Reporter(request) if request.command.intent().is_some() => {
+        let intent = request.command.intent().ok_or(FailureClass::Unsupported)?;
+        (
+          &intent.configuration_digest,
+          &intent.resource,
+          &intent.network_hosts,
+          &self.capabilities.reporter_repositories,
+          "work_reporter_write",
+        )
+      }
       _ => return Err(FailureClass::Unsupported),
     };
     if *profile != self.digest {

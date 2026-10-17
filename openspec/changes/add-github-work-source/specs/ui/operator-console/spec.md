@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Pipeline inputs expose guided GitHub Issue selection
-The console SHALL allow an operator to configure GitHub Issues as a source at the selected Factory pipeline input, choosing visible installed repository/capabilities, target configuration, Issue state, all-label, any-label and excluded-label sets, input mapping, optional exclusive group and enabled state. It SHALL explain empty label selection as unrestricted, provide bounded read-only preview and authoritative validation, and publish reviewed immutable replacements through the existing confirmed-intent workflow. The operator SHALL NOT need to write provider JSON, enter opaque resource identities or supply a GitHub token in the browser. Selector drafts and preview payloads SHALL remain outside browser persistence.
+The console SHALL allow an operator to configure GitHub Issues as a source at the selected Factory pipeline input, choosing an existing Project-authorized connection and external task container independently of the code Repository, visible installed capabilities, target configuration, Issue state, all-label, any-label and excluded-label sets, input mapping, optional exclusive group and enabled state. It SHALL explain empty label selection as unrestricted, provide bounded read-only preview and authoritative validation, and publish reviewed immutable replacements through the existing confirmed-intent workflow. The operator SHALL NOT need to write provider JSON, enter opaque resource identities or supply credentials in the pipeline editor. A missing connection or grant SHALL link to the separate Integrations administration/access flow without enabling unsupported choices. Selector drafts and preview payloads SHALL remain outside browser persistence.
 
 #### Scenario: Operator prepares assessment and implementation inputs
 - **WHEN** an operator configures an assessment input with no required labels and separate `approved + bug` and `approved + feature-request` inputs
@@ -36,3 +36,40 @@ The console SHALL let an operator configure a source-update action for any decla
 #### Scenario: Operator inspects stage update progress
 - **WHEN** an intermediate stage committed and its source update is pending, applied or failed
 - **THEN** the console associates that reporting state with the exact stage/action and keeps it distinct from the overall pipeline result
+
+### Requirement: Integrations has dedicated reusable connection administration
+The console SHALL provide a dedicated provider-neutral Integrations section for authorized operators to list, create, inspect, replace, check and disable named connections, manage credentials and inspect permitted dependents. It SHALL present installed providers, allowed endpoints, supported authentication methods, permitted external resources and separate capability/readiness states through typed server choices. GitHub SHALL expose its repository owner/name context and token setup without making those fields mandatory for other providers. The section SHALL distinguish connection configuration from access granted to an OctaCity Project and from pipeline filtering/routing. Only installed supported capabilities SHALL be offered. Forms SHALL use existing review/version-conflict patterns, keyboard access and English/Russian messages.
+
+#### Scenario: Operator creates one connection for multiple pipelines
+- **WHEN** an administrator configures a named GitHub connection and grants selected resources to a Project
+- **THEN** several pipeline editors can select that connection without copying its credentials or its per-pipeline predicates
+
+#### Scenario: Provider is not installed
+- **WHEN** a provider has no compatible installed adapter
+- **THEN** the console identifies it as unavailable and cannot present metadata alone as a working source
+
+### Requirement: Credential entry stays isolated and transient
+The console SHALL collect raw credentials only in a separately authorized write-only integration setup/rotation flow, never in pipeline or ordinary connection metadata forms. Existing credentials SHALL be represented by configured/missing state and safe metadata, with replacement rather than value read-back. Secret input SHALL remain transient, SHALL NOT enter browser persistence, URLs, query/mutation caches, analytics, confirmation summaries or errors, and SHALL be cleared after submission or leaving the flow. Server errors SHALL be rendered as safe classifications without echoing the submitted value. Selecting an existing permitted server-side handle SHALL NOT require retrieving its contents.
+
+#### Scenario: Administrator submits or rotates a token
+- **WHEN** the protected credential form is submitted
+- **THEN** the console shows a safe outcome, clears the secret field and exposes no token value in detail/review screens or cached state
+
+#### Scenario: Administrator leaves an unfinished credential form
+- **WHEN** the credential flow is closed or navigation leaves it
+- **THEN** returning does not restore the secret from browser storage or client caches
+
+### Requirement: Project access and capability readiness are explicit
+The console SHALL let authorized administrators grant/revoke selected connection resources and purposes for an OctaCity Project, showing task-read, task-update, repository-read and Delivery access independently. Pipeline users SHALL see only their authorized choices and SHALL NOT gain connection-administration rights by creating a pipeline. Connection checks SHALL be visibly read-only and distinguish configuration, authentication, resource access and capability readiness from pipeline activation. Disablement/revocation SHALL show safe dependency effects without claiming to cancel already accepted remote requests or undo Work.
+
+#### Scenario: Read access is available without Reporter access
+- **WHEN** a Project has task-read access and no task-update grant
+- **THEN** the console permits read intake, explains unavailable reporting and does not require a write credential to use the read source
+
+#### Scenario: Administrator revokes access
+- **WHEN** an administrator reviews revocation for a connection used by visible inputs and pending reporting
+- **THEN** the console shows those dependents, explains blocked subsequent provider operations and preserves the distinction from accepted pipeline results
+
+#### Scenario: Manual Factory intake remains selected
+- **WHEN** the operator chooses manual intake with no provider connection
+- **THEN** the console allows ordinary manual Work creation without opening integration setup or requiring tokens

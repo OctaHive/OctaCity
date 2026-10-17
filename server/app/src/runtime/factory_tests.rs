@@ -145,7 +145,24 @@ async fn native_reporting_worker_binds_installed_projectors_without_dependency_i
     managed::reference("installed-status-projector", "v1"),
     Arc::new(Reporter) as Arc<dyn FactoryWorkStatusProjector>,
   )]);
-  assert!(resources.work_status_dispatcher(projectors, settings).is_ok());
+  assert!(resources.work_status_dispatcher(projectors, settings.clone()).is_ok());
+  let root = tempfile::tempdir().unwrap();
+  let registry = Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(root.path()).unwrap());
+  let profile =
+    super::FactoryReporterProfile::new(key("effects"), key("v1"), super::work_reporter_tests::draft("tracker"))
+      .unwrap();
+  assert!(
+    resources
+      .work_reporter_dispatcher(
+        vec![profile],
+        registry,
+        settings,
+        std::time::Duration::from_secs(1),
+        std::time::Duration::from_millis(10),
+        tokio_util::sync::CancellationToken::new()
+      )
+      .is_ok()
+  );
 }
 
 #[tokio::test]

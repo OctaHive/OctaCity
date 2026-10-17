@@ -11,6 +11,9 @@ use tokio_rustls::{
   TlsAcceptor,
   rustls::{self, pki_types::PrivatePkcs8KeyDer},
 };
+#[path = "reporting.rs"]
+#[allow(dead_code)]
+pub mod reporting;
 
 pub struct Reply {
   pub status: u16,
@@ -18,6 +21,7 @@ pub struct Reply {
   pub body: Vec<u8>,
   pub chunked: bool,
   pub stall: bool,
+  pub disconnect: bool,
 }
 impl Reply {
   pub fn json(value: Value) -> Self {
@@ -27,6 +31,7 @@ impl Reply {
       body: serde_json::to_vec(&value).unwrap(),
       chunked: false,
       stall: false,
+      disconnect: false,
     }
   }
 }
@@ -37,6 +42,8 @@ pub struct Forge {
   pub replies: Arc<Mutex<VecDeque<Reply>>>,
   pub repository: Arc<Mutex<Value>>,
   pub changed: Arc<Notify>,
+  #[allow(dead_code)]
+  pub reporting: Arc<Mutex<Option<reporting::Issue>>>,
   task: tokio::task::JoinHandle<()>,
 }
 impl Forge {
@@ -71,6 +78,8 @@ impl Forge {
     let repository = Arc::new(Mutex::new(json!({"id":1234})));
     let metadata = repository.clone();
     let changed = Arc::new(Notify::new());
+    let reporting = Arc::new(Mutex::new(None::<reporting::Issue>));
+    let effects = reporting.clone();
     let (captured, queued, signal) = (requests.clone(), replies.clone(), changed.clone());
     let task = tokio::spawn(async move {
       loop {
@@ -88,21 +97,43 @@ impl Forge {
             stream.read_exact(&mut byte).await.ok()?;
             bytes.push(byte[0]);
           }
+          let headers = String::from_utf8(bytes.clone()).ok()?;
+          let length = headers
+            .lines()
+            .find_map(|line| {
+              let (name, value) = line.split_once(':')?;
+              name
+                .eq_ignore_ascii_case("content-length")
+                .then(|| value.trim().parse::<usize>().ok())
+                .flatten()
+            })
+            .unwrap_or(0);
+          if length > 64 * 1024 {
+            return None;
+          }
+          let mut body = vec![0; length];
+          stream.read_exact(&mut body).await.ok()?;
+          bytes.extend(body);
           String::from_utf8(bytes).ok()
         })
         .await;
         let Ok(Some(request)) = request else { continue };
         let repository = request.starts_with("GET /api/v3/repos/owner/tickets HTTP/");
-        captured.lock().await.push(request);
+        captured.lock().await.push(request.clone());
         signal.notify_one();
         let reply = if repository {
           Reply::json(metadata.lock().await.clone())
+        } else if let Some(issue) = effects.lock().await.as_mut() {
+          issue.respond(&request)
         } else {
           queued.lock().await.pop_front().unwrap_or_else(|| Reply {
             status: 404,
             ..Reply::json(json!({"message":"private-provider-error"}))
           })
         };
+        if reply.disconnect {
+          continue;
+        }
         if reply.stall {
           std::future::pending::<()>().await;
         }
@@ -143,6 +174,7 @@ impl Forge {
       replies,
       repository,
       changed,
+      reporting,
       task,
     }
   }

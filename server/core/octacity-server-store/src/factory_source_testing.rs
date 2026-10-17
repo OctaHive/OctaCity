@@ -15,9 +15,96 @@ pub(super) struct SourceMemoryState {
   pub(super) scans: BTreeMap<(&'static str, uuid::Uuid), crate::WorkSourceScan>,
   pub(super) inputs: BTreeMap<(WorkSourceInputId, WorkSourceInputVersion), WorkSourceInput>,
   pub(super) groups: BTreeMap<(WorkSourceGroupId, WorkSourceGroupVersion), WorkSourceGroup>,
+  pub(super) projection_sequences: BTreeMap<(ProjectId, octacity_server_factory::FactoryDigest), u64>,
+  pub(super) projection_intents: BTreeMap<
+    (
+      ProjectId,
+      octacity_server_factory::FactoryDigest,
+      octacity_server_factory::FactoryDigest,
+    ),
+    crate::SourceProjectionOrder,
+  >,
+  pub(super) projections: BTreeMap<(ProjectId, octacity_server_factory::FactoryDigest), crate::SourceProjectionJournal>,
 }
 #[async_trait]
 impl FactorySourceStore for InMemoryFactoryConfigurationStore {
+  async fn coordinate_source_projection(
+    &self,
+    request: crate::SourceProjectionRequest,
+  ) -> Result<crate::SourceProjectionState, StoreError> {
+    let mut state = self.lock()?;
+    let preparation = state
+      .sources
+      .preparations
+      .values()
+      .find(|p| {
+        p.input.project_id() == request.project_id && p.admission.as_ref().is_some_and(|a| a.work_id == request.work_id)
+      })
+      .ok_or_else(source_conflict)?;
+    let issue = preparation.projection_item();
+    let association = preparation.admission.as_ref().ok_or_else(source_conflict)?;
+    let reporter = preparation
+      .input
+      .definition()
+      .reporter
+      .as_ref()
+      .ok_or_else(source_conflict)?;
+    let snapshots = vec![
+      state
+        .factory_runs
+        .get(&association.run_id)
+        .ok_or_else(source_conflict)?
+        .snapshot()?,
+    ];
+    let candidates = crate::source_projection_candidates(&snapshots)?;
+    if !candidates
+      .iter()
+      .any(|c| c.operation_id == request.operation_id && c.capability == reporter.capability)
+    {
+      return Err(source_conflict());
+    }
+    let key = (request.project_id, issue, request.operation_id);
+    let mut order = state
+      .sources
+      .projection_intents
+      .get(&key)
+      .cloned()
+      .ok_or_else(source_conflict)?;
+    let newer_unknown = state
+      .sources
+      .projection_intents
+      .iter()
+      .any(|((project, item, _), other)| {
+        *project == request.project_id && *item == issue && other.sequence > order.sequence && other.fields.is_none()
+      });
+    let mut journal = state
+      .sources
+      .projections
+      .get(&(request.project_id, issue))
+      .cloned()
+      .unwrap_or_default();
+    let result = journal.coordinate(&request, &candidates, &mut order, newer_unknown)?;
+    state.sources.projection_intents.insert(key, order);
+    state.sources.projections.insert((request.project_id, issue), journal);
+    Ok(result)
+  }
+  async fn source_preparation_for_work(
+    &self,
+    project: ProjectId,
+    work: octacity_server_factory::WorkEnvelopeId,
+  ) -> Result<Option<crate::WorkSourcePreparation>, StoreError> {
+    let state = self.lock()?;
+    let mut matching = state
+      .sources
+      .preparations
+      .values()
+      .filter(|p| p.input.project_id() == project && p.admission.as_ref().is_some_and(|a| a.work_id == work));
+    let result = matching.next().cloned();
+    if matching.next().is_some() {
+      return Err(source_conflict());
+    }
+    Ok(result)
+  }
   async fn source_issue_correlations(
     &self,
     project: ProjectId,
@@ -577,4 +664,54 @@ impl SourceMemoryState {
     }
     Ok(())
   }
+}
+
+/// Called inside the same memory transaction that publishes accepted Flow/outbox data.
+pub(super) fn record_projection_intents(
+  state: &mut crate::factory_configuration_testing::FactoryConfigurationMemoryState,
+  next: &crate::factory_run_testing::StoredFactoryRun,
+  request: &crate::CommitFactoryRunTransition,
+) -> Result<(), StoreError> {
+  if !request
+    .outbox
+    .iter()
+    .any(|row| row.kind.as_str() == "work.status.projection")
+  {
+    return Ok(());
+  }
+  let Some(preparation) = state
+    .sources
+    .preparations
+    .values()
+    .find(|p| p.admission.as_ref().is_some_and(|a| a.run_id == request.run_id))
+  else {
+    return Ok(());
+  };
+  let Some(reporter) = preparation.input.definition().reporter.as_ref() else {
+    return Ok(());
+  };
+  let key = (preparation.input.project_id(), preparation.projection_item());
+  let candidates = crate::source_projection_candidates(&[next.snapshot()?])?;
+  let mut sequence = state.sources.projection_sequences.get(&key).copied().unwrap_or(0);
+  let mut staged = Vec::new();
+  for row in &request.outbox {
+    if !candidates
+      .iter()
+      .any(|c| c.operation_id == row.operation_id && c.capability == reporter.capability)
+    {
+      continue;
+    }
+    let id = (key.0, key.1, row.operation_id);
+    if state.sources.projection_intents.contains_key(&id) {
+      continue;
+    }
+    sequence = sequence
+      .checked_add(1)
+      .filter(|v| *v <= i64::MAX as u64)
+      .ok_or_else(source_conflict)?;
+    staged.push((id, crate::SourceProjectionOrder { sequence, fields: None }));
+  }
+  state.sources.projection_sequences.insert(key, sequence);
+  state.sources.projection_intents.extend(staged);
+  Ok(())
 }
