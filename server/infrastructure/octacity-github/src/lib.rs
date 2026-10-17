@@ -7,6 +7,8 @@ mod candidate;
 mod config;
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 mod credential_files;
+#[cfg(all(test, any(target_os = "linux", target_os = "macos")))]
+mod credential_files_tests;
 mod credential_management;
 mod credential_publication;
 pub use credential_management::{GithubCredentialClass, GithubCredentialManager, GithubCredentialTarget};

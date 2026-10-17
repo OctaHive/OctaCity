@@ -4,7 +4,10 @@ use rustix::fs::{self, Mode, OFlags, RenameFlags};
 use std::{
   fs::File,
   io::{Read as _, Write as _},
-  os::unix::fs::MetadataExt as _,
+  os::{
+    fd::{AsFd, BorrowedFd},
+    unix::fs::MetadataExt as _,
+  },
   path::{Component, Path, PathBuf},
 };
 
@@ -19,11 +22,25 @@ pub(super) struct CredentialDirectory {
   root_identity: (u64, u64),
   directory_identity: (u64, u64),
 }
+/// Owns the operation's lock, independently of duplicate/inherited descriptors.
+pub(super) struct CredentialLock(File);
+impl AsFd for CredentialLock {
+  fn as_fd(&self) -> BorrowedFd<'_> {
+    self.0.as_fd()
+  }
+}
+impl Drop for CredentialLock {
+  fn drop(&mut self) {
+    // CLOEXEC closes inherited descriptors only at exec. Release the lock at
+    // scope exit even if a concurrent child still holds the open file description.
+    let _ = fs::flock(&self.0, fs::FlockOperation::Unlock);
+  }
+}
 impl CredentialDirectory {
-  pub(super) fn lock(&self) -> Result<File, Error> {
+  pub(super) fn lock(&self) -> Result<CredentialLock, Error> {
     let directory = self.directory()?;
     fs::flock(&directory, fs::FlockOperation::NonBlockingLockExclusive).map_err(|_| Error::Conflict)?;
-    Ok(directory)
+    Ok(CredentialLock(directory))
   }
   pub(super) fn read(&self, handle: &str) -> Result<zeroize::Zeroizing<Vec<u8>>, Error> {
     let directory = self.directory()?;
