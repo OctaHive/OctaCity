@@ -91,24 +91,26 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
     step: Option<reporter::ProjectionStep>,
     end: tokio::time::Instant,
   ) -> Result<(reporter::ProjectionPlan, u64), InvocationFailure> {
-    let remaining = end.saturating_duration_since(tokio::time::Instant::now());
-    if remaining.is_zero() {
+    if tokio::time::Instant::now() >= end {
       return Err(ApplicationError::unavailable().into());
     }
     if let Some(access) = &profile.managed_access {
-      access
-        .authorize_work_binding(
+      tokio::time::timeout_at(
+        end,
+        access.authorize_work_binding(
           profile.draft.project_id,
           &profile.binding,
           &profile.draft.plugin,
           &profile.draft.access.resource_id,
           octacity_server_store::IntegrationPurpose::TaskUpdate,
-        )
-        .await
-        .map_err(|error| InvocationFailure {
-          error,
-          uncertain: false,
-        })?;
+        ),
+      )
+      .await
+      .unwrap_or_else(|_| Err(ApplicationError::unavailable()))
+      .map_err(|error| InvocationFailure {
+        error,
+        uncertain: false,
+      })?;
     }
     let adapter = self
       .registry
@@ -127,6 +129,14 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
         reporter::Command::Inspect(Box::new(intent))
       },
     });
+    // Authorization consumes the same window; it cannot renew provider time.
+    let remaining = end.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+      return Err(InvocationFailure {
+        error: ApplicationError::unavailable(),
+        uncertain: false,
+      });
+    }
     let response = adapter
       .execute(request, remaining, self.grace, self.cancellation.child_token())
       .await

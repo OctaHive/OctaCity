@@ -3,6 +3,8 @@ use super::*;
 use crate::runtime::*;
 use octacity_server_factory::NetworkHost;
 use octacity_work_source_protocol::{ConfigurationReference, CredentialClass, CredentialHandle, ResourceAccess};
+#[path = "work_reporter_deadline_tests.rs"]
+mod deadline;
 #[path = "work_reporter_ordering_tests.rs"]
 mod ordering;
 #[path = "work_reporter_recovery_tests.rs"]
