@@ -7,9 +7,18 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod credential_publication;
 mod enrollment;
 mod grant;
+mod provider_credentials;
+pub use credential_publication::{CredentialPublication, CredentialPublicationKind, ProviderCredentialPublisher};
 mod reference;
+pub use provider_credentials::{
+  MAX_PROVIDER_CREDENTIAL_BYTES, ProviderCredentialError, ProviderCredentialManager, ProviderCredentialReceipt,
+  ProviderCredentialValue,
+};
+#[cfg(test)]
+mod provider_credentials_tests;
 
 pub use enrollment::AgentEnrollmentSecretKey;
 pub use grant::{

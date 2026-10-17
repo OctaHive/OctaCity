@@ -10,6 +10,10 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+pub(crate) const MAX_CREDENTIAL_FILE_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_CREDENTIAL_TOKEN_BYTES: usize = 8192;
+pub(crate) const MAX_CREDENTIAL_RESOURCES: usize = 128;
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Repository {
@@ -46,10 +50,12 @@ pub(crate) struct Config {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Credential {
-  class: String,
+  pub(crate) class: String,
   #[serde(deserialize_with = "secret")]
   pub(crate) token: Zeroizing<String>,
-  repositories: Vec<String>,
+  pub(crate) repositories: Vec<String>,
+  #[serde(default)]
+  pub(crate) publication: Option<crate::credential_publication::PrivatePublication>,
 }
 fn secret<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Zeroizing<String>, D::Error> {
   String::deserialize(d).map(Zeroizing::new)
@@ -256,20 +262,45 @@ pub(crate) fn read_credential(
   handle: &str,
   repository: &str,
 ) -> Result<Credential, GithubConfigError> {
-  let path = directory.join(format!("{}.json", hex::encode(Sha256::digest(handle))));
-  let bytes = read_private(&path, 64 * 1024)?;
-  let credential: Credential = serde_json::from_slice(&bytes).map_err(|_| GithubConfigError)?;
-  if credential.class != class
-    || credential.token.is_empty()
-    || credential.token.len() > 8192
-    || credential.token.chars().any(char::is_control)
-    || credential.repositories.len() > 128
-    || !credential.repositories.iter().any(|alias| alias == repository)
+  let path = directory.join(credential_file_name(handle));
+  let bytes = read_private(&path, MAX_CREDENTIAL_FILE_BYTES as u64)?;
+  let credential = decode_credential(&bytes)?;
+  if credential.class != class || !credential.repositories.iter().any(|alias| alias == repository) {
+    return Err(GithubConfigError);
+  }
+  Ok(credential)
+}
+fn decode_credential(bytes: &[u8]) -> Result<Credential, GithubConfigError> {
+  let credential: Credential = serde_json::from_slice(bytes).map_err(|_| GithubConfigError)?;
+  if !valid_credential_token(&credential.token)
+    || credential.repositories.len() > MAX_CREDENTIAL_RESOURCES
+    || credential
+      .publication
+      .as_ref()
+      .is_some_and(|p| p.abandoned || p.kind == octacity_server_secrets::CredentialPublicationKind::Revoke)
   {
     return Err(GithubConfigError);
   }
   Ok(credential)
 }
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn validate_installed_credential(
+  bytes: &[u8],
+  class: &str,
+  repositories: &[String],
+) -> Result<(), GithubConfigError> {
+  let credential = decode_credential(bytes)?;
+  let expected = repositories.iter().collect::<std::collections::BTreeSet<_>>();
+  let actual = credential
+    .repositories
+    .iter()
+    .collect::<std::collections::BTreeSet<_>>();
+  if credential.class != class || expected != actual || actual.len() != credential.repositories.len() {
+    return Err(GithubConfigError);
+  }
+  Ok(())
+}
+
 fn https(value: &str) -> Result<url::Url, GithubConfigError> {
   let url = url::Url::parse(value).map_err(|_| GithubConfigError)?;
   if url.scheme() != "https"
@@ -282,4 +313,45 @@ fn https(value: &str) -> Result<url::Url, GithubConfigError> {
     return Err(GithubConfigError);
   }
   Ok(url)
+}
+
+pub(crate) fn credential_file_name(handle: &str) -> String {
+  format!("{}.json", hex::encode(Sha256::digest(handle)))
+}
+pub(crate) fn valid_credential_token(token: &str) -> bool {
+  !token.is_empty() && token.len() <= MAX_CREDENTIAL_TOKEN_BYTES && !token.chars().any(char::is_control)
+}
+
+// Stream borrowed secret bytes directly into a zeroing, bounded private document.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+pub(crate) fn encode_installed_credential(
+  class: &str,
+  token: &str,
+  repositories: &[String],
+  publication: Option<&crate::credential_publication::PrivatePublication>,
+) -> Result<Zeroizing<Vec<u8>>, octacity_server_secrets::ProviderCredentialError> {
+  use octacity_server_secrets::ProviderCredentialError as Error;
+  #[derive(serde::Serialize)]
+  struct Wire<'a> {
+    class: &'a str,
+    token: &'a str,
+    repositories: &'a [String],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    publication: Option<&'a crate::credential_publication::PrivatePublication>,
+  }
+  let mut bytes = Zeroizing::new(Vec::new());
+  serde_json::to_writer(
+    &mut *bytes,
+    &Wire {
+      class,
+      token,
+      repositories,
+      publication,
+    },
+  )
+  .map_err(|_| Error::Unavailable)?;
+  if bytes.len() > MAX_CREDENTIAL_FILE_BYTES {
+    return Err(Error::Denied);
+  }
+  Ok(bytes)
 }

@@ -111,6 +111,21 @@ class ArchitecturePolicyTests(unittest.TestCase):
             with self.subTest(name=name, kinds=kinds):
                 self.assertEqual(violations(name, kinds), ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"])
 
+    def test_connection_endpoint_parser_is_store_specific_and_does_not_allow_transport(self):
+        for name, dependency, expected in (
+            ("octacity-server-store", "url", []),
+            ("octacity-server-store", "reqwest", ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"]),
+            ("another-core", "url", ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"]),
+        ):
+            with self.subTest(package=name, dependency=dependency):
+                package = package_fixture(
+                    name, REPOSITORY / "server/core" / name / "Cargo.toml",
+                    external_dependencies=(dependency,),
+                )
+                self.assertEqual([v.code for v in ARCHITECTURE.check(
+                    ARCHITECTURE.Graph(packages=(package,), edges=())
+                )], expected)
+
     def test_github_sdk_is_confined_to_the_single_provider_plugin(self):
         from dataclasses import replace
 

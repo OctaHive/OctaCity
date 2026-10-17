@@ -30,6 +30,8 @@ pub struct ManagementOperation {
   pub idempotent_mutation: bool,
   /// Whether the operation requires an optimistic `If-Match` precondition.
   pub optimistic_precondition: bool,
+  /// Requires a separately verified identity and protected transport ingress.
+  pub protected_ingress: bool,
   authorization: Option<ManagementOperationAuthorization>,
   visibility: Option<ManagementOperationVisibility>,
   pub(super) parameter_profile: ParameterProfile,
@@ -101,6 +103,13 @@ pub(crate) enum ParameterProfile {
 }
 
 impl ManagementOperation {
+  const fn with_protected_ingress(mut self) -> Self {
+    self.protected_ingress = true;
+    self.precondition_failed_response = self.optimistic_precondition;
+    self.capability_unavailable_response = true;
+    self
+  }
+
   pub(crate) fn authorization(&self) -> ManagementOperationAuthorization {
     self
       .authorization
@@ -155,6 +164,7 @@ macro_rules! operation {
       success_status: $status,
       idempotent_mutation: $mutation,
       optimistic_precondition: $precondition,
+      protected_ingress: false,
       authorization: Some($crate::v1::openapi::operations::authorization::<$target>()),
       visibility: None,
       parameter_profile: ParameterProfile::None,
@@ -170,6 +180,7 @@ mod builds;
 mod core;
 mod definitions;
 mod factory;
+mod integrations;
 mod search;
 mod triggers;
 
@@ -178,6 +189,7 @@ const GROUPS: &[&[ManagementOperation]] = &[
   search::OPERATIONS,
   definitions::OPERATIONS,
   factory::OPERATIONS,
+  integrations::OPERATIONS,
   triggers::OPERATIONS,
   builds::OPERATIONS,
   agents::OPERATIONS,
@@ -188,6 +200,7 @@ const OPERATION_COUNT: usize = core::OPERATIONS.len()
   + search::OPERATIONS.len()
   + definitions::OPERATIONS.len()
   + factory::OPERATIONS.len()
+  + integrations::OPERATIONS.len()
   + triggers::OPERATIONS.len()
   + builds::OPERATIONS.len()
   + agents::OPERATIONS.len()
@@ -204,6 +217,7 @@ const EMPTY_OPERATION: ManagementOperation = ManagementOperation {
   success_status: "",
   idempotent_mutation: false,
   optimistic_precondition: false,
+  protected_ingress: false,
   authorization: None,
   visibility: None,
   parameter_profile: ParameterProfile::None,

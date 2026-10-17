@@ -9,6 +9,9 @@ publish = false
 description = "Single GitHub provider plugin with independently scoped capabilities"
 
 [dependencies]
+async-trait.workspace = true
+octacity-server-secrets = { path = "../../core/octacity-server-secrets" }
+rustix = { workspace = true, features = ["fs"] }
 base64.workspace = true
 chrono.workspace = true
 octocrab = { version = "0.54.3", default-features = false, features = ["reqwest"] }

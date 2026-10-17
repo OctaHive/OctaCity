@@ -71,12 +71,12 @@ pub struct ManagementAuthorizationOperation {
   pub authorization: ManagementAuthorizationMapping,
 }
 
-struct ManagementRoutes {
-  router: Router<Arc<ManagementApplication>>,
+struct ManagementRoutes<S = Arc<ManagementApplication>> {
+  router: Router<S>,
   operations: Vec<ManagementAuthorizationOperation>,
 }
 
-impl ManagementRoutes {
+impl<S: Clone + Send + Sync + 'static> ManagementRoutes<S> {
   fn new() -> Self {
     Self {
       router: Router::new(),
@@ -87,7 +87,7 @@ impl ManagementRoutes {
   fn get<Request, HandlerType, HandlerArgs>(self, operation_id: &'static str, handler: HandlerType) -> Self
   where
     Request: ManagementAuthorizationTarget + 'static,
-    HandlerType: Handler<HandlerArgs, Arc<ManagementApplication>>,
+    HandlerType: Handler<HandlerArgs, S>,
     HandlerArgs: 'static,
   {
     self.register::<Request>("GET", operation_id, get(handler))
@@ -96,7 +96,7 @@ impl ManagementRoutes {
   fn post<Request, HandlerType, HandlerArgs>(self, operation_id: &'static str, handler: HandlerType) -> Self
   where
     Request: ManagementAuthorizationTarget + 'static,
-    HandlerType: Handler<HandlerArgs, Arc<ManagementApplication>>,
+    HandlerType: Handler<HandlerArgs, S>,
     HandlerArgs: 'static,
   {
     self.register::<Request>("POST", operation_id, post(handler))
@@ -105,7 +105,7 @@ impl ManagementRoutes {
   fn delete<Request, HandlerType, HandlerArgs>(self, operation_id: &'static str, handler: HandlerType) -> Self
   where
     Request: ManagementAuthorizationTarget + 'static,
-    HandlerType: Handler<HandlerArgs, Arc<ManagementApplication>>,
+    HandlerType: Handler<HandlerArgs, S>,
     HandlerArgs: 'static,
   {
     self.register::<Request>("DELETE", operation_id, delete(handler))
@@ -115,7 +115,7 @@ impl ManagementRoutes {
     mut self,
     method: &'static str,
     operation_id: &'static str,
-    method_router: MethodRouter<Arc<ManagementApplication>>,
+    method_router: MethodRouter<S>,
   ) -> Self
   where
     Request: ManagementAuthorizationTarget + 'static,
@@ -125,8 +125,10 @@ impl ManagementRoutes {
     self.operations.push(authorization_operation(operation));
     self
   }
-
-  fn finish(self, application: ManagementApplication) -> Router {
+}
+impl ManagementRoutes<Arc<ManagementApplication>> {
+  fn finish(self, mut application: ManagementApplication) -> Router {
+    let protected = registered_integration_routes();
     let expected = MANAGEMENT_OPERATIONS
       .iter()
       .map(|operation| operation.operation_id)
@@ -134,17 +136,28 @@ impl ManagementRoutes {
     let registered = self
       .operations
       .iter()
+      .chain(protected.operations.iter())
       .map(|operation| operation.operation_id)
       .collect::<BTreeSet<_>>();
     assert_eq!(registered, expected, "management router inventory is incomplete");
     assert_eq!(
-      self.operations.len(),
+      self.operations.len() + protected.operations.len(),
       registered.len(),
       "management router inventory contains duplicate operations"
     );
 
+    let integration_application = application
+      .integrations
+      .take()
+      .unwrap_or_else(super::integrations::IntegrationManagementApplication::unavailable);
+    let protected = protected
+      .router
+      .layer(axum::extract::DefaultBodyLimit::max(32 * 1024))
+      .layer(axum::middleware::from_fn(super::integrations::protected_ingress))
+      .with_state::<Arc<ManagementApplication>>(Arc::new(integration_application));
     self
       .router
+      .merge(protected)
       .route(&format!("{API_PREFIX}/openapi.json"), get(openapi))
       .fallback(api_not_found)
       .layer(axum::extract::DefaultBodyLimit::max(MAX_MANAGEMENT_BODY_BYTES))
@@ -207,7 +220,11 @@ fn authorization_operation(operation: &'static ManagementOperation) -> Managemen
 /// Returns authorization metadata from the same declarations that build the router.
 #[must_use]
 pub fn management_authorization_operations() -> Vec<ManagementAuthorizationOperation> {
-  registered_routes().operations
+  registered_routes()
+    .operations
+    .into_iter()
+    .chain(registered_integration_routes().operations)
+    .collect()
 }
 
 fn registered_routes() -> ManagementRoutes {
@@ -331,6 +348,29 @@ fn registered_routes() -> ManagementRoutes {
 /// Builds the registered management routes below `/api/v1`.
 pub fn router(application: ManagementApplication) -> Router {
   registered_routes().finish(application)
+}
+
+fn registered_integration_routes() -> ManagementRoutes<Arc<super::integrations::IntegrationManagementApplication>> {
+  use super::integrations::*;
+  use octacity_server_application::{
+    CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery, GetIntegrationConnectionQuery,
+    ManageIntegrationCredentialCommand, PublishIntegrationConnectionCommand, SetIntegrationConnectionStateCommand,
+  };
+  ManagementRoutes::new()
+    .post::<ManageIntegrationCredentialCommand, _, _>("manageIntegrationCredential", submit_credentials)
+    .post::<PublishIntegrationConnectionCommand, _, _>("publishIntegrationConnection", publish_metadata)
+    .get::<GetIntegrationConnectionQuery, _, _>("getIntegrationConnection", get_metadata)
+    .get::<GetIntegrationConnectionQuery, _, _>("getIntegrationConnectionVersion", get_metadata_version)
+    .post::<SetIntegrationConnectionStateCommand, _, _>("setIntegrationConnectionState", set_state)
+    .get::<GetIntegrationAdministrationQuery, _, _>("getIntegrationAdministration", get_state)
+    .post::<CleanupIntegrationPreparationsCommand, _, _>("cleanupIntegrationPreparations", cleanup_preparations)
+}
+pub(super) fn integration_router(application: super::integrations::IntegrationManagementApplication) -> Router {
+  registered_integration_routes()
+    .router
+    .layer(axum::extract::DefaultBodyLimit::max(32 * 1024))
+    .layer(axum::middleware::from_fn(super::integrations::protected_ingress))
+    .with_state(Arc::new(application))
 }
 
 #[cfg(test)]

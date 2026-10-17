@@ -25,6 +25,7 @@ use octacity_server_application::{ManagementRequestContext, ManagementRequestId}
 mod long_poll;
 mod telemetry;
 pub mod v1;
+pub use v1::integrations;
 
 pub use long_poll::JobEventNotificationHub;
 

@@ -118,6 +118,10 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     "octacity-server-factory": frozenset({"blake3"}),
     "octacity-server-job": frozenset({"base64", "ed25519-dalek"}),
     "octacity-server-secrets": frozenset({"hmac"}),
+    # The connection publication contract validates canonical approved HTTPS URL
+    # syntax in both memory and PostgreSQL. This parser performs no network I/O;
+    # provider clients and transport SDKs remain forbidden in the store core.
+    "octacity-server-store": frozenset({"url"}),
     "octacity-server-trigger": frozenset({"chrono", "chrono-tz", "cron"}),
 }
 

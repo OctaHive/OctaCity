@@ -61,6 +61,8 @@ pub fn openapi_document() -> Value {
     "paths": paths,
     "components": {
       "schemas": component_schemas(),
+      "securitySchemes": {"ProtectedManagementIngress":{"type":"http","scheme":"bearer",
+        "description":"Requires an explicitly configured identity verifier over TLS or an authenticated local proxy channel. Headers alone are not accepted by the server."}},
       "responses": {
         "ManagementError": {
           "description": "Stable management API error",
@@ -103,7 +105,14 @@ fn operation_document(operation: &ManagementOperation) -> Value {
     ("operationId".to_owned(), json!(operation.operation_id)),
     ("summary".to_owned(), json!(operation.summary)),
     ("tags".to_owned(), json!([operation.tag])),
-    ("security".to_owned(), json!([])),
+    (
+      "security".to_owned(),
+      if operation.protected_ingress {
+        json!([{"ProtectedManagementIngress":[]}])
+      } else {
+        json!([])
+      },
+    ),
     ("responses".to_owned(), responses(operation)),
   ]);
   let parameters = parameters(operation);

@@ -560,3 +560,57 @@ impl octacity_server_store::FactoryFlowDefinitionStore for PostgresStore {
     crate::factory_flow_definition::list(&self.pool, project, after, limit, visibility).await
   }
 }
+
+#[async_trait]
+impl IntegrationConnectionStore for PostgresStore {
+  async fn replay_integration_connection(
+    &self,
+    request: ManagementMutation<ReplayIntegrationConnection>,
+  ) -> Result<Option<IntegrationConnectionMutationOutcome>, StoreError> {
+    crate::integration_connection::replay_mutation(&self.pool, request).await
+  }
+  async fn publish_integration_connection(
+    &self,
+    request: ManagementMutation<PublishIntegrationConnection>,
+  ) -> Result<IntegrationConnectionMutationOutcome, StoreError> {
+    crate::integration_connection::publish(&self.pool, request).await
+  }
+  async fn integration_connection(
+    &self,
+    id: IntegrationId,
+    version: Option<IntegrationVersion>,
+  ) -> Result<PublishedIntegrationConnection, StoreError> {
+    crate::integration_connection::read(&self.pool, id, version).await
+  }
+}
+
+#[async_trait]
+impl IntegrationAdministrationStore for PostgresStore {
+  async fn begin_integration_administration(
+    &self,
+    request: ManagementMutation<BeginIntegrationAdministration>,
+  ) -> Result<IntegrationAdministrationReceipt, StoreError> {
+    crate::integration_administration::begin(&self.pool, request).await
+  }
+  async fn complete_integration_administration(
+    &self,
+    request: ManagementMutation<IntegrationAdministrationReceipt>,
+  ) -> Result<IntegrationAdministrationReceipt, StoreError> {
+    crate::integration_administration::complete(&self.pool, request).await
+  }
+  async fn integration_administration(&self, id: IntegrationId) -> Result<IntegrationAdministrationState, StoreError> {
+    crate::integration_administration::read(&self.pool, id).await
+  }
+  async fn integration_preparation_cleanup(
+    &self,
+    request: ManagementMutation<IntegrationPreparationCleanup>,
+  ) -> Result<Vec<octacity_server_store::CredentialPublication>, StoreError> {
+    crate::integration_administration::cleanup(&self.pool, request).await
+  }
+  async fn acknowledge_integration_preparation_cleanup(
+    &self,
+    request: ManagementMutation<octacity_server_store::CredentialPublication>,
+  ) -> Result<(), StoreError> {
+    crate::integration_administration::acknowledge(&self.pool, request).await
+  }
+}

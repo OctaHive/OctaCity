@@ -5,6 +5,7 @@
 //! payloads. Route adapters perform explicit conversion at the boundary.
 
 mod adapter;
+pub use adapter::integrations;
 mod agent;
 mod artifact;
 mod audit;

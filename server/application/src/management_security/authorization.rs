@@ -68,6 +68,10 @@ pub enum ManagementResourceKind {
   BuildConfiguration,
   /// Versioned Dark Factory Configuration.
   FactoryConfiguration,
+  /// Reusable external connection metadata; independent of Project-use authority.
+  IntegrationConnection,
+  /// Write-only provider credential administration, separate from connection use/metadata.
+  IntegrationCredential,
   /// Immutable Factory Flow Definition.
   FlowDefinition,
   /// Exact Project-scoped selectable Factory capability or policy reference.
@@ -110,7 +114,7 @@ pub enum ManagementResourceKind {
 
 impl ManagementResourceKind {
   /// Complete closed resource-kind vocabulary used by coverage and policy tests.
-  pub const ALL: [Self; 26] = [
+  pub const ALL: [Self; 28] = [
     Self::ControlPlane,
     Self::Project,
     Self::ProjectPolicy,
@@ -118,6 +122,8 @@ impl ManagementResourceKind {
     Self::Repository,
     Self::BuildConfiguration,
     Self::FactoryConfiguration,
+    Self::IntegrationConnection,
+    Self::IntegrationCredential,
     Self::FlowDefinition,
     Self::FactoryRun,
     Self::FactoryNodeAttempt,
@@ -401,6 +407,7 @@ const fn supports_collection(kind: ManagementResourceKind) -> bool {
       | ManagementResourceKind::AuditFact
       | ManagementResourceKind::FlowDefinition
       | ManagementResourceKind::FactoryConfiguration
+      | ManagementResourceKind::IntegrationConnection
       | ManagementResourceKind::FactoryRun
       | ManagementResourceKind::FactoryChoice
   )
@@ -415,6 +422,8 @@ const fn supports_instance(kind: ManagementResourceKind) -> bool {
       | ManagementResourceKind::BuildConfiguration
       | ManagementResourceKind::FlowDefinition
       | ManagementResourceKind::FactoryConfiguration
+      | ManagementResourceKind::IntegrationConnection
+      | ManagementResourceKind::IntegrationCredential
       | ManagementResourceKind::FactoryRun
       | ManagementResourceKind::FactoryNodeAttempt
       | ManagementResourceKind::FactoryChoice

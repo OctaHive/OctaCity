@@ -43,6 +43,8 @@ mod factory_signal_request;
 mod factory_source;
 mod factory_source_artifact;
 mod factory_source_projection;
+mod integration_administration;
+mod integration_connection;
 mod internal_trigger;
 mod internal_trigger_definition;
 mod job_claim;

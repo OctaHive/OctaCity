@@ -1304,6 +1304,14 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("/api/v1/projects/{project_id}/factory-runs?limit=1"),None),
     empty_request("GET",&format!("/api/v1/factory-phase-ready?policy_digest={}&limit=1","ab".repeat(32)),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/factory-phase-ready?policy_digest={}&limit=1","ab".repeat(32)),None),
+    // Protected administration rejects even well-routed requests before body parsing/policy.
+    empty_request("POST", &format!("/api/v1/integrations/{integration_id}/credentials"), None),
+    empty_request("POST", &format!("/api/v1/integrations/{integration_id}/versions"), None),
+    empty_request("GET", &format!("/api/v1/integrations/{integration_id}"), None),
+    empty_request("GET", &format!("/api/v1/integrations/{integration_id}/versions/1"), None),
+    empty_request("POST", &format!("/api/v1/integrations/{integration_id}/state"), None),
+    empty_request("GET", &format!("/api/v1/integrations/{integration_id}/state"), None),
+    empty_request("POST", &format!("/api/v1/integrations/{integration_id}/preparations/cleanup"), None),
   ]
 }
 
@@ -1318,7 +1326,9 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
   assert_eq!(requests.len(), MANAGEMENT_OPERATIONS.len());
 
   for (index, request) in requests.into_iter().enumerate() {
-    let expected = if request.uri().path() == "/api/v1/operations/metadata" {
+    let expected = if request.uri().path().starts_with("/api/v1/integrations/") {
+      StatusCode::FORBIDDEN
+    } else if request.uri().path() == "/api/v1/operations/metadata" {
       StatusCode::OK
     } else {
       StatusCode::SERVICE_UNAVAILABLE
@@ -1452,13 +1462,58 @@ async fn every_management_operation_denies_before_application_and_protected_side
     );
   }
 
-  assert_eq!(policy.decisions.load(Ordering::SeqCst), MANAGEMENT_OPERATIONS.len());
+  assert_eq!(
+    policy.decisions.load(Ordering::SeqCst),
+    MANAGEMENT_OPERATIONS
+      .iter()
+      .filter(|operation| !operation.protected_ingress)
+      .count()
+  );
   assert!(application.calls.lock().unwrap().is_empty());
   assert_eq!(
     *application.protected_side_effects.lock().unwrap(),
     ProtectedSideEffectCounts::default(),
     "denial must precede handlers, transactions, audit, outbox, idempotency, and transfer capabilities"
   );
+}
+
+#[tokio::test]
+async fn verified_integration_ingress_reports_unconfigured_services_without_dispatch() {
+  use octacity_server_api_rest::integrations::ProtectedIntegrationRequest;
+  use octacity_server_application::{
+    ManagementActor, ManagementIngress, ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId,
+    ManagementSecurityScope,
+  };
+  let application = Arc::new(RecordingApplication::default());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let mut request = json_request(
+    "POST",
+    "/api/v1/integrations/11111111-1111-4111-8111-111111111111/credentials",
+    "not-configured",
+    None,
+    r#"{"intent":{"id":"11111111-1111-4111-8111-111111111111","expected_metadata_version":1,"expected_revision":0,"action":{"operation":"credential","reference":{"provider":"installed","reference":"reader"},"kind":"adopt"}}}"#,
+  );
+  request.headers_mut().insert("if-none-match", "*".parse().unwrap());
+  request.extensions_mut().insert(
+    ProtectedIntegrationRequest::new(
+      ManagementRequestContext::new(
+        ManagementActor::authenticated("verified-administrator").unwrap(),
+        ManagementSecurityScope::new("verified-ingress").unwrap(),
+        ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap(),
+        ManagementRequestAttributes::new(ManagementIngress::VerifiedIdentity, None),
+      )
+      .unwrap(),
+    )
+    .unwrap(),
+  );
+  assert_eq!(
+    routes.oneshot(request).await.unwrap().status(),
+    StatusCode::SERVICE_UNAVAILABLE
+  );
+  assert!(application.calls.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

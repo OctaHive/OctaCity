@@ -4,6 +4,14 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Publish immutable reusable integration connection metadata.
+  PublishIntegrationConnection,
+  /// Reserve safe integration administration and its stable recovery identity.
+  BeginIntegrationAdministration,
+  /// Complete a current private credential publication without retaining its value.
+  CompleteIntegrationAdministration,
+  /// Abandon an expired private preparation with attributed transactional evidence.
+  AbandonIntegrationPreparation,
   /// Atomically create ordinary execution for a persisted common node intent.
   AcceptFactoryBuild,
   /// Publish verified private inputs for one persisted node operation.
@@ -289,6 +297,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// A connection selection exceeds the trusted installation or metadata bounds.
+  #[error("invalid integration connection metadata")]
+  InvalidIntegrationConnection,
   /// Management mutation actor evidence or request correlation is missing or invalid.
   #[error("a management mutation audit context is invalid")]
   InvalidMutationAuditContext,

@@ -17,12 +17,14 @@ use support::TestDatabase;
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 39] = [
+const FACTORY_TABLES: [&str; 41] = [
   "factory_source_inputs",
   "factory_source_groups",
   "factory_source_scans",
   "factory_source_preparations",
   "factory_source_materializations",
+  "factory_source_projection_intents",
+  "factory_source_projection_journals",
   "factory_source_input_objects",
   "factory_audit_links",
   "factory_configuration_versions",
@@ -57,6 +59,13 @@ const FACTORY_TABLES: [&str; 39] = [
   "factory_execution_inputs",
   "factory_decision_signal_requests",
   "factory_decision_signal_receipts",
+];
+const INTEGRATION_TABLES: [&str; 5] = [
+  "integration_connections",
+  "integration_connection_versions",
+  "integration_administration",
+  "integration_administration_operations",
+  "integration_credential_owners",
 ];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
 const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [
@@ -143,7 +152,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
 
   let mut previous = TestDatabase::empty().await;
   MIGRATOR.run_to(PREVIOUS_BINARY_SCHEMA_VERSION, &previous.pool).await?;
-  for table in FACTORY_TABLES {
+  for table in FACTORY_TABLES.into_iter().chain(INTEGRATION_TABLES) {
     assert!(!table_exists(&previous.pool, table).await?);
   }
   for table in FACTORY_RETENTION_TABLES {
@@ -203,7 +212,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   verify_build_discovery_indexes(&rollback.pool).await?;
   verify_resource_search_indexes(&rollback.pool).await?;
   verify_operator_attention_schema(&rollback.pool).await?;
-  for table in FACTORY_TABLES {
+  for table in FACTORY_TABLES.into_iter().chain(INTEGRATION_TABLES) {
     assert!(!table_exists(&rollback.pool, table).await?);
   }
   for table in FACTORY_RETENTION_TABLES {
@@ -492,6 +501,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
   .into_iter()
   .chain(FACTORY_TABLES)
   .chain(FACTORY_RETENTION_TABLES)
+  .chain(INTEGRATION_TABLES)
   .map(str::to_owned)
   .collect();
   if actual != expected {

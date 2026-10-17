@@ -618,6 +618,12 @@ pub use crate::factory_node_journal_testing::{
   verify_factory_node_journal_contract,
 };
 
+pub use crate::integration_administration_tests::{
+  verify_integration_administration, verify_integration_preparation_cleanup,
+};
+
+pub use crate::integration_connection_testing::{integration_connection_fixture, verify_connection_publication};
+
 #[cfg(test)]
 mod evidence_identity_tests {
   use super::*;

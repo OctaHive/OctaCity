@@ -5,6 +5,11 @@
 mod api;
 mod candidate;
 mod config;
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+mod credential_files;
+mod credential_management;
+mod credential_publication;
+pub use credential_management::{GithubCredentialClass, GithubCredentialManager, GithubCredentialTarget};
 mod issue_pagination;
 mod issue_reporter;
 pub mod issue_selector;

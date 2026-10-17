@@ -436,3 +436,7 @@ fn changed_nested_credential_directory_cannot_redirect_an_installed_grant() {
   assert_eq!(provider.prepare(&request).unwrap_err(), FailureClass::Permanent);
   fixture.no_provider_call();
 }
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[path = "work_credentials/management.rs"]
+mod management;

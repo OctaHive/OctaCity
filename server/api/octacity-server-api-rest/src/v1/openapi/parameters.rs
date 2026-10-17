@@ -237,10 +237,14 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     parameters.push(json!({
       "name": "If-Match",
       "in": "header",
-      "required": true,
+      "required": !operation.protected_ingress,
       "description": "Canonical strong ETag carrying a positive resource version, for example \"7\".",
       "schema": {"type": "string", "pattern": "^\\\"[1-9][0-9]*\\\"$"}
     }));
+  }
+  if operation.protected_ingress && operation.optimistic_precondition {
+    parameters.push(json!({"name":"If-None-Match","in":"header","required":false,"schema":{"type":"string","const":"*"},
+      "description":"Required for initial metadata/administrative publication; otherwise use If-Match matching the intent version/revision."}));
   }
   parameters
 }

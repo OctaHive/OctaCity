@@ -53,6 +53,8 @@ fn representative_resource(kind: ManagementResourceKind) -> ManagementResource {
     }
     ManagementResourceKind::Pipeline
     | ManagementResourceKind::Repository
+    | ManagementResourceKind::IntegrationConnection
+    | ManagementResourceKind::IntegrationCredential
     | ManagementResourceKind::BuildConfiguration
     | ManagementResourceKind::Schedule
     | ManagementResourceKind::Build

@@ -78,6 +78,7 @@ mod definition_discovery;
 mod error;
 mod execution;
 mod factory;
+pub mod integrations;
 mod internal_trigger;
 mod job_event;
 mod log_search;
@@ -181,6 +182,7 @@ where
 pub struct ManagementApplication {
   inputs: ManagementInputFactory,
   factory: FactoryManagementApplication,
+  integrations: Option<integrations::IntegrationManagementApplication>,
   projects: ProjectManagementApplication,
   pipelines: PipelineManagementApplication,
   configurations: ConfigurationManagementApplication,
@@ -203,6 +205,13 @@ pub struct ManagementApplication {
 }
 
 impl ManagementApplication {
+  /// Enables protected reusable-integration endpoints with explicitly supplied services.
+  /// The ingress verifier must independently install a ProtectedIntegrationRequest.
+  pub fn with_integrations(mut self, integrations: integrations::IntegrationManagementApplication) -> Self {
+    self.integrations = Some(integrations);
+    self
+  }
+
   /// Creates the management adapter registered through the static Agent Pool slice.
   pub fn new(
     supported_pipeline_capabilities: impl IntoIterator<Item = String>,
@@ -251,6 +260,7 @@ impl ManagementApplication {
       pipelines,
       configurations,
       factory,
+      integrations: None,
       agent_pools,
       agents,
       builds,

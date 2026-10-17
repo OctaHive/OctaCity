@@ -721,3 +721,16 @@ mod factory_command_materializer;
 pub use factory_command_materializer::FactoryCommandBuildMaterializer;
 
 pub use factory_codex_review_build::FactoryCodexReviewBuildAdapter;
+
+mod integration_administration;
+#[cfg(test)]
+mod integration_administration_tests;
+#[cfg(test)]
+mod integration_connection_tests;
+pub use integration_administration::*;
+
+mod integration_connection;
+pub use integration_connection::{
+  GetIntegrationConnectionQuery, IntegrationConnectionHandlers, MAX_INTEGRATION_NAME_BYTES,
+  PublishIntegrationConnectionCommand,
+};

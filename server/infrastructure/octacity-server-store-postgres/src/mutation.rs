@@ -316,6 +316,10 @@ pub(crate) enum MutationKind {
   CreateBuildConfiguration,
   PublishBuildConfigurationVersion,
   PublishFactoryFlowDefinition,
+  PublishIntegrationConnection,
+  BeginIntegrationAdministration,
+  CompleteIntegrationAdministration,
+  AbandonIntegrationPreparation,
   CreateFactoryConfiguration,
   ReplaceFactoryConfiguration,
   AdmitFactoryWork,
@@ -481,6 +485,30 @@ impl MutationKind {
         "publish-factory-flow-definition",
         "flow_definition",
         "factory.flow-version-published"
+      ),
+      Self::PublishIntegrationConnection => metadata!(
+        b"octacity.publish-integration-connection.v1\0",
+        "publish-integration-connection",
+        "integration",
+        "integration.connection.published"
+      ),
+      Self::BeginIntegrationAdministration => metadata!(
+        b"octacity.begin-integration-administration.v1\0",
+        "begin-integration-administration",
+        "integration",
+        "integration.administration.begun"
+      ),
+      Self::CompleteIntegrationAdministration => metadata!(
+        b"octacity.complete-integration-administration.v1\0",
+        "complete-integration-administration",
+        "integration",
+        "integration.administration.completed"
+      ),
+      Self::AbandonIntegrationPreparation => metadata!(
+        b"octacity.abandon-integration-preparation.v1\0",
+        "abandon-integration-preparation",
+        "integration",
+        "integration.preparation.abandoned"
       ),
       Self::CreateFactoryConfiguration => metadata!(
         b"octacity.create-factory-configuration.v1\0",

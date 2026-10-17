@@ -240,7 +240,14 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
     let method = operation.method.to_ascii_lowercase();
     let documented = &document["paths"][operation.path][&method];
     assert_eq!(documented["operationId"], operation.operation_id);
-    assert_eq!(documented["security"], serde_json::json!([]));
+    assert_eq!(
+      documented["security"],
+      if operation.protected_ingress {
+        serde_json::json!([{"ProtectedManagementIngress":[]}])
+      } else {
+        serde_json::json!([])
+      }
+    );
     assert_eq!(
       documented["responses"][operation.success_status]["content"]["application/json"]["schema"]["$ref"],
       format!("#/components/schemas/{}", operation.response_schema)
@@ -282,7 +289,11 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
       );
     }
     assert_required_header(documented, "Idempotency-Key", operation.idempotent_mutation);
-    assert_required_header(documented, "If-Match", operation.optimistic_precondition);
+    assert_required_header(
+      documented,
+      "If-Match",
+      operation.optimistic_precondition && !operation.protected_ingress,
+    );
 
     let response = routes
       .clone()

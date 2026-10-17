@@ -776,3 +776,19 @@ pub use factory_signal_receipt::{
   FactoryDecisionSignalRequestDisposition, FactoryDecisionSignalRequestStore, FactoryDecisionSignalUsageStore,
   PublishFactoryDecisionSignalReceipt, ReserveFactoryDecisionSignalRequest,
 };
+
+#[cfg(any(test, feature = "test-support"))]
+mod integration_administration_tests;
+#[cfg(test)]
+mod integration_connection_tests;
+
+mod integration_connection;
+pub use integration_connection::*;
+
+#[cfg(any(test, feature = "test-support"))]
+mod integration_connection_testing;
+
+mod integration_connection_port;
+pub use integration_connection_port::*;
+mod integration_administration;
+pub use integration_administration::*;

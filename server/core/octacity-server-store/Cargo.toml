@@ -31,6 +31,7 @@ sha2.workspace = true
 thiserror.workspace = true
 uuid.workspace = true
 zeroize.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 octacity-server-factory = { path = "../octacity-server-factory", features = ["test-support"] }

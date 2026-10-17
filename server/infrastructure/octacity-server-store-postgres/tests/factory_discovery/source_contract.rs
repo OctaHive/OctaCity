@@ -1897,6 +1897,96 @@ async fn source_migration_preserves_existing_manual_admission_and_its_replay() {
   octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
   let after: (i64,i64,i64) = sqlx::query_as("SELECT (SELECT count(*) FROM factory_runs),(SELECT count(*) FROM audit_facts),(SELECT count(*) FROM idempotency_records)").fetch_one(&database.pool).await.unwrap();
   assert_eq!(after, before);
+  // Migration adopts nothing and activates no new source input.
+  let empty: (i64, i64) = sqlx::query_as(
+    "SELECT (SELECT count(*) FROM integration_connections), (SELECT count(*) FROM factory_source_inputs)",
+  )
+  .fetch_one(&database.pool)
+  .await
+  .unwrap();
+  assert_eq!(empty, (0, 0));
+  use octacity_server_store::ConfigurationStore as _;
+  use octacity_server_store::{
+    IntegrationConnectionIntent, IntegrationConnectionStore as _, IntegrationPurpose, PublishIntegrationConnection,
+    testing::integration_connection_fixture,
+  };
+  let repository_before = store
+    .repository_version(repository.id, repository.version)
+    .await
+    .unwrap();
+  let existing_input = input(&configuration, &repository, "github");
+  store
+    .publish_work_sources(PublishWorkSources {
+      project_id: project,
+      inputs: vec![WorkSourceInputChange {
+        expected_version: None,
+        input: existing_input.clone(),
+      }],
+      group: None,
+    })
+    .await
+    .unwrap();
+  let targets_before = store.source_scan_targets(project, None, 64).await.unwrap();
+  let binding = existing_input.definition().source.clone();
+  let (mut installed, mut draft) = integration_connection_fixture("github");
+  installed.installation = binding.installation.clone();
+  installed.resources[0].reference = binding.resource.clone();
+  installed.resources[0].capabilities[0].capability = binding.capability.clone();
+  installed.resources[0].capabilities[0].configuration = binding.configuration.clone();
+  draft.installation = binding.installation.clone();
+  draft.resources[0].reference = binding.resource.clone();
+  let adopted = store
+    .publish_integration_connection(management_mutation_with_request(
+      PublishIntegrationConnection {
+        intent: IntegrationConnectionIntent {
+          id: repository.definition.vcs_integration_id,
+          expected_current_version: None,
+          draft,
+        },
+        installed: installed.clone(),
+        idempotency_key: idempotency("explicit-adoption"),
+        published_at: time(20),
+      },
+      "explicit-adoption",
+    ))
+    .await
+    .unwrap()
+    .connection;
+  assert_eq!(adopted.id, repository.definition.vcs_integration_id);
+  assert_eq!(
+    adopted
+      .definition
+      .work_binding(&binding.resource, IntegrationPurpose::TaskRead)
+      .unwrap(),
+    binding
+  );
+  assert_eq!(adopted.definition.resources, installed.resources);
+  assert_eq!(
+    store.source_scan_targets(project, None, 64).await.unwrap(),
+    targets_before
+  );
+  assert_eq!(
+    store
+      .source_input(project, existing_input.id(), existing_input.version())
+      .await
+      .unwrap(),
+    existing_input
+  );
+  assert_eq!(
+    store
+      .repository_version(repository.id, repository.version)
+      .await
+      .unwrap(),
+    repository_before
+  );
+  assert_eq!(
+    store
+      .current_factory_configuration(configuration.reference().id())
+      .await
+      .unwrap()
+      .configuration,
+    configuration
+  );
   let restarted = PostgresStore::new(database.pool.clone());
   let replay = restarted
     .admit_factory_work(management_mutation_with_request(admission, "post-source-replay"))
