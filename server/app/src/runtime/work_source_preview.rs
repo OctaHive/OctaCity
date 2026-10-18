@@ -146,21 +146,29 @@ impl FactoryWorkSourcePreview for HostedFactoryWorkSourcePreview {
               .iter()
               .find(|s| s.selection == profile.selection)
               .ok_or_else(|| dependency(WorkSourceFailure::ProtocolFault))?;
+            let mut reasons: Vec<_> = selected
+              .reasons
+              .iter()
+              .map(|reason| match reason {
+                preview::SelectionMismatch::StateMismatch => WorkSourceSelectionMismatch::StateMismatch,
+                preview::SelectionMismatch::RequiredLabelMissing => WorkSourceSelectionMismatch::RequiredLabelMissing,
+                preview::SelectionMismatch::AlternativeLabelMissing => {
+                  WorkSourceSelectionMismatch::AlternativeLabelMissing
+                }
+                preview::SelectionMismatch::ExcludedLabelPresent => WorkSourceSelectionMismatch::ExcludedLabelPresent,
+                preview::SelectionMismatch::PredicateMismatch => WorkSourceSelectionMismatch::PredicateMismatch,
+              })
+              .collect();
+            if let Some(predicate) = &input.definition.predicate {
+              for reason in predicate.mismatches(&candidate.state, &candidate.labels) {
+                if !reasons.contains(&reason) {
+                  reasons.push(reason);
+                }
+              }
+            }
             Ok(WorkSourcePreviewSelection {
               input_id: input.id,
-              reasons: selected
-                .reasons
-                .iter()
-                .map(|reason| match reason {
-                  preview::SelectionMismatch::StateMismatch => WorkSourceSelectionMismatch::StateMismatch,
-                  preview::SelectionMismatch::RequiredLabelMissing => WorkSourceSelectionMismatch::RequiredLabelMissing,
-                  preview::SelectionMismatch::AlternativeLabelMissing => {
-                    WorkSourceSelectionMismatch::AlternativeLabelMissing
-                  }
-                  preview::SelectionMismatch::ExcludedLabelPresent => WorkSourceSelectionMismatch::ExcludedLabelPresent,
-                  preview::SelectionMismatch::PredicateMismatch => WorkSourceSelectionMismatch::PredicateMismatch,
-                })
-                .collect(),
+              reasons,
             })
           })
           .collect::<Result<Vec<_>, ApplicationError>>()?;

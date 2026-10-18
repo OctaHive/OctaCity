@@ -6,6 +6,7 @@ import {
   Hammer,
   MonitorCog,
   Moon,
+  Plug,
   Search,
   ServerCog,
   Star,
@@ -507,6 +508,12 @@ function navigationItems(
       key: 'builds',
       label: t('command.navigateBuilds'),
       run: () => navigate(CONSOLE_PATHS.builds),
+    },
+    {
+      icon: Plug,
+      key: 'integrations',
+      label: t('command.navigateIntegrations'),
+      run: () => navigate(CONSOLE_PATHS.integrations),
     },
     {
       icon: ServerCog,

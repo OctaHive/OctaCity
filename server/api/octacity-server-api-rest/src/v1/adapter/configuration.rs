@@ -25,7 +25,10 @@ pub(super) async fn create_repository(
     .handle_authorized_command(&context, command)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok((StatusCode::CREATED, Json(repository_mutation(outcome))))
+  Ok((
+    StatusCode::CREATED,
+    Json(repository_mutation(outcome).map_err(|error| application_error(error.classification(), &request_id))?),
+  ))
 }
 
 pub(super) async fn publish_repository(
@@ -54,7 +57,10 @@ pub(super) async fn publish_repository(
     .handle_authorized_command(&context, command)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok((StatusCode::OK, Json(repository_mutation(outcome))))
+  Ok((
+    StatusCode::OK,
+    Json(repository_mutation(outcome).map_err(|error| application_error(error.classification(), &request_id))?),
+  ))
 }
 
 pub(super) async fn get_repository(
@@ -72,7 +78,10 @@ pub(super) async fn get_repository(
     .handle_authorized_query(&context, query)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok((StatusCode::OK, Json(repository_resource(projection))))
+  Ok((
+    StatusCode::OK,
+    Json(repository_resource(projection).map_err(|error| application_error(error.classification(), &request_id))?),
+  ))
 }
 
 pub(super) async fn create_build_configuration(

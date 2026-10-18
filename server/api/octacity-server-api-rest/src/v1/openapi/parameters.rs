@@ -48,6 +48,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     ParameterProfile::WorkSourceDiagnostics => parameters.extend([cursor_parameter_with_max(512),limit_parameter(64,super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::WorkSourceConfigurations => parameters.extend([cursor_parameter_with_max(256), limit_parameter(octacity_server_application::MAX_WORK_SOURCE_CONFIGURATION_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::None => {}
+    ParameterProfile::IntegrationDiscovery => parameters.extend([cursor_parameter_with_max(128),limit_parameter(octacity_server_application::MAX_INTEGRATION_DISCOVERY_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::ProjectList => parameters.extend([
       json!({"name": "parent_id", "in": "query", "required": false, "schema": non_empty_string()}),
       cursor_parameter(),

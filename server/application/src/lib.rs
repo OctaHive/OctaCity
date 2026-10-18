@@ -733,8 +733,10 @@ pub use integration_administration::*;
 
 mod integration_connection;
 pub use integration_connection::{
-  GetIntegrationConnectionQuery, IntegrationConnectionHandlers, MAX_INTEGRATION_NAME_BYTES,
-  PublishIntegrationConnectionCommand,
+  GetIntegrationConnectionQuery, IntegrationConnectionHandlers, IntegrationConnectionPage, IntegrationInstallationPage,
+  ListIntegrationConnectionsQuery, ListIntegrationInstallationsQuery, MAX_INTEGRATION_AUTHENTICATION_METHODS,
+  MAX_INTEGRATION_DISCOVERY_PAGE_SIZE, MAX_INTEGRATION_ENDPOINT_BYTES, MAX_INTEGRATION_ENDPOINTS,
+  MAX_INTEGRATION_NAME_BYTES, PublishIntegrationConnectionCommand, ValidateIntegrationConnectionQuery,
 };
 
 #[cfg(test)]

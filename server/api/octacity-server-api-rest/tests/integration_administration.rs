@@ -187,6 +187,47 @@ fn integration_openapi_retains_typed_authorization_and_write_only_secret_submiss
 }
 
 #[test]
+fn integration_discovery_and_draft_validation_are_protected_typed_read_operations() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  for (path, method, name, schema) in [
+    (
+      "/api/v1/integrations",
+      "get",
+      "listIntegrationConnections",
+      "IntegrationConnectionPage",
+    ),
+    (
+      "/api/v1/integration-installations",
+      "get",
+      "listIntegrationInstallations",
+      "IntegrationInstallationPage",
+    ),
+    (
+      "/api/v1/integrations/{integration_id}/validate",
+      "post",
+      "validateIntegrationConnection",
+      "IntegrationConnectionDefinition",
+    ),
+  ] {
+    let operation = &document["paths"][path][method];
+    assert_eq!(operation["operationId"], name, "{path}");
+    assert_eq!(
+      operation["security"],
+      json!([{"ProtectedManagementIngress":[]}]),
+      "{path}"
+    );
+    openapi::assert_component_exists(&document, schema);
+    assert!(
+      operation["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|p| p["name"] != "Idempotency-Key")
+    );
+  }
+}
+
+#[test]
 fn integration_openapi_name_limit_matches_publication_validation() {
   let document = octacity_server_api_rest::v1::openapi_document();
   let schemas = &document["components"]["schemas"];
@@ -623,3 +664,220 @@ async fn read_only_connection_check_rest_is_protected_closed_and_uses_no_credent
 
 #[path = "integration_administration/sources.rs"]
 mod sources;
+
+#[async_trait]
+impl ManagementQueryUseCase<ListIntegrationConnectionsQuery> for Peer {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    query: ListIntegrationConnectionsQuery,
+  ) -> Result<<ListIntegrationConnectionsQuery as Query>::Outcome, ApplicationError> {
+    assert_eq!(query.limit, 1);
+    Ok(IntegrationConnectionPage {
+      items: vec![serde_json::from_value(metadata()).unwrap()],
+      next_cursor: None,
+    })
+  }
+}
+#[async_trait]
+impl ManagementQueryUseCase<ListIntegrationInstallationsQuery> for Peer {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    query: ListIntegrationInstallationsQuery,
+  ) -> Result<IntegrationInstallationPage, ApplicationError> {
+    assert_eq!(query.limit, 1);
+    let value = metadata();
+    let definition = &value["definition"];
+    Ok(IntegrationInstallationPage { items:vec![serde_json::from_value(json!({"provider":"jira","installation":definition["installation"],"adapter":definition["adapter"],"endpoints":["https://tracker.invalid/"],"authentication":["token"],"resources":definition["resources"]})).unwrap()],next_cursor:None })
+  }
+}
+#[async_trait]
+impl ManagementQueryUseCase<ValidateIntegrationConnectionQuery> for Peer {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    query: ValidateIntegrationConnectionQuery,
+  ) -> Result<<ValidateIntegrationConnectionQuery as Query>::Outcome, ApplicationError> {
+    assert_eq!(query.intent.draft.endpoint, "https://tracker.invalid/");
+    Ok(serde_json::from_value(metadata()["definition"].clone()).unwrap())
+  }
+}
+#[tokio::test]
+async fn connection_discovery_rest_exposes_installed_choices_without_credential_submission() {
+  let peer = Arc::new(Peer::default());
+  let commands = Arc::new(AuthorizedCommandHandler::new(Arc::new(Policy), peer.clone()));
+  let queries = Arc::new(AuthorizedQueryHandler::new(Arc::new(Policy), peer.clone()));
+  let router = integration_management_routes(
+    IntegrationManagementApplication::new(commands.clone())
+      .with_metadata(commands, queries.clone())
+      .with_discovery(queries),
+  );
+  let connection = "0199a6f4-d56c-7440-9aa2-6a320f862795";
+  let intent = json!({"intent":{"id":connection,"expected_current_version":null,"draft":{"name":"Tracker","installation":exact("installation"),"endpoint":"https://tracker.invalid/","authentication":"token","resources":[{"reference":exact("tickets"),"purposes":["task_read"]}]}}});
+  let document = octacity_server_api_rest::v1::openapi_document();
+  for (uri, method, payload, component) in [
+    (
+      "/api/v1/integrations?limit=1".to_owned(),
+      "GET",
+      json!(null),
+      "IntegrationConnectionPage",
+    ),
+    (
+      "/api/v1/integration-installations?limit=1".to_owned(),
+      "GET",
+      json!(null),
+      "IntegrationInstallationPage",
+    ),
+    (
+      format!("/api/v1/integrations/{connection}/validate"),
+      "POST",
+      intent.clone(),
+      "IntegrationConnectionDefinition",
+    ),
+  ] {
+    for authorized in [false, true] {
+      let mut request = Request::builder()
+        .method(method)
+        .uri(&uri)
+        .header("content-type", "application/json")
+        .body(Body::from(payload.to_string()))
+        .unwrap();
+      if authorized {
+        request.extensions_mut().insert(proof());
+      }
+      let response = router.clone().oneshot(request).await.unwrap();
+      assert_eq!(
+        response.status(),
+        if authorized {
+          StatusCode::OK
+        } else {
+          StatusCode::FORBIDDEN
+        }
+      );
+      assert_eq!(response.headers()["cache-control"], "no-store");
+      let value: serde_json::Value =
+        serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+      if authorized {
+        openapi::assert_json_matches_component(&document, component, &value);
+      }
+    }
+  }
+  assert_eq!(peer.0.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn integration_discovery_rejects_unbounded_pages_before_query_dispatch() {
+  let peer = Arc::new(Peer::default());
+  let commands = Arc::new(AuthorizedCommandHandler::new(Arc::new(Policy), peer.clone()));
+  let queries = Arc::new(AuthorizedQueryHandler::new(Arc::new(Policy), peer));
+  let router = integration_management_routes(IntegrationManagementApplication::new(commands).with_discovery(queries));
+  for path in ["/api/v1/integrations", "/api/v1/integration-installations"] {
+    for limit in [0, 101] {
+      let mut request = Request::builder()
+        .uri(format!("{path}?limit={limit}"))
+        .body(Body::empty())
+        .unwrap();
+      request.extensions_mut().insert(proof());
+      let response = router.clone().oneshot(request).await.unwrap();
+      assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+  }
+}
+
+#[test]
+fn dependency_review_is_a_protected_visibility_filtered_read_contract() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let operation = &document["paths"]["/api/v1/integrations/{integration_id}/projects/{project_id}/dependencies"]["get"];
+  assert_eq!(operation["operationId"], "listIntegrationDependencies");
+  assert!(!operation["security"].as_array().unwrap().is_empty());
+  assert_eq!(
+    operation["responses"]["200"]["content"]["application/json"]["schema"]["$ref"],
+    "#/components/schemas/WorkSourceConfigurationPage"
+  );
+}
+
+#[async_trait]
+impl ManagementQueryUseCase<ListIntegrationDependenciesQuery> for Peer {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    query: ListIntegrationDependenciesQuery,
+  ) -> Result<<ListIntegrationDependenciesQuery as Query>::Outcome, ApplicationError> {
+    self.0.fetch_add(1, Ordering::SeqCst);
+    assert_eq!(query.limit, 1);
+    let fixture: serde_json::Value =
+      serde_json::from_str(include_str!("../fixtures/v1/integration-contracts.json")).unwrap();
+    let record: WorkSourceConfigurationRecord =
+      serde_json::from_value(fixture["WorkSourceDiagnostics"][0]["configuration"].clone()).unwrap();
+    assert_eq!(query.project_id, record.inputs()[0].project_id());
+    Ok(WorkSourceConfigurationPage {
+      next_cursor: Some(record.target()),
+      items: vec![record],
+    })
+  }
+}
+#[tokio::test]
+async fn dependency_review_retains_scoped_cursor_and_rejects_substitution_before_dispatch() {
+  let peer = Arc::new(Peer::default());
+  let commands = Arc::new(AuthorizedCommandHandler::new(Arc::new(Policy), peer.clone()));
+  let queries = Arc::new(AuthorizedQueryHandler::new(Arc::new(Policy), peer.clone()));
+  let router =
+    integration_management_routes(IntegrationManagementApplication::new(commands).with_dependencies(queries));
+  let path = "/api/v1/integrations/0199a6f4-d56c-7440-9aa2-6a320f862795/projects/0199a6f4-d56c-7440-9aa2-6a320f862790/dependencies";
+  let request = |uri: String, authenticated: bool| {
+    let mut r = Request::builder().uri(uri).body(Body::empty()).unwrap();
+    if authenticated {
+      r.extensions_mut().insert(proof());
+    }
+    r
+  };
+  let response = router
+    .clone()
+    .oneshot(request(format!("{path}?limit=1"), false))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::FORBIDDEN);
+  let response = router
+    .clone()
+    .oneshot(request(format!("{path}?limit=1"), true))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers()["cache-control"], "no-store");
+  let body: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+  openapi::assert_json_matches_component(
+    &octacity_server_api_rest::v1::openapi_document(),
+    "WorkSourceConfigurationPage",
+    &body,
+  );
+  let cursor = body["next_cursor"].as_str().unwrap();
+  for (path, cursor, limit, status) in [
+    (path.to_owned(), Some(cursor.to_owned()), 1, StatusCode::OK),
+    (
+      path.replace("62795", "62796"),
+      Some(cursor.to_owned()),
+      1,
+      StatusCode::BAD_REQUEST,
+    ),
+    (path.to_owned(), None, 0, StatusCode::BAD_REQUEST),
+    (path.to_owned(), None, 65, StatusCode::BAD_REQUEST),
+  ] {
+    let mut uri = format!("{path}?limit={limit}");
+    if let Some(cursor) = cursor {
+      uri.push_str("&after=");
+      uri.push_str(&cursor.bytes().map(|b| format!("%{b:02X}")).collect::<String>());
+    }
+    let response = router.clone().oneshot(request(uri, true)).await.unwrap();
+    assert_eq!(response.status(), status);
+  }
+  assert_eq!(peer.0.load(Ordering::SeqCst), 2);
+}

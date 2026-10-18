@@ -2,12 +2,75 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{
   CheckIntegrationConnectionQuery, CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery,
   GetIntegrationConnectionQuery, GetIntegrationProjectAccessQuery, GetWorkSourceConfigurationQuery,
-  GetWorkSourceDiagnosticsQuery, ListIntegrationProjectResourcesQuery, ListWorkSourceConfigurationsQuery,
-  ListWorkSourceInputChoicesQuery, ManageIntegrationCredentialCommand, PreviewWorkSourcesQuery,
-  PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand, PublishWorkSourceConfigurationCommand,
-  SetIntegrationConnectionStateCommand, ValidateWorkSourceConfigurationQuery,
+  GetWorkSourceDiagnosticsQuery, ListIntegrationConnectionsQuery, ListIntegrationInstallationsQuery,
+  ListIntegrationProjectResourcesQuery, ListWorkSourceConfigurationsQuery, ListWorkSourceInputChoicesQuery,
+  ManageIntegrationCredentialCommand, PreviewWorkSourcesQuery, PublishIntegrationConnectionCommand,
+  PublishIntegrationProjectAccessCommand, PublishWorkSourceConfigurationCommand, SetIntegrationConnectionStateCommand,
+  ValidateIntegrationConnectionQuery, ValidateWorkSourceConfigurationQuery,
 };
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
+  operation!(
+    octacity_server_application::ListIntegrationDependenciesQuery,
+    "GET",
+    "/api/v1/integrations/{integration_id}/projects/{project_id}/dependencies",
+    "listIntegrationDependencies",
+    "Integrations",
+    "List visible retained input versions using the connection; history grants no execution or reporting authority",
+    None,
+    "WorkSourceConfigurationPage",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::WorkSourceConfigurations)
+  .with_visibility::<octacity_server_application::ListIntegrationDependenciesQuery>(),
+  operation!(
+    ListIntegrationConnectionsQuery,
+    "GET",
+    "/api/v1/integrations",
+    "listIntegrationConnections",
+    "Integrations",
+    "List current visible connection metadata",
+    None,
+    "IntegrationConnectionPage",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::IntegrationDiscovery)
+  .with_visibility::<ListIntegrationConnectionsQuery>(),
+  operation!(
+    ListIntegrationInstallationsQuery,
+    "GET",
+    "/api/v1/integration-installations",
+    "listIntegrationInstallations",
+    "Integrations",
+    "List verified installed choices for integration administrators",
+    None,
+    "IntegrationInstallationPage",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::IntegrationDiscovery)
+  .with_visibility::<ListIntegrationInstallationsQuery>(),
+  operation!(
+    ValidateIntegrationConnectionQuery,
+    "POST",
+    "/api/v1/integrations/{integration_id}/validate",
+    "validateIntegrationConnection",
+    "Integrations",
+    "Resolve a credential-free draft against installed ceilings without publication",
+    Some("IntegrationConnectionPublication"),
+    "IntegrationConnectionDefinition",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress(),
   operation!(
     PreviewWorkSourcesQuery,
     "POST",

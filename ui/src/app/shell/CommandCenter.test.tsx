@@ -32,6 +32,11 @@ afterEach(() => {
 });
 
 describe('CommandCenter', () => {
+  it('opens reusable integration administration from the global keyboard command surface', () => {
+    const { router } = renderCenter(searchApi(async () => emptyPage()));
+    fireEvent.click(screen.getByRole('button', { name: 'Open Integrations' }));
+    expect(router.state.location.pathname).toBe('/integrations');
+  });
   it('offers global navigation and presentation commands without state-changing actions', async () => {
     const api = searchApi(async () => emptyPage());
     const { router } = renderCenter(api);

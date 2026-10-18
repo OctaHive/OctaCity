@@ -201,10 +201,10 @@ impl WorkSourceConfigurationVisibility {
         .is_none_or(|c| self.connections.allows(&c.id))
   }
 }
-/// A bounded current-definition page; private snapshots, admission and polling cursors are absent.
+/// A bounded definition page; private snapshots, admission and polling cursors are absent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct WorkSourceConfigurationPage {
-  /// Visible current inputs/groups in stable kind/identity order.
+  /// Visible current inputs/groups, or retained input versions for connection dependency review.
   pub items: Vec<WorkSourceConfigurationRecord>,
   /// Last visible record when another visible record exists.
   pub next_cursor: Option<WorkSourceScanTarget>,
@@ -212,9 +212,12 @@ pub struct WorkSourceConfigurationPage {
 /// Store-owned read constraints, including dependency visibility before pagination.
 #[derive(Clone, Debug)]
 pub struct ListWorkSourceConfigurations {
+  /// Connection dependency review includes every retained input version, not group duplicates.
+  /// None retains ordinary current-definition discovery.
+  pub connection_dependency: Option<octacity_server_domain::IntegrationId>,
   /// Owning Project.
   pub project_id: ProjectId,
-  /// Exclusive stable kind/identity position; version remains provenance only.
+  /// Exclusive kind/identity position; dependency review additionally orders by version.
   pub after: Option<WorkSourceScanTarget>,
   /// At most 64 returned configurations.
   pub limit: u16,

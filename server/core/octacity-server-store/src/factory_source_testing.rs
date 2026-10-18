@@ -743,6 +743,33 @@ impl crate::FactorySourceConfigurationStore for InMemoryFactoryConfigurationStor
     if !state.projects.contains(&request.project_id) {
       return Err(source_conflict());
     }
+    if let Some(connection) = request.connection_dependency {
+      let mut items = state
+        .sources
+        .inputs
+        .values()
+        .filter(|i| {
+          i.project_id() == request.project_id
+            && i.definition().connection.as_ref().is_some_and(|c| c.id == connection)
+            && request.visibility.allows(i)
+        })
+        .filter(|i| {
+          request.after.is_none_or(|after| match after {
+            crate::WorkSourceScanTarget::Input { id, version } => (i.id(), i.version()) > (id, version),
+            crate::WorkSourceScanTarget::Group { .. } => false,
+          })
+        })
+        .map(|i| crate::WorkSourceConfigurationRecord::Input(Box::new(i.clone())))
+        .collect::<Vec<_>>();
+      items.sort_by_key(|r| {
+        let i = &r.inputs()[0];
+        (i.id(), i.version())
+      });
+      let more = items.len() > usize::from(request.limit);
+      items.truncate(usize::from(request.limit));
+      let next_cursor = more.then(|| items.last().map(|r| r.target())).flatten();
+      return Ok(crate::WorkSourceConfigurationPage { items, next_cursor });
+    }
     let mut inputs = BTreeMap::new();
     for input in state
       .sources

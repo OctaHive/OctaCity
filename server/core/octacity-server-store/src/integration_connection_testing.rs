@@ -220,6 +220,24 @@ fn replay_connection(
 }
 #[async_trait::async_trait]
 impl IntegrationConnectionStore for crate::testing::InMemoryFactoryConfigurationStore {
+  async fn list_integration_connections(
+    &self,
+    request: ReadIntegrationConnections,
+  ) -> Result<IntegrationConnectionPage, StoreError> {
+    request.validate()?;
+    let state = self.lock()?;
+    let mut items: Vec<_> = state
+      .integrations
+      .current
+      .iter()
+      .filter(|(id, _)| request.visibility.allows(id) && request.after.is_none_or(|after| **id > after))
+      .filter_map(|(id, version)| state.integrations.versions.get(&(*id, *version)).cloned())
+      .take(usize::from(request.limit) + 1)
+      .collect();
+    let next_cursor = (items.len() > usize::from(request.limit)).then(|| items[usize::from(request.limit) - 1].id);
+    items.truncate(usize::from(request.limit));
+    Ok(IntegrationConnectionPage { items, next_cursor })
+  }
   async fn replay_integration_connection(
     &self,
     request: ManagementMutation<ReplayIntegrationConnection>,

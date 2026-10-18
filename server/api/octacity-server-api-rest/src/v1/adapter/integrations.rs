@@ -17,9 +17,13 @@ use octacity_server_application::{
 };
 
 mod check;
+mod dependencies;
+pub(super) use dependencies::list_dependencies;
+mod discovery;
 mod project_access;
 mod sources;
 pub(super) use check::check_connection;
+pub(super) use discovery::*;
 use octacity_server_application::CheckIntegrationConnectionQuery;
 use octacity_server_application::{
   GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, PublishIntegrationProjectAccessCommand,
@@ -29,12 +33,21 @@ pub(super) use sources::*;
 type Credentials = dyn AuthorizedManagementCommandHandler<ManageIntegrationCredentialCommand, Error = ApplicationError>;
 /// Endpoint capabilities are supplied by trusted composition, with application authorization.
 pub struct IntegrationManagementApplication {
+  dependencies: Option<
+    Arc<
+      dyn AuthorizedManagementQueryHandler<
+          octacity_server_application::ListIntegrationDependenciesQuery,
+          Error = ApplicationError,
+        >,
+    >,
+  >,
   credentials: Option<Arc<Credentials>>,
   metadata: Option<MetadataEndpoints>,
   administration: Option<AdministrationEndpoints>,
   project_access: Option<ProjectAccessEndpoints>,
   sources: Option<SourceConfigurationEndpoints>,
   source_reads: Option<SourceReadEndpoints>,
+  discovery: Option<DiscoveryEndpoints>,
   checks: Option<Arc<dyn AuthorizedManagementQueryHandler<CheckIntegrationConnectionQuery, Error = ApplicationError>>>,
 }
 struct ProjectAccessEndpoints {
@@ -55,6 +68,7 @@ struct AdministrationEndpoints {
 impl IntegrationManagementApplication {
   pub(super) fn unavailable() -> Self {
     Self {
+      dependencies: None,
       credentials: None,
       metadata: None,
       administration: None,
@@ -62,6 +76,7 @@ impl IntegrationManagementApplication {
       checks: None,
       sources: None,
       source_reads: None,
+      discovery: None,
     }
   }
   /// Installs the separately authorized write-only credential service.
@@ -71,6 +86,7 @@ impl IntegrationManagementApplication {
     credentials: Arc<C>,
   ) -> Self {
     Self {
+      dependencies: None,
       credentials: Some(credentials),
       metadata: None,
       administration: None,
@@ -78,6 +94,7 @@ impl IntegrationManagementApplication {
       checks: None,
       sources: None,
       source_reads: None,
+      discovery: None,
     }
   }
   /// Installs separately authorized, bounded read-only diagnostics without activating inputs.
@@ -326,7 +343,7 @@ pub(super) async fn publish_metadata(
     json!({"disposition":encode(outcome.disposition, &request_id)?, "connection":connection_representation(outcome.connection, &request_id)?}),
   ))
 }
-fn connection_representation(
+pub(super) fn connection_representation(
   connection: octacity_server_application::PublishedIntegrationConnection,
   request_id: &RequestId,
 ) -> Result<Value, ApiError> {

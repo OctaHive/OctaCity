@@ -7,7 +7,7 @@ Implementation baseline and remaining seams:
 - `server/application/src/factory_admission.rs` preserves manual admission and replay-before-resolution; completed tasks 1–4.5 have added separately authorized source admission and reporting without changing manual identity.
 - `server/core/octacity-server-store/src/factory_admission_model.rs` already scopes external identities by source and accepted security scope and retains immutable admission intent. Extend that authority; do not add a second deduplication database or reimplement the pipeline's business duplicate analysis.
 - `server/application/src/factory_work_status_outbox.rs` already dispatches accepted `set_status` effects under independent outbox fences and retry policy through `FactoryWorkStatusProjector`.
-- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Tasks 5.1–5.6 provide reusable connection metadata, protected credential publication, recoverable authorized administration/REST, explicit Project/resource/purpose grants with managed Source/Reporter enforcement, bounded read-only connection checks through independently advertised provider operations, and typed immutable automatic input/group publication with safe installed choices. Task 5.7 provides bounded read-only Source preview and retained Source/Reporter diagnostics. Task 5.8 aligns OpenAPI, canonical wire examples and generated client contracts. Console integration remains pending from 5.9 onward.
+- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Tasks 5.1–5.6 provide reusable connection metadata, protected credential publication, recoverable authorized administration/REST, explicit Project/resource/purpose grants with managed Source/Reporter enforcement, bounded read-only connection checks through independently advertised provider operations, and typed immutable automatic input/group publication with safe installed choices. Task 5.7 provides bounded read-only Source preview and retained Source/Reporter diagnostics. Task 5.8 aligns OpenAPI, canonical wire examples and generated client contracts. Tasks 5.9–5.10 provide dedicated connection/credential/check administration plus Project grants and visible retained dependency review. Guided pipeline input and status authoring remain pending from 5.11 onward.
 - Existing VCS configuration uses integration identities and private credential handles, while the secret domain separates logical references from transient values. Reuse these contracts where applicable; do not expose Job-secret delegation as authority to manage provider credentials.
 - `ui/src/features/factory/ConfigurationEditor.tsx` already selects visible Factory dependencies through generated REST types. Add an input section there or in its adjacent configuration detail rather than create a second pipeline designer.
 - `ui/src/features/factory/FlowGraphEditor.tsx` and `FlowBindings.tsx` already author ordinary trusted-action bindings; use those surfaces for stage-local source effects.
@@ -241,6 +241,20 @@ Source/Reporter dispatch resolves the selected input connection and fails closed
 without its current read/write authority. See [task 5.6 verification](verification-5.6.md)
 for publication, visibility, replay and compatibility evidence.
 
+The approved task 5.11 expansion adds optional input-owned normalized narrowing
+profiles. An installation owner explicitly advertises permitted opaque states only
+for a Source profile whose installed selector is unrestricted. State/all/any/excluded
+labels are bounded, typed and frozen in the existing input version, with absent
+profiles retaining the old wire/digest shape. The server validates profile support
+and state choices; Source preview and admission apply the same literal normalized
+predicate after the verified provider read. It can only narrow the original
+installed resource/network/credential scope. This uses no new provider protocol,
+private configuration upload, mutable global catalog or independent persistence.
+Installed provider-owned mapping and polling ceilings remain unchanged. Legacy
+profiles remain selectable without claiming to support editing. Manual Artifact
+intake and future card ownership stay independent. The browser consumes exact
+server-supplied Repository digests rather than reconstructing configuration hashes.
+
 Task 5.7 uses an independently advertised optional Source `preview` operation,
 sharing native listing without admission, cursor or task-observation authority.
 The hosted reader shares one original authorization/process deadline and narrows
@@ -258,6 +272,33 @@ Generated client checks preserve write-only credentials, native correlation,
 optional visible Issue links and independent manual admission. See
 [task 5.8 verification](verification-5.8.md) and the
 [integration contract reference](../../../docs/reference/integration-management-contracts.md).
+
+Task 5.9 adds dedicated Integrations list/detail navigation, reviewed metadata and
+credential administration, and explicit resource/purpose checks. Its approved
+prerequisite scope adds visible connection enumeration, a bounded safe installed
+catalog and pure draft validation. Catalog enumeration requires unrestricted
+administration visibility; ordinary connection enumeration filters before paging.
+These opt-in management contracts still require verified protected ingress and
+trusted installed declarations. No authentication or live deployment configuration
+is inferred by the browser. Secret values stay outside drafts, confirmed intents,
+query/mutation caches and browser storage; submission/cancellation/navigation clear
+the input. Existing review, SelectMenu and query-state components handle keyboard
+access, conflicts and failed background refreshes. Both pages share one optional
+lazy bundle. Project grants and pipeline input authoring remain subsequent tasks.
+See [task 5.9 verification](verification-5.9.md) for Red/Green evidence and measured
+bundle-budget changes.
+
+Task 5.10 adds separate Project selection and reviewed resource/purpose grants,
+including explicit full revocation, access-version conflict recovery and filtered
+use choices. Dependency review reuses the input journal with a connection-scoped
+retained-version mode; ordinary current-definition enumeration is unchanged.
+A bounded protected Project/connection endpoint applies dependency visibility
+before paging, with exact input identity/version cursors. Existing Source diagnostics
+supply visible Run/reporting history on demand, including historical inputs after
+revocation, without restoring use authority or requiring a task card. The UI
+identifies its Project scope and historical enabled flags rather than presenting
+these rows as a global dependency graph or current activation proof. See
+[task 5.10 verification](verification-5.10.md).
 
 Use existing Factory configuration/detail patterns for effective selectors, exact
 versions, preview, source/reporting progress and visible Work/Run correlations.

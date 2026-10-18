@@ -1,11 +1,11 @@
 //! Safe installed input choices; repository selection uses the existing independent Repository query.
 use super::*;
 use octacity_server_domain::{IntegrationId, IntegrationVersion, ProjectId};
+pub use octacity_server_factory::{
+  MAX_WORK_SOURCE_PREDICATE_LABEL_BYTES as MAX_SOURCE_SELECTION_LABEL_BYTES,
+  MAX_WORK_SOURCE_PREDICATE_LABELS as MAX_SOURCE_SELECTION_LABELS,
+};
 use serde::Serialize;
-/// Presentation ceiling; an adapter can impose tighter selector limits.
-pub const MAX_SOURCE_SELECTION_LABELS: usize = 64;
-/// UTF-8 ceiling shared with normalized task labels.
-pub const MAX_SOURCE_SELECTION_LABEL_BYTES: usize = 256;
 
 /// Provider-normalized labels for an already validated immutable selector, never Flow instructions.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -22,6 +22,10 @@ pub struct WorkSourceSelectionLabels {
 /// One usable installed profile; private role handles and credential references are absent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkSourceInputChoice {
+  /// Explicit editable normalized states over an unrestricted installed read profile.
+  /// Absence keeps legacy installed-only selection; clients cannot infer editing support.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub predicate_states: Option<Vec<FactoryKey>>,
   /// Exact input selector/mapping profile.
   pub binding: WorkSourceBinding,
   /// Connection profile from which this input configuration was installed.
@@ -68,6 +72,36 @@ impl ManagementAuthorizationTarget for ListWorkSourceInputChoicesQuery {
   }
 }
 impl<S> FactorySourceConfigurationHandlers<S> {
+  /// Declares normalized narrowing support over an adapter-owned unrestricted base.
+  /// The trusted installation owner supplies its native unrestricted state key and permitted states.
+  /// This cannot change transport, credentials, resources, mapping or network authority.
+  pub fn with_predicate_states(
+    mut self,
+    capability: WorkSourceCapability,
+    unrestricted: FactoryKey,
+    states: Vec<FactoryKey>,
+  ) -> Result<Self, ApplicationError> {
+    let base = self
+      .selection_labels
+      .iter()
+      .find(|(c, _)| c == &capability)
+      .map(|(_, s)| s)
+      .ok_or_else(ApplicationError::invalid)?;
+    if capability.role != WorkSourceCapabilityRole::Source
+      || base.state != unrestricted
+      || !base.all_of.is_empty()
+      || !base.any_of.is_empty()
+      || !base.none_of.is_empty()
+      || states.len() > MAX_SOURCE_SELECTION_LABELS
+      || states.iter().collect::<std::collections::BTreeSet<_>>().len() != states.len()
+      || self.predicate_states.iter().any(|(c, _)| c == &capability)
+    {
+      return Err(ApplicationError::invalid());
+    }
+    self.predicate_states.push((capability, states));
+    Ok(self)
+  }
+
   /// Attaches bounded presentation from the trusted owner of an exact, adapter-validated selector.
   /// It cannot install another profile, change executable settings or widen a grant.
   pub fn with_selection_labels(
@@ -190,6 +224,11 @@ impl<
         continue;
       }
       items.push(WorkSourceInputChoice {
+        predicate_states: self
+          .predicate_states
+          .iter()
+          .find(|(c, _)| c == capability)
+          .map(|(_, states)| states.clone()),
         binding: binding.clone(),
         connection_configuration: installed.configuration.clone(),
         purpose,

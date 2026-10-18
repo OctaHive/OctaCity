@@ -52,6 +52,12 @@ impl IntegrationProjectAccessStore for DelayedGrants {
 }
 #[async_trait::async_trait]
 impl IntegrationConnectionStore for DelayedGrants {
+  async fn list_integration_connections(
+    &self,
+    request: ReadIntegrationConnections,
+  ) -> Result<IntegrationConnectionPage, StoreError> {
+    self.store.list_integration_connections(request).await
+  }
   async fn replay_integration_connection(
     &self,
     request: ManagementMutation<ReplayIntegrationConnection>,

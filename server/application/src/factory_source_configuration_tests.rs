@@ -96,6 +96,7 @@ impl Fixture {
         id: WorkSourceInputId::generate(),
         expected_version: None,
         definition: WorkSourceInputDraft {
+          predicate: None,
           target: selected.configuration.configuration.reference().clone(),
           repository: WorkSourceRepositoryRef {
             project_id: project,
@@ -603,6 +604,24 @@ fn source_configuration_discovery_filters_hidden_inputs_and_groups_before_pagina
       page.next_cursor, None,
       "hidden rows and mixed-visibility groups cannot affect pagination"
     );
+    let dependencies = queries
+      .handle_query(
+        &context(),
+        ListIntegrationDependenciesQuery {
+          connection_id: fixture.intent.inputs[0].definition.connection.as_ref().unwrap().id,
+          project_id: fixture.intent.project_id,
+          after: None,
+          limit: 1,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(dependencies.items.len(), 1);
+    assert_eq!(dependencies.items[0].inputs()[0].id(), visible_id);
+    assert!(
+      dependencies.next_cursor.is_none(),
+      "hidden targets cannot affect dependency cursors"
+    );
     let read = queries
       .handle_query(
         &context(),
@@ -681,3 +700,184 @@ fn source_configuration_validation_identifies_invalid_input_fields_without_expos
 
 #[path = "factory_source_preview_tests.rs"]
 mod preview;
+
+#[test]
+fn connection_dependencies_keep_retained_input_versions_after_replacement_and_revocation() {
+  run_ready(async {
+    let mut fixture = Fixture::new("custom-tracker").await;
+    let connection = fixture.intent.inputs[0].definition.connection.as_ref().unwrap().id;
+    let commands =
+      AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(fixture.handlers()));
+    commands
+      .handle_command(
+        &context(),
+        PublishWorkSourceConfigurationCommand {
+          intent: fixture.intent.clone(),
+          idempotency_key: IdempotencyKey::new("dependency-v1").unwrap(),
+          published_at: time(4),
+        },
+      )
+      .await
+      .unwrap();
+    fixture.intent.inputs[0].expected_version = Some(WorkSourceInputVersion::INITIAL);
+    fixture.intent.inputs[0].definition.enabled = false;
+    commands
+      .handle_command(
+        &context(),
+        PublishWorkSourceConfigurationCommand {
+          intent: fixture.intent.clone(),
+          idempotency_key: IdempotencyKey::new("dependency-v2").unwrap(),
+          published_at: time(5),
+        },
+      )
+      .await
+      .unwrap();
+    fixture
+      .store
+      .publish_integration_project_access(management_mutation(PublishIntegrationProjectAccess {
+        intent: IntegrationProjectAccessIntent {
+          connection_id: connection,
+          project_id: fixture.intent.project_id,
+          connection_version: IntegrationVersion::INITIAL,
+          expected_current_version: Some(IntegrationVersion::INITIAL),
+          resources: vec![],
+        },
+        idempotency_key: IdempotencyKey::new("dependency-revoke").unwrap(),
+        published_at: time(6),
+      }))
+      .await
+      .unwrap();
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(fixture.handlers()));
+    let page = queries
+      .handle_query(
+        &context(),
+        ListIntegrationDependenciesQuery {
+          connection_id: connection,
+          project_id: fixture.intent.project_id,
+          after: None,
+          limit: 1,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].inputs()[0].version().get(), 1);
+    assert!(page.next_cursor.is_some());
+    let next = queries
+      .handle_query(
+        &context(),
+        ListIntegrationDependenciesQuery {
+          connection_id: connection,
+          project_id: fixture.intent.project_id,
+          after: page.next_cursor,
+          limit: 1,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(next.items[0].inputs()[0].version().get(), 2);
+    assert!(!next.items[0].inputs()[0].definition().enabled);
+    assert!(next.next_cursor.is_none());
+  });
+}
+
+#[test]
+fn custom_input_predicates_require_explicit_installed_editing_support() {
+  run_ready(async {
+    let mut fixture = Fixture::new("custom-tracker").await;
+    fixture.intent.inputs[0].definition.predicate = Some(WorkSourcePredicate {
+      state: Some(key("todo")),
+      all_of: vec!["operator-label".into()],
+      any_of: vec![],
+      none_of: vec![],
+    });
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(fixture.handlers()));
+    assert!(
+      queries
+        .handle_query(
+          &context(),
+          ValidateWorkSourceConfigurationQuery { intent: fixture.intent }
+        )
+        .await
+        .is_err(),
+      "an installed profile must explicitly advertise normalized predicate editing"
+    );
+  });
+}
+
+#[test]
+fn advertised_normalized_predicates_publish_immutable_inputs_for_open_provider_identities() {
+  run_ready(async {
+    for provider in ["github", "gitlab", "jira", "custom-tracker"] {
+      let mut fixture = Fixture::new(provider).await;
+      let predicate = WorkSourcePredicate {
+        state: Some(key("todo")),
+        all_of: vec!["operator-label".into()],
+        any_of: vec![],
+        none_of: vec!["blocked".into()],
+      };
+      fixture.intent.inputs[0].definition.predicate = Some(predicate.clone());
+      let handlers = fixture
+        .handlers()
+        .with_selection_labels(
+          fixture.capability.clone(),
+          WorkSourceSelectionLabels {
+            state: key("any"),
+            all_of: vec![],
+            any_of: vec![],
+            none_of: vec![],
+          },
+        )
+        .unwrap()
+        .with_predicate_states(
+          fixture.capability.clone(),
+          key("any"),
+          vec![key("todo"), key("resolved")],
+        )
+        .unwrap();
+      let handlers = Arc::new(handlers);
+      let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers.clone());
+      let choice = queries
+        .handle_query(
+          &context(),
+          ListWorkSourceInputChoicesQuery {
+            project_id: fixture.intent.project_id,
+            connection_id: fixture.intent.inputs[0].definition.connection.as_ref().unwrap().id,
+            connection_version: IntegrationVersion::INITIAL,
+          },
+        )
+        .await
+        .unwrap();
+      assert_eq!(
+        choice.items[0].predicate_states.as_ref().unwrap(),
+        &[key("todo"), key("resolved")]
+      );
+      let commands = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers);
+      let published = commands
+        .handle_command(
+          &context(),
+          PublishWorkSourceConfigurationCommand {
+            intent: fixture.intent.clone(),
+            idempotency_key: IdempotencyKey::new("input-with-predicate").unwrap(),
+            published_at: time(4),
+          },
+        )
+        .await
+        .unwrap();
+      assert_eq!(
+        published.publication.inputs[0].input.definition().predicate.as_ref(),
+        Some(&predicate)
+      );
+      fixture.intent.inputs[0].definition.predicate.as_mut().unwrap().state = Some(key("unadvertised-state"));
+      assert!(
+        queries
+          .handle_query(
+            &context(),
+            ValidateWorkSourceConfigurationQuery { intent: fixture.intent }
+          )
+          .await
+          .is_err()
+      );
+    }
+  });
+}

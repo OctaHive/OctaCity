@@ -62,6 +62,9 @@ pub struct WorkSourceCapability {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkSourceInputDraft {
+  /// Optional immutable narrowing over normalized Source data, supported only by advertised profiles.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub predicate: Option<crate::WorkSourcePredicate>,
   /// Exact managed connection and reviewed Project access; absent for legacy installed inputs.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub connection: Option<WorkSourceConnectionRef>,
@@ -134,6 +137,9 @@ impl TryFrom<RetainedWorkSourceInput> for WorkSourceInput {
 
   fn try_from(value: RetainedWorkSourceInput) -> Result<Self, Self::Error> {
     let definition = &value.definition;
+    if let Some(predicate) = &definition.predicate {
+      predicate.validate()?;
+    }
     if definition.target.project_id() != value.project_id
       || definition.repository.project_id != value.project_id
       || definition.reporter.as_ref().is_some_and(|reporter| {
@@ -164,6 +170,9 @@ impl WorkSourceInput {
     definition: WorkSourceInputDraft,
     context: WorkSourceInputContext<'_>,
   ) -> Result<Self, FactoryError> {
+    if let Some(predicate) = &definition.predicate {
+      predicate.validate()?;
+    }
     if definition.target != *context.target.reference() || definition.target.project_id() != project_id {
       return Err(FactoryError::InvalidConfiguration {
         field: "source input target",

@@ -109,6 +109,7 @@ fn draft(
   source: &WorkSourceCapability,
 ) -> WorkSourceInputDraft {
   WorkSourceInputDraft {
+    predicate: None,
     connection: None,
     target: target.reference().clone(),
     repository: repository.clone(),
@@ -484,4 +485,56 @@ fn reporting_is_optional_and_requires_an_independent_compatible_reporter_selecti
     );
   }
   assert!(read_only.definition().reporter.is_none());
+}
+
+#[test]
+fn input_predicate_is_immutable_bounded_and_uses_literal_normalized_labels() {
+  let predicate: crate::WorkSourcePredicate = serde_json::from_value(serde_json::json!({
+    "state":"open","all_of":["needs-human-review"],"any_of":["docs","maintenance"],"none_of":["blocked"]
+  }))
+  .unwrap();
+  predicate.validate().unwrap();
+  assert!(
+    predicate
+      .mismatches("open", &["docs".into(), "needs-human-review".into()])
+      .is_empty()
+  );
+  assert!(!predicate.mismatches("open", &["docs".into()]).is_empty());
+  assert!(
+    !predicate
+      .mismatches("closed", &["docs".into(), "needs-human-review".into()])
+      .is_empty()
+  );
+  let unrestricted: crate::WorkSourcePredicate =
+    serde_json::from_value(serde_json::json!({"state":null,"all_of":[],"any_of":[],"none_of":[]})).unwrap();
+  assert!(unrestricted.mismatches("provider-specific-state", &[]).is_empty());
+  let project = ProjectId::generate();
+  let target = target(project, true);
+  let repository = repository(project);
+  let source = source(project, "custom-tracker");
+  let mut definition = draft(&target, &repository, &source);
+  definition.predicate = Some(predicate.clone());
+  let input = WorkSourceInput::publish(
+    WorkSourceInputId::generate(),
+    project,
+    definition,
+    WorkSourceInputContext {
+      target: &target,
+      repository: &repository,
+      source: Some(&source),
+      reporter: None,
+    },
+  )
+  .unwrap();
+  let retained: WorkSourceInput = serde_json::from_value(serde_json::to_value(&input).unwrap()).unwrap();
+  assert_eq!(retained.definition().predicate.as_ref(), Some(&predicate));
+  for (all, any, none) in [
+    (vec!["x"], vec![], vec!["x"]),
+    (vec!["x", "x"], vec![], vec![]),
+    (vec![], vec!["x"], vec!["x"]),
+  ] {
+    let invalid: crate::WorkSourcePredicate =
+      serde_json::from_value(serde_json::json!({"state":null,"all_of":all,"any_of":any,"none_of":none})).unwrap();
+    assert!(invalid.validate().is_err());
+  }
 }

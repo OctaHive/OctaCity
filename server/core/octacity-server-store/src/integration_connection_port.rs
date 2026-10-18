@@ -83,6 +83,11 @@ pub struct IntegrationConnectionMutationOutcome {
 /// Minimal reusable metadata authority. Project grants and worker activation belong elsewhere.
 #[async_trait::async_trait]
 pub trait IntegrationConnectionStore: Send + Sync {
+  /// Reads current metadata with policy visibility applied before pagination.
+  async fn list_integration_connections(
+    &self,
+    request: ReadIntegrationConnections,
+  ) -> Result<IntegrationConnectionPage, StoreError>;
   /// Returns the exact receipt before resolving mutable installed choices again.
   async fn replay_integration_connection(
     &self,
@@ -99,4 +104,35 @@ pub trait IntegrationConnectionStore: Send + Sync {
     id: IntegrationId,
     version: Option<IntegrationVersion>,
   ) -> Result<PublishedIntegrationConnection, StoreError>;
+}
+
+/// Maximum visible connections or installations returned by one management page.
+pub const MAX_INTEGRATION_DISCOVERY_PAGE_SIZE: u16 = 100;
+
+/// Bounded metadata discovery; no credential access or Project grant is implied.
+#[derive(Clone, Debug)]
+pub struct ReadIntegrationConnections {
+  /// Server-derived connection visibility.
+  pub visibility: IntegrationConnectionListVisibility,
+  /// Exclusive stable connection identity.
+  pub after: Option<IntegrationId>,
+  /// Positive page ceiling, at most 100.
+  pub limit: u16,
+}
+impl ReadIntegrationConnections {
+  /// Rejects unbounded reads independently of transport validation.
+  pub fn validate(&self) -> Result<(), StoreError> {
+    if !(1..=MAX_INTEGRATION_DISCOVERY_PAGE_SIZE).contains(&self.limit) {
+      return Err(crate::integration_connection::invalid_connection());
+    }
+    Ok(())
+  }
+}
+/// Current visible connections in identity order.
+#[derive(Clone, Debug)]
+pub struct IntegrationConnectionPage {
+  /// Visible metadata only.
+  pub items: Vec<PublishedIntegrationConnection>,
+  /// Last visible identity only when another visible row exists.
+  pub next_cursor: Option<IntegrationId>,
 }

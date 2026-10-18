@@ -23,6 +23,162 @@ headers are optional in OpenAPI because the required choice depends on the inten
 Checks, validation and preview need neither mutation header. Integration operations
 require verified protected ingress; setting a browser header does not supply that proof.
 
+## Console setup and discovery
+
+Open **Integrations** in the primary navigation or command center. Create a named
+connection by choosing an operator-installed provider, an approved endpoint and
+authentication method, and resource/purpose pairs. Validate the draft, review it,
+then publish its immutable metadata version. Editing starts from the current
+version; a publication conflict requires refreshing the baseline and validating
+the retained draft again. No arbitrary provider configuration or private path is
+entered in this form.
+
+The console uses three bounded, protected contracts in addition to the existing
+publication and administration endpoints:
+
+| Operation | Contract and authority |
+| --- | --- |
+| `GET /api/v1/integrations` | Current metadata, `View` collection permission and connection visibility applied before pagination. |
+| `GET /api/v1/integration-installations` | Safe trusted declarations: open provider identity, immutable pins, approved endpoints/authentication, native resources, capabilities and logical credential references. Requires collection `Administer` permission and unrestricted connection visibility; restricted scopes fail closed. |
+| `POST /api/v1/integrations/{integration_id}/validate` | Resolves the ordinary `IntegrationConnectionPublication` intent against its installed declaration under instance `Administer` permission. Returns a safe definition without publication, grants, credential reads or provider calls. |
+
+Both lists accept optional exclusive `after` cursors and `limit` (default 50,
+maximum 100). Empty results and unavailable services are different outcomes.
+Discovery is composed explicitly with
+`IntegrationManagementApplication::with_discovery`; it does not install adapters
+or configure verified ingress. Deployments must compose the existing protected
+management services and trusted declarations before using this UI. Missing
+services or ingress proof fail closed; the console does not supply authentication.
+
+On a connection page, credential setup offers provision, rotation, adoption and
+revocation of its installed logical references. Submitted values are write-only:
+the uncontrolled password input is cleared before sending and on cancellation,
+scope/action changes or navigation. Values never enter confirmed-intent replay
+snapshots, React Query query/mutation state, browser storage or returned metadata.
+Recovery retries reuse the safe command identity without retaining the value.
+Remote error text and details are discarded because a peer could echo a value.
+Activation is a separate explicit choice, and revocation cannot request activation.
+
+**Check access (read-only)** checks only the selected resource and purpose.
+Configuration, authentication, resource access and capability readiness remain
+distinct; unverified write capability is shown explicitly. Project access is
+configured separately. Checks do not activate a connection or grant Project use.
+A failed background refresh keeps previously loaded metadata
+visible with a stale-data notice. English/Russian messages and keyboard review
+dialogs use the existing console components.
+
+Guided pipeline input selection is available in the Factory configuration workbench;
+guided status mapping and progress presentation remain task 5.12.
+A connection does not select an OctaCity Project, code Repository or pipeline and
+does not create a task card. Existing manual Factory intake remains available;
+manual internal-Issue creation belongs to the independent card capability.
+
+## Guided pipeline inputs
+
+Inspect a published Factory Configuration and open **Pipeline inputs**. **Admit
+manual Work** opens the existing Artifact-based form without connection discovery.
+Manual internal-Issue creation remains owned by the independent task-card change.
+
+**Configure automatic intake** loads current visible inputs/groups and reusable
+connections. **Add automatic input** selects an existing connection, an authorized
+task container and installed selector/input mapping. The code Repository is a
+separate choice and can use another host/provider; the server returns its exact
+`definition_digest`. No credential is entered or copied into an input. Missing
+connection setup or usable read access links to Integrations. Source input editing
+does not import or refresh cards and does not request execution for a manual card.
+
+New inputs start disabled. A user can enable intake explicitly, preview a bounded
+read without admission, validate against current server authority and review the
+pinned target, Repository, source and predicates before confirming publication.
+Empty results, filtered tasks, exclusive-group ambiguity and unavailable reads
+are distinct. Independent inputs can each admit a task; an exclusive group admits
+only when exactly one retained member matches. Group publication references exact
+member versions without replacing them or silently changing their pipeline targets.
+The editor retains every selected member's immutable snapshot, including newly
+selected historical versions, so refreshed lists cannot hide an active choice.
+Publication still sends only the member identity/version references.
+
+An installer can advertise editable normalized predicates using
+`FactorySourceConfigurationHandlers::with_predicate_states`. This requires an
+explicitly declared unrestricted base selection and a bounded list of opaque state
+keys. Unadvertised profiles keep their installed filters; the UI cannot fabricate
+support or widen the provider's resource, network, credential or read scope.
+`WorkSourceInputDraft.predicate` is optional and omitted for legacy definitions.
+When present, it is immutable with the input version: nullable state, literal
+`all_of`, `any_of` and `none_of` label arrays. Each list is bounded to 64 unique
+labels of at most 256 UTF-8 bytes. Contradictory filters are rejected. UI textareas
+use one label per line and preserve spaces/commas; empty lists include unlabeled
+tasks. Preview and automatic selection use the same normalized evaluator before
+admission. Existing native provider protocols remain unchanged.
+
+Drafts, validation proofs and preview results exist only in the mounted editor.
+A proof belongs to the exact draft. Conflicts preserve the operator's selection,
+require successful current-version/access refresh and then fresh validation and
+confirmation. Publication uses existing idempotent confirmed commands and version
+preconditions; creating another input does not change automatic replay identity
+for an existing input. Metadata queries remain separate from transient preview
+state. Closing the editor discards its transient data. An unpublished input/group
+can refresh current dependencies without an existing publication and keeps its
+initial-creation precondition; an existing version still requires its current
+published record. A refresh never silently repins selected group members.
+
+A change to the source connection, installation pin or native task resource omits
+the previous Reporter and its parent configuration together from the new input
+version. The form explains the resulting absence of external status reporting,
+and the publication review shows it explicitly. Changing only the input mapping
+within the same scope preserves the retained Reporter. Existing accepted Work,
+Run history and frozen reporting operations retain their original references.
+
+These controls require the deployment's existing opt-in protected Source
+management, installed profile declarations and runtime/preview composition. They
+do not install adapters, grant access or configure authentication for a stand.
+
+## Project access and retained dependencies
+
+On the connection page, choose **Manage Project access**, then an existing visible
+OctaCity Project. The selector supports paged root Projects and child Projects;
+native external resource names do not identify an OctaCity Project. The usable
+resource list comes from the server's filtered `/resources` contract, independently
+of the connection's administrative metadata.
+
+**Edit Project access** replaces the Project's explicit resource/purpose grant.
+Task reading, task updates, repository reading and Delivery remain separate
+checkboxes; remote token permissions cannot add a checked purpose. Selecting no
+purposes revokes all access. Review shows the Project, connection version, exact
+resources/purposes and the effects of revocation before sending. Publication still
+requires both connection and Project administration on the server. Reading choices
+or opening the UI grants neither authority. No credential is entered here.
+
+Access revisions are independent of connection metadata and administration
+revisions. A conflict preserves the in-memory selection but requires a successful
+baseline refresh and a new confirmation with a new command identity. Switching to
+a newer connection version resets the old grant selection and explicitly requires
+selecting resources again. Activation and read-only access checks remain separate.
+
+`GET /api/v1/integrations/{integration_id}/projects/{project_id}/dependencies`
+returns `WorkSourceConfigurationPage` containing visible retained input versions
+using that connection, including disabled/historical versions. It requires visible
+connection and Project access under the existing management policy, without current
+execution authority. Target Configuration, Repository and connection visibility
+are applied before pagination. The opaque exclusive cursor is scoped to connection,
+Project and exact input identity/version; `limit` defaults to 50 and is bounded at
+64. Group copies are excluded. The read reuses the existing input journal and
+requires no migration, provider call or new dependency database. Install its
+authorized service explicitly with `.with_dependencies(...)`.
+
+Expand **Show Run and reporting history** on an input to read bounded existing
+Source diagnostics. Only visible Runs for that exact input version are displayed;
+reporting pending, in progress, applied and exhausted remain distinct from Run
+execution. Additional pages and truncated reporting summaries are indicated.
+This is Project-scoped visible history, not a claim that all global dependents have
+been enumerated or that an old enabled version is still active. Hidden/unavailable
+history is never presented as a complete empty result.
+
+Revocation blocks subsequent protected provider operations, including retries.
+Accepted Work, Run results, queued reporting history and already sent remote
+requests remain retained; no external effect is undone. The card capability is
+not consulted or required, and manual Factory intake remains independent.
+
 `FactoryWorkStatusActionParameters` describes the existing installed `set_status`
 action: an arbitrary `status` plus an optional finite `outbox` retry policy. The
 original input's immutable Reporter configuration resolves the status to permitted

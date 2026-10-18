@@ -156,3 +156,47 @@ async fn connection_read_rejects_metadata_inconsistent_with_its_immutable_digest
   ));
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn connection_list_filters_before_pagination_and_retains_current_metadata() {
+  use octacity_server_store::{IntegrationConnectionListVisibility, ReadIntegrationConnections};
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let mut ids = vec![];
+  for index in 1..=3 {
+    let mut request = request();
+    request.intent.id = format!("00000000-0000-7000-8000-{index:012}").parse().unwrap();
+    request.idempotency_key = IdempotencyKey::new(format!("list-{index}")).unwrap();
+    ids.push(
+      store
+        .publish_integration_connection(management_mutation(request))
+        .await
+        .unwrap()
+        .connection
+        .id,
+    );
+  }
+  let visibility = IntegrationConnectionListVisibility::restricted([ids[0], ids[2]]).unwrap();
+  let first = store
+    .list_integration_connections(ReadIntegrationConnections {
+      visibility: visibility.clone(),
+      after: None,
+      limit: 1,
+    })
+    .await
+    .unwrap();
+  assert_eq!(first.items.iter().map(|c| c.id).collect::<Vec<_>>(), vec![ids[0]]);
+  assert_eq!(first.next_cursor, Some(ids[0]));
+  let last = store
+    .list_integration_connections(ReadIntegrationConnections {
+      visibility,
+      after: first.next_cursor,
+      limit: 1,
+    })
+    .await
+    .unwrap();
+  assert_eq!(last.items.iter().map(|c| c.id).collect::<Vec<_>>(), vec![ids[2]]);
+  assert_eq!(last.next_cursor, None);
+  database.cleanup().await;
+}

@@ -9,21 +9,7 @@ use std::collections::BTreeSet;
 pub const MAX_WORK_SOURCE_PREVIEW_ITEMS: u16 = 100;
 /// Maximum UTF-8 bytes of display title; never an execution input.
 pub const MAX_WORK_SOURCE_PREVIEW_TITLE_BYTES: usize = 512;
-/// Provider-normalized predicate failures, independent of business phases and forge state enums.
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum WorkSourceSelectionMismatch {
-  /// Observed state fails its configured predicate.
-  StateMismatch,
-  /// A required literal label is absent.
-  RequiredLabelMissing,
-  /// No alternative literal label matches.
-  AlternativeLabelMissing,
-  /// An excluded label is present.
-  ExcludedLabelPresent,
-  /// Another installed predicate fails.
-  PredicateMismatch,
-}
+pub use octacity_server_factory::WorkSourcePredicateMismatch as WorkSourceSelectionMismatch;
 /// One requested input's selector explanation; no reasons means a match.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkSourcePreviewSelection {
@@ -291,7 +277,7 @@ impl<
       .intent
       .inputs
       .iter()
-      .map(|i| self.selector_diagnostic(query.intent.project_id, i.id, &i.definition.source))
+      .map(|i| self.selector_diagnostic(query.intent.project_id, i.id, &i.definition))
       .collect();
     let mut result = WorkSourcePreview {
       configuration,

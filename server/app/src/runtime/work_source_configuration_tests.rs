@@ -91,3 +91,45 @@ async fn managed_input_publication_uses_its_connection_before_dispatch_and_after
     assert_eq!(before.flow, after.flow);
   }
 }
+
+#[tokio::test]
+async fn source_worker_applies_retained_predicates_before_selection_and_admission() {
+  for provider in ["github", "custom-tracker"] {
+    let fixture = Fixture::enabled(provider).await;
+    let mut input = fixture.input.clone();
+    for (index, label) in ["not-present", "arbitrary"].into_iter().enumerate() {
+      let mut value = serde_json::to_value(&input).unwrap();
+      value["version"] = serde_json::json!(input.version().get() + 1);
+      value["definition"]["predicate"] = serde_json::json!({"state":null,"all_of":[label],"any_of":[],"none_of":[]});
+      let replacement: WorkSourceInput = serde_json::from_value(value).unwrap();
+      fixture
+        .store
+        .publish_work_sources(PublishWorkSources {
+          project_id: input.project_id(),
+          inputs: vec![WorkSourceInputChange {
+            expected_version: Some(input.version()),
+            input: replacement.clone(),
+          }],
+          group: None,
+        })
+        .await
+        .unwrap();
+      input = replacement;
+      fixture.clock.0.store(100 + (index as i64) * 2000, Ordering::SeqCst);
+      assert_eq!(
+        fixture
+          .worker()
+          .run_once(CancellationToken::new())
+          .await
+          .unwrap()
+          .completed,
+        1
+      );
+      assert_eq!(
+        fixture.runs().await.len(),
+        index,
+        "nonmatching native data must never become Work"
+      );
+    }
+  }
+}

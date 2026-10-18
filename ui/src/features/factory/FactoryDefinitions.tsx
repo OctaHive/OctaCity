@@ -10,6 +10,7 @@ import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBr
 import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
 import type { FactoryApi, FactoryConfiguration, FactoryFlowDetails } from './api';
+import { FactoryPipelineInputs } from './FactoryPipelineInputs';
 import { FactoryPools } from './FactoryPools';
 import { ManagementApiError } from '../../api/client';
 import { useFactoryChoices } from './useFactoryChoices';
@@ -174,7 +175,13 @@ export function FactoryDefinitions({
                     key={`${item.id}:${params.get('configuration_version')}`}
                     api={api}
                     summary={item}
+                    repositories={workSources}
                     canAuthor={canAuthor}
+                    onManual={
+                      workSources
+                        ? () => setAuthoring({ kind: 'work', id: null, version: null })
+                        : undefined
+                    }
                     editing={
                       authoring?.kind === 'configuration' &&
                       authoring.id === item.id &&
@@ -262,6 +269,8 @@ export function FactoryDefinitions({
 }
 
 function ConfigurationDetails({
+  repositories,
+  onManual,
   api,
   summary,
   version,
@@ -271,6 +280,8 @@ function ConfigurationDetails({
   onDiscard,
   canAuthor,
 }: {
+  onManual?: (() => void) | undefined;
+  repositories?: FactoryWorkSources | undefined;
   api: FactoryApi;
   summary: FactoryConfiguration;
   version: number;
@@ -324,6 +335,11 @@ function ConfigurationDetails({
           {t('factory.editConfiguration')}
         </button>
       )}
+      <FactoryPipelineInputs
+        configuration={query.data}
+        onManual={onManual}
+        repositories={repositories}
+      />
       <FactoryPools api={api} configuration={query.data} />
     </section>
   );

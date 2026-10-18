@@ -59,6 +59,9 @@ pub struct RepositoryResource {
   pub name: String,
   /// Exact positive immutable version.
   pub version: u64,
+  /// Authoritative canonical digest for immutable Factory references; optional for older clients.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub definition_digest: Option<String>,
   /// Provider-neutral immutable definition.
   pub definition: RepositoryDefinition,
   /// Authoritative publication time as Unix milliseconds.

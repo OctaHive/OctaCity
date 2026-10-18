@@ -9,6 +9,8 @@ export const CONSOLE_PATHS = {
   builds: '/builds',
   factory: '/factory',
   factoryRun: '/factory/:factoryRunId',
+  integrations: '/integrations',
+  integration: '/integrations/:integrationId',
   project: '/projects/:projectId',
   projects: '/projects',
 } as const;

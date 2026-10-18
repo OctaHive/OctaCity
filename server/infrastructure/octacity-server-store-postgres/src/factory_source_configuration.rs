@@ -30,19 +30,25 @@ impl FactorySourceConfigurationStore for PostgresStore {
     let connections =
       crate::read_visibility::sql_read_visibility(request.visibility.connections.view(), |id| id.as_uuid());
     let after = request.after.map(|target| target.identity());
+    let after_version = request.after.map(|target| match target {
+      WorkSourceScanTarget::Input { version, .. } => version.get(),
+      WorkSourceScanTarget::Group { version, .. } => version.get(),
+    });
     let rows: Vec<(String, uuid::Uuid, i64, Json<Value>)> = sqlx::query_as(
       "WITH inputs AS (SELECT DISTINCT ON(id) id,version,document FROM factory_source_inputs WHERE project_id=$1 ORDER BY id,version DESC), \
        groups AS (SELECT DISTINCT ON(id) id,version,document FROM factory_source_groups WHERE project_id=$1 ORDER BY id,version DESC), \
-       heads AS (SELECT 'input'::text kind,id,version,document FROM inputs UNION ALL SELECT 'group'::text kind,id,version,document FROM groups) \
+       heads AS (SELECT 'input'::text kind,id,version,document FROM inputs WHERE $11::uuid IS NULL UNION ALL SELECT 'group'::text kind,id,version,document FROM groups WHERE $11::uuid IS NULL UNION ALL SELECT 'input'::text kind,id,version,document FROM factory_source_inputs WHERE project_id=$1 AND $11::uuid IS NOT NULL AND (document#>>'{definition,connection,id}')::uuid=$11) \
        SELECT kind,id,version,document FROM heads h WHERE NOT EXISTS ( \
          SELECT 1 FROM jsonb_array_elements(CASE WHEN h.kind='input' THEN jsonb_build_array(h.document) ELSE h.document->'members' END) member \
          WHERE NOT (($2 OR (member#>>'{definition,target,id}')::uuid=ANY($3::uuid[])) \
            AND ($4 OR (member#>>'{definition,repository,id}')::uuid=ANY($5::uuid[])) \
            AND ((member#>>'{definition,connection,id}') IS NULL OR $6 OR (member#>>'{definition,connection,id}')::uuid=ANY($7::uuid[])))) \
-       AND ($8::text IS NULL OR (kind,id)>($8,$9::uuid)) ORDER BY kind,id LIMIT $10"
+       AND ($8::text IS NULL OR (kind,id,CASE WHEN $11::uuid IS NULL THEN 0 ELSE version END)>($8,$9::uuid,$12::bigint)) ORDER BY kind,id,version LIMIT $10"
     ).bind(request.project_id.as_uuid()).bind(configurations.all).bind(configurations.identities)
       .bind(repositories.all).bind(repositories.identities).bind(connections.all).bind(connections.identities)
       .bind(after.map(|a| a.0)).bind(after.map(|a| a.1)).bind(i64::from(request.limit)+1)
+      .bind(request.connection_dependency.map(|id| id.as_uuid()))
+      .bind(if request.connection_dependency.is_some() { after_version.map(|v| i64::try_from(v).map_err(|_| StoreError::Unavailable)).transpose()? } else { Some(0) })
       .fetch_all(self.pool()).await.map_err(unavailable)?;
     let mut items = vec![];
     for (kind, id, version, Json(document)) in rows {

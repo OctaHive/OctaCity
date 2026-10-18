@@ -100,7 +100,11 @@ fn assert_safe_response_schema(
 fn ordinary_integration_responses_cannot_reach_secret_submission_and_manual_intake_needs_no_connection() {
   let document = openapi_document();
   for (path, item) in document["paths"].as_object().unwrap() {
-    if !path.contains("/integrations/") && !path.contains("/factory-source") {
+    if !path.contains("/integrations/")
+      && !path.contains("/factory-source")
+      && path != "/api/v1/integrations"
+      && path != "/api/v1/integration-installations"
+    {
       continue;
     }
     for operation in item.as_object().unwrap().values() {
@@ -198,4 +202,24 @@ fn integration_fixture_validation_rejects_oversized_preview_pages() {
   );
   example["candidates"].as_array_mut().unwrap().pop();
   assert_json_matches_component(&document, "WorkSourcePreview", &example);
+}
+
+#[test]
+fn input_schema_advertises_optional_normalized_narrowing_without_provider_state_enums() {
+  let document = openapi_document();
+  let predicate = &document["components"]["schemas"]["WorkSourcePredicate"];
+  assert_eq!(predicate["properties"]["all_of"]["maxItems"], 64);
+  assert_eq!(predicate["properties"]["all_of"]["items"]["x-max-utf8-bytes"], 256);
+  assert!(predicate["properties"]["state"].get("enum").is_none());
+  let draft = &document["components"]["schemas"]["WorkSourceInputDraft"];
+  assert_eq!(
+    draft["properties"]["predicate"]["anyOf"][0]["$ref"],
+    "#/components/schemas/WorkSourcePredicate"
+  );
+  let choices = &document["components"]["schemas"]["WorkSourceInputChoices"]["properties"]["items"]["items"];
+  assert_eq!(choices["properties"]["predicate_states"]["maxItems"], 64);
+  assert_eq!(
+    document["components"]["schemas"]["RepositoryResource"]["properties"]["definition_digest"]["$ref"],
+    "#/components/schemas/FactoryDigest"
+  );
 }

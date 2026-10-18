@@ -188,7 +188,8 @@ Idempotency-Key: example-create-repository
 ```
 
 The response is `201 Created`. Save `resource.id`; the initial immutable
-Repository version is `1`.
+Repository version is `1`. Repository responses also include the authoritative
+`resource.definition_digest` used to pin this exact definition in Factory inputs.
 
 ## 4. Publish Build Configuration version 1
 

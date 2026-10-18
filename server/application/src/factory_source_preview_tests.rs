@@ -505,3 +505,52 @@ fn source_group_preview_does_not_reveal_hidden_member_existence() {
     }
   });
 }
+
+#[test]
+fn preview_presents_the_effective_custom_predicate_instead_of_the_installed_base() {
+  run_ready(async {
+    let fixture = Fixture::new("custom-tracker").await;
+    let mut intent = fixture.intent.clone();
+    intent.inputs[0].definition.predicate = Some(octacity_server_factory::WorkSourcePredicate {
+      state: Some(key("todo")),
+      all_of: vec!["literal, label".into()],
+      any_of: vec![],
+      none_of: vec!["on hold".into()],
+    });
+    let handlers = fixture
+      .handlers()
+      .with_selection_labels(
+        fixture.capability.clone(),
+        WorkSourceSelectionLabels {
+          state: key("any"),
+          all_of: vec![],
+          any_of: vec![],
+          none_of: vec![],
+        },
+      )
+      .unwrap()
+      .with_predicate_states(fixture.capability.clone(), key("any"), vec![key("todo")])
+      .unwrap()
+      .with_preview(Arc::new(Reader));
+    let result = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers))
+      .handle_query(
+        &context(),
+        PreviewWorkSourcesQuery {
+          intent,
+          limit: 2,
+          observed_at: time(4),
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      result.selectors[0].selection,
+      Some(WorkSourceSelectionLabels {
+        state: key("todo"),
+        all_of: vec!["literal, label".into()],
+        any_of: vec![],
+        none_of: vec!["on hold".into()],
+      })
+    );
+  });
+}

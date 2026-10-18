@@ -38,10 +38,9 @@ pub(super) fn insert_repository_schemas(schemas: &mut Map<String, Value>) {
     "PublishRepositoryVersionRequest".to_owned(),
     object([("definition", schema_ref("RepositoryDefinition"))], &["definition"]),
   );
-  schemas.insert(
-    "RepositoryResource".to_owned(),
-    versioned_resource("RepositoryDefinition"),
-  );
+  let mut repository = versioned_resource("RepositoryDefinition");
+  repository["properties"]["definition_digest"] = schema_ref("FactoryDigest");
+  schemas.insert("RepositoryResource".to_owned(), repository);
   schemas.insert(
     "RepositoryMutationResponse".to_owned(),
     mutation_response("RepositoryResource"),

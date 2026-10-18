@@ -191,7 +191,7 @@ impl<
     let selectors = configuration
       .inputs()
       .iter()
-      .map(|input| self.selector_diagnostic(query.project_id, input.id(), &input.definition().source))
+      .map(|input| self.selector_diagnostic(query.project_id, input.id(), input.definition()))
       .collect();
     Ok(WorkSourceDiagnostics {
       configuration,
@@ -267,16 +267,26 @@ impl<S> FactorySourceConfigurationHandlers<S> {
     &self,
     project: ProjectId,
     input_id: WorkSourceInputId,
-    binding: &WorkSourceBinding,
+    definition: &WorkSourceInputDraft,
   ) -> WorkSourceSelectorDiagnostic {
     WorkSourceSelectorDiagnostic {
       input_id,
-      binding: binding.clone(),
+      binding: definition.source.clone(),
       selection: self
         .selection_labels
         .iter()
-        .find(|(c, _)| c.project_id == project && c.role == WorkSourceCapabilityRole::Source && c.binding == *binding)
-        .map(|(_, selection)| selection.clone()),
+        .find(|(c, _)| {
+          c.project_id == project && c.role == WorkSourceCapabilityRole::Source && c.binding == definition.source
+        })
+        .map(|(_, selection)| match &definition.predicate {
+          Some(predicate) => WorkSourceSelectionLabels {
+            state: predicate.state.clone().unwrap_or_else(|| selection.state.clone()),
+            all_of: predicate.all_of.clone(),
+            any_of: predicate.any_of.clone(),
+            none_of: predicate.none_of.clone(),
+          },
+          None => selection.clone(),
+        }),
     }
   }
 }

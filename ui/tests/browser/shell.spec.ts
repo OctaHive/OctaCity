@@ -48,7 +48,7 @@ test('renders the semantic contextual workbench', async ({ page }) => {
   await expect(page.getByLabel('Operator menu')).toBeVisible();
 
   const sectionNavigation = page.getByRole('navigation', { name: 'Primary sections' });
-  await expect(sectionNavigation.getByRole('link')).toHaveCount(5);
+  await expect(sectionNavigation.getByRole('link')).toHaveCount(6);
   await expect(sectionNavigation.getByRole('link', { name: 'Projects' })).toHaveAttribute(
     'aria-current',
     'page',

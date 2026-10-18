@@ -2,6 +2,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { installOperatorFixture } from './operatorFixture';
 import { PRIMARY_ROUTES } from './primaryRoutes';
+import { sectionForPath } from '../../src/app/shell/sections';
 
 for (const route of PRIMARY_ROUTES) {
   test(`${route.path} has labeled semantics, visible keyboard focus, and a usable narrow layout`, async ({
@@ -20,7 +21,11 @@ for (const route of PRIMARY_ROUTES) {
 
     await page.setViewportSize({ height: 900, width: 640 });
     await expect(page.getByRole('main')).toBeVisible();
-    await expect(page.getByRole('button', { name: /Open .* explorer/u })).toBeVisible();
+    if (sectionForPath(route.path).explorerMode === null) {
+      await expect(page.getByRole('button', { name: /Open .* explorer/u })).toHaveCount(0);
+    } else {
+      await expect(page.getByRole('button', { name: /Open .* explorer/u })).toBeVisible();
+    }
     expect(await viewportOverflow(page)).toBe(0);
     expect(await accessibilityViolations(page)).toEqual([]);
     await expectVisibleKeyboardFocus(page);

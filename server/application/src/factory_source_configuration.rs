@@ -63,6 +63,7 @@ pub struct FactorySourceConfigurationHandlers<S> {
   capabilities: Vec<WorkSourceCapability>,
   configuration_parents: Vec<(WorkSourceCapability, ImmutableReference)>,
   selection_labels: Vec<(WorkSourceCapability, WorkSourceSelectionLabels)>,
+  predicate_states: Vec<(WorkSourceCapability, Vec<FactoryKey>)>,
   preview: Option<Arc<dyn FactoryWorkSourcePreview>>,
   issue_links: Option<Arc<dyn FactoryWorkSourceIssueLinks>>,
 }
@@ -88,6 +89,7 @@ impl<S> FactorySourceConfigurationHandlers<S> {
       capabilities,
       configuration_parents: vec![],
       selection_labels: vec![],
+      predicate_states: vec![],
       preview: None,
       issue_links: None,
     })
@@ -175,6 +177,20 @@ impl<
     definition: &WorkSourceInputDraft,
   ) -> Result<(), ApplicationError> {
     self.require_input_visibility(context, definition).await?;
+    if let Some(predicate) = &definition.predicate {
+      predicate
+        .validate()
+        .map_err(|_| FactoryValidationDiagnostics::invalid("/predicate"))?;
+      let states = self
+        .predicate_states
+        .iter()
+        .find(|(c, _)| c.project_id == definition.target.project_id() && c.binding == definition.source)
+        .map(|(_, states)| states)
+        .ok_or_else(|| FactoryValidationDiagnostics::invalid("/predicate"))?;
+      if predicate.state.as_ref().is_some_and(|s| !states.contains(s)) {
+        return Err(FactoryValidationDiagnostics::invalid("/predicate/state"));
+      }
+    }
     let connection = definition
       .connection
       .as_ref()

@@ -6,6 +6,7 @@ import { resourceSearchApi, type ResourceSearchApi } from '../api/resourceSearch
 import { operatorAttentionApi, type OperatorAttentionApi } from '../api/operatorAttention';
 import { auditApi, type AuditApi } from '../features/audit/api';
 import { factoryApi, type FactoryApi } from '../features/factory/api';
+import type { IntegrationsApi } from '../features/integrations/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
@@ -22,6 +23,12 @@ const AuditView = lazy(async () => {
   const module = await import('../features/audit/AuditView');
   return { default: module.AuditView };
 });
+const IntegrationsView = lazy(async () => ({
+  default: (await import('../features/integrations/views')).IntegrationsView,
+}));
+const IntegrationDetailView = lazy(async () => ({
+  default: (await import('../features/integrations/views')).IntegrationDetailView,
+}));
 const FactoryExplorer = lazy(async () => ({
   default: (await import('../features/factory/FactoryExplorer')).FactoryExplorer,
 }));
@@ -98,6 +105,7 @@ function WorkspaceLandingView({
 }
 
 export interface ConsoleRouteDependencies {
+  readonly integrationsApi?: IntegrationsApi;
   readonly factoryApi: FactoryApi;
   readonly attentionApi: OperatorAttentionApi;
   readonly auditApi: AuditApi;
@@ -153,6 +161,19 @@ export function createConsoleRoutes(
       ),
       errorElement: <RouteErrorBoundary />,
       children: [
+        {
+          path: childPath(CONSOLE_PATHS.integrations),
+          element: defer(<IntegrationsView api={dependencies.integrationsApi} />),
+        },
+        {
+          path: childPath(CONSOLE_PATHS.integration),
+          element: defer(
+            <IntegrationDetailView
+              api={dependencies.integrationsApi}
+              projects={dependencies.projectsApi}
+            />,
+          ),
+        },
         {
           path: childPath(CONSOLE_PATHS.factory),
           element: defer(

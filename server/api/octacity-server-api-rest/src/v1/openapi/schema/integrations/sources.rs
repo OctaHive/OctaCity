@@ -25,7 +25,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["project_id", "id", "version", "definition_digest"],
   );
   let draft = object(
-    json!({"connection":nullable(reference("WorkSourceConnectionReference")),"target":reference("FactoryConfigurationReference"),"repository":repository,"source":reference("WorkSourceBinding"),"reporter":nullable(reference("WorkSourceBinding")),"enabled":{"type":"boolean","default":false}}),
+    json!({"connection":nullable(reference("WorkSourceConnectionReference")),"target":reference("FactoryConfigurationReference"),"repository":repository,"source":reference("WorkSourceBinding"),"reporter":nullable(reference("WorkSourceBinding")),"predicate":nullable(reference("WorkSourcePredicate")),"enabled":{"type":"boolean","default":false}}),
     &["target", "repository", "source"],
   );
   let input_intent = object(
@@ -61,10 +61,17 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["state", "all_of", "any_of", "none_of"],
   );
   let choices = object(
-    json!({"connection_id":id(),"connection_version":version(),"access_version":version(),"items":array(object(json!({"binding":reference("WorkSourceBinding"),"connection_configuration":pin(),"purpose":{"type":"string","enum":["task_read","task_update"]},"native_id":text(1024),"locator":text(1024),"selection":nullable(labels.clone())}),&["binding","connection_configuration","purpose","native_id","locator","selection"]),256)}),
+    json!({"connection_id":id(),"connection_version":version(),"access_version":version(),"items":array(object(json!({"binding":reference("WorkSourceBinding"),"connection_configuration":pin(),"purpose":{"type":"string","enum":["task_read","task_update"]},"native_id":text(1024),"locator":text(1024),"selection":nullable(labels.clone()),"predicate_states":array(text(128),octacity_server_application::MAX_SOURCE_SELECTION_LABELS)}),&["binding","connection_configuration","purpose","native_id","locator","selection"]),256)}),
     &["connection_id", "connection_version", "access_version", "items"],
   );
+  let mut predicate = labels.clone();
+  predicate["properties"]["state"] = nullable(text(128));
+  for labels in ["all_of", "any_of", "none_of"] {
+    predicate["properties"][labels]["items"]["x-max-utf8-bytes"] =
+      json!(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES);
+  }
   for (name, value) in [
+    ("WorkSourcePredicate", predicate),
     ("WorkSourceSelectionLabels", labels),
     ("WorkSourceBinding", binding),
     ("WorkSourceConnectionReference", connection),

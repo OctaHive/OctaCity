@@ -7,6 +7,7 @@ import {
   type ConsolePath,
 } from '../../src/app/routes';
 import { FIXTURE_IDS } from './operatorFixture';
+import { integrationFixture } from '../fixtures/integrations';
 
 export interface PrimaryRoute {
   heading: string;
@@ -16,6 +17,18 @@ export interface PrimaryRoute {
 }
 
 const routesByTemplate = {
+  [CONSOLE_PATHS.integrations]: {
+    heading: 'Integrations',
+    id: 'integrations',
+    path: CONSOLE_PATHS.integrations,
+    retainedText: 'Tracker',
+  },
+  [CONSOLE_PATHS.integration]: {
+    heading: 'Tracker',
+    id: 'integration',
+    path: `/integrations/${integrationFixture('IntegrationConnection').id}`,
+    retainedText: 'Tracker',
+  },
   [CONSOLE_PATHS.factory]: {
     heading: 'Factory',
     id: 'factory',

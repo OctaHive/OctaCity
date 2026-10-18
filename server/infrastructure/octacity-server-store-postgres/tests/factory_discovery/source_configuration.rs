@@ -143,6 +143,8 @@ async fn managed_contract<
     reporter_configuration: None,
   })
   .unwrap();
+  value["definition"]["predicate"] =
+    serde_json::json!({ "state":null, "all_of":["literal, label"], "any_of":[], "none_of":["on hold"] });
   original = serde_json::from_value(value).unwrap();
   let group = WorkSourceGroup::publish(
     WorkSourceGroupId::generate(),
@@ -202,6 +204,7 @@ async fn managed_contract<
     original
   );
   let request = ListWorkSourceConfigurations {
+    connection_dependency: None,
     project_id: repository.project_id,
     after: None,
     limit: 1,
@@ -233,6 +236,30 @@ async fn managed_contract<
     }
   );
   assert_eq!(page.next_cursor, None);
+  let mut dependencies = request.clone();
+  dependencies.connection_dependency = Some(connection);
+  let dependency_page = store
+    .list_work_source_configurations(dependencies.clone())
+    .await
+    .unwrap();
+  assert_eq!(dependency_page.items.len(), 1);
+  assert_eq!(
+    dependency_page.items[0].target(),
+    WorkSourceScanTarget::Input {
+      id: original.id(),
+      version: original.version()
+    }
+  );
+  assert!(dependency_page.next_cursor.is_none());
+  dependencies.connection_dependency = Some(IntegrationId::generate());
+  assert!(
+    store
+      .list_work_source_configurations(dependencies.clone())
+      .await
+      .unwrap()
+      .items
+      .is_empty()
+  );
   for hidden in ["configuration", "repository", "connection"] {
     let mut filtered = request.clone();
     match hidden {
@@ -244,6 +271,75 @@ async fn managed_contract<
     let page = store.list_work_source_configurations(filtered).await.unwrap();
     assert!(page.items.is_empty());
     assert_eq!(page.next_cursor, None);
+  }
+  // A connection review retains versions, rather than only the latest head or group copies.
+  let retained_id = WorkSourceInputId::generate();
+  for version in [1, 2] {
+    let mut value = serde_json::to_value(&original).unwrap();
+    value["id"] = serde_json::json!(retained_id);
+    value["version"] = serde_json::json!(version);
+    let retained: WorkSourceInput = serde_json::from_value(value).unwrap();
+    let expected = (version == 2).then_some(WorkSourceInputVersion::INITIAL);
+    let mut publication = packet.clone();
+    publication.intent.group = None;
+    publication.publication.group = None;
+    publication.intent.inputs = vec![WorkSourceInputIntent {
+      id: retained_id,
+      expected_version: expected,
+      definition: retained.definition().clone(),
+    }];
+    publication.publication.inputs = vec![WorkSourceInputChange {
+      expected_version: expected,
+      input: retained,
+    }];
+    publication.idempotency_key = idempotency(&format!("retained-{connection}-{version}"));
+    store
+      .publish_work_source_configuration(management_mutation(publication))
+      .await
+      .unwrap();
+  }
+  dependencies.connection_dependency = Some(connection);
+  let mut retained = vec![];
+  for index in 0..3 {
+    let page = store
+      .list_work_source_configurations(dependencies.clone())
+      .await
+      .unwrap();
+    assert_eq!(page.items.len(), 1);
+    retained.push((
+      page.items[0].inputs()[0].id(),
+      page.items[0].inputs()[0].version().get(),
+    ));
+    assert_eq!(page.next_cursor.is_some(), index < 2);
+    dependencies.after = page.next_cursor;
+  }
+  assert_eq!(
+    retained
+      .iter()
+      .filter(|(id, _)| *id == retained_id)
+      .map(|(_, version)| *version)
+      .collect::<Vec<_>>(),
+    [1, 2]
+  );
+  assert_eq!(
+    retained
+      .iter()
+      .filter(|(id, version)| *id == original.id() && *version == 1)
+      .count(),
+    1
+  );
+  for hidden in ["configuration", "repository", "connection"] {
+    let mut filtered = dependencies.clone();
+    filtered.after = None;
+    match hidden {
+      "configuration" => filtered.visibility.configurations = FactoryConfigurationListVisibility::none(),
+      "repository" => filtered.visibility.repositories = RepositoryListVisibility::none(),
+      "connection" => filtered.visibility.connections = IntegrationConnectionListVisibility::none(),
+      _ => unreachable!(),
+    }
+    let hidden = store.list_work_source_configurations(filtered).await.unwrap();
+    assert!(hidden.items.is_empty());
+    assert!(hidden.next_cursor.is_none());
   }
   let mut next = serde_json::to_value(&original).unwrap();
   next["version"] = serde_json::json!(2);

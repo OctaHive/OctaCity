@@ -5,6 +5,7 @@ import {
   FolderKanban,
   Hammer,
   PanelLeftOpen,
+  Plug,
   ServerCog,
 } from 'lucide-react';
 import {
@@ -45,6 +46,7 @@ const sectionIcons = {
   audit: ClipboardList,
   builds: Hammer,
   factory: Factory,
+  integrations: Plug,
   projects: FolderKanban,
 } satisfies Record<ConsoleSectionId, typeof FolderKanban>;
 

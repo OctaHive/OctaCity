@@ -83,6 +83,7 @@ const fn visibility<T: ManagementVisibilityTarget + 'static>() -> ManagementOper
 pub(crate) enum ParameterProfile {
   #[default]
   None,
+  IntegrationDiscovery,
   ProjectList,
   CurrentDefinitionList,
   FactoryConfigurationChoices,

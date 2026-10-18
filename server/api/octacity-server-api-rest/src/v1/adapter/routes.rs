@@ -359,10 +359,18 @@ fn registered_integration_routes() -> ManagementRoutes<Arc<super::integrations::
   };
   use octacity_server_application::{
     CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery, GetIntegrationConnectionQuery,
-    GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, ManageIntegrationCredentialCommand,
-    PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand, SetIntegrationConnectionStateCommand,
+    GetIntegrationProjectAccessQuery, ListIntegrationConnectionsQuery, ListIntegrationInstallationsQuery,
+    ListIntegrationProjectResourcesQuery, ManageIntegrationCredentialCommand, PublishIntegrationConnectionCommand,
+    PublishIntegrationProjectAccessCommand, SetIntegrationConnectionStateCommand, ValidateIntegrationConnectionQuery,
   };
   ManagementRoutes::new()
+    .get::<octacity_server_application::ListIntegrationDependenciesQuery, _, _>(
+      "listIntegrationDependencies",
+      list_dependencies,
+    )
+    .get::<ListIntegrationConnectionsQuery, _, _>("listIntegrationConnections", list_connections)
+    .get::<ListIntegrationInstallationsQuery, _, _>("listIntegrationInstallations", list_installations)
+    .post::<ValidateIntegrationConnectionQuery, _, _>("validateIntegrationConnection", validate_connection)
     .post::<PreviewWorkSourcesQuery, _, _>("previewWorkSources", preview_sources)
     .get::<GetWorkSourceDiagnosticsQuery, _, _>("getWorkSourceInputDiagnostics", source_input_diagnostics)
     .get::<GetWorkSourceDiagnosticsQuery, _, _>("getWorkSourceGroupDiagnostics", source_group_diagnostics)

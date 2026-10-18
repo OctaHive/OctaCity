@@ -217,6 +217,38 @@ pub struct RepositoryProjection {
   pub published_at: Timestamp,
 }
 
+impl RepositoryProjection {
+  /// Canonical store-definition digest used by immutable Factory input references.
+  pub fn definition_digest(&self) -> Result<octacity_server_factory::FactoryDigest, crate::ApplicationError> {
+    use octacity_server_domain::SourceReference;
+    use octacity_server_store::{RepositoryDefinition, RepositorySelectionPolicy};
+    let definition = RepositoryDefinition {
+      vcs_integration_id: self.vcs_integration_id,
+      repository_locator: self.repository_locator.clone(),
+      selection: RepositorySelectionPolicy {
+        allowed_references: self
+          .selection
+          .allowed_references
+          .iter()
+          .map(SourceReference::new)
+          .collect::<Result<_, _>>()
+          .map_err(|_| crate::ApplicationError::invalid())?,
+        default_reference: self
+          .selection
+          .default_reference
+          .as_ref()
+          .map(SourceReference::new)
+          .transpose()
+          .map_err(|_| crate::ApplicationError::invalid())?,
+        allow_exact_revision: self.selection.allow_exact_revision,
+      },
+    };
+    Ok(octacity_server_factory::FactoryDigest::content_sha256(
+      &serde_json::to_vec(&definition).map_err(|_| crate::ApplicationError::invalid())?,
+    ))
+  }
+}
+
 impl From<PublishedRepository> for RepositoryProjection {
   fn from(repository: PublishedRepository) -> Self {
     Self {

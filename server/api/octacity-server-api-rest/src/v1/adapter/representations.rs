@@ -549,15 +549,21 @@ pub(super) fn pipeline_resource(projection: PipelineProjection) -> PipelineResou
   }
 }
 
-pub(super) fn repository_mutation(outcome: RepositoryCommandOutcome) -> MutationResponse<RepositoryResource> {
-  MutationResponse {
+pub(super) fn repository_mutation(
+  outcome: RepositoryCommandOutcome,
+) -> Result<MutationResponse<RepositoryResource>, octacity_server_application::ApplicationError> {
+  Ok(MutationResponse {
     disposition: mutation_disposition(outcome.disposition),
-    resource: repository_resource(outcome.repository),
-  }
+    resource: repository_resource(outcome.repository)?,
+  })
 }
 
-pub(super) fn repository_resource(projection: RepositoryProjection) -> RepositoryResource {
-  RepositoryResource {
+pub(super) fn repository_resource(
+  projection: RepositoryProjection,
+) -> Result<RepositoryResource, octacity_server_application::ApplicationError> {
+  let definition_digest = Some(projection.definition_digest()?.to_string());
+  Ok(RepositoryResource {
+    definition_digest,
     id: projection.id.to_string(),
     project_id: projection.project_id.to_string(),
     name: projection.name.to_string(),
@@ -580,7 +586,7 @@ pub(super) fn repository_resource(projection: RepositoryProjection) -> Repositor
       },
     },
     published_at_unix_ms: projection.published_at.unix_millis(),
-  }
+  })
 }
 
 pub(super) fn configuration_mutation(

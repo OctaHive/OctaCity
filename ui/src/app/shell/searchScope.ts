@@ -18,6 +18,7 @@ const sectionScopes = {
   audit: [],
   builds: ['build'],
   factory: [],
+  integrations: [],
   projects: ['project'],
 } as const satisfies Record<ConsoleSectionId, ResourceSearchScope>;
 

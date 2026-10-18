@@ -1,7 +1,10 @@
 //! Credential-free connection envelopes and one protected write-only submission.
 mod source_diagnostics;
 mod sources;
-use octacity_server_application::MAX_INTEGRATION_NAME_BYTES;
+use octacity_server_application::{
+  MAX_INTEGRATION_AUTHENTICATION_METHODS, MAX_INTEGRATION_DISCOVERY_PAGE_SIZE, MAX_INTEGRATION_ENDPOINT_BYTES,
+  MAX_INTEGRATION_ENDPOINTS, MAX_INTEGRATION_NAME_BYTES, MAX_INTEGRATION_RESOURCES,
+};
 use serde_json::{Map, Value, json};
 fn reference(name: &str) -> Value {
   json!({"$ref":format!("#/components/schemas/{name}")})
@@ -61,7 +64,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["reference", "native_id", "locator", "capabilities"],
   );
   let definition = object(
-    json!({"name":name,"provider":text(128),"installation":pin(),"adapter":pin(),"endpoint":text(2048),"authentication":text(128),"resources":array(resource,64)}),
+    json!({"name":name,"provider":text(128),"installation":pin(),"adapter":pin(),"endpoint":text(2048),"authentication":text(128),"resources":array(resource.clone(),64)}),
     &[
       "name",
       "provider",
@@ -77,6 +80,20 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "resources":array(object(json!({"reference":pin(),"purposes":array(purpose.clone(),4)}), &["reference","purposes"]),64)}),
     &["name", "installation", "endpoint", "authentication", "resources"],
   );
+  schemas.insert("IntegrationConnectionDefinition".into(), definition.clone());
+  schemas.insert("IntegrationConnectionPage".into(),object(json!({"items":array(reference("IntegrationConnection"),usize::from(MAX_INTEGRATION_DISCOVERY_PAGE_SIZE)),"next_cursor":{"type":["string","null"],"format":"uuid"}}), &["items","next_cursor"]));
+  let installed = object(
+    json!({"installation":pin(),"provider":text(128),"adapter":pin(),"endpoints":array(text(MAX_INTEGRATION_ENDPOINT_BYTES),MAX_INTEGRATION_ENDPOINTS),"authentication":array(text(128),MAX_INTEGRATION_AUTHENTICATION_METHODS),"resources":array(resource.clone(),MAX_INTEGRATION_RESOURCES)}),
+    &[
+      "installation",
+      "provider",
+      "adapter",
+      "endpoints",
+      "authentication",
+      "resources",
+    ],
+  );
+  schemas.insert("IntegrationInstallationPage".into(),object(json!({"items":array(installed,usize::from(MAX_INTEGRATION_DISCOVERY_PAGE_SIZE)),"next_cursor":{"anyOf":[reference("FactoryDigest"),{"type":"null"}]}}), &["items","next_cursor"]));
   let metadata_intent = object(
     json!({"id":identity(),"expected_current_version":{"type":["integer","null"],"minimum":1},"draft":draft}),
     &["id", "expected_current_version", "draft"],

@@ -150,3 +150,21 @@ test('Factory provider failure leaves ordinary CI/CD navigation available', asyn
     page.getByRole('main').getByRole('heading', { level: 1, name: 'Builds', exact: true }),
   ).toBeVisible();
 });
+
+test('offers existing manual Artifact admission from the selected pipeline without an integration setup', async ({
+  page,
+}) => {
+  await installOperatorFixture(page);
+  const owner = configurationFixture().configuration.reference.project_id;
+  const integrations: string[] = [];
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname.startsWith('/api/v1/integrations'))
+      integrations.push(request.url());
+  });
+  await page.goto(`/factory?project_id=${owner}`);
+  await page.getByRole('button', { name: 'Inspect Factory Configuration · v1' }).click();
+  await expect(page.getByRole('heading', { name: 'Pipeline inputs' })).toBeVisible();
+  await page.getByRole('button', { name: 'Admit manual Work' }).click();
+  await expect(page.getByRole('combobox', { name: 'Task Artifact' })).toBeVisible();
+  expect(integrations).toEqual([]);
+});

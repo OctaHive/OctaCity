@@ -1,0 +1,88 @@
+.view {
+  display: grid;
+  gap: var(--space-lg);
+  max-width: 74rem;
+  margin: 0 auto;
+}
+.card {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  padding: var(--space-lg);
+  background: var(--color-surface);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.card h1,
+.card h2 {
+  margin-top: 0;
+}
+.card p {
+  color: var(--color-text-muted);
+  line-height: 1.6;
+}
+.card label {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-block: var(--space-sm);
+}
+.card input:not([type='checkbox']),
+.card select {
+  min-width: 0;
+  max-width: 100%;
+  padding: var(--space-sm);
+  font: inherit;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-canvas);
+  color: var(--color-text-primary);
+}
+.card fieldset {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  margin-block: var(--space-md);
+  border-radius: var(--radius-small);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-sm);
+  margin-block: var(--space-md);
+}
+.field {
+  display: grid;
+  gap: var(--space-sm);
+  margin-block: var(--space-md);
+}
+.view button {
+  font: inherit;
+  color: var(--color-text-primary);
+  background: var(--color-surface-subtle);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  padding: var(--space-sm) var(--space-md);
+  cursor: pointer;
+}
+.view button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.list {
+  list-style: none;
+  padding: 0;
+  display: grid;
+  gap: var(--space-md);
+}
+.details {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 16rem), 1fr));
+  gap: var(--space-md);
+}
+.details dt {
+  color: var(--color-text-muted);
+}
+.details dd {
+  margin: var(--space-xs) 0;
+}

@@ -383,3 +383,50 @@ async fn hosted_preview_can_only_narrow_installed_read_bounds() {
   assert_eq!(wire["message"]["command"]["payload"]["max_page_bytes"], 4096);
   assert!(wire["message"]["command"]["payload"]["cursor"].is_null());
 }
+
+#[tokio::test]
+async fn hosted_preview_applies_immutable_normalized_input_predicates_without_admission() {
+  for provider in ["github", "custom-tracker"] {
+    let fixture = Fixture::enabled(provider).await;
+    let dir = fixture.root.path().join(provider);
+    let manifest = std::fs::read_to_string(dir.join("adapter.toml")).unwrap();
+    std::fs::write(
+      dir.join("adapter.toml"),
+      manifest.replace("authorize=true", "authorize=true\npreview=true"),
+    )
+    .unwrap();
+    let reader = HostedFactoryWorkSourcePreview::new(
+      Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
+      vec![fixture.profile.clone()],
+      settings().operation_timeout,
+      settings().cancellation_grace,
+      CancellationToken::new(),
+    )
+    .unwrap();
+    let mut definition = fixture.input.definition().clone();
+    definition.predicate = Some(WorkSourcePredicate {
+      state: None,
+      all_of: vec!["different-label".into()],
+      any_of: vec![],
+      none_of: vec![],
+    });
+    let page = reader
+      .preview(ReadWorkSourcePreview {
+        project_id: fixture.input.project_id(),
+        inputs: vec![WorkSourceInputIntent {
+          id: fixture.input.id(),
+          expected_version: Some(fixture.input.version()),
+          definition,
+        }],
+        limit: 2,
+      })
+      .await
+      .unwrap();
+    assert_eq!(
+      page.candidates[0].selections[0].reasons,
+      [WorkSourceSelectionMismatch::RequiredLabelMissing]
+    );
+    assert!(fixture.runs().await.is_empty());
+    assert!(fixture.bytes.0.lock().unwrap().is_empty());
+  }
+}

@@ -1317,9 +1317,13 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-inputs/{integration_id}/versions/1"), None),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-groups/{integration_id}/versions/1"), None),
     // Protected administration rejects even well-routed requests before body parsing/policy.
+    empty_request("GET", "/api/v1/integrations", None),
+    empty_request("GET", "/api/v1/integration-installations", None),
+    empty_request("POST", &format!("/api/v1/integrations/{integration_id}/validate"), None),
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/access"), None),
     empty_request("GET", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/access"), None),
     empty_request("GET", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/resources"), None),
+    empty_request("GET", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/dependencies"), None),
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/checks"), None),
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/credentials"), None),
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/versions"), None),
@@ -1343,6 +1347,10 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
 
   for (index, request) in requests.into_iter().enumerate() {
     let expected = if request.uri().path().starts_with("/api/v1/integrations/")
+      || matches!(
+        request.uri().path(),
+        "/api/v1/integrations" | "/api/v1/integration-installations"
+      )
       || request.uri().path().contains("/factory-source")
     {
       StatusCode::FORBIDDEN
@@ -1739,6 +1747,7 @@ fn documented_success_response(target: &str, request: &serde_json::Value) -> ser
         "name": request["name"],
         "version": 1,
         "definition": request["definition"],
+        "definition_digest": "e7bf2fd6b7bfc7bff6add91d7d62903cd7570654710ff6ce6057841380449218",
         "published_at_unix_ms": "<generated timestamp>",
       }
     }),
@@ -1811,4 +1820,31 @@ fn documented_http_requests_support_windows_line_endings() {
   let document = unix_document.replace('\n', "\r\n");
 
   assert_eq!(documented_http_requests(&document).len(), 5);
+}
+
+#[tokio::test]
+async fn repository_publication_returns_the_authoritative_factory_input_digest() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let router = management_router_with_application(
+    || true,
+    recording_management_application(application, Arc::new(JobEventApplication)),
+  );
+  let response = router
+    .oneshot(
+      Request::builder()
+        .method("POST")
+        .uri("/api/v1/repositories")
+        .header("content-type", "application/json")
+        .header("Idempotency-Key", "repository-with-digest")
+        .body(Body::from(repository_body("11111111-1111-4111-8111-111111111111")))
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::CREATED);
+  let value: serde_json::Value = serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+  assert_eq!(
+    value["resource"]["definition_digest"],
+    "7769e2da056209f6fd15391bd9d50a33be09c4236d01a789703778c55c922d53"
+  );
 }

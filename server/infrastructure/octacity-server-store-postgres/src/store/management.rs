@@ -563,6 +563,12 @@ impl octacity_server_store::FactoryFlowDefinitionStore for PostgresStore {
 
 #[async_trait]
 impl IntegrationConnectionStore for PostgresStore {
+  async fn list_integration_connections(
+    &self,
+    request: ReadIntegrationConnections,
+  ) -> Result<IntegrationConnectionPage, StoreError> {
+    crate::integration_connection::list(&self.pool, request).await
+  }
   async fn replay_integration_connection(
     &self,
     request: ManagementMutation<ReplayIntegrationConnection>,

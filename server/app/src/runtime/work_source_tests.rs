@@ -159,6 +159,7 @@ impl Fixture {
       WorkSourceInputId::generate(),
       project,
       WorkSourceInputDraft {
+        predicate: None,
         connection: None,
         target: config.reference().clone(),
         repository: repo.clone(),

@@ -1,4 +1,5 @@
 import { configurationFixture, runFixture, diagnosticFixture } from '../fixtures/factory';
+import { integrationFixture } from '../fixtures/integrations';
 import type { Page, Route } from '@playwright/test';
 
 export const FIXTURE_IDS = {
@@ -20,6 +21,43 @@ export async function installOperatorFixture(page: Page) {
       return;
     }
     const url = new URL(route.request().url());
+    const connection = integrationFixture('IntegrationConnection');
+    if (url.pathname === '/api/v1/integrations') {
+      await fulfill(route, { items: [connection], next_cursor: null });
+      return;
+    }
+    if (url.pathname === '/api/v1/integration-installations') {
+      const definition = connection.definition;
+      await fulfill(route, {
+        items: [
+          {
+            installation: definition.installation,
+            provider: definition.provider,
+            adapter: definition.adapter,
+            endpoints: [definition.endpoint],
+            authentication: [definition.authentication],
+            resources: definition.resources,
+          },
+        ],
+        next_cursor: null,
+      });
+      return;
+    }
+    if (url.pathname === `/api/v1/integrations/${connection.id}`) {
+      await fulfill(route, connection);
+      return;
+    }
+    if (
+      url.pathname === `/api/v1/integrations/${connection.id}/state` &&
+      route.request().method() === 'GET'
+    ) {
+      await fulfill(route, integrationFixture('IntegrationAdministrationState'));
+      return;
+    }
+    if (url.pathname === `/api/v1/integrations/${connection.id}/checks`) {
+      await fulfill(route, integrationFixture('IntegrationConnectionCheckResult'));
+      return;
+    }
     const configuration = configurationFixture();
     const run = runFixture();
     const owner = configuration.configuration.reference.project_id;

@@ -27,10 +27,16 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
         .iter()
         .find(|p| p.project_id == input.project_id() && p.binding == input.definition().source)
         .ok_or_else(ApplicationError::capability_unavailable)?;
-      if snapshot
+      let provider_matches = snapshot
         .selection_matches
         .contains(&selection_digest(&profile.selection)?)
-        || (members.len() == 1 && snapshot.selection_matches.is_empty())
+        || (members.len() == 1 && snapshot.selection_matches.is_empty());
+      if provider_matches
+        && input
+          .definition()
+          .predicate
+          .as_ref()
+          .is_none_or(|predicate| predicate.mismatches(&snapshot.state, &snapshot.labels).is_empty())
       {
         matches.push(input.id());
       }
