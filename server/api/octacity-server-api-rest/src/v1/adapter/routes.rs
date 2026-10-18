@@ -229,6 +229,38 @@ pub fn management_authorization_operations() -> Vec<ManagementAuthorizationOpera
 
 fn registered_routes() -> ManagementRoutes {
   ManagementRoutes::new()
+    .get::<octacity_server_application::ListProjectIssueWorkflowsQuery, _, _>(
+      "listProjectIssueWorkflows",
+      super::issue_workflow::list,
+    )
+    .post::<octacity_server_application::SelectDefaultIssueWorkflowCommand, _, _>(
+      "selectDefaultIssueWorkflow",
+      super::issue_workflow::select_default,
+    )
+    .get::<octacity_server_application::GetIssueWorkflowQuery, _, _>(
+      "getCurrentIssueWorkflow",
+      super::issue_workflow::get_current,
+    )
+    .get::<octacity_server_application::GetIssueWorkflowQuery, _, _>(
+      "getIssueWorkflowVersion",
+      super::issue_workflow::get_version,
+    )
+    .post::<octacity_server_application::PublishIssueWorkflowCommand, _, _>(
+      "createIssueWorkflow",
+      super::issue_workflow::create,
+    )
+    .post::<octacity_server_application::PublishIssueWorkflowCommand, _, _>(
+      "publishIssueWorkflowVersion",
+      super::issue_workflow::publish,
+    )
+    .post::<octacity_server_application::ValidateIssueWorkflowQuery, _, _>(
+      "validateIssueWorkflow",
+      super::issue_workflow::validate,
+    )
+    .get::<octacity_server_application::GetDefaultIssueWorkflowQuery, _, _>(
+      "getDefaultIssueWorkflow",
+      super::issue_workflow::get_default,
+    )
     .get::<GetOperationalMetadataQuery, _, _>("getOperationalMetadata", get_operational_metadata)
     .get::<SearchResourcesQuery, _, _>("searchResources", search_resources)
     .get::<ListOperatorAttentionQuery, _, _>("listOperatorAttention", list_operator_attention)

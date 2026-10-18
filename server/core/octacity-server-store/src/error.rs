@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Discover bounded visible current business workflows.
+  ListProjectIssueWorkflows,
   /// Publish one immutable Project business workflow.
   PublishIssueWorkflow,
   /// Select one exact Project business workflow for future Issues.

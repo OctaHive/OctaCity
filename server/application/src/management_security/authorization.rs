@@ -420,6 +420,7 @@ const fn supports_instance(kind: ManagementResourceKind) -> bool {
   matches!(
     kind,
     ManagementResourceKind::Project
+      | ManagementResourceKind::IssueWorkflow
       | ManagementResourceKind::Pipeline
       | ManagementResourceKind::Repository
       | ManagementResourceKind::BuildConfiguration

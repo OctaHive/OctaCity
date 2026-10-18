@@ -61,6 +61,41 @@ fn conflict() -> StoreError {
 
 #[async_trait::async_trait]
 impl IssueWorkflowStore for crate::testing::InMemoryProjectStore {
+  async fn list_issue_workflows(&self, request: ListProjectIssueWorkflows) -> Result<IssueWorkflowPage, StoreError> {
+    if request.visibility().kind() == ReadVisibilityKind::None {
+      return Ok(IssueWorkflowPage {
+        items: vec![],
+        next_cursor: None,
+      });
+    }
+    let state = self.lock()?;
+    let project = state.projects.get(&request.project_id()).ok_or(StoreError::NotFound {
+      entity: EntityKind::Project,
+    })?;
+    let initial = initial_issue_workflow(project.id, project.created_at)?;
+    let mut current = BTreeMap::new();
+    current.insert(initial.id, initial);
+    for ((project_id, id), version) in &state.workflows.current {
+      if *project_id == project.id {
+        current.insert(*id, state.workflows.workflow(project, *id, Some(*version))?);
+      }
+    }
+    let mut items: Vec<_> = current
+      .into_values()
+      .filter(|w| request.visibility().allows(&w.id) && request.after().is_none_or(|after| w.id > after))
+      .take(usize::from(request.limit().get()) + 1)
+      .collect();
+    let more = items.len() > usize::from(request.limit().get());
+    if more {
+      items.pop();
+    }
+    let next_cursor = more.then(|| items.last().unwrap().id);
+    Ok(IssueWorkflowPage {
+      items: items.into_iter().map(IssueWorkflowSummary::from).collect(),
+      next_cursor,
+    })
+  }
+
   async fn default_issue_workflow(&self, project_id: ProjectId) -> Result<IssueWorkflowDefault, StoreError> {
     let state = self.lock()?;
     let project = state.projects.get(&project_id).ok_or(StoreError::NotFound {

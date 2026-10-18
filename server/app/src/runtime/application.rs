@@ -219,6 +219,9 @@ pub(super) fn management_application(
     )),
   );
   let factory_queries = authorized_queries(&management_policy, factory);
+  let workflows = Arc::new(octacity_server_application::IssueWorkflowHandlers::new(store.clone()));
+  let workflow_commands = authorized_commands(&management_policy, workflows.clone());
+  let workflow_queries = authorized_queries(&management_policy, workflows);
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
@@ -263,7 +266,11 @@ pub(super) fn management_application(
       OperatorAttentionManagementApplication::new(operator_attention_queries),
     ),
   )
-  .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+  .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?
+  .with_issue_workflows(octacity_server_api_rest::v1::IssueWorkflowManagementApplication::new(
+    workflow_commands,
+    workflow_queries,
+  ));
   let application = match integrations {
     Some(integrations) => application.with_integrations(integrations),
     None => application,

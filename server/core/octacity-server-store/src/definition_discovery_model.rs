@@ -216,3 +216,11 @@ pub struct CurrentTriggerDefinitionPage {
   /// Exclusive cursor for the following page, when one exists.
   pub next_cursor: Option<TriggerId>,
 }
+
+definition_list_request!(
+  ListProjectIssueWorkflows,
+  octacity_server_domain::IssueWorkflowId,
+  crate::IssueWorkflowListVisibility,
+  StoreOperation::ListProjectIssueWorkflows,
+  "Bounded visible current business workflows scoped to one Project."
+);

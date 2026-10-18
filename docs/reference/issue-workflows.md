@@ -67,7 +67,67 @@ selection leaves authoritative state unchanged.
 ## Implementation boundary
 
 The public application handlers and narrow `IssueWorkflowStore` port have memory
-behavior over the same Project authority used by manual tasks. PostgreSQL
-persistence, REST discovery and Console settings are separate work-card tasks
-2.2, 2.3 and 2.4. Issue creation and the shared guarded movement command follow
-in 2.5; publishing this vocabulary alone enables no transitions or execution.
+and PostgreSQL behavior over the same Project authority used by manual tasks.
+Migration `0067_issue_workflows.sql` adds workflow heads, retained immutable
+definitions and exact default selections. Composite Project/workflow/version
+foreign keys retain referenced policy and reject cross-Project default targets.
+The template remains a read-only fallback; an authorized mutation materializes
+it when a retained foreign-key reference is needed.
+
+PostgreSQL publication and selection use the existing atomic management
+replay/audit/outbox transaction. A Project row lock protects concurrent first
+publication and default selection without a global workflow lock. Publication
+does not advance the selected default. Reopening the database connection pool
+preserves exact versions and original replay receipts. Migration upgrades data
+additively; rollback follows the existing snapshot-restore policy rather than
+deleting retained definitions to run an older binary.
+
+## Management REST v1
+
+Workflow services are composed by the server independently of optional Factory
+and integration services. Routes are Project-scoped and use the same authorized
+application handlers and PostgreSQL authority as other management operations.
+The generated Console client consumes their OpenAPI schemas.
+
+| Method | Path under `/api/v1/projects/{project_id}` | Purpose |
+| --- | --- | --- |
+| GET | `/issue-workflows?limit=50&after={id}` | Current visible summaries in stable UUID order |
+| GET | `/issue-workflows/{workflow_id}` | Current immutable definition |
+| GET | `/issue-workflows/{workflow_id}/versions/{version}` | Retained exact definition |
+| POST | `/issue-workflows/validate` | Validate `{ "definition": ... }` without mutation |
+| POST | `/issue-workflows` | Create `{ "id": "UUID", "definition": ... }` |
+| POST | `/issue-workflows/{workflow_id}/versions` | Publish replacement `{ "definition": ... }` |
+| GET | `/issue-workflow-default` | Exact default and its independent selection version |
+| POST | `/issue-workflow-default` | Select `{ "workflow_id": "UUID", "workflow_version": 1 }` |
+
+Discovery accepts 1–200 rows (default 50); `after` is the exclusive workflow UUID.
+Visibility is applied before pagination and continuation. Summaries omit full
+policy documents. Current/exact/default reads also apply workflow visibility;
+a hidden policy returns `not_found`. Unknown query fields are rejected.
+
+Creation requires a caller-generated stable UUID and `Idempotency-Key`, returns
+201, and conflicts if that workflow already exists under a different intent.
+Replacement and default selection require `Idempotency-Key` and a canonical
+strong `If-Match: "1"`. Missing preconditions return 428, malformed/weak
+preconditions return 400, and stale state or changed replay intent returns 409.
+This retains the shared workflow store conflict classification. Exact replay
+returns its original resource even after later changes; it does not rebase the
+request. Mutation responses use `{ "disposition": "applied|replayed", "resource": ... }`.
+
+Definition reads/publications return a strong ETag for the workflow version;
+default reads/selections return a strong ETag for the selection version. These
+ETags are not interchangeable. Validation returns the accepted definition and
+requires neither mutation header. Only `View` is needed for reads/validation;
+creation, publication and default selection require separate `Administer` on
+the Project-owned workflow collection.
+
+OpenAPI publishes closed status/edge/policy/request schemas and the same bounds
+as the application. Status rows contain only ID/name; initial and terminal
+references are required workflow settings. Unsupported guards/scripts, execution
+state setters, arbitrary actor/credential/provider fields and legacy status
+flags are rejected. Cross-reference and evidence grammar validation uses the
+shared business-policy validator rather than transport-specific policy.
+
+
+Console settings remain task 2.4. Issue creation and the shared guarded movement
+command follow in 2.5; publishing policy alone enables no transitions or execution.

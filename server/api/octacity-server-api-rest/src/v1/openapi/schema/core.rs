@@ -28,6 +28,7 @@ use management_schema::{insert_common_schemas, insert_pipeline_schemas, insert_p
 pub(crate) fn component_schemas() -> Value {
   let mut schemas = Map::new();
   insert_common_schemas(&mut schemas);
+  super::issue_workflows::insert(&mut schemas);
   factory::insert_factory_schemas(&mut schemas);
   super::integrations::insert(&mut schemas);
   operational::insert_operational_schemas(&mut schemas);

@@ -6,6 +6,7 @@ use axum::{
 pub fn concrete_path(path: &str) -> String {
   path
     .replace("{project_id}", "11111111-1111-4111-8111-111111111111")
+    .replace("{workflow_id}", "22222222-2222-4222-8222-222222222222")
     .replace("{pipeline_id}", "22222222-2222-4222-8222-222222222222")
     .replace("{repository_id}", "33333333-3333-4333-8333-333333333333")
     .replace("{flow_definition_id}", "33333333-3333-4333-8333-333333333333")
@@ -87,6 +88,18 @@ pub fn request_examples() -> Vec<(&'static str, serde_json::Value)> {
   .unwrap();
   let repository_version: serde_json::Value = serde_json::from_str(&repository_version_body()).unwrap();
   vec![
+    (
+      "IssueWorkflowDefinitionRequest",
+      serde_json::json!({"definition":issue_workflow_definition()}),
+    ),
+    (
+      "CreateIssueWorkflowRequest",
+      serde_json::json!({"id":"22222222-2222-4222-8222-222222222222","definition":issue_workflow_definition()}),
+    ),
+    (
+      "SelectDefaultIssueWorkflowRequest",
+      serde_json::json!({"workflow_id":"22222222-2222-4222-8222-222222222222","workflow_version":1}),
+    ),
     (
       "CreateProjectRequest",
       serde_json::from_str(include_str!("../../fixtures/v1/create-project-request.json")).unwrap(),
@@ -183,4 +196,8 @@ pub fn request_examples() -> Vec<(&'static str, serde_json::Value)> {
     ),
     ("DrainAgentRequest", serde_json::json!({"mode": "graceful"})),
   ]
+}
+
+pub fn issue_workflow_definition() -> serde_json::Value {
+  serde_json::from_str(include_str!("../../fixtures/v1/issue-workflow-definition.json")).unwrap()
 }

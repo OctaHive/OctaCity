@@ -80,6 +80,8 @@ mod execution;
 mod factory;
 pub mod integrations;
 mod internal_trigger;
+mod issue_workflow;
+pub use issue_workflow::IssueWorkflowManagementApplication;
 mod job_event;
 mod log_search;
 mod manual_trigger;
@@ -183,6 +185,7 @@ pub struct ManagementApplication {
   inputs: ManagementInputFactory,
   factory: FactoryManagementApplication,
   integrations: Option<integrations::IntegrationManagementApplication>,
+  issue_workflows: Option<IssueWorkflowManagementApplication>,
   projects: ProjectManagementApplication,
   pipelines: PipelineManagementApplication,
   configurations: ConfigurationManagementApplication,
@@ -261,6 +264,7 @@ impl ManagementApplication {
       configurations,
       factory,
       integrations: None,
+      issue_workflows: None,
       agent_pools,
       agents,
       builds,

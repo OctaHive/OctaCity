@@ -60,6 +60,8 @@ mod definition_discovery;
 mod factory;
 #[path = "v1_handlers/integration_contracts.rs"]
 mod integration_contracts;
+#[path = "v1_handlers/issue_workflows.rs"]
+mod issue_workflows;
 #[path = "v1_handlers/log_search.rs"]
 mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
@@ -225,6 +227,27 @@ impl ManagementQueryUseCase<GetOperationalMetadataQuery> for RecordingApplicatio
   }
 }
 
+unavailable_query!(
+  octacity_server_application::GetDefaultIssueWorkflowQuery,
+  "get_default_issue_workflow"
+);
+unavailable_query!(octacity_server_application::GetIssueWorkflowQuery, "get_issue_workflow");
+unavailable_query!(
+  octacity_server_application::ListProjectIssueWorkflowsQuery,
+  "list_issue_workflows"
+);
+unavailable_query!(
+  octacity_server_application::ValidateIssueWorkflowQuery,
+  "validate_issue_workflow"
+);
+unavailable_command!(
+  octacity_server_application::PublishIssueWorkflowCommand,
+  "publish_issue_workflow"
+);
+unavailable_command!(
+  octacity_server_application::SelectDefaultIssueWorkflowCommand,
+  "select_default_issue_workflow"
+);
 unavailable_command!(RenameProjectCommand, "rename_project");
 unavailable_command!(MoveProjectCommand, "move_project");
 unavailable_command!(DeleteProjectCommand, "delete_project");
@@ -976,6 +999,18 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   let cache_session_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
   vec![
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-workflows?limit=1"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-workflows/{pipeline_id}"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-workflows/{pipeline_id}/versions/1"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-workflow-default"), None),
+    json_request("POST", &format!("/api/v1/projects/{project_id}/issue-workflows/validate"), "validate", None,
+      &serde_json::json!({"definition":support::issue_workflow_definition()}).to_string()),
+    json_request("POST", &format!("/api/v1/projects/{project_id}/issue-workflows"), "publish", None,
+      &serde_json::json!({"id":pipeline_id,"definition":support::issue_workflow_definition()}).to_string()),
+    json_request("POST", &format!("/api/v1/projects/{project_id}/issue-workflows/{pipeline_id}/versions"), "replace", Some("\"1\""),
+      &serde_json::json!({"definition":support::issue_workflow_definition()}).to_string()),
+    json_request("POST", &format!("/api/v1/projects/{project_id}/issue-workflow-default"), "select", Some("\"1\""),
+      &serde_json::json!({"workflow_id":pipeline_id,"workflow_version":1}).to_string()),
     empty_request("GET", "/api/v1/operations/metadata", None),
     empty_request("GET", "/api/v1/audit-facts?limit=10", None),
     empty_request("GET", "/api/v1/search?query=alpha&limit=10", None),
@@ -1366,6 +1401,14 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
   assert_eq!(
     *application.calls.lock().unwrap(),
     [
+      "list_issue_workflows",
+      "get_issue_workflow",
+      "get_issue_workflow",
+      "get_default_issue_workflow",
+      "validate_issue_workflow",
+      "publish_issue_workflow",
+      "publish_issue_workflow",
+      "select_default_issue_workflow",
       "get_operational_metadata",
       "list_audit_facts",
       "search_resources",

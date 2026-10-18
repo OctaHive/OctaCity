@@ -1,10 +1,12 @@
 //! Authorized Project business-policy management, independent of execution and providers.
 use crate::*;
-use octacity_server_domain::{IssueWorkflowId, IssueWorkflowVersion, ProjectId, Timestamp};
+use octacity_server_domain::{IssueWorkflowId, ProjectId, Timestamp};
+pub use octacity_server_domain::{IssueWorkflowSelectionVersion, IssueWorkflowVersion};
 use octacity_server_store::{IdempotencyKey, PublishIssueWorkflow, SelectDefaultIssueWorkflow};
 pub use octacity_server_store::{
-  IssueWorkflowDefault, IssueWorkflowDefinition, IssueWorkflowPublicationOutcome, IssueWorkflowSelectionOutcome,
-  IssueWorkflowStore, PublishIssueWorkflowIntent, PublishedIssueWorkflow, SelectDefaultIssueWorkflowIntent,
+  IssueWorkflowDefault, IssueWorkflowDefinition, IssueWorkflowPage, IssueWorkflowPublicationOutcome,
+  IssueWorkflowSelectionOutcome, IssueWorkflowStore, IssueWorkflowSummary, MAX_ISSUE_WORKFLOW_STATUSES,
+  MAX_ISSUE_WORKFLOW_TRANSITIONS, PublishIssueWorkflowIntent, PublishedIssueWorkflow, SelectDefaultIssueWorkflowIntent,
 };
 use std::sync::Arc;
 
@@ -116,9 +118,10 @@ impl<S: IssueWorkflowStore> ManagementQueryUseCase<GetIssueWorkflowQuery> for Is
   async fn execute_management_query(
     &self,
     _: &ManagementRequestContext,
-    _: &ManagementAuthorizationGrant,
+    grant: &ManagementAuthorizationGrant,
     query: GetIssueWorkflowQuery,
   ) -> Result<PublishedIssueWorkflow, ApplicationError> {
+    visible_workflow(grant, query.id)?;
     Ok(
       self
         .store
@@ -217,9 +220,85 @@ impl<S: IssueWorkflowStore> ManagementQueryUseCase<GetDefaultIssueWorkflowQuery>
   async fn execute_management_query(
     &self,
     _: &ManagementRequestContext,
-    _: &ManagementAuthorizationGrant,
+    grant: &ManagementAuthorizationGrant,
     query: GetDefaultIssueWorkflowQuery,
   ) -> Result<IssueWorkflowDefault, ApplicationError> {
-    Ok(self.store.default_issue_workflow(query.project_id).await?)
+    let default = self.store.default_issue_workflow(query.project_id).await?;
+    visible_workflow(grant, default.workflow.id)?;
+    Ok(default)
   }
+}
+
+/// Bounded Project-owned business workflow discovery, separate from Factory definitions.
+#[derive(Clone, Debug)]
+pub struct ListProjectIssueWorkflowsQuery {
+  page: crate::CurrentDefinitionPageInput<IssueWorkflowId>,
+}
+impl ListProjectIssueWorkflowsQuery {
+  /// Validates existing shared current-definition page limits.
+  pub fn try_new(
+    project_id: ProjectId,
+    after: Option<IssueWorkflowId>,
+    limit: u16,
+  ) -> Result<Self, crate::CurrentDefinitionPageError> {
+    Ok(Self {
+      page: crate::CurrentDefinitionPageInput::try_new(project_id, after, limit)?,
+    })
+  }
+}
+impl Query for ListProjectIssueWorkflowsQuery {
+  type Outcome = octacity_server_store::IssueWorkflowPage;
+}
+impl ManagementAuthorizationTarget for ListProjectIssueWorkflowsQuery {
+  const AUTHORIZATION: ManagementAuthorizationMapping = GetDefaultIssueWorkflowQuery::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    GetDefaultIssueWorkflowQuery {
+      project_id: self.page.project_id(),
+    }
+    .management_resource()
+  }
+}
+#[async_trait::async_trait]
+impl<S: IssueWorkflowStore> ManagementQueryUseCase<ListProjectIssueWorkflowsQuery> for IssueWorkflowHandlers<S> {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    query: ListProjectIssueWorkflowsQuery,
+  ) -> Result<octacity_server_store::IssueWorkflowPage, ApplicationError> {
+    let visibility = grant
+      .visibility_for::<ListProjectIssueWorkflowsQuery>()
+      .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?;
+    Ok(
+      self
+        .store
+        .list_issue_workflows(octacity_server_store::ListProjectIssueWorkflows::new(
+          query.page.project_id(),
+          query.page.after().copied(),
+          query.page.limit(),
+          visibility,
+        )?)
+        .await?,
+    )
+  }
+}
+
+/// Maximum workflow/status/transition label length, in UTF-8 bytes.
+pub const MAX_ISSUE_WORKFLOW_NAME_BYTES: usize = octacity_server_domain::MAX_RESOURCE_NAME_BYTES;
+
+fn visible_workflow(grant: &ManagementAuthorizationGrant, id: IssueWorkflowId) -> Result<(), ApplicationError> {
+  // Point reads and discovery use exactly the same bounded policy identity scope.
+  let visibility = grant
+    .visibility_for::<ListProjectIssueWorkflowsQuery>()
+    .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?;
+  if !visibility.allows(&id) {
+    return Err(
+      octacity_server_store::StoreError::NotFound {
+        entity: octacity_server_domain::EntityKind::IssueWorkflow,
+      }
+      .into(),
+    );
+  }
+  Ok(())
 }

@@ -170,6 +170,11 @@ pub struct IssueWorkflowDefault {
 /// Minimal workflow authority; does not admit Work or call a provider.
 #[async_trait::async_trait]
 pub trait IssueWorkflowStore: Send + Sync {
+  /// Lists visible current policies, including the implicit initial template, before pagination.
+  async fn list_issue_workflows(
+    &self,
+    request: crate::ListProjectIssueWorkflows,
+  ) -> Result<IssueWorkflowPage, crate::StoreError>;
   /// Returns the selected immutable version, or the declarative initial default, without writes.
   async fn default_issue_workflow(&self, project_id: ProjectId) -> Result<IssueWorkflowDefault, crate::StoreError>;
   /// Reads a retained version; absence selects current publication, not Project default.
@@ -270,4 +275,38 @@ pub fn initial_issue_workflow(
     definition,
     published_at: created_at,
   })
+}
+
+/// Safe current policy facts without a full definition on every discovery row.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IssueWorkflowSummary {
+  /// Owning Project.
+  pub project_id: ProjectId,
+  /// Stable policy identity.
+  pub id: IssueWorkflowId,
+  /// Current publication version, independent of selected default.
+  pub version: IssueWorkflowVersion,
+  /// Bounded human label.
+  pub name: String,
+  /// Original publication time.
+  pub published_at: Timestamp,
+}
+impl From<PublishedIssueWorkflow> for IssueWorkflowSummary {
+  fn from(value: PublishedIssueWorkflow) -> Self {
+    Self {
+      project_id: value.project_id,
+      id: value.id,
+      version: value.version,
+      name: value.definition.name,
+      published_at: value.published_at,
+    }
+  }
+}
+/// One bounded visible page of current policies in stable identity order.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IssueWorkflowPage {
+  /// Current visible summaries.
+  pub items: Vec<IssueWorkflowSummary>,
+  /// Exclusive last visible identity when more results exist.
+  pub next_cursor: Option<IssueWorkflowId>,
 }

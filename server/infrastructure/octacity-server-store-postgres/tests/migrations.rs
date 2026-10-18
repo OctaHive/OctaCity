@@ -69,6 +69,7 @@ const INTEGRATION_TABLES: [&str; 7] = [
   "integration_project_access",
   "integration_project_access_versions",
 ];
+const ISSUE_WORKFLOW_TABLES: [&str; 3] = ["issue_workflows", "issue_workflow_versions", "issue_workflow_defaults"];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
 const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [
   ("create-project", "legacy-management", "trusted-network"),
@@ -154,7 +155,11 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
 
   let mut previous = TestDatabase::empty().await;
   MIGRATOR.run_to(PREVIOUS_BINARY_SCHEMA_VERSION, &previous.pool).await?;
-  for table in FACTORY_TABLES.into_iter().chain(INTEGRATION_TABLES) {
+  for table in FACTORY_TABLES
+    .into_iter()
+    .chain(INTEGRATION_TABLES)
+    .chain(ISSUE_WORKFLOW_TABLES)
+  {
     assert!(!table_exists(&previous.pool, table).await?);
   }
   for table in FACTORY_RETENTION_TABLES {
@@ -214,7 +219,11 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
   verify_build_discovery_indexes(&rollback.pool).await?;
   verify_resource_search_indexes(&rollback.pool).await?;
   verify_operator_attention_schema(&rollback.pool).await?;
-  for table in FACTORY_TABLES.into_iter().chain(INTEGRATION_TABLES) {
+  for table in FACTORY_TABLES
+    .into_iter()
+    .chain(INTEGRATION_TABLES)
+    .chain(ISSUE_WORKFLOW_TABLES)
+  {
     assert!(!table_exists(&rollback.pool, table).await?);
   }
   for table in FACTORY_RETENTION_TABLES {
@@ -504,6 +513,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
   .chain(FACTORY_TABLES)
   .chain(FACTORY_RETENTION_TABLES)
   .chain(INTEGRATION_TABLES)
+  .chain(ISSUE_WORKFLOW_TABLES)
   .map(str::to_owned)
   .collect();
   if actual != expected {

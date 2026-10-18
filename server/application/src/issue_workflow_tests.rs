@@ -704,3 +704,180 @@ fn issue_workflow_default_is_declarative_stable_and_needs_no_administration_or_f
     assert!(!first.workflow.definition.transitions.is_empty());
   });
 }
+
+#[test]
+fn issue_workflow_discovery_filters_before_paging_without_initializing_state() {
+  run_ready(async {
+    let store = Arc::new(InMemoryProjectStore::new());
+    let project_id = project(&store).await;
+    let handlers = Arc::new(IssueWorkflowHandlers::new(store.clone()));
+    let queries = AuthorizedQueryHandler::new(Arc::new(ReadOnly), handlers.clone());
+    let initial = queries
+      .handle_query(&context(), GetDefaultIssueWorkflowQuery { project_id })
+      .await
+      .unwrap()
+      .workflow;
+    let commands = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers.clone());
+    let ids: Vec<IssueWorkflowId> = [1_u128, 2, 3]
+      .into_iter()
+      .map(|id| IssueWorkflowId::from_uuid(uuid::Uuid::from_u128(id)).unwrap())
+      .collect();
+    for (index, id) in ids.iter().enumerate() {
+      let mut definition = initial.definition.clone();
+      definition.name = format!("Local policy {index}");
+      commands
+        .handle_command(
+          &context(),
+          PublishIssueWorkflowCommand {
+            intent: PublishIssueWorkflowIntent {
+              project_id,
+              id: *id,
+              expected_current_version: None,
+              definition,
+            },
+            idempotency_key: IdempotencyKey::new(format!("policy-{index}")).unwrap(),
+            published_at: Timestamp::from_unix_millis(20).unwrap(),
+          },
+        )
+        .await
+        .unwrap();
+    }
+    struct Scope(Vec<IssueWorkflowId>);
+    #[async_trait]
+    impl ManagementAuthorizationPolicy for Scope {
+      async fn authorize(
+        &self,
+        _: &ManagementRequestContext,
+        _: ManagementAction,
+        _: &ManagementResource,
+      ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+        Ok(ManagementAuthorizationGrant::new(
+          ManagementVisibility::restricted(self.0.iter().map(|id| {
+            ManagementResource::instance(
+              ManagementResourceKind::IssueWorkflow,
+              ManagementResourceIdentity::new(id.to_string()).unwrap(),
+            )
+            .unwrap()
+          }))
+          .unwrap(),
+        ))
+      }
+    }
+    let scoped = AuthorizedQueryHandler::new(Arc::new(Scope(vec![ids[0], ids[2]])), handlers);
+    let before = store.mutation_evidence_counts().await;
+    let first = scoped
+      .handle_query(
+        &context(),
+        ListProjectIssueWorkflowsQuery::try_new(project_id, None, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(first.items.iter().map(|item| item.id).collect::<Vec<_>>(), [ids[0]]);
+    assert_eq!(first.next_cursor, Some(ids[0]));
+    let second = scoped
+      .handle_query(
+        &context(),
+        ListProjectIssueWorkflowsQuery::try_new(project_id, first.next_cursor, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(second.items.iter().map(|item| item.id).collect::<Vec<_>>(), [ids[2]]);
+    assert_eq!(second.next_cursor, None);
+    assert_eq!(store.mutation_evidence_counts().await, before);
+    assert!(ListProjectIssueWorkflowsQuery::try_new(project_id, None, 0).is_err());
+    assert!(ListProjectIssueWorkflowsQuery::try_new(project_id, None, 201).is_err());
+  });
+}
+
+#[test]
+fn issue_workflow_discovery_rejects_unrepresentable_visibility_before_store_access() {
+  run_ready(async {
+    struct WrongScope;
+    #[async_trait]
+    impl ManagementAuthorizationPolicy for WrongScope {
+      async fn authorize(
+        &self,
+        _: &ManagementRequestContext,
+        _: ManagementAction,
+        _: &ManagementResource,
+      ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+        Ok(ManagementAuthorizationGrant::new(
+          ManagementVisibility::restricted([ManagementResource::instance(
+            ManagementResourceKind::Project,
+            ManagementResourceIdentity::new("00000000-0000-0000-0000-000000000001").unwrap(),
+          )
+          .unwrap()])
+          .unwrap(),
+        ))
+      }
+    }
+    let store = Arc::new(InMemoryProjectStore::new());
+    let handlers = Arc::new(IssueWorkflowHandlers::new(store.clone()));
+    let queries = AuthorizedQueryHandler::new(Arc::new(WrongScope), handlers);
+    let result = queries
+      .handle_query(
+        &context(),
+        ListProjectIssueWorkflowsQuery::try_new(ProjectId::generate(), None, 1).unwrap(),
+      )
+      .await;
+    assert!(
+      matches!(
+        result,
+        Err(ManagementHandlerError::Application(
+          ApplicationError::InvalidAuthorizationVisibility
+        ))
+      ),
+      "unrepresentable policy output must fail closed before store access"
+    );
+  });
+}
+
+#[test]
+fn issue_workflow_reads_do_not_reveal_a_hidden_current_or_default_policy() {
+  run_ready(async {
+    struct NoVisibleWorkflows;
+    #[async_trait]
+    impl ManagementAuthorizationPolicy for NoVisibleWorkflows {
+      async fn authorize(
+        &self,
+        _: &ManagementRequestContext,
+        _: ManagementAction,
+        _: &ManagementResource,
+      ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+        Ok(ManagementAuthorizationGrant::new(ManagementVisibility::none()))
+      }
+    }
+    let store = Arc::new(InMemoryProjectStore::new());
+    let project_id = project(&store).await;
+    let workflow_id = IssueWorkflowId::from_uuid(project_id.as_uuid()).unwrap();
+    let queries = AuthorizedQueryHandler::new(
+      Arc::new(NoVisibleWorkflows),
+      Arc::new(IssueWorkflowHandlers::new(store.clone())),
+    );
+    let before = store.mutation_evidence_counts().await;
+    let default = queries
+      .handle_query(&context(), GetDefaultIssueWorkflowQuery { project_id })
+      .await;
+    assert_eq!(
+      default.unwrap_err().application().unwrap().classification(),
+      ApplicationFailure::NotFound
+    );
+    for version in [None, Some(serde_json::from_value(serde_json::json!(1)).unwrap())] {
+      let result = queries
+        .handle_query(
+          &context(),
+          GetIssueWorkflowQuery {
+            project_id,
+            id: workflow_id,
+            version,
+          },
+        )
+        .await;
+      assert_eq!(
+        result.unwrap_err().application().unwrap().classification(),
+        ApplicationFailure::NotFound
+      );
+    }
+    assert_eq!(store.mutation_evidence_counts().await, before);
+  });
+}

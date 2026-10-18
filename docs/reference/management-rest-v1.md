@@ -951,3 +951,12 @@ CARGO_INCREMENTAL=0 cargo test -p octacity-server \
 The ordinary journey runs with Factory disabled and enabled but unused. The
 shared storage fixture uses bucket `octacity-artifacts` and test credentials
 `octacity` / `octacity-secret`; it does not connect to a real forge or deployment.
+
+
+## Project Issue workflows
+
+Business workflows have their own provider-neutral Project-scoped routes for
+bounded discovery, validation, immutable publication, retained reads and exact
+default selection. They require no Factory or integration setup. See
+[Issue workflow contracts](issue-workflows.md#management-rest-v1) for request
+shapes, separate workflow/default ETags, authorization and replay semantics.

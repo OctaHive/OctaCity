@@ -45,6 +45,8 @@ macro_rules! instance_scoped_query_registry {
   ($apply:ident) => {
     $apply! {
       (ListProjectsQuery, ProjectListVisibility, ProjectId, ManagementResourceKind::Project, 1),
+      (crate::ListProjectIssueWorkflowsQuery, octacity_server_store::IssueWorkflowListVisibility,
+        octacity_server_domain::IssueWorkflowId, ManagementResourceKind::IssueWorkflow, 19),
       (crate::ListIntegrationConnectionsQuery, octacity_server_store::IntegrationConnectionListVisibility, octacity_server_domain::IntegrationId, ManagementResourceKind::IntegrationConnection, 18),
       (ListProjectPipelinesQuery, PipelineListVisibility, PipelineId, ManagementResourceKind::Pipeline, 2),
       (ListProjectRepositoriesQuery, RepositoryListVisibility, RepositoryId, ManagementResourceKind::Repository, 3),

@@ -251,6 +251,7 @@ pub use credentials::{
   MAX_AGENT_INVENTORY_BYTES, MAX_AGENT_PLATFORM_LABEL_BYTES, RegisterAgent, RegistrationValidity,
   RevokeAgentCredential,
 };
+pub use definition_discovery_model::ListProjectIssueWorkflows;
 pub use definition_discovery_model::{
   CurrentBuildConfigurationPage, CurrentBuildConfigurationSummary, CurrentPipelinePage, CurrentPipelineSummary,
   CurrentRepositoryPage, CurrentRepositorySummary, CurrentTriggerDefinitionKind, CurrentTriggerDefinitionPage,
@@ -423,6 +424,7 @@ pub use project_model::{
 pub use project_policy::ProjectPolicyDocument;
 pub use project_policy_port::ProjectPolicyStore;
 pub use project_port::ProjectStore;
+pub use read_visibility::IssueWorkflowListVisibility;
 pub use read_visibility::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,

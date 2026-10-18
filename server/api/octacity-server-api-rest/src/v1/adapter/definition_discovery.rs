@@ -3,9 +3,9 @@ use super::*;
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct CurrentDefinitionListParameters {
-  after: Option<Cursor>,
+  pub(super) after: Option<Cursor>,
   #[serde(default = "default_page_limit")]
-  limit: u16,
+  pub(super) limit: u16,
 }
 
 async fn current_definition_page<Q, P, H>(

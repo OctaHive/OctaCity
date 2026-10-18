@@ -185,6 +185,7 @@ mod core;
 mod definitions;
 mod factory;
 mod integrations;
+mod issue_workflows;
 mod search;
 mod triggers;
 
@@ -194,13 +195,15 @@ const GROUPS: &[&[ManagementOperation]] = &[
   definitions::OPERATIONS,
   factory::OPERATIONS,
   integrations::OPERATIONS,
+  issue_workflows::OPERATIONS,
   triggers::OPERATIONS,
   builds::OPERATIONS,
   agents::OPERATIONS,
   artifacts::OPERATIONS,
 ];
 
-const OPERATION_COUNT: usize = core::OPERATIONS.len()
+const OPERATION_COUNT: usize = issue_workflows::OPERATIONS.len()
+  + core::OPERATIONS.len()
   + search::OPERATIONS.len()
   + definitions::OPERATIONS.len()
   + factory::OPERATIONS.len()

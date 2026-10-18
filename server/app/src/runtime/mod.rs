@@ -42,6 +42,8 @@ mod integration_check;
 mod integration_management;
 #[cfg(all(test, unix))]
 mod integration_management_tests;
+#[cfg(test)]
+mod issue_workflow_tests;
 pub use integration_check::{HostedIntegrationConnectionChecker, IntegrationCheckProfile};
 mod lifecycle;
 mod listeners;
