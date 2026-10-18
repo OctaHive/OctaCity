@@ -53,18 +53,19 @@ impl InMemoryProjectStore {
     Ok(())
   }
 
-  fn lock(&self) -> Result<MutexGuard<'_, ProjectMemoryState>, StoreError> {
+  pub(super) fn lock(&self) -> Result<MutexGuard<'_, ProjectMemoryState>, StoreError> {
     self.state.lock().map_err(|_| StoreError::Unavailable)
   }
 }
 
 #[derive(Clone, Default)]
-struct ProjectMemoryState {
-  projects: BTreeMap<ProjectId, Project>,
+pub(super) struct ProjectMemoryState {
+  pub(super) projects: BTreeMap<ProjectId, Project>,
+  pub(super) workflows: crate::issue_workflow_testing::IssueWorkflowMemoryState,
   mutations: BTreeMap<(&'static str, ManagementIdempotencyKey), StoredMutation>,
-  active_references: BTreeSet<ProjectId>,
-  audit_facts: BTreeSet<RecordedManagementAuditFact>,
-  outbox_entries: BTreeSet<String>,
+  pub(super) active_references: BTreeSet<ProjectId>,
+  pub(super) audit_facts: BTreeSet<RecordedManagementAuditFact>,
+  pub(super) outbox_entries: BTreeSet<String>,
   next_create_failure: Option<MutationFailurePoint>,
 }
 
@@ -107,7 +108,7 @@ impl MutationEvidenceProbe for InMemoryProjectStore {
   async fn mutation_evidence_counts(&self) -> MutationEvidenceCounts {
     let state = self.lock().expect("in-memory Project store must remain available");
     MutationEvidenceCounts {
-      idempotency: state.mutations.len(),
+      idempotency: state.mutations.len() + state.workflows.mutation_count(),
       audit: state.audit_facts.len(),
       outbox: state.outbox_entries.len(),
     }

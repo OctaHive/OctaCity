@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum EntityKind {
   /// Hierarchical project.
   Project,
+  /// Project-owned business status workflow, independent of execution.
+  IssueWorkflow,
   /// Versioned build configuration.
   Configuration,
   /// Versioned Dark Factory configuration.
@@ -67,6 +69,7 @@ impl std::fmt::Display for EntityKind {
   fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
     formatter.write_str(match self {
       Self::Project => "project",
+      Self::IssueWorkflow => "issue_workflow",
       Self::Configuration => "configuration",
       Self::FlowDefinition => "flow_definition",
       Self::FactoryConfiguration => "factory_configuration",

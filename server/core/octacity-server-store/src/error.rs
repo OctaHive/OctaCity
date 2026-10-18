@@ -4,6 +4,10 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Publish one immutable Project business workflow.
+  PublishIssueWorkflow,
+  /// Select one exact Project business workflow for future Issues.
+  SelectDefaultIssueWorkflow,
   /// Publish one reviewed atomic set of automatic inputs and its optional group.
   PublishWorkSourceConfiguration,
   /// Publish explicit resource/purpose access for one Project.
@@ -301,6 +305,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Business status/edge vocabulary is invalid or exceeds its finite bounds.
+  #[error("invalid Issue workflow definition")]
+  InvalidIssueWorkflow,
   /// A connection selection exceeds the trusted installation or metadata bounds.
   #[error("invalid integration connection metadata")]
   InvalidIntegrationConnection,

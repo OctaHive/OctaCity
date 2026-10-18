@@ -60,6 +60,8 @@ pub enum ManagementResourceKind {
   Project,
   /// Versioned Project policy.
   ProjectPolicy,
+  /// Project-owned business workflow, separately administered from execution.
+  IssueWorkflow,
   /// Immutable Pipeline definition and versions.
   Pipeline,
   /// Versioned source Repository definition.
@@ -114,10 +116,11 @@ pub enum ManagementResourceKind {
 
 impl ManagementResourceKind {
   /// Complete closed resource-kind vocabulary used by coverage and policy tests.
-  pub const ALL: [Self; 28] = [
+  pub const ALL: [Self; 29] = [
     Self::ControlPlane,
     Self::Project,
     Self::ProjectPolicy,
+    Self::IssueWorkflow,
     Self::Pipeline,
     Self::Repository,
     Self::BuildConfiguration,
@@ -472,6 +475,7 @@ const fn supports_owned_collection(kind: ManagementResourceKind, owner_kind: Man
       | (ManagementResourceKind::Build, ManagementResourceKind::Project)
       | (ManagementResourceKind::JobEvent, ManagementResourceKind::Job)
       | (ManagementResourceKind::BuildLog, ManagementResourceKind::Project)
+      | (ManagementResourceKind::IssueWorkflow, ManagementResourceKind::Project)
       | (ManagementResourceKind::Artifact, ManagementResourceKind::Build)
       | (ManagementResourceKind::CacheSession, ManagementResourceKind::Build)
       | (ManagementResourceKind::Agent, ManagementResourceKind::AgentPool)

@@ -65,6 +65,16 @@ macro_rules! positive_version {
 
 positive_version!(ProjectVersion, EntityKind::Project, "Optimistic version of a Project.");
 positive_version!(
+  IssueWorkflowVersion,
+  EntityKind::IssueWorkflow,
+  "Immutable Issue workflow version."
+);
+positive_version!(
+  IssueWorkflowSelectionVersion,
+  EntityKind::IssueWorkflow,
+  "Optimistic version of a Project workflow default."
+);
+positive_version!(
   ProjectPolicyVersion,
   EntityKind::Project,
   "Immutable version number of a Project policy."

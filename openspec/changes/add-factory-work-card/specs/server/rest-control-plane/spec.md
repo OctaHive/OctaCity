@@ -16,7 +16,7 @@ The management API SHALL expose bounded visible Issue listing, manual creation, 
 - **THEN** validation rejects it without changing execution authority
 
 ### Requirement: REST Project workflows and Issue transitions are explicit versioned contracts
-The API SHALL expose authorized bounded Project workflow discovery/validation/immutable publication/default selection, Issue workflow/status reads, permitted transition choices, explicit preconditioned transition commands, reviewed workflow adoption and paginated status history. Generated schemas SHALL identify stable statuses/edges, current workflow and Issue/status versions, allowed origins, supported evidence requirements and safe ownership/applicability reasons. Workflow administration, manual movement and execution controls SHALL have separate actions/rights; reads SHALL reserve no transition. Mutations SHALL use scoped replay and current preconditions, and retired/replaced versions SHALL remain readable when referenced. Workflow adoption SHALL validate explicit current-to-target status correspondence, mapping compatibility and field ownership without migrating Work or dispatching provider effects. Transition commands SHALL call shared business policy rather than accept an arbitrary desired Run state or bypass generic metadata restrictions.
+The API SHALL expose authorized bounded Project workflow discovery/validation/immutable publication/default selection, Issue workflow/status reads, permitted transition choices, explicit preconditioned transition commands, reviewed workflow adoption and paginated status history. Generated schemas SHALL expose ID/name-only ordered status entries, a required workflow-level `initial_status_id` and bounded unique `terminal_status_ids` referencing those entries (an empty terminal set is valid), and SHALL reject legacy status flags. They SHALL identify stable statuses/edges, current workflow and Issue/status versions, allowed origins, supported evidence requirements and safe ownership/applicability reasons. Workflow administration, manual movement and execution controls SHALL have separate actions/rights; reads SHALL reserve no transition. Mutations SHALL use scoped replay and current preconditions, and retired/replaced versions SHALL remain readable when referenced. Workflow adoption SHALL validate explicit current-to-target status correspondence, mapping compatibility and field ownership without migrating Work or dispatching provider effects. Transition commands SHALL call shared business policy rather than accept an arbitrary desired Run state or bypass generic metadata restrictions.
 
 #### Scenario: Operator manages a custom workflow through HTTP only
 - **WHEN** an authorized client validates/publishes custom status names and allowed edges and selects a default
@@ -118,3 +118,36 @@ Every new Issue/revision/execution/source/synchronization/discussion/result/acti
 #### Scenario: Legacy client controls a Run
 - **WHEN** it uses its existing Factory command body and headers without Issue metadata
 - **THEN** authorization, replay, eligibility, concurrency and receipt semantics remain compatible
+
+### Requirement: REST property choices and relationships support the complete card
+The API SHALL expose bounded authorized Project property-definition publication/history and choices including supported types/bounds, retained retired values and assignee-directory availability. Issue create/edit SHALL accept optional assignee, labels, due date and configured planning properties under current Issue/definition versions without requiring provider or Factory setup. Parent edits and bounded child reads SHALL enforce same-Project visibility and atomic cycle rejection. Definition administration SHALL have separate rights; assignment SHALL not claim authenticated actor identity, grant access or start work. Closed generated schemas SHALL reject unsupported values, hidden identities and reserved status/execution fields. Exact edit replay SHALL retain the original revision after later planning changes.
+
+#### Scenario: HTTP client edits optional properties without a directory
+- **WHEN** it reads unavailable person-directory choices and submits a valid unassigned manual task with configured planning values
+- **THEN** the task is created without an identity-provider/Factory prerequisite and the response distinguishes responsibility from the actual management actor
+
+#### Scenario: Client attaches a hidden or cyclic parent
+- **WHEN** the supplied parent fails visibility, owning Project or current acyclic relationship checks
+- **THEN** the mutation is rejected before partial revision/replay/audit publication and no hidden relationship metadata is returned
+
+### Requirement: REST journals and result panels provide bounded exact detail
+The API SHALL expose exact execution journal hierarchy/event references and separately pageable check/artifact observations with selected execution/candidate/review-revision binding and declared coverage. Generated contracts SHALL publish available event categories, measurement availability, safe summaries, continuation/gap semantics and authorized existing detail/log/download targets. Content/preview expansion SHALL use dedicated bounded authorized readers with no-store/redaction policy; generic list responses SHALL not aggregate log bodies or private transcripts. Visibility SHALL precede paging/counts and missing/unsupported/expired facts SHALL remain explicit. Query reads SHALL reserve no execution, contact no provider or run a tool.
+
+#### Scenario: Client continues another execution's journal
+- **WHEN** a journal/result cursor is reused with another execution, stream or selected subject
+- **THEN** the API rejects continuation without exposing the original stream or silently substituting the current Run
+
+#### Scenario: Artifact list is visible but content is restricted or expired
+- **WHEN** a client expands a retained item without current content access or availability
+- **THEN** the dedicated reader denies/reports unavailable independently and the list grants no body/download privilege
+
+### Requirement: REST review associations use separate read capability and retained observations
+The API SHALL expose bounded Issue PR/MR associations and supported retained review/check metadata through provider-neutral schemas. Explicit attachment SHALL use authorized installed code repository/native review references, current Issue preconditions, scoped replay and independent read grants rather than raw credentials or arbitrary remote URLs. Observation capability availability and safe stale/blocked/error states SHALL be generated facts; public card GETs SHALL perform no provider dispatch. Trusted receipt or explicit attachment provenance SHALL distinguish verified execution lineage from an organizational link. These commands SHALL not mutate a forge, merge code or move Issue business status.
+
+#### Scenario: Client attaches a review to a manual Issue
+- **WHEN** it confirms an authorized code-repository review reference with valid current preconditions
+- **THEN** one association is retained without requiring a primary ticket source, another Run or merge permission
+
+#### Scenario: Card refresh occurs during provider failure
+- **WHEN** retained review metadata exists but its observation is stale or unavailable
+- **THEN** the API returns that condition with the original revision/provenance and no fabricated fresh check result or hidden network call

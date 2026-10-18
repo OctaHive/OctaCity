@@ -88,6 +88,21 @@ macro_rules! opaque_id {
 
 opaque_id!(ProjectId, EntityKind::Project, "Opaque identity of a Project.");
 opaque_id!(
+  IssueWorkflowId,
+  EntityKind::IssueWorkflow,
+  "Stable identity of a Project Issue workflow."
+);
+opaque_id!(
+  IssueStatusId,
+  EntityKind::IssueWorkflow,
+  "Stable status identity independent of its display name."
+);
+opaque_id!(
+  IssueTransitionId,
+  EntityKind::IssueWorkflow,
+  "Stable identity of one explicit business transition."
+);
+opaque_id!(
   BuildConfigurationId,
   EntityKind::Configuration,
   "Opaque identity of a Build Configuration."

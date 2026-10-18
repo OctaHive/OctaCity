@@ -39,7 +39,7 @@ fn representative_resource(kind: ManagementResourceKind) -> ManagementResource {
     | ManagementResourceKind::FlowDefinition
     | ManagementResourceKind::FactoryChoice
     | ManagementResourceKind::FactoryRun => ManagementResource::collection(kind).unwrap(),
-    ManagementResourceKind::ProjectPolicy => {
+    ManagementResourceKind::IssueWorkflow | ManagementResourceKind::ProjectPolicy => {
       ManagementResource::owned_collection(kind, ManagementResourceKind::Project, identity()).unwrap()
     }
     ManagementResourceKind::JobEvent => {

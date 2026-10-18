@@ -6,6 +6,11 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod issue_workflow;
+pub use issue_workflow::*;
+#[cfg(any(test, feature = "test-support"))]
+mod issue_workflow_testing;
+
 mod agent_model;
 mod agent_port;
 mod artifact_model;

@@ -16,7 +16,7 @@ The server SHALL provide a Project-owned Issue with a stable internal identity, 
 - **THEN** at most one new revision commits and the other receives a conflict without overwriting content or creating execution
 
 ### Requirement: Project business workflows are configurable and versioned
-Each Issue-enabled Project SHALL provide a bounded immutable workflow version with stable status/transition identities, editable names/order, one initial status, optional organizational terminal markers and explicit permitted from/to transitions with authorized origins and supported evidence requirements. Validation SHALL reject invalid references, duplicates, missing initial state, unsupported guards and exceeded bounds. A declarative editable default SHALL permit first manual creation without workflow administration, Factory or provider setup. New Issues SHALL use the selected default's initial status. Replacement SHALL preserve referenced versions and affect new Issues without silently repinning existing Issues, mappings or actions. Existing Issue workflow adoption SHALL require a separately authorized reviewed version/status correspondence, compatible source mapping and current field ownership, invalidate old automated applicability, and change no frozen Work or provider state. Status names and terminal markers SHALL have no built-in execution/acceptance semantics.
+Each Issue-enabled Project SHALL provide a bounded immutable workflow version with stable status/transition identities, editable names/order, one required workflow-level `initial_status_id`, a bounded unique workflow-level `terminal_status_ids` set and explicit permitted from/to transitions with authorized origins and supported evidence requirements. Status entries SHALL contain ID/name only, without `initial` or `terminal` flags. Workflow initial/terminal references SHALL belong to that same definition; the terminal set SHALL be allowed to be empty. Validation SHALL reject invalid references, duplicate terminal selections, missing initial selection, unsupported guards, legacy status flags and exceeded bounds. A declarative editable default SHALL permit first manual creation without workflow administration, Factory or provider setup. New Issues SHALL use the selected default's initial status. Replacement SHALL preserve referenced versions and affect new Issues without silently repinning existing Issues, mappings or actions. Existing Issue workflow adoption SHALL require a separately authorized reviewed version/status correspondence, compatible source mapping and current field ownership, invalidate old automated applicability, and change no frozen Work or provider state. Status names and workflow terminal selections SHALL have no built-in execution/acceptance semantics.
 
 #### Scenario: First manual task uses the Project default
 - **WHEN** a permitted creator saves a task before configuring a provider, Factory or custom workflow
@@ -25,6 +25,14 @@ Each Issue-enabled Project SHALL provide a bounded immutable workflow version wi
 #### Scenario: Operator renames statuses and publishes replacement rules
 - **WHEN** an authorized administrator publishes a valid replacement workflow with custom names or transitions
 - **THEN** new tasks can select the new default while existing tasks/actions/history retain their exact version and stable status identities until reviewed adoption
+
+#### Scenario: Workflow chooses initial and terminal statuses independently of order
+- **WHEN** an administrator reorders or renames statuses and selects one initial status and zero or more terminal statuses in workflow settings
+- **THEN** the retained workflow references those stable IDs without duplicating flags in status entries or introducing provider or execution prerequisites
+
+#### Scenario: Workflow settings reference absent or duplicate statuses
+- **WHEN** an initial or terminal reference is absent from the workflow, the initial selection is missing, terminal IDs repeat or legacy status flags are submitted
+- **THEN** validation rejects the definition without partial publication, default change or provider effects
 
 #### Scenario: Replacement references invalid or unsupported transitions
 - **WHEN** its initial state, edge endpoints, bounds or evidence requirements are invalid
@@ -42,7 +50,7 @@ Manual commands, accepted pipeline actions and permitted source observations SHA
 - **THEN** it returns a safe denied/conflict/validation result without partial history, provider effects or execution-state mutation
 
 #### Scenario: A terminal-looking status is selected
-- **WHEN** an allowed organizational move reaches a status named Done or marked terminal
+- **WHEN** an allowed organizational move reaches a status named Done or selected as terminal in the workflow
 - **THEN** existing verification, Decision, human-gate and delivery requirements remain independently authoritative
 
 #### Scenario: Lost transition response is retried after another move
@@ -268,3 +276,63 @@ Backfill SHALL preserve existing Work/Run IDs, admission replay, input/evidence 
 #### Scenario: Collaboration is disabled
 - **WHEN** Issue/card/sync facilities are unavailable or disabled
 - **THEN** existing Artifact intake, Factory/Build discovery, direct controls and ordinary CI/CD remain usable
+
+### Requirement: Planning properties and relationships remain optional task metadata
+Issues SHALL support optional organizational assignee, due date, Project labels, Project-defined type/component/size choices, bounded simple custom properties and a single same-Project parent with bounded child discovery. Property definitions SHALL expose finite supported scalar/choice types and authoritative bounds, retain referenced versions and reject reserved execution/status setters, formulas and nested executable content. Assignment SHALL use server-authorized available identities independently of worker/profile selection and authenticated mutation attribution. A deployment without a person directory SHALL advertise that condition, permit unassigned manual tasks and preserve actual service attribution without fabricated users. Definition administration and Issue edits SHALL retain separate rights, scoped replay, current-version preconditions, history and source ownership. Parent edits SHALL reject self/cyclic/foreign/hidden references atomically. Planning changes SHALL create no execution, permission grant, provider write, inferred status roll-up or mutation of already frozen Work; only explicit input selection SHALL make a property part of execution requirements.
+
+#### Scenario: Manual task has no execution or identity directory
+- **WHEN** an operator creates a task with local labels, size and due date in an unconfigured Project
+- **THEN** it is saved without a provider, Factory or person-directory prerequisite, with Unassigned responsibility and no Work/Run
+
+#### Scenario: Planning choices change after execution started
+- **WHEN** the operator replaces a property definition or edits planning values after admission
+- **THEN** prior revisions retain explainable values and the admitted input/scheduling snapshot stays unchanged
+
+#### Scenario: Concurrent parent edits would create a cycle
+- **WHEN** competing same-Project relationship commands would jointly make a parent cycle
+- **THEN** at most a valid acyclic relationship commits and the rejected command publishes no partial history or hidden-target detail
+
+### Requirement: Detailed run journals expose real bounded execution observations
+Issue-associated execution reads SHALL expose the selected requirements revision and exact Run/Flow/Node Attempt/Build/Job hierarchy, statuses, original times, durations, available model/profile/worker facts, measured usage and safe error/result summaries. Detail SHALL use retained public event observations with stable identity/sequence and authorized existing log references, including tool/command/file-operation categories actually reported by a qualified execution adapter. The first supported detailed path SHALL be qualified through process-level event production. Unsupported categories and missing measurements SHALL be explicit; arbitrary prose/log parsing SHALL NOT manufacture events, costs or verification success. Generic rows SHALL exclude private transcripts, hidden reasoning, prompts, protected outputs, secrets and unredacted arguments/environment. Detailed content SHALL retain independent read authorization, bounds and no-store/redaction policy. Bounded continuation/reconnect SHALL retain exact execution/stream binding and expose gaps, expiration and stale coverage without a parallel execution journal or new lifecycle owner.
+
+#### Scenario: Execution emits command and file operations
+- **WHEN** the qualified adapter reports a command completion and workspace-relative file edit under one Job
+- **THEN** journal detail exposes their safe typed observations, timing/result and exact authorized log references under that Job without exposing private invocation content
+
+#### Scenario: Adapter does not provide a tool event category
+- **WHEN** a retained execution has lifecycle/log records but no structured tool observations
+- **THEN** its detail identifies Not reported and still provides authorized logs rather than invented tool steps
+
+#### Scenario: Live observation reconnects after a gap
+- **WHEN** the client resumes a valid journal cursor after interruption or retention loss
+- **THEN** it continues the same exact stream without duplicate logical rows and identifies any unavailable range or invalid cursor explicitly
+
+### Requirement: Code review links are exact provider-neutral observations
+An Issue SHALL support multiple canonical PR/MR associations independently of its optional primary external ticket and provider. Associations SHALL retain owning Project, installed native code repository/review identity, trusted receipt or explicit reviewed attachment provenance and verified execution/candidate lineage when available. Task-key text, branch names and arbitrary URLs SHALL NOT establish authoritative association or authorize fetching an endpoint. Observations SHALL use a separately scoped installed read-only code-review capability, reuse existing connection/credential/observation boundaries and retain native details outside the Issue domain. This change SHALL qualify the concrete GitHub read path and a second fake vocabulary without requiring native GitLab/Jira adapters or a provider for manual tasks. Reads SHALL expose safe title/number/link, visible author, supported state/draft/revision/change-size/review/check facts, observation time and availability; missing facts SHALL remain unknown. Revocation/outage SHALL stop unauthorized calls and preserve retained history. Review observation SHALL create no merge, delivery, workflow move or execution.
+
+#### Scenario: Ticket provider differs from code-review provider
+- **WHEN** an authorized Issue references one ticket source and a review on another installed code repository
+- **THEN** both associations retain independent identities/grants and the same card contract works with a manual unlinked task or the fake provider vocabulary
+
+#### Scenario: Review head advances after a completed execution
+- **WHEN** a fresh PR/MR observation reports another head revision
+- **THEN** prior execution/candidate/check associations remain historical and are not retargeted to the new head
+
+#### Scenario: Review-read access is revoked
+- **WHEN** an observation requires a revoked code-repository read grant
+- **THEN** no corresponding provider call occurs, the review section reports blocked/stale data and manual task/history/result access remains governed independently
+
+### Requirement: Check and artifact projections preserve provenance and availability
+Card result reads SHALL distinguish Factory verification/evidence from external CI, expose required-but-missing checks, bind every observation to its exact execution/candidate or review head and identify producer, state, timing, details and observation coverage. Pending, running, failed, cancelled, skipped, indeterminate, historical and unavailable outcomes SHALL remain distinct. External CI or review merge state SHALL NOT establish a Factory Decision or overall acceptance. Artifact reads SHALL group original input references, produced outputs, reports and screenshots under their real publication/subject lineage with safe name/type/size, detail provenance, retention and authorized open/download. Project-owned inputs SHALL NOT impersonate produced evidence. Previews SHALL be bounded, independently authorized and limited to safe text/verified raster content without executable HTML/SVG/scripts or provider hotlinks. Hidden/protected records SHALL be removed before metadata/counts/cursors; expired content SHALL remain unavailable without resurrection or a new upload/attachment capability.
+
+#### Scenario: Earlier check passed for another head
+- **WHEN** the card displays a newer candidate or PR/MR head
+- **THEN** the earlier pass remains historical and missing required checks for the selected subject remain visible without a misleading success roll-up
+
+#### Scenario: Operator opens a screenshot and a private report
+- **WHEN** a visible screenshot and a protected report exist for the selected execution
+- **THEN** only authorized screenshot metadata/content can be previewed or downloaded and the protected report does not leak through names, thumbnails, counts or cursor metadata
+
+#### Scenario: Artifact bytes expired
+- **WHEN** retained metadata refers to expired or missing content
+- **THEN** the card exposes its availability condition and exact historical provenance without reconstructing bytes from a provider session or newer output

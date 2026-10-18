@@ -12,7 +12,7 @@ The Console SHALL provide a task-oriented list and manual-create entry point wit
 - **THEN** local task navigation and manual creation remain available and affected linked tasks show their scoped synchronization condition
 
 ### Requirement: Project status settings and card moves are guided and independent
-The Console SHALL expose bounded Project workflow settings for editable status names/order, initial/organizational terminal state and permitted transitions/origins with supported evidence requirements, using generated authoritative choices and reviewed immutable publication/default selection. Manual creation SHALL work with the provided editable default without setup. Existing cards SHALL show their pinned version and require explicit reviewed compatible status correspondence for workflow adoption. Card controls SHALL enumerate only server-authorized organizational moves, explain ownership/evidence/applicability restrictions and confirm the current Issue/status precondition. History SHALL identify before/after status, reason and actor or pipeline/source provenance. A status move SHALL NOT be presented as execution start, gate approval or verification success. Stale intents SHALL require fresh review and preserve in-memory context without automatic resubmission.
+The Console SHALL expose bounded Project workflow settings for editable status names/order, one initial-status selector and a separate terminal-status multiselect in workflow settings, and permitted transitions/origins with supported evidence requirements, using generated authoritative choices and reviewed immutable publication/default selection. Manual creation SHALL work with the provided editable default without setup. Existing cards SHALL show their pinned version and require explicit reviewed compatible status correspondence for workflow adoption. Card controls SHALL enumerate only server-authorized organizational moves, explain ownership/evidence/applicability restrictions and confirm the current Issue/status precondition. History SHALL identify before/after status, reason and actor or pipeline/source provenance. A status move SHALL NOT be presented as execution start, gate approval or verification success. Stale intents SHALL require fresh review and preserve in-memory context without automatic resubmission.
 
 #### Scenario: Project uses its own status vocabulary
 - **WHEN** an operator publishes custom statuses and edges without a provider or configured pipeline
@@ -110,3 +110,48 @@ Every task/card section SHALL use bounded REST queries with explicit loading/emp
 #### Scenario: Operator follows an old Run URL
 - **WHEN** its Issue association is available or still awaiting backfill
 - **THEN** the original diagnostics remain reachable and an available Issue link is additive rather than required
+
+### Requirement: Card layout and optional properties form one task workspace
+The desktop card SHALL have a stable human-key/title/status/start header, main description/acceptance and Activity area, and right-side Properties/Execution/source/review summaries within the existing shell. Overview SHALL be the default with an Activity preview; Activity, Runs, Results and Actions SHALL provide focused deeper views without requiring advanced configuration pages. Properties SHALL include priority, organizational assignee, configurable type/component/size, Project labels, due date and supported simple custom fields, plus parent/child navigation. Safe metadata details/copy controls SHALL expose technical identifiers progressively. Server-authorized choices, source ownership and current-version review SHALL drive editing. Unavailable identity directories SHALL leave Unassigned and all manual/create/edit/start journeys usable; assignment SHALL remain distinct from AI profile/worker and SHALL start no execution. Narrow layouts SHALL stack content with an accessible Properties trigger and no horizontal page overflow, preserving status/start controls and selected historical subject. English/Russian component/browser fixtures SHALL cover empty, manual, preparing, queued, parallel, active, waiting, failed, completed and partially stale/restricted states.
+
+#### Scenario: Operator opens an unconfigured manual task
+- **WHEN** the task has no integration, Factory target, assigned person or Run
+- **THEN** Overview shows editable requirements and useful optional properties, empty execution/results explanations and a separate setup/start entry point without opaque ID forms
+
+#### Scenario: Operator edits responsibility and planning values
+- **WHEN** it saves supported assignee/labels/component/size/date choices under the current version
+- **THEN** the card shows the retained planning revision without starting an agent, moving status or modifying the inputs of an active Run
+
+#### Scenario: Keyboard user opens the card at narrow width
+- **WHEN** the user opens Properties, navigates sections and follows a parent/child or historical execution link
+- **THEN** focus, selected subject and all available actions remain understandable without horizontal scrolling or hidden desktop-only controls
+
+### Requirement: Run inspection shows detailed qualified activity and usable log navigation
+Runs SHALL present an execution selector, stage/Job hierarchy and bounded event/log detail with safe lifecycle/tool/file-operation rows actually reported by the execution backend. Rows SHALL expose available original times/durations, measured usage, outcome/errors, profile/model/worker facts and authorized detail/log links; Unknown and Not reported SHALL not look like zero usage or a successful operation. Expansion SHALL fetch only the selected authorized bounded content and preserve redaction/privacy. Live following SHALL resume the same cursor/stream, preserve user scroll/history selection, mark gaps/stale/expired content and stop/back off when inactive or terminal. Retry/cancel/respond controls SHALL retain their exact Run/attempt authority; inspecting a row SHALL cause no tool, provider write or execution.
+
+#### Scenario: Operator inspects a failed command
+- **WHEN** its qualified execution reports a failed tool operation under one Job
+- **THEN** the detail shows safe operation/result/timing and opens the exact authorized log location while other stage attempts remain distinct
+
+#### Scenario: User revisits a historical run while another is active
+- **WHEN** the URL selects the older execution and live progress exists elsewhere on the card
+- **THEN** its journal/results stay historical through refresh and no current control or new log tail is silently substituted
+
+#### Scenario: Connection to live logs is interrupted
+- **WHEN** journal following resumes or a retained range is unavailable
+- **THEN** rows are not duplicated, missing coverage is explicit and the UI preserves scroll/selection instead of claiming a complete empty log
+
+### Requirement: Review checks and artifact panels expose complete subject-bound results
+Results SHALL provide separate PR/MR, Checks and Artifacts panels plus compact summary links from the card. PR/MR cards SHALL show supported repository/number/title/link, visible author, draft/state, head/base, change counts, review/check summaries and observation freshness, with explicit unknown/stale/unsupported states. Checks SHALL distinguish Factory evidence from external CI, include missing required checks and exact execution/candidate/head binding, and preserve historical results after a new head. Artifacts SHALL group authorized original inputs, outputs, reports and screenshots with names/types/sizes/retention and progressive provenance, bounded safe preview and explicit download. Hidden/protected content SHALL not leak through lists/previews; expired content SHALL remain visibly unavailable. Provider failures SHALL not disable local task creation or rewrite accepted results, and no review/CI/merge badge SHALL substitute for Factory acceptance. Attachment SHALL use authorized reviewed choices and no credentials or arbitrary endpoint fields.
+
+#### Scenario: Review head changes and CI was green for the old head
+- **WHEN** the card receives the newer head observation
+- **THEN** it labels previous checks historical, exposes current coverage/missing checks and preserves the original execution/candidate association
+
+#### Scenario: Provider becomes unavailable
+- **WHEN** PR/MR refresh cannot obtain a fresh authorized observation
+- **THEN** the last known review remains visibly stale/blocked while local properties, execution history and independently authorized artifacts remain usable
+
+#### Scenario: Operator previews a screenshot and opens a report
+- **WHEN** the selected execution has visible raster output and an authorized report
+- **THEN** previews/details are fetched on demand through their existing readers, downloads are explicit and an expired or restricted item has an honest unavailable state

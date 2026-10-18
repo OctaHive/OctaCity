@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
   AdmitSourceFactoryWorkCommand, ApplicationError, FactorySourceAdmissionHandlers, FactorySourceAuthorization,
-  FactorySourceAuthorizer, FactorySourceItem,
+  FactorySourceAuthorizer, FactorySourceItem, RecoverSourceFactoryWorkCommand,
 };
 use octacity_server_factory::{
   WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceInput, WorkSourceInputContext,
@@ -135,22 +135,47 @@ fn an_uninstalled_source_is_denied_before_replay_resolution_or_publication() {
       Arc::new(crate::TrustedNetworkManagementPolicy),
       Arc::new(DeniedSource),
     );
-    let error = handlers
-      .admit(AdmitSourceFactoryWorkCommand {
-        input_id: WorkSourceInputId::generate(),
-        input_version: WorkSourceInputVersion::INITIAL,
-        item: FactorySourceItem {
-          resource: ExternalWorkIdentity::new("native-ticket-container").unwrap(),
-          item: ExternalWorkIdentity::new("item-42").unwrap(),
-        },
-        intent: command(project, configuration, repository_id),
-      })
-      .await
-      .unwrap_err();
+    let intent = command(project, configuration, repository_id);
+    let request = AdmitSourceFactoryWorkCommand {
+      input_id: WorkSourceInputId::generate(),
+      input_version: WorkSourceInputVersion::INITIAL,
+      item: FactorySourceItem {
+        resource: ExternalWorkIdentity::new("native-ticket-container").unwrap(),
+        item: intent.external_identity.clone(),
+      },
+      intent: intent.clone(),
+    };
+    let error = handlers.admit(request.clone()).await.unwrap_err();
     assert_eq!(error.classification(), ApplicationFailure::CapabilityUnavailable);
     assert_eq!(resolver.call_count(), 0);
     assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
     assert!(store.management_audit_facts().await.is_empty());
+    let manual = FactoryAdmissionHandlers::new(store.clone(), resolver.clone());
+    let applied = admit(&manual, intent.clone()).await.unwrap();
+    assert_eq!(applied.disposition, MutationDisposition::Applied);
+    let denied_recovery = handlers
+      .recover(RecoverSourceFactoryWorkCommand {
+        input_id: request.input_id,
+        input_version: request.input_version,
+        item: request.item,
+      })
+      .await
+      .unwrap_err();
+    assert_eq!(
+      denied_recovery.classification(),
+      ApplicationFailure::CapabilityUnavailable
+    );
+    let replayed = admit(&manual, intent).await.unwrap();
+    assert_eq!(
+      replayed,
+      crate::FactoryAdmissionOutcome {
+        disposition: MutationDisposition::Replayed,
+        ..applied
+      }
+    );
+    assert_eq!(resolver.call_count(), 1);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+    assert_eq!(store.management_audit_facts().await.len(), 1);
   });
 }
 

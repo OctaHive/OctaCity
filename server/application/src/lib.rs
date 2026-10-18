@@ -34,6 +34,8 @@ mod definition_cqrs;
 mod definition_discovery;
 mod diagnostic;
 mod error;
+mod issue_workflow;
+pub use issue_workflow::*;
 mod external_trigger;
 mod factory_admission;
 #[cfg(test)]
@@ -48,6 +50,8 @@ mod factory_source_input_retention;
 mod factory_source_mapping;
 mod factory_source_polling;
 mod factory_source_preparation;
+#[cfg(test)]
+mod issue_workflow_tests;
 mod work_source_observation;
 pub use factory_source_input_retention::{FactorySourceInputRetentionWorker, SourceInputCleanupPage};
 pub use factory_source_mapping::{
