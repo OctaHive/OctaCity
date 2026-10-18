@@ -1,0 +1,27 @@
+# Personal stand only: TLS terminates at the loopback-bound gateway. The server
+# authenticates this dedicated channel with kernel peer credentials (UID 101).
+services:
+  server:
+    command: [run, /run/octacity-secrets/integration-server.toml]
+    volumes:
+      - type: bind
+        source: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/integrations
+        target: /run/octacity-integration-installation
+        read_only: true
+      - integration-state:/var/lib/octacity-integrations
+      - integration-channel:/run/octacity-management
+  gateway:
+    configs:
+      - source: integration-management-upstream
+        target: /etc/nginx/octacity-management-upstream.conf
+    volumes:
+      - type: volume
+        source: integration-channel
+        target: /run/octacity-management
+        read_only: true
+configs:
+  integration-management-upstream:
+    file: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/integrations/management-upstream.conf
+volumes:
+  integration-channel:
+  integration-state:

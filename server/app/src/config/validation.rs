@@ -32,6 +32,21 @@ const MAX_VCS_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
 
 impl ServerConfig {
   pub(super) fn validate(&self) -> Result<(), ServerConfigError> {
+    if let Some(local) = &self.integration_management
+      && (!cfg!(unix)
+        || !local.socket_path.is_absolute()
+        || local.socket_path.file_name().is_none()
+        || local.peer_uid == 0
+        || local.operation_timeout_milliseconds == 0
+        || local.operation_timeout_milliseconds > 300_000
+        || local.cancellation_grace_milliseconds == 0
+        || local.cancellation_grace_milliseconds > 300_000
+        || octacity_server_application::ManagementActor::authenticated(&local.principal).is_err())
+    {
+      return Err(ServerConfigError::Invalid(
+        "integration management requires a local socket and explicit non-root proxy identity".to_owned(),
+      ));
+    }
     if self
       .factory_signal_connectors_file
       .as_ref()

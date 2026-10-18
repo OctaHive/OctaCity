@@ -80,6 +80,62 @@ fn test_config() -> ServerConfig {
   ServerConfig::parse_toml(test_config_source()).unwrap()
 }
 
+#[cfg(unix)]
+#[allow(dead_code)]
+#[path = "../../tests/support/runtime.rs"]
+pub(super) mod local_runtime_config;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn local_integration_ingress_verifies_os_peer_without_upgrading_tcp_headers() {
+  use std::os::unix::fs::MetadataExt;
+  for authorized in [true, false] {
+    let root = tempfile::tempdir().unwrap();
+    let socket = root.path().join("management.sock");
+    let uid = std::fs::metadata(root.path()).unwrap().uid();
+    let allowed = if authorized { uid } else { uid.checked_add(1).unwrap() };
+    let extra = format!(
+      "[integration_management]\nsocket_path={:?}\npeer_uid={allowed}\nprincipal='local-stand-gateway'\n",
+      socket.to_str().unwrap()
+    );
+    let config = ServerConfig::parse_toml(&local_runtime_config::runtime_config_source(
+      root.path(),
+      "postgres://test@127.0.0.1:1/unused",
+      "http://127.0.0.1:9",
+      &extra,
+    ))
+    .expect("explicit protected local management must be configurable");
+    let runtime = ServerRuntime::start(config).await.unwrap();
+    let tcp = reqwest::Client::new()
+      .get(format!("http://{}/api/v1/integrations", runtime.management_addr()))
+      .header("authorization", "Bearer forged")
+      .header("x-forwarded-proto", "https")
+      .header("x-octacity-actor", "local-stand-gateway")
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(tcp.status(), StatusCode::FORBIDDEN);
+    let local = reqwest::Client::builder()
+      .unix_socket(socket.as_path())
+      .build()
+      .unwrap()
+      .get("http://localhost/api/v1/integrations")
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(
+      local.status(),
+      if authorized {
+        StatusCode::SERVICE_UNAVAILABLE
+      } else {
+        StatusCode::FORBIDDEN
+      },
+      "only the verified OS peer may reach the separately installed service"
+    );
+    runtime.shutdown().await.unwrap();
+  }
+}
+
 #[test]
 fn signal_connector_file_requires_an_explicit_factory_profile_installation() {
   let profile = "factory_profiles_file='/run/secrets/factory-profiles.json'\n";

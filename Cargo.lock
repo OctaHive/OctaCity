@@ -4474,6 +4474,7 @@ dependencies = [
  "octacity-artifact-s3",
  "octacity-artifact-store",
  "octacity-delivery-protocol",
+ "octacity-github",
  "octacity-observability",
  "octacity-protocol",
  "octacity-server-api-agent",

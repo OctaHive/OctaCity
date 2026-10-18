@@ -18,6 +18,7 @@ use defaults::*;
 pub(crate) use infrastructure::{
   AgentCredentialConfig, CacheConfig, JobSpecConfig, ObjectStorageConfig, PostgresConfig, SigningConfig,
 };
+pub(crate) use integrations::LocalIntegrationManagement;
 pub(crate) use integrations::VcsIntegrationConfig;
 pub use loading::ServerConfigError;
 pub(crate) use workers::{RetentionWorkerPolicy, RetryingWorkerPolicy, WebhookWorkerPolicy, WorkerPolicy};
@@ -26,6 +27,8 @@ pub(crate) use workers::{RetentionWorkerPolicy, RetryingWorkerPolicy, WebhookWor
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
+  #[serde(default)]
+  integration_management: Option<LocalIntegrationManagement>,
   #[serde(default)]
   factory_signal_connectors_file: Option<PathBuf>,
   #[serde(default)]

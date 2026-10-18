@@ -182,6 +182,12 @@ impl ServerRuntime {
       webhook_provider,
     } = management_application(ApplicationAssembly {
       store: registration_store.clone(),
+      integrations: super::integration_management::install(
+        &config,
+        registration_store.clone(),
+        cancellation.child_token(),
+      )
+      .await?,
       authoritative_store: placement_store.clone(),
       toolchain: resources.job_spec_toolchain,
       supported_pipeline_capabilities: config.supported_pipeline_capabilities().to_vec(),

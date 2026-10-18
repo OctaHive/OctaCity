@@ -94,6 +94,11 @@ impl ServerRuntime {
       .as_ref()
       .map(|listener| inspect_listener("webhook", listener))
       .transpose()?;
+    #[cfg(unix)]
+    let local_management = match config.integration_management() {
+      Some(local) => Some(super::local_management::bind(local).await?),
+      None => None,
+    };
     let monitor = ReadinessMonitor::start(
       checks,
       config.readiness_check_interval(),
@@ -136,9 +141,17 @@ impl ServerRuntime {
       factory_readiness.factory_readiness()
     }));
     let management_router = admission.protect_management(management_router);
+    let mut listener_tasks = JoinSet::new();
+    #[cfg(unix)]
+    if let Some(local) = local_management {
+      local.spawn(
+        &mut listener_tasks,
+        management_router.clone(),
+        cancellation.child_token(),
+      );
+    }
     let agent_router = admission.protect_agent(agent_router);
     let webhook_router = webhook_router.map(|router| admission.protect_webhook(router));
-    let mut listener_tasks = JoinSet::new();
     spawn_listener(
       &mut listener_tasks,
       "management",

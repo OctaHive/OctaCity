@@ -118,6 +118,43 @@ if [ -e "$bundle/factory-delivery" ] || [ -L "$bundle/factory-delivery" ]; then
   delivery_bytes=0
   copy_delivery_directory "$bundle/factory-delivery" /run/octacity-delivery 0
 fi
+integration_bundle=/run/octacity-integration-installation
+if [ -e "$integration_bundle" ] || [ -L "$integration_bundle" ]; then
+  [ -d "$integration_bundle" ] && [ ! -L "$integration_bundle" ] || { echo "integration installation is invalid" >&2; exit 1; }
+  key_file=$integration_bundle/installation-key
+  [ -f "$key_file" ] && [ ! -L "$key_file" ] || { echo "integration installation is invalid" >&2; exit 1; }
+  key=$(head -c 66 "$key_file")
+  case "$key" in ''|*[!a-f0-9]*) echo "integration installation is invalid" >&2; exit 1 ;; esac
+  [ "${#key}" -eq 64 ] || { echo "integration installation is invalid" >&2; exit 1; }
+  integration_root=/var/lib/octacity-integrations/$key
+  provider=$integration_root/adapters/github
+  for directory in /var/lib/octacity-integrations "$integration_root" "$integration_root/adapters" "$provider" "$provider/credentials"; do
+    [ ! -L "$directory" ] || { echo "integration directory is invalid" >&2; exit 1; }
+    mkdir -p "$directory"
+    chmod 0700 "$directory"
+    chown octacity:octacity "$directory"
+  done
+  install_integration_file() {
+    [ -f "$1" ] && [ ! -L "$1" ] || { echo "integration file is invalid" >&2; exit 1; }
+    if [ -e "$2" ] || [ -L "$2" ]; then
+      [ -f "$2" ] && [ ! -L "$2" ] && cmp -s "$1" "$2" || { echo "immutable integration installation differs" >&2; exit 1; }
+    else
+      head -c "$(( $3 + 1 ))" "$1" > "$2"
+      [ "$(wc -c < "$2")" -le "$3" ] || { echo "integration file exceeds its bound" >&2; exit 1; }
+      chmod "$4" "$2"
+      chown octacity:octacity "$2"
+    fi
+  }
+  install_integration_file "$integration_bundle/catalog.json" "$integration_root/catalog.json" 4194304 0600
+  install_integration_file "$integration_bundle/adapter.toml" "$provider/adapter.toml" 1048576 0600
+  install_integration_file "$integration_bundle/github-work.toml" "$provider/github-work.toml" 65536 0600
+  install_integration_file /usr/local/bin/octacity-github "$provider/plugin" 268435456 0700
+  install_integration_file "$integration_bundle/server.toml" "$target/integration-server.toml" 65536 0600
+  [ ! -L /run/octacity-management ] || { echo "management channel is invalid" >&2; exit 1; }
+  mkdir -p /run/octacity-management
+  chmod 0711 /run/octacity-management
+  chown octacity:octacity /run/octacity-management
+fi
 chown octacity:octacity "$target"
 
 exec su -s /bin/sh -- octacity -c 'exec "$0" "$@"' "$server" "$@"

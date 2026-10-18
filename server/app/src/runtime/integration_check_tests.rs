@@ -9,7 +9,66 @@ use octacity_work_source_protocol::{CredentialClass, CredentialHandle, ResourceA
 use sha2::{Digest as _, Sha256};
 use std::{fs, os::unix::fs::PermissionsExt as _, time::Duration};
 
-fn fixture(
+#[tokio::test]
+async fn released_runtime_exposes_only_verified_installed_providers_on_protected_ingress() {
+  let (root, connection, _) = fixture("custom-provider");
+  let registry = root.path().join("adapters");
+  fs::create_dir(&registry).unwrap();
+  fs::rename(root.path().join("custom-provider"), registry.join("custom-provider")).unwrap();
+  let definition = connection.definition;
+  let installed = InstalledIntegration {
+    installation: definition.installation,
+    provider: definition.provider,
+    adapter: definition.adapter,
+    endpoints: vec![definition.endpoint],
+    authentication: vec![definition.authentication],
+    resources: definition.resources,
+  };
+  let catalog = root.path().join("integrations.json");
+  fs::write(
+    &catalog,
+    serde_json::to_vec(&serde_json::json!({
+      "version":1, "registry":registry, "installations":[installed]
+    }))
+    .unwrap(),
+  )
+  .unwrap();
+  fs::set_permissions(&catalog, fs::Permissions::from_mode(0o600)).unwrap();
+  let socket = root.path().join("management.sock");
+  use std::os::unix::fs::MetadataExt;
+  let extra = format!(
+    "[integration_management]\nsocket_path={:?}\npeer_uid={}\nprincipal='test-proxy'\ncatalog_file={:?}\n",
+    socket.to_str().unwrap(),
+    fs::metadata(root.path()).unwrap().uid(),
+    catalog.to_str().unwrap()
+  );
+  let config = crate::ServerConfig::parse_toml(&super::tests::local_runtime_config::runtime_config_source(
+    root.path(),
+    "postgres://test@127.0.0.1:1/unused",
+    "http://127.0.0.1:9",
+    &extra,
+  ))
+  .expect("installed integration catalog must be configurable");
+  let runtime = ServerRuntime::start(config).await.unwrap();
+  let client = reqwest::Client::builder()
+    .unix_socket(socket.as_path())
+    .build()
+    .unwrap();
+  let response = client
+    .get("http://localhost/api/v1/integration-installations")
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::OK);
+  let body: serde_json::Value = response.json().await.unwrap();
+  assert_eq!(body["items"].as_array().unwrap().len(), 1);
+  assert_eq!(body["items"][0]["provider"], "custom-provider");
+  assert_eq!(body["items"][0]["resources"][0]["native_id"], "external-project-42");
+  assert!(!body.to_string().contains("private-installed-reader"));
+  runtime.shutdown().await.unwrap();
+}
+
+pub(super) fn fixture(
   provider: &str,
 ) -> (
   tempfile::TempDir,

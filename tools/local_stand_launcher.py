@@ -126,8 +126,21 @@ def _compose_command(root: Path, *arguments: str) -> list[str]:
         "--file",
         str(COMPOSE_FILE),
         *overlay,
+        *_integration_overlay(root),
         *arguments,
     ]
+
+
+def _integration_overlay(root: Path) -> list[str]:
+    config = root / "config/integrations/server.toml"
+    if not config.exists() and not config.is_symlink():
+        return []
+    try:
+        state.read_regular_file(config, "installed integration server configuration", max_bytes=65536,
+                                modes=frozenset({state.PRIVATE_FILE_MODE}))
+    except state.StateError as error:
+        raise LocalStandError(str(error)) from error
+    return ["--file", str(REPOSITORY / "deployment/local-stand/integrations.compose.yaml")]
 
 
 def _run_compose(

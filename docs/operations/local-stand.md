@@ -246,6 +246,50 @@ stand. Restart and refill it with `tools/factory-stand`; no profile files need
 to be prepared by hand. The separate integration verifier remains available
 for its wider ordinary CI/CD checks.
 
+### GitHub connections in the personal Factory stand
+
+Install an explicit task repository separately from the code repository used by
+the demonstration Builds:
+
+```shell
+tools/factory-stand --github-repository OctaHive/OctaCity
+```
+
+The launcher builds **committed** sources. Commit a local fix before rebuilding;
+editing the working tree alone does not update its images. The server image now
+includes the independent `octacity-github` executable. This option resolves the
+public repository's native ID without authentication and installs its exact
+resource ceiling. It never reads GitHub CLI sessions, local credential stores or
+`GITHUB_TOKEN` to configure the connection. Private-repository identity bootstrap
+is not provided by this option.
+
+Open **Integrations**, create a named GitHub connection and select the installed
+repository/purposes. Enter your token in the separate credential form. Reading
+tasks and updating them retain independent handles; remote token permissions do
+not grant an OctaCity Project access. Publish Project grants separately, then
+explicitly activate the connection if intended. No polling/input or task-card
+creation starts merely by installing or creating a connection.
+
+The optional overlay keeps the existing server bundle and demonstration receipts
+unchanged. Its separate private `config/integrations` bundle is immutable and
+reused on subsequent starts. A mismatched installation is rejected rather than
+overwritten. `tools/local-stand status`, `logs`, `down` and `reset` detect the same
+overlay. The `integration-state` volume retains private material across server
+restarts; a deliberate reset removes it with the rest of the disposable stand.
+
+This personal mode delegates local administration to the gateway service, not to
+an authenticated human account. HTTPS remains bound to `127.0.0.1`. The gateway
+uses a dedicated Unix socket shared only with the server, mounted read-only in
+the gateway; the server verifies kernel peer UID `101` and applies the configured
+service principal. Another UID, ordinary TCP, browser headers and forwarded
+protocol claims cannot establish this identity. It is not authentication for a
+shared deployment. Token bytes are private server files (`0700` directories,
+`0600` files) and are never returned by the management API.
+
+Read-only connection checks use the installed adapter. Automatic Factory input,
+preview and Reporter execution still require their separately installed runtime
+profiles; this option does not configure those profiles or qualify live writes.
+
 ## Verify readiness and a real job
 
 ### Optional Factory installation

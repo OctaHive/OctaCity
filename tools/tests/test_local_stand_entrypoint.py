@@ -6,11 +6,86 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import sys
+import json
+import os
 
 REPOSITORY = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(REPOSITORY / "tools"))
+from factory_integrations import configure_integrations
 
 
 class LocalStandEntrypointTests(unittest.TestCase):
+    @unittest.skipUnless(shutil.which("docker"), "Docker is required for the container boundary")
+    def test_server_image_ships_an_independently_invocable_github_provider(self):
+        image = os.environ.get("OCTACITY_TEST_SERVER_IMAGE", "octacity/server:local")
+        if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode:
+            self.skipTest("build the local server image before testing its provider boundary")
+        result = subprocess.run(["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+                                 "--entrypoint", "/usr/local/bin/octacity-github", image],
+                                input="invalid-protocol-frame\n", capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertNotIn("executable file not found", result.stderr)
+        self.assertNotIn("no such file", result.stderr.lower())
+
+    @unittest.skipUnless(shutil.which("docker"), "Docker is required for the container boundary")
+    def test_integration_installation_retains_credentials_after_restart_and_drops_root(self):
+        if subprocess.run(["docker", "image", "inspect", "octacity/server:local"], capture_output=True).returncode:
+            self.skipTest("build the local server image before testing its container boundary")
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            server = root / "config/server/server.toml"
+            server.parent.mkdir(parents=True)
+            server.write_text('management_bind = "0.0.0.0:8080"\n')
+            server.chmod(0o600)
+            bundle = configure_integrations(root, "Example/Tickets", native_repository_id="1234", adapter_digest="ab" * 32)
+            catalog = json.loads((bundle / "catalog.json").read_text())
+            provider = catalog["credential_publishers"][0]["root"]
+            secrets = root / "secrets"
+            secrets.mkdir()
+            for name in ("postgres-url", "object-access-key", "object-secret-key", "signing-key",
+                         "agent-enrollment-key", "cache-credential-key"):
+                path = secrets / name
+                path.write_text("fixture-value\n")
+                path.chmod(0o600)
+            observer = root / "observe"
+            observer.write_text(f'''#!/bin/sh
+set -eu
+test "$(id -u)" = 65532
+test "$(stat -c %a /run/octacity-management)" = 711
+test "$(stat -c %a {provider}/credentials)" = 700
+test "$(stat -c %a {provider}/github-work.toml)" = 600
+test -x {provider}/plugin
+test -r /run/octacity-secrets/integration-server.toml
+if [ -e {provider}/credentials/retained ]; then
+  test "$(cat {provider}/credentials/retained)" = credential-retained
+  echo retained
+else
+  umask 077
+  echo credential-retained > {provider}/credentials/retained
+  echo installed
+fi
+''')
+            observer.chmod(0o755)
+            storage = root / "storage"
+            channel = root / "channel"
+            storage.mkdir()
+            channel.mkdir()
+            command = ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only", "--user", "0:0",
+                "--tmpfs", "/run/octacity-secrets:mode=0700,size=8m",
+                "--mount", f"type=bind,src={secrets},dst=/run/secrets,readonly",
+                "--mount", f"type=bind,src={bundle},dst=/run/octacity-integration-installation,readonly",
+                "--mount", f"type=bind,src={storage},dst=/var/lib/octacity-integrations",
+                "--mount", f"type=bind,src={channel},dst=/run/octacity-management",
+                "--mount", f"type=bind,src={observer},dst=/usr/local/bin/octacity-server,readonly",
+                "--mount", f"type=bind,src={observer},dst=/usr/local/bin/octacity-github,readonly",
+                "--mount", f"type=bind,src={REPOSITORY / 'deployment/local-stand/server-entrypoint.sh'},dst=/entrypoint,readonly",
+                "--entrypoint", "/bin/sh", "octacity/server:local", "/entrypoint"]
+            for expected in ("installed", "retained"):
+                result = subprocess.run(command, capture_output=True, text=True, timeout=30)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.strip(), expected)
+
     @unittest.skipUnless(shutil.which("docker"), "Docker is required for the container boundary")
     def test_oversized_profile_is_rejected_before_starting_the_server(self):
         inspected = subprocess.run(["docker", "image", "inspect", "octacity/server:local"],

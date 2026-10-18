@@ -14,11 +14,13 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/usr/local/cargo/git,sharing=locked \
     --mount=type=cache,target=/workspace/octacity/target,sharing=locked \
     set -eu; \
-    cargo build --locked --release -p octacity-server --bin octacity-server; \
-    binary=target/release/octacity-server; \
-    install -D -m 0755 "$binary" /out/rootfs/usr/local/bin/octacity-server; \
-    ldd "$binary" | awk '{ for (field = 1; field <= NF; field++) if ($field ~ /^\//) print $field }' | \
-      sort -u | while IFS= read -r library; do cp --parents -L "$library" /out/rootfs; done; \
+    cargo build --locked --release -p octacity-server -p octacity-github --bins; \
+    for executable in octacity-server octacity-github; do \
+      binary=target/release/$executable; \
+      install -D -m 0755 "$binary" "/out/rootfs/usr/local/bin/$executable"; \
+      ldd "$binary" | awk '{ for (field = 1; field <= NF; field++) if ($field ~ /^\//) print $field }' | \
+        sort -u | while IFS= read -r library; do cp --parents -L "$library" /out/rootfs; done; \
+    done; \
     mkdir -p /out/rootfs/etc; \
     cp /etc/nsswitch.conf /out/rootfs/etc/nsswitch.conf; \
     install -D -m 0644 /etc/ssl/certs/ca-certificates.crt /out/rootfs/etc/ssl/certs/ca-certificates.crt; \
@@ -77,6 +79,7 @@ COPY deployment/console/nginx/cache-map.conf /etc/nginx/octacity-console/cache-m
 COPY deployment/console/nginx/routes.conf /etc/nginx/octacity-console/routes.conf
 COPY deployment/console/nginx/security-headers.conf /etc/nginx/octacity-console/security-headers.conf
 COPY deployment/local-stand/nginx.conf /etc/nginx/nginx.conf
+COPY deployment/local-stand/management-upstream.conf /etc/nginx/octacity-management-upstream.conf
 USER 101:101
 EXPOSE 8443
 ENTRYPOINT ["nginx"]

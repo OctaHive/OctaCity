@@ -21,6 +21,7 @@ import init_local_stand as initializer
 import local_stand_launcher as launcher
 import local_stand_state as state
 import verify_local_stand_integration as integration
+from factory_integrations import configure_integrations, install_repository
 
 
 def _private_json(path: Path, value: dict) -> None:
@@ -37,7 +38,7 @@ def _read_json(path: Path) -> dict:
                                   modes=frozenset({0o600})), "Factory fixture receipt")
 
 
-def run_stand(root: Path, source: str, revision: str | None) -> dict:
+def run_stand(root: Path, source: str, revision: str | None, *, github_repository: str | None = None) -> dict:
     """Start the standard stand with explicit Factory profiles and retain real demo Runs."""
     root = state.resolve_safe_root(root, launcher.REPOSITORY, Path.home())
     prepared_file = root / "evidence/factory-demo-resources.json"
@@ -77,6 +78,9 @@ def run_stand(root: Path, source: str, revision: str | None) -> dict:
         "references": fixture["references"], "build_configurations": []}], "codex": []})
     print("Starting the standard stand with Factory enabled", flush=True)
     launcher.run(launcher.parse_arguments(["up", "--root", str(root), "--factory-profiles", str(profiles)]))
+    if github_repository is not None:
+        install_repository(root, github_repository)
+        launcher._run_compose(root, 8443, ("up", "--detach", "--wait", "server", "gateway"), timeout_seconds=180)
     receipt_file = root / "evidence/factory-demo.json"
     if receipt_file.exists():
         return _read_json(receipt_file)
@@ -278,9 +282,10 @@ def main(arguments=None) -> int:
                         default=Path(os.environ.get("OCTACITY_LOCAL_STAND_ROOT", state.DEFAULT_ROOT)))
     parser.add_argument("--source-repository", default="https://github.com/OctaHive/OctaCity")
     parser.add_argument("--source-revision", help="published exact revision; defaults to the remote HEAD")
+    parser.add_argument("--github-repository", help="explicit owner/repository to install as a ticket source; credentials are entered in Integrations")
     args = parser.parse_args(arguments)
     try:
-        receipt = run_stand(args.root, args.source_repository, args.source_revision)
+        receipt = run_stand(args.root, args.source_repository, args.source_revision, github_repository=args.github_repository)
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Factory stand failed: {error}", file=sys.stderr)
         return 1

@@ -32,6 +32,54 @@ require verified protected ingress; setting a browser header does not supply tha
 
 ## Console setup and discovery
 
+### Released server composition
+
+The opt-in Unix transport is configured in `server.toml`:
+
+```toml
+[integration_management]
+socket_path = "/run/octacity-management/management.sock"
+peer_uid = 101
+principal = "local-stand-gateway"
+catalog_file = "/absolute/private/integrations.json"
+operation_timeout_milliseconds = 10000
+cancellation_grace_milliseconds = 1000
+```
+
+The socket directory must be owned by the server and not writable by other
+identities. The kernel authenticates the configured proxy UID; its verified
+principal receives integration administration and dependent Project-grant
+authority. This is an explicit service delegation for a personal/local proxy,
+not user login or a policy for a shared remote deployment. TCP retains its
+existing protected-route denial, regardless of HTTP headers. Without a catalog,
+the optional listener authenticates transport but installs no management service.
+
+The bounded, owner-only, regular JSON catalog has `version: 1`, an absolute
+`registry` path and `installations` using the existing `InstalledIntegration`
+contract. Every installation resolves against the verified executable registry;
+advertised task purposes must exist in its manifest. Optional `checks` use
+`IntegrationCheckProfile` with exact installation/resource/capability/plugin pins,
+private `ResourceAccess`, provider-configuration digest and allowed network hosts.
+These private fields are not accepted from browser connection metadata.
+
+Optional `credential_publishers` select a concrete storage adapter at the server
+composition root. The installed `github_private_files` publisher takes absolute
+`root`, confined relative `directory` and `targets`: logical `reference`, original
+opaque `handle`, independent `purpose`, and allowed native resource aliases in
+`resources`. References/purposes/resources must belong to installed declarations;
+duplicate publisher references are rejected. It reuses the existing recoverable,
+generation-fenced GitHub publisher on Linux/macOS. No installed publisher means
+private publication is unavailable; it does not fabricate configured credentials.
+
+The composition installs discovery, metadata, credential/lifecycle administration,
+Project access and read-only checks over the existing application handlers and
+PostgreSQL store. Source configuration, preview/polling and Reporter execution
+remain separately composed capabilities. Provider identities in domain and API
+contracts remain open; a native storage implementation does not install GitLab,
+Jira or any other provider adapter.
+
+### Operator controls
+
 Open **Integrations** in the primary navigation or command center. Create a named
 connection by choosing an operator-installed provider, an approved endpoint and
 authentication method, and resource/purpose pairs. Validate the draft, review it,

@@ -1,8 +1,8 @@
 //! Composition root and process lifecycle for the OctaCity server.
 //!
 //! This crate is the only server crate allowed to select concrete adapters.
-//! The initial runtime exposes bounded health probes and operational metadata;
-//! it deliberately registers no domain command or query routes.
+//! The runtime assembles management, execution and optional integration services,
+//! with independently supervised listeners and bounded health probes.
 //!
 //! Crate ownership, dependency direction, and public protocol seams are mapped
 //! in the [server architecture guide].
@@ -11,6 +11,9 @@
 
 #![forbid(unsafe_code)]
 #![warn(missing_docs)]
+
+#[cfg(test)]
+extern crate self as octacity_server;
 
 mod config;
 mod readiness;

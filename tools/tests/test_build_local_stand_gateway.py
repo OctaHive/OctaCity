@@ -160,6 +160,9 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         config = (REPOSITORY / "deployment/local-stand/nginx.conf").read_text(
             encoding="utf-8"
         )
+        self.assertIn("include /etc/nginx/octacity-management-upstream.conf;", config)
+        default_upstream = (REPOSITORY / "deployment/local-stand/management-upstream.conf").read_text()
+        self.assertEqual(default_upstream.strip(), "server server:8080;")
 
         self.assertIn("ssl_certificate /run/secrets/gateway.pem", config)
         self.assertIn("ssl_certificate_key /run/secrets/gateway-key.pem", config)

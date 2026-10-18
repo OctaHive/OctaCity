@@ -7,6 +7,9 @@ use super::{
 };
 
 impl ServerConfig {
+  pub(crate) fn integration_management(&self) -> Option<&super::LocalIntegrationManagement> {
+    self.integration_management.as_ref()
+  }
   /// Separate operator-owned connector installations; absent keeps networking uninstalled.
   pub fn factory_signal_connectors_file(&self) -> Option<&Path> {
     self.factory_signal_connectors_file.as_deref()

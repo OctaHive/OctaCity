@@ -47,6 +47,28 @@ class FakeOwner:
 
 
 class LocalStandLauncherTests(unittest.TestCase):
+    def test_integrations_use_a_private_socket_volume_shared_only_with_the_gateway(self):
+        bundle = self.root / "config/integrations"
+        bundle.mkdir(parents=True, mode=0o700)
+        config = bundle / "server.toml"
+        config.write_text('[integration_management]\npeer_uid=101\n')
+        config.chmod(0o600)
+        command = launcher._compose_command(self.root, "config", "--format", "json")
+        self.assertIn(str(REPOSITORY / "deployment/local-stand/integrations.compose.yaml"), command)
+        rendered = subprocess.run(command, env=launcher._compose_environment(self.root, 8443),
+                                  check=True, capture_output=True, text=True)
+        services = json.loads(rendered.stdout)["services"]
+        readers = {name for name, service in services.items()
+                   if any(v["target"] == "/run/octacity-management" for v in service.get("volumes", []))}
+        self.assertEqual(readers, {"server", "gateway"})
+        gateway_socket = next(v for v in services["gateway"]["volumes"] if v["target"] == "/run/octacity-management")
+        self.assertTrue(gateway_socket["read_only"])
+        self.assertEqual(services["gateway"]["ports"][0]["host_ip"], "127.0.0.1")
+        self.assertEqual(services["server"]["command"], ["run", "/run/octacity-secrets/integration-server.toml"])
+        config.chmod(0o644)
+        with self.assertRaises(launcher.LocalStandError):
+            launcher._compose_command(self.root, "up")
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

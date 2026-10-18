@@ -64,6 +64,7 @@ pub(super) struct ApplicationAssembly {
   pub(super) cache: Arc<CacheSessionHandlers<PostgresStore>>,
   pub(super) log_search_index: Arc<PostgresLogSearchIndex>,
   pub(super) operational_metadata: ManagementOperationalMetadataProjection,
+  pub(super) integrations: Option<octacity_server_api_rest::integrations::IntegrationManagementApplication>,
 }
 
 pub(super) fn management_application(
@@ -85,6 +86,7 @@ pub(super) fn management_application(
     cache,
     log_search_index,
     operational_metadata,
+    integrations,
   } = assembly;
   let projects = Arc::new(ProjectHandlers::new(store.clone()));
   let pipelines = Arc::new(PipelineHandlers::new(store.clone()));
@@ -262,6 +264,10 @@ pub(super) fn management_application(
     ),
   )
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+  let application = match integrations {
+    Some(integrations) => application.with_integrations(integrations),
+    None => application,
+  };
   Ok(ApplicationComponents {
     management: application,
     trigger_service: manual_triggers,

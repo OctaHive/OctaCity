@@ -11,6 +11,9 @@ import unittest
 from unittest.mock import patch
 import uuid
 import threading
+import tomllib
+import io
+import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import factory_local_stand as demo
@@ -19,6 +22,102 @@ import local_stand_state as state
 
 
 class FactoryLocalStandTests(unittest.TestCase):
+    def test_integration_setup_refuses_to_adopt_or_change_an_unrecognized_existing_bundle(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            server = root / "config/server/server.toml"
+            server.parent.mkdir(parents=True)
+            server.write_text('management_bind = "0.0.0.0:8080"\n')
+            server.chmod(0o600)
+            bundle = root / "config/integrations"
+            bundle.mkdir(mode=0o700)
+            marker = bundle / "retained"
+            marker.write_text("existing operator data")
+            marker.chmod(0o600)
+            with self.assertRaises(ValueError):
+                demo.configure_integrations(root, "Example/Tickets", native_repository_id="1234", adapter_digest="ab"*32)
+            self.assertEqual(list(bundle.iterdir()), [marker])
+            self.assertEqual(marker.read_text(), "existing operator data")
+
+    def test_issue_repository_installation_uses_public_identity_and_no_ambient_github_credentials(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            server = root / "config/server/server.toml"
+            server.parent.mkdir(parents=True)
+            server.write_text('management_bind = "0.0.0.0:8080"\n')
+            server.chmod(0o600)
+            response = io.BytesIO(b'{"id":1234,"full_name":"Example/Tickets"}')
+            with patch.object(urllib.request.OpenerDirector, "open", return_value=response) as fetch, \
+                    patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout="ab" * 32 + "  /usr/local/bin/octacity-github\n")), \
+                    patch.dict(os.environ, {"GITHUB_TOKEN":"ambient-secret-must-not-be-used"}):
+                bundle = demo.install_repository(root, "Example/Tickets")
+            request = fetch.call_args.args[0]
+            self.assertEqual(request.full_url, "https://api.github.com/repos/Example/Tickets")
+            self.assertFalse(request.has_header("Authorization"))
+            catalog = json.loads((bundle / "catalog.json").read_text())
+            self.assertEqual(catalog["installations"][0]["resources"][0]["native_id"], "1234")
+            self.assertNotIn("ambient-secret", json.dumps(catalog))
+
+    def test_retained_stand_installs_selected_issue_repository_without_replaying_demo_runs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = "https://github.com/OctaHive/OctaCity.git"
+            demo._private_json(root / "evidence/factory-demo-resources.json", {"project":str(uuid.uuid4())})
+            demo._private_json(root / "evidence/factory-demo-input.json", {"namespace":str(uuid.uuid4()), "source":source, "revision":"a"*40})
+            retained = {"runs":{"manual":"retained-run"}}
+            demo._private_json(root / "evidence/factory-demo.json", retained)
+            with patch.object(demo.initializer, "initialize"), \
+                    patch.object(demo.launcher, "_prepare_native_installation"), \
+                    patch.object(demo.launcher, "_build_images"), \
+                    patch.object(demo.launcher, "run"), \
+                    patch.object(demo, "install_repository", create=True) as install, \
+                    patch.object(demo.launcher, "_run_compose") as compose, \
+                    patch.object(demo.integration, "LocalStandClient", side_effect=AssertionError("retained Runs must not be republished")):
+                result = demo.run_stand(root, source, None, github_repository="Example/Tickets")
+            self.assertEqual(result, retained)
+            install.assert_called_once_with(root, "Example/Tickets")
+            self.assertEqual(compose.call_args.args[2], ("up", "--detach", "--wait", "server", "gateway"))
+
+    def test_command_accepts_an_explicit_issue_repository_independent_of_build_source(self):
+        with patch.object(demo, "run_stand", return_value={}) as start:
+            self.assertEqual(demo.main(["--github-repository", "Example/Tickets"]), 0)
+        self.assertEqual(start.call_args.kwargs["github_repository"], "Example/Tickets")
+        self.assertEqual(start.call_args.args[1], "https://github.com/OctaHive/OctaCity")
+
+    def test_prepares_confined_integration_without_changing_existing_server_or_demo_data(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            server = root / "config/server/server.toml"
+            server.parent.mkdir(parents=True)
+            server.write_text('management_bind = "0.0.0.0:8080"\n')
+            server.chmod(0o600)
+            receipt = root / "evidence/factory-demo.json"
+            receipt.parent.mkdir()
+            receipt.write_text('{"retained":"run-history"}')
+            bundle = demo.configure_integrations(root, "OctaHive/OctaCity", native_repository_id="1234", adapter_digest="ab" * 32)
+            config = tomllib.loads((bundle / "server.toml").read_text())
+            self.assertEqual(config["integration_management"]["peer_uid"], 101)
+            self.assertEqual(config["integration_management"]["socket_path"], "/run/octacity-management/management.sock")
+            catalog = json.loads((bundle / "catalog.json").read_text())
+            installed, = catalog["installations"]
+            self.assertEqual(installed["provider"], "github")
+            resource, = installed["resources"]
+            self.assertEqual(resource["native_id"], "1234")
+            self.assertEqual(resource["locator"], "OctaHive/OctaCity")
+            self.assertEqual({c["purpose"] for c in resource["capabilities"]}, {"task_read", "task_update"})
+            self.assertEqual(len(catalog["checks"]), 2)
+            for check in catalog["checks"]:
+                self.assertEqual(check["resource"]["resource_id"], "1234")
+                self.assertEqual(check["resource"]["resource_locator"], "OctaHive/OctaCity")
+                self.assertEqual(check["network_hosts"], ["api.github.com"])
+            self.assertNotIn("project_id", json.dumps(catalog))
+            self.assertEqual(server.read_text(), 'management_bind = "0.0.0.0:8080"\n')
+            self.assertEqual(json.loads(receipt.read_text()), {"retained":"run-history"})
+            for path in bundle.iterdir():
+                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            again = demo.configure_integrations(root, "OctaHive/OctaCity", native_repository_id="1234", adapter_digest="ab" * 32)
+            self.assertEqual(again, bundle)
+
     def test_demo_rejects_a_failed_run_even_if_it_previously_reached_a_human_gate(self):
         class Api:
             def get(self, path):

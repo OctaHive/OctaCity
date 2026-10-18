@@ -63,8 +63,11 @@ native adapter must support the bounded managed label/state ceiling; ordered
 Reporter v2 must advertise `custom_effects`. Otherwise select the available frozen
 installed settings instead of treating an unknown description as editable.
 
-These are the existing installation contracts, not a new file the released server
-automatically loads. Public composition types and the canonical native test
+The released server can explicitly load the protected connection-management
+catalog described in [integration management contracts](integration-management-contracts.md#released-server-composition).
+For the personal stand, see the [GitHub installation command](../operations/local-stand.md#github-connections-in-the-personal-factory-stand).
+Automatic input, preview and Reporter execution retain their separate installed
+profile contracts. Public composition types and the canonical native test
 installation are linked in the [example README](../../config/factory/work-sources/README.md).
 
 ## Operator: set up a connection and private credentials

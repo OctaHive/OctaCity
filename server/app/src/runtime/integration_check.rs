@@ -16,7 +16,8 @@ use std::{collections::BTreeMap, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 /// Trusted installed check material, independent of a Project, pipeline, input or task card.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct IntegrationCheckProfile {
   /// Original immutable installation namespace.
   pub installation: ImmutableReference,
