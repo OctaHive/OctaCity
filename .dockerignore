@@ -128,6 +128,7 @@ deployment/local-stand/*
 !deployment/local-stand/*.Dockerfile
 !deployment/local-stand/*.json
 !deployment/local-stand/nginx.conf
+!deployment/local-stand/management-upstream.conf
 !deployment/local-stand/server-entrypoint.sh
 
 # Absolute exclusions are intentionally last so a later broad allow rule can

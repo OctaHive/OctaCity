@@ -190,6 +190,29 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
             VERIFY.docker_path_included("deployment/console/nginx/nginx.conf", rules)
         )
 
+    def test_gateway_management_upstream_is_available_in_the_filtered_context(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        self.assertTrue(VERIFY.docker_path_included(
+            "deployment/local-stand/management-upstream.conf", rules,
+        ))
+        for excluded in ("deployment/local-stand/private-upstream.conf",
+                         "deployment/local-stand/generated/management-upstream.conf"):
+            with self.subTest(path=excluded):
+                self.assertFalse(VERIFY.docker_path_included(excluded, rules))
+
+    def test_repository_verification_rejects_a_missing_management_upstream(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
+            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                if relative == "deployment/local-stand/management-upstream.conf":
+                    continue
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPOSITORY / relative, destination)
+            with self.assertRaisesRegex(VERIFY.ContextError, "management-upstream.conf"):
+                VERIFY.validate_repository(root)
+
     def test_developer_state_build_outputs_and_secrets_are_excluded(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
         for path in VERIFY.FORBIDDEN_CONTEXT_PATHS:
