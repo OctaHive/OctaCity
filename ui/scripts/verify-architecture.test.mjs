@@ -241,7 +241,7 @@ test('retains a tight asset count for the complete console with Factory diagnost
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
   await write(root, 'dist/assets/index.js', 'x');
-  for (let index = 0; index < 41; index += 1)
+  for (let index = 0; index < 43; index += 1)
     await write(root, `dist/assets/part-${index}.js`, 'x');
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   await write(root, 'dist/assets/extra.js', 'x');
@@ -252,20 +252,20 @@ test('retains a tight asset count for the complete console with Factory diagnost
   );
 });
 
-test('admits measured stage effects and source history while retaining strict entry and CSS ceilings', async (context) => {
+test('admits the measured lazy workflow settings and rejects unplanned growth with the entry ceiling unchanged', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
-  await write(root, 'dist/assets/index.js', 'x'.repeat(424_280));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(509_606));
-  await write(root, 'dist/assets/styles.css', 'x'.repeat(81_069));
+  await write(root, 'dist/assets/index.js', 'x'.repeat(426_280));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(532_483));
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(82_650));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
-  assert.equal(policy.bundleBudgets.totalCssBytes, 81_920);
-  assert.equal(policy.bundleBudgets.assetCount, 43);
-  await write(root, 'dist/assets/unplanned.js', 'x'.repeat(4_000));
+  assert.equal(policy.bundleBudgets.totalCssBytes, 83_968);
+  assert.equal(policy.bundleBudgets.assetCount, 45);
+  await write(root, 'dist/assets/unplanned.js', 'x'.repeat(16_000));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });
   assert.ok(rejected.some((message) => message.includes('total JavaScript')));
   assert.ok(rejected.some((message) => message.includes('total static output')));

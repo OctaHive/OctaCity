@@ -128,6 +128,42 @@ state setters, arbitrary actor/credential/provider fields and legacy status
 flags are rejected. Cross-reference and evidence grammar validation uses the
 shared business-policy validator rather than transport-specific policy.
 
+## Console settings
 
-Console settings remain task 2.4. Issue creation and the shared guarded movement
-command follow in 2.5; publishing policy alone enables no transitions or execution.
+Open **Projects → a Project → Task workflow** (Russian: **Workflow задач**), or
+`/projects/{project_id}/issue-workflows`. This Project-owned page needs no Factory
+Configuration, repository or source integration. It reads the editable server default
+and a cursor-bounded list of published workflows. Catalog reads and editing of
+visible policies remain available if the selected default is hidden or temporarily
+unavailable; default selection waits for a readable selection revision.
+
+- Edit the default, create an independent workflow from it, or open a published
+  workflow and load an exact historical version. Drafts live only in the mounted editor.
+- Rename/reorder ID/name-only status rows. Reordering keeps IDs and does not change
+  the initial selection. Select the initial status and zero or more terminal statuses
+  at workflow level. Before deleting a status, change its initial selection and remove
+  any referencing edges; deletion also removes its terminal selection.
+- Add named transitions between status IDs. Choose only the generated supported
+  origins and evidence requirements. Source-origin transitions do not configure native
+  provider mappings or grant write access.
+- Validate the exact draft, review its name/base version, ordered statuses, selections
+  and edge/origin/evidence policy, then confirm immutable publication. A draft edit
+  invalidates its validation receipt. Publication does not select the default.
+- To change the default, open the exact published version and separately confirm
+  **Use for new tasks**. Existing Issues keep their pinned workflow; there is no
+  migration, execution start, gate approval or verification claim in these settings.
+
+The shared confirmed-command mechanism freezes the reviewed request and idempotency
+key across transport retries. A conflict requires an explicit current-version refresh,
+preserves the in-memory draft, and requires validation and fresh review before another
+publication. Closing that stale review returns keyboard focus to **Validate draft**,
+including after a failed version refresh. Default selection uses its own refreshed
+selection revision. A successful
+publication receipt becomes the next editing baseline without rereading or rebasing.
+Publication refreshes the catalog and the affected current-definition read, so its
+selection controls show the new version; exact historical reads remain unchanged.
+Names are bounded in UTF-8 bytes and all form limits/origin/evidence choices are generated
+from OpenAPI. Business-policy validation and authorization remain on the server.
+
+Issue creation and the shared guarded movement command follow in 2.5; publishing
+policy alone enables no task transitions or execution.

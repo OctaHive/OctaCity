@@ -1,4 +1,5 @@
 import { configurationFixture, runFixture, diagnosticFixture } from '../fixtures/factory';
+import { workflowFixture } from '../fixtures/issueWorkflows';
 import { integrationFixture } from '../fixtures/integrations';
 import type { Page, Route } from '@playwright/test';
 
@@ -21,6 +22,18 @@ export async function installOperatorFixture(page: Page) {
       return;
     }
     const url = new URL(route.request().url());
+    if (url.pathname === `/api/v1/projects/${FIXTURE_IDS.project}/issue-workflow-default`) {
+      await fulfill(route, { version: 7, workflow: workflowFixture(FIXTURE_IDS.project) });
+      return;
+    }
+    if (url.pathname === `/api/v1/projects/${FIXTURE_IDS.project}/issue-workflows`) {
+      const workflow = workflowFixture(FIXTURE_IDS.project);
+      await fulfill(route, {
+        items: [{ ...workflow, name: workflow.definition.name }],
+        next_cursor: null,
+      });
+      return;
+    }
     const connection = integrationFixture('IntegrationConnection');
     if (url.pathname === '/api/v1/integrations') {
       await fulfill(route, { items: [connection], next_cursor: null });

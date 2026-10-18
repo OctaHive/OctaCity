@@ -50,7 +50,10 @@ timing constants, colors, and SVG icon imports behind their intended boundaries 
 external fonts, icon fonts, analytics integrations, and copied template assets. Run
 `check:architecture` for the source-only gate or `check:bundle` against an existing `dist/`.
 `architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
-the build reports any measured value that exceeds them.
+the build reports any measured value that exceeds them. Project workflow settings add one lazy
+JavaScript chunk and one stylesheet, with no new dependencies; the measured aggregate ceilings
+are 944 KiB JavaScript, 82 KiB CSS and 45 assets. The ordinary entry ceiling remains 450 KiB.
+The architecture tests admit the measured feature and reject additional unplanned growth.
 
 Release packaging consumes this exact `dist/` directory without rebuilding the application:
 
@@ -101,7 +104,7 @@ bounds numeric `Retry-After` delays through one console retry-safety policy.
 
 The root route redirects to `/projects`. The shell declares deep links for:
 
-- `/projects` and `/projects/:projectId`;
+- `/projects`, `/projects/:projectId`, and `/projects/:projectId/issue-workflows`;
 - `/builds` and `/builds/:buildId`;
 - `/factory` and `/factory/:factoryRunId`, including URL-backed Project, configuration,
   immutable Flow version, and Run filters;

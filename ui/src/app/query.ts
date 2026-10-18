@@ -1,6 +1,10 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  issueWorkflow: (project: string, id: string | null, version?: number) =>
+    ['issue-workflows', project, id, version ?? 'current'] as const,
+  issueWorkflowDefault: (project: string) => ['issue-workflows', project, 'default'] as const,
+  issueWorkflows: (project: string) => ['issue-workflows', project, 'list'] as const,
   factorySourceProgress: (project: string, kind: string, id: string, version: number) =>
     ['factory', 'source-progress', project, kind, id, version] as const,
   integrationProjectAccess: (id: string, project: string) =>

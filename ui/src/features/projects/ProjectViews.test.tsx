@@ -16,6 +16,15 @@ import {
 afterEach(cleanup);
 
 describe('Project hierarchy', () => {
+  it('offers Project workflow settings without requiring Factory or a provider', async () => {
+    const api = fakeProjectsApi();
+    api.getProject.mockResolvedValue({ ancestors: [], project: project('delivery', 'Delivery') });
+    renderProjects('/projects/delivery', api);
+    expect((await screen.findByRole('link', { name: 'Task workflow' })).getAttribute('href')).toBe(
+      '/projects/delivery/issue-workflows',
+    );
+  });
+
   it('loads bounded root pages through the server cursor', async () => {
     const api = fakeProjectsApi();
     api.listProjects

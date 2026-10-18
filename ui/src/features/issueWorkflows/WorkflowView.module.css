@@ -1,0 +1,85 @@
+.page {
+  display: grid;
+  gap: var(--space-lg);
+  min-width: 0;
+}
+.page h1,
+.page h2,
+.page p {
+  margin: 0;
+}
+.page a {
+  color: var(--color-brand-action);
+}
+.card {
+  display: grid;
+  gap: var(--space-md);
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.card label {
+  display: grid;
+  gap: var(--space-sm);
+  min-width: 0;
+}
+.card input {
+  min-width: 0;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: var(--space-sm);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  color: var(--color-text-primary);
+  background: var(--color-surface);
+  font: inherit;
+}
+.card fieldset {
+  min-width: 0;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  padding: var(--space-md);
+}
+.card button {
+  min-height: 2.5rem;
+  padding: var(--space-sm) var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  color: var(--color-brand-action);
+  background: var(--color-surface);
+  font: inherit;
+  cursor: pointer;
+}
+.card button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.card .choice {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-sm);
+}
+.rows {
+  display: grid;
+  gap: var(--space-md);
+  padding-inline-start: var(--space-lg);
+}
+.rows li {
+  min-width: 0;
+}
+.endpoints {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
+  gap: var(--space-md);
+}
+.card fieldset > fieldset {
+  margin-block: var(--space-md);
+}

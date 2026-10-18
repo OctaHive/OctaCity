@@ -5,7 +5,7 @@ import { Link, useParams } from 'react-router-dom';
 import { ManagementApiError } from '../../api/client';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
-import { CONSOLE_PATHS, projectPath } from '../../app/routes';
+import { CONSOLE_PATHS, projectPath, issueWorkflowsPath } from '../../app/routes';
 import {
   QueryBackgroundNotice,
   QueryFailureNotice,
@@ -88,6 +88,9 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
         label={t('projects.data')}
         onRetry={project.refetch}
       />
+      <Link className={styles.primaryLink} to={issueWorkflowsPath(projectId)}>
+        {t('workflow.title')}
+      </Link>
       <ProjectDefinitions key={projectId} api={api} projectId={projectId} />
       <ProjectBuilds key={`builds:${projectId}`} api={api} projectId={projectId} />
     </section>

@@ -10,6 +10,7 @@ import type { IntegrationsApi } from '../features/integrations/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
+import { issueWorkflowsApi, type IssueWorkflowsApi } from '../features/issueWorkflows/api';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
 import { WorkspaceWelcome, type WorkspaceWelcomeKind } from '../shared/WorkspaceWelcome';
 import { usePresentation } from './presentation/PresentationProvider';
@@ -74,6 +75,9 @@ const ProjectsLandingView = lazy(async () => {
   const module = await import('../features/projects/ProjectViews');
   return { default: module.ProjectsLandingView };
 });
+const WorkflowView = lazy(async () => ({
+  default: (await import('../features/issueWorkflows/WorkflowView')).WorkflowView,
+}));
 const ProjectView = lazy(async () => {
   const module = await import('../features/projects/ProjectViews');
   return { default: module.ProjectView };
@@ -111,6 +115,7 @@ export interface ConsoleRouteDependencies {
   readonly auditApi: AuditApi;
   readonly buildApi: BuildDiagnosticsApi;
   readonly capacityApi: CapacityApi;
+  readonly issueWorkflowsApi: IssueWorkflowsApi;
   readonly projectsApi: ProjectsApi;
   readonly readinessProbe: ReadinessProbe;
   readonly searchApi: ResourceSearchApi;
@@ -123,6 +128,7 @@ const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   buildApi: buildDiagnosticsApi,
   capacityApi,
   projectsApi,
+  issueWorkflowsApi,
   readinessProbe: fetchReadiness,
   searchApi: resourceSearchApi,
 };
@@ -197,6 +203,10 @@ export function createConsoleRoutes(
         {
           path: childPath(CONSOLE_PATHS.projects),
           element: defer(<ProjectsLandingView />),
+        },
+        {
+          path: childPath(CONSOLE_PATHS.issueWorkflows),
+          element: defer(<WorkflowView api={dependencies.issueWorkflowsApi} />),
         },
         {
           path: childPath(CONSOLE_PATHS.project),

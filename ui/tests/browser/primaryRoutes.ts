@@ -47,6 +47,12 @@ const routesByTemplate = {
     path: CONSOLE_PATHS.projects,
     retainedText: 'Accessible Project',
   },
+  [CONSOLE_PATHS.issueWorkflows]: {
+    heading: 'Task workflow',
+    id: 'issue-workflows',
+    path: `${projectPath(FIXTURE_IDS.project)}/issue-workflows`,
+    retainedText: 'Local workflow',
+  },
   [CONSOLE_PATHS.project]: {
     heading: 'Accessible Project',
     id: 'project',
