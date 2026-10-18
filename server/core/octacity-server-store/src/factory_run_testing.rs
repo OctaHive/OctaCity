@@ -54,6 +54,26 @@ pub(super) struct StoredFactoryRun {
 }
 
 impl StoredFactoryRun {
+  pub(super) fn source_reporting_diagnostics(
+    &self,
+    accepted: &BTreeSet<FactoryDigest>,
+    limit: u16,
+  ) -> crate::WorkSourceReportingPage {
+    let mut items = latest_outbox_records(self)
+      .into_iter()
+      .filter(|row| row.kind.as_str() == "work.status.projection" && accepted.contains(&row.operation_id))
+      .take(usize::from(limit) + 1)
+      .map(|row| crate::WorkSourceReportingDiagnostic {
+        operation_id: row.operation_id,
+        state: row.state.into(),
+        attempt: row.attempt,
+        available_at: row.available_at,
+      })
+      .collect::<Vec<_>>();
+    let truncated = items.len() > usize::from(limit);
+    items.truncate(usize::from(limit));
+    crate::WorkSourceReportingPage { items, truncated }
+  }
   pub(super) const fn run(&self) -> &FactoryRun {
     &self.run
   }
@@ -978,12 +998,7 @@ fn latest_outbox_record(stored: &StoredFactoryRun, operation_id: FactoryDigest) 
 }
 
 fn outbox_order(record: &FactoryOutboxRecord) -> (u16, u8, octacity_server_domain::Timestamp, FactoryDigest) {
-  let state = match record.state {
-    crate::FactoryOutboxState::Pending => 0,
-    crate::FactoryOutboxState::Claimed => 1,
-    crate::FactoryOutboxState::Delivered | crate::FactoryOutboxState::Failed => 2,
-  };
-  (record.attempt, state, record.recorded_at, record.id)
+  record.order_key()
 }
 
 fn validate_claim(stored: &StoredFactoryRun, request: &ClaimFactoryRun) -> Result<(), StoreError> {

@@ -1,127 +1,126 @@
-# Review fixes verification
+# Review corrections after tasks 5.6–5.8
 
-## Addressed findings
+## Scope and boundaries
 
-1. **Replay after private input expiry/cleanup.** Memory and PostgreSQL retain
-   current input/version, authorization, scan fence and original-intent checks.
-   The private materialization lifetime gate now applies only to fresh Work.
-   Exact replay and correlation recovery reuse the original authoritative receipt
-   without new artifact reads, VCS resolution, Work/Run or admission evidence.
-2. **Cleanup failure isolation.** A failed object or preparation acknowledgement
-   increments the page's safe `failed` count. Other preparations are still
-   cleaned, the page cursor is returned, and failed records remain eligible on
-   the next cursor sweep. Failure never clears that preparation's snapshot.
-3. **Scheduled cleanup reconciliation.** Initial private expiry and due late-write
-   checks are separate indexed PostgreSQL selections. Completed raw/rejected
-   preparations with no objects leave the queue. Byte tombstones retain a
-   trusted configurable recheck interval; successful checks become sparser with
-   age since first cleanup. Late physical writes remain removable, without an
-   invented deadline for uncertain storage requests. Duplicate acknowledgements
-   cannot postpone the current schedule and do not rewrite frozen preparation
-   documents. Migration 0061 adds one scheduling column and relevant indexes;
-   existing cleaned byte reservations receive an initial reconciliation.
-4. **Canonical admission probe.** Direct and prepared ingress now call the same
-   `factory_source_admission_probe` constructor. Existing domain separation,
-   namespace, field order and transport key spelling are preserved.
-5. **Query-only reader dependency.** `FactoryArtifactReader` accepts
-   `SourceArtifactQueryStore`, which has one read method and no configuration,
-   scan, admission or cleanup methods. Both real store adapters implement it.
-6. **Glossary consistency.** `CONTEXT.md` distinguishes ordinary Build-owned
-   artifacts from Project-owned prepared Factory inputs. The architecture
-   document describes the updated replay, reader and cleanup contracts.
+Corrected the three reviewed issues through public boundaries: authorized Source
+preview/validation, exported OpenAPI fixture validation, and authorized Source
+reporting diagnostics against a real disposable PostgreSQL service. No task beyond
+5.8, new provider protocol, database migration, Issue command or UI feature is added.
 
-The shared input byte/title/body and lifetime ceilings are named constants.
-Installed mappings can narrow them. Historical migration literals remain frozen
-schema history, not runtime configuration. Protocol identity strings also remain
-fixed protocol constants rather than operator-selected parameters.
-
-## TDD evidence
-
-| Slice | Observed Red | Observed Green |
-| --- | --- | --- |
-| Memory replay across expiry and cleanup | `staged_exact_replay_survives` returned a source Conflict after expiry | Four providers recover the same original Run before and after physical cleanup, with one correlation and one idempotency outcome |
-| PostgreSQL replay | Expanded shared source contract returned Conflict at the expired exact replay | Memory/PostgreSQL exact expired and cleaned replays preserve original receipt and admission counts |
-| Per-preparation cleanup isolation | `source_cleanup_isolates` returned Unavailable for the page after the first failed object | One preparation stays retryable, the other is cleared, cursor survives and retry removes the remaining bytes |
-| Cleanup schedule and duplicate ACK | Missing explicit interval/acknowledgement scheduling API; shared PostgreSQL contract subsequently returned Conflict for duplicate ACK | No repeated cleanup before due time; old ACK cannot defer it; delayed physical bytes are deleted at the scheduled check; later checks back off and first-cleanup/publication/expiry timestamps remain unchanged |
-| Query-only input reader | Missing `SourceArtifactQueryStore` interface | The existing ownership/digest/size/retention reader contract passes with an adapter implementing only one query method |
-
-Refactoring the probe and shared ceilings had passing behavioral coverage first:
-`staged_direct_and_prepared` passed before and after extraction, with one Run,
-VCS resolution and admission outcome for both ingress paths across four providers.
-`source_mapping_` passed before the constant extraction and remains in the full
-admission regression. No domain admission, eligibility, business duplicate or
-manual-input rule was changed by those refactors.
-
-Commands used for the slices:
+All Cargo commands and client generation used these resource bounds:
 
 ```sh
-cargo test --locked --jobs 2 -p octacity-server-application --lib staged_exact_replay_survives -- --nocapture
-cargo test --locked --jobs 2 -p octacity-server-application --lib source_cleanup_isolates -- --nocapture
-cargo test --locked --jobs 2 -p octacity-server-application --lib source_cleanup_schedules -- --nocapture
-cargo test --locked --jobs 2 -p octacity-server-application --lib source_cleanup_ -- --nocapture
-cargo test --locked --jobs 2 -p octacity-server-application --lib staged_direct_and_prepared -- --nocapture
-cargo test --locked --jobs 2 -p octacity-server-application --lib source_mapping_ -- --nocapture
-cargo test --locked --jobs 2 -p octacity-server-application --lib source_inputs_are_read -- --nocapture
-OCTACITY_POSTGRES_URL=<owned-disposable-url> cargo test --locked --jobs 2 \
-  -p octacity-server-store-postgres --test factory_discovery source_publication_is_atomic -- --ignored --nocapture
+export CARGO_INCREMENTAL=0
+export CARGO_PROFILE_DEV_DEBUG=0
+export CARGO_PROFILE_TEST_DEBUG=0
+export CARGO_BUILD_JOBS=2
 ```
 
-## Regression commands
+Only one Cargo operation ran at a time. No commit or branch change was performed.
+
+## Preview publication intent: Red → Green
 
 ```sh
-cargo test --locked --jobs 2 -p octacity-server-application --lib factory_admission_tests -- --test-threads=2
-cargo test --locked --jobs 2 -p octacity-server-application --test manual_trigger --test factory_artifact_reader -- --test-threads=2
-cargo test --locked --jobs 2 -p octacity-server-factory -p octacity-server-store --all-features -- --test-threads=2
-OCTACITY_POSTGRES_URL=<owned-disposable-url> cargo test --locked --jobs 2 \
-  -p octacity-server-store-postgres --test factory_discovery --test migrations -- --ignored --test-threads=2
-cargo clippy --locked --jobs 2 -p octacity-server-application -p octacity-server-store \
-  -p octacity-server-store-postgres --all-targets --all-features -- -D warnings
+cargo test --locked -p octacity-server-application --lib source_preview_freezes_exclusive_members_and_explains_ambiguity_before_activation
+```
+
+Red: the returned configuration contained replacement intents for retained input
+v1 members instead of the submitted group-only intent. Green: the same test passed
+with the submitted intent preserved in the response and expanded members used only
+for read preparation. It also repeats preview using that response and validates it
+for group replacement without replacing the unchanged input versions.
+
+This preserves exact input/group version semantics for draft and retained members;
+provider selection, manual admission and optional card links are unchanged.
+
+## Fixture contract validation: three Red → Green slices
+
+```sh
+cargo test --locked -p octacity-server-api-rest --test v1_handlers integration_fixture_validation_rejects_non_string_credential_values
+cargo test --locked -p octacity-server-api-rest --test v1_handlers integration_fixture_validation_rejects_oversized_utf8_status
+cargo test --locked -p octacity-server-api-rest --test v1_handlers integration_fixture_validation_rejects_oversized_preview_pages
+```
+
+Each test first failed because the existing validator accepted the invalid value.
+Each then passed after the corresponding small correction:
+
+- A credential value of `42` fails the declared `string|null` union; string/null
+  values remain valid.
+- A 2050-byte Cyrillic status fails the 2048-byte ceiling; exactly 2048 bytes pass.
+- A preview with 101 candidates fails `maxItems: 100`; exactly 100 pass.
+
+The shared helper now checks type arrays, UTF-8 byte ceilings and array minimum/
+maximum cardinality. Existing positive wire fixtures, typed intents and REST
+responses continue to pass. No dependency or second validation subsystem was added.
+
+## Reporting diagnostics without Run locks: Red → Green
+
+Using the explicitly created disposable PostgreSQL service:
+
+```sh
+OCTACITY_POSTGRES_URL=postgres://postgres@127.0.0.1:32789/postgres \
+  cargo test --locked -p octacity-server --lib source_reporting_diagnostics_does_not_wait_for_a_run_writer -- --ignored
+```
+
+Red: an authorized diagnostics query failed with `Application(Store(Unavailable))`
+while another connection held the Run row lock. Green: the same query returned the
+original Run association and pending reporting status while that writer still held
+its lock.
+
+The test retains the writer transaction until the query completes. A separate
+read connection has `lock_timeout = '1ms'` so an accidental locking read fails
+without a wall-clock latency assertion. Production timeouts and test parallelism
+are unchanged. Tokio's existing controlled-I/O fixture keeps this deterministic
+under scheduler load.
+
+The application now uses one bounded reporting read in
+`FactorySourceDiagnosticsStore` instead of `FactoryRunStore::factory_run_snapshot`.
+PostgreSQL selects latest outbox metadata for operations registered atomically with
+accepted actions after checking the original Source Reporter. Existing immutable
+association fields and Project scope restrict the read. No private preparation
+payload, full Flow history or execution lock is loaded. The existing acceptance
+registry also covers migrated history and excludes unrelated Reporter actions.
+
+Safe reporting DTOs are reused from the read port, preserving the REST shape and
+removing the application's snapshot processing. The 64-operation ceiling is shared
+with OpenAPI. A fresh exporter document was compared with the snapshot captured
+during review: the complete public OpenAPI JSON is unchanged. Memory and PostgreSQL retain the same operation ordering and safe
+state vocabulary. Optional authorized Issue links and native correlations remain
+independent of reporting and execution authority.
+
+## Regression and repository checks
+
+```sh
+OCTACITY_POSTGRES_URL=postgres://postgres@127.0.0.1:32789/postgres \
+  cargo test --locked -p octacity-server --lib reporting::ordering::postgres -- --ignored
+# 9 passed in the normal parallel test run, including restart, migration,
+# acceptance order, unrelated Reporter filtering and late-write recovery.
+cargo test --locked -p octacity-server-store -p octacity-server-api-rest --lib --tests
+# 81 Store and 124 REST tests passed.
+cargo test --locked -p octacity-server-application --lib factory_admission_tests
+# 76 passed, including provider peers, manual intake, visibility and optional cards.
+cargo test --locked -p octacity-server --lib
+# 156 passed; 9 PostgreSQL tests ignored here and run explicitly above.
+cargo clippy --locked -p octacity-server-store -p octacity-server-application -p octacity-server-store-postgres -p octacity-server-api-rest -p octacity-server --all-targets --all-features -- -D warnings
+pnpm --dir ui api:generate
+pnpm --dir ui typecheck
+pnpm --dir ui exec vitest run src/api/integrationContracts.test.ts src/api/client.test.ts src/features/factory/api.test.ts
+# 40 passed.
 cargo fmt --all -- --check
-python3 tools/check_architecture.py
-openspec validate add-github-work-source --strict
 git diff --check
+python3 tools/check_architecture.py
+# 63 packages, 253 dependency edges.
+python3 tools/security_matrix.py validate
+node ui/scripts/verify-architecture.mjs
+openspec validate add-github-work-source --strict
+openspec validate add-factory-work-card --strict
 ```
 
-## Observed regression results
+Reference-document updates have no executable behavior and are validated through
+whitespace/OpenSpec checks rather than Red/Green. Earlier uncommitted task work
+and completion identifiers are preserved.
 
-All regression commands above passed on 2026-10-16:
-
-- Application admission: 40 tests.
-- Manual trigger: 34 tests; ordinary artifact reader: 5 tests.
-- Factory core: 293 tests; store core: 71 tests; 2 compile-fail doctests.
-- PostgreSQL Factory discovery: 23 tests; migration compatibility: 5 tests.
-- Clippy with warnings denied, formatting, architecture (61 packages, 245
-  dependency edges), strict OpenSpec validation and diff whitespace checks passed.
-
-Total: 471 regression tests plus 2 doctests, without counting repeated slice runs.
-The PostgreSQL suite used the disposable service described below, including the
-single-connection contract and manual-admission migration/replay preservation.
-
-## Scope and operations
-
-Manual admission remains a separate namespace and requires no Source capability,
-provider credentials, scan claim or cleanup worker. The unchanged installed-source
-contracts exercise GitHub, GitLab, Jira and a custom provider. No provider-specific
-branch, SDK, credential flow or business classification was introduced.
-
-Worker composition remains in tasks 3.x. It must supply the trusted positive
-recheck interval, observe the failure count and wrap the cursor between sweeps.
-Tombstone metadata remains for provenance and occasional late-write checks;
-private input retention deadlines and read authority are never renewed.
-
-PostgreSQL tests use only the owned loopback `postgres:18.6-bookworm` container
-labelled `octacity.test=source-review-fixes`. No provider process, live repository,
-paid model or user stand was activated. No commit was requested or created.
-After successful database regressions, its identity and ownership label were
-checked and the owned `--rm` container was stopped and removed.
-Existing work from tasks 2.1–2.5 is preserved. OpenSpec progress remains 9/29;
-this review follow-up does not start task 3.1.
-
-Glossary, documentation and SQL whitespace-only edits have no executable behavior
-to drive with TDD. Architecture, format, strict OpenSpec and diff checks validate
-the prose/formatting; behavioral changes and migration are covered above.
-
-## Source polling review
-
-The subsequent review of tasks 3.1–3.5 is recorded separately in
-[Source review corrections](verification-source-review-fixes.md).
+Free space remained approximately 16–17 GiB; `target` grew from about 6.5 GiB to
+about 6.9 GiB. The disposable PostgreSQL container was stopped and removed after
+testing. No user files/build cache were deleted, running stand changed, external
+provider contacted or paid model invoked.

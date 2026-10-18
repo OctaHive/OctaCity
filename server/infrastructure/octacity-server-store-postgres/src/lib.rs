@@ -107,4 +107,6 @@ pub async fn health_check(pool: &PgPool) -> bool {
 
 mod factory_flow_definition;
 
+mod factory_source_configuration;
+mod factory_source_diagnostics;
 mod integration_project_access;

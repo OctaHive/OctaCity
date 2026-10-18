@@ -31,6 +31,8 @@ pub enum Command {
   Check(check::CheckIntent),
   /// Reads one bounded page using the exact installed selector.
   Scan(Box<ScanIntent>),
+  /// Reads summaries and selection reasons without snapshots or worker state.
+  Preview(Box<ScanIntent>),
   /// Checks current private installed read authority without listing or retaining tickets.
   Authorize(AccessIntent),
   /// Stops only this scan and performs no provider effects.
@@ -60,6 +62,8 @@ pub enum Outcome {
   Failure(Failure),
   /// One complete private page; checkpointing and admission remain server-owned.
   Page(Page),
+  /// Bounded read-only summaries, including candidates excluded by every selector.
+  Previewed(crate::preview::Page),
   /// Current installed read authority for the original exact scope; no admission authority.
   Authorized(AuthorizedAccess),
   /// Original scan stopped without starting another operation.
@@ -77,7 +81,7 @@ impl Request {
     field(&self.request_id)?;
     match &self.command {
       Command::Check(intent) => intent.validate(CredentialClass::WorkSourceRead),
-      Command::Scan(intent) => intent.validate(),
+      Command::Scan(intent) | Command::Preview(intent) => intent.validate(),
       Command::Authorize(intent) => intent.validate(),
       Command::Cancel { target_scan_id } => digest(target_scan_id),
     }
@@ -216,6 +220,11 @@ impl Response {
           && access.configuration_digest == intent.configuration_digest =>
       {
         Ok(())
+      }
+      (Outcome::Previewed(page), Command::Preview(intent)) => {
+        page.validate_for(intent)?;
+        let encoded = serde_json::to_vec(&crate::Response::Source(self.clone())).map_err(|_| ProtocolError::Invalid)?;
+        common::require_message_size(&encoded, intent.max_page_bytes as usize).map_err(|_| ProtocolError::LimitExceeded)
       }
       (Outcome::Page(page), Command::Scan(intent)) => {
         page.validate_for(intent)?;

@@ -1,4 +1,6 @@
 //! Credential-free connection envelopes and one protected write-only submission.
+mod source_diagnostics;
+mod sources;
 use octacity_server_application::MAX_INTEGRATION_NAME_BYTES;
 use serde_json::{Map, Value, json};
 fn reference(name: &str) -> Value {
@@ -21,6 +23,8 @@ fn intent(action: Value) -> Value {
   )
 }
 pub(super) fn insert(schemas: &mut Map<String, Value>) {
+  sources::insert(schemas);
+  source_diagnostics::insert(schemas);
   let mut name = text(MAX_INTEGRATION_NAME_BYTES);
   name["description"] = json!(format!(
     "At most {MAX_INTEGRATION_NAME_BYTES} UTF-8 bytes; no surrounding whitespace or control characters."
@@ -134,7 +138,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     json!({"operation":{"const":"credential"},"reference":credential,"kind":{"type":"string","enum":["provision","adopt","rotate","revoke"]},"activate_connection":{"type":"boolean","default":false}}),
     &["operation", "reference", "kind"],
   );
-  schemas.insert("IntegrationCredentialSubmission".into(), object(json!({"intent":intent(credential_action),"value":{"type":["string","null"],"minLength":1,"maxLength":16384,"writeOnly":true,
+  schemas.insert("IntegrationCredentialSubmission".into(), object(json!({"intent":intent(credential_action),"value":{"type":["string","null"],"minLength":1,"maxLength":octacity_server_application::MAX_PROVIDER_CREDENTIAL_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_PROVIDER_CREDENTIAL_BYTES,"writeOnly":true,
     "description":"Transient protected input. Omit for adoption, revocation or recovery. Never returned or retained in ordinary storage."}}), &["intent"]));
   let state_action = object(
     json!({"operation":{"type":"string","enum":["activate","disable"]}}),
@@ -166,4 +170,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["cleaned"],
     ),
   );
+  // Canonical synthetic wire examples are shared with schema drift and console client tests.
+  let examples: Map<String, Value> =
+    serde_json::from_str(include_str!("../../../../fixtures/v1/integration-contracts.json"))
+      .expect("integration contract examples are valid JSON");
+  for (name, examples) in examples {
+    schemas.get_mut(&name).expect("documented integration component exists")["examples"] = examples;
+  }
 }

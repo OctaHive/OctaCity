@@ -1,11 +1,161 @@
 use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{
   CheckIntegrationConnectionQuery, CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery,
-  GetIntegrationConnectionQuery, GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery,
-  ManageIntegrationCredentialCommand, PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand,
-  SetIntegrationConnectionStateCommand,
+  GetIntegrationConnectionQuery, GetIntegrationProjectAccessQuery, GetWorkSourceConfigurationQuery,
+  GetWorkSourceDiagnosticsQuery, ListIntegrationProjectResourcesQuery, ListWorkSourceConfigurationsQuery,
+  ListWorkSourceInputChoicesQuery, ManageIntegrationCredentialCommand, PreviewWorkSourcesQuery,
+  PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand, PublishWorkSourceConfigurationCommand,
+  SetIntegrationConnectionStateCommand, ValidateWorkSourceConfigurationQuery,
 };
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
+  operation!(
+    PreviewWorkSourcesQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-sources/preview",
+    "previewWorkSources",
+    "Factory",
+    "Read bounded native selector explanations without admission, cursor updates or task refresh",
+    Some("WorkSourcePreviewSubmission"),
+    "WorkSourcePreview",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress(),
+  operation!(
+    GetWorkSourceDiagnosticsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-source-inputs/{input_id}/versions/{version}/diagnostics",
+    "getWorkSourceInputDiagnostics",
+    "Factory",
+    "Read safe exact input progress and visible original Work/Run reporting",
+    None,
+    "WorkSourceDiagnostics",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::WorkSourceDiagnostics)
+  .with_visibility::<GetWorkSourceDiagnosticsQuery>(),
+  operation!(
+    GetWorkSourceDiagnosticsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-source-groups/{group_id}/versions/{version}/diagnostics",
+    "getWorkSourceGroupDiagnostics",
+    "Factory",
+    "Read safe exact exclusive-group progress and visible original Work/Run reporting",
+    None,
+    "WorkSourceDiagnostics",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::WorkSourceDiagnostics)
+  .with_visibility::<GetWorkSourceDiagnosticsQuery>(),
+  operation!(
+    PublishWorkSourceConfigurationCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-source-inputs/{input_id}/versions",
+    "publishWorkSourceInput",
+    "Factory",
+    "Publish an immutable automatic input using granted installed profiles",
+    Some("WorkSourceConfigurationSubmission"),
+    "WorkSourceConfigurationMutation",
+    "200",
+    true,
+    true
+  )
+  .with_protected_ingress(),
+  operation!(
+    PublishWorkSourceConfigurationCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-source-groups/{group_id}/versions",
+    "publishWorkSourceGroup",
+    "Factory",
+    "Publish an exact exclusive input group and optional member versions atomically",
+    Some("WorkSourceConfigurationSubmission"),
+    "WorkSourceConfigurationMutation",
+    "200",
+    true,
+    true
+  )
+  .with_protected_ingress(),
+  operation!(
+    ValidateWorkSourceConfigurationQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-sources/validate",
+    "validateWorkSourceConfiguration",
+    "Factory",
+    "Validate automatic inputs without importing tasks or starting discovery",
+    Some("WorkSourceConfigurationSubmission"),
+    "WorkSourceConfigurationValidation",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress(),
+  operation!(
+    ListWorkSourceInputChoicesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-source-choices",
+    "listWorkSourceInputChoices",
+    "Factory",
+    "List currently granted installed selectors and optional Reporter choices",
+    None,
+    "WorkSourceInputChoices",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::WorkSourceInputChoices)
+  .with_visibility::<ListWorkSourceInputChoicesQuery>(),
+  operation!(
+    ListWorkSourceConfigurationsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-sources",
+    "listWorkSourceConfigurations",
+    "Factory",
+    "List visible current input and group definitions",
+    None,
+    "WorkSourceConfigurationPage",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::WorkSourceConfigurations)
+  .with_visibility::<ListWorkSourceConfigurationsQuery>(),
+  operation!(
+    GetWorkSourceConfigurationQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-source-inputs/{input_id}/versions/{version}",
+    "getWorkSourceInput",
+    "Factory",
+    "Inspect an immutable input and its exact target root",
+    None,
+    "WorkSourceConfigurationRecord",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress(),
+  operation!(
+    GetWorkSourceConfigurationQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-source-groups/{group_id}/versions/{version}",
+    "getWorkSourceGroup",
+    "Factory",
+    "Inspect a group with its frozen members",
+    None,
+    "WorkSourceConfigurationRecord",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress(),
   operation!(
     CheckIntegrationConnectionQuery,
     "POST",

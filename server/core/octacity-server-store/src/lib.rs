@@ -422,9 +422,10 @@ pub use read_visibility::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
   FactoryChoiceListVisibility, FactoryConfigurationListVisibility, FactoryRunListVisibility,
-  FlowDefinitionListVisibility, InternalTriggerListVisibility, JobEventReadVisibility, MAX_READ_VISIBILITY_IDENTITIES,
-  PipelineListVisibility, ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView,
-  RepositoryListVisibility, TriggerDefinitionListVisibility,
+  FlowDefinitionListVisibility, IntegrationConnectionListVisibility, InternalTriggerListVisibility,
+  JobEventReadVisibility, MAX_READ_VISIBILITY_IDENTITIES, PipelineListVisibility, ProjectListVisibility,
+  ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility,
+  TriggerDefinitionListVisibility,
 };
 pub use resource_search_model::{
   MAX_RESOURCE_SEARCH_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_LABEL_BYTES, MAX_RESOURCE_SEARCH_PAGE_SIZE,
@@ -798,3 +799,8 @@ mod integration_project_access_tests;
 
 mod integration_project_access;
 pub use integration_project_access::*;
+
+mod factory_source_configuration;
+pub use factory_source_configuration::*;
+mod factory_source_diagnostics;
+pub use factory_source_diagnostics::*;

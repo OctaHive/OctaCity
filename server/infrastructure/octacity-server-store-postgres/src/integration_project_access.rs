@@ -78,13 +78,13 @@ pub(crate) async fn publish(
   crate::mutation::commit(tx, &identity, facts, encode_outcome(&outcome)?).await?;
   Ok(outcome)
 }
-pub(crate) async fn read(
-  pool: &PgPool,
+pub(crate) async fn read<'e>(
+  executor: impl sqlx::Executor<'e, Database = sqlx::Postgres>,
   connection_id: IntegrationId,
   project_id: ProjectId,
 ) -> Result<Option<PublishedIntegrationProjectAccess>, StoreError> {
   let row: Option<(i64, i64, Json<PublishedIntegrationProjectAccess>)> = sqlx::query_as("SELECT v.version, v.connection_version, v.document FROM integration_project_access a JOIN integration_project_access_versions v ON v.connection_id = a.connection_id AND v.project_id = a.project_id AND v.version = a.current_version WHERE a.connection_id = $1 AND a.project_id = $2")
-    .bind(connection_id.as_uuid()).bind(project_id.as_uuid()).fetch_optional(pool).await.map_err(unavailable)?;
+    .bind(connection_id.as_uuid()).bind(project_id.as_uuid()).fetch_optional(executor).await.map_err(unavailable)?;
   let Some((version, metadata_version, Json(access))) = row else {
     return Ok(None);
   };

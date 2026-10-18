@@ -27,6 +27,9 @@ use uuid::Uuid;
 #[path = "factory_source_admission_tests.rs"]
 mod installed_sources;
 
+#[path = "factory_source_configuration_tests.rs"]
+mod source_configuration;
+
 use crate::{
   AdmitManualFactoryWorkCommand, ApplicationFailure, AuthorizedCommandHandler, FactoryAdmissionHandlers,
   ManagementAction, ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,

@@ -1379,3 +1379,36 @@ fn publication_rejects_a_probe_only_receipt_schema_before_any_external_write() {
     assert!(publisher.published.lock().unwrap().is_none());
   });
 }
+
+#[test]
+fn published_status_action_fixture_matches_the_installed_contract_and_rejects_unbounded_parameters() {
+  let fixtures: serde_json::Value = serde_json::from_str(include_str!(
+    "../../api/octacity-server-api-rest/fixtures/v1/integration-contracts.json"
+  ))
+  .unwrap();
+  let parameters = &fixtures["FactoryWorkStatusActionParameters"][0];
+  let outcome = FlowOutcomeDefinition::new(key("reported"), FlowOutcomeKind::Success, reference("action.result"));
+  let reporter = Arc::new(Reporter {
+    requests: Mutex::new(vec![]),
+    unavailable: false,
+    scoped: false,
+  });
+  let action = FactoryWorkStatusAction::new(reference("reporter"), reporter.clone(), outcome.clone());
+  let validate = |parameters| {
+    action.validate(
+      &binding("reporter", "set_status", parameters),
+      std::slice::from_ref(&outcome),
+    )
+  };
+  assert!(validate(parameters.clone()).is_ok());
+  for invalid in [
+    serde_json::json!({"status":"arbitrary-outcome","outbox":{"max_attempts":0,"retry_delay_millis":1}}),
+    serde_json::json!({"status":"arbitrary-outcome","outbox":{"max_attempts":1025,"retry_delay_millis":1}}),
+    serde_json::json!({"status":"arbitrary-outcome","outbox":{"max_attempts":1,"retry_delay_millis":3600001}}),
+    serde_json::json!({"status":"я".repeat(1025)}),
+    serde_json::json!({"status":"arbitrary-outcome","issue_id":"retarget-forbidden"}),
+  ] {
+    assert!(validate(invalid).is_err());
+  }
+  assert!(reporter.requests.lock().unwrap().is_empty());
+}

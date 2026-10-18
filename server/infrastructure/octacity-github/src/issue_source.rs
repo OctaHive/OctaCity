@@ -35,6 +35,87 @@ pub(crate) async fn scan(
   intent: &ScanIntent,
   selectors: &[IssueSelector],
 ) -> Result<Page, WorkApiFailure> {
+  let (issues, next_cursor) = list(api, owner, name, credential, intent).await?;
+  let mut candidates = Vec::new();
+  let mut matching_selections = Vec::new();
+  for (state, candidate) in issues {
+    let matches = selectors
+      .iter()
+      .zip(std::iter::once(&intent.selection).chain(&intent.additional_selections))
+      .filter(|(selector, _)| selector.matches(state, &candidate.labels))
+      .map(|(_, selection)| selection.clone())
+      .collect::<Vec<_>>();
+    if matches.is_empty() {
+      continue;
+    }
+    if !intent.additional_selections.is_empty() {
+      matching_selections.push(matches);
+    }
+    candidates.push(candidate);
+  }
+  Ok(Page {
+    scan_id: intent.scan_id.clone(),
+    resource_id: intent.resource.resource_id.clone(),
+    configuration_digest: intent.configuration_digest.clone(),
+    selection: intent.selection.clone(),
+    candidates,
+    matching_selections,
+    next_cursor,
+  })
+}
+
+pub(crate) async fn preview(
+  api: &ApiSettings,
+  owner: &str,
+  name: &str,
+  credential: &Credential,
+  intent: &ScanIntent,
+  selectors: &[IssueSelector],
+) -> Result<octacity_work_source_protocol::preview::Page, WorkApiFailure> {
+  use octacity_work_source_protocol::preview;
+  let (issues, next_cursor) = list(api, owner, name, credential, intent).await?;
+  let candidates = issues
+    .into_iter()
+    .map(|(state, candidate)| {
+      let mut title = candidate.title;
+      let mut end = title.len().min(preview::MAX_SUMMARY_BYTES);
+      while !title.is_char_boundary(end) {
+        end -= 1;
+      }
+      title.truncate(end);
+      preview::Candidate {
+        item_id: candidate.item_id,
+        display_id: candidate.display_id,
+        title,
+        state: candidate.state,
+        labels: candidate.labels.clone(),
+        selections: selectors
+          .iter()
+          .zip(std::iter::once(&intent.selection).chain(&intent.additional_selections))
+          .map(|(selector, selection)| preview::Selection {
+            selection: selection.clone(),
+            reasons: selector.mismatches(state, &candidate.labels),
+          })
+          .collect(),
+      }
+    })
+    .collect();
+  Ok(preview::Page {
+    scan_id: intent.scan_id.clone(),
+    resource_id: intent.resource.resource_id.clone(),
+    configuration_digest: intent.configuration_digest.clone(),
+    candidates,
+    next_cursor,
+  })
+}
+
+async fn list(
+  api: &ApiSettings,
+  owner: &str,
+  name: &str,
+  credential: &Credential,
+  intent: &ScanIntent,
+) -> Result<(Vec<(IssueState, Candidate)>, Option<String>), WorkApiFailure> {
   let (page, context) = crate::issue_pagination::current(intent)?;
   let since = intent
     .window
@@ -87,7 +168,6 @@ pub(crate) async fn scan(
     return Err(FailureClass::ProtocolFault.into());
   }
   let mut candidates = Vec::new();
-  let mut matching_selections = Vec::new();
   for issue in issues {
     if issue.get("pull_request").is_some() {
       continue;
@@ -105,41 +185,24 @@ pub(crate) async fn scan(
       continue;
     }
     let labels: Vec<String> = issue.labels.into_iter().map(|label| label.name).collect();
-    let matches = selectors
-      .iter()
-      .zip(std::iter::once(&intent.selection).chain(&intent.additional_selections))
-      .filter(|(selector, _)| selector.matches(issue.state, &labels))
-      .map(|(_, selection)| selection.clone())
-      .collect::<Vec<_>>();
-    if matches.is_empty() {
-      continue;
-    }
-    if !intent.additional_selections.is_empty() {
-      matching_selections.push(matches);
-    }
-    candidates.push(Candidate {
-      container_id: intent.resource.resource_id.clone(),
-      item_id: issue.id.to_string(),
-      display_id: issue.number.to_string(),
-      update_identity: issue.updated_at,
-      title: issue.title,
-      body: issue.body,
-      fields: Default::default(),
-      labels,
-      state: match issue.state {
-        IssueState::Open => "open",
-        IssueState::Closed => "closed",
-      }
-      .into(),
-    });
+    candidates.push((
+      issue.state,
+      Candidate {
+        container_id: intent.resource.resource_id.clone(),
+        item_id: issue.id.to_string(),
+        display_id: issue.number.to_string(),
+        update_identity: issue.updated_at,
+        title: issue.title,
+        body: issue.body,
+        fields: Default::default(),
+        labels,
+        state: match issue.state {
+          IssueState::Open => "open",
+          IssueState::Closed => "closed",
+        }
+        .into(),
+      },
+    ));
   }
-  Ok(Page {
-    scan_id: intent.scan_id.clone(),
-    resource_id: intent.resource.resource_id.clone(),
-    configuration_digest: intent.configuration_digest.clone(),
-    selection: intent.selection.clone(),
-    candidates,
-    matching_selections,
-    next_cursor,
-  })
+  Ok((candidates, next_cursor))
 }

@@ -165,16 +165,35 @@ impl IssueSelector {
 
   /// Evaluates the locally observed Issue facts rather than a provider search result.
   pub fn matches(&self, state: IssueState, labels: &[String]) -> bool {
-    let state_matches = matches!(
+    self.mismatches(state, labels).is_empty()
+  }
+
+  /// Explains the same validated local predicate without exposing private task content.
+  pub(crate) fn mismatches(
+    &self,
+    state: IssueState,
+    labels: &[String],
+  ) -> Vec<octacity_work_source_protocol::preview::SelectionMismatch> {
+    use octacity_work_source_protocol::preview::SelectionMismatch as Reason;
+    let mut reasons = Vec::new();
+    if !matches!(
       (self.state, state),
       (IssueStateSelection::All, _)
         | (IssueStateSelection::Open, IssueState::Open)
         | (IssueStateSelection::Closed, IssueState::Closed)
-    );
-    state_matches
-      && self.all_of.iter().all(|label| contains_label(labels, label))
-      && (self.any_of.is_empty() || self.any_of.iter().any(|label| contains_label(labels, label)))
-      && !self.none_of.iter().any(|label| contains_label(labels, label))
+    ) {
+      reasons.push(Reason::StateMismatch);
+    }
+    if !self.all_of.iter().all(|label| contains_label(labels, label)) {
+      reasons.push(Reason::RequiredLabelMissing);
+    }
+    if !self.any_of.is_empty() && !self.any_of.iter().any(|label| contains_label(labels, label)) {
+      reasons.push(Reason::AlternativeLabelMissing);
+    }
+    if self.none_of.iter().any(|label| contains_label(labels, label)) {
+      reasons.push(Reason::ExcludedLabelPresent);
+    }
+    reasons
   }
 }
 

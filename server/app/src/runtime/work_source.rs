@@ -69,6 +69,20 @@ pub struct FactorySourceProfile {
   pub polling: SourcePollingPolicy,
 }
 impl FactorySourceProfile {
+  fn for_definition(
+    mut self,
+    definition: &WorkSourceInputDraft,
+    connections: Option<&ManagedIntegrationConnections>,
+  ) -> Result<Self, ApplicationError> {
+    if let Some(connection) = &definition.connection {
+      self.managed_access = Some(
+        connections
+          .ok_or_else(ApplicationError::capability_unavailable)?
+          .for_work_binding(connection, &self.binding, IntegrationPurpose::TaskRead)?,
+      );
+    }
+    Ok(self)
+  }
   /// Adopts managed current-grant checks without changing the pinned Source/Work identity.
   pub fn with_managed_access(mut self, access: ManagedIntegrationAccess) -> Self {
     self.managed_access = Some(access);
@@ -113,6 +127,7 @@ pub struct FactorySourceWorker<S, B> {
   dependencies: Arc<FactorySourceWorkerDependencies<S, B>>,
   installation: Arc<FactorySourceInstallation>,
   discovery: tokio::sync::Mutex<(usize, Option<WorkSourceScanTarget>)>,
+  managed_connections: Option<ManagedIntegrationConnections>,
 }
 impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> FactorySourceWorker<S, B> {
   /// Constructs explicit source support without fetching tokens or contacting a provider.
@@ -154,7 +169,13 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
       dependencies: Arc::new(dependencies),
       installation: Arc::new(installation),
       discovery: tokio::sync::Mutex::new((0, None)),
+      managed_connections: None,
     })
+  }
+  /// Enables current connection resolution for explicitly managed inputs; legacy profiles stay explicit.
+  pub fn with_managed_connections(mut self, connections: ManagedIntegrationConnections) -> Self {
+    self.managed_connections = Some(connections);
+    self
   }
   /// Runs one finite slice; absence or pre-cancellation performs no provider activity.
   pub async fn run_once(
@@ -196,7 +217,8 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
         let cancellation = cancellation.clone();
         let project = *project;
         let target = *target;
-        tasks.spawn(async move { poll_target(d, installation, project, target, cancellation).await });
+        let connections = self.managed_connections.clone();
+        tasks.spawn(async move { poll_target(d, installation, project, target, cancellation, connections).await });
       }
       while let Some(result) = tasks.join_next().await {
         let one = result.map_err(|_| ApplicationError::unavailable())??;
@@ -215,6 +237,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
   project: ProjectId,
   target: WorkSourceScanTarget,
   cancellation: CancellationToken,
+  managed_connections: Option<ManagedIntegrationConnections>,
 ) -> Result<FactorySourceWorkerOutcome, ApplicationError> {
   let mut outcome = FactorySourceWorkerOutcome::default();
   let settings = installation.settings;
@@ -243,9 +266,10 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
   let operation_cancel = cancellation.child_token();
   let pass = async {
     let members = d.store.source_scan_members(scan.claim.clone(), d.clock.now()?).await?;
-    let profiles = profiles_for(&installation.profiles, &members)?;
+    let profiles = profiles_for(&installation.profiles, &members, managed_connections.as_ref())?;
     let mut polling = common_polling(&profiles)?;
     let reader = Arc::new(SourcePageBridge {
+      managed_connections: managed_connections.clone(),
       store: d.store.clone(),
       registry: d.registry.clone(),
       profiles: profiles.clone(),
@@ -254,6 +278,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
       cancellation: operation_cancel.clone(),
     });
     let processor = Arc::new(SourceCandidateBridge {
+      managed_connections: managed_connections.clone(),
       store: d.store.clone(),
       bytes: d.bytes.clone(),
       revisions: d.revisions.clone(),
@@ -395,6 +420,7 @@ fn failure(error: &ApplicationError) -> (WorkSourceFailure, Option<u32>) {
 fn profiles_for(
   profiles: &[FactorySourceProfile],
   members: &[WorkSourceInput],
+  connections: Option<&ManagedIntegrationConnections>,
 ) -> Result<Vec<FactorySourceProfile>, ApplicationError> {
   members
     .iter()
@@ -405,6 +431,7 @@ fn profiles_for(
         .find(|p| p.project_id == input.project_id() && p.binding == input.definition().source)
         .cloned()
         .ok_or_else(ApplicationError::capability_unavailable)
+        .and_then(|profile| profile.for_definition(input.definition(), connections))
     })
     .collect()
 }
@@ -460,3 +487,6 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
     self.run_once(cancellation).await
   }
 }
+#[path = "work_source_preview.rs"]
+mod preview;
+pub use preview::HostedFactoryWorkSourcePreview;

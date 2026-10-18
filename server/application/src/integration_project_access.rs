@@ -281,6 +281,49 @@ pub struct ManagedIntegrationAccess {
   connection_id: IntegrationId,
   version: octacity_server_domain::IntegrationVersion,
   authorizer: Arc<dyn IntegrationResourceAuthorizer>,
+  work_configuration: Option<(
+    octacity_server_factory::ImmutableReference,
+    octacity_server_factory::ImmutableReference,
+  )>,
+}
+/// Shared current-authority resolver for explicitly managed inputs, without eager reads or provider IO.
+#[derive(Clone)]
+pub struct ManagedIntegrationConnections {
+  authorizer: Arc<dyn IntegrationResourceAuthorizer>,
+}
+impl ManagedIntegrationConnections {
+  /// Installs the existing connection/access read ports once for Source and Reporter composition.
+  pub fn new<
+    S: IntegrationProjectAccessStore + IntegrationConnectionStore + IntegrationAdministrationStore + 'static,
+  >(
+    store: Arc<S>,
+  ) -> Self {
+    Self {
+      authorizer: Arc::new(StoredIntegrationAuthorizer(store)),
+    }
+  }
+  /// Binds one published input profile to its exact connection profile; this grants no authority.
+  pub fn for_work_binding(
+    &self,
+    connection: &octacity_server_factory::WorkSourceConnectionRef,
+    binding: &octacity_server_factory::WorkSourceBinding,
+    purpose: IntegrationPurpose,
+  ) -> Result<ManagedIntegrationAccess, ApplicationError> {
+    let configuration = match purpose {
+      IntegrationPurpose::TaskRead => &connection.source_configuration,
+      IntegrationPurpose::TaskUpdate => connection
+        .reporter_configuration
+        .as_ref()
+        .ok_or_else(ApplicationError::capability_unavailable)?,
+      _ => return Err(ApplicationError::capability_unavailable()),
+    };
+    Ok(ManagedIntegrationAccess {
+      connection_id: connection.id,
+      version: connection.version,
+      authorizer: self.authorizer.clone(),
+      work_configuration: Some((binding.configuration.clone(), configuration.clone())),
+    })
+  }
 }
 impl ManagedIntegrationAccess {
   /// Pins the reviewed connection version without reading credentials, granting access or contacting providers.
@@ -295,6 +338,7 @@ impl ManagedIntegrationAccess {
       connection_id,
       version,
       authorizer: Arc::new(StoredIntegrationAuthorizer(store)),
+      work_configuration: None,
     }
   }
   /// Rechecks current Project use and exact native/profile pins immediately before a provider dispatch.
@@ -316,11 +360,19 @@ impl ManagedIntegrationAccess {
         purpose,
       })
       .await?;
+    let configuration = if let Some((input, connection)) = &self.work_configuration {
+      if input != &binding.configuration {
+        return Err(ApplicationError::capability_unavailable());
+      }
+      connection
+    } else {
+      &binding.configuration
+    };
     if material.installation != binding.installation
       || material.adapter != *plugin
       || material.resource.native_id.as_str() != native_resource
       || material.capability.capability != binding.capability
-      || material.capability.configuration != binding.configuration
+      || material.capability.configuration != *configuration
     {
       return Err(ApplicationError::capability_unavailable());
     }

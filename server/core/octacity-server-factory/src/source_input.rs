@@ -62,6 +62,9 @@ pub struct WorkSourceCapability {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkSourceInputDraft {
+  /// Exact managed connection and reviewed Project access; absent for legacy installed inputs.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub connection: Option<WorkSourceConnectionRef>,
   /// Exact Factory Configuration; its published closure selects the root Flow.
   pub target: FactoryConfigurationRef,
   /// Exact code Repository selected independently of the ticket container.
@@ -73,6 +76,22 @@ pub struct WorkSourceInputDraft {
   /// Explicit operator opt-in to future discovery/admission workers.
   #[serde(default)]
   pub enabled: bool,
+}
+
+/// Managed authority is separate from the stable input and native task identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkSourceConnectionRef {
+  /// Reusable connection selected without credentials.
+  pub id: octacity_server_domain::IntegrationId,
+  /// Exact metadata revision, never implicitly retargeted.
+  pub version: octacity_server_domain::IntegrationVersion,
+  /// Reviewed Project grant revision, rechecked at publication.
+  pub access_version: octacity_server_domain::IntegrationVersion,
+  /// Installed connection profile, separate from this input's selector/mapping settings.
+  pub source_configuration: ImmutableReference,
+  /// Separately selected writer profile; absent when no Reporter is selected.
+  pub reporter_configuration: Option<ImmutableReference>,
 }
 
 /// Selected immutable resources supplied by authorized application resolution.

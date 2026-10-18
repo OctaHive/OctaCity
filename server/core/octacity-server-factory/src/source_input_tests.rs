@@ -109,6 +109,7 @@ fn draft(
   source: &WorkSourceCapability,
 ) -> WorkSourceInputDraft {
   WorkSourceInputDraft {
+    connection: None,
     target: target.reference().clone(),
     repository: repository.clone(),
     source: source.binding.clone(),

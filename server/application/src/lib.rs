@@ -219,7 +219,7 @@ mod factory_protected_test_tests;
 pub use factory_flow::{FactoryFlowInputPreparer, FactoryFlowRunner};
 pub use factory_flow_action::{
   FactoryFlowActionAdapter, FactoryFlowActionObservation, FactoryFlowActionPlugin, FactoryFlowActionRequest,
-  FactoryWorkStatusAction, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
+  FactoryReporterRetryPolicy, FactoryWorkStatusAction, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
 };
 mod factory_job_spec;
 #[cfg(test)]
@@ -666,7 +666,9 @@ pub use factory_discovery::{
   ListFactoryRunsQuery, MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
 };
 pub use management_input::factory::{FactoryNodeControlInput, FactoryRunListInput};
-pub use octacity_server_factory::{MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS, MAX_DECISION_SIGNAL_RECEIPTS};
+pub use octacity_server_factory::{
+  MAX_DECISION_ASSESSMENTS, MAX_DECISION_REASONS, MAX_DECISION_SIGNAL_RECEIPTS, MAX_FACTORY_SAFE_TEXT_BYTES,
+};
 pub use octacity_server_store::{
   FactoryRunPage as FactoryRunPageProjection, FactoryRunSummary as FactoryRunSummaryProjection,
   MAX_FACTORY_RUN_SUMMARY_NODES,
@@ -745,3 +747,6 @@ mod integration_check;
 #[cfg(test)]
 mod integration_check_tests;
 pub use integration_check::*;
+
+mod factory_source_configuration;
+pub use factory_source_configuration::*;

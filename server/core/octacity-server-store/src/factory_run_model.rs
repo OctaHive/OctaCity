@@ -247,6 +247,17 @@ pub struct FactoryOutboxRecord {
 }
 
 impl FactoryOutboxRecord {
+  /// Canonical immutable journal order; a later attempt supersedes an earlier terminal row.
+  #[must_use]
+  pub fn order_key(&self) -> (u16, u8, Timestamp, FactoryDigest) {
+    let state = match self.state {
+      FactoryOutboxState::Pending => 0,
+      FactoryOutboxState::Claimed => 1,
+      FactoryOutboxState::Delivered | FactoryOutboxState::Failed => 2,
+    };
+    (self.attempt, state, self.recorded_at, self.id)
+  }
+
   /// Constructs an initial pending outbox state row.
   #[must_use]
   pub fn pending(

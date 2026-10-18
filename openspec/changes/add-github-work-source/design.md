@@ -7,7 +7,7 @@ Implementation baseline and remaining seams:
 - `server/application/src/factory_admission.rs` preserves manual admission and replay-before-resolution; completed tasks 1–4.5 have added separately authorized source admission and reporting without changing manual identity.
 - `server/core/octacity-server-store/src/factory_admission_model.rs` already scopes external identities by source and accepted security scope and retains immutable admission intent. Extend that authority; do not add a second deduplication database or reimplement the pipeline's business duplicate analysis.
 - `server/application/src/factory_work_status_outbox.rs` already dispatches accepted `set_status` effects under independent outbox fences and retry policy through `FactoryWorkStatusProjector`.
-- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Completed tasks 5.1–5.5 provide reusable connection metadata, protected credential publication, recoverable authorized administration/REST, explicit Project/resource/purpose grants with managed Source/Reporter enforcement, and bounded read-only connection checks through independently advertised provider operations. Input management and Console integration remain pending from 5.6 onward.
+- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Tasks 5.1–5.6 provide reusable connection metadata, protected credential publication, recoverable authorized administration/REST, explicit Project/resource/purpose grants with managed Source/Reporter enforcement, bounded read-only connection checks through independently advertised provider operations, and typed immutable automatic input/group publication with safe installed choices. Task 5.7 provides bounded read-only Source preview and retained Source/Reporter diagnostics. Task 5.8 aligns OpenAPI, canonical wire examples and generated client contracts. Console integration remains pending from 5.9 onward.
 - Existing VCS configuration uses integration identities and private credential handles, while the secret domain separates logical references from transient values. Reuse these contracts where applicable; do not expose Job-secret delegation as authority to manage provider credentials.
 - `ui/src/features/factory/ConfigurationEditor.tsx` already selects visible Factory dependencies through generated REST types. Add an input section there or in its adjacent configuration detail rather than create a second pipeline designer.
 - `ui/src/features/factory/FlowGraphEditor.tsx` and `FlowBindings.tsx` already author ordinary trusted-action bindings; use those surfaces for stage-local source effects.
@@ -231,6 +231,33 @@ Recheck current grants at validation, publication and each protected operation;
 client choices and earlier checks are not authority. A bounded source preview
 reads candidates but cannot change provider data, production cursors or admission.
 Keep task-read readiness separate from optional task-write/Delivery readiness.
+
+Task 5.6 authoring selects operator-installed, adapter-validated immutable selector/
+mapping profiles. Safe choices describe their literal state/label settings; the
+server does not accept executable uploads, private paths or arbitrary provider
+configuration JSON. Input-specific settings pin their trusted parent connection
+profile separately, allowing distinct selectors to reuse a connection. Managed
+Source/Reporter dispatch resolves the selected input connection and fails closed
+without its current read/write authority. See [task 5.6 verification](verification-5.6.md)
+for publication, visibility, replay and compatibility evidence.
+
+Task 5.7 uses an independently advertised optional Source `preview` operation,
+sharing native listing without admission, cursor or task-observation authority.
+The hosted reader shares one original authorization/process deadline and narrows
+installed page bounds. Safe diagnostics project existing scan, admission and
+accepted reporting journals with dependency/Run visibility before pagination.
+Native correlation includes the installed security partition and excludes input
+identity; automatic replay remains unchanged. Optional visible task links use a
+read-only authoritative owner capability, without creating or refreshing cards.
+See [task 5.7 verification](verification-5.7.md) and
+[Source diagnostics reference](../../../docs/reference/factory-source-diagnostics.md).
+
+Task 5.8 publishes canonical schema-checked wire examples and the existing
+`set_status` parameter contract, with shared authoritative retry/credential bounds.
+Generated client checks preserve write-only credentials, native correlation,
+optional visible Issue links and independent manual admission. See
+[task 5.8 verification](verification-5.8.md) and the
+[integration contract reference](../../../docs/reference/integration-management-contracts.md).
 
 Use existing Factory configuration/detail patterns for effective selectors, exact
 versions, preview, source/reporting progress and visible Work/Run correlations.

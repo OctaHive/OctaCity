@@ -45,6 +45,9 @@ impl FactoryRuntimeResources {
       cancellation,
     )
     .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+    let projector = projector.with_managed_connections(
+      octacity_server_application::ManagedIntegrationConnections::new(self.runs.clone()),
+    );
     let projector = Arc::new(projector) as Arc<dyn octacity_server_application::FactoryWorkStatusProjector>;
     self.work_status_dispatcher(
       capabilities.into_iter().map(|key| (key, projector.clone())).collect(),
@@ -70,7 +73,13 @@ impl FactoryRuntimeResources {
       },
       installation,
     )
-    .map(|worker| Arc::new(worker) as Arc<dyn super::FactorySourceRuntime>)
+    .map(|worker| {
+      Arc::new(
+        worker.with_managed_connections(octacity_server_application::ManagedIntegrationConnections::new(
+          self.runs.clone(),
+        )),
+      ) as Arc<dyn super::FactorySourceRuntime>
+    })
     .map_err(|_| FactoryRuntimeInstallationError::Invalid)
   }
 

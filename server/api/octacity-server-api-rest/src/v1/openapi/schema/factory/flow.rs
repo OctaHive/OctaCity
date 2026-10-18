@@ -233,13 +233,26 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["predecessor", "outcome", "successor", "schema"],
     ),
   );
+  // This describes the installed built-in action without closing the generic plugin envelope.
+  schemas.insert(
+    "FactoryWorkStatusActionParameters".to_owned(),
+    object([
+      ("status", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_FACTORY_SAFE_TEXT_BYTES,
+        "x-max-utf8-bytes":octacity_server_application::MAX_FACTORY_SAFE_TEXT_BYTES,
+        "description":"Arbitrary configured status resolved by the original source's pinned Reporter mapping; no provider or outcome vocabulary is imposed."})),
+      ("outbox", nullable(object([
+        ("max_attempts", bounded_integer(1, octacity_server_application::FactoryReporterRetryPolicy::MAX_ATTEMPTS.into())),
+        ("retry_delay_millis", bounded_integer(1, octacity_server_application::FactoryReporterRetryPolicy::MAX_RETRY_DELAY_MILLIS)),
+      ], &["max_attempts", "retry_delay_millis"]))),
+    ], &["status"]),
+  );
   schemas.insert(
     "FactoryFlowAction".to_owned(),
     object(
       [
         ("plugin", schema_ref("FactoryImmutableReferenceResource")),
         ("action", key()),
-        ("parameters", json!({})),
+        ("parameters", json!({"description":"Plugin-owned parameters. The installed set_status action uses FactoryWorkStatusActionParameters; other installed actions retain their own contracts."})),
       ],
       &["plugin", "action", "parameters"],
     ),

@@ -18,12 +18,14 @@ use octacity_server_application::{
 
 mod check;
 mod project_access;
+mod sources;
 pub(super) use check::check_connection;
 use octacity_server_application::CheckIntegrationConnectionQuery;
 use octacity_server_application::{
   GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, PublishIntegrationProjectAccessCommand,
 };
 pub(super) use project_access::{get_project_access, list_project_resources, publish_project_access};
+pub(super) use sources::*;
 type Credentials = dyn AuthorizedManagementCommandHandler<ManageIntegrationCredentialCommand, Error = ApplicationError>;
 /// Endpoint capabilities are supplied by trusted composition, with application authorization.
 pub struct IntegrationManagementApplication {
@@ -31,6 +33,8 @@ pub struct IntegrationManagementApplication {
   metadata: Option<MetadataEndpoints>,
   administration: Option<AdministrationEndpoints>,
   project_access: Option<ProjectAccessEndpoints>,
+  sources: Option<SourceConfigurationEndpoints>,
+  source_reads: Option<SourceReadEndpoints>,
   checks: Option<Arc<dyn AuthorizedManagementQueryHandler<CheckIntegrationConnectionQuery, Error = ApplicationError>>>,
 }
 struct ProjectAccessEndpoints {
@@ -56,6 +60,8 @@ impl IntegrationManagementApplication {
       administration: None,
       project_access: None,
       checks: None,
+      sources: None,
+      source_reads: None,
     }
   }
   /// Installs the separately authorized write-only credential service.
@@ -70,6 +76,8 @@ impl IntegrationManagementApplication {
       administration: None,
       project_access: None,
       checks: None,
+      sources: None,
+      source_reads: None,
     }
   }
   /// Installs separately authorized, bounded read-only diagnostics without activating inputs.

@@ -7,6 +7,7 @@ use serde::{Deserialize, Serialize};
 
 mod access;
 pub mod check;
+pub mod preview;
 pub mod reporter;
 pub mod source;
 pub use access::*;
@@ -137,7 +138,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request, ProtocolError> {
 pub fn decode_response(bytes: &[u8], request: &Request) -> Result<Response, ProtocolError> {
   common::require_message_size(bytes, request.max_response_bytes()).map_err(|_| ProtocolError::LimitExceeded)?;
   if let Request::Source(source::Request {
-    command: source::Command::Scan(intent),
+    command: source::Command::Scan(intent) | source::Command::Preview(intent),
     ..
   }) = request
   {

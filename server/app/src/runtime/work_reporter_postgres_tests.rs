@@ -442,3 +442,68 @@ async fn postgres_slow_confirmation_does_not_spend_the_projection_budget() {
   })
   .await;
 }
+
+#[tokio::test(start_paused = true)]
+#[ignore = "requires an explicitly selected disposable PostgreSQL service"]
+async fn source_reporting_diagnostics_does_not_wait_for_a_run_writer() {
+  controlled_io(async move {
+    let (fixture, profile) = fixture("custom-tracker").await;
+    let (fixture, database) = postgres_fixture(fixture).await;
+    let run = queue(&fixture, hosted(&fixture, vec![profile])).await;
+    // The writer holds its lock until the public query returns. A low database
+    // lock timeout makes accidental locking reads fail without an elapsed-time assertion.
+    let reads = sqlx::postgres::PgPoolOptions::new()
+      .max_connections(1)
+      .after_connect(|connection, _| {
+        Box::pin(async move {
+          sqlx::query("SET lock_timeout = '1ms'").execute(connection).await?;
+          Ok(())
+        })
+      })
+      .connect_with((*database.pool.connect_options()).clone())
+      .await
+      .unwrap();
+    let queries = AuthorizedQueryHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(
+        FactorySourceConfigurationHandlers::new(
+          Arc::new(PostgresStore::new(reads.clone())),
+          Arc::new(TrustedNetworkManagementPolicy),
+          vec![],
+        )
+        .unwrap(),
+      ),
+    );
+    let mut writer = database.pool.begin().await.unwrap();
+    sqlx::query("SELECT id FROM factory_runs WHERE id=$1 FOR UPDATE")
+      .bind(run.as_uuid())
+      .execute(&mut *writer)
+      .await
+      .unwrap();
+    let result = queries
+      .handle_query(
+        &fixture.profile.context,
+        GetWorkSourceDiagnosticsQuery {
+          project_id: fixture.input.project_id(),
+          target: WorkSourceScanTarget::Input {
+            id: fixture.input.id(),
+            version: fixture.input.version(),
+          },
+          after: None,
+          limit: 1,
+        },
+      )
+      .await;
+    writer.rollback().await.unwrap();
+    reads.close().await;
+    database.cleanup().await;
+    let diagnostic = result.expect("reporting diagnostics must finish while the Run writer owns its lock");
+    assert_eq!(diagnostic.admissions[0].association.run_id, run);
+    assert_eq!(diagnostic.admissions[0].reporting.len(), 1);
+    assert_eq!(
+      diagnostic.admissions[0].reporting[0].state,
+      WorkSourceReportingState::Pending
+    );
+  })
+  .await;
+}

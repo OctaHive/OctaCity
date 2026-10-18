@@ -36,7 +36,7 @@ async fn metadata(
   }
   Ok(metadata)
 }
-async fn read_state(
+pub(crate) async fn read_state(
   tx: &mut Transaction<'_, Postgres>,
   id: IntegrationId,
 ) -> Result<IntegrationAdministrationState, StoreError> {

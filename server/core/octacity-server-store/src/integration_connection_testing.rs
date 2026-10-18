@@ -176,6 +176,33 @@ pub(super) struct IntegrationMemoryState {
     (IntegrationConnectionIntent, IntegrationConnectionMutationOutcome),
   >,
 }
+
+impl IntegrationMemoryState {
+  pub(super) fn validate_source_input(
+    &self,
+    input: &octacity_server_factory::WorkSourceInput,
+  ) -> Result<(), StoreError> {
+    let Some(connection) = &input.definition().connection else {
+      return Ok(());
+    };
+    if self.current.get(&connection.id) != Some(&connection.version) {
+      return Err(crate::source_conflict());
+    }
+    let metadata = self
+      .versions
+      .get(&(connection.id, connection.version))
+      .ok_or_else(crate::source_conflict)?;
+    let access = self
+      .access
+      .get(&(connection.id, input.project_id()))
+      .ok_or_else(crate::source_conflict)?;
+    let administration = self
+      .administration
+      .get(&connection.id)
+      .ok_or_else(crate::source_conflict)?;
+    crate::validate_managed_work_source(input, metadata, access, administration)
+  }
+}
 fn replay_connection(
   state: &IntegrationMemoryState,
   key: &ManagementIdempotencyKey,

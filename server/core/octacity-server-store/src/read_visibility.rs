@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use octacity_server_domain::{
-  AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, JobId, PipelineId, PoolId,
-  ProjectId, RepositoryId, TriggerId,
+  AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, IntegrationId, JobId, PipelineId,
+  PoolId, ProjectId, RepositoryId, TriggerId,
 };
 use octacity_server_factory::{FactoryChoiceIdentity, FactoryConfigurationId, FactoryRunId};
 use thiserror::Error;
@@ -150,6 +150,11 @@ query_visibility!(
   RepositoryListVisibility,
   RepositoryId,
   "Visibility input for a deterministic current Repository page."
+);
+query_visibility!(
+  IntegrationConnectionListVisibility,
+  IntegrationId,
+  "Visible reusable connection identities for source configuration reads."
 );
 query_visibility!(
   BuildConfigurationListVisibility,

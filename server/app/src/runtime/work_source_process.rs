@@ -1,6 +1,7 @@
 //! Verified process translation and safe provider failure mapping.
 use super::*;
 pub(super) struct SourcePageBridge<S> {
+  pub(super) managed_connections: Option<ManagedIntegrationConnections>,
   pub(super) store: Arc<S>,
   pub(super) registry: Arc<WorkAdapterRegistry>,
   pub(super) profiles: Vec<FactorySourceProfile>,
@@ -16,7 +17,7 @@ impl<S: FactorySourceStore> FactorySourcePageReader for SourcePageBridge<S> {
       .store
       .source_scan_members(request.claim.clone(), self.clock.now()?)
       .await?;
-    let profiles = profiles_for(&self.profiles, &members)?;
+    let profiles = profiles_for(&self.profiles, &members, self.managed_connections.as_ref())?;
     for profile in &profiles {
       profile.authorize_access().await?;
     }
@@ -62,8 +63,15 @@ impl<S: FactorySourceStore> FactorySourcePageReader for SourcePageBridge<S> {
         max_page_bytes: request.max_page_bytes,
       })),
     });
-    let source::Outcome::Page(page) =
-      execute_source(&self.registry, profile, wire, self.settings, self.cancellation.clone()).await?
+    let source::Outcome::Page(page) = execute_source(
+      &self.registry,
+      profile,
+      wire,
+      self.settings.operation_timeout,
+      self.settings.cancellation_grace,
+      self.cancellation.clone(),
+    )
+    .await?
     else {
       return Err(ApplicationError::capability_unavailable());
     };
@@ -106,7 +114,8 @@ pub(super) async fn execute_source(
   registry: &WorkAdapterRegistry,
   profile: &FactorySourceProfile,
   wire: octacity_work_source_protocol::Request,
-  settings: FactorySourceWorkerSettings,
+  timeout: Duration,
+  grace: Duration,
   cancellation: CancellationToken,
 ) -> Result<octacity_work_source_protocol::source::Outcome, ApplicationError> {
   use octacity_work_source_protocol::{Response, source};
@@ -114,12 +123,7 @@ pub(super) async fn execute_source(
     .resolve(profile.plugin.identity().as_str(), &profile.plugin.digest().to_string())
     .map_err(|_| ApplicationError::capability_unavailable())?;
   let response = adapter
-    .execute(
-      wire,
-      settings.operation_timeout,
-      settings.cancellation_grace,
-      cancellation,
-    )
+    .execute(wire, timeout, grace, cancellation)
     .await
     .map_err(|error| {
       use octacity_server_work_source::{HostError, HostFailureClass};

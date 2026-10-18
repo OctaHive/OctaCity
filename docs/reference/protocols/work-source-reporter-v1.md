@@ -34,6 +34,7 @@ max = 2
 
 [capabilities.source]
 authorize = true
+preview = true
 cancel = true
 credential_class = "work_source_read"
 configuration_digest = "<immutable-discovery-profile-sha256>"
@@ -113,6 +114,32 @@ plugin rechecks its current private installed read grant and resource scope; thi
 is independent of new discovery and grants no management/admission permission.
 Cancellation uses the same original Source id. Older discovery-only plugins stay
 loadable but cannot supply the current grant check required by the polling worker.
+
+Source v1 optionally supports `preview`, advertised independently with
+`capabilities.source.preview = true`. Omission defaults to false; a legacy scan
+capability never implicitly authorizes preview. The request uses the exact
+`ScanIntent` resource/read handle, selector set, cancellation id and page bounds.
+The hosted management reader supplies no production cursor or scan window, takes
+one page, and narrows the caller's item/byte limits by every installed profile.
+Grant resolution and process execution share one original absolute deadline.
+
+`previewed` echoes scan/profile/native-container identity and contains bounded
+native summaries, an optional private continuation and one explanation for every
+requested selector on every item. Summaries contain only `item_id`, `display_id`,
+UTF-8 title (at most 512 bytes), native state and bounded literal labels. They
+contain no body, mapped Artifact input, credentials, internal Issue or execution
+instructions. Empty reasons mean a match; closed reasons are `state_mismatch`,
+`required_label_missing`, `alternative_label_missing`, `excluded_label_present`
+and `predicate_mismatch`. Missing/duplicate/foreign selectors, duplicate native
+items, invalid summaries and an oversized encoded response fail closed. A preview
+may include filtered items; an exclusive group with several matching members is
+ambiguous. Neither result is an admission decision.
+
+The GitHub adapter shares its bounded HTTPS metadata/listing path with Scan,
+excludes pull requests, truncates titles on UTF-8 boundaries and issues GETs only.
+Provider failures use the existing closed failure response; throttling retains
+bounded retry advice and cannot become a successful empty preview. The hosted
+reader discards private continuation bytes and exposes only `has_more`.
 
 Both Source v1 and Reporter v1/v2 optionally support read-only `check`. Each role
 must advertise `check = true` in its own capability section; omission defaults to
@@ -261,3 +288,6 @@ projection contract before intermediate/nested pipeline completion; stage/action
 provenance stays in accepted Factory records rather than entering provider wire
 payloads or granting native routing authority. Integration administration and
 management/Console authoring retain their subsequent tasks.
+
+Management composition and privacy semantics are documented in
+[Factory source preview and diagnostics](../factory-source-diagnostics.md).

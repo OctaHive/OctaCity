@@ -17,7 +17,7 @@ pub const MAX_SOURCE_BODY_BYTES: u32 = 262_144;
 pub const MAX_SOURCE_RETENTION_MILLIS: u64 = 2_592_000_000;
 
 /// One immutable input publication with a compare-and-swap precondition.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct WorkSourceInputChange {
   /// Current version, or absence for a new stable identity.
   pub expected_version: Option<WorkSourceInputVersion>,
@@ -25,7 +25,7 @@ pub struct WorkSourceInputChange {
   pub input: WorkSourceInput,
 }
 /// One immutable exclusive group publication.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct WorkSourceGroupChange {
   /// Current revision, or absence for a new group.
   pub expected_version: Option<WorkSourceGroupVersion>,
@@ -33,7 +33,7 @@ pub struct WorkSourceGroupChange {
   pub group: WorkSourceGroup,
 }
 /// Bounded atomic publication of inputs and an optional exclusive group.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 pub struct PublishWorkSources {
   /// Existing owner of every published resource.
   pub project_id: ProjectId,
@@ -481,14 +481,10 @@ impl ReserveWorkSourcePreparation {
     if input.id() != self.input_id || input.project_id() != self.claim.project_id || !input.definition().enabled {
       return Err(source_conflict());
     }
-    let issue = FactoryDigest::sha256(
-      "octacity.factory.source-correlation.v1",
-      &[
-        input.project_id().to_string().as_bytes(),
-        input.definition().source.installation.identity().as_str().as_bytes(),
-        self.item.resource.as_str().as_bytes(),
-        self.item.item.as_str().as_bytes(),
-      ],
+    let issue = crate::source_native_issue(
+      input.project_id(),
+      input.definition().source.installation.identity(),
+      &self.item,
     );
     let id = FactoryDigest::sha256(
       "octacity.factory.source-preparation.v1",
@@ -704,4 +700,32 @@ fn source_snapshot_epoch() -> octacity_server_domain::Timestamp {
 fn source_snapshot_deadline() -> octacity_server_domain::Timestamp {
   octacity_server_domain::Timestamp::from_unix_millis(MAX_SOURCE_RETENTION_MILLIS as i64)
     .expect("bounded legacy deadline")
+}
+
+/// Existing native observation hash; deliberately unchanged from the Source preparation journal.
+pub fn source_native_issue(
+  project: ProjectId,
+  installation: &octacity_server_factory::FactoryKey,
+  item: &WorkSourceItem,
+) -> FactoryDigest {
+  FactoryDigest::sha256(
+    "octacity.factory.source-correlation.v1",
+    &[
+      project.to_string().as_bytes(),
+      installation.as_str().as_bytes(),
+      item.resource.as_str().as_bytes(),
+      item.item.as_str().as_bytes(),
+    ],
+  )
+}
+/// Existing admission security-partition hash; carries no credential material.
+pub fn source_security_partition(scope: &crate::ManagementSecurityScope) -> FactoryDigest {
+  FactoryDigest::sha256("octacity.factory.security-scope.v1", &[scope.as_str().as_bytes()])
+}
+/// Common display correlation, excluding input identity; never used to reserve or replay work.
+pub fn source_native_correlation(issue: FactoryDigest, partition: FactoryDigest) -> FactoryDigest {
+  FactoryDigest::sha256(
+    "octacity.factory.native-task.v1",
+    &[&issue.as_bytes(), &partition.as_bytes()],
+  )
 }

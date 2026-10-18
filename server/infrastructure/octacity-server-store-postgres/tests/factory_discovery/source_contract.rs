@@ -1,4 +1,6 @@
 use super::*;
+#[path = "source_configuration.rs"]
+mod configuration;
 use octacity_server_factory::{
   WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceGroup, WorkSourceGroupId,
   WorkSourceGroupVersion, WorkSourceInput, WorkSourceInputContext, WorkSourceInputDraft, WorkSourceInputId,
@@ -76,6 +78,9 @@ async fn source_publication_is_atomic_owned_and_retains_exact_versions_in_both_s
       let restarted = PostgresStore::new(source_pool.clone());
       let store: &dyn FactorySourceStore = if is_postgres { &restarted } else { &memory };
       let retained = fenced_admission_contract(store, &input, &configuration).await;
+      let diagnostics: &dyn octacity_server_store::FactorySourceDiagnosticsStore =
+        if is_postgres { &restarted } else { &memory };
+      diagnostic_read_contract(diagnostics, &retained, foreign).await;
       replacement_contract(store, &input, &group, &configuration, &retained).await;
     }
     let restarted = PostgresStore::new(source_pool.clone());
@@ -1428,6 +1433,7 @@ fn input(configuration: &FactoryConfiguration, repository: &PublishedRepository,
     WorkSourceInputId::generate(),
     repository.project_id,
     WorkSourceInputDraft {
+      connection: None,
       target: configuration.reference().clone(),
       repository: repository.clone(),
       source: source.binding.clone(),
@@ -2207,5 +2213,85 @@ async fn worker_contract(store: &dyn FactorySourceStore, input: &WorkSourceInput
       .await
       .unwrap()
       .is_none()
+  );
+}
+
+async fn diagnostic_read_contract(
+  store: &dyn octacity_server_store::FactorySourceDiagnosticsStore,
+  preparation: &octacity_server_store::WorkSourcePreparation,
+  foreign: ProjectId,
+) {
+  use octacity_server_store::*;
+  let input = &preparation.input;
+  let target = WorkSourceScanTarget::Input {
+    id: input.id(),
+    version: input.version(),
+  };
+  let scan = store
+    .source_scan_diagnostics(input.project_id(), target)
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(scan.window, Some((time(1), time(9))));
+  assert!(store.source_scan_diagnostics(foreign, target).await.unwrap().is_none());
+  let mut request = ReadWorkSourceCorrelations {
+    project_id: input.project_id(),
+    filter: WorkSourceDiagnosticFilter::Inputs(vec![input.id()]),
+    visibility: WorkSourceConfigurationVisibility {
+      configurations: FactoryConfigurationListVisibility::all(),
+      repositories: RepositoryListVisibility::all(),
+      connections: IntegrationConnectionListVisibility::all(),
+    },
+    runs: FactoryRunListVisibility::all(),
+    after: None,
+    limit: 1,
+  };
+  let page = store.source_diagnostic_correlations(request.clone()).await.unwrap();
+  assert_eq!(page.items.len(), 1);
+  assert_eq!(page.items[0].work_id, preparation.admission.as_ref().unwrap().work_id);
+  assert_eq!(page.items[0].input_version, input.version());
+  assert!(page.next_cursor.is_none());
+  let partition = source_security_partition(&ManagementSecurityScope::trusted_network());
+  assert_eq!(
+    page.items[0].native_correlation,
+    source_native_correlation(preparation.issue, partition)
+  );
+  request.filter = WorkSourceDiagnosticFilter::Native {
+    issues: vec![preparation.issue],
+    security_scope: partition,
+  };
+  assert_eq!(
+    store.source_diagnostic_correlations(request.clone()).await.unwrap(),
+    page
+  );
+  request.runs = FactoryRunListVisibility::none();
+  let hidden = store.source_diagnostic_correlations(request.clone()).await.unwrap();
+  assert!(hidden.items.is_empty());
+  assert!(hidden.next_cursor.is_none());
+  request.runs = FactoryRunListVisibility::all();
+  request.visibility.repositories = RepositoryListVisibility::none();
+  assert_eq!(
+    store.source_diagnostic_correlations(request.clone()).await.unwrap(),
+    hidden
+  );
+  request.visibility.repositories = RepositoryListVisibility::all();
+  request.filter = WorkSourceDiagnosticFilter::Native {
+    issues: vec![preparation.issue],
+    security_scope: source_security_partition(&ManagementSecurityScope::new("another-partition").unwrap()),
+  };
+  assert_eq!(
+    store.source_diagnostic_correlations(request.clone()).await.unwrap(),
+    hidden
+  );
+  request.filter = WorkSourceDiagnosticFilter::Inputs(vec![input.id()]);
+  request.project_id = foreign;
+  assert_eq!(store.source_diagnostic_correlations(request).await.unwrap(), hidden);
+  assert_eq!(
+    store
+      .source_scan_diagnostics(input.project_id(), target)
+      .await
+      .unwrap()
+      .unwrap(),
+    scan
   );
 }

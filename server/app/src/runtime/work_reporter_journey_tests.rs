@@ -3,6 +3,8 @@ use super::*;
 use crate::runtime::*;
 use octacity_server_factory::NetworkHost;
 use octacity_work_source_protocol::{ConfigurationReference, CredentialClass, CredentialHandle, ResourceAccess};
+#[path = "work_reporter_configuration_tests.rs"]
+mod configuration;
 #[path = "work_reporter_deadline_tests.rs"]
 mod deadline;
 #[path = "work_reporter_ordering_tests.rs"]
@@ -754,4 +756,82 @@ async fn managed_reporter_revocation_blocks_retained_retry_without_rewriting_wor
   assert_eq!(after.work, before.work);
   assert_eq!(after.run, before.run);
   assert_eq!(after.flow, before.flow);
+}
+
+#[tokio::test]
+async fn source_reporting_diagnostics_distinguishes_queued_applied_and_exhausted_without_dispatch() {
+  for exhausted in [false, true] {
+    let (fixture, profile) = fixture("custom-tracker").await;
+    let projector = hosted(&fixture, vec![profile]);
+    let run = queue(&fixture, projector.clone()).await;
+    let queries = AuthorizedQueryHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(
+        FactorySourceConfigurationHandlers::new(
+          fixture.store.clone(),
+          Arc::new(TrustedNetworkManagementPolicy),
+          vec![],
+        )
+        .unwrap(),
+      ),
+    );
+    let query = GetWorkSourceDiagnosticsQuery {
+      project_id: fixture.input.project_id(),
+      target: WorkSourceScanTarget::Input {
+        id: fixture.input.id(),
+        version: fixture.input.version(),
+      },
+      after: None,
+      limit: 1,
+    };
+    let pending = queries
+      .handle_query(&fixture.profile.context, query.clone())
+      .await
+      .unwrap();
+    assert_eq!(pending.admissions[0].association.run_id, run);
+    assert_eq!(pending.admissions[0].reporting.len(), 1);
+    assert_eq!(
+      pending.admissions[0].reporting[0].state,
+      WorkSourceReportingState::Pending
+    );
+    assert!(
+      !fixture
+        .root
+        .path()
+        .join("custom-tracker/reporter-requests.jsonl")
+        .exists()
+    );
+    if exhausted {
+      std::fs::write(
+        fixture.root.path().join("custom-tracker/reporter-mode.json"),
+        br#"{"failure":{"class":"permanent","retry_after_millis":null}}"#,
+      )
+      .unwrap();
+    }
+    let worker = FactoryWorkStatusOutboxWorker::new(
+      fixture.store.clone(),
+      std::collections::BTreeMap::from([(capability(), projector as Arc<dyn FactoryWorkStatusProjector>)]),
+      FactoryReporterWorkerSettings::new(key("diagnostics-reporter"), 10000, 4).unwrap(),
+      fixture.clock.clone(),
+    )
+    .unwrap();
+    worker.run_once(time(120)).await.unwrap();
+    let before = fixture.store.factory_run_snapshot(run).await.unwrap();
+    let calls = std::fs::read(fixture.root.path().join("custom-tracker/reporter-requests.jsonl")).unwrap();
+    let result = queries.handle_query(&fixture.profile.context, query).await.unwrap();
+    assert_eq!(result.admissions[0].reporting.len(), 1);
+    assert_eq!(
+      result.admissions[0].reporting[0].state,
+      if exhausted {
+        WorkSourceReportingState::Exhausted
+      } else {
+        WorkSourceReportingState::Applied
+      }
+    );
+    assert_eq!(fixture.store.factory_run_snapshot(run).await.unwrap(), before);
+    assert_eq!(
+      std::fs::read(fixture.root.path().join("custom-tracker/reporter-requests.jsonl")).unwrap(),
+      calls
+    );
+  }
 }

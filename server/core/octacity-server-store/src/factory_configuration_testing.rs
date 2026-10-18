@@ -840,3 +840,14 @@ pub(super) fn admit_factory_work_locked(
     admission: outcome,
   })
 }
+/// Read partition from the authoritative admission, without reading a private Source snapshot.
+pub(super) fn source_admission_partition(
+  state: &FactoryConfigurationMemoryState,
+  work: octacity_server_factory::WorkEnvelopeId,
+) -> Option<FactoryDigest> {
+  state
+    .admissions
+    .values()
+    .find(|a| a.outcome.work.id() == work)
+    .map(|a| crate::source_security_partition(&a.source_scope.security_scope))
+}

@@ -53,6 +53,16 @@ fn validate(document: &Value, schema: &Value, value: &Value, path: &str) -> Resu
   {
     return Err(format!("{path}: {value} is outside the documented enum"));
   }
+  if let Some(types) = schema.get("type").and_then(Value::as_array) {
+    for kind in types {
+      let mut variant = schema.clone();
+      variant["type"] = kind.clone();
+      if kind.is_string() && validate(document, &variant, value, path).is_ok() {
+        return Ok(());
+      }
+    }
+    return Err(format!("{path}: value matches no documented type"));
+  }
   match schema.get("type").and_then(Value::as_str) {
     None => Ok(()),
     Some("object") => validate_object(document, schema, value, path),
@@ -97,6 +107,18 @@ fn validate_array(document: &Value, schema: &Value, value: &Value, path: &str) -
   let items = value
     .as_array()
     .ok_or_else(|| format!("{path}: expected array, got {value}"))?;
+  let length = items.len() as u64;
+  if schema
+    .get("minItems")
+    .and_then(Value::as_u64)
+    .is_some_and(|minimum| length < minimum)
+    || schema
+      .get("maxItems")
+      .and_then(Value::as_u64)
+      .is_some_and(|maximum| length > maximum)
+  {
+    return Err(format!("{path}: array length is outside its documented bounds"));
+  }
   if let Some(item_schema) = schema.get("items") {
     for (index, item) in items.iter().enumerate() {
       validate(document, item_schema, item, &format!("{path}[{index}]"))?;
@@ -109,6 +131,13 @@ fn validate_string(schema: &Value, value: &Value, path: &str) -> Result<(), Stri
   let value = value
     .as_str()
     .ok_or_else(|| format!("{path}: expected string, got {value}"))?;
+  if schema
+    .get("x-max-utf8-bytes")
+    .and_then(Value::as_u64)
+    .is_some_and(|maximum| value.len() as u64 > maximum)
+  {
+    return Err(format!("{path}: string exceeds its UTF-8 byte ceiling"));
+  }
   let length = value.chars().count() as u64;
   if schema
     .get("minLength")

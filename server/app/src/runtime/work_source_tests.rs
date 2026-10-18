@@ -14,6 +14,8 @@ use std::{
 use tokio_util::sync::CancellationToken;
 // Watchdogs bound test failures; process scheduling speed is not an admission contract.
 const TEST_WAIT: Duration = Duration::from_secs(30);
+#[path = "work_source_configuration_tests.rs"]
+mod configuration;
 struct Clock(AtomicI64);
 impl FactoryExecutionClock for Clock {
   fn now(&self) -> Result<Timestamp, ApplicationError> {
@@ -157,6 +159,7 @@ impl Fixture {
       WorkSourceInputId::generate(),
       project,
       WorkSourceInputDraft {
+        connection: None,
         target: config.reference().clone(),
         repository: repo.clone(),
         source: binding.clone(),
@@ -1991,3 +1994,5 @@ async fn managed_source_rechecks_project_grants_before_provider_reads_after_revo
   );
   assert_eq!(fixture.runs().await, original);
 }
+#[path = "work_source_preview_tests.rs"]
+mod preview;

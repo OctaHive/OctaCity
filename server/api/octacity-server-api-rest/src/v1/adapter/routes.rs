@@ -352,13 +352,30 @@ pub fn router(application: ManagementApplication) -> Router {
 
 fn registered_integration_routes() -> ManagementRoutes<Arc<super::integrations::IntegrationManagementApplication>> {
   use super::integrations::*;
-  use octacity_server_application::CheckIntegrationConnectionQuery;
+  use octacity_server_application::{
+    CheckIntegrationConnectionQuery, GetWorkSourceConfigurationQuery, GetWorkSourceDiagnosticsQuery,
+    ListWorkSourceConfigurationsQuery, ListWorkSourceInputChoicesQuery, PreviewWorkSourcesQuery,
+    PublishWorkSourceConfigurationCommand, ValidateWorkSourceConfigurationQuery,
+  };
   use octacity_server_application::{
     CleanupIntegrationPreparationsCommand, GetIntegrationAdministrationQuery, GetIntegrationConnectionQuery,
     GetIntegrationProjectAccessQuery, ListIntegrationProjectResourcesQuery, ManageIntegrationCredentialCommand,
     PublishIntegrationConnectionCommand, PublishIntegrationProjectAccessCommand, SetIntegrationConnectionStateCommand,
   };
   ManagementRoutes::new()
+    .post::<PreviewWorkSourcesQuery, _, _>("previewWorkSources", preview_sources)
+    .get::<GetWorkSourceDiagnosticsQuery, _, _>("getWorkSourceInputDiagnostics", source_input_diagnostics)
+    .get::<GetWorkSourceDiagnosticsQuery, _, _>("getWorkSourceGroupDiagnostics", source_group_diagnostics)
+    .post::<PublishWorkSourceConfigurationCommand, _, _>("publishWorkSourceInput", publish_source_input)
+    .post::<PublishWorkSourceConfigurationCommand, _, _>("publishWorkSourceGroup", publish_source_group)
+    .post::<ValidateWorkSourceConfigurationQuery, _, _>(
+      "validateWorkSourceConfiguration",
+      validate_source_configuration,
+    )
+    .get::<ListWorkSourceInputChoicesQuery, _, _>("listWorkSourceInputChoices", source_choices)
+    .get::<ListWorkSourceConfigurationsQuery, _, _>("listWorkSourceConfigurations", list_source_configurations)
+    .get::<GetWorkSourceConfigurationQuery, _, _>("getWorkSourceInput", get_source_input)
+    .get::<GetWorkSourceConfigurationQuery, _, _>("getWorkSourceGroup", get_source_group)
     .post::<CheckIntegrationConnectionQuery, _, _>("checkIntegrationConnection", check_connection)
     .post::<PublishIntegrationProjectAccessCommand, _, _>("publishIntegrationProjectAccess", publish_project_access)
     .get::<GetIntegrationProjectAccessQuery, _, _>("getIntegrationProjectAccess", get_project_access)

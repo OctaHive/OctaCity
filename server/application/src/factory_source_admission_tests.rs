@@ -64,6 +64,7 @@ async fn installed(
     WorkSourceInputId::generate(),
     intent.project_id,
     WorkSourceInputDraft {
+      connection: None,
       target: selected.configuration.configuration.reference().clone(),
       repository: repository.clone(),
       source: capability.binding.clone(),

@@ -1,7 +1,8 @@
 //! Optional provider-neutral projection through the verified Reporter process and existing outbox.
 use octacity_server_application::{
   ApplicationError, FactoryExecutionClock, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
-  ManagedIntegrationAccess, WorkSourceSnapshot, validate_accepted_factory_status_request,
+  ManagedIntegrationAccess, ManagedIntegrationConnections, WorkSourceSnapshot,
+  validate_accepted_factory_status_request,
 };
 use octacity_server_domain::ProjectId;
 use octacity_server_factory::*;
@@ -109,6 +110,7 @@ pub struct HostedFactoryWorkStatusProjector<S> {
   timeout: Duration,
   grace: Duration,
   cancellation: CancellationToken,
+  managed_connections: Option<ManagedIntegrationConnections>,
 }
 impl<S> HostedFactoryWorkStatusProjector<S> {
   /// Constructs explicit Reporter support without resolving grants or contacting a provider.
@@ -139,6 +141,12 @@ impl<S> HostedFactoryWorkStatusProjector<S> {
       timeout,
       grace,
       cancellation,
+      managed_connections: None,
     })
+  }
+  /// Resolves the original managed input's current connection authority at each dispatch.
+  pub fn with_managed_connections(mut self, connections: ManagedIntegrationConnections) -> Self {
+    self.managed_connections = Some(connections);
+    self
   }
 }

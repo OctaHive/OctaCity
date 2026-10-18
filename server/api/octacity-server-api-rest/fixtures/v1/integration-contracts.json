@@ -1,0 +1,1009 @@
+{
+  "IntegrationConnectionPublication": [
+    {
+      "intent": {
+        "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+        "expected_current_version": null,
+        "draft": {
+          "name": "Tracker",
+          "installation": {
+            "identity": "installation",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "endpoint": "https://tracker.invalid/",
+          "authentication": "token",
+          "resources": [
+            {
+              "reference": {
+                "identity": "tickets",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "purposes": [
+                "task_read"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "IntegrationConnection": [
+    {
+      "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+      "version": 1,
+      "digest": "0707070707070707070707070707070707070707070707070707070707070707",
+      "definition": {
+        "name": "Tracker",
+        "provider": "jira",
+        "installation": {
+          "identity": "installation",
+          "version": "v1",
+          "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "adapter": {
+          "identity": "adapter",
+          "version": "v1",
+          "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+        },
+        "endpoint": "https://tracker.invalid/",
+        "authentication": "token",
+        "resources": [
+          {
+            "reference": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "native_id": "external-project",
+            "locator": "team/project",
+            "capabilities": [
+              {
+                "purpose": "task_read",
+                "capability": {
+                  "identity": "read",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "profile",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "credential": {
+                  "provider": "installed",
+                  "reference": "reader"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "published_at_unix_ms": 10
+    }
+  ],
+  "IntegrationProjectAccessPublication": [
+    {
+      "intent": {
+        "connection_id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+        "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+        "connection_version": 1,
+        "expected_current_version": null,
+        "resources": [
+          {
+            "reference": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "purposes": [
+              "task_read"
+            ]
+          }
+        ]
+      }
+    }
+  ],
+  "IntegrationProjectAccess": [
+    {
+      "connection_id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+      "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+      "connection_version": 1,
+      "version": 1,
+      "resources": [
+        {
+          "reference": {
+            "identity": "tickets",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "purposes": [
+            "task_read"
+          ]
+        }
+      ],
+      "published_at_unix_ms": 10
+    }
+  ],
+  "IntegrationCredentialSubmission": [
+    {
+      "intent": {
+        "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+        "expected_metadata_version": 1,
+        "expected_revision": 0,
+        "action": {
+          "operation": "credential",
+          "reference": {
+            "provider": "installed",
+            "reference": "reader"
+          },
+          "kind": "provision",
+          "activate_connection": true
+        }
+      },
+      "value": "documentation-placeholder"
+    },
+    {
+      "intent": {
+        "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+        "expected_metadata_version": 1,
+        "expected_revision": 0,
+        "action": {
+          "operation": "credential",
+          "reference": {
+            "provider": "installed",
+            "reference": "reader"
+          },
+          "kind": "adopt",
+          "activate_connection": true
+        }
+      }
+    },
+    {
+      "intent": {
+        "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+        "expected_metadata_version": 1,
+        "expected_revision": 1,
+        "action": {
+          "operation": "credential",
+          "reference": {
+            "provider": "installed",
+            "reference": "reader"
+          },
+          "kind": "rotate",
+          "activate_connection": true
+        }
+      },
+      "value": "documentation-placeholder"
+    }
+  ],
+  "IntegrationAdministrationState": [
+    {
+      "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+      "revision": 1,
+      "enabled": true,
+      "active_version": 1,
+      "credentials": [
+        {
+          "reference": {
+            "provider": "installed",
+            "reference": "reader"
+          },
+          "configured": true
+        }
+      ],
+      "preparation_pending": false
+    }
+  ],
+  "IntegrationAdministrationReceipt": [
+    {
+      "operation_id": "0707070707070707070707070707070707070707070707070707070707070707",
+      "integration_id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+      "revision": 1,
+      "metadata_version": 1,
+      "status": "completed",
+      "requested_at_unix_ms": 10
+    }
+  ],
+  "IntegrationConnectionCheckRequest": [
+    {
+      "version": 1,
+      "resource": {
+        "identity": "tickets",
+        "version": "v1",
+        "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+      },
+      "purpose": "task_read"
+    }
+  ],
+  "IntegrationConnectionCheckResult": [
+    {
+      "connection_id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+      "connection_version": 1,
+      "resource": {
+        "identity": "tickets",
+        "version": "v1",
+        "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+      },
+      "native_id": "external-project",
+      "locator": "team/project",
+      "purpose": "task_read",
+      "readiness": {
+        "configuration": "ready",
+        "authentication": "ready",
+        "resource_access": "ready",
+        "capability": "ready",
+        "retry_after_millis": null
+      }
+    }
+  ],
+  "WorkSourceConfigurationSubmission": [
+    {
+      "intent": {
+        "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+        "inputs": [
+          {
+            "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+            "expected_version": null,
+            "definition": {
+              "connection": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+                "version": 1,
+                "access_version": 2,
+                "source_configuration": {
+                  "identity": "connection-settings",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "reporter_configuration": null
+              },
+              "target": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+                "version": 1,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "repository": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+                "version": 3,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808"
+              },
+              "source": {
+                "installation": {
+                  "identity": "installed",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "capability": {
+                  "identity": "read",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "triage-labels",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "resource": {
+                  "identity": "tickets",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "reporter": null,
+              "enabled": true
+            }
+          }
+        ],
+        "group": null
+      }
+    },
+    {
+      "intent": {
+        "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+        "inputs": [
+          {
+            "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+            "expected_version": null,
+            "definition": {
+              "connection": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+                "version": 1,
+                "access_version": 2,
+                "source_configuration": {
+                  "identity": "connection-settings",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "reporter_configuration": {
+                  "identity": "connection-writer",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "target": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+                "version": 1,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "repository": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+                "version": 3,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808"
+              },
+              "source": {
+                "installation": {
+                  "identity": "installed",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "capability": {
+                  "identity": "read",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "triage-labels",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "resource": {
+                  "identity": "tickets",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "reporter": {
+                "installation": {
+                  "identity": "installed",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "capability": {
+                  "identity": "write",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "outcome-mapping",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "resource": {
+                  "identity": "tickets",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "enabled": true
+            }
+          }
+        ],
+        "group": {
+          "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+          "expected_version": null,
+          "members": [
+            {
+              "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+              "version": 1
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "WorkSourceInputChoices": [
+    {
+      "connection_id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+      "connection_version": 1,
+      "access_version": 2,
+      "items": [
+        {
+          "binding": {
+            "installation": {
+              "identity": "installed",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "capability": {
+              "identity": "read",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "configuration": {
+              "identity": "triage-labels",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "resource": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            }
+          },
+          "connection_configuration": {
+            "identity": "connection-settings",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "purpose": "task_read",
+          "native_id": "external-project",
+          "locator": "team/project",
+          "selection": {
+            "state": "open",
+            "all_of": [],
+            "any_of": [],
+            "none_of": []
+          }
+        }
+      ]
+    }
+  ],
+  "WorkSourcePreviewSubmission": [
+    {
+      "intent": {
+        "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+        "inputs": [
+          {
+            "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+            "expected_version": null,
+            "definition": {
+              "connection": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+                "version": 1,
+                "access_version": 2,
+                "source_configuration": {
+                  "identity": "connection-settings",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "reporter_configuration": null
+              },
+              "target": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+                "version": 1,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "repository": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+                "version": 3,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808"
+              },
+              "source": {
+                "installation": {
+                  "identity": "installed",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "capability": {
+                  "identity": "read",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "triage-labels",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "resource": {
+                  "identity": "tickets",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "reporter": null,
+              "enabled": true
+            }
+          }
+        ],
+        "group": null
+      },
+      "limit": 2
+    }
+  ],
+  "WorkSourcePreview": [
+    {
+      "configuration": {
+        "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+        "inputs": [
+          {
+            "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+            "expected_version": null,
+            "definition": {
+              "connection": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+                "version": 1,
+                "access_version": 2,
+                "source_configuration": {
+                  "identity": "connection-settings",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "reporter_configuration": null
+              },
+              "target": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+                "version": 1,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "repository": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+                "version": 3,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808"
+              },
+              "source": {
+                "installation": {
+                  "identity": "installed",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "capability": {
+                  "identity": "read",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "triage-labels",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "resource": {
+                  "identity": "tickets",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "reporter": null,
+              "enabled": true
+            }
+          }
+        ],
+        "group": null
+      },
+      "selectors": [
+        {
+          "input_id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+          "binding": {
+            "installation": {
+              "identity": "installed",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "capability": {
+              "identity": "read",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "configuration": {
+              "identity": "triage-labels",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "resource": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            }
+          },
+          "selection": {
+            "state": "open",
+            "all_of": [],
+            "any_of": [],
+            "none_of": []
+          }
+        }
+      ],
+      "observed_at_unix_ms": 10,
+      "failure": null,
+      "retry_after_millis": null,
+      "candidates": [
+        {
+          "native_correlation": "2222222222222222222222222222222222222222222222222222222222222222",
+          "summary": {
+            "item": {
+              "resource": "external-project",
+              "item": "123"
+            },
+            "display_id": "TEAM-123",
+            "title": "Investigate intermittent failure",
+            "state": "open",
+            "labels": [],
+            "selections": [
+              {
+                "input_id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+                "reasons": []
+              }
+            ]
+          },
+          "disposition": "selected",
+          "admissions": [
+            {
+              "association": {
+                "id": "1111111111111111111111111111111111111111111111111111111111111111",
+                "native_correlation": "2222222222222222222222222222222222222222222222222222222222222222",
+                "input_id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+                "input_version": 1,
+                "work_id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+                "run_id": "0199a6f4-d56c-7440-9aa2-6a320f862795"
+              },
+              "reporting": [
+                {
+                  "operation_id": "3333333333333333333333333333333333333333333333333333333333333333",
+                  "state": "pending",
+                  "attempt": 0,
+                  "available_at": 10
+                }
+              ],
+              "reporting_truncated": false
+            }
+          ]
+        }
+      ],
+      "has_more": false,
+      "admissions_truncated": false
+    },
+    {
+      "configuration": {
+        "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+        "inputs": [
+          {
+            "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+            "expected_version": null,
+            "definition": {
+              "connection": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+                "version": 1,
+                "access_version": 2,
+                "source_configuration": {
+                  "identity": "connection-settings",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "reporter_configuration": null
+              },
+              "target": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+                "version": 1,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "repository": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+                "version": 3,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808"
+              },
+              "source": {
+                "installation": {
+                  "identity": "installed",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "capability": {
+                  "identity": "read",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "triage-labels",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "resource": {
+                  "identity": "tickets",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "reporter": null,
+              "enabled": true
+            }
+          }
+        ],
+        "group": null
+      },
+      "selectors": [
+        {
+          "input_id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+          "binding": {
+            "installation": {
+              "identity": "installed",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "capability": {
+              "identity": "read",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "configuration": {
+              "identity": "triage-labels",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "resource": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            }
+          },
+          "selection": {
+            "state": "open",
+            "all_of": [],
+            "any_of": [],
+            "none_of": []
+          }
+        }
+      ],
+      "observed_at_unix_ms": 10,
+      "failure": "rate_limited",
+      "retry_after_millis": 30000,
+      "candidates": [],
+      "has_more": false,
+      "admissions_truncated": false
+    }
+  ],
+  "WorkSourceDiagnostics": [
+    {
+      "configuration": {
+        "kind": "input",
+        "definition": {
+          "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+          "version": 1,
+          "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+          "root_flow": {
+            "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+            "version": 2,
+            "digest": "0909090909090909090909090909090909090909090909090909090909090909"
+          },
+          "definition": {
+            "connection": {
+              "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+              "version": 1,
+              "access_version": 2,
+              "source_configuration": {
+                "identity": "connection-settings",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "reporter_configuration": null
+            },
+            "target": {
+              "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+              "version": 1,
+              "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+              "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "repository": {
+              "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+              "version": 3,
+              "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+              "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808"
+            },
+            "source": {
+              "installation": {
+                "identity": "installed",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "capability": {
+                "identity": "read",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "configuration": {
+                "identity": "triage-labels",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "resource": {
+                "identity": "tickets",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              }
+            },
+            "reporter": null,
+            "enabled": true
+          }
+        }
+      },
+      "selectors": [
+        {
+          "input_id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+          "binding": {
+            "installation": {
+              "identity": "installed",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "capability": {
+              "identity": "read",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "configuration": {
+              "identity": "triage-labels",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "resource": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            }
+          },
+          "selection": {
+            "state": "open",
+            "all_of": [],
+            "any_of": [],
+            "none_of": []
+          }
+        }
+      ],
+      "scan": null,
+      "admissions": [
+        {
+          "association": {
+            "id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "native_correlation": "2222222222222222222222222222222222222222222222222222222222222222",
+            "input_id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+            "input_version": 1,
+            "work_id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+            "run_id": "0199a6f4-d56c-7440-9aa2-6a320f862795"
+          },
+          "reporting": [
+            {
+              "operation_id": "3333333333333333333333333333333333333333333333333333333333333333",
+              "state": "pending",
+              "attempt": 0,
+              "available_at": 10
+            }
+          ],
+          "reporting_truncated": false
+        }
+      ],
+      "next_cursor": null
+    },
+    {
+      "configuration": {
+        "kind": "input",
+        "definition": {
+          "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+          "version": 1,
+          "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+          "root_flow": {
+            "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+            "version": 2,
+            "digest": "0909090909090909090909090909090909090909090909090909090909090909"
+          },
+          "definition": {
+            "connection": {
+              "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+              "version": 1,
+              "access_version": 2,
+              "source_configuration": {
+                "identity": "connection-settings",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "reporter_configuration": null
+            },
+            "target": {
+              "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+              "version": 1,
+              "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+              "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "repository": {
+              "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+              "version": 3,
+              "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+              "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808"
+            },
+            "source": {
+              "installation": {
+                "identity": "installed",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "capability": {
+                "identity": "read",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "configuration": {
+                "identity": "triage-labels",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "resource": {
+                "identity": "tickets",
+                "version": "v1",
+                "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              }
+            },
+            "reporter": null,
+            "enabled": true
+          }
+        }
+      },
+      "selectors": [
+        {
+          "input_id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+          "binding": {
+            "installation": {
+              "identity": "installed",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "capability": {
+              "identity": "read",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "configuration": {
+              "identity": "triage-labels",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "resource": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            }
+          },
+          "selection": {
+            "state": "open",
+            "all_of": [],
+            "any_of": [],
+            "none_of": []
+          }
+        }
+      ],
+      "scan": null,
+      "admissions": [
+        {
+          "association": {
+            "id": "1111111111111111111111111111111111111111111111111111111111111111",
+            "native_correlation": "2222222222222222222222222222222222222222222222222222222222222222",
+            "input_id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+            "input_version": 1,
+            "work_id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+            "run_id": "0199a6f4-d56c-7440-9aa2-6a320f862795"
+          },
+          "reporting": [
+            {
+              "operation_id": "3333333333333333333333333333333333333333333333333333333333333333",
+              "state": "pending",
+              "attempt": 0,
+              "available_at": 10
+            }
+          ],
+          "reporting_truncated": false,
+          "issue": {
+            "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+            "issue_id": "internal-task-123"
+          }
+        }
+      ],
+      "next_cursor": null
+    }
+  ],
+  "FactoryWorkStatusActionParameters": [
+    {
+      "status": "needs_context",
+      "outbox": {
+        "max_attempts": 3,
+        "retry_delay_millis": 250
+      }
+    }
+  ]
+}

@@ -287,69 +287,8 @@ impl FactorySourceStore for PostgresStore {
     Ok(count)
   }
   async fn publish_work_sources(&self, request: PublishWorkSources) -> Result<(), StoreError> {
-    request.validate()?;
     let mut tx = self.pool().begin().await.map_err(unavailable)?;
-    lock_project(&mut tx, request.project_id).await?;
-    for change in request.inputs {
-      let id = change.input.id().as_uuid();
-      let current: Option<(i64, uuid::Uuid)> = sqlx::query_as(
-        "SELECT version, project_id FROM factory_source_inputs WHERE id=$1 ORDER BY version DESC LIMIT 1",
-      )
-      .bind(id)
-      .fetch_optional(&mut *tx)
-      .await
-      .map_err(unavailable)?;
-      if current.map(|v| v.0) != change.expected_version.map(|v| number(v.get())).transpose()?
-        || current.is_some_and(|v| v.1 != request.project_id.as_uuid())
-      {
-        return Err(source_conflict());
-      }
-      let definition = change.input.definition();
-      let target =
-        crate::factory_configuration::read(&mut *tx, definition.target.id(), definition.target.version()).await?;
-      let repository =
-        crate::configuration_query::repository(&mut *tx, definition.repository.id, definition.repository.version)
-          .await?;
-      validate_source_input_dependencies(&change.input, &target.configuration, &repository)?;
-      sqlx::query("INSERT INTO factory_source_inputs (id,version,project_id,configuration_id,configuration_version,repository_id,repository_version,document) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
-        .bind(id).bind(number(change.input.version().get())?).bind(request.project_id.as_uuid()).bind(definition.target.id().as_uuid()).bind(number(definition.target.version().get())?).bind(definition.repository.id.as_uuid()).bind(number(definition.repository.version.get())?).bind(Json(&change.input))
-        .execute(&mut *tx).await.map_err(unavailable)?;
-    }
-    if let Some(change) = request.group {
-      let current: Option<(i64, uuid::Uuid)> = sqlx::query_as(
-        "SELECT version, project_id FROM factory_source_groups WHERE id=$1 ORDER BY version DESC LIMIT 1",
-      )
-      .bind(change.group.id().as_uuid())
-      .fetch_optional(&mut *tx)
-      .await
-      .map_err(unavailable)?;
-      if current.map(|v| v.0) != change.expected_version.map(|v| number(v.get())).transpose()?
-        || current.is_some_and(|v| v.1 != request.project_id.as_uuid())
-      {
-        return Err(source_conflict());
-      }
-      for member in change.group.members() {
-        let current: Option<Json<WorkSourceInput>> = sqlx::query_scalar(
-          "SELECT document FROM factory_source_inputs WHERE id=$1 AND project_id=$2 ORDER BY version DESC LIMIT 1",
-        )
-        .bind(member.id().as_uuid())
-        .bind(request.project_id.as_uuid())
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-        if current.as_ref().map(|v| &v.0) != Some(member) {
-          return Err(source_conflict());
-        }
-      }
-      sqlx::query("INSERT INTO factory_source_groups (id,version,project_id,document) VALUES ($1,$2,$3,$4)")
-        .bind(change.group.id().as_uuid())
-        .bind(number(change.group.version().get())?)
-        .bind(request.project_id.as_uuid())
-        .bind(Json(&change.group))
-        .execute(&mut *tx)
-        .await
-        .map_err(unavailable)?;
-    }
+    publish_in(&mut tx, request).await?;
     tx.commit().await.map_err(unavailable)
   }
   async fn source_input(
@@ -604,4 +543,75 @@ pub(crate) async fn correlate_replay(
   let preparation = lock_preparation(&mut tx, guard, request).await?;
   correlate(&mut tx, preparation, receipt).await?;
   tx.commit().await.map_err(unavailable)
+}
+
+// Shared transaction body; callers own management evidence and the final commit.
+pub(crate) async fn publish_in(
+  tx: &mut Transaction<'_, Postgres>,
+  request: PublishWorkSources,
+) -> Result<(), StoreError> {
+  request.validate()?;
+  crate::factory_source_configuration::lock_connections(tx, &request).await?;
+  lock_project(tx, request.project_id).await?;
+  for change in request.inputs {
+    crate::factory_source_configuration::validate_managed(tx, &change.input).await?;
+    let id = change.input.id().as_uuid();
+    let current: Option<(i64, uuid::Uuid)> =
+      sqlx::query_as("SELECT version, project_id FROM factory_source_inputs WHERE id=$1 ORDER BY version DESC LIMIT 1")
+        .bind(id)
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(unavailable)?;
+    if current.map(|v| v.0) != change.expected_version.map(|v| number(v.get())).transpose()?
+      || current.is_some_and(|v| v.1 != request.project_id.as_uuid())
+    {
+      return Err(source_conflict());
+    }
+    let definition = change.input.definition();
+    let target =
+      crate::factory_configuration::read(&mut **tx, definition.target.id(), definition.target.version()).await?;
+    let repository =
+      crate::configuration_query::repository(&mut **tx, definition.repository.id, definition.repository.version)
+        .await?;
+    validate_source_input_dependencies(&change.input, &target.configuration, &repository)?;
+    sqlx::query("INSERT INTO factory_source_inputs (id,version,project_id,configuration_id,configuration_version,repository_id,repository_version,document) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)")
+        .bind(id).bind(number(change.input.version().get())?).bind(request.project_id.as_uuid()).bind(definition.target.id().as_uuid()).bind(number(definition.target.version().get())?).bind(definition.repository.id.as_uuid()).bind(number(definition.repository.version.get())?).bind(Json(&change.input))
+        .execute(&mut **tx).await.map_err(unavailable)?;
+  }
+  if let Some(change) = request.group {
+    let current: Option<(i64, uuid::Uuid)> =
+      sqlx::query_as("SELECT version, project_id FROM factory_source_groups WHERE id=$1 ORDER BY version DESC LIMIT 1")
+        .bind(change.group.id().as_uuid())
+        .fetch_optional(&mut **tx)
+        .await
+        .map_err(unavailable)?;
+    if current.map(|v| v.0) != change.expected_version.map(|v| number(v.get())).transpose()?
+      || current.is_some_and(|v| v.1 != request.project_id.as_uuid())
+    {
+      return Err(source_conflict());
+    }
+    for member in change.group.members() {
+      crate::factory_source_configuration::validate_managed(tx, member).await?;
+      let current: Option<Json<WorkSourceInput>> = sqlx::query_scalar(
+        "SELECT document FROM factory_source_inputs WHERE id=$1 AND project_id=$2 ORDER BY version DESC LIMIT 1",
+      )
+      .bind(member.id().as_uuid())
+      .bind(request.project_id.as_uuid())
+      .fetch_optional(&mut **tx)
+      .await
+      .map_err(unavailable)?;
+      if current.as_ref().map(|v| &v.0) != Some(member) {
+        return Err(source_conflict());
+      }
+    }
+    sqlx::query("INSERT INTO factory_source_groups (id,version,project_id,document) VALUES ($1,$2,$3,$4)")
+      .bind(change.group.id().as_uuid())
+      .bind(number(change.group.version().get())?)
+      .bind(request.project_id.as_uuid())
+      .bind(Json(&change.group))
+      .execute(&mut **tx)
+      .await
+      .map_err(unavailable)?;
+  }
+  Ok(())
 }

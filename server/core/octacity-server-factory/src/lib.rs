@@ -99,8 +99,8 @@ mod source_input;
 pub use source_group::{MAX_WORK_SOURCE_GROUP_MEMBERS, WorkSourceGroup, WorkSourceSelection, WorkSourceSelectionPass};
 mod subject;
 pub use source_input::{
-  WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceInput, WorkSourceInputContext,
-  WorkSourceInputDraft, WorkSourceRepositoryRef,
+  WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceConnectionRef, WorkSourceInput,
+  WorkSourceInputContext, WorkSourceInputDraft, WorkSourceRepositoryRef,
 };
 #[cfg(test)]
 mod source_input_tests;

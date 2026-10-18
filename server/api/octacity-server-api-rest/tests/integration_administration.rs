@@ -1,3 +1,6 @@
+#[path = "support/openapi.rs"]
+mod openapi;
+
 use async_trait::async_trait;
 use axum::{
   body::{Body, to_bytes},
@@ -163,6 +166,10 @@ fn proof() -> ProtectedIntegrationRequest {
 fn integration_openapi_retains_typed_authorization_and_write_only_secret_submission() {
   let document = octacity_server_api_rest::v1::openapi_document();
   let operation = &document["paths"]["/api/v1/integrations/{integration_id}/credentials"]["post"];
+  openapi::assert_component_exists(&document, "IntegrationCredentialSubmission");
+  openapi::assert_required_header(operation, "Idempotency-Key", true);
+  openapi::assert_required_header(operation, "If-Match", false);
+  openapi::assert_required_header(operation, "If-None-Match", false);
   assert_eq!(operation["operationId"], "manageIntegrationCredential");
   assert_eq!(operation["security"], json!([{"ProtectedManagementIngress":[]}]));
   let schema = &document["components"]["schemas"]["IntegrationCredentialSubmission"];
@@ -237,6 +244,11 @@ async fn credential_rest_requires_verified_protected_ingress_and_redacts_success
     assert!(!String::from_utf8_lossy(&response_body).contains("private-rest-token"));
     if verified {
       let receipt: serde_json::Value = serde_json::from_slice(&response_body).unwrap();
+      openapi::assert_json_matches_component(
+        &octacity_server_api_rest::v1::openapi_document(),
+        "IntegrationAdministrationReceipt",
+        &receipt,
+      );
       assert_eq!(receipt["revision"], 1);
       assert_eq!(receipt["status"], "completed");
     }
@@ -255,6 +267,7 @@ async fn credential_rest_requires_verified_protected_ingress_and_redacts_success
   );
   for payload in [
     body().to_string().replace("private-rest-token", &"x".repeat(17 * 1024)),
+    body().to_string().replace("private-rest-token", &"я".repeat(8193)),
     r#"{"intent":{},"value":"private-rest-token","path":"/private/credential"}"#.to_string(),
     "{\"value\":\"private-rest-token\",broken".into(),
   ] {
@@ -308,6 +321,11 @@ async fn connection_rest_publishes_and_inspects_provider_neutral_metadata_and_di
   assert_eq!(published.status(), StatusCode::OK);
   let document: serde_json::Value =
     serde_json::from_slice(&to_bytes(published.into_body(), 16384).await.unwrap()).unwrap();
+  openapi::assert_json_matches_component(
+    &octacity_server_api_rest::v1::openapi_document(),
+    "IntegrationConnectionMutation",
+    &document,
+  );
   assert_eq!(document["connection"]["definition"]["provider"], "jira");
   assert_eq!(document["connection"]["version"], 1);
   for suffix in ["", "/versions/1"] {
@@ -320,6 +338,11 @@ async fn connection_rest_publishes_and_inspects_provider_neutral_metadata_and_di
     assert_eq!(response.status(), StatusCode::OK);
     let document: serde_json::Value =
       serde_json::from_slice(&to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
+    openapi::assert_json_matches_component(
+      &octacity_server_api_rest::v1::openapi_document(),
+      "IntegrationConnection",
+      &document,
+    );
     assert_eq!(document["definition"]["provider"], "jira");
   }
   let payload = json!({"intent":{"id":"0199a6f4-d56c-7440-9aa2-6a320f862795","expected_metadata_version":1,"expected_revision":1,"action":{"operation":"disable"}}});
@@ -344,6 +367,11 @@ async fn connection_rest_publishes_and_inspects_provider_neutral_metadata_and_di
   let state = router.clone().oneshot(state).await.unwrap();
   assert_eq!(state.status(), StatusCode::OK);
   let state: serde_json::Value = serde_json::from_slice(&to_bytes(state.into_body(), 65536).await.unwrap()).unwrap();
+  openapi::assert_json_matches_component(
+    &octacity_server_api_rest::v1::openapi_document(),
+    "IntegrationAdministrationState",
+    &state,
+  );
   assert_eq!(state["enabled"], false);
   let retained = state["credentials"].as_array().unwrap();
   assert_eq!(retained.len(), 257);
@@ -450,6 +478,11 @@ async fn project_access_rest_is_protected_preconditioned_and_exposes_only_grante
     if expected == StatusCode::OK {
       let body: serde_json::Value =
         serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+      openapi::assert_json_matches_component(
+        &octacity_server_api_rest::v1::openapi_document(),
+        "IntegrationProjectAccessMutation",
+        &body,
+      );
       assert_eq!(body["access"]["version"], 1);
       assert_eq!(body["access"]["resources"][0]["purposes"], json!(["task_read"]));
     }
@@ -462,6 +495,15 @@ async fn project_access_rest_is_protected_preconditioned_and_exposes_only_grante
     assert_eq!(response.headers()["cache-control"], "no-store");
     let body: serde_json::Value =
       serde_json::from_slice(&to_bytes(response.into_body(), 65536).await.unwrap()).unwrap();
+    openapi::assert_json_matches_component(
+      &octacity_server_api_rest::v1::openapi_document(),
+      if url.ends_with("/resources") {
+        "IntegrationProjectResources"
+      } else {
+        "IntegrationProjectAccessState"
+      },
+      &body,
+    );
     if url.ends_with("/resources") {
       assert_eq!(body["resources"][0]["capabilities"][0]["purpose"], "task_read");
       assert!(body["resources"][0]["capabilities"][0].get("credential").is_none());
@@ -539,6 +581,11 @@ async fn read_only_connection_check_rest_is_protected_closed_and_uses_no_credent
     let value: serde_json::Value =
       serde_json::from_slice(&to_bytes(response.into_body(), 16384).await.unwrap()).unwrap();
     if verified {
+      openapi::assert_json_matches_component(
+        &octacity_server_api_rest::v1::openapi_document(),
+        "IntegrationConnectionCheckResult",
+        &value,
+      );
       assert_eq!(value["purpose"], "task_update");
       assert_eq!(value["native_id"], "native-container");
       assert_eq!(value["readiness"]["capability"], "unverified");
@@ -573,3 +620,6 @@ async fn read_only_connection_check_rest_is_protected_closed_and_uses_no_credent
     false
   );
 }
+
+#[path = "integration_administration/sources.rs"]
+mod sources;

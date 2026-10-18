@@ -58,6 +58,8 @@ mod build_discovery;
 mod definition_discovery;
 #[path = "v1_handlers/factory.rs"]
 mod factory;
+#[path = "v1_handlers/integration_contracts.rs"]
+mod integration_contracts;
 #[path = "v1_handlers/log_search.rs"]
 mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
@@ -1304,6 +1306,16 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("/api/v1/projects/{project_id}/factory-runs?limit=1"),None),
     empty_request("GET",&format!("/api/v1/factory-phase-ready?policy_digest={}&limit=1","ab".repeat(32)),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/factory-phase-ready?policy_digest={}&limit=1","ab".repeat(32)),None),
+    empty_request("POST", &format!("/api/v1/projects/{project_id}/factory-source-inputs/{integration_id}/versions"), None),
+    empty_request("POST", &format!("/api/v1/projects/{project_id}/factory-source-groups/{integration_id}/versions"), None),
+    empty_request("POST", &format!("/api/v1/projects/{project_id}/factory-sources/validate"), None),
+    empty_request("POST", &format!("/api/v1/projects/{project_id}/factory-sources/preview"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-inputs/{integration_id}/versions/1/diagnostics"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-groups/{integration_id}/versions/1/diagnostics"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-choices"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-sources"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-inputs/{integration_id}/versions/1"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-groups/{integration_id}/versions/1"), None),
     // Protected administration rejects even well-routed requests before body parsing/policy.
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/access"), None),
     empty_request("GET", &format!("/api/v1/integrations/{integration_id}/projects/{project_id}/access"), None),
@@ -1330,7 +1342,9 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
   assert_eq!(requests.len(), MANAGEMENT_OPERATIONS.len());
 
   for (index, request) in requests.into_iter().enumerate() {
-    let expected = if request.uri().path().starts_with("/api/v1/integrations/") {
+    let expected = if request.uri().path().starts_with("/api/v1/integrations/")
+      || request.uri().path().contains("/factory-source")
+    {
       StatusCode::FORBIDDEN
     } else if request.uri().path() == "/api/v1/operations/metadata" {
       StatusCode::OK

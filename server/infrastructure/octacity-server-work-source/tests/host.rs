@@ -535,3 +535,60 @@ async fn connection_check_process_output_cannot_exceed_its_small_independent_cei
     assert!(!error.to_string().contains("private-check-grant"));
   }
 }
+
+#[tokio::test]
+async fn preview_requires_independent_advertisement_before_exposing_any_read_handle() {
+  for provider in ["github", "gitlab", "jira", "custom-provider"] {
+    let (root, digest) = installed(provider);
+    let dir = root.path().join(provider);
+    let mut wire = serde_json::to_value(scan()).unwrap();
+    wire["message"]["command"]["operation"] = json!("preview");
+    let request = decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
+    let registry = WorkAdapterRegistry::discover(root.path()).unwrap();
+    let error = registry
+      .resolve(provider, &digest)
+      .unwrap()
+      .execute(
+        request.clone(),
+        Duration::from_secs(10),
+        Duration::from_secs(2),
+        CancellationToken::new(),
+      )
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.class(),
+      octacity_server_work_source::HostFailureClass::Unsupported
+    );
+    assert!(!dir.join("captured-request.json").exists());
+    let manifest = fs::read_to_string(dir.join("adapter.toml")).unwrap();
+    fs::write(
+      dir.join("adapter.toml"),
+      manifest.replace("[capabilities.source]", "[capabilities.source]\npreview = true"),
+    )
+    .unwrap();
+    let mut response: Value = serde_json::from_slice(&fs::read(dir.join("response.json")).unwrap()).unwrap();
+    response["message"]["outcome"]["status"] = json!("previewed");
+    response["message"]["outcome"]["payload"]
+      .as_object_mut()
+      .unwrap()
+      .remove("selection");
+    fs::write(dir.join("response.json"), serde_json::to_vec(&response).unwrap()).unwrap();
+    let registry = WorkAdapterRegistry::discover(root.path()).expect("explicit read-only preview capability");
+    let response = registry
+      .resolve(provider, &digest)
+      .unwrap()
+      .execute(
+        request,
+        Duration::from_secs(10),
+        Duration::from_secs(2),
+        CancellationToken::new(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      serde_json::to_value(response).unwrap()["message"]["outcome"]["status"],
+      "previewed"
+    );
+  }
+}

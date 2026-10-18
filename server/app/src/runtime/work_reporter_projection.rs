@@ -24,7 +24,7 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
   async fn material(
     &self,
     request: &FactoryWorkStatusRequest,
-  ) -> Result<(&FactoryReporterProfile, reporter::ProjectionIntent), ApplicationError> {
+  ) -> Result<(FactoryReporterProfile, reporter::ProjectionIntent), ApplicationError> {
     let preparation = self
       .store
       .source_preparation_for_work(request.subject.project_id(), request.work_id)
@@ -39,10 +39,11 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
       .as_ref()
       .ok_or_else(ApplicationError::invalid)?;
     validate_accepted_factory_status_request(&snapshot, &binding.capability, request, self.clock.now()?)?;
-    let profile = self
+    let mut profile = self
       .profiles
       .iter()
       .find(|p| p.draft.project_id == request.subject.project_id() && p.binding == *binding)
+      .cloned()
       .ok_or_else(ApplicationError::unavailable)?;
     let draft = &profile.draft;
     if correlation.work_id != request.work_id
@@ -82,6 +83,19 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
       network_hosts: draft.network_hosts.clone(),
     };
     intent.validate().map_err(|_| ApplicationError::invalid())?;
+    if let Some(connection) = &preparation.input.definition().connection {
+      profile.managed_access = Some(
+        self
+          .managed_connections
+          .as_ref()
+          .ok_or_else(ApplicationError::unavailable)?
+          .for_work_binding(
+            connection,
+            &profile.binding,
+            octacity_server_store::IntegrationPurpose::TaskUpdate,
+          )?,
+      );
+    }
     Ok((profile, intent))
   }
   async fn invoke(
@@ -211,7 +225,7 @@ impl<S: FactorySourceStore + FactoryRunStore> FactoryWorkStatusProjector for Hos
     let (profile, intent) = tokio::time::timeout_at(end, self.material(&request))
       .await
       .map_err(|_| ApplicationError::unavailable())??;
-    self.project_ordered(&request, profile, intent, started, end).await
+    self.project_ordered(&request, &profile, intent, started, end).await
   }
 
   async fn cancel_status(

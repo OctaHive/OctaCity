@@ -2,6 +2,7 @@
 use super::process::execute_source;
 use super::*;
 pub(super) struct SourceCandidateBridge<S, B> {
+  pub(super) managed_connections: Option<ManagedIntegrationConnections>,
   pub(super) store: Arc<S>,
   pub(super) bytes: Arc<B>,
   pub(super) revisions: Arc<dyn RevisionResolver>,
@@ -19,7 +20,7 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
   async fn settle(&self, claim: WorkSourceScanClaim, snapshot: WorkSourceSnapshot) -> Result<(), ApplicationError> {
     require_running(&self.cancellation)?;
     let members = self.store.source_scan_members(claim.clone(), self.clock.now()?).await?;
-    let profiles = profiles_for(&self.profiles, &members)?;
+    let profiles = profiles_for(&self.profiles, &members, self.managed_connections.as_ref())?;
     let mut matches = Vec::new();
     for input in members.iter().filter(|v| v.definition().enabled) {
       let profile = profiles
@@ -88,7 +89,9 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
     Ok(Arc::new(SourceAuthority {
       store: self.store.clone(),
       registry: self.registry.clone(),
-      profile: profile.clone(),
+      profile: profile
+        .clone()
+        .for_definition(input.definition(), self.managed_connections.as_ref())?,
       claim: claim.clone(),
       clock: self.clock.clone(),
       settings: self.settings,
@@ -210,7 +213,8 @@ impl<S: FactorySourceStore> FactorySourceAuthorizer for SourceAuthority<S> {
       &self.registry,
       &self.profile,
       wire,
-      self.settings,
+      self.settings.operation_timeout,
+      self.settings.cancellation_grace,
       self.cancellation.clone(),
     )
     .await?

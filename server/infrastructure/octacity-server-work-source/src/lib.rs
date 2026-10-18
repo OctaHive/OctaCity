@@ -108,6 +108,7 @@ impl InstalledWorkAdapter {
         .map_err(|_| self.unsupported("source"))?;
         let (profile, scan_id) = match &request.command {
           source::Command::Scan(intent) => (&intent.configuration_digest, &intent.scan_id),
+          source::Command::Preview(intent) if capabilities.preview => (&intent.configuration_digest, &intent.scan_id),
           source::Command::Check(intent) if capabilities.check => (&intent.configuration_digest, &intent.check_id),
           source::Command::Authorize(intent) if capabilities.authorize => {
             (&intent.configuration_digest, &intent.scan_id)

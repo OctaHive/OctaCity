@@ -280,11 +280,15 @@ pub struct FactoryReporterRetryPolicy {
   pub retry_delay_millis: u64,
 }
 impl FactoryReporterRetryPolicy {
+  /// Maximum published projection attempts, shared with the management schema.
+  pub const MAX_ATTEMPTS: u16 = 1024;
+  /// Maximum published delay; retries still cannot extend the original deadline.
+  pub const MAX_RETRY_DELAY_MILLIS: u64 = 3_600_000;
   pub(crate) fn validate(self) -> Result<(), ApplicationError> {
     if self.max_attempts == 0
-      || self.max_attempts > 1024
+      || self.max_attempts > Self::MAX_ATTEMPTS
       || self.retry_delay_millis == 0
-      || self.retry_delay_millis > 3_600_000
+      || self.retry_delay_millis > Self::MAX_RETRY_DELAY_MILLIS
     {
       return Err(ApplicationError::invalid());
     }

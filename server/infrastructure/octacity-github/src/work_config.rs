@@ -188,7 +188,7 @@ impl GithubWorkProvider {
       });
     }
     let Request::Source(source::Request {
-      command: source::Command::Scan(intent),
+      command: source::Command::Scan(intent) | source::Command::Preview(intent),
       ..
     }) = request
     else {
@@ -215,15 +215,35 @@ impl GithubWorkProvider {
         .repositories
         .get(&intent.resource.resource_locator)
         .ok_or(FailureClass::InvalidRequest)?;
-      crate::issue_source::scan(
-        &self.api,
-        &repository.owner,
-        &repository.name,
-        &access.credential,
-        intent,
-        &selectors,
-      )
-      .await
+      if matches!(
+        request,
+        Request::Source(source::Request {
+          command: source::Command::Preview(_),
+          ..
+        })
+      ) {
+        crate::issue_source::preview(
+          &self.api,
+          &repository.owner,
+          &repository.name,
+          &access.credential,
+          intent,
+          &selectors,
+        )
+        .await
+        .map(source::Outcome::Previewed)
+      } else {
+        crate::issue_source::scan(
+          &self.api,
+          &repository.owner,
+          &repository.name,
+          &access.credential,
+          intent,
+          &selectors,
+        )
+        .await
+        .map(source::Outcome::Page)
+      }
     };
     let result = tokio::select! {
       biased;
@@ -237,7 +257,7 @@ impl GithubWorkProvider {
         _ => unreachable!(),
       },
       outcome: match result {
-        Ok(page) => source::Outcome::Page(page),
+        Ok(outcome) => outcome,
         Err(error) => source::Outcome::Failure(octacity_work_source_protocol::Failure {
           class: error.class,
           retry_after_millis: error.retry_after_millis,
@@ -322,7 +342,7 @@ impl GithubWorkProvider {
     request.validate().map_err(|_| FailureClass::InvalidRequest)?;
     let (profile, access, network, aliases, class) = match request {
       Request::Source(source::Request {
-        command: source::Command::Scan(intent),
+        command: source::Command::Scan(intent) | source::Command::Preview(intent),
         ..
       }) => (
         &intent.configuration_digest,

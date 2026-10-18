@@ -22,7 +22,7 @@ pub(super) fn same_cancellation(original: &Request, bytes: &[u8]) -> bool {
 
     (
       Request::Source(source::Request {
-        command: source::Command::Scan(intent),
+        command: source::Command::Scan(intent) | source::Command::Preview(intent),
         ..
       }),
       Request::Source(source::Request {
@@ -98,7 +98,9 @@ pub(super) fn response(request: &Request, class: FailureClass) -> Response {
           scan_id: target_scan_id.clone(),
         },
         source::Command::Check(intent) => source::Outcome::Checked(check_failure(intent, class)),
-        source::Command::Scan(_) | source::Command::Authorize(_) => source::Outcome::Failure(unavailable()),
+        source::Command::Scan(_) | source::Command::Preview(_) | source::Command::Authorize(_) => {
+          source::Outcome::Failure(unavailable())
+        }
       },
     }),
     Request::Reporter(request) => Response::Reporter(reporter::Response {

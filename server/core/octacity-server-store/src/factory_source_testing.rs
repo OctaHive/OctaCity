@@ -10,6 +10,13 @@ use std::collections::BTreeMap;
 
 #[derive(Default, Clone)]
 pub(super) struct SourceMemoryState {
+  pub(super) mutations: BTreeMap<
+    crate::ManagementIdempotencyKey,
+    (
+      crate::WorkSourceConfigurationIntent,
+      crate::WorkSourceConfigurationOutcome,
+    ),
+  >,
   pub(super) materializations: BTreeMap<octacity_server_factory::FactoryDigest, crate::SourceMaterialization>,
   pub(super) preparations: BTreeMap<octacity_server_factory::FactoryDigest, crate::WorkSourcePreparation>,
   pub(super) scans: BTreeMap<(&'static str, uuid::Uuid), crate::WorkSourceScan>,
@@ -472,64 +479,8 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
     Ok(count)
   }
   async fn publish_work_sources(&self, request: PublishWorkSources) -> Result<(), StoreError> {
-    request.validate()?;
     let mut state = self.lock()?;
-    if !state.projects.contains(&request.project_id) {
-      return Err(source_conflict());
-    }
-    let mut sources = state.sources.clone();
-    for change in request.inputs {
-      let current = sources
-        .inputs
-        .values()
-        .filter(|v| v.id() == change.input.id())
-        .max_by_key(|v| v.version());
-      if current.map(|v| v.version()) != change.expected_version
-        || current.is_some_and(|v| v.project_id() != request.project_id)
-      {
-        return Err(source_conflict());
-      }
-      let definition = change.input.definition();
-      let target = &state
-        .versions
-        .get(&(definition.target.id(), definition.target.version()))
-        .ok_or_else(source_conflict)?
-        .configuration;
-      let repository = state
-        .repositories
-        .get(&(definition.repository.id, definition.repository.version))
-        .ok_or_else(source_conflict)?;
-      validate_source_input_dependencies(&change.input, target, repository)?;
-      sources
-        .inputs
-        .insert((change.input.id(), change.input.version()), change.input);
-    }
-    if let Some(change) = request.group {
-      let current = sources
-        .groups
-        .values()
-        .filter(|v| v.id() == change.group.id())
-        .max_by_key(|v| v.version());
-      if current.map(|v| v.version()) != change.expected_version
-        || current.is_some_and(|v| v.project_id() != request.project_id)
-      {
-        return Err(source_conflict());
-      }
-      for member in change.group.members() {
-        let current = sources
-          .inputs
-          .values()
-          .filter(|v| v.id() == member.id())
-          .max_by_key(|v| v.version());
-        if current != Some(member) {
-          return Err(source_conflict());
-        }
-      }
-      sources
-        .groups
-        .insert((change.group.id(), change.group.version()), change.group);
-    }
-    state.sources = sources;
+    state.sources = resolved_publication(&state, request)?;
     Ok(())
   }
   async fn source_input(
@@ -714,4 +665,277 @@ pub(super) fn record_projection_intents(
   state.sources.projection_sequences.insert(key, sequence);
   state.sources.projection_intents.extend(staged);
   Ok(())
+}
+
+// Prepare the complete next source state before committing any part of it.
+fn resolved_publication(
+  state: &crate::factory_configuration_testing::FactoryConfigurationMemoryState,
+  request: PublishWorkSources,
+) -> Result<SourceMemoryState, StoreError> {
+  request.validate()?;
+  if !state.projects.contains(&request.project_id) {
+    return Err(source_conflict());
+  }
+  let mut sources = state.sources.clone();
+  for change in request.inputs {
+    state.integrations.validate_source_input(&change.input)?;
+    let current = sources
+      .inputs
+      .values()
+      .filter(|v| v.id() == change.input.id())
+      .max_by_key(|v| v.version());
+    if current.map(|v| v.version()) != change.expected_version
+      || current.is_some_and(|v| v.project_id() != request.project_id)
+    {
+      return Err(source_conflict());
+    }
+    let definition = change.input.definition();
+    let target = &state
+      .versions
+      .get(&(definition.target.id(), definition.target.version()))
+      .ok_or_else(source_conflict)?
+      .configuration;
+    let repository = state
+      .repositories
+      .get(&(definition.repository.id, definition.repository.version))
+      .ok_or_else(source_conflict)?;
+    validate_source_input_dependencies(&change.input, target, repository)?;
+    sources
+      .inputs
+      .insert((change.input.id(), change.input.version()), change.input);
+  }
+  if let Some(change) = request.group {
+    let current = sources
+      .groups
+      .values()
+      .filter(|v| v.id() == change.group.id())
+      .max_by_key(|v| v.version());
+    if current.map(|v| v.version()) != change.expected_version
+      || current.is_some_and(|v| v.project_id() != request.project_id)
+    {
+      return Err(source_conflict());
+    }
+    for member in change.group.members() {
+      state.integrations.validate_source_input(member)?;
+      let current = sources
+        .inputs
+        .values()
+        .filter(|v| v.id() == member.id())
+        .max_by_key(|v| v.version());
+      if current != Some(member) {
+        return Err(source_conflict());
+      }
+    }
+    sources
+      .groups
+      .insert((change.group.id(), change.group.version()), change.group);
+  }
+  Ok(sources)
+}
+#[async_trait]
+impl crate::FactorySourceConfigurationStore for InMemoryFactoryConfigurationStore {
+  async fn list_work_source_configurations(
+    &self,
+    request: crate::ListWorkSourceConfigurations,
+  ) -> Result<crate::WorkSourceConfigurationPage, StoreError> {
+    request.validate()?;
+    let state = self.lock()?;
+    if !state.projects.contains(&request.project_id) {
+      return Err(source_conflict());
+    }
+    let mut inputs = BTreeMap::new();
+    for input in state
+      .sources
+      .inputs
+      .values()
+      .filter(|i| i.project_id() == request.project_id)
+    {
+      inputs.insert(input.id(), input);
+    }
+    let mut groups = BTreeMap::new();
+    for group in state
+      .sources
+      .groups
+      .values()
+      .filter(|g| g.project_id() == request.project_id)
+    {
+      groups.insert(group.id(), group);
+    }
+    let mut items = inputs
+      .into_values()
+      .map(|i| crate::WorkSourceConfigurationRecord::Input(Box::new(i.clone())))
+      .chain(
+        groups
+          .into_values()
+          .map(|g| crate::WorkSourceConfigurationRecord::Group(g.clone())),
+      )
+      .filter(|r| r.inputs().iter().all(|i| request.visibility.allows(i)))
+      .filter(|r| {
+        request
+          .after
+          .is_none_or(|after| r.target().identity() > after.identity())
+      })
+      .collect::<Vec<_>>();
+    items.sort_by_key(|r| r.target().identity());
+    let more = items.len() > usize::from(request.limit);
+    items.truncate(usize::from(request.limit));
+    let next_cursor = more.then(|| items.last().map(|r| r.target())).flatten();
+    Ok(crate::WorkSourceConfigurationPage { items, next_cursor })
+  }
+  async fn replay_work_source_configuration(
+    &self,
+    request: crate::ManagementMutation<crate::ReplayWorkSourceConfiguration>,
+  ) -> Result<Option<crate::WorkSourceConfigurationOutcome>, StoreError> {
+    let (request, audit) = request.into_parts();
+    let state = self.lock()?;
+    replay_configuration(
+      &state.sources,
+      &audit.scoped_idempotency_key(&request.idempotency_key),
+      &request.intent,
+    )
+  }
+  async fn publish_work_source_configuration(
+    &self,
+    request: crate::ManagementMutation<crate::PublishWorkSourceConfiguration>,
+  ) -> Result<crate::WorkSourceConfigurationOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    request.validate()?;
+    let key = audit.scoped_idempotency_key(&request.idempotency_key);
+    let mut state = self.lock()?;
+    if let Some(prior) = replay_configuration(&state.sources, &key, &request.intent)? {
+      return Ok(prior);
+    }
+    let mut sources = resolved_publication(&state, request.publication.clone())?;
+    let outcome = request.outcome();
+    sources.mutations.insert(key.clone(), (request.intent, outcome.clone()));
+    state.sources = sources;
+    state.evidence.insert(format!(
+      "publish-work-source-configuration:{}:{}",
+      key.security_scope().as_str(),
+      key.caller_key()
+    ));
+    state.audit.insert(crate::testing::recorded_management_audit(
+      &audit,
+      crate::StoreOperation::PublishWorkSourceConfiguration,
+      octacity_server_domain::EntityKind::Project,
+      outcome.publication.project_id,
+    ));
+    Ok(outcome)
+  }
+}
+fn replay_configuration(
+  sources: &SourceMemoryState,
+  key: &crate::ManagementIdempotencyKey,
+  intent: &crate::WorkSourceConfigurationIntent,
+) -> Result<Option<crate::WorkSourceConfigurationOutcome>, StoreError> {
+  let Some((original, outcome)) = sources.mutations.get(key) else {
+    return Ok(None);
+  };
+  if original != intent {
+    return Err(source_conflict());
+  }
+  let mut replay = outcome.clone();
+  replay.disposition = crate::MutationDisposition::Replayed;
+  Ok(Some(replay))
+}
+#[async_trait]
+impl crate::FactorySourceDiagnosticsStore for InMemoryFactoryConfigurationStore {
+  async fn source_reporting_diagnostics(
+    &self,
+    project: ProjectId,
+    association: &crate::WorkSourceDiagnosticAssociation,
+    limit: u16,
+  ) -> Result<crate::WorkSourceReportingPage, StoreError> {
+    if !(1..=crate::MAX_WORK_SOURCE_REPORTING_OPERATIONS).contains(&limit) {
+      return Err(source_conflict());
+    }
+    let state = self.lock()?;
+    let preparation = state
+      .sources
+      .preparations
+      .get(&association.id)
+      .filter(|p| {
+        p.input.project_id() == project
+          && p.input.id() == association.input_id
+          && p.input.version() == association.input_version
+          && p
+            .admission
+            .as_ref()
+            .is_some_and(|a| a.work_id == association.work_id && a.run_id == association.run_id)
+      })
+      .ok_or_else(source_conflict)?;
+    // This registry is written with accepted Flow/outbox publication after checking the original Reporter.
+    let issue = preparation.projection_item();
+    let accepted = state
+      .sources
+      .projection_intents
+      .keys()
+      .filter(|(p, i, _)| *p == project && *i == issue)
+      .map(|(_, _, operation)| *operation)
+      .collect();
+    let run = state
+      .factory_runs
+      .get(&association.run_id)
+      .ok_or_else(source_conflict)?;
+    Ok(run.source_reporting_diagnostics(&accepted, limit))
+  }
+  async fn source_scan_diagnostics(
+    &self,
+    project: ProjectId,
+    target: crate::WorkSourceScanTarget,
+  ) -> Result<Option<crate::WorkSourceScanDiagnostics>, StoreError> {
+    Ok(
+      self
+        .lock()?
+        .sources
+        .scans
+        .get(&target.identity())
+        .filter(|s| s.claim.project_id == project && s.claim.target == target)
+        .cloned()
+        .map(crate::WorkSourceScanDiagnostics::from_scan),
+    )
+  }
+  async fn source_diagnostic_correlations(
+    &self,
+    request: crate::ReadWorkSourceCorrelations,
+  ) -> Result<crate::WorkSourceDiagnosticPage, StoreError> {
+    request.validate()?;
+    let state = self.lock()?;
+    let mut items = vec![];
+    for p in state.sources.preparations.values() {
+      let Some(admission) = &p.admission else { continue };
+      if p.input.project_id() != request.project_id
+        || request.after.is_some_and(|after| p.id <= after)
+        || !request.visibility.allows(&p.input)
+        || !request.runs.allows(&admission.run_id)
+      {
+        continue;
+      }
+      let partition = crate::factory_configuration_testing::source_admission_partition(&state, admission.work_id)
+        .ok_or(StoreError::Unavailable)?;
+      let matches = match &request.filter {
+        crate::WorkSourceDiagnosticFilter::Inputs(ids) => ids.contains(&p.input.id()),
+        crate::WorkSourceDiagnosticFilter::Native { issues, security_scope } => {
+          issues.contains(&p.issue) && partition == *security_scope
+        }
+      };
+      if !matches {
+        continue;
+      }
+      items.push(crate::WorkSourceDiagnosticAssociation {
+        id: p.id,
+        native_correlation: crate::source_native_correlation(p.issue, partition),
+        input_id: p.input.id(),
+        input_version: p.input.version(),
+        work_id: admission.work_id,
+        run_id: admission.run_id,
+      });
+      if items.len() > usize::from(request.limit) {
+        break;
+      }
+    }
+    let next_cursor = (items.len() > usize::from(request.limit)).then(|| items[usize::from(request.limit) - 1].id);
+    items.truncate(usize::from(request.limit));
+    Ok(crate::WorkSourceDiagnosticPage { items, next_cursor })
+  }
 }

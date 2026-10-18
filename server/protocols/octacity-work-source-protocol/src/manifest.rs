@@ -29,6 +29,9 @@ pub struct ProtocolRanges {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceCapabilities {
+  /// Explicit opt-in for summaries/reasons, without production scan or task events.
+  #[serde(default)]
+  pub preview: bool,
   /// Explicit opt-in for bounded read-only connection diagnostics.
   #[serde(default)]
   pub check: bool,

@@ -22,6 +22,8 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "agent_id",
     "integration_id",
     "trigger_id",
+    "input_id",
+    "group_id",
     "version",
   ] {
     if operation.path.contains(&format!("{{{name}}}")) {
@@ -39,6 +41,12 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
   match operation.parameter_profile {
     ParameterProfile::FactoryDiagnostics => parameters.extend([cursor_parameter_with_max(256),
       limit_parameter(octacity_server_application::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT)]),
+    ParameterProfile::WorkSourceInputChoices => parameters.extend([
+      json!({"name":"connection_id","in":"query","required":true,"schema":{"type":"string","format":"uuid"}}),
+      json!({"name":"connection_version","in":"query","required":true,"schema":positive_integer()}),
+    ]),
+    ParameterProfile::WorkSourceDiagnostics => parameters.extend([cursor_parameter_with_max(512),limit_parameter(64,super::super::adapter::DEFAULT_PAGE_LIMIT)]),
+    ParameterProfile::WorkSourceConfigurations => parameters.extend([cursor_parameter_with_max(256), limit_parameter(octacity_server_application::MAX_WORK_SOURCE_CONFIGURATION_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::None => {}
     ParameterProfile::ProjectList => parameters.extend([
       json!({"name": "parent_id", "in": "query", "required": false, "schema": non_empty_string()}),
