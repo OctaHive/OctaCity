@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: REST manual Issue creation and revision commands
-The management API SHALL expose bounded visible Issue listing, manual creation, safe card reads, authorized requirements/revision reads and editable-field revision commands independently of Factory configuration and external providers. Creation/editing SHALL use closed generated schemas, scoped idempotency and current Issue-version preconditions where applicable. Clients SHALL supply neither execution state, accepted evidence/Decision, authenticated actor identity, credentials nor arbitrary provider payloads. Source-owned field edits SHALL be rejected with safe ownership feedback. An Issue save SHALL create no Work or execution.
+The management API SHALL expose bounded visible Issue listing, manual creation, safe card reads, authorized requirements/revision reads and editable-field revision commands independently of Factory configuration and external providers. Creation/editing SHALL use closed generated schemas, scoped idempotency and current Issue-version preconditions where applicable. Clients SHALL supply neither execution state, accepted evidence/Decision, authenticated actor identity, credentials nor arbitrary provider payloads. Generic metadata edits SHALL NOT bypass explicit status transitions or reviewed workflow adoption. Source-owned field edits SHALL be rejected with safe ownership feedback. An Issue save SHALL create no Work or execution.
 
 #### Scenario: HTTP-only client creates and edits a task
 - **WHEN** an authorized client creates a manual Issue and edits it using its returned version
@@ -14,6 +14,32 @@ The management API SHALL expose bounded visible Issue listing, manual creation, 
 #### Scenario: Client attempts an execution-state setter
 - **WHEN** an Issue mutation supplies an acceptance, Run-success, candidate or permission field
 - **THEN** validation rejects it without changing execution authority
+
+### Requirement: REST Project workflows and Issue transitions are explicit versioned contracts
+The API SHALL expose authorized bounded Project workflow discovery/validation/immutable publication/default selection, Issue workflow/status reads, permitted transition choices, explicit preconditioned transition commands, reviewed workflow adoption and paginated status history. Generated schemas SHALL identify stable statuses/edges, current workflow and Issue/status versions, allowed origins, supported evidence requirements and safe ownership/applicability reasons. Workflow administration, manual movement and execution controls SHALL have separate actions/rights; reads SHALL reserve no transition. Mutations SHALL use scoped replay and current preconditions, and retired/replaced versions SHALL remain readable when referenced. Workflow adoption SHALL validate explicit current-to-target status correspondence, mapping compatibility and field ownership without migrating Work or dispatching provider effects. Transition commands SHALL call shared business policy rather than accept an arbitrary desired Run state or bypass generic metadata restrictions.
+
+#### Scenario: Operator manages a custom workflow through HTTP only
+- **WHEN** an authorized client validates/publishes custom status names and allowed edges and selects a default
+- **THEN** it receives immutable identities/version receipts and new tasks use the initial status without configuring Factory or an integration
+
+#### Scenario: Two clients race a status move
+- **WHEN** both submit moves against the same Issue/status precondition
+- **THEN** at most one new move commits, the loser receives a safe conflict and winning exact replay returns its original history receipt
+
+#### Scenario: Status query exposes a restricted move
+- **WHEN** ownership, evidence or current applicability prevents a transition
+- **THEN** authorized clients receive safe reasons and cannot acquire mutation authority from enumerating the choice
+
+### Requirement: REST pipeline status actions and external mapping stay separate
+Existing Flow/action publication SHALL expose typed Issue-status action choices using visible exact workflow/transition references and declared outcome/evidence bindings, without provider payloads or credentials. Validation SHALL check action/target compatibility and reject known missing Issue requirements, unsupported transitions and conflicting producers. The external mapping contract SHALL separately expose compatible internal status IDs, native supported observations/effects, authority/direction and unmapped/ambiguous/conflict conditions through existing source-link/definition management. Accepted action status receipts SHALL retain exact Issue/workflow/execution/action provenance independently of external projection receipts. Current requirements/applicability failures SHALL remain explicit and SHALL NOT be retried as a new intent against the latest card.
+
+#### Scenario: Client adds a local status action without a source
+- **WHEN** an authorized Flow author binds a permitted declared outcome to an installed Issue-status action for Issue-backed execution
+- **THEN** publication needs no connection/Reporter and action progress identifies its local transition independently of execution and synchronization
+
+#### Scenario: External mapping is ambiguous or unsupported
+- **WHEN** a client requests multiple matching targets, incompatible workflow status references or a native operation not advertised by the installed adapter
+- **THEN** validation/observation exposes the exact safe condition without inferring a business transition or offering a provider-specific bypass
 
 ### Requirement: REST Issue execution requests preserve ordinary admission
 The API SHALL expose bounded Issue execution history, explicit reviewed execution requests and request-status reads. Commands SHALL bind the observed Issue revision, exact visible target/repository and input mapping; validate ordinary admission authority and prerequisites; and expose pending publication/admission versus a durably linked Work/Run. Replay SHALL resume the original request and return its exact outcome after interrupted publication, admission, association or acknowledgement. Reads SHALL link to existing Factory Run/Build routes. Later intentional execution SHALL require a distinct request, while existing retry controls SHALL remain unchanged.

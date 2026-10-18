@@ -11,6 +11,28 @@ The Console SHALL provide a task-oriented list and manual-create entry point wit
 - **WHEN** an external source cannot be reached
 - **THEN** local task navigation and manual creation remain available and affected linked tasks show their scoped synchronization condition
 
+### Requirement: Project status settings and card moves are guided and independent
+The Console SHALL expose bounded Project workflow settings for editable status names/order, initial/organizational terminal state and permitted transitions/origins with supported evidence requirements, using generated authoritative choices and reviewed immutable publication/default selection. Manual creation SHALL work with the provided editable default without setup. Existing cards SHALL show their pinned version and require explicit reviewed compatible status correspondence for workflow adoption. Card controls SHALL enumerate only server-authorized organizational moves, explain ownership/evidence/applicability restrictions and confirm the current Issue/status precondition. History SHALL identify before/after status, reason and actor or pipeline/source provenance. A status move SHALL NOT be presented as execution start, gate approval or verification success. Stale intents SHALL require fresh review and preserve in-memory context without automatic resubmission.
+
+#### Scenario: Project uses its own status vocabulary
+- **WHEN** an operator publishes custom statuses and edges without a provider or configured pipeline
+- **THEN** tasks use those settings through the same manual-create/move/card UI and no label spelling or phase name is required
+
+#### Scenario: Old execution cannot move the current card
+- **WHEN** the server classifies its configured action as stale or conflicting after a newer revision or status intent
+- **THEN** the card retains its exact historical result and shows the unapplied transition rather than moving the card or relabeling the Run result
+
+### Requirement: Pipeline Issue-status actions and native mapping have separate editors
+Existing Flow authoring SHALL allow an authorized operator to select an installed Issue-status action on a declared outcome and review the exact workflow/version/edge and supported evidence, independently of source-update actions. Source-link mapping review SHALL separately show internal status IDs/names, native supported values/effects and field authority/direction; it SHALL not edit Project workflow structure. The UI SHALL explain unmapped/ambiguous observations, forbidden edges and overlapping producers, and offer only installed supported operations. A local action/manual task SHALL require no connection, token or external mapping. Completion without a configured status action SHALL display only execution progress. Both surfaces SHALL preserve generated bounds, stale-version review, keyboard/focus, English/Russian strings and in-memory-only drafts.
+
+#### Scenario: Operator configures Triage business outcomes
+- **WHEN** separate accepted eligible and declined branches select different explicit Issue transitions
+- **THEN** review shows Ready versus Declined as configurable examples and no automatic Done move is attached to Run completion
+
+#### Scenario: Business status is saved while native update is pending
+- **WHEN** a configured local move succeeds and its external push is retrying
+- **THEN** the UI separately shows the current task status, exact execution/action outcome and pending synchronization with no false rollback or verification claim
+
 ### Requirement: Canonical Issue card presents task execution and source state separately
 The Console SHALL provide one URL-addressable Issue card with Overview, Activity, Runs, Results and Actions sections, exact historical selection, and links to original inputs and existing advanced Run/Build/log views. It SHALL separately display task business metadata, all active executions/current steps, available AI execution profile/model and assigned enrolled worker, and source link/synchronization health. Queued/unassigned/parallel/unavailable facts SHALL be explicit. Editable requirements SHALL show their revision and source ownership; no task-status edit SHALL be presented as verification acceptance or a Factory state setter.
 

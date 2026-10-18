@@ -1,11 +1,11 @@
 ## Purpose
 
-Defines persistent provider-neutral tasks with editable revisions, exact Factory execution history, optional external synchronization, operator discussion, and evidence-bound actions without replacing existing execution authority.
+Defines persistent provider-neutral tasks with configurable Project business workflows, explicit guarded status actions, editable revisions, exact Factory execution history, separate external synchronization and operator discussion without replacing execution authority.
 
 ## ADDED Requirements
 
 ### Requirement: Internal Issues exist independently of execution and providers
-The server SHALL provide a Project-owned Issue with a stable internal identity, unique Project-local display key, bounded title and description, optional acceptance input, configured business metadata, and immutable content revisions. Authorized operators SHALL be able to create and edit manual Issues without an external connection, repository, model, or Factory Configuration. Editing SHALL require the observed Issue version and scoped replay; exact replay SHALL return the original outcome and changed reuse SHALL conflict. Saving an Issue SHALL NOT start execution or require invented acceptance criteria. Task business metadata SHALL NOT constitute a Factory Decision or execution permission.
+The server SHALL provide a Project-owned Issue with a stable internal identity, unique Project-local display key, bounded title and description, optional acceptance input, configured business metadata, and immutable content revisions. Authorized operators SHALL be able to create and edit manual Issues without an external connection, repository, model, or Factory Configuration. Editing SHALL require the observed Issue version and scoped replay; exact replay SHALL return the original outcome and changed reuse SHALL conflict. Saving an Issue SHALL NOT start execution or require invented acceptance criteria. Status/workflow changes SHALL use their explicit guarded commands rather than generic metadata editing. Task business metadata SHALL NOT constitute a Factory Decision or execution permission.
 
 #### Scenario: Operator creates a manual draft without integrations
 - **WHEN** an authorized operator supplies valid task text in a Project without a provider or Factory Configuration
@@ -14,6 +14,59 @@ The server SHALL provide a Project-owned Issue with a stable internal identity, 
 #### Scenario: Two operators edit the same revision
 - **WHEN** both submit different edits against the same observed Issue version
 - **THEN** at most one new revision commits and the other receives a conflict without overwriting content or creating execution
+
+### Requirement: Project business workflows are configurable and versioned
+Each Issue-enabled Project SHALL provide a bounded immutable workflow version with stable status/transition identities, editable names/order, one initial status, optional organizational terminal markers and explicit permitted from/to transitions with authorized origins and supported evidence requirements. Validation SHALL reject invalid references, duplicates, missing initial state, unsupported guards and exceeded bounds. A declarative editable default SHALL permit first manual creation without workflow administration, Factory or provider setup. New Issues SHALL use the selected default's initial status. Replacement SHALL preserve referenced versions and affect new Issues without silently repinning existing Issues, mappings or actions. Existing Issue workflow adoption SHALL require a separately authorized reviewed version/status correspondence, compatible source mapping and current field ownership, invalidate old automated applicability, and change no frozen Work or provider state. Status names and terminal markers SHALL have no built-in execution/acceptance semantics.
+
+#### Scenario: First manual task uses the Project default
+- **WHEN** a permitted creator saves a task before configuring a provider, Factory or custom workflow
+- **THEN** the Issue pins a valid default workflow and its initial status without requiring the creator to publish policy or start execution
+
+#### Scenario: Operator renames statuses and publishes replacement rules
+- **WHEN** an authorized administrator publishes a valid replacement workflow with custom names or transitions
+- **THEN** new tasks can select the new default while existing tasks/actions/history retain their exact version and stable status identities until reviewed adoption
+
+#### Scenario: Replacement references invalid or unsupported transitions
+- **WHEN** its initial state, edge endpoints, bounds or evidence requirements are invalid
+- **THEN** publication fails without changing the Project default or existing Issue behavior
+
+### Requirement: All business status moves share one guarded transition boundary
+Manual commands, accepted pipeline actions and permitted source observations SHALL use the same Issue business-transition boundary. It SHALL verify current visibility/rights, exact Issue/workflow/status preconditions, allowed direct edge/origin, field ownership and configured exact evidence before publication. Status revision/history, scoped replay, safe audit and any authorized retained outbound intent SHALL commit atomically or recover as one original operation. History SHALL identify before/after statuses, workflow version, safe reason and actor or exact execution/action/observation. Exact replay after later changes SHALL return its original receipt, and changed reuse SHALL conflict. Forbidden moves SHALL NOT infer a multi-edge path, partially change metadata, emit provider intent or resolve an execution gate. Status movement alone SHALL NOT start/retry/cancel execution or grant delivery/acceptance; progress reads SHALL NOT create status revisions.
+
+#### Scenario: Manual move follows an allowed edge
+- **WHEN** an authorized operator submits the current Issue/status version and a permitted transition
+- **THEN** one organizational status/history receipt commits without a Work/Run or provider prerequisite
+
+#### Scenario: Move is forbidden or source-owned
+- **WHEN** a manual or pipeline command lacks its edge, current authority, ownership or required exact evidence
+- **THEN** it returns a safe denied/conflict/validation result without partial history, provider effects or execution-state mutation
+
+#### Scenario: A terminal-looking status is selected
+- **WHEN** an allowed organizational move reaches a status named Done or marked terminal
+- **THEN** existing verification, Decision, human-gate and delivery requirements remain independently authoritative
+
+#### Scenario: Lost transition response is retried after another move
+- **WHEN** the original command is replayed after the card has advanced
+- **THEN** its original receipt returns without moving the card backward or appending another transition
+
+### Requirement: Pipelines change Issue status only through explicit accepted actions
+Existing trusted-action contracts SHALL support an installed provider-neutral Issue-status action on a selected declared outcome, with exact workflow/transition, authorized Issue association, requirements binding and accepted Work/Run/Flow/cycle/node/action provenance. Configured supported evidence SHALL remain authoritative. No special node kind, external source or paid model SHALL be required. Completion, stage/status names, raw model prose and unhandled errors SHALL NOT infer status movement. Execution association SHALL retain guarded status applicability; successful sequential commands from that same retained action lineage SHALL remain possible without treating their own status-only changes as new requirements. Committed manual/source status moves, status moves from another execution, workflow adoption or requirements changes SHALL invalidate older applicability even when the visible status or requirements text returns to the same value. Starting another execution, unchanged source reads or unrelated metadata edits SHALL NOT alone invalidate applicability. Stale/conflicting actions SHALL preserve accepted history and report their exact condition without silently retargeting, overwriting newer intent or starting another execution. Original command replay/recovery SHALL produce at most one status receipt. Missing Issue association SHALL NOT cause guessed association or task creation; legacy unlinked execution remains supported.
+
+#### Scenario: Triage completes with an explicit eligible outcome action
+- **WHEN** an accepted configured outcome selects Triage-to-Ready for its applicable Issue revision/workflow
+- **THEN** that organizational move commits with its exact action provenance rather than treating completion as Done
+
+#### Scenario: Pipeline has no Issue-status action
+- **WHEN** its Run or intermediate stage completes
+- **THEN** card business status remains unchanged and only execution progress changes
+
+#### Scenario: One execution performs successive configured moves
+- **WHEN** its accepted entry and later outcome actions follow allowed edges with unchanged requirements and no intervening competing intent
+- **THEN** both retained commands can advance status once each through the shared transition boundary
+
+#### Scenario: Old execution finishes after requirements or status changed
+- **WHEN** a new revision, another execution, manual move or external transition invalidated its applicability, including a move away and back
+- **THEN** its status command conflicts without overwriting the newer card or discarding its historical execution result
 
 ### Requirement: One Issue retains multiple exact executions
 An Issue SHALL retain zero or many explicit execution requests and associated immutable Work Envelopes in its owning Project. Each Work SHALL remain associated with at most one Issue and exactly its existing Factory Run; legacy unassociated Work SHALL remain valid. Each execution SHALL identify its exact requirements revision or legacy input provenance, configuration, repository/base, mapping, and existing Run history. A node retry or requirements cycle SHALL remain within its original execution, while a later intentional processing request SHALL use a distinct admission identity. Multiple active executions SHALL be represented individually rather than collapsed into one agent or outcome.
@@ -85,6 +138,25 @@ Every source link SHALL retain an exact versioned mapping and explicit pull/push
 #### Scenario: Deployment has no native GitLab or Jira adapter
 - **WHEN** it uses manual Issues or another installed provider
 - **THEN** those tasks and executions remain usable without claiming that the absent adapter is available
+
+### Requirement: External status mappings translate fields without defining the workflow
+Source status mappings SHALL be separately versioned from Project workflows and pipeline action selection, reference stable internal statuses and compatible workflow versions, and advertise only installed readable/writable native values/effects. Each managed status field SHALL have one authority/direction: source-owned pull, OctaCity-owned push or unsynchronized. A fresh authorized pull SHALL resolve exactly one configured target and use the shared permitted-transition boundary; absent/ambiguous mappings, forbidden edges, stale applicability or missing evidence SHALL remain explicit conditions without guessed targets or intermediate moves. Source-owned status SHALL reject manual/pipeline replacement; native divergence for OctaCity-owned status SHALL NOT become an incoming transition. Unrelated fields SHALL remain preserved. Native state/labels SHALL have no intrinsic meaning, and provider/connection selection SHALL NOT define or replace the Project workflow. A pull echo SHALL create no new transition, revision, action or execution. Overlapping native writes from a card-status push and direct Factory source effects for the same outcome SHALL require one explicitly reviewed producer or rejection, not duplicate projection paths.
+
+#### Scenario: Same internal status uses different provider vocabulary
+- **WHEN** supported mappings translate Ready to GitHub label effects or a fake provider's opaque native value
+- **THEN** the Project workflow and pipeline action remain identical, while unsupported real adapters/operations are not offered
+
+#### Scenario: External closed value has no configured transition
+- **WHEN** a source observation is unmapped, matches several targets or would require a forbidden direct edge
+- **THEN** synchronization exposes that condition and preserves the current card status instead of assuming Done or executing hidden intermediate transitions
+
+#### Scenario: OctaCity owns the status and the provider is unavailable
+- **WHEN** an applicable accepted status action commits while its exact mapped push cannot complete
+- **THEN** local status and history remain retained, synchronization reports pending/exhausted separately and no Run result is rewritten
+
+#### Scenario: Two configured producers target the same native field
+- **WHEN** an outcome enables both a card-status push and overlapping direct source-update effects without an explicit single producer
+- **THEN** validation rejects the overlap before duplicate outbound intent is accepted
 
 ### Requirement: Accepted updates use durable reporting without changing execution authority
 Outbound synchronization SHALL originate only from a separately authorized Issue metadata command or an accepted configured Factory action. It SHALL retain exact Issue/source/mapping and originating command or Work/Run/action provenance, preserve unmanaged external fields, and use existing durable Reporter ordering, fencing, unknown-response observation and bounded reconciliation. Observing a pull echo or replaying a receipt SHALL NOT create a new logical action or execution. Unreconcilable concurrent changes SHALL become explicit conflicts; resolution SHALL require a reviewed preconditioned desired state or policy change within current grants. No comment, raw model answer or native label SHALL directly select an execution transition, claim acceptance or widen authority.
