@@ -24,6 +24,28 @@ import local_stand_launcher as launcher  # noqa: E402
 import local_stand_lifecycle as lifecycle  # noqa: E402
 
 
+class LocalStandTestDependencyTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX permissions")
+    def test_compose_boundary_is_skipped_when_docker_is_not_on_path(self):
+        with tempfile.TemporaryDirectory() as empty_path:
+            result = subprocess.run(
+                [sys.executable, "-m", "unittest", "-v",
+                 "test_local_stand_launcher.LocalStandLauncherTests."
+                 "test_integration_overlay_requires_private_configuration_without_docker",
+                 "test_local_stand_launcher.LocalStandLauncherTests."
+                 "test_integrations_use_a_private_socket_volume_shared_only_with_the_gateway"],
+                cwd=REPOSITORY,
+                env={**os.environ, "PATH": empty_path,
+                     "PYTHONPATH": str(REPOSITORY / "tools/tests")},
+                capture_output=True,
+                text=True,
+                timeout=30,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Ran 2 tests", result.stderr)
+        self.assertIn("OK (skipped=1)", result.stderr)
+
+
 class FakeOwner:
     def __init__(
         self,
@@ -47,14 +69,28 @@ class FakeOwner:
 
 
 class LocalStandLauncherTests(unittest.TestCase):
-    def test_integrations_use_a_private_socket_volume_shared_only_with_the_gateway(self):
+    def integration_configuration(self) -> Path:
         bundle = self.root / "config/integrations"
         bundle.mkdir(parents=True, mode=0o700)
         config = bundle / "server.toml"
         config.write_text('[integration_management]\npeer_uid=101\n')
         config.chmod(0o600)
+        return config
+
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX permissions")
+    def test_integration_overlay_requires_private_configuration_without_docker(self):
+        config = self.integration_configuration()
         command = launcher._compose_command(self.root, "config", "--format", "json")
         self.assertIn(str(REPOSITORY / "deployment/local-stand/integrations.compose.yaml"), command)
+        config.chmod(0o644)
+        with self.assertRaises(launcher.LocalStandError):
+            launcher._compose_command(self.root, "up")
+
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX permissions")
+    @unittest.skipUnless(shutil.which("docker"), "Docker Compose is not installed")
+    def test_integrations_use_a_private_socket_volume_shared_only_with_the_gateway(self):
+        self.integration_configuration()
+        command = launcher._compose_command(self.root, "config", "--format", "json")
         rendered = subprocess.run(command, env=launcher._compose_environment(self.root, 8443),
                                   check=True, capture_output=True, text=True)
         services = json.loads(rendered.stdout)["services"]
@@ -65,9 +101,6 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertTrue(gateway_socket["read_only"])
         self.assertEqual(services["gateway"]["ports"][0]["host_ip"], "127.0.0.1")
         self.assertEqual(services["server"]["command"], ["run", "/run/octacity-secrets/integration-server.toml"])
-        config.chmod(0o644)
-        with self.assertRaises(launcher.LocalStandError):
-            launcher._compose_command(self.root, "up")
 
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()

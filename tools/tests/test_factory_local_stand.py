@@ -1,5 +1,6 @@
 """Factory stand data is published through the existing management contracts."""
 import copy
+import importlib.util
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
 import os
@@ -12,6 +13,7 @@ from unittest.mock import patch
 import uuid
 import threading
 import tomllib
+import types
 import io
 import urllib.request
 
@@ -19,6 +21,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import factory_local_stand as demo
 import bootstrap_local_stand as bootstrap
 import local_stand_state as state
+
+
+class FactoryStandTestDependencyTests(unittest.TestCase):
+    def test_non_posix_hosts_skip_private_bundle_tests_and_keep_portable_contracts(self):
+        # Scope the platform to the test module; pathlib and the host keep their real OS.
+        platform_os = types.ModuleType("os")
+        platform_os.__dict__.update(vars(os))
+        platform_os.name = "nt"
+        spec = importlib.util.spec_from_file_location("non_posix_factory_stand_tests", __file__)
+        module = importlib.util.module_from_spec(spec)
+        with patch.dict(sys.modules, {"os": platform_os}):
+            spec.loader.exec_module(module)
+        names = (
+            "test_integration_setup_refuses_to_adopt_or_change_an_unrecognized_existing_bundle",
+            "test_issue_repository_installation_uses_public_identity_and_no_ambient_github_credentials",
+            "test_retained_stand_installs_selected_issue_repository_without_replaying_demo_runs",
+            "test_prepares_confined_integration_without_changing_existing_server_or_demo_data",
+            "test_command_accepts_an_explicit_issue_repository_independent_of_build_source",
+            "test_plain_command_installs_the_demo_issue_repository_without_an_extra_flag",
+        )
+        suite = unittest.TestSuite(module.FactoryLocalStandTests(name) for name in names)
+        result = unittest.TestResult()
+        with patch.object(state, "current_uid", side_effect=state.StateError(
+            "local stand host state requires POSIX ownership"
+        )):
+            suite.run(result)
+        self.assertEqual(result.errors, [])
+        self.assertEqual(result.failures, [])
+        self.assertEqual(result.testsRun, 6)
+        self.assertEqual(len(result.skipped), 4)
 
 
 class FactoryLocalStandTests(unittest.TestCase):
@@ -41,6 +73,7 @@ class FactoryLocalStandTests(unittest.TestCase):
             self.assertIsNone(start.call_args.kwargs["github_repository"])
             self.assertEqual(retained.read_text(), "retained private installation")
 
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX ownership and modes")
     def test_integration_setup_refuses_to_adopt_or_change_an_unrecognized_existing_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -58,6 +91,7 @@ class FactoryLocalStandTests(unittest.TestCase):
             self.assertEqual(list(bundle.iterdir()), [marker])
             self.assertEqual(marker.read_text(), "existing operator data")
 
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX ownership and modes")
     def test_issue_repository_installation_uses_public_identity_and_no_ambient_github_credentials(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -77,6 +111,7 @@ class FactoryLocalStandTests(unittest.TestCase):
             self.assertEqual(catalog["installations"][0]["resources"][0]["native_id"], "1234")
             self.assertNotIn("ambient-secret", json.dumps(catalog))
 
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX ownership and modes")
     def test_retained_stand_installs_selected_issue_repository_without_replaying_demo_runs(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
@@ -106,6 +141,7 @@ class FactoryLocalStandTests(unittest.TestCase):
         self.assertEqual(start.call_args.kwargs["github_repository"], "Example/Tickets")
         self.assertEqual(start.call_args.args[1], "https://github.com/OctaHive/OctaCity")
 
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX ownership and modes")
     def test_prepares_confined_integration_without_changing_existing_server_or_demo_data(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
