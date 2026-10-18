@@ -37,6 +37,7 @@ REQUIRED_CONTEXT_PATHS = (
     "server/app/Cargo.toml",
     "server/app/src/main.rs",
     "server/api/octacity-server-api-rest/examples/export_openapi.rs",
+    "server/api/octacity-server-api-rest/fixtures/v1/integration-contracts.json",
     "server/infrastructure/octacity-server-store-postgres/migrations/0001_authoritative_store.sql",
     "server/tests/octacity-service-contract-tests/Cargo.toml",
     "server/tests/octacity-release-harness/Cargo.toml",

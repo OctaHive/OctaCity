@@ -40,6 +40,12 @@ server/api/*/examples/*
 !server/api/octacity-server-api-rest/examples/export_openapi.rs
 !server/api/*/src/
 !server/api/*/src/**
+# Canonical examples are compiled into the public OpenAPI document.
+!server/api/octacity-server-api-rest/fixtures/
+server/api/octacity-server-api-rest/fixtures/*
+!server/api/octacity-server-api-rest/fixtures/v1/
+server/api/octacity-server-api-rest/fixtures/v1/*
+!server/api/octacity-server-api-rest/fixtures/v1/integration-contracts.json
 !server/core/*/
 server/core/*.*
 server/core/*/*

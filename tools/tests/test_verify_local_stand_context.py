@@ -90,6 +90,29 @@ class LocalStandContextTests(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertTrue(VERIFY.docker_path_included(path, rules))
 
+    def test_openapi_wire_examples_are_available_in_the_filtered_build_context(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        fixture = "server/api/octacity-server-api-rest/fixtures/v1/integration-contracts.json"
+        self.assertTrue(VERIFY.docker_path_included(fixture, rules))
+        for excluded in (
+            "server/api/octacity-server-api-rest/fixtures/v1/private-ticket.json",
+            "server/api/octacity-server-api-rest/fixtures/v2/integration-contracts.json",
+            "server/api/octacity-server-api-rest/tests/integration_administration.rs",
+        ):
+            with self.subTest(path=excluded):
+                self.assertFalse(VERIFY.docker_path_included(excluded, rules))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
+            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                if relative == fixture:
+                    continue
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPOSITORY / relative, destination)
+            with self.assertRaisesRegex(VERIFY.ContextError, "integration-contracts.json"):
+                VERIFY.validate_repository(root)
+
     def test_repository_verification_rejects_a_missing_factory_generator_dependency(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
