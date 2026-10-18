@@ -113,18 +113,19 @@ class LocalStandContextTests(unittest.TestCase):
             with self.assertRaisesRegex(VERIFY.ContextError, "integration-contracts.json"):
                 VERIFY.validate_repository(root)
 
-    def test_repository_verification_rejects_a_missing_factory_generator_dependency(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
-            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
-                if relative == "ui/scripts/factory-authoring-schemas.mjs":
-                    continue
-                destination = root / relative
-                destination.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(REPOSITORY / relative, destination)
-            with self.assertRaisesRegex(VERIFY.ContextError, "factory-authoring-schemas"):
-                VERIFY.validate_repository(root)
+    def test_repository_verification_rejects_a_missing_generator_dependency(self):
+        for dependency in ("factory-authoring-schemas.mjs", "issue-workflow-constraints.mjs"):
+            with self.subTest(dependency=dependency), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
+                for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                    if relative == f"ui/scripts/{dependency}":
+                        continue
+                    destination = root / relative
+                    destination.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copyfile(REPOSITORY / relative, destination)
+                with self.assertRaisesRegex(VERIFY.ContextError, dependency):
+                    VERIFY.validate_repository(root)
 
     def test_ui_api_contract_is_generated_inside_the_builder(self):
         rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
@@ -142,7 +143,7 @@ class LocalStandContextTests(unittest.TestCase):
             VERIFY.docker_path_included("ui/.generated/api/constraints.ts", rules)
         )
 
-    def test_factory_schema_generator_loads_from_the_filtered_docker_context(self):
+    def test_ui_api_generators_load_from_the_filtered_docker_context(self):
         node = shutil.which("node")
         if node is None:
             self.skipTest("Node is required for the UI generator smoke test")
@@ -157,7 +158,23 @@ class LocalStandContextTests(unittest.TestCase):
                     shutil.copyfile(source, destination)
             result = subprocess.run(
                 [node, "--input-type=module", "--eval", """
+import assert from 'node:assert/strict';
+import { issueWorkflowConstraints } from './ui/scripts/issue-workflow-constraints.mjs';
 import { factoryAuthoringSchemas } from './ui/scripts/factory-authoring-schemas.mjs';
+assert.deepEqual(issueWorkflowConstraints({components: {schemas: {
+  IssueWorkflowDefinition: {properties: {
+    name: {'x-max-utf8-bytes': 64},
+    statuses: {minItems: 1, maxItems: 8},
+    transitions: {maxItems: 16},
+  }},
+  IssueWorkflowTransition: {properties: {
+    origins: {items: {enum: ['manual', 'pipeline']}},
+    evidence: {items: {enum: ['reason']}},
+  }},
+}}}), {
+  nameMaximumBytes: 64, minimumStatuses: 1, maximumStatuses: 8,
+  maximumTransitions: 16, origins: ['manual', 'pipeline'], evidence: ['reason'],
+});
 console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
   FactoryConfigurationDefinition: {type: 'object'},
   FactoryFlowDefinitionDraft: {type: 'object'},

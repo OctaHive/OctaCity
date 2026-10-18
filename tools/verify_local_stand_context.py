@@ -49,6 +49,7 @@ REQUIRED_CONTEXT_PATHS = (
     "ui/architecture-policy.json",
     "ui/scripts/generate-api.mjs",
     "ui/scripts/factory-authoring-schemas.mjs",
+    "ui/scripts/issue-workflow-constraints.mjs",
     "ui/scripts/verify-architecture.mjs",
     "ui/src/main.tsx",
     "deployment/console/nginx/cache-map.conf",

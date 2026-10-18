@@ -1,6 +1,12 @@
-"""Static contracts for the portable local-stand CI gates."""
+"""Contracts for the portable local-stand CI gates and their diagnostics."""
 
+import os
 from pathlib import Path
+import shutil
+import subprocess
+import sys
+import tempfile
+import textwrap
 import unittest
 
 
@@ -88,6 +94,66 @@ class LocalStandCiContractTests(unittest.TestCase):
         ):
             self.assertGreaterEqual(workflow.count(path), 2)
         self.assertIn("gitleaks dir --config octacity/.gitleaks.toml", workflow)
+
+
+@unittest.skipUnless(os.name == "posix" and shutil.which("bash"), "requires Bash")
+class LocalStandImageDiagnosticsTests(unittest.TestCase):
+    def run_image_step(self, build_status, build_output):
+        workflow = CI.read_text(encoding="utf-8")
+        step = workflow.split(
+            "      - name: Build and verify every Linux ARM64 local-stand image\n", 1
+        )[1].split("\n  local-stand-native-staging:", 1)[0]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            secrets = root / "octacity-local-stand-portable" / "secrets"
+            secrets.mkdir(parents=True)
+            (secrets / "fixture-secret").write_text("synthetic-private-value")
+            executable = root / "python3"
+            executable.write_text(
+                f"#!{sys.executable}\n"
+                "import os, sys\n"
+                "if sys.argv[1] == 'tools/build_local_stand_images.py':\n"
+                "    print(os.environ['BUILD_OUTPUT'])\n"
+                "    sys.exit(int(os.environ['BUILD_STATUS']))\n"
+                "os.execv(sys.executable, [sys.executable, *sys.argv[1:]])\n"
+            )
+            executable.chmod(0o700)
+            return subprocess.run(
+                [shutil.which("bash"), "--noprofile", "--norc", "-c", script],
+                cwd=REPOSITORY,
+                env={
+                    **os.environ,
+                    "PATH": str(root) + os.pathsep + os.defpath,
+                    "RUNNER_TEMP": str(root),
+                    "BUILD_STATUS": str(build_status),
+                    "BUILD_OUTPUT": build_output,
+                },
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+    def test_failed_build_prints_safe_diagnostics_and_preserves_exit_status(self):
+        result = self.run_image_step(2, "fixture image verification failed")
+
+        self.assertEqual(result.returncode, 2, result.stderr)
+        self.assertIn("fixture image verification failed", result.stdout)
+
+    def test_successful_build_prints_safe_diagnostics(self):
+        result = self.run_image_step(0, "fixture images verified")
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("fixture images verified", result.stdout)
+
+    def test_unsafe_diagnostics_are_withheld_for_success_and_failure(self):
+        for build_status, expected_status in ((0, 2), (17, 17)):
+            with self.subTest(build_status=build_status):
+                result = self.run_image_step(build_status, "synthetic-private-value")
+
+                self.assertEqual(result.returncode, expected_status)
+                self.assertNotIn("synthetic-private-value", result.stdout + result.stderr)
+                self.assertIn("refusing to emit", result.stderr)
 
 
 if __name__ == "__main__":

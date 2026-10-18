@@ -53,11 +53,20 @@ jobs:
         run: |
           set -euo pipefail
           log="${RUNNER_TEMP}/octacity-local-stand-images.log"
-          python3 tools/build_local_stand_images.py >"${log}" 2>&1
-          python3 tools/check_local_stand_logs.py \
+          build_status=0
+          python3 tools/build_local_stand_images.py >"${log}" 2>&1 || build_status=$?
+          if python3 tools/check_local_stand_logs.py \
             --state-root "${RUNNER_TEMP}/octacity-local-stand-portable" \
-            --log "${log}"
-          cat "${log}"
+            --log "${log}"; then
+            cat "${log}"
+          else
+            log_status=$?
+            echo "image build log failed safety validation; refusing to emit it" >&2
+            if [[ "${build_status}" -eq 0 ]]; then
+              build_status="${log_status}"
+            fi
+          fi
+          exit "${build_status}"
 
   local-stand-native-staging:
     name: local stand native staging and configurations
