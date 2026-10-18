@@ -935,5 +935,7 @@ fn advertised_normalized_predicates_publish_immutable_inputs_for_open_provider_i
   });
 }
 
+#[path = "factory_source_example_tests.rs"]
+mod examples;
 #[path = "factory_source_reporting_tests.rs"]
 mod reporting;

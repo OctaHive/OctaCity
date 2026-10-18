@@ -1,0 +1,19 @@
+{
+  "enabled": false,
+  "predicate": {
+    "state": "open",
+    "all_of": ["ready-for-review", "documentation"],
+    "any_of": [],
+    "none_of": ["investigating"]
+  },
+  "reporting": {
+    "statuses": [
+      {
+        "status": "documented",
+        "add": ["documentation-done"],
+        "remove": ["ready-for-review"],
+        "state": null
+      }
+    ]
+  }
+}

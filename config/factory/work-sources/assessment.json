@@ -1,0 +1,31 @@
+{
+  "enabled": false,
+  "predicate": {
+    "state": "open",
+    "all_of": [],
+    "any_of": [],
+    "none_of": ["approved", "rejected"]
+  },
+  "reporting": {
+    "statuses": [
+      {
+        "status": "accept-defect",
+        "add": ["approved", "bug"],
+        "remove": ["rejected", "feature-request", "enhancement"],
+        "state": null
+      },
+      {
+        "status": "accept-feature",
+        "add": ["approved", "feature-request"],
+        "remove": ["rejected", "bug"],
+        "state": null
+      },
+      {
+        "status": "decline",
+        "add": ["rejected"],
+        "remove": ["approved", "bug", "feature-request", "enhancement"],
+        "state": null
+      }
+    ]
+  }
+}

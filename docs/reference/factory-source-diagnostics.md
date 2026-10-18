@@ -84,8 +84,9 @@ an enabled task observation owner receives only an explicit read lookup here.
 Persistent task creation, refresh, manual Issue execution and field ownership
 remain in `add-factory-work-card`. Existing manual Artifact-based Factory intake
 requires no connection, Source capability or internal Issue. Source/reporting
-services hold no authority to change that path. UI editors and guided presentation
-are separate tasks; these routes provide their authorized data contracts.
+services hold no authority to change that path. The console's guided inputs,
+mapping editor and retained progress consume these authorized data contracts; see
+[Factory task-source setup](factory-work-sources-setup.md).
 
 The separate [optional observation port](work-source-observations.md) supplies
 private current snapshots to explicitly enabled consumers. Preview/diagnostic

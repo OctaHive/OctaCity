@@ -4,6 +4,12 @@
 to create another flow. Node keys and outcome keys are operator-defined. Their
 names never select Rust execution behavior.
 
+Configure automatic task intake separately using the
+[Work Source examples](../work-sources/README.md) and
+[operator setup guide](../../../docs/reference/factory-work-sources-setup.md).
+Source labels select an input; only an accepted configured Flow action can enqueue
+its source-reporting effects.
+
 The main file declares incoming schema, entry, execution ceilings and an ordered
 list of relative configuration parts. `base-flow/schemas/` contains one editable
 contract per file; `base-flow/nodes/` contains one node per file. Transitions and

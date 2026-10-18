@@ -6,6 +6,13 @@ connection checks, automatic input selection and Source diagnostics have separat
 contracts. Provider names and native task containers are open identities; a task
 container does not select the code Repository or an OctaCity Project.
 
+For the operator setup sequence and editable routing examples, see
+[Factory task-source setup](factory-work-sources-setup.md).
+
+For a separately authorized disposable-repository pilot, use the
+[opt-in live qualification procedure](github-work-source-live-qualification.md).
+Its preparation and hermetic tests do not establish live activation readiness.
+
 Canonical synthetic examples live in
 [`integration-contracts.json`](../../server/api/octacity-server-api-rest/fixtures/v1/integration-contracts.json).
 They are published as OpenAPI component examples, validated against that document,
@@ -67,8 +74,8 @@ A failed background refresh keeps previously loaded metadata
 visible with a stale-data notice. English/Russian messages and keyboard review
 dialogs use the existing console components.
 
-Guided pipeline input selection is available in the Factory configuration workbench;
-guided status mapping and progress presentation remain task 5.12.
+Guided pipeline input selection, status mapping and progress presentation are
+available in the Factory configuration workbench.
 A connection does not select an OctaCity Project, code Repository or pipeline and
 does not create a task card. Existing manual Factory intake remains available;
 manual internal-Issue creation belongs to the independent card capability.
@@ -185,8 +192,9 @@ original input's immutable Reporter configuration resolves the status to permitt
 provider effects. An ordinary `trusted_action` node can use these parameters on a
 stage outcome route, including an intermediate or nested stage. The generic
 `FactoryFlowAction.parameters` envelope remains open for other installed plugins.
-This contract does not add label-effect fields or a new source-update endpoint;
-guided per-outcome effect editing belongs to task 5.13.
+Its optional typed `source_update` configures stage-owned effects through the same
+action/publication boundary; see [stage-local source effects](#stage-local-source-effects).
+There is no separate direct source-write endpoint.
 
 Source diagnostics retain bounded native correlation separately from input-scoped
 Work/Run identities. An `issue` link is optional and supplied only by the authorized

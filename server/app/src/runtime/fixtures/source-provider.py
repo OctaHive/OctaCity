@@ -75,6 +75,20 @@ if request['family'] == 'reporter':
                 json.dump(values, state)
             with open('reporter-applied', 'w', encoding='utf-8') as applied:
                 applied.write(intent['projection_id'])
+            # Opt-in shared native state for the composed pilot; ordinary protocol peers stay isolated.
+            if mode.get('source_effects'):
+                with open('mode.json', 'r+', encoding='utf-8') as native:
+                    fcntl.flock(native, fcntl.LOCK_EX)
+                    source_mode = json.load(native)
+                    for candidate in source_mode['candidates']:
+                        if candidate['item_id'] == intent['item_id']:
+                            effects = intent['effects']
+                            candidate['labels'] = sorted((set(candidate['labels']) - set(effects['remove'])) | set(effects['add']))
+                            if effects.get('state') is not None:
+                                candidate['state'] = effects['state']
+                    native.seek(0)
+                    native.truncate()
+                    json.dump(source_mode, native)
             if mode.get('pause_after_apply'):
                 with open('reporter-awaiting-response', 'w', encoding='utf-8') as ready:
                     ready.write(intent['projection_id'])

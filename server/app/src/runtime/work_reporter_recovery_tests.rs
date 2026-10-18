@@ -1,20 +1,7 @@
 //! Unknown process results and independently fenced outbox recovery.
 use super::*;
 
-pub(super) fn worker<S: FactoryRunStore>(
-  fixture: &Fixture<S>,
-  projector: Arc<dyn FactoryWorkStatusProjector>,
-  owner: &str,
-  claim_millis: u64,
-) -> FactoryWorkStatusOutboxWorker<S> {
-  FactoryWorkStatusOutboxWorker::new(
-    fixture.store.clone(),
-    std::collections::BTreeMap::from([(capability(), projector)]),
-    FactoryReporterWorkerSettings::new(key(owner), claim_millis, 4).unwrap(),
-    fixture.clock.clone(),
-  )
-  .unwrap()
-}
+pub(super) use super::reporting_worker as worker;
 
 #[tokio::test]
 async fn lost_project_response_is_recovered_by_observation_after_restart_for_any_provider() {

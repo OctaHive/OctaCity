@@ -4491,6 +4491,7 @@ dependencies = [
  "octacity-server-job",
  "octacity-server-orchestrator",
  "octacity-server-pipeline",
+ "octacity-server-secrets",
  "octacity-server-store",
  "octacity-server-store-postgres",
  "octacity-server-vcs",

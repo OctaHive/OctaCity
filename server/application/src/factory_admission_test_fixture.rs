@@ -1,13 +1,13 @@
 // Shared pure admission fixtures for application and composed source-worker contracts.
-fn key(value: &str) -> FactoryKey {
+pub(super) fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
 
-fn digest(value: u8) -> FactoryDigest {
+pub(super) fn digest(value: u8) -> FactoryDigest {
   FactoryDigest::from_bytes([value; 32])
 }
 
-fn exact(identity: &str, value: u8) -> ImmutableReference {
+pub(super) fn exact(identity: &str, value: u8) -> ImmutableReference {
   ImmutableReference::new(key(identity), key("v1"), digest(value))
 }
 

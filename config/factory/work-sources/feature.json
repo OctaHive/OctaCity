@@ -1,0 +1,19 @@
+{
+  "enabled": false,
+  "predicate": {
+    "state": "open",
+    "all_of": ["approved"],
+    "any_of": ["feature-request", "enhancement"],
+    "none_of": ["rejected"]
+  },
+  "reporting": {
+    "statuses": [
+      {
+        "status": "implementation-complete",
+        "add": ["implemented"],
+        "remove": [],
+        "state": null
+      }
+    ]
+  }
+}
