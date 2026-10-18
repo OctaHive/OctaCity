@@ -42,7 +42,7 @@ async fn released_runtime_exposes_only_verified_installed_providers_on_protected
     fs::metadata(root.path()).unwrap().uid(),
     catalog.to_str().unwrap()
   );
-  let config = crate::ServerConfig::parse_toml(&super::tests::local_runtime_config::runtime_config_source(
+  let config = crate::ServerConfig::parse_toml(&super::test_runtime_config::runtime_config_source(
     root.path(),
     "postgres://test@127.0.0.1:1/unused",
     "http://127.0.0.1:9",

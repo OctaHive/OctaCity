@@ -81,11 +81,6 @@ fn test_config() -> ServerConfig {
 }
 
 #[cfg(unix)]
-#[allow(dead_code)]
-#[path = "../../tests/support/runtime.rs"]
-pub(super) mod local_runtime_config;
-
-#[cfg(unix)]
 #[tokio::test]
 async fn local_integration_ingress_verifies_os_peer_without_upgrading_tcp_headers() {
   use std::os::unix::fs::MetadataExt;
@@ -98,7 +93,7 @@ async fn local_integration_ingress_verifies_os_peer_without_upgrading_tcp_header
       "[integration_management]\nsocket_path={:?}\npeer_uid={allowed}\nprincipal='local-stand-gateway'\n",
       socket.to_str().unwrap()
     );
-    let config = ServerConfig::parse_toml(&local_runtime_config::runtime_config_source(
+    let config = ServerConfig::parse_toml(&super::test_runtime_config::runtime_config_source(
       root.path(),
       "postgres://test@127.0.0.1:1/unused",
       "http://127.0.0.1:9",

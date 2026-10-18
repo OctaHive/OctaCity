@@ -10,6 +10,77 @@ import { integrationsApi } from './api';
 import { ConnectionDetails } from './ConnectionDetails';
 
 afterEach(cleanup);
+it('explains which access still needs a token after saving the read credential', async () => {
+  const connection = integrationFixture('IntegrationConnection');
+  const state = integrationFixture('IntegrationAdministrationState');
+  state.enabled = false;
+  const reader = connection.definition.resources[0]!.capabilities[0]!;
+  connection.definition.resources[0]!.capabilities.push({
+    ...reader,
+    purpose: 'task_update',
+    credential: { ...reader.credential, reference: 'writer' },
+  });
+  const router = createMemoryRouter([
+    {
+      path: '*',
+      element: (
+        <ConnectionDetails
+          id={connection.id}
+          api={{
+            ...integrationsApi,
+            getConnection: async () => connection,
+            getState: async () => state,
+          }}
+        />
+      ),
+    },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  const status = await screen.findByRole('list', { name: 'Credential status' });
+  expect(within(status).getByText('team/project · Task reading · Configured')).toBeTruthy();
+  expect(within(status).getByText('team/project · Task updates · Not configured')).toBeTruthy();
+  expect(
+    screen.getByText('Open Manage credentials to configure the missing access before activation.'),
+  ).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Activate connection' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+});
+
+it('keeps activation unavailable until every selected access has a configured token', async () => {
+  const connection = integrationFixture('IntegrationConnection');
+  const state = integrationFixture('IntegrationAdministrationState');
+  state.enabled = false;
+  state.credentials = [];
+  const setState = vi.fn<typeof integrationsApi.setState>();
+  const api = {
+    ...integrationsApi,
+    getConnection: vi.fn(async () => connection),
+    getState: vi.fn(async () => state),
+    setState,
+  };
+  const router = createMemoryRouter([
+    { path: '*', element: <ConnectionDetails id={connection.id} api={api} /> },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  const activate = await screen.findByRole('button', { name: 'Activate connection' });
+  expect(activate).toHaveProperty('disabled', true);
+  expect(setState).not.toHaveBeenCalled();
+  expect(screen.getByRole('button', { name: 'Manage credentials' })).toHaveProperty(
+    'disabled',
+    false,
+  );
+});
+
 it('checks only a selected installed capability and distinguishes unverified write readiness from activation', async () => {
   const connection = integrationFixture('IntegrationConnection');
   const result = integrationFixture('IntegrationConnectionCheckResult');

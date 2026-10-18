@@ -102,6 +102,39 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertEqual(services["gateway"]["ports"][0]["host_ip"], "127.0.0.1")
         self.assertEqual(services["server"]["command"], ["run", "/run/octacity-secrets/integration-server.toml"])
 
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX permissions")
+    @unittest.skipUnless(shutil.which("docker"), "Docker Compose is not installed")
+    def test_integration_restart_can_reapply_private_volume_permissions(self):
+        self.integration_configuration()
+        command = launcher._compose_command(self.root, "config", "--format", "json")
+        rendered = subprocess.run(command, env=launcher._compose_environment(self.root, 8443),
+                                  check=True, capture_output=True, text=True)
+        server = json.loads(rendered.stdout)["services"]["server"]
+        self.assertEqual(server["cap_drop"], ["ALL"])
+        self.assertIn("FOWNER", server["cap_add"],
+                      "startup must chmod retained directories already owned by the runtime UID")
+
+    @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX permissions")
+    @unittest.skipUnless(shutil.which("docker"), "Docker Compose is not installed")
+    def test_integration_adapters_have_outbound_access_without_exposing_private_services(self):
+        self.integration_configuration()
+        command = launcher._compose_command(self.root, "config", "--format", "json")
+        rendered = subprocess.run(command, env=launcher._compose_environment(self.root, 8443),
+                                  check=True, capture_output=True, text=True)
+        configuration = json.loads(rendered.stdout)
+        networks = configuration["networks"]
+        services = configuration["services"]
+        self.assertTrue(
+            any(not networks[name].get("internal", False)
+                for name in services["server"]["networks"]),
+            "installed adapters need outbound access to the approved provider service",
+        )
+        self.assertFalse(services["server"].get("ports"))
+        for name in ("postgres", "minio", "minio-init"):
+            self.assertTrue(all(networks[network].get("internal", False)
+                                for network in services[name]["networks"]), name)
+            self.assertFalse(services[name].get("ports"), name)
+
     def setUp(self) -> None:
         temporary = tempfile.TemporaryDirectory()
         self.addCleanup(temporary.cleanup)

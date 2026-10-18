@@ -124,3 +124,13 @@ mod factory_evaluation_runtime_tests;
 
 #[cfg(all(test, unix))]
 mod integration_check_tests;
+
+// Shared fixtures are loaded once for workflow, ingress and integration tests.
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../../infrastructure/octacity-server-store-postgres/tests/support/mod.rs"]
+mod postgres_test_support;
+#[cfg(test)]
+#[allow(dead_code)]
+#[path = "../../tests/support/runtime.rs"]
+mod test_runtime_config;

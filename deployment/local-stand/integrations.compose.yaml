@@ -3,6 +3,13 @@
 services:
   server:
     command: [run, /run/octacity-secrets/integration-server.toml]
+    # Startup reapplies modes to retained directories owned by the runtime UID.
+    cap_add:
+      - FOWNER
+    # Installed provider adapters run in this container and need outbound HTTPS.
+    networks:
+      - stand
+      - integration-egress
     volumes:
       - type: bind
         source: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/integrations
@@ -25,3 +32,6 @@ configs:
 volumes:
   integration-channel:
   integration-state:
+networks:
+  integration-egress:
+    internal: false

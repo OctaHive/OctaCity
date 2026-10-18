@@ -107,6 +107,21 @@ revision, not the metadata or Project-access version. Rotation preserves logical
 scope, input/native identity and frozen pending effects; endpoint/resource changes
 need explicit metadata replacement and do not redirect accepted Work.
 
+All selected credential scopes must be configured before activation. For example,
+when read and update use separate handles, save the first token without activation;
+then configure the other handle and explicitly activate. The Console keeps both
+activation controls unavailable while another required scope is missing and
+explains that token storage remains available. A single-scope connection can
+still request activation together with its first token. This prerequisite is
+separate from checking the provider's actual permissions.
+
+Connection details list configured/missing credentials by resource and purpose.
+**Manage credentials** initially selects the first missing scope with **Provision**,
+instead of offering rotation of the already configured read scope. Separate handles
+do not require different provider tokens: the same value may be entered for both
+if its remote permissions allow both purposes. Configuration is not proof of those
+permissions. For a read-only connection, remove the update purpose in **Edit connection**.
+
 ## Grant the Project access and check readiness
 
 On the connection page, choose **Manage Project access**, select the exact OctaCity

@@ -12,6 +12,7 @@ import {
   QueryLoadingNotice,
 } from '../../shared/QueryStateNotice';
 import { CredentialSetup } from './CredentialSetup';
+import { credentialConfigured, connectionCredentialsReady } from './credentialReadiness';
 import { ConnectionEditor } from './ConnectionEditor';
 import {
   integrationsApi,
@@ -144,6 +145,22 @@ export function ConnectionDetails({
         {state ? (
           <>
             <p>{t(state.enabled ? 'integrations.enabled' : 'integrations.disabled')}</p>
+            <ul aria-label={t('integrations.credentialStatus')}>
+              {connection.definition.resources.flatMap((resource) =>
+                resource.capabilities.map((capability) => (
+                  <li key={JSON.stringify([resource.reference, capability.purpose])}>
+                    {`${resource.locator} · ${t(`integrations.purpose.${capability.purpose}`)} · ${t(
+                      credentialConfigured(state, capability.credential)
+                        ? 'integrations.configured'
+                        : 'integrations.missing',
+                    )}`}
+                  </li>
+                )),
+              )}
+            </ul>
+            {!state.enabled && !connectionCredentialsReady(connection, state) ? (
+              <p>{t('integrations.activationHelp')}</p>
+            ) : null}
             <p>
               {t('integrations.activeVersion', {
                 version: state.active_version ?? t('integrations.none'),
@@ -162,7 +179,11 @@ export function ConnectionDetails({
               </button>
               <button
                 type="button"
-                disabled={!!administration.error || state.preparation_pending}
+                disabled={
+                  !!administration.error ||
+                  state.preparation_pending ||
+                  (!state.enabled && !connectionCredentialsReady(connection, state))
+                }
                 onClick={(event) =>
                   setReview({
                     intent: {

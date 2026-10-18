@@ -282,6 +282,19 @@ overwritten. `tools/local-stand status`, `logs`, `down` and `reset` detect the s
 overlay. The `integration-state` volume retains private material across server
 restarts; a deliberate reset removes it with the rest of the disposable stand.
 
+The integration overlay also attaches only the server to a separate non-internal
+`integration-egress` network for outbound provider requests. PostgreSQL and MinIO
+remain on the internal stand network; no server or storage host ports are
+published. Installed adapter host/resource ceilings still apply. Without this
+outbound route, a saved token can coexist with an access check reporting ready
+configuration, unverified authentication and unavailable resource access. Token
+replacement does not repair missing container connectivity.
+
+The integration overlay adds `FOWNER` to the root startup stage so it can reapply
+private directory modes after a restart, when retained volumes already belong
+to the runtime UID. Startup still drops to the unprivileged server user; the
+base stand's capability set is unchanged.
+
 This personal mode delegates local administration to the gateway service, not to
 an authenticated human account. HTTPS remains bound to `127.0.0.1`. The gateway
 uses a dedicated Unix socket shared only with the server, mounted read-only in

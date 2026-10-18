@@ -258,6 +258,9 @@ export const ruMessages = {
   'integrations.secretHelp':
     'Значения доступны только для записи. Здесь можно ввести замену; прочитать существующее значение нельзя. Поле очищается при отправке или выходе из формы.',
   'integrations.credentialScope': 'Область учётных данных',
+  'integrations.credentialStatus': 'Состояние учётных данных',
+  'integrations.activationHelp':
+    'Нажмите «Управлять учётными данными» и настройте недостающий доступ перед активацией.',
   'integrations.credentialOperation': 'Действие с учётными данными',
   'integrations.credentialValue': 'Секретное значение',
   'integrations.configured': 'Настроено',
@@ -267,6 +270,8 @@ export const ruMessages = {
   'integrations.adopt': 'Использовать установленные учётные данные',
   'integrations.revoke': 'Отозвать',
   'integrations.activateWithCredential': 'Активировать подключение после настройки учётных данных',
+  'integrations.activationNeedsCredentials':
+    'Для активации настройте все выбранные доступы. Этот токен можно сохранить без активации подключения.',
   'integrations.reviewCredential': 'Проверить изменение учётных данных',
   'integrations.confirmCredential': 'Подтвердить изменение учётных данных',
   'integrations.credentialConsequence':

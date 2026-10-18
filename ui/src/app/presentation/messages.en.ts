@@ -256,6 +256,9 @@ export const enMessages = {
   'integrations.secretHelp':
     'Values are write-only. Enter a replacement here; existing values cannot be retrieved. The field is cleared on submission or leaving this form.',
   'integrations.credentialScope': 'Credential scope',
+  'integrations.credentialStatus': 'Credential status',
+  'integrations.activationHelp':
+    'Open Manage credentials to configure the missing access before activation.',
   'integrations.credentialOperation': 'Credential operation',
   'integrations.credentialValue': 'Credential value',
   'integrations.configured': 'Configured',
@@ -265,6 +268,8 @@ export const enMessages = {
   'integrations.adopt': 'Adopt installed credential',
   'integrations.revoke': 'Revoke',
   'integrations.activateWithCredential': 'Activate this connection after credential setup',
+  'integrations.activationNeedsCredentials':
+    'Configure every selected access before activation. You can save this token without activating the connection.',
   'integrations.reviewCredential': 'Review credential change',
   'integrations.confirmCredential': 'Confirm credential change',
   'integrations.credentialConsequence':

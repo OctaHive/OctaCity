@@ -7,6 +7,7 @@ import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { SelectMenu } from '../../shared/SelectMenu';
 import type { ConfirmedMutationAttempt } from '../../shared/confirmedIntent';
 import { safeIntegrationError, type CredentialIntent, type IntegrationsApi } from './api';
+import { credentialConfigured, connectionCredentialsReady } from './credentialReadiness';
 
 /** The uncontrolled secret field never enters React state or the confirmed replay snapshot. */
 export function CredentialSetup({
@@ -32,9 +33,14 @@ export function CredentialSetup({
         .map((c) => [JSON.stringify(c.credential), c.credential]),
     ).values(),
   ];
-  const [selected, setSelected] = useState(0);
+  const [selected, setSelected] = useState(() =>
+    Math.max(
+      0,
+      references.findIndex((reference) => !isConfigured(reference)),
+    ),
+  );
   const [kind, setKind] = useState<CredentialIntent['action']['kind']>(() =>
-    isConfigured(references[0]) ? 'rotate' : 'provision',
+    isConfigured(references[selected]) ? 'rotate' : 'provision',
   );
   const [activate, setActivate] = useState(false);
   const [review, setReview] = useState<{
@@ -52,15 +58,7 @@ export function CredentialSetup({
     if (secretRef.current) secretRef.current.value = '';
   }
   function isConfigured(reference: CredentialIntent['action']['reference'] | undefined) {
-    return (
-      reference !== undefined &&
-      state.credentials.some(
-        (item) =>
-          item.configured &&
-          item.reference.provider === reference.provider &&
-          item.reference.reference === reference.reference,
-      )
-    );
+    return credentialConfigured(state, reference);
   }
   async function execute(attempt: ConfirmedMutationAttempt<CredentialIntent>) {
     const value = secretRef.current?.value || undefined;
@@ -77,6 +75,10 @@ export function CredentialSetup({
   }
   const reference = references[selected];
   const configured = isConfigured(reference);
+  const canActivate =
+    reference !== undefined &&
+    kind !== 'revoke' &&
+    connectionCredentialsReady(connection, state, reference);
   return (
     <section aria-labelledby="credential-setup-heading">
       <h2 id="credential-setup-heading">{t('integrations.credentials')}</h2>
@@ -98,7 +100,7 @@ export function CredentialSetup({
                 operation: 'credential',
                 reference,
                 kind,
-                activate_connection: kind !== 'revoke' && activate,
+                activate_connection: canActivate && activate,
               },
             },
             returnFocus: button,
@@ -152,12 +154,15 @@ export function CredentialSetup({
         <label>
           <input
             type="checkbox"
-            checked={kind !== 'revoke' && activate}
-            disabled={kind === 'revoke'}
+            checked={canActivate && activate}
+            disabled={!canActivate}
             onChange={(event) => setActivate(event.target.checked)}
           />
           {t('integrations.activateWithCredential')}
         </label>
+        {!canActivate && kind !== 'revoke' ? (
+          <p>{t('integrations.activationNeedsCredentials')}</p>
+        ) : null}
         <button type="submit" disabled={!reference || review !== null || state.preparation_pending}>
           {t('integrations.reviewCredential')}
         </button>

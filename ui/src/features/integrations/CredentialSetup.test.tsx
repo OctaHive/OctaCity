@@ -11,6 +11,104 @@ import { CredentialSetup } from './CredentialSetup';
 import { ManagementApiError } from '../../api/client';
 
 afterEach(cleanup);
+it('opens the missing update credential after reading is configured and can activate with its submission', async () => {
+  const connection = integrationFixture('IntegrationConnection');
+  const reader = connection.definition.resources[0]!.capabilities[0]!;
+  connection.definition.resources[0]!.capabilities.push({
+    ...reader,
+    purpose: 'task_update',
+    credential: { ...reader.credential, reference: 'writer' },
+  });
+  const credential = vi.fn<typeof integrationsApi.credential>(async () =>
+    integrationFixture('IntegrationAdministrationReceipt'),
+  );
+  const router = createMemoryRouter([
+    {
+      path: '*',
+      element: (
+        <CredentialSetup
+          api={{ ...integrationsApi, credential }}
+          connection={connection}
+          state={integrationFixture('IntegrationAdministrationState')}
+          onClose={() => {}}
+          onRefresh={async () => {}}
+        />
+      ),
+    },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  expect(screen.getByRole('combobox', { name: 'Credential scope' }).textContent).toBe(
+    'installed · writer',
+  );
+  expect(screen.getByRole('combobox', { name: 'Credential operation' }).textContent).toBe(
+    'Provision',
+  );
+  await userEvent.type(screen.getByLabelText('Credential value'), 'synthetic-update-token');
+  await userEvent.click(
+    screen.getByRole('checkbox', { name: 'Activate this connection after credential setup' }),
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Review credential change' }));
+  const dialog = await screen.findByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm change' }));
+  expect(await within(dialog).findByText('Change completed.')).toBeTruthy();
+  expect(credential.mock.calls[0]?.[0].action).toEqual({
+    operation: 'credential',
+    reference: { provider: 'installed', reference: 'writer' },
+    kind: 'provision',
+    activate_connection: true,
+  });
+  expect(credential.mock.calls[0]?.[1]).toBe('synthetic-update-token');
+});
+
+it('saves the first token without offering activation while another required credential is missing', async () => {
+  const connection = integrationFixture('IntegrationConnection');
+  const state = integrationFixture('IntegrationAdministrationState');
+  state.credentials = [];
+  const read = connection.definition.resources[0]!.capabilities[0]!;
+  connection.definition.resources[0]!.capabilities.push({
+    ...read,
+    purpose: 'task_update',
+    credential: { ...read.credential, reference: 'writer' },
+  });
+  const credential = vi.fn<typeof integrationsApi.credential>(async () =>
+    integrationFixture('IntegrationAdministrationReceipt'),
+  );
+  const router = createMemoryRouter([
+    {
+      path: '*',
+      element: (
+        <CredentialSetup
+          api={{ ...integrationsApi, credential }}
+          connection={connection}
+          state={state}
+          onClose={() => {}}
+          onRefresh={async () => {}}
+        />
+      ),
+    },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  const activate = screen.getByRole('checkbox', {
+    name: 'Activate this connection after credential setup',
+  });
+  expect(activate).toHaveProperty('disabled', true);
+  await userEvent.type(screen.getByLabelText('Credential value'), 'synthetic-first-token');
+  await userEvent.click(screen.getByRole('button', { name: 'Review credential change' }));
+  const dialog = await screen.findByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm change' }));
+  expect(await within(dialog).findByText('Change completed.')).toBeTruthy();
+  expect(credential.mock.calls[0]?.[0].action.activate_connection).toBe(false);
+  expect(credential.mock.calls[0]?.[1]).toBe('synthetic-first-token');
+});
+
 it('clears secret input before confirmed submission and keeps review, caches and returning navigation secret-free', async () => {
   let resolve: (
     value: ReturnType<typeof integrationFixture<'IntegrationAdministrationReceipt'>>,
@@ -138,6 +236,9 @@ it('offers provisioning for a missing credential rather than rotating an absent 
     'Provision',
   );
   expect(screen.getByText('Not configured')).toBeTruthy();
+  expect(
+    screen.getByRole('checkbox', { name: 'Activate this connection after credential setup' }),
+  ).toHaveProperty('disabled', false);
 });
 
 it('recovers an uncertain credential operation with the same safe intent and no retained secret', async () => {

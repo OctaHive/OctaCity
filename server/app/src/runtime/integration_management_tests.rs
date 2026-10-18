@@ -6,13 +6,11 @@ use std::{
   os::unix::fs::{MetadataExt, PermissionsExt},
 };
 
-#[allow(dead_code)]
-#[path = "../../../infrastructure/octacity-server-store-postgres/tests/support/mod.rs"]
-mod postgres;
+use super::postgres_test_support as postgres;
 
 #[tokio::test]
 #[ignore = "requires OCTACITY_POSTGRES_URL pointing to disposable PostgreSQL"]
-async fn runtime_publishes_connection_and_credentials_without_enabling_or_granting_project_use() {
+async fn runtime_publishes_connection_credentials_and_project_access_without_enabling_inputs() {
   let database = postgres::TestDatabase::migrated().await;
   let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
   url.set_path(&database.name);
@@ -53,7 +51,7 @@ async fn runtime_publishes_connection_and_credentials_without_enabling_or_granti
     fs::metadata(root.path()).unwrap().uid(),
     catalog.to_str().unwrap()
   );
-  let config = crate::ServerConfig::parse_toml(&super::tests::local_runtime_config::runtime_config_source(
+  let config = crate::ServerConfig::parse_toml(&super::test_runtime_config::runtime_config_source(
     root.path(),
     url.as_str(),
     "http://127.0.0.1:9",
@@ -141,6 +139,55 @@ async fn runtime_publishes_connection_and_credentials_without_enabling_or_granti
   assert_eq!(checked["readiness"]["authentication"], "ready");
   assert_eq!(checked["readiness"]["resource_access"], "ready");
   assert_eq!(checked["readiness"]["capability"], "ready");
+  let projects = reqwest::Client::new();
+  let response = projects
+    .post(format!("http://{}/api/v1/projects", runtime.management_addr()))
+    .header("idempotency-key", "integration-access-project")
+    .json(&json!({"name":"Manual tasks"}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+  let project: Value = response.json().await.unwrap();
+  let project_id = project["resource"]["id"].as_str().unwrap();
+  let project_path = format!("{path}/projects/{project_id}");
+  let response = client.get(format!("{project_path}/dependencies")).send().await.unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "{}",
+    response.text().await.unwrap()
+  );
+  assert_eq!(
+    response.json::<Value>().await.unwrap(),
+    json!({"items":[],"next_cursor":null})
+  );
+  let grant = json!({"connection_id":id,"project_id":project_id,"connection_version":1,
+    "expected_current_version":null,"resources":[{"reference":definition.resources[0].reference,"purposes":["task_read"]}]});
+  let response = client
+    .post(format!("{project_path}/access"))
+    .header("idempotency-key", "grant-project-reading")
+    .header("if-none-match", "*")
+    .json(&json!({"intent":grant}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "{}",
+    response.text().await.unwrap()
+  );
+  let access: Value = client
+    .get(format!("{project_path}/access"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(access["access"]["project_id"], project_id);
+  assert_eq!(access["access"]["resources"], grant["resources"]);
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }
