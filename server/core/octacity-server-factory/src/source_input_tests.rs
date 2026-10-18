@@ -13,6 +13,63 @@ use crate::{
 #[path = "source_group_tests.rs"]
 mod exclusive_groups;
 
+#[test]
+fn input_reporting_maps_arbitrary_statuses_only_within_the_installed_effect_ceiling() {
+  let mapping: crate::WorkSourceStatusMapping = serde_json::from_value(serde_json::json!({"statuses":[
+    {"status":"needs-human-eyes","add":["ready / review"],"remove":["needs context"],"state":null},
+    {"status":"archive","add":[],"remove":[],"state":"native-closed"}
+  ]}))
+  .unwrap();
+  let policy = crate::WorkSourceReportingPolicy {
+    labels: vec!["ready / review".into(), "needs context".into()],
+    states: vec!["native-closed".into()],
+  };
+  policy.validate_mapping(&mapping).unwrap();
+  assert_eq!(mapping.effects("needs-human-eyes").unwrap().add, ["ready / review"]);
+  assert!(mapping.effects("approved").is_none());
+  for change in ["label", "state", "overlap", "duplicate", "oversized"] {
+    let mut invalid = mapping.clone();
+    match change {
+      "label" => invalid.statuses[0].add = vec!["outside-installed-scope".into()],
+      "state" => invalid.statuses[0].state = Some("outside-installed-state".into()),
+      "overlap" => invalid.statuses[0].remove = vec!["ready / review".into()],
+      "duplicate" => invalid.statuses.push(invalid.statuses[0].clone()),
+      _ => invalid.statuses[0].add = vec!["x".repeat(257)],
+    }
+    assert!(policy.validate_mapping(&invalid).is_err(), "accepted {change}");
+  }
+}
+
+#[test]
+fn input_publication_freezes_reporting_mapping_and_requires_an_explicit_reporter() {
+  let project = ProjectId::generate();
+  let target = target(project, true);
+  let repository = repository(project);
+  let source = source(project, "custom-tracker");
+  let mut reporter = source.clone();
+  reporter.role = WorkSourceCapabilityRole::Reporter;
+  let mut definition = draft(&target, &repository, &source);
+  assert!(serde_json::to_value(&definition).unwrap().get("reporting").is_none());
+  definition.reporting = Some(
+    serde_json::from_value(
+      serde_json::json!({"statuses":[{"status":"review","add":["arbitrary"],"remove":[],"state":null}]}),
+    )
+    .unwrap(),
+  );
+  let context = || WorkSourceInputContext {
+    target: &target,
+    repository: &repository,
+    source: Some(&source),
+    reporter: Some(&reporter),
+  };
+  assert!(WorkSourceInput::publish(WorkSourceInputId::generate(), project, definition.clone(), context()).is_err());
+  definition.reporter = Some(reporter.binding.clone());
+  let input = WorkSourceInput::publish(WorkSourceInputId::generate(), project, definition.clone(), context()).unwrap();
+  assert_eq!(input.definition().reporting, definition.reporting);
+  let restored: WorkSourceInput = serde_json::from_value(serde_json::to_value(&input).unwrap()).unwrap();
+  assert_eq!(restored, input);
+}
+
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
@@ -109,6 +166,7 @@ fn draft(
   source: &WorkSourceCapability,
 ) -> WorkSourceInputDraft {
   WorkSourceInputDraft {
+    reporting: None,
     predicate: None,
     connection: None,
     target: target.reference().clone(),

@@ -46,6 +46,7 @@ if request['family'] == 'reporter':
                 return json.loads(text) if text else {}
         def plan(values):
             receipt = {key: intent[key] for key in ('projection_id', 'item_id', 'configuration_digest', 'mapping', 'status')}
+            receipt.update({'effects': intent['effects']} if 'effects' in intent else {})
             receipt['resource_id'] = intent['resource']['resource_id']
             receipt['matches'] = all(values.get(field) == desired for field in fields)
             token = hashlib.sha256(json.dumps([intent, {field: values.get(field) for field in fields}], sort_keys=True).encode()).hexdigest()
@@ -87,6 +88,7 @@ if request['family'] == 'reporter':
         sys.stdout.write('\n')
         sys.exit(0)
     receipt = {key: intent[key] for key in ('projection_id', 'item_id', 'configuration_digest', 'mapping', 'status')}
+    receipt.update({'effects': intent['effects']} if 'effects' in intent else {})
     receipt['resource_id'] = intent['resource']['resource_id']
     receipt['matches'] = os.path.exists('reporter-applied')
     if command == 'project':

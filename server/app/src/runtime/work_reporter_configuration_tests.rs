@@ -4,7 +4,7 @@ use octacity_server_store::testing::management_mutation;
 
 async fn managed_fixture(provider: &str) -> (Fixture, FactoryReporterProfile) {
   let (mut fixture, profile) = fixture(provider).await;
-  let (_, id) = managed_access(&fixture, &fixture.profile.binding, IntegrationPurpose::TaskRead).await;
+  let (_, id) = managed_access(&fixture, &fixture.profile.read.binding, IntegrationPurpose::TaskRead).await;
   let metadata = fixture.store.integration_connection(id, None).await.unwrap();
   let mut resources = metadata.definition.resources.clone();
   let writer = IntegrationCapability {
@@ -91,7 +91,7 @@ async fn managed_fixture(provider: &str) -> (Fixture, FactoryReporterProfile) {
   let source = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
-    binding: fixture.profile.binding.clone(),
+    binding: fixture.profile.read.binding.clone(),
   };
   let reporter = WorkSourceCapability {
     project_id: fixture.input.project_id(),
@@ -114,7 +114,7 @@ async fn managed_fixture(provider: &str) -> (Fixture, FactoryReporterProfile) {
   .unwrap();
   let published = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers))
     .handle_command(
-      &fixture.profile.context,
+      &fixture.profile.read.context,
       PublishWorkSourceConfigurationCommand {
         intent: WorkSourceConfigurationIntent {
           project_id: fixture.input.project_id(),

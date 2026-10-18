@@ -10,6 +10,7 @@ import { ConfigurationEditor } from './ConfigurationEditor';
 import { SchemaEditor } from './SchemaEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { useFactoryChoices } from './useFactoryChoices';
+import { factorySourcesApi } from './sourceApi';
 
 type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
 /** Entire editor state is owned here and discarded when its immutable baseline or Project changes. */
@@ -121,6 +122,7 @@ export function FactoryAuthoring({
         ) : draft ? (
           <>
             <FlowGraphEditor
+              sources={{ api: factorySourcesApi, projectId }}
               value={draft}
               choices={choices.data.pages.flatMap((page) => page.items)}
               subflows={visibleFlows}

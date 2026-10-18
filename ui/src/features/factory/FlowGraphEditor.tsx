@@ -10,6 +10,7 @@ import styles from './Factory.module.css';
 import { ExecutionProfiles } from './ExecutionProfiles';
 import { FlowSettings } from './FlowSettings';
 import { FlowBindings } from './FlowBindings';
+import type { FlowSourceServices } from './FlowSourceUpdate';
 import { FlowProjections } from './FlowProjections';
 import { FlowTransitions } from './FlowTransitions';
 import { BudgetEditor, PermissionEditor } from './ResourceEditors';
@@ -20,6 +21,7 @@ interface Props {
   choices: readonly components['schemas']['FactoryConfigurationChoiceResource'][];
   subflows: readonly components['schemas']['FactoryFlowDefinitionDetails'][];
   onChange: (value: Draft) => void;
+  sources?: FlowSourceServices;
 }
 
 const NODE_KINDS = {
@@ -35,7 +37,7 @@ const NODE_KINDS = {
 } satisfies Record<components['schemas']['FactoryFlowNodeKind'], MessageKey>;
 
 /** A component-memory draft over the closed technical grammar; names have no special meaning. */
-export function FlowGraphEditor({ value, onChange, choices, subflows }: Props) {
+export function FlowGraphEditor({ value, onChange, choices, subflows, sources }: Props) {
   const { t } = usePresentation();
   const [selected, setSelected] = useState(() =>
     Math.max(
@@ -238,6 +240,7 @@ export function FlowGraphEditor({ value, onChange, choices, subflows }: Props) {
             onChange={onChange}
           />
           <FlowBindings
+            sources={sources}
             node={node}
             root={value.root}
             schemas={value.data_schemas}

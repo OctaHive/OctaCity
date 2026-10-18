@@ -10,6 +10,8 @@ pub use octacity_server_store::{
   WorkSourceInputIntent, WorkSourceMemberRef, WorkSourceScanTarget,
 };
 use std::sync::Arc;
+#[path = "factory_source_actions.rs"]
+mod actions;
 #[path = "factory_source_configuration_choices.rs"]
 mod choices;
 pub use choices::*;
@@ -64,6 +66,7 @@ pub struct FactorySourceConfigurationHandlers<S> {
   configuration_parents: Vec<(WorkSourceCapability, ImmutableReference)>,
   selection_labels: Vec<(WorkSourceCapability, WorkSourceSelectionLabels)>,
   predicate_states: Vec<(WorkSourceCapability, Vec<FactoryKey>)>,
+  reporting_mappings: Vec<(WorkSourceCapability, WorkSourceReportingChoice)>,
   preview: Option<Arc<dyn FactoryWorkSourcePreview>>,
   issue_links: Option<Arc<dyn FactoryWorkSourceIssueLinks>>,
 }
@@ -90,6 +93,7 @@ impl<S> FactorySourceConfigurationHandlers<S> {
       configuration_parents: vec![],
       selection_labels: vec![],
       predicate_states: vec![],
+      reporting_mappings: vec![],
       preview: None,
       issue_links: None,
     })
@@ -177,6 +181,19 @@ impl<
     definition: &WorkSourceInputDraft,
   ) -> Result<(), ApplicationError> {
     self.require_input_visibility(context, definition).await?;
+    if let Some(mapping) = &definition.reporting {
+      let policy = self
+        .reporting_mappings
+        .iter()
+        .find(|(c, _)| {
+          c.project_id == definition.target.project_id() && Some(&c.binding) == definition.reporter.as_ref()
+        })
+        .and_then(|(_, choice)| choice.editable.as_ref())
+        .ok_or_else(|| FactoryValidationDiagnostics::invalid("/reporting"))?;
+      policy
+        .validate_mapping(mapping)
+        .map_err(|_| FactoryValidationDiagnostics::invalid("/reporting"))?;
+    }
     if let Some(predicate) = &definition.predicate {
       predicate
         .validate()
@@ -305,6 +322,11 @@ impl<
     })?;
     validate_managed_work_source(&input, &metadata, &grant, &administration)?;
     validate_source_input_dependencies(&input, &selected.configuration.configuration, &selected.repository)?;
+    crate::factory_stage_source_update::validate_input_source_updates(
+      input.definition(),
+      selected.configuration.configuration.flow(),
+    )
+    .map_err(|_| FactoryValidationDiagnostics::invalid("/target"))?;
     Ok(input)
   }
   async fn resolve(

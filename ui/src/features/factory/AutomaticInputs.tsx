@@ -1,4 +1,5 @@
 import { SourceGroupEditor } from './SourceGroupEditor';
+import { SourceProgress } from './SourceProgress';
 import { useState } from 'react';
 import { SourceInputEditor, type SourceRepositories } from './SourceInputEditor';
 import { useInfiniteQuery } from '@tanstack/react-query';
@@ -131,6 +132,7 @@ export function AutomaticInputs({
                 <button type="button" onClick={() => setEditing(record.definition.id)}>
                   {t('factory.editInput')}
                 </button>
+                <SourceProgress record={record} api={api} />
               </li>
             ) : null,
           )}
@@ -143,6 +145,7 @@ export function AutomaticInputs({
               <button type="button" onClick={() => setEditing(record.definition.id)}>
                 {t('factory.editGroup')}
               </button>
+              <SourceProgress record={record} api={api} />
             </li>
           ) : null,
         )}

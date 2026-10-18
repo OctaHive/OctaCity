@@ -7,14 +7,14 @@ Implementation baseline and remaining seams:
 - `server/application/src/factory_admission.rs` preserves manual admission and replay-before-resolution; completed tasks 1–4.5 have added separately authorized source admission and reporting without changing manual identity.
 - `server/core/octacity-server-store/src/factory_admission_model.rs` already scopes external identities by source and accepted security scope and retains immutable admission intent. Extend that authority; do not add a second deduplication database or reimplement the pipeline's business duplicate analysis.
 - `server/application/src/factory_work_status_outbox.rs` already dispatches accepted `set_status` effects under independent outbox fences and retry policy through `FactoryWorkStatusProjector`.
-- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Tasks 5.1–5.6 provide reusable connection metadata, protected credential publication, recoverable authorized administration/REST, explicit Project/resource/purpose grants with managed Source/Reporter enforcement, bounded read-only connection checks through independently advertised provider operations, and typed immutable automatic input/group publication with safe installed choices. Task 5.7 provides bounded read-only Source preview and retained Source/Reporter diagnostics. Task 5.8 aligns OpenAPI, canonical wire examples and generated client contracts. Tasks 5.9–5.10 provide dedicated connection/credential/check administration plus Project grants and visible retained dependency review. Guided pipeline input and status authoring remain pending from 5.11 onward.
+- `server/infrastructure/octacity-github` now implements Delivery, Issue Source and Reporter over separately versioned verified process contracts and private scoped grants. Tasks 5.1–5.6 provide reusable connection metadata, protected credential publication, recoverable authorized administration/REST, explicit Project/resource/purpose grants with managed Source/Reporter enforcement, bounded read-only connection checks through independently advertised provider operations, and typed immutable automatic input/group publication with safe installed choices. Task 5.7 provides bounded read-only Source preview and retained Source/Reporter diagnostics. Task 5.8 aligns OpenAPI, canonical wire examples and generated client contracts. Tasks 5.9–5.10 provide dedicated connection/credential/check administration plus Project grants and visible retained dependency review. Task 5.11 provides guided independent input selection; task 5.12 adds reviewed status mapping and retained progress presentation. Task 5.13 adds typed stage-action authoring and accepted action/stage provenance; see verification-5.13.md.
 - Existing VCS configuration uses integration identities and private credential handles, while the secret domain separates logical references from transient values. Reuse these contracts where applicable; do not expose Job-secret delegation as authority to manage provider credentials.
 - `ui/src/features/factory/ConfigurationEditor.tsx` already selects visible Factory dependencies through generated REST types. Add an input section there or in its adjacent configuration detail rather than create a second pipeline designer.
 - `ui/src/features/factory/FlowGraphEditor.tsx` and `FlowBindings.tsx` already author ordinary trusted-action bindings; use those surfaces for stage-local source effects.
 
 The existing [extension boundaries](../../../docs/architecture/factory-extension-boundaries.md) deliberately reserved this change. The approved generic Flow and non-authoritative reporting contracts remain controlling.
 
-The revised `add-factory-work-card` plans a persistent internal Issue above immutable Work. In this document, **external task** means the native GitHub Issue (or another installed provider's task); **internal Issue** means that optional Project-owned card. Existing references to an Issue's labels/state describe the external task unless explicitly qualified. This update preserves all completed task entries and verification evidence; the new handoff seam is pending work, not a claim about the implemented Source protocol.
+The revised `add-factory-work-card` plans a persistent internal Issue above immutable Work. In this document, **external task** means the native GitHub Issue (or another installed provider's task); **internal Issue** means that optional Project-owned card. Existing references to an Issue's labels/state describe the external task unless explicitly qualified. Completed task entries and verification evidence remain preserved. Task 5.14 exposes an optional application handoff over existing installed Source v1 reads; it adds no protocol operation or persistent card lifecycle.
 
 ## Goals / Non-Goals
 
@@ -93,6 +93,8 @@ Use repository Issue listing rather than unrestricted Search. GitHub's [Issues A
 Retain per-input/group progress, scan windows, pending candidate intents, owner/fence and safe dispositions. Drain pages within configured per-pass limits; checkpoint only covered work. Use overlapping update windows plus periodic fair bounded full reconciliation, stable observation identities and existing admission replay. Do not assume timestamps or ETags alone provide exactly-once intake or a provider snapshot. Bound concurrency, bytes, pages and retries; expose backlog/cursor age rather than scan without a ceiling. Disabled inputs start no new preparation/admission; already committed Work and pending reporting keep their original policies.
 
 Retain a narrow execution-neutral observation seam over these installed Source operations. An observation carries trusted Project/security scope, installation/native resource/item identity, display context, freshness evidence and bounded snapshot/input provenance; GitHub wire DTOs and secrets stay inside their existing boundaries. Pipeline matching and Work admission consume observations separately. Observations of already admitted tasks must not be suppressed solely by admission replay or exposed only through the last accepted Work snapshot. Existing Work continues to use its original frozen inputs.
+
+`WorkSourceObservations` and `HostedWorkSourceObservations` implement this as an explicitly invoked bounded page read, with no Factory target/input id, store or observer subscription. Observation and preview consume `WorkSourceReadProfile`; intake composes that same read scope with separate preparation settings, so independent consumers supply no acceptance/Artifact/code-source/Work-classification settings. They share installed process execution, normalized snapshot translation and `SourcePollingPolicy` validation with intake. The request reuses original Source scan identity, window and continuation; future import/refresh policy owns durable progress. A separately installed permitted selector can include closed/nonmatching tasks without changing execution selectors. Managed current-read checks precede dispatch and private response handoff under one deadline. Native correlation reuses the existing hash; private snapshot digest and trusted read/expiry times distinguish live changed, live unchanged and stale evidence without ordering opaque provider update ids. See [observation reference](../../../docs/reference/work-source-observations.md) and verification-5.14.md.
 
 The card change owns explicit import/link-refresh configuration and its durable task updates, including refresh of retained links that no longer match an execution selector. It must reuse the authorized Source read/observation and bounded progress/reconciliation contracts. A nonmatching/closed external task is not deleted from an internal card, and an observation alone is not a Run request. Disabling an execution input stops its admissions; separately configured link refresh can continue only with its own enabled policy and current read grants. No optional consumer means no card mutations or extra provider reads, and existing intake does not wait for card availability. Do not add an unbounded cache, implicit observer subscription or second provider polling implementation here.
 
@@ -254,6 +256,52 @@ Installed provider-owned mapping and polling ceilings remain unchanged. Legacy
 profiles remain selectable without claiming to support editing. Manual Artifact
 intake and future card ownership stay independent. The browser consumes exact
 server-supplied Repository digests rather than reconstructing configuration hashes.
+
+The approved task 5.12 expansion adds an optional input-owned immutable status
+mapping, distinct from its installed Reporter binding and parent connection profile.
+Each arbitrary logical value declares literal additions/removals and an optional
+opaque state. Trusted installation owners attach safe installed mapping descriptions
+and explicitly opt into bounded editable label/state choices. The application
+rechecks these ceilings and independent current task-update authority at publication;
+the original input version freezes the mapping for admitted Work. Absent mappings
+retain the original serialization and installed-only behavior, with no migration
+or separate mapping journal.
+
+The existing ordered Reporter v2 contract carries optional bounded effects and
+requires their exact echo in receipts. The verified host requires an explicit
+`custom_effects` advertisement and never sends these effects through bulk v1.
+The hosted projector validates the original input mapping against its pinned
+profile's installed ceiling, rejects unmapped statuses before process dispatch,
+and reuses current connection authorization, deadlines, fencing and the outbox.
+GitHub independently requires `editable` in the original installed mapping,
+revalidates labels with its existing managed-group effect validator and permits only
+explicit `editable_states`. Each conditional step binds the complete original
+intent, including custom effects. No raw provider JSON, path, credential upload,
+provider switch or mutable mapping lookup is added to Factory.
+
+The console selects compatible granted Reporter profiles for the exact Source
+installation/resource. It reviews installed or customized effects, explicitly
+preserves unrelated labels/state, invalidates validation after draft edits and
+labels unavailable retained pins without treating them as fresh readiness proof.
+Factory and Integrations share bounded Work/Run/native correlation presentation;
+optional authoritative cards use the owning change's canonical `/issues/{issue_id}`
+route only when REST supplies a visible association. Retained scan selection,
+retry/exhaustion, accepted Work, pending/claimed/applied/exhausted projections and
+execution navigation remain separate facts. Drafts/previews stay in mounted state;
+remote diagnostic error text is redacted before query caching. Manual Artifact
+intake remains independent. See [task 5.12 verification](verification-5.12.md).
+
+Task 5.13 adds optional typed `source_update` parameters to existing deferred
+`set_status` actions. A small opt-in source authorizer shared by Flow and Factory
+Configuration publication reuses current installed choice/grant resolution and
+explicit editable-effect ceilings. Resolved closures retain exact source/Reporter/
+connection/effect pins. The projector reads these only from verified accepted action
+history and uses the original native target through the existing outbox, preserving
+ordinary status action APIs and manual intake. The Flow editor reuses shared status
+controls and exact binding keys; confirmation includes normalized nested effects.
+Retained diagnostics add safe action and explicitly consumed stage record references
+without a migration or Run-row locking reads. Later card association grants no writes.
+See [task 5.13 verification](verification-5.13.md).
 
 Task 5.7 uses an independently advertised optional Source `preview` operation,
 sharing native listing without admission, cursor or task-observation authority.

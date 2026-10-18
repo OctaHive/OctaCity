@@ -2,7 +2,7 @@
 use crate::*;
 use octacity_server_domain::{ProjectId, Timestamp};
 use octacity_server_factory::*;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 /// Safe scan facts; ownership fences, private snapshots and continuations are deliberately absent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkSourceScanDiagnostics {
@@ -132,6 +132,48 @@ pub struct WorkSourceReportingDiagnostic {
   pub attempt: u16,
   /// Earliest permitted retry/dispatch time; not a completed effect timestamp.
   pub available_at: Timestamp,
+  /// Exact immutable action and explicitly consumed stage records, including nested Flow identity.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub origin: Option<WorkSourceReportingOrigin>,
+}
+/// Safe record provenance only; no projected payload, Context or provider data.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkSourceReportingRecord {
+  /// Exact immutable definition, distinguishing identical names in nested stages.
+  pub definition: FlowDefinitionRef,
+  /// Producing Flow invocation.
+  pub flow_run_id: FlowRunId,
+  /// Producing repeat cycle.
+  pub cycle_id: WorkflowCycleId,
+  /// Arbitrary configured node name.
+  pub node: FactoryKey,
+  /// Finite declared selected outcome.
+  pub outcome: FactoryKey,
+  /// Exact accepted attempt; a retry is not another stage.
+  pub node_attempt_id: NodeAttemptId,
+}
+impl WorkSourceReportingRecord {
+  /// Projects the allowlisted metadata of an already accepted record.
+  pub fn from_record(record: &FlowNodeRecord) -> Option<Self> {
+    Some(Self {
+      definition: record.input().definition(),
+      flow_run_id: record.input().flow_run_id(),
+      cycle_id: record.input().cycle_id(),
+      node: record.input().node().clone(),
+      outcome: serde_json::from_value(record.metadata().ok()?["outcome"].clone()).ok()?,
+      node_attempt_id: record.node_attempt_id(),
+    })
+  }
+}
+/// The action and its explicit stage data provenance remain separate facts.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WorkSourceReportingOrigin {
+  /// The accepted trusted action which queued this operation.
+  pub action: WorkSourceReportingRecord,
+  /// Only exact records consumed by the action; never guessed from a node name.
+  pub stages: Vec<WorkSourceReportingRecord>,
 }
 /// Projection health; never a task business status.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

@@ -42,31 +42,17 @@ pub struct FactorySourceWorkerSettings {
   /// Time for verified process cancellation and tree cleanup.
   pub cancellation_grace: Duration,
 }
-/// Trusted immutable Source settings selected by exact binding, independent of the provider name.
+#[path = "work_source_read_profile.rs"]
+mod read_profile;
+pub use read_profile::WorkSourceReadProfile;
+
+/// Installed Source read scope plus the separate choices needed only for Work preparation.
 #[derive(Clone)]
 pub struct FactorySourceProfile {
-  /// Explicit managed connection guard; absent only for existing operator-installed authority.
-  pub managed_access: Option<ManagedIntegrationAccess>,
-  /// Permitted OctaCity Project.
-  pub project_id: ProjectId,
-  /// Exact installed source settings; mutable ticket data cannot choose them.
-  pub binding: WorkSourceBinding,
-  /// Exact content-verified plugin executable.
-  pub plugin: ImmutableReference,
-  /// Frozen provider transport/configuration profile.
-  pub provider_configuration: FactoryDigest,
-  /// Independently scoped read handle and native ticket container.
-  pub resource: ResourceAccess,
-  /// Exact provider-owned selector.
-  pub selection: ConfigurationReference,
-  /// Actual permitted provider hosts; never derived from a ticket.
-  pub network_hosts: Vec<String>,
-  /// Independently accepted installation-owner attribution.
-  pub context: ManagementRequestContext,
-  /// Explicit immutable input mapping and source policy.
+  /// Shared installed read scope, independently usable without Factory admission settings.
+  pub read: WorkSourceReadProfile,
+  /// Explicit immutable input mapping, code source policy and Work classification.
   pub preparation: SourcePreparationSettings,
-  /// Finite normalized discovery limits and reconciliation policy.
-  pub polling: SourcePollingPolicy,
 }
 impl FactorySourceProfile {
   fn for_definition(
@@ -74,33 +60,13 @@ impl FactorySourceProfile {
     definition: &WorkSourceInputDraft,
     connections: Option<&ManagedIntegrationConnections>,
   ) -> Result<Self, ApplicationError> {
-    if let Some(connection) = &definition.connection {
-      self.managed_access = Some(
-        connections
-          .ok_or_else(ApplicationError::capability_unavailable)?
-          .for_work_binding(connection, &self.binding, IntegrationPurpose::TaskRead)?,
-      );
-    }
+    self.read = self.read.for_connection(definition.connection.as_ref(), connections)?;
     Ok(self)
   }
-  /// Adopts managed current-grant checks without changing the pinned Source/Work identity.
+  /// Adopts current managed read grants without changing Source/Work identity.
   pub fn with_managed_access(mut self, access: ManagedIntegrationAccess) -> Self {
-    self.managed_access = Some(access);
+    self.read = self.read.with_managed_access(access);
     self
-  }
-  async fn authorize_access(&self) -> Result<(), ApplicationError> {
-    if let Some(access) = &self.managed_access {
-      access
-        .authorize_work_binding(
-          self.project_id,
-          &self.binding,
-          &self.plugin,
-          &self.resource.resource_id,
-          IntegrationPurpose::TaskRead,
-        )
-        .await?;
-    }
-    Ok(())
   }
 }
 /// Explicit deployment opt-in. An absent installation starts no source worker.
@@ -156,11 +122,11 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
       return Err(ApplicationError::invalid());
     }
     for (index, profile) in installation.profiles.iter().enumerate() {
-      if !installation.projects.contains(&profile.project_id)
-        || profile.preparation.mapping.source != profile.binding
+      if !installation.projects.contains(&profile.read.project_id)
+        || profile.preparation.mapping.source != profile.read.binding
         || installation.profiles[..index]
           .iter()
-          .any(|p| p.project_id == profile.project_id && p.binding == profile.binding)
+          .any(|p| p.read.project_id == profile.read.project_id && p.read.binding == profile.read.binding)
       {
         return Err(ApplicationError::invalid());
       }
@@ -267,7 +233,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
   let pass = async {
     let members = d.store.source_scan_members(scan.claim.clone(), d.clock.now()?).await?;
     let profiles = profiles_for(&installation.profiles, &members, managed_connections.as_ref())?;
-    let mut polling = common_polling(&profiles)?;
+    let mut polling = common_polling(profiles.iter().map(|p| &p.read))?;
     let reader = Arc::new(SourcePageBridge {
       managed_connections: managed_connections.clone(),
       store: d.store.clone(),
@@ -428,7 +394,7 @@ fn profiles_for(
     .map(|input| {
       profiles
         .iter()
-        .find(|p| p.project_id == input.project_id() && p.binding == input.definition().source)
+        .find(|p| p.read.project_id == input.project_id() && p.read.binding == input.definition().source)
         .cloned()
         .ok_or_else(ApplicationError::capability_unavailable)
         .and_then(|profile| profile.for_definition(input.definition(), connections))
@@ -440,9 +406,12 @@ fn selection_digest(selection: &ConfigurationReference) -> Result<FactoryDigest,
     &serde_json::to_vec(selection).map_err(|_| ApplicationError::invalid())?,
   ))
 }
-fn common_polling(profiles: &[FactorySourceProfile]) -> Result<SourcePollingPolicy, ApplicationError> {
-  let mut result = profiles.first().ok_or_else(ApplicationError::invalid)?.polling.clone();
-  for p in profiles.iter().skip(1).map(|p| &p.polling) {
+fn common_polling<'a>(
+  profiles: impl IntoIterator<Item = &'a WorkSourceReadProfile>,
+) -> Result<SourcePollingPolicy, ApplicationError> {
+  let mut profiles = profiles.into_iter();
+  let mut result = profiles.next().ok_or_else(ApplicationError::invalid)?.polling.clone();
+  for p in profiles.map(|p| &p.polling) {
     result.page_items = result.page_items.min(p.page_items);
     result.max_pages = result.max_pages.min(p.max_pages);
     result.max_items = result.max_items.min(p.max_items);
@@ -490,3 +459,6 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
 #[path = "work_source_preview.rs"]
 mod preview;
 pub use preview::HostedFactoryWorkSourcePreview;
+#[path = "work_source_observation.rs"]
+mod observation;
+pub use observation::HostedWorkSourceObservations;

@@ -34,6 +34,26 @@ pub struct SourcePollingPolicy {
   /// Fixed retention of the first observed private page; retries never renew it.
   pub retention_millis: u64,
 }
+impl SourcePollingPolicy {
+  /// Checks the shared finite read/retention policy before provider activity.
+  pub fn validate(&self) -> Result<(), ApplicationError> {
+    if !(1..=MAX_SOURCE_POLL_PAGE_ITEMS).contains(&self.page_items)
+      || !(1..=MAX_POLL_PAGES).contains(&self.max_pages)
+      || !(1..=MAX_POLL_ITEMS).contains(&self.max_items)
+      || !(1..=MAX_SOURCE_POLL_PAGE_BYTES).contains(&self.max_page_bytes)
+      || self.max_bytes < self.max_page_bytes
+      || self.max_bytes > MAX_POLL_BYTES
+      || self.reconciliation_interval_millis == 0
+      || self.reconciliation_interval_millis > i64::MAX as u64
+      || self.overlap_millis > i64::MAX as u64
+      || self.retention_millis == 0
+      || self.retention_millis > octacity_server_store::MAX_SOURCE_RETENTION_MILLIS
+    {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
+}
 /// Exact provider read without Work admission or checkpoint authority.
 #[derive(Clone)]
 pub struct SourcePollRequest {
@@ -112,20 +132,7 @@ impl<S: FactorySourceStore, R: FactorySourcePageReader, P: FactorySourceCandidat
     clock: Arc<dyn FactoryExecutionClock>,
     policy: SourcePollingPolicy,
   ) -> Result<Self, ApplicationError> {
-    if !(1..=MAX_SOURCE_POLL_PAGE_ITEMS).contains(&policy.page_items)
-      || !(1..=MAX_POLL_PAGES).contains(&policy.max_pages)
-      || !(1..=MAX_POLL_ITEMS).contains(&policy.max_items)
-      || !(1..=MAX_SOURCE_POLL_PAGE_BYTES).contains(&policy.max_page_bytes)
-      || policy.max_bytes < policy.max_page_bytes
-      || policy.max_bytes > MAX_POLL_BYTES
-      || policy.reconciliation_interval_millis == 0
-      || policy.reconciliation_interval_millis > i64::MAX as u64
-      || policy.overlap_millis > i64::MAX as u64
-      || policy.retention_millis == 0
-      || policy.retention_millis > octacity_server_store::MAX_SOURCE_RETENTION_MILLIS
-    {
-      return Err(ApplicationError::invalid());
-    }
+    policy.validate()?;
     Ok(Self {
       store,
       reader,

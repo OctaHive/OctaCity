@@ -394,6 +394,106 @@
           ]
         }
       }
+    },
+    {
+      "intent": {
+        "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+        "inputs": [
+          {
+            "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+            "expected_version": null,
+            "definition": {
+              "connection": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+                "version": 1,
+                "access_version": 2,
+                "source_configuration": {
+                  "identity": "connection-settings",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "reporter_configuration": {
+                  "identity": "writer-connection-settings",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "target": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862792",
+                "version": 1,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0707070707070707070707070707070707070707070707070707070707070707"
+              },
+              "repository": {
+                "id": "0199a6f4-d56c-7440-9aa2-6a320f862791",
+                "version": 3,
+                "project_id": "0199a6f4-d56c-7440-9aa2-6a320f862790",
+                "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808"
+              },
+              "source": {
+                "installation": {
+                  "identity": "installed",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "capability": {
+                  "identity": "read",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "triage-labels",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "resource": {
+                  "identity": "tickets",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "reporter": {
+                "installation": {
+                  "identity": "installed",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "capability": {
+                  "identity": "write",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "configuration": {
+                  "identity": "editorial-effects",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                },
+                "resource": {
+                  "identity": "tickets",
+                  "version": "v1",
+                  "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+                }
+              },
+              "enabled": true,
+              "reporting": {
+                "statuses": [
+                  {
+                    "status": "needs-human-eyes",
+                    "add": [
+                      "ready / review"
+                    ],
+                    "remove": [
+                      "needs context"
+                    ],
+                    "state": null
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "group": null
+      }
     }
   ],
   "WorkSourceInputChoices": [
@@ -438,6 +538,109 @@
             "all_of": [],
             "any_of": [],
             "none_of": []
+          }
+        }
+      ]
+    },
+    {
+      "connection_id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+      "connection_version": 1,
+      "access_version": 2,
+      "items": [
+        {
+          "binding": {
+            "installation": {
+              "identity": "installed",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "capability": {
+              "identity": "read",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "configuration": {
+              "identity": "triage-labels",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "resource": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            }
+          },
+          "connection_configuration": {
+            "identity": "connection-settings",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "purpose": "task_read",
+          "native_id": "external-project",
+          "locator": "team/project",
+          "selection": {
+            "state": "open",
+            "all_of": [],
+            "any_of": [],
+            "none_of": []
+          }
+        },
+        {
+          "binding": {
+            "installation": {
+              "identity": "installed",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "capability": {
+              "identity": "write",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "configuration": {
+              "identity": "editorial-effects",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            },
+            "resource": {
+              "identity": "tickets",
+              "version": "v1",
+              "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+            }
+          },
+          "connection_configuration": {
+            "identity": "writer-connection-settings",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "purpose": "task_update",
+          "native_id": "external-project",
+          "locator": "team/project",
+          "selection": null,
+          "reporting": {
+            "mapping": {
+              "statuses": [
+                {
+                  "status": "needs-human-eyes",
+                  "add": [
+                    "ready / review"
+                  ],
+                  "remove": [
+                    "needs context"
+                  ],
+                  "state": null
+                }
+              ]
+            },
+            "editable": {
+              "labels": [
+                "ready / review",
+                "needs context"
+              ],
+              "states": [
+                "native-closed"
+              ]
+            }
           }
         }
       ]
@@ -1003,6 +1206,138 @@
       "outbox": {
         "max_attempts": 3,
         "retry_delay_millis": 250
+      }
+    },
+    {
+      "status": "needs-human-eyes",
+      "outbox": {
+        "max_attempts": 3,
+        "retry_delay_millis": 250
+      },
+      "source_update": {
+        "source": {
+          "installation": {
+            "identity": "installed",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "capability": {
+            "identity": "read",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "configuration": {
+            "identity": "triage-labels",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "resource": {
+            "identity": "tickets",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          }
+        },
+        "reporter": {
+          "installation": {
+            "identity": "installed",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "capability": {
+            "identity": "write",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "configuration": {
+            "identity": "editorial-effects",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "resource": {
+            "identity": "tickets",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          }
+        },
+        "connection": {
+          "id": "0199a6f4-d56c-7440-9aa2-6a320f862795",
+          "version": 1,
+          "access_version": 2,
+          "source_configuration": {
+            "identity": "connection-settings",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          },
+          "reporter_configuration": {
+            "identity": "writer-connection-settings",
+            "version": "v1",
+            "digest": "0707070707070707070707070707070707070707070707070707070707070707"
+          }
+        },
+        "effects": {
+          "status": "needs-human-eyes",
+          "add": [
+            "ready / review"
+          ],
+          "remove": [
+            "needs context"
+          ],
+          "state": null
+        }
+      }
+    }
+  ],
+  "WorkSourceStatusMapping": [
+    {
+      "statuses": [
+        {
+          "status": "needs-human-eyes",
+          "add": [
+            "ready / review"
+          ],
+          "remove": [
+            "needs context"
+          ],
+          "state": null
+        }
+      ]
+    }
+  ],
+  "WorkSourceReportingPolicy": [
+    {
+      "labels": [
+        "ready / review",
+        "needs context"
+      ],
+      "states": [
+        "native-closed"
+      ]
+    }
+  ],
+  "WorkSourceReportingChoice": [
+    {
+      "mapping": {
+        "statuses": [
+          {
+            "status": "needs-human-eyes",
+            "add": [
+              "ready / review"
+            ],
+            "remove": [
+              "needs context"
+            ],
+            "state": null
+          }
+        ]
+      },
+      "editable": {
+        "labels": [
+          "ready / review",
+          "needs context"
+        ],
+        "states": [
+          "native-closed"
+        ]
       }
     }
   ]

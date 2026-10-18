@@ -35,6 +35,10 @@ impl StatusEffects {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct MappingDraft {
+  #[serde(default)]
+  editable: bool,
+  #[serde(default)]
+  editable_states: Vec<IssueState>,
   config_version: u16,
   #[serde(deserialize_with = "unique_map")]
   managed_label_groups: BTreeMap<String, Vec<String>>,
@@ -69,6 +73,8 @@ where
 pub struct StatusMapping {
   statuses: BTreeMap<String, StatusEffects>,
   groups: BTreeMap<String, Vec<String>>,
+  editable: bool,
+  editable_states: Vec<IssueState>,
 }
 impl StatusMapping {
   /// Decodes a versioned installed mapping without reading credentials or calling GitHub.
@@ -78,6 +84,13 @@ impl StatusMapping {
     }
     let mapping: MappingDraft = serde_json::from_slice(bytes).map_err(|_| MappingError)?;
     if mapping.config_version != 1
+      || mapping.editable_states.len() > 2
+      || mapping
+        .editable_states
+        .iter()
+        .enumerate()
+        .any(|(i, state)| mapping.editable_states[..i].contains(state))
+      || (!mapping.editable && !mapping.editable_states.is_empty())
       || mapping.managed_label_groups.len() > 32
       || mapping.statuses.is_empty()
       || mapping.statuses.len() > 128
@@ -99,29 +112,68 @@ impl StatusMapping {
       return Err(MappingError);
     }
     for (status, effect) in &mapping.statuses {
-      if !bounded(status) || effect.add.len() > 64 || effect.remove.len() > 64 {
-        return Err(MappingError);
-      }
-      let mut affected = BTreeSet::new();
-      for label in effect.add.iter().chain(&effect.remove) {
-        let normalized = label.to_lowercase();
-        if !bounded(label) || !managed.contains(&normalized) || !affected.insert(normalized) {
-          return Err(MappingError);
-        }
-      }
+      validate_effect(status, effect, &managed)?;
     }
     Ok(Self {
       statuses: mapping.statuses,
       groups: mapping.managed_label_groups,
+      editable: mapping.editable,
+      editable_states: mapping.editable_states,
     })
   }
   /// Resolves only an exact configured value, without a built-in business vocabulary.
   pub fn effects(&self, status: &str) -> Result<&StatusEffects, MappingError> {
     self.statuses.get(status).ok_or(MappingError)
   }
+  /// Narrows an explicitly editable installed mapping without accepting a new native scope.
+  /// Shares effect validation with installed mappings without reencoding the native catalogue.
+  pub fn with_effects(
+    &self,
+    status: &str,
+    effects: &octacity_work_source_protocol::reporter::ProjectionEffects,
+  ) -> Result<Self, MappingError> {
+    effects.validate().map_err(|_| MappingError)?;
+    let state: Option<IssueState> = effects
+      .state
+      .as_ref()
+      .map(|s| serde_json::from_value(serde_json::json!(s)))
+      .transpose()
+      .map_err(|_| MappingError)?;
+    if !self.editable || state.is_some_and(|s| !self.editable_states.contains(&s)) {
+      return Err(MappingError);
+    }
+    let effect = StatusEffects {
+      add: effects.add.clone(),
+      remove: effects.remove.clone(),
+      state,
+    };
+    let managed = self
+      .groups
+      .values()
+      .flatten()
+      .map(|label| label.to_lowercase())
+      .collect();
+    validate_effect(status, &effect, &managed)?;
+    let mut selected = self.clone();
+    selected.statuses = BTreeMap::from([(status.into(), effect)]);
+    Ok(selected)
+  }
   pub(crate) fn managed_groups(&self) -> impl Iterator<Item = &Vec<String>> {
     self.groups.values()
   }
+}
+fn validate_effect(status: &str, effect: &StatusEffects, managed: &BTreeSet<String>) -> Result<(), MappingError> {
+  if !bounded(status) || effect.add.len() > 64 || effect.remove.len() > 64 {
+    return Err(MappingError);
+  }
+  let mut affected = BTreeSet::new();
+  for label in effect.add.iter().chain(&effect.remove) {
+    let normalized = label.to_lowercase();
+    if !bounded(label) || !managed.contains(&normalized) || !affected.insert(normalized) {
+      return Err(MappingError);
+    }
+  }
+  Ok(())
 }
 fn bounded(value: &str) -> bool {
   !value.trim().is_empty() && value.len() <= 256 && !value.chars().any(char::is_control)

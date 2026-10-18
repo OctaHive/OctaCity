@@ -101,7 +101,7 @@ async fn next_input<S: FactorySourceStore>(fixture: &mut Fixture<S>, reporter: &
   let source = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
-    binding: fixture.profile.binding.clone(),
+    binding: fixture.profile.read.binding.clone(),
   };
   let capability = WorkSourceCapability {
     project_id: fixture.input.project_id(),
@@ -161,7 +161,7 @@ async fn next_input<S: FactorySourceStore>(fixture: &mut Fixture<S>, reporter: &
     })
     .await
     .unwrap();
-  fixture.profile.binding = next.definition().source.clone();
+  fixture.profile.read.binding = next.definition().source.clone();
   fixture.profile.preparation.mapping.source = next.definition().source.clone();
   fixture.input = next;
 }
@@ -500,7 +500,7 @@ fn mapped_profile<S>(fixture: &Fixture<S>, mapping: &str) -> FactoryReporterProf
   mapped_installation_profile(
     fixture,
     mapping,
-    fixture.profile.binding.installation.clone(),
+    fixture.profile.read.binding.installation.clone(),
     capability(),
   )
 }
@@ -514,11 +514,12 @@ fn mapped_installation_profile<S>(
     key(mapping),
     key("v1"),
     FactoryReporterProfileDraft {
+      reporting_policy: None,
       project_id: fixture.input.project_id(),
       installation,
       capability: action_capability,
-      resource: fixture.profile.binding.resource.clone(),
-      plugin: fixture.profile.plugin.clone(),
+      resource: fixture.profile.read.binding.resource.clone(),
+      plugin: fixture.profile.read.plugin.clone(),
       provider_configuration: FactoryDigest::from_bytes([0xdd; 32]),
       access: ResourceAccess {
         resource_id: "native-container".into(),
@@ -613,7 +614,10 @@ async fn late_write_contract<S: WorkSourceArtifactStore + FactoryDiscoveryStore 
   // Only acceptance of the newer status action must follow the older Begin.
   next_input(&mut fixture, &newer).await;
   let new_run = admit_at(&fixture, 120).await;
-  let directory = fixture.root.path().join(fixture.profile.plugin.identity().as_str());
+  let directory = fixture
+    .root
+    .path()
+    .join(fixture.profile.read.plugin.identity().as_str());
   std::fs::write(
     directory.join("reporter-state.json"),
     serde_json::to_vec(&serde_json::json!({"b".repeat(64):"human-owned"})).unwrap(),

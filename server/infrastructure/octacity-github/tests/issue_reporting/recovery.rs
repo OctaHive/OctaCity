@@ -4,6 +4,70 @@ use octacity_work_source_protocol::FailureClass;
 use reporting::LostResponse;
 
 #[tokio::test]
+async fn input_owned_mapping_converges_only_installed_managed_effects_through_ordered_process_steps() {
+  let forge = Forge::start().await;
+  *forge.reporting.lock().await = Some(reporting::Issue::new(&["needs context", "human-owned"]));
+  let mut installed = mapping();
+  installed["editable"] = json!(true);
+  installed["editable_states"] = json!(["closed"]);
+  let (installation, original) = install(&forge, installed);
+  let Request::Reporter(reporter::Request {
+    command: reporter::Command::Project(mut intent),
+    ..
+  }) = original
+  else {
+    unreachable!()
+  };
+  intent.status = "custom-classified".into();
+  intent.effects = Some(reporter::ProjectionEffects {
+    add: vec!["ready / review".into()],
+    remove: vec!["needs context".into()],
+    state: Some("closed".into()),
+  });
+  let inspect = Request::Reporter(reporter::Request {
+    protocol_version: 2,
+    request_id: "custom-inspect".into(),
+    command: reporter::Command::Inspect(intent.clone()),
+  });
+  let Response::Reporter(reporter::Response {
+    outcome: reporter::Outcome::Planned(mut plan),
+    ..
+  }) = process(&installation, &inspect).await
+  else {
+    panic!("expected custom effect plan")
+  };
+  assert_eq!(writes(&forge).await.len(), 0, "inspection must remain read-only");
+  for n in 0..3 {
+    let apply = Request::Reporter(reporter::Request {
+      protocol_version: 2,
+      request_id: format!("custom-apply-{n}"),
+      command: reporter::Command::Apply(Box::new(reporter::StepRequest {
+        intent: (*intent).clone(),
+        step: plan.steps[0].clone(),
+      })),
+    });
+    let response = process(&installation, &apply).await;
+    response.validate_for(&apply).unwrap();
+    let Response::Reporter(reporter::Response {
+      outcome: reporter::Outcome::Progressed(next),
+      ..
+    }) = response
+    else {
+      panic!("expected one custom effect")
+    };
+    assert_eq!(writes(&forge).await.len(), n + 1);
+    plan = next;
+  }
+  assert!(plan.receipt.matches);
+  let observed = forge.reporting.lock().await;
+  assert_eq!(
+    observed.as_ref().unwrap().labels,
+    ["human-owned".into(), "ready / review".into()].into_iter().collect()
+  );
+  assert_eq!(observed.as_ref().unwrap().state, "closed");
+}
+
+#[tokio::test]
 async fn stage_effect_presets_apply_distinct_arbitrary_values_without_changing_unrelated_labels() {
   for (status, expected_labels, expected_state, expected_writes) in [
     ("ready / review", vec!["human-owned", "ready / review"], "open", 2),

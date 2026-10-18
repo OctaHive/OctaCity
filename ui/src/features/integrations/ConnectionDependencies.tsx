@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { SourceAdmissions } from '../../shared/SourceAdmissions';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import {
@@ -148,21 +148,7 @@ function ReportingHistory({
       {history.data && !admissions.length ? (
         <QueryEmptyNotice>{t('integrations.noHistory')}</QueryEmptyNotice>
       ) : null}
-      <ul>
-        {admissions.map((a) => (
-          <li key={a.association.id}>
-            <Link to={`/factory/${encodeURIComponent(a.association.run_id)}`}>
-              {t('integrations.openRun')}
-            </Link>
-            <ul>
-              {a.reporting.map((r) => (
-                <li key={r.operation_id}>{t(`integrations.reporting.${r.state}`)}</li>
-              ))}
-            </ul>
-            {a.reporting_truncated ? <p>{t('integrations.reportingTruncated')}</p> : null}
-          </li>
-        ))}
-      </ul>
+      <SourceAdmissions admissions={admissions} />
       {history.hasNextPage ? (
         <button
           type="button"

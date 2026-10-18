@@ -1,8 +1,7 @@
 //! Optional provider-neutral projection through the verified Reporter process and existing outbox.
 use octacity_server_application::{
   ApplicationError, FactoryExecutionClock, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
-  ManagedIntegrationAccess, ManagedIntegrationConnections, WorkSourceSnapshot,
-  validate_accepted_factory_status_request,
+  ManagedIntegrationAccess, ManagedIntegrationConnections, WorkSourceSnapshot, accepted_factory_status_source_update,
 };
 use octacity_server_domain::ProjectId;
 use octacity_server_factory::*;
@@ -18,6 +17,9 @@ mod projection;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryReporterProfileDraft {
+  /// Explicit native adapter editing ceiling; absence preserves installed-only effects.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub reporting_policy: Option<WorkSourceReportingPolicy>,
   /// Permitted OctaCity Project.
   pub project_id: ProjectId,
   /// Exact installed integration identity retained by the source input.
@@ -58,6 +60,9 @@ impl FactoryReporterProfile {
       .validate(octacity_work_source_protocol::CredentialClass::WorkReporterWrite)
       .map_err(|_| ApplicationError::invalid())?;
     draft.mapping.validate().map_err(|_| ApplicationError::invalid())?;
+    if let Some(policy) = &draft.reporting_policy {
+      policy.validate().map_err(|_| ApplicationError::invalid())?;
+    }
     if draft.network_hosts.is_empty()
       || draft.network_hosts.len() > 256
       || draft

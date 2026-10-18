@@ -142,6 +142,9 @@ async fn fixture(provider: &str) -> (Fixture, FactoryReporterProfile) {
   fixture_with_authority(provider, None).await
 }
 async fn fixture_with_authority(provider: &str, omit: Option<&str>) -> (Fixture, FactoryReporterProfile) {
+  fixture_with_reporting(provider, omit, false).await
+}
+async fn fixture_with_reporting(provider: &str, omit: Option<&str>, custom: bool) -> (Fixture, FactoryReporterProfile) {
   let mut fixture = Fixture::enabled_with_flow(
     provider,
     Some(if omit.is_none() {
@@ -152,11 +155,15 @@ async fn fixture_with_authority(provider: &str, omit: Option<&str>) -> (Fixture,
   )
   .await;
   let draft = FactoryReporterProfileDraft {
+    reporting_policy: custom.then(|| WorkSourceReportingPolicy {
+      labels: vec!["custom-ready".into()],
+      states: vec![],
+    }),
     project_id: fixture.input.project_id(),
-    installation: fixture.profile.binding.installation.clone(),
+    installation: fixture.profile.read.binding.installation.clone(),
     capability: capability(),
-    resource: fixture.profile.binding.resource.clone(),
-    plugin: fixture.profile.plugin.clone(),
+    resource: fixture.profile.read.binding.resource.clone(),
+    plugin: fixture.profile.read.plugin.clone(),
     provider_configuration: FactoryDigest::from_bytes([0xdd; 32]),
     access: ResourceAccess {
       resource_id: "native-container".into(),
@@ -188,7 +195,7 @@ async fn fixture_with_authority(provider: &str, omit: Option<&str>) -> (Fixture,
   let source = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
-    binding: fixture.profile.binding.clone(),
+    binding: fixture.profile.read.binding.clone(),
   };
   let reporter = WorkSourceCapability {
     project_id: fixture.input.project_id(),
@@ -197,6 +204,12 @@ async fn fixture_with_authority(provider: &str, omit: Option<&str>) -> (Fixture,
   };
   let mut draft = fixture.input.definition().clone();
   draft.reporter = Some(profile.binding().clone());
+  draft.reporting = custom.then(|| {
+    serde_json::from_value(
+      serde_json::json!({"statuses":[{"status":"needs-human-eyes","add":["custom-ready"],"remove":[],"state":null}]}),
+    )
+    .unwrap()
+  });
   let replacement = fixture
     .input
     .replace(
@@ -225,7 +238,7 @@ async fn fixture_with_authority(provider: &str, omit: Option<&str>) -> (Fixture,
   fixture.input = replacement;
   let dir = fixture.root.path().join(provider);
   use std::io::Write as _;
-  std::fs::OpenOptions::new().append(true).open(dir.join("adapter.toml")).unwrap().write_all(format!("\n[protocol.reporter]\nmin=1\nmax=2\n[capabilities.reporter]\nobserve=true\nproject=true\ncancel=true\nidempotency=\"observe_before_retry\"\ncredential_class=\"work_reporter_write\"\nconfiguration_digest=\"{}\"\n","d".repeat(64)).as_bytes()).unwrap();
+  std::fs::OpenOptions::new().append(true).open(dir.join("adapter.toml")).unwrap().write_all(format!("\n[protocol.reporter]\nmin=1\nmax=2\n[capabilities.reporter]\ncustom_effects=true\nobserve=true\nproject=true\ncancel=true\nidempotency=\"observe_before_retry\"\ncredential_class=\"work_reporter_write\"\nconfiguration_digest=\"{}\"\n","d".repeat(64)).as_bytes()).unwrap();
   (fixture, profile)
 }
 fn hosted<S: FactorySourceStore + FactoryRunStore + 'static>(
@@ -291,7 +304,10 @@ async fn accept_status_at<S: FactorySourceStore + FactoryRunStore + 'static>(
   base: i64,
 ) {
   fixture.clock.0.store(base, Ordering::SeqCst);
-  let dir = fixture.root.path().join(fixture.profile.plugin.identity().as_str());
+  let dir = fixture
+    .root
+    .path()
+    .join(fixture.profile.read.plugin.identity().as_str());
   let captured = captured_requests(&dir);
   let snapshot = fixture.store.factory_run_snapshot(run).await.unwrap();
   let claim = FactoryRunClaimRecord::new(
@@ -426,6 +442,88 @@ async fn accepted_source_status_reaches_only_its_original_verified_reporter_for_
 }
 
 #[tokio::test]
+async fn input_owned_reporting_keeps_original_effects_after_input_replacement_for_any_provider() {
+  for provider in ["github", "custom-tracker"] {
+    let (fixture, profile) = fixture_with_reporting(provider, None, true).await;
+    let projector = hosted(&fixture, vec![profile]);
+    let run = queue(&fixture, projector.clone()).await;
+    let original = fixture.input.definition();
+    let target = fixture
+      .store
+      .factory_admission_context(ReadFactoryAdmissionContext {
+        project_id: fixture.input.project_id(),
+        configuration_id: original.target.id(),
+        configuration_version: original.target.version(),
+        repository_id: original.repository.id,
+        repository_version: original.repository.version,
+      })
+      .await
+      .unwrap();
+    let source = WorkSourceCapability {
+      project_id: fixture.input.project_id(),
+      role: WorkSourceCapabilityRole::Source,
+      binding: original.source.clone(),
+    };
+    let mut changed = original.clone();
+    changed.reporting = None;
+    changed.reporter = None;
+    changed.enabled = false;
+    let replacement = fixture
+      .input
+      .replace(
+        WorkSourceInputVersion::new(3).unwrap(),
+        changed,
+        WorkSourceInputContext {
+          target: &target.configuration.configuration,
+          repository: &original.repository,
+          source: Some(&source),
+          reporter: None,
+        },
+      )
+      .unwrap();
+    fixture
+      .store
+      .publish_work_sources(PublishWorkSources {
+        project_id: fixture.input.project_id(),
+        inputs: vec![WorkSourceInputChange {
+          expected_version: Some(fixture.input.version()),
+          input: replacement,
+        }],
+        group: None,
+      })
+      .await
+      .unwrap();
+    let worker = FactoryWorkStatusOutboxWorker::new(
+      fixture.store.clone(),
+      std::collections::BTreeMap::from([(capability(), projector as Arc<dyn FactoryWorkStatusProjector>)]),
+      FactoryReporterWorkerSettings::new(key("custom-reporting"), 10000, 4).unwrap(),
+      fixture.clock.clone(),
+    )
+    .unwrap();
+    assert_eq!(worker.run_once(time(120)).await.unwrap().delivered, 1);
+    let calls = captured_requests(&fixture.root.path().join(provider));
+    assert!(!calls.is_empty());
+    for call in calls.lines() {
+      let value: serde_json::Value = serde_json::from_str(call).unwrap();
+      assert_eq!(
+        original_intent(&value)["effects"],
+        serde_json::json!({"add":["custom-ready"],"remove":[],"state":null})
+      );
+    }
+    assert!(
+      fixture
+        .store
+        .factory_run_snapshot(run)
+        .await
+        .unwrap()
+        .outbox
+        .iter()
+        .any(|o| o.kind.as_str() == "work.status.projection")
+    );
+  }
+}
+
+#[tokio::test]
 async fn reporter_retry_lower_bounds_and_exhaustion_survive_restart_without_reopening_the_flow() {
   let (fixture, profile) = fixture("jira").await;
   let projector = hosted(&fixture, vec![profile.clone()]);
@@ -523,7 +621,7 @@ async fn disabling_or_replacing_the_current_input_never_redirects_an_accepted_pr
   let source = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
-    binding: fixture.profile.binding.clone(),
+    binding: fixture.profile.read.binding.clone(),
   };
   let mut draft = fixture.input.definition().clone();
   draft.enabled = false;
@@ -605,7 +703,7 @@ async fn unavailable_reporter_is_local_and_manual_factory_intake_requires_no_rep
   command.admitted_at = time(121);
   let manual = FactoryAdmissionHandlers::new(fixture.store.clone(), Arc::new(ExactRevisionResolver))
     .execute_management_command(
-      &fixture.profile.context,
+      &fixture.profile.read.context,
       &ManagementAuthorizationGrant::new(ManagementVisibility::all()),
       command,
     )
@@ -785,11 +883,15 @@ async fn source_reporting_diagnostics_distinguishes_queued_applied_and_exhausted
       limit: 1,
     };
     let pending = queries
-      .handle_query(&fixture.profile.context, query.clone())
+      .handle_query(&fixture.profile.read.context, query.clone())
       .await
       .unwrap();
     assert_eq!(pending.admissions[0].association.run_id, run);
     assert_eq!(pending.admissions[0].reporting.len(), 1);
+    let progress = serde_json::to_value(&pending.admissions[0].reporting[0]).unwrap();
+    assert_eq!(progress["origin"]["action"]["node"], "report-any-stage");
+    assert_eq!(progress["origin"]["action"]["outcome"], "done");
+    assert_eq!(progress["origin"]["stages"], serde_json::json!([]));
     assert_eq!(
       pending.admissions[0].reporting[0].state,
       WorkSourceReportingState::Pending
@@ -818,7 +920,10 @@ async fn source_reporting_diagnostics_distinguishes_queued_applied_and_exhausted
     worker.run_once(time(120)).await.unwrap();
     let before = fixture.store.factory_run_snapshot(run).await.unwrap();
     let calls = std::fs::read(fixture.root.path().join("custom-tracker/reporter-requests.jsonl")).unwrap();
-    let result = queries.handle_query(&fixture.profile.context, query).await.unwrap();
+    let result = queries
+      .handle_query(&fixture.profile.read.context, query)
+      .await
+      .unwrap();
     assert_eq!(result.admissions[0].reporting.len(), 1);
     assert_eq!(
       result.admissions[0].reporting[0].state,
@@ -833,5 +938,199 @@ async fn source_reporting_diagnostics_distinguishes_queued_applied_and_exhausted
       std::fs::read(fixture.root.path().join("custom-tracker/reporter-requests.jsonl")).unwrap(),
       calls
     );
+  }
+}
+
+#[tokio::test]
+async fn stage_owned_effects_override_input_mapping_and_keep_original_target_after_replacement() {
+  struct LaterCardAssociation;
+  #[async_trait::async_trait]
+  impl FactoryWorkSourceIssueLinks for LaterCardAssociation {
+    async fn visible_issue(
+      &self,
+      _: &ManagementRequestContext,
+      project: ProjectId,
+      _: FactoryDigest,
+    ) -> Result<Option<WorkSourceIssueLink>, ApplicationError> {
+      Ok(Some(WorkSourceIssueLink {
+        project_id: project,
+        issue_id: ManagementResourceIdentity::new("card-linked-after-action").unwrap(),
+      }))
+    }
+  }
+  for provider in ["github", "custom-tracker"] {
+    let (mut fixture, profile) = fixture_with_reporting(provider, None, true).await;
+    let original = fixture.input.definition().clone();
+    let update = serde_json::json!({
+      "source":original.source,"reporter":profile.binding(),"connection":null,
+      "effects":{"status":"needs-human-eyes","add":[],"remove":["custom-ready"],"state":null}
+    });
+    let configured = flow(provider);
+    let root = configured.closure.definition(configured.closure.root()).unwrap();
+    let mut nodes = root.nodes().to_vec();
+    nodes[0] = nodes[0].clone().with_action(FlowActionBinding::new(capability(), key("set_status"),
+      serde_json::json!({"status":"needs-human-eyes","outbox":{"max_attempts":2,"retry_delay_millis":100},"source_update":update})
+    ).unwrap()).unwrap();
+    let root = FlowDefinition::new(FlowDefinitionInput {
+      id: root.reference().id(),
+      version: root.reference().version(),
+      input_schema: root.input_schema().cloned(),
+      entry: root.entry().clone(),
+      nodes,
+      transitions: root.transitions().to_vec(),
+      terminals: root.terminals().to_vec(),
+      context_projections: root.context_projections().to_vec(),
+      data_projections: root.data_projections().to_vec(),
+      execution: root.execution().clone(),
+    })
+    .unwrap();
+    let configured = FactoryFlowConfiguration::new(
+      PinnedFlowDefinitionClosure::new(root.reference(), vec![root]).unwrap(),
+      configured.limits,
+      configured.data_schemas,
+      configured.pools,
+    )
+    .unwrap();
+    let config = configuration_with_flow(
+      fixture.input.project_id(),
+      FactoryConfigurationId::generate(),
+      Some(configured),
+    );
+    fixture
+      .store
+      .seed_factory_configuration_version(PublishedFactoryConfiguration {
+        configuration: config.clone(),
+        published_at: time(2),
+      })
+      .unwrap();
+    let source = WorkSourceCapability {
+      project_id: fixture.input.project_id(),
+      role: WorkSourceCapabilityRole::Source,
+      binding: original.source.clone(),
+    };
+    let reporter = WorkSourceCapability {
+      project_id: fixture.input.project_id(),
+      role: WorkSourceCapabilityRole::Reporter,
+      binding: profile.binding().clone(),
+    };
+    let mut draft = original.clone();
+    draft.target = config.reference().clone();
+    let input = fixture
+      .input
+      .replace(
+        WorkSourceInputVersion::new(3).unwrap(),
+        draft,
+        WorkSourceInputContext {
+          target: &config,
+          repository: &original.repository,
+          source: Some(&source),
+          reporter: Some(&reporter),
+        },
+      )
+      .unwrap();
+    fixture
+      .store
+      .publish_work_sources(PublishWorkSources {
+        project_id: fixture.input.project_id(),
+        inputs: vec![WorkSourceInputChange {
+          expected_version: Some(fixture.input.version()),
+          input: input.clone(),
+        }],
+        group: None,
+      })
+      .await
+      .unwrap();
+    fixture.input = input;
+    let projector = hosted(&fixture, vec![profile]);
+    let run = queue(&fixture, projector.clone()).await;
+    let history = AuthorizedQueryHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(
+        FactorySourceConfigurationHandlers::new(
+          fixture.store.clone(),
+          Arc::new(TrustedNetworkManagementPolicy),
+          vec![],
+        )
+        .unwrap()
+        .with_issue_links(Arc::new(LaterCardAssociation)),
+      ),
+    );
+    let diagnostic = history
+      .handle_query(
+        &fixture.profile.read.context,
+        GetWorkSourceDiagnosticsQuery {
+          project_id: fixture.input.project_id(),
+          target: WorkSourceScanTarget::Input {
+            id: fixture.input.id(),
+            version: fixture.input.version(),
+          },
+          after: None,
+          limit: 1,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      diagnostic.admissions[0].issue.as_ref().unwrap().issue_id.as_str(),
+      "card-linked-after-action"
+    );
+    let mut changed = fixture.input.definition().clone();
+    changed.enabled = false;
+    changed.reporter = None;
+    changed.reporting = None;
+    let replaced = fixture
+      .input
+      .replace(
+        WorkSourceInputVersion::new(4).unwrap(),
+        changed,
+        WorkSourceInputContext {
+          target: &config,
+          repository: &original.repository,
+          source: Some(&source),
+          reporter: None,
+        },
+      )
+      .unwrap();
+    fixture
+      .store
+      .publish_work_sources(PublishWorkSources {
+        project_id: fixture.input.project_id(),
+        inputs: vec![WorkSourceInputChange {
+          expected_version: Some(fixture.input.version()),
+          input: replaced,
+        }],
+        group: None,
+      })
+      .await
+      .unwrap();
+    let worker = FactoryWorkStatusOutboxWorker::new(
+      fixture.store.clone(),
+      std::collections::BTreeMap::from([(capability(), projector as Arc<dyn FactoryWorkStatusProjector>)]),
+      FactoryReporterWorkerSettings::new(key("stage-effects"), 10000, 4).unwrap(),
+      fixture.clock.clone(),
+    )
+    .unwrap();
+    assert_eq!(worker.run_once(time(120)).await.unwrap().delivered, 1);
+    assert_eq!(
+      fixture
+        .store
+        .factory_run_snapshot(run)
+        .await
+        .unwrap()
+        .work
+        .subject()
+        .project_id(),
+      fixture.input.project_id()
+    );
+    for call in captured_requests(&fixture.root.path().join(provider)).lines() {
+      let value: serde_json::Value = serde_json::from_str(call).unwrap();
+      let intent = original_intent(&value);
+      assert_eq!(
+        intent["effects"],
+        serde_json::json!({"add":[],"remove":["custom-ready"],"state":null})
+      );
+      assert_eq!(intent["item_id"], "TASK-native");
+      assert_eq!(intent["mapping"]["identity"], "original-effects");
+    }
   }
 }

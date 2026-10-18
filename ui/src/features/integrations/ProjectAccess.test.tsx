@@ -102,7 +102,10 @@ it('reviews visible retained inputs and pending reporting before revoking all pu
   await userEvent.click(
     await screen.findByRole('button', { name: 'Show Run and reporting history' }),
   );
-  expect(await screen.findByText('Pending')).toBeTruthy();
+  expect(await screen.findByText('Awaiting external confirmation')).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Work summary' }).getAttribute('href')).toContain(
+    `diagnostic_id=${diagnostic.admissions[0]!.association.work_id}`,
+  );
   expect(screen.getByRole('link', { name: 'Open Run' }).getAttribute('href')).toContain(
     diagnostic.admissions[0]!.association.run_id,
   );

@@ -48,6 +48,7 @@ mod factory_source_input_retention;
 mod factory_source_mapping;
 mod factory_source_polling;
 mod factory_source_preparation;
+mod work_source_observation;
 pub use factory_source_input_retention::{FactorySourceInputRetentionWorker, SourceInputCleanupPage};
 pub use factory_source_mapping::{
   MappedWorkSource, SourceAcceptanceMapping, SourceMappingFailure, WorkSourceMapping, WorkSourceSnapshot,
@@ -58,6 +59,10 @@ pub use factory_source_polling::{
   SourcePollRequest, SourcePollingPolicy,
 };
 pub use factory_source_preparation::{FactoryWorkSourcePreparer, SourcePreparationOutcome, SourcePreparationSettings};
+pub use work_source_observation::{
+  ReadWorkSourceObservations, WorkSourceObservation, WorkSourceObservationFreshness, WorkSourceObservationPage,
+  WorkSourceObservations,
+};
 mod factory_stored_candidate_context;
 pub use factory_stored_candidate_context::{
   FactoryNodeCandidateContextSource, FactoryRetainedCandidateContextSource, FactoryStoredCandidateContextSource,
@@ -140,6 +145,8 @@ pub use factory_verification::{
   VerifiedFactoryVerificationCheck, evaluate_factory_verification, verify_factory_verification_check,
 };
 mod factory_flow_action;
+mod factory_stage_source_update;
+pub use factory_stage_source_update::{FactoryStageSourceAuthorizer, FactoryStageSourceUpdate};
 mod factory_review_invocation;
 pub use factory_review_invocation::{
   FactoryReviewInvocation, FactoryReviewInvocationSource, FactoryStoredReviewInvocationSource,
@@ -155,7 +162,7 @@ pub use factory_candidate_publication::{
 };
 pub use factory_work_status_outbox::{
   FactoryOutboxDispatchSummary, FactoryOutboxDispatcher, FactoryReporterWorkerSettings, FactoryWorkStatusOutboxWorker,
-  validate_accepted_factory_status_request,
+  accepted_factory_status_source_update, validate_accepted_factory_status_request,
 };
 mod factory_candidate_deliverables;
 #[cfg(test)]

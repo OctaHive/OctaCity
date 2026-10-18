@@ -4,7 +4,7 @@ use octacity_work_source_protocol::{Request, preview, source};
 /// Explicit preview capability over verified installed Source profiles.
 pub struct HostedFactoryWorkSourcePreview {
   registry: Arc<WorkAdapterRegistry>,
-  profiles: Vec<FactorySourceProfile>,
+  profiles: Vec<WorkSourceReadProfile>,
   timeout: Duration,
   grace: Duration,
   cancellation: CancellationToken,
@@ -14,7 +14,7 @@ impl HostedFactoryWorkSourcePreview {
   /// Installs finite read bounds without starting a worker or contacting a provider.
   pub fn new(
     registry: Arc<WorkAdapterRegistry>,
-    profiles: Vec<FactorySourceProfile>,
+    profiles: Vec<WorkSourceReadProfile>,
     timeout: Duration,
     grace: Duration,
     cancellation: CancellationToken,
@@ -70,7 +70,7 @@ impl FactoryWorkSourcePreview for HostedFactoryWorkSourcePreview {
           .find(|p| p.project_id == request.project_id && p.binding == input.definition.source)
           .cloned()
           .ok_or_else(|| dependency(WorkSourceFailure::Unavailable))?
-          .for_definition(&input.definition, self.connections.as_ref())?;
+          .for_connection(input.definition.connection.as_ref(), self.connections.as_ref())?;
         profile.authorize_access().await?;
         profiles.push(profile);
       }

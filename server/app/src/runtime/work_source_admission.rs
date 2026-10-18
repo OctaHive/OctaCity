@@ -25,11 +25,11 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
     for input in members.iter().filter(|v| v.definition().enabled) {
       let profile = profiles
         .iter()
-        .find(|p| p.project_id == input.project_id() && p.binding == input.definition().source)
+        .find(|p| p.read.project_id == input.project_id() && p.read.binding == input.definition().source)
         .ok_or_else(ApplicationError::capability_unavailable)?;
       let provider_matches = snapshot
         .selection_matches
-        .contains(&selection_digest(&profile.selection)?)
+        .contains(&selection_digest(&profile.read.selection)?)
         || (members.len() == 1 && snapshot.selection_matches.is_empty());
       if provider_matches
         && input
@@ -90,7 +90,7 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
     let profile = self
       .profiles
       .iter()
-      .find(|p| p.project_id == input.project_id() && p.binding == input.definition().source)
+      .find(|p| p.read.project_id == input.project_id() && p.read.binding == input.definition().source)
       .ok_or_else(ApplicationError::capability_unavailable)?;
     Ok(Arc::new(SourceAuthority {
       store: self.store.clone(),
@@ -136,7 +136,9 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
       let original = self
         .profiles
         .iter()
-        .find(|p| p.project_id == retained.input.project_id() && p.binding == retained.input.definition().source)
+        .find(|p| {
+          p.read.project_id == retained.input.project_id() && p.read.binding == retained.input.definition().source
+        })
         .ok_or_else(ApplicationError::capability_unavailable)?;
       let preparer = FactoryWorkSourcePreparer::new(self.store.clone(), self.bytes.clone(), self.clock.clone());
       if matches!(
@@ -197,11 +199,11 @@ impl<S: FactorySourceStore> FactorySourceAuthorizer for SourceAuthority<S> {
         v.id() == id
           && v.version() == version
           && v.definition().enabled
-          && v.project_id() == self.profile.project_id
-          && v.definition().source == self.profile.binding
+          && v.project_id() == self.profile.read.project_id
+          && v.definition().source == self.profile.read.binding
       })
       .ok_or_else(ApplicationError::invalid)?;
-    self.profile.authorize_access().await?;
+    self.profile.read.authorize_access().await?;
     use octacity_work_source_protocol::{Request, source};
     require_running(&self.cancellation)?;
     let wire = Request::Source(source::Request {
@@ -210,14 +212,14 @@ impl<S: FactorySourceStore> FactorySourceAuthorizer for SourceAuthority<S> {
       command: source::Command::Authorize(source::AccessIntent {
         scan_id: FactoryDigest::sha256("octacity.source-access.v1", &[self.claim.owner.as_str().as_bytes()])
           .to_string(),
-        configuration_digest: self.profile.provider_configuration.to_string(),
-        resource: self.profile.resource.clone(),
-        network_hosts: self.profile.network_hosts.clone(),
+        configuration_digest: self.profile.read.provider_configuration.to_string(),
+        resource: self.profile.read.resource.clone(),
+        network_hosts: self.profile.read.network_hosts.clone(),
       }),
     });
     let source::Outcome::Authorized(_) = execute_source(
       &self.registry,
-      &self.profile,
+      &self.profile.read,
       wire,
       self.settings.operation_timeout,
       self.settings.cancellation_grace,
@@ -230,13 +232,13 @@ impl<S: FactorySourceStore> FactorySourceAuthorizer for SourceAuthority<S> {
     Ok(FactorySourceAuthorization {
       input,
       capability: WorkSourceCapability {
-        project_id: self.profile.project_id,
+        project_id: self.profile.read.project_id,
         role: WorkSourceCapabilityRole::Source,
-        binding: self.profile.binding.clone(),
+        binding: self.profile.read.binding.clone(),
       },
-      resource_identity: ExternalWorkIdentity::new(self.profile.resource.resource_id.clone())
+      resource_identity: ExternalWorkIdentity::new(self.profile.read.resource.resource_id.clone())
         .map_err(|_| ApplicationError::invalid())?,
-      context: self.profile.context.clone(),
+      context: self.profile.read.context.clone(),
     })
   }
 }

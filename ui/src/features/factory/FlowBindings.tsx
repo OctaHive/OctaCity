@@ -4,6 +4,7 @@ import type { MessageKey } from '../../app/presentation/messages';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { ValueMappingEditor } from './ValueMappingEditor';
 import { SelectMenu } from '../../shared/SelectMenu';
+import { FlowSourceUpdate, type FlowSourceServices } from './FlowSourceUpdate';
 
 type Node = components['schemas']['FactoryFlowNodeDefinition'];
 type Root = components['schemas']['FactoryFlowRootDraft'];
@@ -33,11 +34,13 @@ export function FlowBindings({
   root,
   schemas,
   onChange,
+  sources: services,
 }: {
   node: Node;
   root: Root;
   schemas: readonly Schema[];
   onChange: (node: Node) => void;
+  sources?: FlowSourceServices | undefined;
 }) {
   const { t } = usePresentation();
   const sources = node.input_binding?.sources ?? {};
@@ -57,6 +60,9 @@ export function FlowBindings({
   ) => onChange({ ...node, context_binding: { ...node.context_binding, entries } });
   return (
     <section>
+      {services && node.action?.action === 'set_status' ? (
+        <FlowSourceUpdate key={node.key} node={node} services={services} onChange={onChange} />
+      ) : null}
       <SelectMenu
         ariaLabel={t('factory.inputSchema')}
         value={String(

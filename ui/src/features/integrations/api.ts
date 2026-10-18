@@ -2,6 +2,7 @@ import type { components } from '../../../.generated/api/schema';
 import {
   managementApi,
   ManagementApiError,
+  redactManagementError,
   requireManagementResponse,
   versionedMutationHeaders,
   type IdempotencyRequestHeaders,
@@ -26,14 +27,7 @@ export function safeIntegrationError(
   error: unknown,
   message = 'Integration operation failed.',
 ): ManagementApiError {
-  return new ManagementApiError({
-    code: error instanceof ManagementApiError ? error.code : 'transport_failure',
-    status: error instanceof ManagementApiError ? error.status : null,
-    retryAfterMilliseconds:
-      error instanceof ManagementApiError ? error.retryAfterMilliseconds : null,
-    requestId: null,
-    message,
-  });
+  return redactManagementError(error, message);
 }
 
 /** Version zero is an absent-resource precondition, not an If-Match version. */

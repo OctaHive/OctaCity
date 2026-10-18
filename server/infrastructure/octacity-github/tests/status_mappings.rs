@@ -7,6 +7,63 @@ fn document() -> serde_json::Value {
 }
 
 #[test]
+fn editable_mappings_narrow_installed_managed_labels_and_states_for_arbitrary_logical_values() {
+  let effects = octacity_work_source_protocol::reporter::ProjectionEffects {
+    add: vec!["blocked".into()],
+    remove: vec!["ready".into()],
+    state: Some("closed".into()),
+  };
+  let legacy = StatusMapping::from_config(&serde_json::to_vec(&document()).unwrap()).unwrap();
+  assert!(legacy.with_effects("different-status", &effects).is_err());
+  let mut doc = document();
+  doc["editable"] = json!(true);
+  doc["editable_states"] = json!(["closed"]);
+  let mapping = StatusMapping::from_config(&serde_json::to_vec(&doc).unwrap()).unwrap();
+  let narrowed = mapping.with_effects("different-status", &effects).unwrap();
+  assert_eq!(narrowed.effects("different-status").unwrap().add(), ["blocked"]);
+  assert_eq!(narrowed.effects("different-status").unwrap().remove(), ["ready"]);
+  for invalid in [
+    octacity_work_source_protocol::reporter::ProjectionEffects {
+      add: vec!["unmanaged".into()],
+      ..effects.clone()
+    },
+    octacity_work_source_protocol::reporter::ProjectionEffects {
+      state: Some("open".into()),
+      ..effects.clone()
+    },
+    octacity_work_source_protocol::reporter::ProjectionEffects {
+      remove: vec!["BLOCKED".into()],
+      ..effects.clone()
+    },
+  ] {
+    assert!(mapping.with_effects("different-status", &invalid).is_err());
+  }
+  assert_eq!(
+    mapping.effects("publish").unwrap().add(),
+    ["ready"],
+    "an override cannot mutate the installed mapping"
+  );
+}
+
+#[test]
+fn custom_effects_keep_declared_label_bounds_without_reencoding_the_installed_catalogue() {
+  let labels: Vec<_> = (0..128).map(|n| format!("{n:03}{}", "x".repeat(253))).collect();
+  let bytes = serde_json::to_vec(&json!({"config_version":1,"editable":true,
+    "managed_label_groups":{"first":&labels[..64],"second":&labels[64..]},
+    "statuses":{"installed":{"add":[],"remove":[]}}}))
+  .unwrap();
+  let installed = StatusMapping::from_config(&bytes).unwrap();
+  let effects = octacity_work_source_protocol::reporter::ProjectionEffects {
+    add: labels[..64].to_vec(),
+    remove: labels[64..].to_vec(),
+    state: None,
+  };
+  let selected = installed.with_effects("custom", &effects).unwrap();
+  assert_eq!(selected.effects("custom").unwrap().add(), &labels[..64]);
+  assert_eq!(selected.effects("custom").unwrap().remove(), &labels[64..]);
+}
+
+#[test]
 fn conflicting_unmanaged_and_unbounded_mappings_are_rejected_before_use() {
   let mut invalid = Vec::new();
   for (path, value) in [

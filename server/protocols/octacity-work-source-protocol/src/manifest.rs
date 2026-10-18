@@ -56,6 +56,9 @@ pub enum IdempotencyMode {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReporterCapabilities {
+  /// Explicit support for immutable input-owned effects under the installed mapping ceiling.
+  #[serde(default)]
+  pub custom_effects: bool,
   /// Explicit opt-in for bounded read-only connection diagnostics.
   #[serde(default)]
   pub check: bool,
@@ -120,6 +123,13 @@ impl AdapterManifest {
     if let Some(reporter) = &self.capabilities.reporter {
       digest(&reporter.configuration_digest)?;
       if reporter.credential_class != CredentialClass::WorkReporterWrite || (reporter.project && !reporter.observe) {
+        return Err(ProtocolError::Invalid);
+      }
+      if reporter.custom_effects
+        && !self.protocol.reporter.is_some_and(|range| {
+          range.min <= reporter::ORDERED_PROTOCOL_VERSION && range.max >= reporter::ORDERED_PROTOCOL_VERSION
+        })
+      {
         return Err(ProtocolError::Invalid);
       }
     }

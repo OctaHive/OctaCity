@@ -172,6 +172,9 @@ impl InstalledWorkAdapter {
           reporter::Command::Cancel { .. } if capabilities.cancel => return Ok(None),
           _ => return Err(self.unsupported("reporter operation")),
         };
+        if intent.effects.is_some() && !capabilities.custom_effects {
+          return Err(self.unsupported("custom reporting effects"));
+        }
         if intent.configuration_digest != capabilities.configuration_digest {
           return Err(invalid());
         }

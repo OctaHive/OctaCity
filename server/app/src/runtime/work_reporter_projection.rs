@@ -38,7 +38,8 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
       .reporter
       .as_ref()
       .ok_or_else(ApplicationError::invalid)?;
-    validate_accepted_factory_status_request(&snapshot, &binding.capability, request, self.clock.now()?)?;
+    let stage_update =
+      accepted_factory_status_source_update(&snapshot, &binding.capability, request, self.clock.now()?)?;
     let mut profile = self
       .profiles
       .iter()
@@ -72,7 +73,39 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
     if original.item != preparation.item {
       return Err(ApplicationError::invalid());
     }
+    let stage_mapping = if let Some(update) = stage_update {
+      update.validate_for_input(preparation.input.definition())?;
+      if update.effects.status != request.status.as_str() {
+        return Err(ApplicationError::invalid());
+      }
+      Some(WorkSourceStatusMapping {
+        statuses: vec![update.effects],
+      })
+    } else {
+      None
+    };
     let intent = reporter::ProjectionIntent {
+      effects: if let Some(mapping) = stage_mapping
+        .as_ref()
+        .or(preparation.input.definition().reporting.as_ref())
+      {
+        draft
+          .reporting_policy
+          .as_ref()
+          .ok_or_else(ApplicationError::invalid)?
+          .validate_mapping(mapping)
+          .map_err(|_| ApplicationError::invalid())?;
+        let effects = mapping
+          .effects(request.status.as_str())
+          .ok_or_else(ApplicationError::invalid)?;
+        Some(reporter::ProjectionEffects {
+          add: effects.add.clone(),
+          remove: effects.remove.clone(),
+          state: effects.state.clone(),
+        })
+      } else {
+        None
+      },
       projection_id: request.operation_id.to_string(),
       configuration_digest: draft.provider_configuration.to_string(),
       resource: draft.access.clone(),

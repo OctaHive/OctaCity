@@ -235,6 +235,7 @@ pub(crate) async fn report(
     && !effects.remove().iter().any(contains)
     && effects.state().is_none_or(|desired| desired == state);
   let receipt = reporter::ProjectionReceipt {
+    effects: intent.effects.clone(),
     projection_id: intent.projection_id.clone(),
     resource_id: intent.resource.resource_id.clone(),
     item_id: intent.item_id.clone(),

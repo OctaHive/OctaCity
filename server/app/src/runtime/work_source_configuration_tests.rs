@@ -5,13 +5,13 @@ use super::*;
 async fn managed_input_publication_uses_its_connection_before_dispatch_and_after_revocation() {
   for provider in ["github", "gitlab", "jira", "custom-tracker"] {
     let mut fixture = Fixture::enabled(provider).await;
-    let (_, id) = managed_access(&fixture, &fixture.profile.binding, IntegrationPurpose::TaskRead).await;
+    let (_, id) = managed_access(&fixture, &fixture.profile.read.binding, IntegrationPurpose::TaskRead).await;
     let mut definition = fixture.input.definition().clone();
     definition.connection = Some(WorkSourceConnectionRef {
       id,
       version: IntegrationVersion::INITIAL,
       access_version: IntegrationVersion::INITIAL,
-      source_configuration: fixture.profile.binding.configuration.clone(),
+      source_configuration: fixture.profile.read.binding.configuration.clone(),
       reporter_configuration: None,
     });
     let handlers = FactorySourceConfigurationHandlers::new(
@@ -20,13 +20,13 @@ async fn managed_input_publication_uses_its_connection_before_dispatch_and_after
       vec![WorkSourceCapability {
         project_id: fixture.input.project_id(),
         role: WorkSourceCapabilityRole::Source,
-        binding: fixture.profile.binding.clone(),
+        binding: fixture.profile.read.binding.clone(),
       }],
     )
     .unwrap();
     let published = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers))
       .handle_command(
-        &fixture.profile.context,
+        &fixture.profile.read.context,
         PublishWorkSourceConfigurationCommand {
           intent: WorkSourceConfigurationIntent {
             project_id: fixture.input.project_id(),

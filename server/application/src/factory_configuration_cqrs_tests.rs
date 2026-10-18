@@ -1280,3 +1280,114 @@ fn schema_normalization_rejects_hidden_owners_and_unbounded_shapes_without_write
     assert!(store.management_audit_facts().await.is_empty());
   });
 }
+
+#[test]
+fn configuration_publication_rejects_stage_source_effects_without_an_installed_authorizer() {
+  run_ready(async {
+    use octacity_server_factory::{
+      FactoryFlowConfiguration, FlowDefinition, FlowDefinitionInput, PinnedFlowDefinitionClosure,
+    };
+    let project = ProjectId::generate();
+    let mut fixture = fixture(project);
+    let flow = fixture.draft.flow.take().unwrap();
+    let root = flow.closure.definition(flow.closure.root()).unwrap();
+    let mut nodes = root.nodes().to_vec();
+    let action = nodes[0].action().unwrap();
+    let source = octacity_server_factory::WorkSourceBinding {
+      installation: exact("tracker", "v1", 80),
+      capability: exact("reader", "v1", 81),
+      configuration: exact("reader-settings", "v1", 82),
+      resource: exact("tickets", "v1", 83),
+    };
+    let mut reporter = source.clone();
+    reporter.capability = action.plugin().clone();
+    reporter.configuration = exact("writer-settings", "v1", 84);
+    let stage_update = serde_json::json!({
+      "source":source, "reporter":reporter, "connection":null,
+      "effects":{"status":"review-next","add":["review-label"],"remove":["fresh-label"],"state":null}
+    });
+    nodes[0] = nodes[0]
+      .clone()
+      .with_action(
+        octacity_server_factory::FlowActionBinding::new(
+          action.plugin().clone(),
+          key("set_status"),
+          serde_json::json!({
+            "status":"review-next", "outbox":{"max_attempts":2,"retry_delay_millis":5}, "source_update":stage_update
+          }),
+        )
+        .unwrap(),
+      )
+      .unwrap();
+    let root = FlowDefinition::new(FlowDefinitionInput {
+      id: root.reference().id(),
+      version: root.reference().version(),
+      input_schema: root.input_schema().cloned(),
+      entry: root.entry().clone(),
+      nodes,
+      transitions: root.transitions().to_vec(),
+      terminals: root.terminals().to_vec(),
+      context_projections: root.context_projections().to_vec(),
+      data_projections: root.data_projections().to_vec(),
+      execution: root.execution().clone(),
+    })
+    .unwrap();
+    fixture.draft.flow = Some(
+      FactoryFlowConfiguration::new(
+        PinnedFlowDefinitionClosure::new(root.reference(), vec![root]).unwrap(),
+        flow.limits,
+        flow.data_schemas,
+        flow.pools,
+      )
+      .unwrap(),
+    );
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices).unwrap();
+    let candidate = ValidateFactoryConfigurationQuery {
+      id: FactoryConfigurationId::generate(),
+      project_id: project,
+      definition_digest: digest(33),
+      draft: fixture.draft,
+    };
+    let error = query(&FactoryConfigurationHandlers::new(store.clone()), candidate.clone())
+      .await
+      .unwrap_err();
+    assert_eq!(error.classification(), ApplicationFailure::CapabilityUnavailable);
+    struct InstalledAuthorizer {
+      project: ProjectId,
+      expected: crate::FactoryStageSourceUpdate,
+    }
+    #[async_trait]
+    impl crate::FactoryStageSourceAuthorizer for InstalledAuthorizer {
+      async fn validate_source_update(
+        &self,
+        _: &ManagementRequestContext,
+        project: ProjectId,
+        update: &crate::FactoryStageSourceUpdate,
+      ) -> Result<(), crate::ApplicationError> {
+        assert_eq!(project, self.project);
+        assert_eq!(update, &self.expected);
+        Ok(())
+      }
+    }
+    let authorized =
+      FactoryConfigurationHandlers::new(store.clone()).with_source_actions(Arc::new(InstalledAuthorizer {
+        project,
+        expected: serde_json::from_value(stage_update).unwrap(),
+      }));
+    let validated = query(&authorized, candidate).await.unwrap();
+    let pinned = validated.configuration.flow().closure.definitions()[0].nodes()[0]
+      .action()
+      .unwrap();
+    assert_eq!(
+      pinned.parameters()["source_update"]["effects"]["add"],
+      serde_json::json!(["review-label"])
+    );
+    assert_eq!(
+      pinned.parameters()["source_update"]["effects"]["remove"],
+      serde_json::json!(["fresh-label"])
+    );
+    assert!(store.management_audit_facts().await.is_empty());
+  });
+}

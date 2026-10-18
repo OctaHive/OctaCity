@@ -206,3 +206,104 @@ pnpm --dir ui exec vitest run src/api/integrationContracts.test.ts src/api/clien
 CI regenerates from the live Rust document before console type checking. Do not
 hand-edit `.generated/api/`, maintain a second schema snapshot, or introduce
 handwritten provider DTOs alongside these generated contracts.
+
+## Guided status mappings and retained progress
+
+At an automatic Factory input, select a Reporter mapping from the same installed
+Source resource and separately granted `task_update` choices. Read intake does not
+require this selection. Missing reporting access links to Integrations; selecting a
+profile does not verify native write permission. Read-only connection checks may
+still report write readiness as unverified.
+
+`WorkSourceInputChoices.items[].reporting` optionally describes an exact installed
+mapping and an `editable` ceiling. Missing descriptions are unknown, not editable.
+A null editing ceiling permits selection/review of installed effects only. Trusted
+installation composition attaches these descriptions with
+`FactorySourceConfigurationHandlers::with_reporting_mapping`; descriptions do not
+install an adapter, credential or Project grant. The declared ceiling must match
+the provider-validated installed configuration and the hosted Reporter profile.
+
+When editing is advertised, the operator can add/remove logical status rows,
+select only permitted labels to add/remove, and preserve or select an advertised
+native state. Logical statuses have no special approval/classification vocabulary.
+`WorkSourceInputDraft.reporting` holds the resulting typed immutable mapping in the
+existing versioned input publication. Each row requires `status`, `add`, `remove`
+and nullable `state`. At most 128 unique statuses, 64 labels per effect list,
+256 UTF-8 bytes per literal and 64 KiB for the mapping are accepted. Duplicate,
+contradictory or out-of-ceiling effects fail validation. Validation and confirmation
+are tied to the exact complete draft; changes require fresh validation and review.
+An unavailable retained Reporter remains explicitly identified until replaced or
+removed; it does not acquire fresh use or write authority.
+
+The original admitted input freezes this mapping. Changing a current input cannot
+retarget pending updates. The hosted Reporter resolves only a configured value
+selected by an accepted action, validates its installed editing ceiling and uses
+the existing independently fenced outbox/current-grant checks. No matching value
+means a safe failure, not a guessed label. Ordinary Flow action authoring is still
+the stage-effect surface; selecting an input mapping alone queues no update.
+
+Use **Source and reporting progress** on an exact input/group to inspect retained
+scan acquisition, selection and scoped retries. A match is not admission; ambiguity
+in an exclusive group starts neither target. Visible native correlation and original
+Work/Run links remain usable with no task card. A card link appears only for an
+optional visible authoritative association. Pending/claimed projections await
+confirmation; only applied projections confirm external effects. Exhausted updates
+do not undo accepted Work or imply a failed Run. Attempt and eligible dispatch time
+are reporting facts, separate from task business status and execution. Diagnostics
+and previews do not poll production cursors, retry effects, import tasks or create
+cards. Diagnostic error bodies/identities are redacted before query caching while
+safe retry metadata is retained. Draft and preview payloads never enter browser
+persistence. Manual Work admission requires no provider configuration; manual Issue
+creation, field ownership and synchronization conflict resolution stay with the task
+card capability.
+
+## Stage-local source effects
+
+An ordinary deferred `set_status` Flow action can include an optional typed
+`source_update` (`FactoryStageSourceUpdate`) alongside its logical `status` and
+existing finite `outbox` policy. The update contains the exact original Source and
+Reporter bindings, a reviewed connection/access reference and one bounded
+`WorkSourceStatusEffects` row. Its status must match the action's status. Add/remove
+sets cannot overlap. Native item IDs, credentials and provider wire requests are
+not authoring fields. Unrelated labels remain preserved.
+
+Before activating an automatic input, validation also compares its original
+Source, Reporter and complete connection revision against every explicit stage
+source update in the target's pinned closure, including nested definitions.
+Mismatch returns safe `/inputs/{index}/definition/target` diagnostics before
+publication. Disabled inputs remain retainable for repair; enabling them performs
+this check. Flow/action authorization and current runtime grants remain separate
+checks. Reporter dispatch reuses the same input-pin comparison against original
+accepted Work, so later configuration edits cannot redirect an existing effect.
+
+Install the existing `FactorySourceConfigurationHandlers` as a
+`FactoryStageSourceAuthorizer` with `with_source_actions` on both
+`FactoryFlowDefinitionHandlers` and `FactoryConfigurationHandlers`. This is explicit
+protected-service composition, not a grant created by the editor. The authorizer
+reuses current connection choices and Project task-read/task-update grants, validates
+parent profile pins and requires the installed Reporter's editable effect ceiling.
+Both validation and publication inspect the complete resolved Flow closure. Absent
+support fails closed for these parameters while ordinary/manual flows remain usable.
+
+In the Flow editor, use a published deferred status action profile and connect a
+declared outcome to that trusted-action node using the existing transition editor.
+Select the original task source and compatible Reporter, choose/customize the literal
+effects, apply them to the draft, then validate and review publication. Different
+outcomes can route through different action nodes; the action need not be terminal.
+For stage-level diagnostic provenance, use the existing explicit predecessor/record
+input binding. Each nested definition is edited/published as an immutable Flow and
+selected by exact reference. Stages without a selected action enqueue no update.
+
+Confirmation includes exact effects and immutable Reporter mapping identity/digest
+from the normalized closure, including nested definitions. Changed drafts need a
+new validation proof. Choice lists use full immutable binding keys rather than
+positions, so a background refresh cannot redirect the selected profile. Drafts and
+unpublished effects stay outside browser storage and are discarded on leaving.
+
+At dispatch, `accepted_factory_status_source_update` returns only parameters proved
+by accepted action history and a live outbox claim. The hosted projector checks them
+against the original admitted input and installed policy; stage effects override the
+input-wide default mapping for that action. Current protected authorization and all
+existing ordering, retry and deadline bounds still apply. Later input/mapping
+replacement or card association cannot select another native item or authorize a new
+write. Existing validation APIs and actions without `source_update` remain compatible.

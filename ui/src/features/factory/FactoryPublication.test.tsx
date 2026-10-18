@@ -300,3 +300,51 @@ it('reviews a disabled configuration with server-derived capability and permissi
   expect(replaceConfiguration.mock.calls[0]?.[1]).toEqual({ definition: request.definition });
   expect(replaceConfiguration.mock.calls[0]?.[2]['If-Match']).toBe('"1"');
 });
+
+it('reviews exact immutable per-stage effects before publishing the validated Flow', async () => {
+  const { config, request } = setup();
+  const choice = (await import('../../../tests/fixtures/integrations')).integrationFixture(
+    'WorkSourceInputChoices',
+    1,
+  );
+  const writer = choice.items.find((item) => item.purpose === 'task_update')!;
+  const source = choice.items.find((item) => item.purpose === 'task_read')!;
+  const node = request.definition.root.nodes.find((node) => node.action)!;
+  node.action!.action = 'set_status';
+  node.action!.parameters = {
+    status: 'review-next',
+    outbox: { max_attempts: 2, retry_delay_millis: 5 },
+    source_update: {
+      source: source.binding,
+      reporter: writer.binding,
+      connection: null,
+      effects: {
+        status: 'review-next',
+        add: ['selected-label'],
+        remove: ['retired-label'],
+        state: null,
+      },
+    },
+  };
+  const createFlow = vi.fn();
+  const api = { ...factoryApi, validateFlow: vi.fn(async () => config.flow), createFlow };
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider
+        router={createMemoryRouter([
+          {
+            path: '*',
+            element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} />,
+          },
+        ])}
+      />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Review publication' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Publish Flow Definition?' });
+  expect(dialog.textContent).toContain('selected-label');
+  expect(dialog.textContent).toContain('retired-label');
+  expect(dialog.textContent).toContain(writer.binding.configuration.digest);
+  expect(createFlow).not.toHaveBeenCalled();
+});

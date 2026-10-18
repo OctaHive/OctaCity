@@ -107,6 +107,138 @@ async function openInput() {
   await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Add automatic input' }));
 }
+
+it('selects only a same-resource granted Reporter and reviews arbitrary installed status effects without claiming verified write readiness', async () => {
+  const choices = integrationFixture('WorkSourceInputChoices');
+  const read = choices.items[0]!;
+  const writer = {
+    ...read,
+    purpose: 'task_update' as const,
+    selection: null,
+    binding: {
+      ...read.binding,
+      capability: { ...read.binding.capability, identity: 'writer' },
+      configuration: { ...read.binding.configuration, identity: 'editorial-effects' },
+    },
+    reporting: {
+      mapping: {
+        statuses: [
+          {
+            status: 'needs-human-eyes',
+            add: ['ready / review'],
+            remove: ['needs context'],
+            state: null,
+          },
+        ],
+      },
+      editable: null,
+    },
+  };
+  const { connection, validate, publish } = fixture({
+    choices: vi.fn(async () => ({
+      ...choices,
+      items: [
+        read,
+        writer,
+        {
+          ...writer,
+          binding: {
+            ...writer.binding,
+            resource: { ...writer.binding.resource, identity: 'another-container' },
+            configuration: { ...writer.binding.configuration, identity: 'wrong-container' },
+          },
+        },
+      ],
+    })),
+  });
+  await openInput();
+  await choose('Source connection', connection.definition.name);
+  await choose('Task container', read.locator);
+  await choose('Selector and input mapping', read.binding.configuration.identity);
+  await choose('Code Repository', 'Code in another host · v3');
+  await choose('Reporter mapping', 'editorial-effects');
+  expect(screen.queryByRole('option', { name: 'wrong-container' })).toBeNull();
+  expect(
+    screen.getByText(
+      'Selecting a Reporter does not verify remote write readiness. Only accepted configured actions can queue updates.',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByText('Unrelated labels are preserved.')).toBeTruthy();
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review input publication' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Publish automatic input' });
+  expect(dialog.textContent).toContain('needs-human-eyes');
+  expect(dialog.textContent).toContain('Unrelated labels are preserved.');
+  expect(dialog.textContent).toContain(
+    'Selecting a Reporter does not verify remote write readiness.',
+  );
+  expect(dialog.textContent).toContain('ready / review');
+  expect(dialog.textContent).toContain('needs context');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm publication' }));
+  await within(dialog).findByText('Automatic input published.');
+  const definition = validate.mock.calls[0]![0].inputs[0]!.definition;
+  expect(definition.reporter).toEqual(writer.binding);
+  expect(definition.connection?.reporter_configuration).toEqual(writer.connection_configuration);
+  expect(publish.mock.calls[0]![0].inputs[0]!.definition.reporting).toBeUndefined();
+});
+
+it('edits arbitrary status mappings using only advertised labels and states and invalidates the prior review proof', async () => {
+  const choices = integrationFixture('WorkSourceInputChoices');
+  const read = choices.items[0]!;
+  const writer = {
+    ...read,
+    purpose: 'task_update' as const,
+    selection: null,
+    binding: {
+      ...read.binding,
+      configuration: { ...read.binding.configuration, identity: 'editable-effects' },
+    },
+    reporting: {
+      mapping: {
+        statuses: [
+          { status: 'original', add: ['ready / review'], remove: ['needs context'], state: null },
+        ],
+      },
+      editable: { labels: ['ready / review', 'needs context'], states: ['native-closed'] },
+    },
+  };
+  const { connection, validate } = fixture({
+    choices: vi.fn(async () => ({ ...choices, items: [read, writer] })),
+  });
+  await openInput();
+  await choose('Source connection', connection.definition.name);
+  await choose('Task container', read.locator);
+  await choose('Selector and input mapping', read.binding.configuration.identity);
+  await choose('Code Repository', 'Code in another host · v3');
+  await choose('Reporter mapping', 'editable-effects');
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Customize status mapping' }));
+  const status = screen.getByRole('textbox', { name: 'Logical status' });
+  await userEvent.clear(status);
+  await userEvent.type(status, 'editorial-approved');
+  await choose('Resulting task state', 'native-closed');
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  expect(validate.mock.calls[0]![0].inputs[0]!.definition.reporting).toEqual({
+    statuses: [
+      {
+        status: 'editorial-approved',
+        add: ['ready / review'],
+        remove: ['needs context'],
+        state: 'native-closed',
+      },
+    ],
+  });
+  const review = screen.getByRole('button', { name: 'Review input publication' });
+  await waitFor(() => expect(review).toHaveProperty('disabled', false));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Add label: ready / review' }));
+  expect(review).toHaveProperty('disabled', true);
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  await userEvent.click(review);
+  const dialog = await screen.findByRole('dialog', { name: 'Publish automatic input' });
+  expect(dialog.textContent).toContain('editorial-approved');
+  expect(dialog.textContent).toContain('native-closed');
+  expect(dialog.textContent).toContain('needs context');
+  expect(screen.queryByRole('textbox', { name: 'Credential value' })).toBeNull();
+});
 it('selects an authorized task container independently of code, previews read-only and publishes only a freshly validated reviewed input', async () => {
   const { api, validate, publish, connection, read, code } = fixture();
   await openInput();
@@ -130,6 +262,11 @@ it('selects an authorized task container independently of code, previews read-on
     await screen.findByText('Preview does not import tasks, reserve execution or start a Run.'),
   ).toBeTruthy();
   expect(api.preview).toHaveBeenCalledOnce();
+  const retained = integrationFixture('WorkSourcePreview').candidates[0]!.admissions[0]!;
+  expect(screen.getByRole('link', { name: 'Open Run' }).getAttribute('href')).toBe(
+    `/factory/${retained.association.run_id}`,
+  );
+  expect(screen.getByText('Awaiting external confirmation')).toBeTruthy();
   expect(publish).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Review input publication' }));
@@ -645,6 +782,9 @@ it('preserves the retained Reporter and its parent when only the source mapping 
   });
   await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit automatic input' }));
+  expect(screen.getByRole('combobox', { name: 'Reporter mapping' }).textContent).toContain(
+    'Retained mapping unavailable: status-mapping',
+  );
   await choose('Selector and input mapping', 'another-read-mapping');
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Validate input' })).toHaveProperty(

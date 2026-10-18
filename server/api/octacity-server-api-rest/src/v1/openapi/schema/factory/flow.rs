@@ -235,11 +235,24 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   );
   // This describes the installed built-in action without closing the generic plugin envelope.
   schemas.insert(
+    "FactoryStageSourceUpdate".to_owned(),
+    object(
+      [
+        ("source", schema_ref("WorkSourceBinding")),
+        ("reporter", schema_ref("WorkSourceBinding")),
+        ("connection", nullable(schema_ref("WorkSourceConnectionReference"))),
+        ("effects", schema_ref("WorkSourceStatusEffects")),
+      ],
+      &["source", "reporter", "connection", "effects"],
+    ),
+  );
+  schemas.insert(
     "FactoryWorkStatusActionParameters".to_owned(),
     object([
       ("status", json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_FACTORY_SAFE_TEXT_BYTES,
         "x-max-utf8-bytes":octacity_server_application::MAX_FACTORY_SAFE_TEXT_BYTES,
         "description":"Arbitrary configured status resolved by the original source's pinned Reporter mapping; no provider or outcome vocabulary is imposed."})),
+      ("source_update", schema_ref("FactoryStageSourceUpdate")),
       ("outbox", nullable(object([
         ("max_attempts", bounded_integer(1, octacity_server_application::FactoryReporterRetryPolicy::MAX_ATTEMPTS.into())),
         ("retry_delay_millis", bounded_integer(1, octacity_server_application::FactoryReporterRetryPolicy::MAX_RETRY_DELAY_MILLIS)),

@@ -202,6 +202,7 @@ struct AcceptedStatusMaterial<'a> {
   policy: crate::factory_flow_action::FactoryReporterRetryPolicy,
   plugin: &'a ImmutableReference,
   original_deadline: Timestamp,
+  source_update: Option<crate::FactoryStageSourceUpdate>,
 }
 /// Verifies an exact source projection against accepted action history and the current live outbox claim.
 /// Pending, superseded, terminal, forged or expired requests cannot authorize provider effects.
@@ -211,6 +212,16 @@ pub fn validate_accepted_factory_status_request(
   request: &FactoryWorkStatusRequest,
   at: Timestamp,
 ) -> Result<(), ApplicationError> {
+  accepted_factory_status_source_update(snapshot, plugin, request, at).map(|_| ())
+}
+/// Returns only the source effects pinned by the verified accepted action and live outbox claim.
+/// Caller-supplied parameters or later task/card state cannot populate this result.
+pub fn accepted_factory_status_source_update(
+  snapshot: &FactoryRunSnapshot,
+  plugin: &ImmutableReference,
+  request: &FactoryWorkStatusRequest,
+  at: Timestamp,
+) -> Result<Option<crate::FactoryStageSourceUpdate>, ApplicationError> {
   let row = snapshot
     .outbox
     .iter()
@@ -228,7 +239,7 @@ pub fn validate_accepted_factory_status_request(
   if material.plugin != plugin || material.request != *request {
     return Err(ApplicationError::invalid());
   }
-  Ok(())
+  Ok(material.source_update)
 }
 fn accepted_status_material<'a>(
   snapshot: &'a FactoryRunSnapshot,
@@ -268,6 +279,7 @@ fn accepted_status_material<'a>(
     policy,
     plugin: binding.plugin(),
     original_deadline: attempt.deadline(),
+    source_update: parameters.source_update,
   })
 }
 

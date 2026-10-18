@@ -1,5 +1,77 @@
 //! Shared wire fixtures guard the published contract consumed by generated console clients.
 use super::*;
+use serde_json::json;
+
+#[test]
+fn reporting_progress_exposes_exact_stage_outcome_and_action_without_private_payloads() {
+  let document = openapi_document();
+  assert_component_exists(&document, "WorkSourceReportingOrigin");
+  assert_component_exists(&document, "WorkSourceReportingRecord");
+  let schemas = &document["components"]["schemas"];
+  assert_eq!(
+    schemas["WorkSourceReportingDiagnostic"]["properties"]["origin"]["$ref"],
+    "#/components/schemas/WorkSourceReportingOrigin"
+  );
+  assert_eq!(schemas["WorkSourceReportingRecord"]["additionalProperties"], false);
+  for private in ["payload", "context", "credentials", "body"] {
+    assert!(
+      schemas["WorkSourceReportingRecord"]["properties"]
+        .get(private)
+        .is_none()
+    );
+  }
+}
+
+#[test]
+fn stage_source_updates_publish_exact_typed_source_and_effect_pins_without_provider_payloads() {
+  let document = openapi_document();
+  assert_component_exists(&document, "FactoryStageSourceUpdate");
+  let schema = &document["components"]["schemas"]["FactoryStageSourceUpdate"];
+  assert_eq!(schema["additionalProperties"], false);
+  for field in ["source", "reporter", "connection", "effects"] {
+    assert!(schema["required"].as_array().unwrap().contains(&json!(field)));
+  }
+  assert_eq!(
+    schema["properties"]["effects"]["$ref"],
+    "#/components/schemas/WorkSourceStatusEffects"
+  );
+  let parameters = &document["components"]["schemas"]["FactoryWorkStatusActionParameters"];
+  assert_eq!(
+    parameters["properties"]["source_update"]["$ref"],
+    "#/components/schemas/FactoryStageSourceUpdate"
+  );
+  assert!(
+    !parameters["required"]
+      .as_array()
+      .unwrap()
+      .contains(&json!("source_update"))
+  );
+}
+
+#[test]
+fn input_reporting_contract_exposes_closed_bounded_effects_and_explicit_installed_editing_support() {
+  let document = openapi_document();
+  assert_component_exists(&document, "WorkSourceStatusMapping");
+  assert_component_exists(&document, "WorkSourceReportingPolicy");
+  let schemas = &document["components"]["schemas"];
+  let draft = &schemas["WorkSourceInputDraft"];
+  assert!(draft["properties"].get("reporting").is_some());
+  assert!(!draft["required"].as_array().unwrap().contains(&json!("reporting")));
+  let choice = &schemas["WorkSourceInputChoices"]["properties"]["items"]["items"];
+  assert!(choice["properties"].get("reporting").is_some());
+  let mapping = json!({"statuses":[{"status":"needs-human-eyes","add":["ready / review"],"remove":["needs context"],"state":null}]});
+  assert_json_matches_component(&document, "WorkSourceStatusMapping", &mapping);
+  assert_eq!(
+    schemas["WorkSourceStatusMapping"]["properties"]["statuses"]["maxItems"],
+    128
+  );
+  assert!(
+    schemas["WorkSourceStatusEffects"]["properties"]["status"]
+      .get("enum")
+      .is_none()
+  );
+  assert_eq!(schemas["WorkSourceStatusEffects"]["additionalProperties"], false);
+}
 
 #[test]
 fn work_status_action_has_a_typed_provider_neutral_parameter_contract() {

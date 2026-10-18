@@ -1,6 +1,55 @@
 use octacity_work_source_protocol::{decode_request, decode_response};
 use serde_json::{Value, json};
 
+#[test]
+fn ordered_reporting_carries_bounded_frozen_effects_without_changing_legacy_wire_shape() {
+  let original: Value = serde_json::from_slice(include_bytes!("../fixtures/project-v1.json")).unwrap();
+  let mut wire = original.clone();
+  wire["message"]["protocol_version"] = json!(2);
+  wire["message"]["command"]["operation"] = json!("inspect");
+  wire["message"]["command"]["payload"]["effects"] =
+    json!({"add":["ready / review"],"remove":["needs context"],"state":"native-closed"});
+  let decoded = decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
+  assert_eq!(serde_json::to_value(decoded).unwrap(), wire);
+  let mut bulk = wire.clone();
+  bulk["message"]["protocol_version"] = json!(1);
+  bulk["message"]["command"]["operation"] = json!("project");
+  assert!(
+    decode_request(&serde_json::to_vec(&bulk).unwrap()).is_err(),
+    "custom effects require independently fenced single-write steps"
+  );
+  for effects in [
+    json!({"add":["a"],"remove":["a"],"state":null}),
+    json!({"add":["bad\nlabel"],"remove":[],"state":null}),
+    json!({"add":[],"remove":[],"state":"x".repeat(257)}),
+  ] {
+    let mut invalid = wire.clone();
+    invalid["message"]["command"]["payload"]["effects"] = effects;
+    assert!(decode_request(&serde_json::to_vec(&invalid).unwrap()).is_err());
+  }
+  let decoded = decode_request(&serde_json::to_vec(&original).unwrap()).unwrap();
+  assert_eq!(serde_json::to_value(decoded).unwrap(), original);
+}
+
+#[test]
+fn reporting_receipts_confirm_the_exact_custom_effects_and_reject_installed_default_substitution() {
+  let mut wire: Value = serde_json::from_slice(include_bytes!("../fixtures/project-v1.json")).unwrap();
+  wire["message"]["protocol_version"] = json!(2);
+  wire["message"]["command"]["operation"] = json!("inspect");
+  wire["message"]["command"]["payload"]["effects"] = json!({"add":["custom"],"remove":[],"state":null});
+  let request = decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
+  let intent = &wire["message"]["command"]["payload"];
+  let mut response = json!({"family":"reporter","message":{"protocol_version":2,"request_id":wire["message"]["request_id"],"outcome":{"status":"planned","payload":{"steps":[],"fields":[],"receipt":{
+    "projection_id":intent["projection_id"],"resource_id":intent["resource"]["resource_id"],"item_id":intent["item_id"],"configuration_digest":intent["configuration_digest"],"mapping":intent["mapping"],"status":intent["status"],"effects":intent["effects"],"matches":true
+  }}}}});
+  decode_response(&serde_json::to_vec(&response).unwrap(), &request).unwrap();
+  response["message"]["outcome"]["payload"]["receipt"]
+    .as_object_mut()
+    .unwrap()
+    .remove("effects");
+  assert!(decode_response(&serde_json::to_vec(&response).unwrap(), &request).is_err());
+}
+
 fn cancellation(family: &str, target: &str) -> Value {
   json!({"family":family,"message":{"protocol_version":1,"request_id":"request-1",
     "command":{"operation":"cancel","payload":{target:"a".repeat(64)}}}})
@@ -166,7 +215,7 @@ fn advertised_roles_negotiate_independently_and_cannot_borrow_credentials() {
     "protocol":{"source":{"min":2,"max":3},"reporter":{"min":1,"max":1}},
     "capabilities":{
       "source":{"cancel":true,"credential_class":"work_source_read","configuration_digest":"e".repeat(64)},
-      "reporter":{"observe":true,"project":true,"cancel":true,"idempotency":"observe_before_retry",
+      "reporter":{"custom_effects":false,"observe":true,"project":true,"cancel":true,"idempotency":"observe_before_retry",
         "credential_class":"work_reporter_write","configuration_digest":"f".repeat(64)}}});
   let manifest: AdapterManifest = serde_json::from_value(original.clone()).unwrap();
   manifest.validate().unwrap();
@@ -184,6 +233,7 @@ fn advertised_roles_negotiate_independently_and_cannot_borrow_credentials() {
   for (pointer, value) in [
     ("/capabilities/source/credential_class", json!("work_reporter_write")),
     ("/capabilities/reporter/observe", json!(false)),
+    ("/capabilities/reporter/custom_effects", json!(true)),
     ("/protocol/source", Value::Null),
   ] {
     let mut wrong = original.clone();

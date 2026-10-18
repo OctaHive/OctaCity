@@ -339,7 +339,7 @@ async fn migration_ignores_status_actions_for_another_source_reporter_capability
     let other = mapped_installation_profile(
       &fixture,
       "other-reporter",
-      fixture.profile.binding.installation.clone(),
+      fixture.profile.read.binding.installation.clone(),
       exact("other-status-adapter", 73),
     );
     let projector = hosted(&fixture, vec![original, other.clone()]);
@@ -482,7 +482,7 @@ async fn source_reporting_diagnostics_does_not_wait_for_a_run_writer() {
       .unwrap();
     let result = queries
       .handle_query(
-        &fixture.profile.context,
+        &fixture.profile.read.context,
         GetWorkSourceDiagnosticsQuery {
           project_id: fixture.input.project_id(),
           target: WorkSourceScanTarget::Input {
@@ -498,6 +498,9 @@ async fn source_reporting_diagnostics_does_not_wait_for_a_run_writer() {
     reads.close().await;
     database.cleanup().await;
     let diagnostic = result.expect("reporting diagnostics must finish while the Run writer owns its lock");
+    let progress = serde_json::to_value(&diagnostic.admissions[0].reporting[0]).unwrap();
+    assert_eq!(progress["origin"]["action"]["node"], "report-any-stage");
+    assert_eq!(progress["origin"]["action"]["outcome"], "done");
     assert_eq!(diagnostic.admissions[0].association.run_id, run);
     assert_eq!(diagnostic.admissions[0].reporting.len(), 1);
     assert_eq!(

@@ -68,6 +68,22 @@ impl StoredFactoryRun {
         state: row.state.into(),
         attempt: row.attempt,
         available_at: row.available_at,
+        origin: self
+          .node_records
+          .values()
+          .find(|record| record.digest().ok() == Some(row.input_digest))
+          .and_then(|record| {
+            Some(crate::WorkSourceReportingOrigin {
+              action: crate::WorkSourceReportingRecord::from_record(record)?,
+              stages: record
+                .input()
+                .sources()
+                .iter()
+                .filter_map(|source| self.node_records.get(&source.node_attempt_id()))
+                .filter_map(crate::WorkSourceReportingRecord::from_record)
+                .collect(),
+            })
+          }),
       })
       .collect::<Vec<_>>();
     let truncated = items.len() > usize::from(limit);

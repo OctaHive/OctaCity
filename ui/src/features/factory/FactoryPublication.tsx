@@ -44,7 +44,11 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [proof, setProof] = useState<{ signature: string; preview: Preview } | null>(null);
-  const [review, setReview] = useState<{ subject: Subject; returnFocus: HTMLElement } | null>(null);
+  const [review, setReview] = useState<{
+    subject: Subject;
+    sourceSummary: string[];
+    returnFocus: HTMLElement;
+  } | null>(null);
   const latestSignatureRef = useRef('');
   const signature = JSON.stringify(subject);
   latestSignatureRef.current = signature;
@@ -152,9 +156,18 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
       <button
         type="button"
         disabled={!valid || returnedErrors.length > 0 || review !== null}
-        onClick={(event) =>
-          setReview({ subject: structuredClone(subject), returnFocus: event.currentTarget })
-        }
+        onClick={(event) => {
+          if (!proof) return;
+          const flow =
+            proof.preview.kind === 'flow'
+              ? proof.preview.value
+              : proof.preview.value.configuration.flow;
+          setReview({
+            subject: structuredClone(subject),
+            sourceSummary: sourceEffectsSummary(flow.closure.definitions, t),
+            returnFocus: event.currentTarget,
+          });
+        }}
       >
         {t('factory.reviewPublication')}
       </button>
@@ -171,7 +184,7 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
               ? 'factory.publishFlowTitle'
               : 'factory.publishConfigurationTitle',
           )}
-          consequence={t('factory.publishConsequence')}
+          consequence={[t('factory.publishConsequence'), ...review.sourceSummary].join('\n')}
           confirmLabel={t('factory.confirmPublish')}
           request={review.subject}
           execute={execute}
@@ -214,6 +227,23 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
         />
       ) : null}
     </section>
+  );
+}
+function sourceEffectsSummary(
+  definitions: readonly components['schemas']['FactoryFlowDefinition'][],
+  t: ReturnType<typeof usePresentation>['t'],
+) {
+  return definitions.flatMap((definition) =>
+    definition.nodes.flatMap((node) => {
+      if (node.action?.action !== 'set_status') return [];
+      const parameters = node.action
+        .parameters as components['schemas']['FactoryWorkStatusActionParameters'];
+      const update = parameters?.source_update;
+      if (!update) return [];
+      return [
+        `${node.key}: ${update.effects.status}; ${update.source.resource.identity}; ${update.reporter.configuration.identity} · ${update.reporter.configuration.version} · ${update.reporter.configuration.digest}; ${t('factory.addEffect')}: ${update.effects.add.join(', ')}; ${t('factory.removeEffect')}: ${update.effects.remove.join(', ')}; ${t('factory.taskState')}: ${update.effects.state ?? t('factory.preserveState')}`,
+      ];
+    }),
   );
 }
 function ValidationPreview({ preview }: { preview: Preview }) {

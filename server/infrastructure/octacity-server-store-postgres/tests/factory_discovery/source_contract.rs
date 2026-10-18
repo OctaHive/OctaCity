@@ -1433,6 +1433,7 @@ fn input(configuration: &FactoryConfiguration, repository: &PublishedRepository,
     WorkSourceInputId::generate(),
     repository.project_id,
     WorkSourceInputDraft {
+      reporting: None,
       predicate: None,
       connection: None,
       target: configuration.reference().clone(),

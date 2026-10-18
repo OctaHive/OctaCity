@@ -171,12 +171,23 @@ impl ManagementAuthorizationTarget for ValidateFactoryFlowDefinitionQuery {
 pub struct FactoryFlowDefinitionHandlers<S> {
   store: Arc<S>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
+  source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
 }
 impl<S> FactoryFlowDefinitionHandlers<S> {
   /// Binds the same authorization policy used by the management decorators.
   #[must_use]
   pub fn new(store: Arc<S>, policy: Arc<dyn crate::ManagementAuthorizationPolicy>) -> Self {
-    Self { store, policy }
+    Self {
+      store,
+      policy,
+      source_actions: None,
+    }
+  }
+  /// Shares installed source authorization with Factory Configuration publication.
+  #[must_use]
+  pub fn with_source_actions(mut self, authorizer: Arc<dyn crate::FactoryStageSourceAuthorizer>) -> Self {
+    self.source_actions = Some(authorizer);
+    self
   }
 }
 impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfigurationStore>
@@ -249,6 +260,13 @@ impl<S: FactoryFlowDefinitionStore + octacity_server_store::FactoryConfiguration
     )
     .map_err(|_| ApplicationError::invalid())?;
     crate::factory_configuration_choices::validate_flow_choices(&flow, &choices, "")?;
+    crate::factory_stage_source_update::validate_flow_source_updates(
+      &flow,
+      self.source_actions.as_deref(),
+      context,
+      project,
+    )
+    .await?;
     Ok(flow)
   }
 }

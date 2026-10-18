@@ -10,6 +10,7 @@ fn reference(s: &str) -> ImmutableReference {
 }
 pub(super) fn draft(provider: &str) -> FactoryReporterProfileDraft {
   FactoryReporterProfileDraft {
+    reporting_policy: None,
     project_id: ProjectId::generate(),
     installation: reference(provider),
     capability: reference("source-status"),

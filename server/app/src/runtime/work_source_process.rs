@@ -17,7 +17,10 @@ impl<S: FactorySourceStore> FactorySourcePageReader for SourcePageBridge<S> {
       .store
       .source_scan_members(request.claim.clone(), self.clock.now()?)
       .await?;
-    let profiles = profiles_for(&self.profiles, &members, self.managed_connections.as_ref())?;
+    let profiles: Vec<_> = profiles_for(&self.profiles, &members, self.managed_connections.as_ref())?
+      .into_iter()
+      .map(|profile| profile.read)
+      .collect();
     for profile in &profiles {
       profile.authorize_access().await?;
     }
@@ -80,27 +83,16 @@ impl<S: FactorySourceStore> FactorySourcePageReader for SourcePageBridge<S> {
       .into_iter()
       .enumerate()
       .map(|(index, candidate)| {
-        Ok(WorkSourceSnapshot {
-          selection_matches: page
-            .matching_selections
-            .get(index)
-            .cloned()
-            .unwrap_or_else(|| vec![primary.clone()])
-            .iter()
-            .map(selection_digest)
-            .collect::<Result<_, _>>()?,
-          item: WorkSourceItem {
-            resource: ExternalWorkIdentity::new(candidate.container_id).map_err(|_| ApplicationError::invalid())?,
-            item: ExternalWorkIdentity::new(candidate.item_id).map_err(|_| ApplicationError::invalid())?,
-          },
-          display_id: candidate.display_id,
-          update_identity: candidate.update_identity,
-          title: candidate.title,
-          body: candidate.body,
-          fields: candidate.fields,
-          labels: candidate.labels,
-          state: candidate.state,
-        })
+        let mut snapshot = normalized_snapshot(candidate)?;
+        snapshot.selection_matches = page
+          .matching_selections
+          .get(index)
+          .cloned()
+          .unwrap_or_else(|| vec![primary.clone()])
+          .iter()
+          .map(selection_digest)
+          .collect::<Result<_, _>>()?;
+        Ok(snapshot)
       })
       .collect::<Result<Vec<_>, ApplicationError>>()?;
     Ok(SourcePollPage {
@@ -112,7 +104,7 @@ impl<S: FactorySourceStore> FactorySourcePageReader for SourcePageBridge<S> {
 
 pub(super) async fn execute_source(
   registry: &WorkAdapterRegistry,
-  profile: &FactorySourceProfile,
+  profile: &WorkSourceReadProfile,
   wire: octacity_work_source_protocol::Request,
   timeout: Duration,
   grace: Duration,
@@ -166,4 +158,24 @@ pub(super) async fn execute_source(
     return Err(ApplicationError::capability_unavailable());
   };
   Ok(response.outcome)
+}
+
+/// Shared translation after protocol scope/size validation; selectors never become native identity.
+pub(super) fn normalized_snapshot(
+  candidate: octacity_work_source_protocol::Candidate,
+) -> Result<WorkSourceSnapshot, ApplicationError> {
+  Ok(WorkSourceSnapshot {
+    selection_matches: vec![],
+    item: WorkSourceItem {
+      resource: ExternalWorkIdentity::new(candidate.container_id).map_err(|_| ApplicationError::invalid())?,
+      item: ExternalWorkIdentity::new(candidate.item_id).map_err(|_| ApplicationError::invalid())?,
+    },
+    display_id: candidate.display_id,
+    update_identity: candidate.update_identity,
+    title: candidate.title,
+    body: candidate.body,
+    fields: candidate.fields,
+    labels: candidate.labels,
+    state: candidate.state,
+  })
 }

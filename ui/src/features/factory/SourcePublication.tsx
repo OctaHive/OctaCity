@@ -1,11 +1,12 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ManagementApiError } from '../../api/client';
+import { ManagementApiError, redactManagementError } from '../../api/client';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import type { ConfirmedMutationAttempt } from '../../shared/confirmedIntent';
 import type { FactorySourcesApi, SourceIntent } from './sourceApi';
+import { SourceAdmissions } from '../../shared/SourceAdmissions';
 
 /** Proofs, previews and confirmed snapshots live only in this mounted editor. */
 export function SourcePublication({
@@ -78,14 +79,7 @@ export function SourcePublication({
         setProof(null);
       }
       // Never display provider or transport text in a draft/confirmation.
-      throw new ManagementApiError({
-        code: failure instanceof ManagementApiError ? failure.code : 'transport_failure',
-        status: failure instanceof ManagementApiError ? failure.status : null,
-        requestId: null,
-        retryAfterMilliseconds:
-          failure instanceof ManagementApiError ? failure.retryAfterMilliseconds : null,
-        message: t('factory.sourceFailure'),
-      });
+      throw redactManagementError(failure, t('factory.sourceFailure'));
     }
   }
   async function refresh() {
@@ -162,10 +156,14 @@ export function SourcePublication({
                         </li>
                       ))}
                     </ul>
+                    <SourceAdmissions admissions={item.admissions} />
                   </li>
                 ))}
               </ul>
               {preview.value.has_more ? <p>{t('factory.previewMore')}</p> : null}
+              {preview.value.admissions_truncated ? (
+                <p>{t('factory.admissionsTruncated')}</p>
+              ) : null}
             </>
           )}
         </section>

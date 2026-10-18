@@ -1,6 +1,7 @@
 import type { components } from '../../../.generated/api/schema';
 import {
   managementApi,
+  redactManagementError,
   requireManagementResponse,
   versionedMutationHeaders,
   type IdempotencyRequestHeaders,
@@ -15,6 +16,42 @@ export type SourceConnection = components['schemas']['IntegrationConnection'];
 /** Guided input transport carries public references only; credentials stay in Integrations. */
 export function createFactorySourcesApi(client = managementApi) {
   return {
+    async diagnostics(
+      projectId: string,
+      target: { kind: 'input' | 'group'; id: string; version: number },
+      after: string | null,
+      signal?: AbortSignal,
+    ) {
+      try {
+        const query = { limit: 10, ...(after === null ? {} : { after }) };
+        return requireManagementResponse(
+          (target.kind === 'input'
+            ? await client.GET(
+                '/api/v1/projects/{project_id}/factory-source-inputs/{input_id}/versions/{version}/diagnostics',
+                {
+                  params: {
+                    path: { project_id: projectId, input_id: target.id, version: target.version },
+                    query,
+                  },
+                  signal: signal ?? null,
+                },
+              )
+            : await client.GET(
+                '/api/v1/projects/{project_id}/factory-source-groups/{group_id}/versions/{version}/diagnostics',
+                {
+                  params: {
+                    path: { project_id: projectId, group_id: target.id, version: target.version },
+                    query,
+                  },
+                  signal: signal ?? null,
+                },
+              )
+          ).data,
+        );
+      } catch (error) {
+        throw redactManagementError(error, 'The source operation could not be completed.');
+      }
+    },
     async connections(after: string | null, signal?: AbortSignal) {
       return requireManagementResponse(
         (

@@ -67,6 +67,42 @@ fn projection() -> Request {
 }
 
 #[tokio::test]
+async fn custom_reporting_requires_explicit_installed_support_before_process_dispatch() {
+  let (root, digest) = installed("custom-provider");
+  let manifest = root.path().join("custom-provider/adapter.toml");
+  fs::write(
+    &manifest,
+    fs::read_to_string(&manifest).unwrap().replace(
+      "[protocol.reporter]\nmin = 1\nmax = 1",
+      "[protocol.reporter]\nmin = 1\nmax = 2",
+    ),
+  )
+  .unwrap();
+  let mut wire = serde_json::to_value(projection()).unwrap();
+  wire["message"]["protocol_version"] = json!(2);
+  wire["message"]["command"]["operation"] = json!("inspect");
+  wire["message"]["command"]["payload"]["effects"] = json!({"add":["custom"],"remove":[],"state":null});
+  let request = decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
+  let registry = WorkAdapterRegistry::discover(root.path()).unwrap();
+  let error = registry
+    .resolve("custom-provider", &digest)
+    .unwrap()
+    .execute(
+      request,
+      Duration::from_secs(10),
+      Duration::from_secs(2),
+      CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+  assert_eq!(
+    error.class(),
+    octacity_server_work_source::HostFailureClass::Unsupported
+  );
+  assert!(!root.path().join("custom-provider/captured-request.json").exists());
+}
+
+#[tokio::test]
 async fn incompatible_source_does_not_disable_reporter_and_rejections_expose_no_handles() {
   use octacity_server_work_source::HostFailureClass;
   let (root, digest) = installed("jira");

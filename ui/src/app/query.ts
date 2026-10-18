@@ -1,6 +1,8 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factorySourceProgress: (project: string, kind: string, id: string, version: number) =>
+    ['factory', 'source-progress', project, kind, id, version] as const,
   integrationProjectAccess: (id: string, project: string) =>
     ['integrations', 'access', id, project] as const,
   integrationProjectResources: (id: string, project: string) =>

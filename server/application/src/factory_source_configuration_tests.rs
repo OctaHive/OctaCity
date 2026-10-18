@@ -10,14 +10,38 @@ struct Fixture {
   intent: WorkSourceConfigurationIntent,
   capability: WorkSourceCapability,
   root: FlowDefinitionRef,
+  reporter: Option<WorkSourceCapability>,
 }
 impl Fixture {
   async fn new(provider: &str) -> Self {
+    Self::with_writer(provider, false).await
+  }
+  async fn with_writer(provider: &str, writer: bool) -> Self {
     let project = ProjectId::generate();
     let configuration = FactoryConfigurationId::generate();
     let repository_id = RepositoryId::generate();
     let store = seeded_store(project, configuration, repository(project, repository_id, None));
-    let (installed, draft) = integration_connection_fixture(provider);
+    let (mut installed, mut draft) = integration_connection_fixture(provider);
+    let reporter = writer.then(|| {
+      let mut capability = installed.resources[0].capabilities[0].clone();
+      capability.purpose = IntegrationPurpose::TaskUpdate;
+      capability.capability = exact("writer", 45);
+      capability.configuration = exact("writer-settings", 46);
+      capability.credential =
+        serde_json::from_value(serde_json::json!({"provider":"installed","reference":"writer"})).unwrap();
+      installed.resources[0].capabilities.push(capability.clone());
+      draft.resources[0].purposes.push(IntegrationPurpose::TaskUpdate);
+      WorkSourceCapability {
+        project_id: project,
+        role: WorkSourceCapabilityRole::Reporter,
+        binding: WorkSourceBinding {
+          installation: installed.installation.clone(),
+          resource: installed.resources[0].reference.clone(),
+          capability: capability.capability,
+          configuration: capability.configuration,
+        },
+      }
+    });
     let connection = IntegrationId::generate();
     let resource = installed.resources[0].clone();
     let source = &resource.capabilities[0];
@@ -54,7 +78,7 @@ impl Fixture {
           action: IntegrationAdministrationAction::Credential {
             reference: source.credential.clone(),
             kind: octacity_server_secrets::CredentialPublicationKind::Adopt,
-            activate_connection: true,
+            activate_connection: !writer,
           },
         },
         idempotency_key: IdempotencyKey::new("configuration-activate").unwrap(),
@@ -66,6 +90,31 @@ impl Fixture {
       .complete_integration_administration(management_mutation(preparation))
       .await
       .unwrap();
+    if writer {
+      let current = store.integration_administration(connection).await.unwrap();
+      let receipt = store
+        .begin_integration_administration(management_mutation(BeginIntegrationAdministration {
+          intent: IntegrationAdministrationIntent {
+            id: connection,
+            expected_metadata_version: IntegrationVersion::INITIAL,
+            expected_revision: current.revision,
+            action: IntegrationAdministrationAction::Credential {
+              reference: serde_json::from_value(serde_json::json!({"provider":"installed","reference":"writer"}))
+                .unwrap(),
+              kind: octacity_server_secrets::CredentialPublicationKind::Adopt,
+              activate_connection: true,
+            },
+          },
+          idempotency_key: IdempotencyKey::new("writer-adopt").unwrap(),
+          requested_at: time(2),
+        }))
+        .await
+        .unwrap();
+      store
+        .complete_integration_administration(management_mutation(receipt))
+        .await
+        .unwrap();
+    }
     store
       .publish_integration_project_access(management_mutation(PublishIntegrationProjectAccess {
         intent: IntegrationProjectAccessIntent {
@@ -96,6 +145,7 @@ impl Fixture {
         id: WorkSourceInputId::generate(),
         expected_version: None,
         definition: WorkSourceInputDraft {
+          reporting: None,
           predicate: None,
           target: selected.configuration.configuration.reference().clone(),
           repository: WorkSourceRepositoryRef {
@@ -125,13 +175,16 @@ impl Fixture {
       intent,
       capability,
       root: selected.configuration.configuration.flow().closure.root(),
+      reporter,
     }
   }
   fn handlers(&self) -> FactorySourceConfigurationHandlers<InMemoryFactoryConfigurationStore> {
     FactorySourceConfigurationHandlers::new(
       self.store.clone(),
       Arc::new(TrustedNetworkManagementPolicy),
-      vec![self.capability.clone()],
+      std::iter::once(self.capability.clone())
+        .chain(self.reporter.clone())
+        .collect(),
     )
     .unwrap()
   }
@@ -881,3 +934,6 @@ fn advertised_normalized_predicates_publish_immutable_inputs_for_open_provider_i
     }
   });
 }
+
+#[path = "factory_source_reporting_tests.rs"]
+mod reporting;

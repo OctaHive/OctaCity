@@ -5,6 +5,36 @@ use crate::*;
 pub const PROTOCOL_VERSION: u16 = 1;
 /// Single-write planning contract; the host checks durable authority between steps.
 pub const ORDERED_PROTOCOL_VERSION: u16 = 2;
+/// Explicit normalized effects, usable only under an installed editable mapping ceiling.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectionEffects {
+  /// Bounded literal managed labels to add.
+  pub add: Vec<String>,
+  /// Bounded literal managed labels to remove.
+  pub remove: Vec<String>,
+  /// Opaque provider state, absent to preserve it.
+  pub state: Option<String>,
+}
+impl ProjectionEffects {
+  /// Validates wire bounds; the provider independently validates its installed native ceiling.
+  pub fn validate(&self) -> Result<(), ProtocolError> {
+    let valid = |s: &str| !s.trim().is_empty() && s.len() <= 256 && !s.chars().any(char::is_control);
+    let mut seen = std::collections::BTreeSet::new();
+    if self.add.len() > 64
+      || self.remove.len() > 64
+      || self
+        .add
+        .iter()
+        .chain(&self.remove)
+        .any(|s| !valid(s) || !seen.insert(s))
+      || self.state.as_ref().is_some_and(|s| !valid(s))
+    {
+      return Err(ProtocolError::Invalid);
+    }
+    Ok(())
+  }
+}
 /// Exact request to observe/project one original accepted status intent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -136,6 +166,9 @@ fn fields(values: &[String], empty: bool) -> Result<(), ProtocolError> {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectionIntent {
+  /// Frozen input-owned effects; absent retains the original installed-only wire contract.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub effects: Option<ProjectionEffects>,
   /// Stable original outbox operation identity, independent of process retries.
   pub projection_id: String,
   /// Exact operator profile, excluding rotated secret bytes.
@@ -156,6 +189,9 @@ pub struct ProjectionIntent {
 impl ProjectionIntent {
   /// Checks immutable scope without resolving credentials or interpreting provider state.
   pub fn validate(&self) -> Result<(), ProtocolError> {
+    if let Some(effects) = &self.effects {
+      effects.validate()?;
+    }
     digest(&self.projection_id)?;
     digest(&self.configuration_digest)?;
     self.resource.validate(CredentialClass::WorkReporterWrite)?;
@@ -173,6 +209,11 @@ impl Request {
       return Err(ProtocolError::IncompatibleVersion);
     }
     field(&self.request_id)?;
+    if self.command.intent().is_some_and(|intent| intent.effects.is_some())
+      && self.protocol_version != ORDERED_PROTOCOL_VERSION
+    {
+      return Err(ProtocolError::Invalid);
+    }
     match &self.command {
       Command::Check(intent) => intent.validate(CredentialClass::WorkReporterWrite),
       Command::Observe(intent) | Command::Project(intent) if self.protocol_version == PROTOCOL_VERSION => {
@@ -225,6 +266,9 @@ pub enum Outcome {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ProjectionReceipt {
+  /// Exact confirmed custom effects; absence confirms only the installed default mapping.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub effects: Option<ProjectionEffects>,
   /// Original logical operation identity.
   pub projection_id: String,
   /// Original native ticket container.
@@ -250,6 +294,7 @@ impl ProjectionReceipt {
       || self.configuration_digest != intent.configuration_digest
       || self.mapping != intent.mapping
       || self.status != intent.status
+      || self.effects != intent.effects
     {
       return Err(ProtocolError::Invalid);
     }

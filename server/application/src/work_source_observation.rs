@@ -1,0 +1,94 @@
+//! Optional execution-neutral handoff. Task import, association and refresh scheduling are consumers.
+use crate::{ApplicationError, ManagementRequestContext, ManagementSecurityScope, WorkSourceSnapshot};
+use async_trait::async_trait;
+use octacity_server_domain::{ProjectId, Timestamp};
+use octacity_server_factory::{FactoryDigest, ImmutableReference, WorkSourceBinding};
+
+/// One page of an explicitly requested installed read; no input identity or Factory target.
+#[derive(Clone)]
+pub struct ReadWorkSourceObservations {
+  /// Owning Project, checked against the installed profile and current grant.
+  pub project_id: ProjectId,
+  /// Exact installed read profile; a consumer can select its own broader installed selector.
+  pub source: WorkSourceBinding,
+  /// Original bounded pass identity, retained when continuing a page.
+  pub scan_id: FactoryDigest,
+  /// Inclusive incremental window, or full reconciliation using the existing Source protocol.
+  pub window: Option<(Timestamp, Timestamp)>,
+  /// Private opaque continuation; never a destination or authorization.
+  pub continuation: Option<String>,
+  /// Requested ceiling, narrowed by installed page/item/byte limits.
+  pub limit: u16,
+}
+
+/// Bounded private provenance, never a Work mutation, admission or reporting authorization.
+/// Deliberately excludes Serialize/Debug: raw task content is not a diagnostic or REST DTO.
+pub struct WorkSourceObservation {
+  /// Trusted owning Project.
+  pub project_id: ProjectId,
+  /// Trusted security partition of the installed reader.
+  pub security_scope: ManagementSecurityScope,
+  /// Exact installed Source binding, independent of any pipeline input identity.
+  pub source: WorkSourceBinding,
+  /// Content-verified executable that produced the normalized snapshot.
+  pub plugin: ImmutableReference,
+  /// Exact provider transport/configuration, excluding credentials.
+  pub provider_configuration: FactoryDigest,
+  /// Exact selector evidence; never an execution target or task identity.
+  pub selection_digest: FactoryDigest,
+  /// Existing native Project/security/installation/container/item correlation.
+  pub native_correlation: FactoryDigest,
+  /// Untrusted normalized data, bounded and scoped by the installed protocol.
+  pub snapshot: WorkSourceSnapshot,
+  /// Complete normalized snapshot digest, excluding pipeline selection matches.
+  pub snapshot_digest: FactoryDigest,
+  /// Trusted beginning of the provider read, not a provider timestamp.
+  pub observed_at: Timestamp,
+  /// Original finite provenance lifetime; rereading retained data cannot renew it.
+  pub expires_at: Timestamp,
+}
+
+/// Temporal/content evidence for a consumer, never a provider revision ordering guarantee.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WorkSourceObservationFreshness {
+  /// A live new snapshot, or the first live observation of this native task.
+  Fresh,
+  /// A live reread has the same complete content as the previous native observation.
+  Unchanged,
+  /// Expired, future-dated or older than the consumer's last observation of this task.
+  Stale,
+}
+impl WorkSourceObservation {
+  /// Compares trusted read times and complete snapshot digests, never opaque update identifiers.
+  /// Consumers retain their own latest accepted evidence; no hidden observation cache exists.
+  pub fn freshness_at(&self, now: Timestamp, previous: Option<&Self>) -> WorkSourceObservationFreshness {
+    let previous = previous.filter(|p| p.native_correlation == self.native_correlation);
+    if now < self.observed_at || now >= self.expires_at || previous.is_some_and(|p| p.observed_at > self.observed_at) {
+      WorkSourceObservationFreshness::Stale
+    } else if previous.is_some_and(|p| p.snapshot_digest == self.snapshot_digest) {
+      WorkSourceObservationFreshness::Unchanged
+    } else {
+      WorkSourceObservationFreshness::Fresh
+    }
+  }
+}
+
+/// One finite page; the consumer owns durable progress and any task updates.
+pub struct WorkSourceObservationPage {
+  /// Private bounded observations.
+  pub observations: Vec<WorkSourceObservation>,
+  /// Existing provider continuation, including for empty pages.
+  pub next_cursor: Option<String>,
+}
+
+/// Optional trusted internal read capability; callers authorize their consumer operation first.
+/// Installing it starts no polling or consumer subscription and creates no management endpoint.
+#[async_trait]
+pub trait WorkSourceObservations: Send + Sync {
+  /// Reads under current task-read authority, without admission, task storage or Reporter effects.
+  async fn read(
+    &self,
+    context: &ManagementRequestContext,
+    request: ReadWorkSourceObservations,
+  ) -> Result<WorkSourceObservationPage, ApplicationError>;
+}

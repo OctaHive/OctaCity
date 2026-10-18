@@ -66,6 +66,18 @@ export class ManagementApiError extends Error {
   }
 }
 
+/** Retains closed failure/retry metadata while dropping remote text, identities and diagnostics. */
+export function redactManagementError(error: unknown, message: string): ManagementApiError {
+  return new ManagementApiError({
+    code: error instanceof ManagementApiError ? error.code : 'transport_failure',
+    status: error instanceof ManagementApiError ? error.status : null,
+    retryAfterMilliseconds:
+      error instanceof ManagementApiError ? error.retryAfterMilliseconds : null,
+    requestId: null,
+    message,
+  });
+}
+
 /** Returns the validated correlation identity attached to a management response. */
 export function requestIdFromResponse(response: Response): string | null {
   return boundedVisibleAscii(response.headers.get('x-request-id'), MAX_REQUEST_ID_LENGTH);

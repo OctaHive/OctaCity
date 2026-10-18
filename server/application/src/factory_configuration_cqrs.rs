@@ -391,13 +391,18 @@ pub struct FactoryConfigurationCommandOutcome {
 pub struct FactoryConfigurationHandlers<S> {
   store: Arc<S>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
+  source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
 }
 
 impl<S> FactoryConfigurationHandlers<S> {
   /// Shares the management policy for dependency visibility before alias resolution.
   #[must_use]
   pub fn with_policy(store: Arc<S>, policy: Arc<dyn crate::ManagementAuthorizationPolicy>) -> Self {
-    Self { store, policy }
+    Self {
+      store,
+      policy,
+      source_actions: None,
+    }
   }
 
   /// Creates handlers from a backend-neutral Factory Configuration port.
@@ -440,6 +445,12 @@ impl<S> FactoryConfigurationHandlers<S>
 where
   S: FactoryConfigurationStore,
 {
+  /// Enables typed stage effects using current installed Source/Reporter authorization.
+  #[must_use]
+  pub fn with_source_actions(mut self, authorizer: Arc<dyn crate::FactoryStageSourceAuthorizer>) -> Self {
+    self.source_actions = Some(authorizer);
+    self
+  }
   async fn resolve(
     &self,
     context: &crate::ManagementRequestContext,
@@ -458,6 +469,13 @@ where
     .await?;
     if let Some(flow) = &draft.flow {
       crate::factory_configuration_choices::validate_flow_choices(flow, &choices, "/flow")?;
+      crate::factory_stage_source_update::validate_flow_source_updates(
+        flow,
+        self.source_actions.as_deref(),
+        context,
+        project_id,
+      )
+      .await?;
     }
     FactoryConfiguration::publish(id, version, project_id, definition_digest, draft, &choices)
       .map_err(FactoryValidationDiagnostics::from_factory_error)

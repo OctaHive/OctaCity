@@ -18,13 +18,20 @@ impl FactorySourceDiagnosticsStore for PostgresStore {
     // Registration already proved accepted-action provenance and the original Reporter
     // inside the publication transaction. Fetch one latest metadata row per operation;
     // no Flow documents, private Source snapshots or execution locks are needed here.
-    let rows: Vec<(Vec<u8>, String, i32, i64)> = sqlx::query_as(
-      "SELECT initial.operation_id, latest.state, latest.attempt, latest.available_at \
+    let rows: Vec<(Vec<u8>, String, i32, i64, Json<WorkSourceReportingOrigin>)> = sqlx::query_as(
+      "SELECT initial.operation_id, latest.state, latest.attempt, latest.available_at, \
+       jsonb_build_object('action', jsonb_build_object('definition', action.doc#>'{input,definition}', 'flow_run_id', action.doc#>'{input,flow_run_id}', 'cycle_id', action.doc#>'{input,cycle_id}', 'node', action.doc#>'{input,node}', 'outcome', action.doc->'outcome', 'node_attempt_id', action.doc->'node_attempt_id'), \
+         'stages', COALESCE((SELECT jsonb_agg(jsonb_build_object('definition', stage.doc#>'{input,definition}', 'flow_run_id', stage.doc#>'{input,flow_run_id}', 'cycle_id', stage.doc#>'{input,cycle_id}', 'node', stage.doc#>'{input,node}', 'outcome', stage.doc->'outcome', 'node_attempt_id', stage.doc->'node_attempt_id') ORDER BY selected.position) \
+         FROM jsonb_array_elements(action.doc#>'{input,sources}') WITH ORDINALITY selected(ref, position) \
+         JOIN factory_flow_records source_record ON source_record.run_id=p.run_id AND source_record.node_attempt_id=(selected.ref->>'node_attempt_id')::uuid \
+         CROSS JOIN LATERAL (SELECT convert_from(source_record.document, 'UTF8')::jsonb AS doc) stage), '[]'::jsonb)) \
        FROM factory_source_preparations p \
        JOIN factory_runs run ON run.id=p.run_id AND run.visible \
        JOIN factory_outbox_records initial ON initial.run_id=p.run_id \
          AND initial.kind='work.status.projection' AND initial.attempt=0 AND initial.state='pending' \
        JOIN factory_source_projection_intents accepted ON accepted.operation_id=initial.operation_id AND accepted.project_id=p.project_id \
+       JOIN factory_flow_records action_record ON action_record.run_id=p.run_id AND action_record.id=initial.input_digest \
+       CROSS JOIN LATERAL (SELECT convert_from(action_record.document, 'UTF8')::jsonb AS doc) action \
        CROSS JOIN LATERAL (SELECT state, attempt, FLOOR(EXTRACT(EPOCH FROM available_at)*1000)::BIGINT AS available_at \
          FROM factory_outbox_records history WHERE history.operation_id=initial.operation_id AND history.run_id=p.run_id \
          ORDER BY attempt DESC, CASE state WHEN 'pending' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END DESC, recorded_at DESC, id DESC LIMIT 1) latest \
@@ -36,9 +43,10 @@ impl FactorySourceDiagnosticsStore for PostgresStore {
       .fetch_all(self.pool()).await.map_err(unavailable)?;
     let mut items = rows
       .into_iter()
-      .map(|(operation, state, attempt, at)| {
+      .map(|(operation, state, attempt, at, origin)| {
         Ok(WorkSourceReportingDiagnostic {
           operation_id: read_digest(operation)?,
+          origin: Some(origin.0),
           state: match state.as_str() {
             "pending" => WorkSourceReportingState::Pending,
             "claimed" => WorkSourceReportingState::Claimed,

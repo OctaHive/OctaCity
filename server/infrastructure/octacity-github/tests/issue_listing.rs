@@ -840,3 +840,53 @@ async fn source_authorization_rechecks_the_current_private_grant_without_listing
     "grant checks do not list tickets, change a cursor or create effects"
   );
 }
+
+#[tokio::test]
+async fn separate_installed_read_selector_observes_closed_nonmatching_tasks_without_execution_target() {
+  let forge = Forge::start().await;
+  let mut closed = issue(9001, 17);
+  closed["state"] = json!("closed");
+  let execution = Installation::new(
+    &forge,
+    json!({
+      "state":"open", "all_of":["ready"], "any_of":[], "none_of":[],
+    }),
+  );
+  let observer = Installation::new(
+    &forge,
+    json!({
+      "state":"all", "all_of":[], "any_of":[], "none_of":[],
+    }),
+  );
+  forge
+    .replies
+    .lock()
+    .await
+    .extend([Reply::json(json!([closed.clone()])), Reply::json(json!([closed]))]);
+  let excluded = page(
+    execution
+      .provider()
+      .execute(&execution.request(), CancellationToken::new())
+      .await,
+  );
+  assert!(excluded.candidates.is_empty());
+  let request = observer.request();
+  let observed = observer.provider().execute(&request, CancellationToken::new()).await;
+  observed.validate_for(&request).unwrap();
+  let observed = page(observed);
+  assert_eq!(observed.candidates.len(), 1);
+  assert_eq!(observed.candidates[0].item_id, "9001");
+  assert_eq!(observed.candidates[0].state, "closed");
+  assert!(observed.candidates[0].labels.is_empty());
+  assert_eq!(
+    observed.candidates[0].body.as_deref(),
+    Some("Task\nAcceptance: explicit criteria")
+  );
+  let calls = forge.requests.lock().await;
+  assert_eq!(calls.len(), 4, "only existing bounded repository and page reads");
+  assert!(
+    calls
+      .iter()
+      .all(|call| call.starts_with("GET /api/v3/repos/owner/tickets"))
+  );
+}

@@ -1,6 +1,71 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'factory.deferredStatusProfile':
+    'Для настройки эффектов источника выберите опубликованный профиль отложенного действия статуса.',
+  'factory.stageSourceUpdate': 'Обновить исходную внешнюю задачу',
+  'factory.stageSourceHelp':
+    'Проведите любой объявленный исход через это доверенное действие, в том числе внутри промежуточного или вложенного этапа. Эффекты относятся к исходной принятой задаче и проверенному неизменяемому маппингу. Примените изменения формы, затем проверьте и подтвердите публикацию Flow.',
+  'factory.originalTaskSource': 'Исходный источник задач',
+  'factory.useSourceEffects': 'Применить проверенные эффекты источника',
+  'factory.removeSourceEffects': 'Использовать маппинг статусов входа',
+  'factory.sourceProgress': 'Прогресс источника и обновлений',
+  'factory.projectionAttempt': 'Попытка внешнего обновления {attempt}',
+  'factory.projectionAvailable': 'Допустимое время отправки',
+  'factory.reporterMapping': 'Маппинг обновлений внешней системы',
+  'factory.retainedReporterUnavailable': 'Сохранённый маппинг недоступен: {name}',
+  'factory.customizeReporting': 'Настроить маппинг статусов',
+  'factory.mappingRow': 'Маппинг статуса {number}',
+  'factory.logicalStatus': 'Логический статус',
+  'factory.resultingState': 'Итоговое состояние задачи',
+  'factory.addEffectLabel': 'Добавить метку: {label}',
+  'factory.removeEffectLabel': 'Удалить метку: {label}',
+  'factory.addMapping': 'Добавить маппинг статуса',
+  'factory.removeMapping': 'Удалить маппинг статуса',
+  'factory.noReporter': 'Без обновления внешнего статуса',
+  'factory.noReporterAccess':
+    'Нет совместимого профиля с правом изменения задач. Чтение остаётся доступно; для обновлений настройте доступ в Интеграциях.',
+  'factory.reporterReadiness':
+    'Выбор Reporter не подтверждает право записи во внешней системе. Только принятые настроенные действия могут поставить обновление в очередь.',
+  'factory.preserveLabels': 'Остальные метки сохраняются.',
+  'factory.addEffect': 'Добавить метки',
+  'factory.removeEffect': 'Удалить метки',
+  'factory.preserveState': 'Сохранить текущее состояние',
+  'factory.reportingUnknown':
+    'У установленного маппинга нет безопасного описания эффектов. Редактирование недоступно.',
+  'factory.admissionsTruncated':
+    'Показана ограниченная видимая история допуска; отсутствие записи не доказывает отсутствие запуска.',
+  'factory.openTaskCard': 'Открыть карточку задачи',
+  'factory.lastScan': 'Начало последнего сканирования',
+  'factory.scanMode': 'Режим сканирования',
+  'factory.scanReconciliation': 'Сверка',
+  'factory.scanIncremental': 'Поиск изменений',
+  'factory.lastSelection': 'Последний сохранённый отбор',
+  'factory.matchedNotAdmitted': 'Соответствует; это сканирование не подтверждает допуск',
+  'factory.sourceRetry': 'Повтор источника и попытка',
+  'factory.scanExhausted': 'Попытки сканирования исчерпаны',
+  'factory.noScan': 'Для этой версии нет сохранённого сканирования.',
+  'factory.noVisibleAdmissions':
+    'На этой странице нет видимых допущенных Work; это не доказывает отсутствие более ранних или скрытых запусков.',
+  'factory.sourceFailure.rate_limited': 'Ограничение частоты запросов',
+  'factory.sourceFailure.unavailable': 'Источник недоступен',
+  'factory.sourceFailure.transient': 'Временная ошибка источника',
+  'factory.sourceFailure.timeout': 'Достигнут срок операции источника',
+  'factory.sourceFailure.cancelled': 'Операция источника отменена',
+  'factory.sourceFailure.admission_capacity': 'Достигнут предел допуска',
+  'factory.sourceFailure.retention_pending': 'Ожидается сохранение входных данных',
+  'factory.sourceFailure.protocol_fault': 'Ошибка протокола источника',
+  'factory.sourceFailure.invalid_configuration': 'Некорректная конфигурация источника',
+  'factory.sourceFailure.conflict': 'Конфликт источника',
+  'factory.retainedSourceProgress': 'Сохранённый прогресс источника',
+  'factory.reportingIndependent':
+    'Состояние обновления внешней системы не определяет бизнес-статус задачи или выполнение Run.',
+  'factory.nativeCorrelation': 'Идентификатор внешней задачи',
+  'factory.admittedVersion': 'Допущено через вход {id} · v{version}',
+  'factory.projection.pending': 'Ожидает подтверждения внешней системы',
+  'factory.projection.claimed': 'Внешнее обновление выполняется; подтверждения ещё нет',
+  'factory.projection.applied': 'Внешние изменения подтверждены',
+  'factory.projection.exhausted': 'Попытки внешнего обновления исчерпаны; принятый Work сохранён',
   'factory.automaticInputs': 'Автоматический приём',
   'factory.configureAutomatic': 'Настроить автоматический приём',
   'factory.manageIntegrations': 'Управлять интеграциями',
@@ -98,10 +163,6 @@ export const ruMessages = {
   'integrations.moreHistory': 'Загрузить ещё Runs',
   'integrations.reportingTruncated':
     'Остальные операции reporting находятся за пределами этой ограниченной сводки.',
-  'integrations.reporting.pending': 'Ожидает отправки',
-  'integrations.reporting.claimed': 'Выполняется',
-  'integrations.reporting.applied': 'Применено',
-  'integrations.reporting.exhausted': 'Лимит повторов исчерпан',
 
   'integrations.projectAccess': 'Доступ Projects',
   'integrations.accessHelp':

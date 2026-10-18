@@ -17,6 +17,59 @@ fn reference(value: &str) -> ImmutableReference {
 fn at(value: i64) -> octacity_server_domain::Timestamp {
   octacity_server_domain::Timestamp::from_unix_millis(value).unwrap()
 }
+#[test]
+fn status_actions_accept_closed_stage_source_effects_and_require_matching_status_and_outbox() {
+  let source = WorkSourceBinding {
+    installation: reference("tracker"),
+    capability: reference("source"),
+    configuration: reference("reader"),
+    resource: reference("tickets"),
+  };
+  let mut writer = source.clone();
+  writer.capability = reference("reporter");
+  writer.configuration = reference("writer");
+  let parameters = serde_json::json!({
+    "status":"ready / review", "outbox":{"max_attempts":2,"retry_delay_millis":5},
+    "source_update": {
+      "source":source, "reporter":writer,
+      "connection": {"id":octacity_server_domain::IntegrationId::generate(), "version":1,"access_version":1,
+        "source_configuration":reference("reader"),"reporter_configuration":reference("writer")},
+      "effects":{"status":"ready / review","add":["review-next"],"remove":["new-item"],"state":null}
+    }
+  });
+  let h = harness(
+    binding("reporter", "set_status", parameters.clone()),
+    permissions("reporter"),
+  );
+  let plugin = FactoryWorkStatusAction::new(reference("reporter"), reporter(), h.outcome.clone());
+  assert!(
+    plugin
+      .validate(
+        &binding("reporter", "set_status", parameters.clone()),
+        std::slice::from_ref(&h.outcome)
+      )
+      .is_ok()
+  );
+  for invalid in 0..4 {
+    let mut changed = parameters.clone();
+    match invalid {
+      0 => changed["source_update"]["effects"]["status"] = serde_json::json!("another-result"),
+      1 => changed["source_update"]["effects"]["remove"] = serde_json::json!(["review-next"]),
+      2 => {
+        changed.as_object_mut().unwrap().remove("outbox");
+      }
+      _ => changed["source_update"]["token"] = serde_json::json!("forbidden"),
+    }
+    assert!(
+      plugin
+        .validate(
+          &binding("reporter", "set_status", changed),
+          std::slice::from_ref(&h.outcome)
+        )
+        .is_err()
+    );
+  }
+}
 struct Reporter {
   requests: Mutex<Vec<FactoryWorkStatusRequest>>,
   unavailable: bool,

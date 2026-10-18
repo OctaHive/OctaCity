@@ -294,6 +294,13 @@ impl GithubWorkProvider {
         return Err(FailureClass::Conflict.into());
       }
       let mapping = crate::status_mapping::StatusMapping::from_config(&bytes).map_err(|_| FailureClass::Permanent)?;
+      let mapping = if let Some(effects) = &intent.effects {
+        mapping
+          .with_effects(&intent.status, effects)
+          .map_err(|_| FailureClass::Unsupported)?
+      } else {
+        mapping
+      };
       mapping.effects(&intent.status).map_err(|_| FailureClass::Unsupported)?;
       let repository = self
         .repositories

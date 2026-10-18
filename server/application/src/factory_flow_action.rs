@@ -268,7 +268,26 @@ pub struct FactoryWorkStatusAction<P> {
 pub(crate) struct StatusParameters {
   pub(crate) status: FactorySafeText,
   #[serde(default)]
+  pub(crate) source_update: Option<crate::FactoryStageSourceUpdate>,
+  #[serde(default)]
   pub(crate) outbox: Option<FactoryReporterRetryPolicy>,
+}
+impl StatusParameters {
+  pub(crate) fn validate(&self, binding: &FlowActionBinding) -> Result<(), ApplicationError> {
+    if let Some(policy) = self.outbox {
+      policy.validate()?;
+    }
+    if let Some(update) = &self.source_update {
+      update.validate()?;
+      if self.outbox.is_none()
+        || update.effects.status != self.status.as_str()
+        || &update.reporter.capability != binding.plugin()
+      {
+        return Err(ApplicationError::invalid());
+      }
+    }
+    Ok(())
+  }
 }
 /// Published bounded retry policy for non-authoritative source projection.
 #[derive(Clone, Copy, Debug, serde::Deserialize)]
@@ -317,10 +336,7 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
     }
     let parameters = serde_json::from_value::<StatusParameters>(binding.parameters().clone())
       .map_err(|_| ApplicationError::invalid())?;
-    if let Some(policy) = parameters.outbox {
-      policy.validate()?;
-    }
-    Ok(())
+    parameters.validate(binding)
   }
   async fn cancel(
     &self,

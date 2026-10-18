@@ -6,6 +6,29 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let version = || json!({"type":"integer","minimum":1});
   let optional_version = || json!({"type":["integer","null"],"minimum":1});
   let nullable = |value: Value| json!({"anyOf":[value,{"type":"null"}]});
+  let literal = || {
+    let mut value = text(octacity_server_application::MAX_SOURCE_REPORTING_TEXT_BYTES);
+    value["x-max-utf8-bytes"] = json!(octacity_server_application::MAX_SOURCE_REPORTING_TEXT_BYTES);
+    value
+  };
+  let effects = object(
+    json!({"status":literal(),"add":array(literal(),octacity_server_application::MAX_SOURCE_REPORTING_EFFECT_LABELS),"remove":array(literal(),octacity_server_application::MAX_SOURCE_REPORTING_EFFECT_LABELS),"state":nullable(literal())}),
+    &["status", "add", "remove", "state"],
+  );
+  let mut statuses = array(
+    reference("WorkSourceStatusEffects"),
+    octacity_server_application::MAX_SOURCE_REPORTING_STATUSES,
+  );
+  statuses["minItems"] = json!(1);
+  let status_mapping = object(json!({"statuses":statuses}), &["statuses"]);
+  let reporting_policy = object(
+    json!({"labels":array(literal(),octacity_server_application::MAX_SOURCE_REPORTING_CHOICES),"states":array(literal(),octacity_server_application::MAX_SOURCE_REPORTING_CHOICES)}),
+    &["labels", "states"],
+  );
+  let reporting_choice = object(
+    json!({"mapping":reference("WorkSourceStatusMapping"),"editable":nullable(reference("WorkSourceReportingPolicy"))}),
+    &["mapping", "editable"],
+  );
   let binding = object(
     json!({"installation":pin(),"capability":pin(),"configuration":pin(),"resource":pin()}),
     &["installation", "capability", "configuration", "resource"],
@@ -25,7 +48,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["project_id", "id", "version", "definition_digest"],
   );
   let draft = object(
-    json!({"connection":nullable(reference("WorkSourceConnectionReference")),"target":reference("FactoryConfigurationReference"),"repository":repository,"source":reference("WorkSourceBinding"),"reporter":nullable(reference("WorkSourceBinding")),"predicate":nullable(reference("WorkSourcePredicate")),"enabled":{"type":"boolean","default":false}}),
+    json!({"connection":nullable(reference("WorkSourceConnectionReference")),"target":reference("FactoryConfigurationReference"),"repository":repository,"source":reference("WorkSourceBinding"),"reporter":nullable(reference("WorkSourceBinding")),"reporting":nullable(reference("WorkSourceStatusMapping")),"predicate":nullable(reference("WorkSourcePredicate")),"enabled":{"type":"boolean","default":false}}),
     &["target", "repository", "source"],
   );
   let input_intent = object(
@@ -61,7 +84,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["state", "all_of", "any_of", "none_of"],
   );
   let choices = object(
-    json!({"connection_id":id(),"connection_version":version(),"access_version":version(),"items":array(object(json!({"binding":reference("WorkSourceBinding"),"connection_configuration":pin(),"purpose":{"type":"string","enum":["task_read","task_update"]},"native_id":text(1024),"locator":text(1024),"selection":nullable(labels.clone()),"predicate_states":array(text(128),octacity_server_application::MAX_SOURCE_SELECTION_LABELS)}),&["binding","connection_configuration","purpose","native_id","locator","selection"]),256)}),
+    json!({"connection_id":id(),"connection_version":version(),"access_version":version(),"items":array(object(json!({"binding":reference("WorkSourceBinding"),"connection_configuration":pin(),"purpose":{"type":"string","enum":["task_read","task_update"]},"native_id":text(1024),"locator":text(1024),"selection":nullable(labels.clone()),"predicate_states":array(text(128),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"reporting":reference("WorkSourceReportingChoice")}),&["binding","connection_configuration","purpose","native_id","locator","selection"]),256)}),
     &["connection_id", "connection_version", "access_version", "items"],
   );
   let mut predicate = labels.clone();
@@ -71,6 +94,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       json!(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES);
   }
   for (name, value) in [
+    ("WorkSourceStatusEffects", effects),
+    ("WorkSourceStatusMapping", status_mapping),
+    ("WorkSourceReportingPolicy", reporting_policy),
+    ("WorkSourceReportingChoice", reporting_choice),
     ("WorkSourcePredicate", predicate),
     ("WorkSourceSelectionLabels", labels),
     ("WorkSourceBinding", binding),

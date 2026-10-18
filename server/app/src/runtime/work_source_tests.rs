@@ -16,6 +16,8 @@ use tokio_util::sync::CancellationToken;
 const TEST_WAIT: Duration = Duration::from_secs(30);
 #[path = "work_source_configuration_tests.rs"]
 mod configuration;
+#[path = "work_source_observation_tests.rs"]
+mod observations;
 struct Clock(AtomicI64);
 impl FactoryExecutionClock for Clock {
   fn now(&self) -> Result<Timestamp, ApplicationError> {
@@ -91,7 +93,7 @@ impl Fixture {
     let path = self
       .root
       .path()
-      .join(self.profile.plugin.identity().as_str())
+      .join(self.profile.read.plugin.identity().as_str())
       .join(name);
     tokio::time::timeout(TEST_WAIT, async {
       while !path.exists() {
@@ -107,7 +109,7 @@ impl Fixture {
       self
         .root
         .path()
-        .join(self.profile.plugin.identity().as_str())
+        .join(self.profile.read.plugin.identity().as_str())
         .join("release"),
       b"release",
     )
@@ -159,6 +161,7 @@ impl Fixture {
       WorkSourceInputId::generate(),
       project,
       WorkSourceInputDraft {
+        reporting: None,
         predicate: None,
         connection: None,
         target: config.reference().clone(),
@@ -195,18 +198,30 @@ impl Fixture {
       },
     };
     let profile = FactorySourceProfile {
-      managed_access: None,
-      project_id: project,
-      binding: binding.clone(),
-      plugin: ImmutableReference::new(key(provider), key("v1"), plugin_digest),
-      provider_configuration: FactoryDigest::from_bytes([0xee; 32]),
-      resource,
-      selection: octacity_work_source_protocol::ConfigurationReference {
-        identity: "selected-input".into(),
-        sha256: "b".repeat(64),
+      read: WorkSourceReadProfile {
+        managed_access: None,
+        project_id: project,
+        binding: binding.clone(),
+        plugin: ImmutableReference::new(key(provider), key("v1"), plugin_digest),
+        provider_configuration: FactoryDigest::from_bytes([0xee; 32]),
+        resource,
+        selection: octacity_work_source_protocol::ConfigurationReference {
+          identity: "selected-input".into(),
+          sha256: "b".repeat(64),
+        },
+        network_hosts: vec!["tracker.invalid".into()],
+        context: ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap()),
+        polling: SourcePollingPolicy {
+          page_items: 2,
+          max_pages: 1,
+          max_items: 2,
+          max_bytes: 65536,
+          max_page_bytes: 65536,
+          overlap_millis: 20,
+          reconciliation_interval_millis: 1000,
+          retention_millis: 86400000,
+        },
       },
-      network_hosts: vec!["tracker.invalid".into()],
-      context: ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap()),
       preparation: SourcePreparationSettings {
         mapping: WorkSourceMapping {
           source: binding,
@@ -223,16 +238,6 @@ impl Fixture {
           RiskClass::Medium,
           FactoryMetadata::default(),
         ),
-      },
-      polling: SourcePollingPolicy {
-        page_items: 2,
-        max_pages: 1,
-        max_items: 2,
-        max_bytes: 65536,
-        max_page_bytes: 65536,
-        overlap_millis: 20,
-        reconciliation_interval_millis: 1000,
-        retention_millis: 86400000,
       },
     };
     Self {
@@ -460,7 +465,7 @@ async fn source_installations_reject_unbounded_workers_and_ambiguous_or_foreign_
       "timeout" => installation.settings.operation_timeout = Duration::ZERO,
       "claim-window" => installation.settings.operation_timeout = installation.settings.worker.claim_lifetime(),
       "duplicate" => installation.profiles.push(fixture.profile.clone()),
-      "foreign-project" => installation.profiles[0].project_id = ProjectId::generate(),
+      "foreign-project" => installation.profiles[0].read.project_id = ProjectId::generate(),
       "mapping" => installation.profiles[0].preparation.mapping.source.configuration = exact("foreign-settings", 90),
       _ => unreachable!(),
     }
@@ -495,19 +500,19 @@ async fn exclusive_group_ambiguity_is_durable_and_later_one_match_uses_its_exact
     })
     .unwrap();
   let mut profile = fixture.profile.clone();
-  profile.binding.configuration = exact("other-input", 45);
-  profile.preparation.mapping.source = profile.binding.clone();
-  profile.selection.identity = "other-selector".into();
-  profile.selection.sha256 = "d".repeat(64);
-  profile.polling.page_items = 1;
+  profile.read.binding.configuration = exact("other-input", 45);
+  profile.preparation.mapping.source = profile.read.binding.clone();
+  profile.read.selection.identity = "other-selector".into();
+  profile.read.selection.sha256 = "d".repeat(64);
+  profile.read.polling.page_items = 1;
   let capability = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
-    binding: profile.binding.clone(),
+    binding: profile.read.binding.clone(),
   };
   let mut draft = fixture.input.definition().clone();
   draft.target = config.reference().clone();
-  draft.source = profile.binding.clone();
+  draft.source = profile.read.binding.clone();
   let second = WorkSourceInput::publish(
     WorkSourceInputId::generate(),
     fixture.input.project_id(),
@@ -626,7 +631,7 @@ async fn source_batches_are_bounded_concurrent_and_advance_past_the_first_page()
   let capability = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
-    binding: fixture.profile.binding.clone(),
+    binding: fixture.profile.read.binding.clone(),
   };
   for _ in 0..2 {
     let input = WorkSourceInput::publish(
@@ -875,7 +880,7 @@ async fn a_source_pass_deadline_bounds_revision_resolution_and_leaves_original_i
   let capability = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
-    binding: fixture.profile.binding.clone(),
+    binding: fixture.profile.read.binding.clone(),
   };
   let changed = fixture
     .input
@@ -961,7 +966,7 @@ impl Fixture {
     let capability = WorkSourceCapability {
       project_id: self.input.project_id(),
       role: WorkSourceCapabilityRole::Source,
-      binding: self.profile.binding.clone(),
+      binding: self.profile.read.binding.clone(),
     };
     let mut draft = self.input.definition().clone();
     draft.enabled = enabled;
@@ -1194,7 +1199,7 @@ async fn runtime_retention_clears_orphaned_source_snapshots_after_the_input_is_d
 #[tokio::test]
 async fn retained_preparations_are_drained_in_finite_pages_before_fresh_discovery() {
   let mut fixture = Fixture::enabled("jira").await;
-  fixture.profile.polling.max_items = 100;
+  fixture.profile.read.polling.max_items = 100;
   let target = WorkSourceScanTarget::Input {
     id: fixture.input.id(),
     version: fixture.input.version(),
@@ -1543,7 +1548,7 @@ async fn disabled_members_pending_work_does_not_block_the_current_group() {
   let capability = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
-    binding: fixture.profile.binding.clone(),
+    binding: fixture.profile.read.binding.clone(),
   };
   let second = WorkSourceInput::publish(
     WorkSourceInputId::generate(),
@@ -1682,8 +1687,8 @@ async fn pending_work_follows_its_stable_input_into_an_exclusive_group() {
 #[tokio::test]
 async fn factory_wip_backpressure_does_not_exhaust_the_provider_retry_budget_or_republish_inputs() {
   let mut fixture = Fixture::enabled("jira").await;
-  fixture.profile.polling.page_items = 3;
-  fixture.profile.polling.max_items = 3;
+  fixture.profile.read.polling.page_items = 3;
+  fixture.profile.read.polling.max_items = 3;
   let path = fixture.root.path().join("jira/mode.json");
   let mut mode: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
   let mut second = mode["candidates"][0].clone();
@@ -1861,7 +1866,7 @@ async fn managed_access(
   let installed = InstalledIntegration {
     installation: binding.installation.clone(),
     provider: key("custom-tracker"),
-    adapter: fixture.profile.plugin.clone(),
+    adapter: fixture.profile.read.plugin.clone(),
     endpoints: vec!["https://tracker.invalid/".into()],
     authentication: vec![key("token")],
     resources: vec![IntegrationResource {
@@ -1953,7 +1958,7 @@ async fn managed_access(
 #[tokio::test]
 async fn managed_source_rechecks_project_grants_before_provider_reads_after_revocation() {
   let mut fixture = Fixture::enabled("custom-tracker").await;
-  let (access, id) = managed_access(&fixture, &fixture.profile.binding, IntegrationPurpose::TaskRead).await;
+  let (access, id) = managed_access(&fixture, &fixture.profile.read.binding, IntegrationPurpose::TaskRead).await;
   fixture.profile = fixture.profile.clone().with_managed_access(access);
   assert_eq!(
     fixture

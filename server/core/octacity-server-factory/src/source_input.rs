@@ -62,6 +62,9 @@ pub struct WorkSourceCapability {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct WorkSourceInputDraft {
+  /// Optional immutable status effects, accepted only with explicit installed editing support.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub reporting: Option<crate::WorkSourceStatusMapping>,
   /// Optional immutable narrowing over normalized Source data, supported only by advertised profiles.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub predicate: Option<crate::WorkSourcePredicate>,
@@ -140,6 +143,7 @@ impl TryFrom<RetainedWorkSourceInput> for WorkSourceInput {
     if let Some(predicate) = &definition.predicate {
       predicate.validate()?;
     }
+    validate_reporting(definition)?;
     if definition.target.project_id() != value.project_id
       || definition.repository.project_id != value.project_id
       || definition.reporter.as_ref().is_some_and(|reporter| {
@@ -173,6 +177,7 @@ impl WorkSourceInput {
     if let Some(predicate) = &definition.predicate {
       predicate.validate()?;
     }
+    validate_reporting(&definition)?;
     if definition.target != *context.target.reference() || definition.target.project_id() != project_id {
       return Err(FactoryError::InvalidConfiguration {
         field: "source input target",
@@ -266,4 +271,16 @@ impl WorkSourceInput {
   pub const fn definition(&self) -> &WorkSourceInputDraft {
     &self.definition
   }
+}
+
+fn validate_reporting(definition: &WorkSourceInputDraft) -> Result<(), FactoryError> {
+  if let Some(mapping) = &definition.reporting {
+    mapping.validate()?;
+    if definition.reporter.is_none() {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "source reporting mapping",
+      });
+    }
+  }
+  Ok(())
 }

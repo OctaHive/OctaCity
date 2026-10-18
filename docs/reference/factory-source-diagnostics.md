@@ -86,3 +86,27 @@ remain in `add-factory-work-card`. Existing manual Artifact-based Factory intake
 requires no connection, Source capability or internal Issue. Source/reporting
 services hold no authority to change that path. UI editors and guided presentation
 are separate tasks; these routes provide their authorized data contracts.
+
+The separate [optional observation port](work-source-observations.md) supplies
+private current snapshots to explicitly enabled consumers. Preview/diagnostic
+routes do not invoke it or advance a consumer's refresh progress.
+
+## Stage and action provenance
+
+A reporting operation can include optional `origin` metadata. `origin.action`
+identifies its accepted trusted-action record; `origin.stages` identifies only the
+exact records explicitly consumed by that action. Each record reference includes
+its immutable definition, Flow invocation, cycle, node, declared selected outcome
+and node-attempt identity. This distinguishes identically named nested stages and
+links to the original Run attempt without exposing payloads or Context.
+
+The same metadata accompanies pending, claimed, applied and exhausted reporting;
+readers need not wait for the enclosing Run to finish. Empty stage references mean
+no stage data was explicitly bound, not an inferred business outcome. The UI keeps
+these reporting facts distinct from task business status and execution results.
+Existing consumers can ignore the optional metadata, and Work/Run navigation stays
+available without internal task cards.
+
+PostgreSQL projects origin from existing immutable action/source records alongside
+outbox state. This remains a read-only query with no Run-row write lock, provider
+request, task refresh or new progress journal.

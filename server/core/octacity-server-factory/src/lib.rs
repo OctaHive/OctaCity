@@ -96,6 +96,8 @@ pub use verification_plan::{
 mod review_plan_tests;
 mod source_group;
 mod source_input;
+mod source_reporting;
+pub use source_reporting::*;
 mod source_predicate;
 pub use source_group::{MAX_WORK_SOURCE_GROUP_MEMBERS, WorkSourceGroup, WorkSourceSelection, WorkSourceSelectionPass};
 pub use source_predicate::{

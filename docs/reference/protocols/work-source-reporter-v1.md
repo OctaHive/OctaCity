@@ -291,3 +291,31 @@ management/Console authoring retain their subsequent tasks.
 
 Management composition and privacy semantics are documented in
 [Factory source preview and diagnostics](../factory-source-diagnostics.md).
+
+## Optional input-owned effects under Reporter v2
+
+An installed Reporter can explicitly advertise `custom_effects = true` alongside
+an ordered v2 protocol range. It remains false when absent. This advertises wire
+support only; native configuration, Project grants and each accepted action still
+authorize the operation independently. The verified host rejects custom effects
+before process dispatch when support is absent. Bulk v1 cannot carry custom effects.
+
+`ProjectionIntent.effects` is optional and contains closed bounded `add`, `remove`
+and nullable opaque `state` fields. Each add/remove list has at most 64 unique
+literal labels, each literal/state has at most 256 UTF-8 bytes, and the lists must
+not overlap. The field is absent for existing installed-only requests. A receipt
+must echo the exact custom effects; omission or substitution cannot confirm them.
+Ordered step tokens bind the entire intent, including these effects, so retry and
+late-write reconciliation retain their original scope and finite deadline.
+
+GitHub's private installed status mapping must explicitly set `editable: true`
+and may declare `editable_states: ["open", "closed"]` or a subset. With no declared
+states, custom mappings preserve native state. Existing `managed_label_groups`
+remain the label ceiling. The provider reuses its shared checked effect validator for
+case-insensitive native label identity, contradictory effects and bounds. It
+rejects unmanaged labels, forbidden states and absent editing support before any
+native request. These fields remain installation-owned; pipeline clients submit
+neither private configuration JSON nor mapping paths. Factory freezes the typed
+logical mapping in its original input version and dispatches only accepted action
+effects through the same Reporter/outbox. No extra poller, write path or card command
+producer is introduced.

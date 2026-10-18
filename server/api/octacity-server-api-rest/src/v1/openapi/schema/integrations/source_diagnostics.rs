@@ -30,12 +30,20 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       "run_id",
     ],
   );
+  schemas.insert("WorkSourceReportingRecord".into(), object(
+    json!({"definition":reference("FactoryFlowDefinitionReference"),"flow_run_id":id(),"cycle_id":id(),"node":text(128),"outcome":text(128),"node_attempt_id":id()}),
+    &["definition","flow_run_id","cycle_id","node","outcome","node_attempt_id"],
+  ));
+  schemas.insert("WorkSourceReportingOrigin".into(), object(
+    json!({"action":reference("WorkSourceReportingRecord"),"stages":array(reference("WorkSourceReportingRecord"),octacity_server_application::factory_configuration_document_bounds().schema_entries)}),
+    &["action","stages"],
+  ));
   let reporting = object(
-    json!({"operation_id":digest(),"state":{"type":"string","enum":["pending","claimed","applied","exhausted"]},"attempt":{"type":"integer","minimum":0},"available_at":time()}),
+    json!({"operation_id":digest(),"state":{"type":"string","enum":["pending","claimed","applied","exhausted"]},"attempt":{"type":"integer","minimum":0},"available_at":time(),"origin":reference("WorkSourceReportingOrigin")}),
     &["operation_id", "state", "attempt", "available_at"],
   );
   let admission = object(
-    json!({"association":association,"reporting":array(reporting,usize::from(octacity_server_application::MAX_WORK_SOURCE_REPORTING_OPERATIONS)),"reporting_truncated":{"type":"boolean"},"issue":reference("WorkSourceIssueLink")}),
+    json!({"association":association,"reporting":array(reference("WorkSourceReportingDiagnostic"),usize::from(octacity_server_application::MAX_WORK_SOURCE_REPORTING_OPERATIONS)),"reporting_truncated":{"type":"boolean"},"issue":reference("WorkSourceIssueLink")}),
     &["association", "reporting", "reporting_truncated"],
   );
   let candidate = object(
@@ -54,6 +62,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     64,
   );
   for (name, value) in [
+    ("WorkSourceReportingDiagnostic", reporting),
     ("WorkSourceIssueLink", issue),
     ("WorkSourceAdmissionDiagnostic", admission),
     (

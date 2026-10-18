@@ -14,7 +14,7 @@ async fn hosted_preview_reads_explicit_capability_without_claiming_or_admitting(
     .unwrap();
     let reader = HostedFactoryWorkSourcePreview::new(
       Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
-      vec![fixture.profile.clone()],
+      vec![fixture.profile.read.clone()],
       settings().operation_timeout,
       settings().cancellation_grace,
       CancellationToken::new(),
@@ -57,7 +57,7 @@ async fn hosted_preview_reads_explicit_capability_without_claiming_or_admitting(
       id: IntegrationId::generate(),
       version: IntegrationVersion::INITIAL,
       access_version: IntegrationVersion::INITIAL,
-      source_configuration: fixture.profile.binding.configuration.clone(),
+      source_configuration: fixture.profile.read.binding.configuration.clone(),
       reporter_configuration: None,
     });
     assert!(
@@ -84,7 +84,7 @@ async fn source_diagnostics_reads_existing_progress_and_admissions_without_chang
     limit: 2,
   };
   let initial = queries
-    .handle_query(&fixture.profile.context, query.clone())
+    .handle_query(&fixture.profile.read.context, query.clone())
     .await
     .unwrap();
   assert!(initial.scan.is_none());
@@ -92,7 +92,7 @@ async fn source_diagnostics_reads_existing_progress_and_admissions_without_chang
   fixture.worker().run_once(CancellationToken::new()).await.unwrap();
   let before = fixture.store.mutation_evidence_counts().await;
   let result = queries
-    .handle_query(&fixture.profile.context, query.clone())
+    .handle_query(&fixture.profile.read.context, query.clone())
     .await
     .unwrap();
   assert!(result.scan.is_some());
@@ -103,7 +103,10 @@ async fn source_diagnostics_reads_existing_progress_and_admissions_without_chang
   assert!(result.admissions[0].reporting.is_empty());
   assert!(result.admissions[0].issue.is_none());
   assert_eq!(
-    queries.handle_query(&fixture.profile.context, query).await.unwrap(),
+    queries
+      .handle_query(&fixture.profile.read.context, query)
+      .await
+      .unwrap(),
     result
   );
   assert_eq!(fixture.store.mutation_evidence_counts().await, before);
@@ -142,13 +145,13 @@ impl FactoryWorkSourceIssueLinks for Cards {
 #[tokio::test]
 async fn source_preview_correlates_existing_work_and_optional_cards_without_observation_mutations() {
   let mut fixture = Fixture::enabled("custom-tracker").await;
-  let (_, connection) = managed_access(&fixture, &fixture.profile.binding, IntegrationPurpose::TaskRead).await;
+  let (_, connection) = managed_access(&fixture, &fixture.profile.read.binding, IntegrationPurpose::TaskRead).await;
   let mut definition = fixture.input.definition().clone();
   definition.connection = Some(WorkSourceConnectionRef {
     id: connection,
     version: IntegrationVersion::INITIAL,
     access_version: IntegrationVersion::INITIAL,
-    source_configuration: fixture.profile.binding.configuration.clone(),
+    source_configuration: fixture.profile.read.binding.configuration.clone(),
     reporter_configuration: None,
   });
   let intent = WorkSourceConfigurationIntent {
@@ -167,14 +170,14 @@ async fn source_preview_correlates_existing_work_and_optional_cards_without_obse
       vec![WorkSourceCapability {
         project_id: intent.project_id,
         role: WorkSourceCapabilityRole::Source,
-        binding: fixture.profile.binding.clone(),
+        binding: fixture.profile.read.binding.clone(),
       }],
     )
     .unwrap()
   };
   let published = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers()))
     .handle_command(
-      &fixture.profile.context,
+      &fixture.profile.read.context,
       PublishWorkSourceConfigurationCommand {
         intent: intent.clone(),
         idempotency_key: IdempotencyKey::new("preview-managed").unwrap(),
@@ -192,7 +195,7 @@ async fn source_preview_correlates_existing_work_and_optional_cards_without_obse
   .unwrap();
   let reader = HostedFactoryWorkSourcePreview::new(
     Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
-    vec![fixture.profile.clone()],
+    vec![fixture.profile.read.clone()],
     settings().operation_timeout,
     settings().cancellation_grace,
     CancellationToken::new(),
@@ -220,7 +223,7 @@ async fn source_preview_correlates_existing_work_and_optional_cards_without_obse
     observed_at: time(5),
   };
   let first = queries
-    .handle_query(&fixture.profile.context, query.clone())
+    .handle_query(&fixture.profile.read.context, query.clone())
     .await
     .unwrap();
   assert!(first.candidates[0].admissions.is_empty());
@@ -233,7 +236,7 @@ async fn source_preview_correlates_existing_work_and_optional_cards_without_obse
     .await
     .unwrap();
   let second = queries
-    .handle_query(&fixture.profile.context, query.clone())
+    .handle_query(&fixture.profile.read.context, query.clone())
     .await
     .unwrap();
   assert_eq!(second.candidates[0].admissions.len(), 1);
@@ -251,7 +254,10 @@ async fn source_preview_correlates_existing_work_and_optional_cards_without_obse
     "a match remains separate from the existing admission"
   );
   cards.visible.store(false, Ordering::SeqCst);
-  let third = queries.handle_query(&fixture.profile.context, query).await.unwrap();
+  let third = queries
+    .handle_query(&fixture.profile.read.context, query)
+    .await
+    .unwrap();
   assert!(third.candidates[0].issue.is_none());
   assert!(third.candidates[0].admissions[0].issue.is_none());
   assert_eq!(third.candidates[0].admissions.len(), 1);
@@ -281,7 +287,7 @@ async fn source_preview_correlates_existing_work_and_optional_cards_without_obse
   assert!(
     queries
       .handle_query(
-        &fixture.profile.context,
+        &fixture.profile.read.context,
         PreviewWorkSourcesQuery {
           intent,
           limit: 2,
@@ -323,7 +329,7 @@ async fn source_diagnostics_hidden_runs_produce_neither_rows_nor_pagination_hint
   );
   let result = queries
     .handle_query(
-      &fixture.profile.context,
+      &fixture.profile.read.context,
       GetWorkSourceDiagnosticsQuery {
         project_id: fixture.input.project_id(),
         target: WorkSourceScanTarget::Input {
@@ -342,8 +348,8 @@ async fn source_diagnostics_hidden_runs_produce_neither_rows_nor_pagination_hint
 #[tokio::test]
 async fn hosted_preview_can_only_narrow_installed_read_bounds() {
   let mut fixture = Fixture::enabled("jira").await;
-  fixture.profile.polling.page_items = 1;
-  fixture.profile.polling.max_page_bytes = 4096;
+  fixture.profile.read.polling.page_items = 1;
+  fixture.profile.read.polling.max_page_bytes = 4096;
   let dir = fixture.root.path().join("jira");
   let manifest = std::fs::read_to_string(dir.join("adapter.toml")).unwrap();
   std::fs::write(
@@ -353,7 +359,7 @@ async fn hosted_preview_can_only_narrow_installed_read_bounds() {
   .unwrap();
   let reader = HostedFactoryWorkSourcePreview::new(
     Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
-    vec![fixture.profile.clone()],
+    vec![fixture.profile.read.clone()],
     settings().operation_timeout,
     settings().cancellation_grace,
     CancellationToken::new(),
@@ -397,7 +403,7 @@ async fn hosted_preview_applies_immutable_normalized_input_predicates_without_ad
     .unwrap();
     let reader = HostedFactoryWorkSourcePreview::new(
       Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
-      vec![fixture.profile.clone()],
+      vec![fixture.profile.read.clone()],
       settings().operation_timeout,
       settings().cancellation_grace,
       CancellationToken::new(),

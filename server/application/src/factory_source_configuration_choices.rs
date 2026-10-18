@@ -2,7 +2,8 @@
 use super::*;
 use octacity_server_domain::{IntegrationId, IntegrationVersion, ProjectId};
 pub use octacity_server_factory::{
-  MAX_WORK_SOURCE_PREDICATE_LABEL_BYTES as MAX_SOURCE_SELECTION_LABEL_BYTES,
+  MAX_SOURCE_REPORTING_CHOICES, MAX_SOURCE_REPORTING_EFFECT_LABELS, MAX_SOURCE_REPORTING_STATUSES,
+  MAX_SOURCE_REPORTING_TEXT_BYTES, MAX_WORK_SOURCE_PREDICATE_LABEL_BYTES as MAX_SOURCE_SELECTION_LABEL_BYTES,
   MAX_WORK_SOURCE_PREDICATE_LABELS as MAX_SOURCE_SELECTION_LABELS,
 };
 use serde::Serialize;
@@ -22,6 +23,9 @@ pub struct WorkSourceSelectionLabels {
 /// One usable installed profile; private role handles and credential references are absent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkSourceInputChoice {
+  /// Exact installed effect presentation; absence means unknown, never editable.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub reporting: Option<WorkSourceReportingChoice>,
   /// Explicit editable normalized states over an unrestricted installed read profile.
   /// Absence keeps legacy installed-only selection; clients cannot infer editing support.
   #[serde(skip_serializing_if = "Option::is_none")]
@@ -38,6 +42,14 @@ pub struct WorkSourceInputChoice {
   pub locator: ExternalWorkIdentity,
   /// Optional provider-validated literal selector presentation.
   pub selection: Option<WorkSourceSelectionLabels>,
+}
+/// Adapter-validated installed effects and optional explicit editing ceiling.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct WorkSourceReportingChoice {
+  /// Existing immutable default mapping, with no privileged status names.
+  pub mapping: WorkSourceStatusMapping,
+  /// None keeps installed-only selection; read-only checks do not imply write readiness.
+  pub editable: Option<WorkSourceReportingPolicy>,
 }
 /// Current safe choices and reviewed version preconditions; this is not an execution grant.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -72,6 +84,31 @@ impl ManagementAuthorizationTarget for ListWorkSourceInputChoicesQuery {
   }
 }
 impl<S> FactorySourceConfigurationHandlers<S> {
+  /// Attaches bounded presentation verified by the trusted installed Reporter owner.
+  /// This does not install a writer or grant any Project/native resource authority.
+  pub fn with_reporting_mapping(
+    mut self,
+    capability: WorkSourceCapability,
+    mapping: WorkSourceStatusMapping,
+    editable: Option<WorkSourceReportingPolicy>,
+  ) -> Result<Self, ApplicationError> {
+    mapping.validate().map_err(|_| ApplicationError::invalid())?;
+    if let Some(policy) = &editable {
+      policy
+        .validate_mapping(&mapping)
+        .map_err(|_| ApplicationError::invalid())?;
+    }
+    if capability.role != WorkSourceCapabilityRole::Reporter
+      || !self.capabilities.contains(&capability)
+      || self.reporting_mappings.iter().any(|(c, _)| c == &capability)
+    {
+      return Err(ApplicationError::invalid());
+    }
+    self
+      .reporting_mappings
+      .push((capability, WorkSourceReportingChoice { mapping, editable }));
+    Ok(self)
+  }
   /// Declares normalized narrowing support over an adapter-owned unrestricted base.
   /// The trusted installation owner supplies its native unrestricted state key and permitted states.
   /// This cannot change transport, credentials, resources, mapping or network authority.
@@ -224,6 +261,11 @@ impl<
         continue;
       }
       items.push(WorkSourceInputChoice {
+        reporting: self
+          .reporting_mappings
+          .iter()
+          .find(|(c, _)| c == capability)
+          .map(|(_, choice)| choice.clone()),
         predicate_states: self
           .predicate_states
           .iter()

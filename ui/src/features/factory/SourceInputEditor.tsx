@@ -14,17 +14,14 @@ import type {
   SourceSnapshot,
 } from './sourceApi';
 import { SourcePublication } from './SourcePublication';
+import { SourceReporting } from './SourceReporting';
+import {
+  sourceReferenceKey as referenceKey,
+  sourceBindingKey as bindingKey,
+} from './sourceReferences';
 
 export type SourceRepositories = Pick<FactoryWorkSources, 'listRepositories' | 'getRepository'>;
 type Input = components['schemas']['WorkSourceInput'];
-const referenceKey = (reference: Input['definition']['source']['resource']) =>
-  JSON.stringify([reference.identity, reference.version, reference.digest]);
-const bindingKey = (binding: Input['definition']['source']) =>
-  JSON.stringify(
-    [binding.installation, binding.capability, binding.configuration, binding.resource].map(
-      referenceKey,
-    ),
-  );
 const lines = (value: string) => value.split('\n').filter((label) => label.length > 0);
 /** Task container authority and code Repository are selected independently. Drafts are not cached. */
 export function SourceInputEditor({
@@ -87,15 +84,43 @@ export function SourceInputEditor({
   const [any, setAny] = useState(base?.predicate?.any_of.join('\n') ?? '');
   const [none, setNone] = useState(base?.predicate?.none_of.join('\n') ?? '');
   const [enabled, setEnabled] = useState(base?.enabled ?? false);
+  const [reporterProfile, setReporterProfile] = useState(() =>
+    base?.reporter ? bindingKey(base.reporter) : '',
+  );
+  const [reportingDraft, setReportingDraft] = useState(base?.reporting ?? null);
+  const writers =
+    choices.data?.items.filter(
+      (item) =>
+        item.purpose === 'task_update' &&
+        selected &&
+        referenceKey(item.binding.installation) === referenceKey(selected.binding.installation) &&
+        referenceKey(item.binding.resource) === referenceKey(selected.binding.resource),
+    ) ?? [];
+  const selectedWriter = writers.find((item) => bindingKey(item.binding) === reporterProfile);
   // A retained Reporter must not follow a different connection or native resource.
   const reporter =
-    base?.reporter &&
+    selectedWriter?.binding ??
+    (base?.reporter &&
+    reporterProfile === bindingKey(base.reporter) &&
     selected &&
     connectionId === base.connection?.id &&
     referenceKey(selected.binding.installation) === referenceKey(base.reporter.installation) &&
     referenceKey(selected.binding.resource) === referenceKey(base.reporter.resource)
       ? base.reporter
-      : null;
+      : null);
+  const reporting = reporter
+    ? (reportingDraft ?? selectedWriter?.reporting?.mapping ?? undefined)
+    : undefined;
+  const reporterOptions = writers.map((item) => ({
+    value: bindingKey(item.binding),
+    label: item.binding.configuration.identity,
+  }));
+  // Retaining an existing pin is distinct from offering a currently usable writer.
+  if (reporter && !selectedWriter)
+    reporterOptions.push({
+      value: bindingKey(reporter),
+      label: t('factory.retainedReporterUnavailable', { name: reporter.configuration.identity }),
+    });
   const intent: SourceIntent | null =
     connection &&
     selected &&
@@ -121,6 +146,7 @@ export function SourceInputEditor({
                 },
                 source: selected.binding,
                 reporter,
+                ...(reporter && reportingDraft ? { reporting: reportingDraft } : {}),
                 enabled,
                 connection: {
                   id: connection.id,
@@ -128,7 +154,9 @@ export function SourceInputEditor({
                   access_version: choices.data.access_version,
                   source_configuration: selected.connection_configuration,
                   reporter_configuration: reporter
-                    ? (base?.connection?.reporter_configuration ?? null)
+                    ? (selectedWriter?.connection_configuration ??
+                      base?.connection?.reporter_configuration ??
+                      null)
                     : null,
                 },
                 ...(custom && selected.predicate_states
@@ -198,6 +226,11 @@ export function SourceInputEditor({
     `${t('factory.sourceTarget')}: ${(base?.target ?? configuration.configuration.reference).id} · v${(base?.target ?? configuration.configuration.reference).version}`,
     t(enabled ? 'factory.inputEnabled' : 'factory.inputDisabled'),
     `${t('factory.diag.reporting')}: ${reporter?.configuration.identity ?? t('common.none')}`,
+    ...(reporter ? [t('factory.preserveLabels'), t('factory.reporterReadiness')] : []),
+    ...(reporting?.statuses.map(
+      (effect) =>
+        `${effect.status}: ${t('factory.addEffect')} ${effect.add.join(', ')}; ${t('factory.removeEffect')} ${effect.remove.join(', ')}; ${t('factory.taskState')} ${effect.state ?? t('factory.preserveState')}`,
+    ) ?? []),
     `${t('factory.taskState')}: ${selection?.state ?? t('factory.installedFilters')}`,
     `${t('factory.allLabels')}: ${selection?.all_of.join(' / ') ?? ''}`,
     `${t('factory.anyLabels')}: ${selection?.any_of.join(' / ') ?? ''}`,
@@ -214,6 +247,8 @@ export function SourceInputEditor({
         connections.map((item) => ({ value: item.id, label: item.definition.name })),
         (value) => {
           setConnectionId(value);
+          setReporterProfile('');
+          setReportingDraft(null);
           setResource('');
           setProfile('');
           setCustom(false);
@@ -237,6 +272,8 @@ export function SourceInputEditor({
         containers.map((item) => ({ value: item.binding.resource.identity, label: item.locator })),
         (value) => {
           setResource(value);
+          setReporterProfile('');
+          setReportingDraft(null);
           setProfile('');
           setCustom(false);
         },
@@ -321,6 +358,25 @@ export function SourceInputEditor({
       {unrestricted ? <p>{t('factory.unrestrictedLabels')}</p> : null}
       {repository.data && !repository.data.definition_digest ? (
         <p role="alert">{t('factory.repositoryDigestMissing')}</p>
+      ) : null}
+      {select(
+        t('factory.reporterMapping'),
+        reporterProfile,
+        reporterOptions,
+        (value) => {
+          setReporterProfile(value);
+          setReportingDraft(null);
+        },
+        t('factory.noReporter'),
+      )}
+      {!writers.length ? <p>{t('factory.noReporterAccess')}</p> : null}
+      {reporter ? (
+        <SourceReporting
+          mapping={reporting}
+          policy={selectedWriter?.reporting?.editable}
+          draft={reportingDraft}
+          onChange={setReportingDraft}
+        />
       ) : null}
       <label>
         <input
