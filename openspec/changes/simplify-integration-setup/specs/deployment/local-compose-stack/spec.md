@@ -25,3 +25,7 @@ Startup readiness SHALL verify installed setup capability and connection discove
 #### Scenario: Client bypasses the protected gateway
 - **WHEN** a client calls protected setup or credential administration through unverified direct server ingress
 - **THEN** the request is forbidden before private preparation, enrollment or provider access
+
+#### Scenario: Stand restarts after archival or interrupted deletion
+- **WHEN** a stand with an archived connection or pending exclusive credential deletion cleanup is restarted
+- **THEN** archival remains effective, authorized history remains readable, and cleanup resumes under the same operation without reactivation, old credential inheritance or removal of another connection's material

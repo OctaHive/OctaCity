@@ -43,6 +43,46 @@ Setup SHALL retain one recoverable administrative operation identity across priv
 - **WHEN** enrollment policy or credential authority is revoked while a prepared setup is pending
 - **THEN** recovery cannot activate it under stale authority and retains only safe failed-operation history and bounded cleanup
 
+### Requirement: Archival retires connections without deleting history
+The management API SHALL expose authorized provider-neutral archival with current metadata-version/admin-revision preconditions, scoped idempotency and safe audit receipts. Archival SHALL disable the connection, exclude it from default discovery and new-use selectors, and preserve authorization-filtered archived discovery, exact historical reads and retained dependency/history links. Filtering SHALL occur before pagination. Archival SHALL block subsequent provider dispatch, checks, metadata replacement, setup/rotation completion, new grants and input publication through that connection, including pending retries. It SHALL NOT delete or retarget retained grants, input versions, Work/Run, observations, pending effects or future internal-card references, recall accepted remote requests or prevent independent manual task creation/admission. Stale activation, setup completion and replay SHALL NOT restore archived authority. No unarchive operation is required by this change.
+
+#### Scenario: Used connection is archived
+- **WHEN** an authorized administrator archives a connection referenced by inputs and retained execution/reporting
+- **THEN** the ordinary list and selectors omit it, authorized archived/history reads retain its identity and dependents, and subsequent provider dispatch is blocked without rewriting accepted results
+
+#### Scenario: Archive races with a prepared setup or credential rotation
+- **WHEN** archival commits before a prepared operation completes
+- **THEN** completion cannot activate the connection or publish usable authority, and unreferenced preparation follows bounded cleanup
+
+#### Scenario: Discovery pages include archived connections in storage
+- **WHEN** a client requests ordinary connection discovery over stored active, disabled and archived connections
+- **THEN** archived entries are excluded before bounded pagination and authorized archived discovery remains separately available
+
+### Requirement: Permanent deletion is restricted to unused unreferenced connections
+The management API SHALL expose authorized dependency inspection and permanent deletion for never-used connections only. A bounded safe preview SHALL report authoritative eligibility, visible dependency reasons and non-disclosing blockers for protected dependencies. Deletion SHALL require explicit intent, current metadata-version/admin-revision preconditions and scoped idempotency, and atomically recheck absence of retained Project grants, input versions, Work/Run, observations/card references, pending effects, in-progress setup/credential publication and other consumers. Concurrent reference publication SHALL be fenced against deletion. Archival alone SHALL NOT make a used connection eligible. Completed setup, credential configuration and administrative read-only checks alone SHALL NOT count as task/execution use; accepted runtime use SHALL remain a blocker even when it produced no Work.
+
+Deletion SHALL retire only the unused connection data and exclusively owned unreferenced private credentials through recoverable generation-fenced cleanup. Shared installed handles, resources/profiles, adapters and other consumers' credentials SHALL remain intact. Private cleanup and ownership retirement SHALL prevent inheritance of deleted credentials or permanent ownership collisions during fresh setup. Interrupted cleanup SHALL remain unavailable for use and recover safely without claiming completed deletion prematurely. Minimal safe audit/idempotency tombstone evidence SHALL remain without secret values and SHALL prevent stale replay or identity reuse from resurrecting authority; completed administrative receipts alone SHALL NOT block deletion. Archive/delete SHALL NOT mutate external projects/items or revoke remote tokens. These rules SHALL apply equally to existing installed and newly enrolled connections and SHALL preserve manual creation/intake without a provider.
+
+#### Scenario: Administrator deletes an unused configured connection
+- **WHEN** a connection has configured credentials but has never been used, has no retained consumers or pending preparation, and the administrator confirms deletion
+- **THEN** deletion completes with a safe receipt after exclusive credential cleanup, shared installation data remains, and fresh setup neither inherits old credentials nor conflicts with the deleted owner's retired binding
+
+#### Scenario: Dependency appears after deletion preview
+- **WHEN** a Project grant or input reference is published after an eligible preview but before deletion commits
+- **THEN** deletion conflicts or is rejected with a safe dependency result and retains the connection and its credentials
+
+#### Scenario: Retained or protected dependency prevents deletion
+- **WHEN** a used or referenced connection is submitted for deletion, including after archival
+- **THEN** deletion is rejected without cascading removal, visible reasons are reported and protected dependent identities remain undisclosed
+
+#### Scenario: Process stops during private deletion cleanup
+- **WHEN** deletion is interrupted after the connection becomes unavailable but before exclusive private cleanup completes
+- **THEN** status/retry resumes the same operation after restart, retains minimal safe audit evidence and cannot expose or reactivate the old credential
+
+#### Scenario: Old operation is replayed after deletion
+- **WHEN** a completed setup, activation, rotation or deletion is retried after permanent deletion
+- **THEN** the original safe receipt is returned where permitted without recreating metadata, credentials, grants or usable authority
+
 ## MODIFIED Requirements
 
 ### Requirement: Reusable provider connections have versioned administration

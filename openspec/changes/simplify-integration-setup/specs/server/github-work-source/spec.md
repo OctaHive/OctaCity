@@ -49,3 +49,11 @@ GitHub connection administration SHALL configure a named connection using the in
 #### Scenario: Connection address is changed while reporting is pending
 - **WHEN** an administrator selects a different native repository in a replacement connection version
 - **THEN** pending reporting retains its original repository identity and authorization checks and cannot be redirected to the replacement repository
+
+#### Scenario: Connection is archived before reporting dispatch
+- **WHEN** a managed GitHub connection is archived before the next Source or Reporter dispatch
+- **THEN** no new native request or credential fallback is made through it, and retained Work/reporting keeps its original repository/item identities and results
+
+#### Scenario: Unused connection is permanently deleted
+- **WHEN** an authorized administrator deletes an eligible unused GitHub connection
+- **THEN** only its exclusively owned unreferenced private bindings are cleaned up, with no repository/Issue mutation or remote token revocation, and another connection to the same repository keeps its independent credentials and grants
