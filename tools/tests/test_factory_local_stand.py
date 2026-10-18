@@ -22,6 +22,25 @@ import local_stand_state as state
 
 
 class FactoryLocalStandTests(unittest.TestCase):
+    def test_plain_command_installs_the_demo_issue_repository_without_an_extra_flag(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            with patch.dict(os.environ, {"OCTACITY_LOCAL_STAND_ROOT": temporary}), \
+                    patch.object(demo, "run_stand", return_value={}) as start:
+                self.assertEqual(demo.main([]), 0)
+            self.assertEqual(start.call_args.kwargs["github_repository"], "OctaHive/OctaCity")
+
+    def test_plain_command_retains_an_installed_issue_repository_without_resolving_another(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            bundle = root / "config/integrations"
+            bundle.mkdir(parents=True)
+            retained = bundle / "server.toml"
+            retained.write_text("retained private installation")
+            with patch.object(demo, "run_stand", return_value={}) as start:
+                self.assertEqual(demo.main(["--root", str(root)]), 0)
+            self.assertIsNone(start.call_args.kwargs["github_repository"])
+            self.assertEqual(retained.read_text(), "retained private installation")
+
     def test_integration_setup_refuses_to_adopt_or_change_an_unrecognized_existing_bundle(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -72,11 +91,14 @@ class FactoryLocalStandTests(unittest.TestCase):
                     patch.object(demo.launcher, "run"), \
                     patch.object(demo, "install_repository", create=True) as install, \
                     patch.object(demo.launcher, "_run_compose") as compose, \
-                    patch.object(demo.integration, "LocalStandClient", side_effect=AssertionError("retained Runs must not be republished")):
+                    patch.object(demo.integration, "LocalStandClient") as client:
                 result = demo.run_stand(root, source, None, github_repository="Example/Tickets")
             self.assertEqual(result, retained)
             install.assert_called_once_with(root, "Example/Tickets")
             self.assertEqual(compose.call_args.args[2], ("up", "--detach", "--wait", "server", "gateway"))
+            self.assertEqual([call.args[0] for call in client.return_value.get.call_args_list],
+                             ["/api/v1/integration-installations", "/api/v1/integrations"])
+            client.return_value.post.assert_not_called()
 
     def test_command_accepts_an_explicit_issue_repository_independent_of_build_source(self):
         with patch.object(demo, "run_stand", return_value={}) as start:
@@ -168,7 +190,7 @@ class FactoryLocalStandTests(unittest.TestCase):
                          "restarts the retained real demonstration stand")
     def test_restart_preserves_seed_receipt_without_replaying_operator_work(self):
         expected = demo._read_json(state.DEFAULT_ROOT / "evidence/factory-demo.json")
-        with patch.object(demo.integration, "LocalStandClient",
+        with patch.object(demo.integration.LocalStandClient, "post",
                           side_effect=AssertionError("a seeded stand must not publish demonstration work again")):
             actual = demo.run_stand(state.DEFAULT_ROOT, "https://github.com/OctaHive/OctaCity", None)
         self.assertEqual(actual, expected)

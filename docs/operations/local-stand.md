@@ -248,8 +248,13 @@ for its wider ordinary CI/CD checks.
 
 ### GitHub connections in the personal Factory stand
 
-Install an explicit task repository separately from the code repository used by
-the demonstration Builds:
+The ordinary `tools/factory-stand` command also prepares integration management
+and installs the demo task repository, `OctaHive/OctaCity`, on first use. Its
+selection is declared in `deployment/local-stand/fixtures/factory-demo.json`,
+separately from the code repository used by the demonstration Builds. Existing
+Factory stands without integration setup gain it on their next launch, retaining
+their Runs. Subsequent launches reuse an installed selection without resolving
+or replacing it. To select another public task repository on initial setup:
 
 ```shell
 tools/factory-stand --github-repository OctaHive/OctaCity
@@ -257,11 +262,11 @@ tools/factory-stand --github-repository OctaHive/OctaCity
 
 The launcher builds **committed** sources. Commit a local fix before rebuilding;
 editing the working tree alone does not update its images. The server image now
-includes the independent `octacity-github` executable. This option resolves the
+includes the independent `octacity-github` executable. Initial setup resolves the
 public repository's native ID without authentication and installs its exact
 resource ceiling. It never reads GitHub CLI sessions, local credential stores or
 `GITHUB_TOKEN` to configure the connection. Private-repository identity bootstrap
-is not provided by this option.
+is not provided by this setup.
 
 Open **Integrations**, create a named GitHub connection and select the installed
 repository/purposes. Enter your token in the separate credential form. Reading

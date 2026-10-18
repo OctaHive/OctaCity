@@ -81,6 +81,10 @@ def run_stand(root: Path, source: str, revision: str | None, *, github_repositor
     if github_repository is not None:
         install_repository(root, github_repository)
         launcher._run_compose(root, 8443, ("up", "--detach", "--wait", "server", "gateway"), timeout_seconds=180)
+    if github_repository is not None or (root / "config/integrations/server.toml").exists():
+        probe = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
+        for endpoint in ("/api/v1/integration-installations", "/api/v1/integrations"):
+            probe.get(endpoint)
     receipt_file = root / "evidence/factory-demo.json"
     if receipt_file.exists():
         return _read_json(receipt_file)
@@ -285,6 +289,10 @@ def main(arguments=None) -> int:
     parser.add_argument("--github-repository", help="explicit owner/repository to install as a ticket source; credentials are entered in Integrations")
     args = parser.parse_args(arguments)
     try:
+        installed = args.root / "config/integrations/server.toml"
+        if args.github_repository is None and not (installed.exists() or installed.is_symlink()):
+            fixture = json.loads((launcher.REPOSITORY / "deployment/local-stand/fixtures/factory-demo.json").read_text())
+            args.github_repository = fixture["github_repository"]
         receipt = run_stand(args.root, args.source_repository, args.source_revision, github_repository=args.github_repository)
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Factory stand failed: {error}", file=sys.stderr)
