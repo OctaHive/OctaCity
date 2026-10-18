@@ -1,0 +1,46 @@
+## 1. Establish compatibility and the setup contract
+
+- [ ] 1.1 Run existing integration metadata, credential, Project-access and manual-admission behavioral tests before refactoring; add characterization only for uncovered retained identities/no automatic execution. Verify these tests pass and record commands without inventing a Red failure for unchanged behavior.
+- [ ] 1.2 Through TDD, add typed protected setup intent, safe receipt/status and installed setup-capability discovery at the application boundary. Verify Red/Green for one previously unlisted synthetic external project, bounded invalid input, unsupported capability and absence of implicit grants, import or execution.
+- [ ] 1.3 Through TDD, enforce connection/credential/enrollment authorization and default-deny installed policy before private preparation or provider invocation. Verify public denied-path tests observe no provider calls, private writes or hidden-resource disclosure, and a permitted second synthetic provider works without GitHub-specific application types.
+
+## 2. Verify and enroll external resources
+
+- [ ] 2.1 Through TDD, extend the verified provider setup/resolve contract with approved address rules, enrollment ceilings, typed native identity and separate permission evidence. Verify contract tests reject unsupported versions, malformed results, mismatched adapter pins and unauthorized resource scope while preserving older non-setup capabilities.
+- [ ] 2.2 Through TDD, implement GitHub authenticated repository-address resolution for public/private and non-demo repositories. Verify native adapter transport-fixture tests use only the submitted token, retain exact native identity/canonical context and require no public lookup or ambient credentials.
+- [ ] 2.3 Through TDD, enforce URL/host/redirect and response/request bounds in native setup. Verify forbidden destinations receive no token, invalid paths/embedded credentials are rejected, identity mismatches fail and throttling/unavailability stay classified without timing-dependent sleeps.
+- [ ] 2.4 Through TDD, persist additive verified resource/profile declarations within installed policy and merge them with legacy installed resources. Verify store contract tests, including PostgreSQL migration/restart coverage, preserve immutable pins, reject conflicting publication and keep two connections' credentials/grants independent.
+
+## 3. Complete setup and credential recovery
+
+- [ ] 3.1 Through TDD, compose setup with existing private credential preparation/publication and connection activation using one operation identity. Verify read-only and read/modify success, separate purpose handles, unavailable partial setup and no Delivery/repository authority from the submitted task token.
+- [ ] 3.2 Through TDD, implement durable recovery and completion fencing around provider/resource/private publication. Verify process interruption, lost response, concurrent duplicate submission, conflicting token/key reuse and stale replay converge on one outcome across store implementations; failed replacement preserves the prior working version.
+- [ ] 3.3 Through TDD, enforce completion-time policy/revocation/version checks and bounded cleanup of unreferenced preparation. Verify revocation during setup cannot activate it and cleanup cannot remove active or referenced credentials, without increasing timeouts or serializing tests.
+- [ ] 3.4 Through TDD, return truthful per-purpose read-only readiness. Verify confirmed read plus unverified write can save with explicit evidence; known-denied selected permission, invalid token and required-read failure do not silently downgrade or succeed; provider fixtures observe no mutation requests.
+
+## 4. Wire protected management and runtime consumers
+
+- [ ] 4.1 Through TDD, expose setup/capability/status through REST with strong preconditions, scoped idempotency and authorization inventory; update OpenAPI fixtures/generated types. Verify HTTP tests cover unauthorized ingress, side-effect-free denial, bounds, version conflict, safe replay and all supported setup outcomes.
+- [ ] 4.2 Through TDD, extend runtime composition so newly enrolled resources work immediately and after restart for checks, Source and Reporter under exact pins. Verify process/adapter integration tests use the newly selected resource without rebuilding images or rewriting installed bundles and cannot retarget pending reporting when the address changes.
+- [ ] 4.3 Through TDD, constrain Project grants and each runtime dispatch to current connection purposes as well as installed/Project ceilings. Verify read-only connection cannot grant updates, removal/readdition requires explicit valid regrant, rename/token rotation preserve native/admission identity, and revoked access cannot fall back to another credential.
+- [ ] 4.4 Through TDD, cover secret handling through the actual HTTP/private-publisher boundary. Verify success, denial, provider error, cancellation, replay and cleanup expose no sentinel secret in responses, safe history, logs/audit, metadata or public credential-derived values; existing installed-handle adoption remains usable.
+
+## 5. Replace the primary UI setup flow
+
+- [ ] 5.1 Through TDD, implement the single Add integration form with name, external URL, transient password token and supported read/modify choices plus Check and save. Verify component tests for server-advertised provider selection/disambiguation, in-form summary and no technical resource/handle or separate activation prerequisites.
+- [ ] 5.2 Through TDD, implement safe operation-status recovery, inline errors and submission/cancellation handling. Verify component/transport tests prevent duplicate setup, clear tokens on submission/navigation, avoid query/mutation cache retention and recover an uncertain response without retaining the token.
+- [ ] 5.3 Through TDD, simplify connection details and editing/token replacement/disable actions while retaining advanced compatibility. Verify name/address/permissions/readiness presentation, unverified write feedback, token-free rename, explicit disruptive-change confirmation and version conflicts through existing public APIs.
+- [ ] 5.4 Through TDD, expose separate OctaCity Project access using saved connections and only their allowed purposes. Verify UI tests need no token, respect both administrative boundaries, keep repository/Delivery authority separate and leave pipeline intake disabled until explicitly configured.
+- [ ] 5.5 Through TDD, add English/Russian browser coverage for keyboard use, supported narrow widths, token clearing and the two-operation setup-to-grant path. Verify there is no horizontal content overflow, secret persistence or credential entry in pipeline selection; manual intake remains available without any connection.
+
+## 6. Make Factory stand setup independent of a repository
+
+- [ ] 6.1 Through TDD, install the pinned GitHub adapter, protected transport, publisher capability and explicit enrollment policy independently of a native repository. Verify launcher/config tests start clean integration setup without a repository/token/public lookup even when provider access is unavailable; retain explicit legacy repository configuration without widening its ceiling.
+- [ ] 6.2 Through TDD, update generated/private deployment composition and source packaging as needed for adapter-only setup and managed resource persistence. Verify Docker-context/archive contracts include every referenced asset and restart tests retain private files, resource/connection/grant identities and Work/Run history.
+- [ ] 6.3 Through TDD, extend launcher readiness to exercise actual setup/capability and connection routes through the verified gateway. Verify healthy-process-but-forbidden/missing-runtime cases fail actionably, correctly configured routes pass and direct unverified setup/credential access remains forbidden.
+
+## 7. Qualify the complete workflow and document it
+
+- [ ] 7.1 Qualify the packaged composed stand through the real browser/gateway/server/private publisher using a hermetic approved provider fixture: create a non-demo private project connection, separately grant a Project, select it for a pipeline and restart. Verify only the explicitly authorized actions occur, checks make no external writes, resource bindings survive restart and manual admission still works; record this separately from mocked UI tests or optional live GitHub qualification.
+- [ ] 7.2 Update integration-management contracts, Factory source setup and local-stand documentation with the single form, separate Project grants, token-vs-local permissions, unverified writing, installed enrollment policy and compatible legacy/migration/rollback paths. Verify links and examples match implemented OpenAPI/CLI behavior and do not promise native GitLab/Jira support or require internal cards.
+- [ ] 7.3 Run required repository checks and relevant integration/provider/store/UI/browser/launcher regressions, recording each behavior slice's observed Red/Green commands. Verify `openspec validate simplify-integration-setup --strict` and `git diff --check`; monitor free space before/during builds, reuse scoped targets and avoid unnecessary full rebuilds. Confirm `add-factory-work-card` artifacts and completed tasks remain untouched.
