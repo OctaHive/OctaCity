@@ -2,7 +2,7 @@
 
 ## Delivered scope
 
-[Factory task-source setup](../../../docs/reference/factory-work-sources-setup.md)
+[Factory task-source setup](../../../../docs/reference/factory-work-sources-setup.md)
 documents the full operator sequence and the separate installation-owner boundary:
 reusable connections, protected provision/adopt/rotate/revoke, explicit activation,
 Project/resource/purpose grants, bounded read-only checks, Source installation,
@@ -18,7 +18,7 @@ remain in `add-factory-work-card`. Manual Artifact intake stays available withou
 a connection. No additional provider, card, loader or credential mechanism is added.
 
 The guide and existing Flow/management/diagnostic references link to four editable
-[settings examples](../../../config/factory/work-sources/README.md):
+[settings examples](../../../../config/factory/work-sources/README.md):
 
 - `assessment.json`: unlabeled open intake excluding already evaluated labels;
   explicit accepted defect/feature and declined effects.

@@ -8,7 +8,7 @@ No live provider check, preview, credential operation, polling, admission, label
 write, remote fixture creation or cleanup was performed in this task.
 
 The concrete operator procedure is
-[Opt-in live GitHub Work Source qualification](../../../docs/reference/github-work-source-live-qualification.md).
+[Opt-in live GitHub Work Source qualification](../../../../docs/reference/github-work-source-live-qualification.md).
 It records required identities and grants, read-only checks/preview, reviewed
 Factory/outbox effects, replay, rotation/revocation, owned cleanup and qualification
 criteria. It uses the existing public management/process/runtime contracts without

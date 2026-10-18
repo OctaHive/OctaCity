@@ -12,7 +12,7 @@ Implementation baseline and remaining seams:
 - `ui/src/features/factory/ConfigurationEditor.tsx` already selects visible Factory dependencies through generated REST types. Add an input section there or in its adjacent configuration detail rather than create a second pipeline designer.
 - `ui/src/features/factory/FlowGraphEditor.tsx` and `FlowBindings.tsx` already author ordinary trusted-action bindings; use those surfaces for stage-local source effects.
 
-The existing [extension boundaries](../../../docs/architecture/factory-extension-boundaries.md) deliberately reserved this change. The approved generic Flow and non-authoritative reporting contracts remain controlling.
+The existing [extension boundaries](../../../../docs/architecture/factory-extension-boundaries.md) deliberately reserved this change. The approved generic Flow and non-authoritative reporting contracts remain controlling.
 
 The revised `add-factory-work-card` plans a persistent internal Issue above immutable Work. In this document, **external task** means the native GitHub Issue (or another installed provider's task); **internal Issue** means that optional Project-owned card. Existing references to an Issue's labels/state describe the external task unless explicitly qualified. Completed task entries and verification evidence remain preserved. Task 5.14 exposes an optional application handoff over existing installed Source v1 reads; it adds no protocol operation or persistent card lifecycle.
 
@@ -94,7 +94,7 @@ Retain per-input/group progress, scan windows, pending candidate intents, owner/
 
 Retain a narrow execution-neutral observation seam over these installed Source operations. An observation carries trusted Project/security scope, installation/native resource/item identity, display context, freshness evidence and bounded snapshot/input provenance; GitHub wire DTOs and secrets stay inside their existing boundaries. Pipeline matching and Work admission consume observations separately. Observations of already admitted tasks must not be suppressed solely by admission replay or exposed only through the last accepted Work snapshot. Existing Work continues to use its original frozen inputs.
 
-`WorkSourceObservations` and `HostedWorkSourceObservations` implement this as an explicitly invoked bounded page read, with no Factory target/input id, store or observer subscription. Observation and preview consume `WorkSourceReadProfile`; intake composes that same read scope with separate preparation settings, so independent consumers supply no acceptance/Artifact/code-source/Work-classification settings. They share installed process execution, normalized snapshot translation and `SourcePollingPolicy` validation with intake. The request reuses original Source scan identity, window and continuation; future import/refresh policy owns durable progress. A separately installed permitted selector can include closed/nonmatching tasks without changing execution selectors. Managed current-read checks precede dispatch and private response handoff under one deadline. Native correlation reuses the existing hash; private snapshot digest and trusted read/expiry times distinguish live changed, live unchanged and stale evidence without ordering opaque provider update ids. See [observation reference](../../../docs/reference/work-source-observations.md) and verification-5.14.md.
+`WorkSourceObservations` and `HostedWorkSourceObservations` implement this as an explicitly invoked bounded page read, with no Factory target/input id, store or observer subscription. Observation and preview consume `WorkSourceReadProfile`; intake composes that same read scope with separate preparation settings, so independent consumers supply no acceptance/Artifact/code-source/Work-classification settings. They share installed process execution, normalized snapshot translation and `SourcePollingPolicy` validation with intake. The request reuses original Source scan identity, window and continuation; future import/refresh policy owns durable progress. A separately installed permitted selector can include closed/nonmatching tasks without changing execution selectors. Managed current-read checks precede dispatch and private response handoff under one deadline. Native correlation reuses the existing hash; private snapshot digest and trusted read/expiry times distinguish live changed, live unchanged and stale evidence without ordering opaque provider update ids. See [observation reference](../../../../docs/reference/work-source-observations.md) and verification-5.14.md.
 
 The card change owns explicit import/link-refresh configuration and its durable task updates, including refresh of retained links that no longer match an execution selector. It must reuse the authorized Source read/observation and bounded progress/reconciliation contracts. A nonmatching/closed external task is not deleted from an internal card, and an observation alone is not a Run request. Disabling an execution input stops its admissions; separately configured link refresh can continue only with its own enabled policy and current read grants. No optional consumer means no card mutations or extra provider reads, and existing intake does not wait for card availability. Do not add an unbounded cache, implicit observer subscription or second provider polling implementation here.
 
@@ -312,14 +312,14 @@ Native correlation includes the installed security partition and excludes input
 identity; automatic replay remains unchanged. Optional visible task links use a
 read-only authoritative owner capability, without creating or refreshing cards.
 See [task 5.7 verification](verification-5.7.md) and
-[Source diagnostics reference](../../../docs/reference/factory-source-diagnostics.md).
+[Source diagnostics reference](../../../../docs/reference/factory-source-diagnostics.md).
 
 Task 5.8 publishes canonical schema-checked wire examples and the existing
 `set_status` parameter contract, with shared authoritative retry/credential bounds.
 Generated client checks preserve write-only credentials, native correlation,
 optional visible Issue links and independent manual admission. See
 [task 5.8 verification](verification-5.8.md) and the
-[integration contract reference](../../../docs/reference/integration-management-contracts.md).
+[integration contract reference](../../../../docs/reference/integration-management-contracts.md).
 
 Task 5.9 adds dedicated Integrations list/detail navigation, reviewed metadata and
 credential administration, and explicit resource/purpose checks. Its approved

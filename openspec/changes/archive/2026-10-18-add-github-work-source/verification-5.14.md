@@ -32,7 +32,7 @@ claimed. The card change still owns import/link-refresh enablement, durable task
 progress, association uniqueness, revision ordering, field ownership, execution
 requests and additional command producers. Empty/incomplete pages do not mean
 deletion, and opaque update ids do not establish a remote revision order. See the
-[observation reference](../../../docs/reference/work-source-observations.md).
+[observation reference](../../../../docs/reference/work-source-observations.md).
 Completed earlier tasks and their uncommitted implementation remain preserved.
 
 ## Observed TDD cycles

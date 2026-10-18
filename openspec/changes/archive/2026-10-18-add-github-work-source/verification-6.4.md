@@ -180,7 +180,7 @@ for those future manual tasks.
 recorded in [6.2](verification-6.2.md). No disposable repository, selected live
 installation/connection or Project/resource/purpose grants were supplied. Closing
 this regression gate does not turn the hermetic pilot into a live pass. The
-[live runbook](../../../docs/reference/github-work-source-live-qualification.md)
+[live runbook](../../../../docs/reference/github-work-source-live-qualification.md)
 retains that separate operator qualification and owned-resource cleanup procedure.
 
 No commit, push or change archival was performed.

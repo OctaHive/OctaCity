@@ -84,7 +84,7 @@ new Source/Reporter behavior still requires its own observed Red then Green.
 ## Provider-independent extension constraint
 
 The requested GitLab, Jira and other-provider extensibility follows the
-existing [extension boundaries](../../../docs/architecture/factory-extension-boundaries.md)
+existing [extension boundaries](../../../../docs/architecture/factory-extension-boundaries.md)
 and the change design: shared admission/replay, normalized Work/Artifact
 inputs, exact target Configuration/Repository and non-authoritative reporting
 remain provider-neutral. The target code Repository is independent of the

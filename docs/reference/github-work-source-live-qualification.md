@@ -201,4 +201,4 @@ checks actually pass; never promote the hermetic result or this procedure's
 existence to live activation evidence.
 
 For this change's recorded preparation and missing inputs, see
-[task 6.2 evidence](../../openspec/changes/add-github-work-source/verification-6.2.md).
+[task 6.2 evidence](../../openspec/changes/archive/2026-10-18-add-github-work-source/verification-6.2.md).
