@@ -304,6 +304,10 @@ pub(crate) enum MutationKind {
   MoveProject,
   DeleteProject,
   PublishProjectPolicy,
+  CreateIssue,
+  AdoptIssueWorkflow,
+  EditIssue,
+  TransitionIssue,
   PublishIssueWorkflow,
   SelectDefaultIssueWorkflow,
   CreateAgentPool,
@@ -418,6 +422,20 @@ impl MutationKind {
         "project",
         "issue-workflow.default-selected"
       ),
+      Self::EditIssue => metadata!(b"octacity.edit-issue.v1\0", "edit-issue", "issue", "issue.edited"),
+      Self::TransitionIssue => metadata!(
+        b"octacity.transition-issue.v1\0",
+        "transition-issue",
+        "issue",
+        "issue.transitioned"
+      ),
+      Self::AdoptIssueWorkflow => metadata!(
+        b"octacity.adopt-issue-workflow.v1\0",
+        "adopt-issue-workflow",
+        "issue",
+        "issue.workflow-adopted"
+      ),
+      Self::CreateIssue => metadata!(b"octacity.create-issue.v1\0", "create-issue", "issue", "issue.created"),
       Self::PublishIssueWorkflow => metadata!(
         b"octacity.publish-issue-workflow.v1\0",
         "publish-issue-workflow",

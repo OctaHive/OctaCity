@@ -231,27 +231,40 @@ fn invalid() -> StoreError {
 
 // Serializes only business-policy changes within this Project, including the first
 // publication when no workflow row exists yet. It also fences concurrent deletion.
-async fn lock_project(
+pub(super) async fn lock_project(
   connection: &mut PgConnection,
   project_id: ProjectId,
 ) -> Result<PublishedIssueWorkflow, StoreError> {
-  let created_at: i64 = sqlx::query_scalar(
-    "SELECT FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT FROM projects WHERE id = $1 FOR UPDATE",
-  )
-  .bind(project_id.as_uuid())
-  .fetch_optional(&mut *connection)
-  .await
-  .map_err(unavailable)?
-  .ok_or(StoreError::NotFound {
-    entity: EntityKind::Project,
-  })?;
+  project_template(connection, project_id, true).await
+}
+
+// Issue mutations already lock their own head. Reading immutable policy must use
+// the same connection without taking the Project publication lock or another pool slot.
+pub(super) async fn project_template(
+  connection: &mut PgConnection,
+  project_id: ProjectId,
+  lock: bool,
+) -> Result<PublishedIssueWorkflow, StoreError> {
+  let query = if lock {
+    "SELECT FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT FROM projects WHERE id = $1 FOR UPDATE"
+  } else {
+    "SELECT FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT FROM projects WHERE id = $1"
+  };
+  let created_at: i64 = sqlx::query_scalar(query)
+    .bind(project_id.as_uuid())
+    .fetch_optional(connection)
+    .await
+    .map_err(unavailable)?
+    .ok_or(StoreError::NotFound {
+      entity: EntityKind::Project,
+    })?;
   initial_issue_workflow(
     project_id,
     Timestamp::from_unix_millis(created_at).map_err(|_| StoreError::Unavailable)?,
   )
 }
 
-async fn read(
+pub(super) async fn read(
   connection: &mut PgConnection,
   initial: &PublishedIssueWorkflow,
   id: IssueWorkflowId,
@@ -282,7 +295,10 @@ async fn read(
 
 // Materialize the retained template only inside an authorized mutation, so exact
 // default references get a foreign key without turning reads into initialization.
-async fn retain_initial(connection: &mut PgConnection, initial: &PublishedIssueWorkflow) -> Result<(), StoreError> {
+pub(super) async fn retain_initial(
+  connection: &mut PgConnection,
+  initial: &PublishedIssueWorkflow,
+) -> Result<(), StoreError> {
   sqlx::query("INSERT INTO issue_workflows (project_id, id, current_version) VALUES ($1,$2,1) ON CONFLICT DO NOTHING")
     .bind(initial.project_id.as_uuid())
     .bind(initial.id.as_uuid())
@@ -302,7 +318,7 @@ async fn insert_version(connection: &mut PgConnection, workflow: &PublishedIssue
   Ok(())
 }
 
-async fn read_default(
+pub(super) async fn read_default(
   connection: &mut PgConnection,
   initial: &PublishedIssueWorkflow,
 ) -> Result<IssueWorkflowDefault, StoreError> {

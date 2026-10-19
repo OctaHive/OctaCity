@@ -69,6 +69,7 @@ const INTEGRATION_TABLES: [&str; 7] = [
   "integration_project_access",
   "integration_project_access_versions",
 ];
+const ISSUE_TABLES: [&str; 4] = ["issue_numbers", "issues", "issue_revisions", "issue_status_history"];
 const ISSUE_WORKFLOW_TABLES: [&str; 3] = ["issue_workflows", "issue_workflow_versions", "issue_workflow_defaults"];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
 const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [
@@ -159,6 +160,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     .into_iter()
     .chain(INTEGRATION_TABLES)
     .chain(ISSUE_WORKFLOW_TABLES)
+    .chain(ISSUE_TABLES)
   {
     assert!(!table_exists(&previous.pool, table).await?);
   }
@@ -223,6 +225,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     .into_iter()
     .chain(INTEGRATION_TABLES)
     .chain(ISSUE_WORKFLOW_TABLES)
+    .chain(ISSUE_TABLES)
   {
     assert!(!table_exists(&rollback.pool, table).await?);
   }
@@ -514,6 +517,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
   .chain(FACTORY_RETENTION_TABLES)
   .chain(INTEGRATION_TABLES)
   .chain(ISSUE_WORKFLOW_TABLES)
+  .chain(ISSUE_TABLES)
   .map(str::to_owned)
   .collect();
   if actual != expected {
