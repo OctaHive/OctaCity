@@ -15,6 +15,8 @@ mod configuration;
 mod definition_discovery;
 mod execution;
 mod factory;
+mod issue;
+pub use issue::*;
 mod issue_workflow;
 mod job_event;
 pub use issue_workflow::*;
@@ -29,7 +31,6 @@ mod resource_search;
 mod retention;
 mod trigger;
 
-pub use adapter::IssueWorkflowManagementApplication;
 pub use adapter::{
   AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,
   BuildLogSearchManagementApplication, BuildManagementApplication, BuildResultRetentionManagementApplication,
@@ -41,6 +42,7 @@ pub use adapter::{
   ProjectManagementApplication, ResourceSearchManagementApplication, ScheduleManagementApplication,
   management_authorization_operations, router as management_routes,
 };
+pub use adapter::{IssueManagementApplication, IssueWorkflowManagementApplication};
 pub use agent::*;
 pub use artifact::*;
 pub use audit::*;

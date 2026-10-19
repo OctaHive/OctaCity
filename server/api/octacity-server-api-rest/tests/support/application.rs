@@ -105,6 +105,8 @@ where
   let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), application.clone()));
   let job_event_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), job_events));
   let retention_commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), retention.clone()));
+  let issue_commands = commands.clone();
+  let issue_queries = queries.clone();
   let workflow_commands = commands.clone();
   let workflow_queries = queries.clone();
   let retention_queries = Arc::new(AuthorizedQueryHandler::new(policy, retention));
@@ -156,5 +158,9 @@ where
   .with_issue_workflows(octacity_server_api_rest::v1::IssueWorkflowManagementApplication::new(
     workflow_commands,
     workflow_queries,
+  ))
+  .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
+    issue_commands,
+    issue_queries,
   ))
 }

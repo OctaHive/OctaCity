@@ -960,3 +960,15 @@ bounded discovery, validation, immutable publication, retained reads and exact
 default selection. They require no Factory or integration setup. See
 [Issue workflow contracts](issue-workflows.md#management-rest-v1) for request
 shapes, separate workflow/default ETags, authorization and replay semantics.
+
+
+## Manual Issues and explicit business moves
+
+The server exposes provider-free Issue creation, dedicated no-store current and
+retained requirements reads, content edits, bounded visible summaries/revisions,
+direct move review, preconditioned transitions/status history and explicit
+workflow adoption. Paths remain scoped by the owning Project. See
+[Issue REST contracts](issues.md#management-rest-v1) for the complete route table,
+closed input grammar, separate rights, exact replay and cursor/precondition rules.
+These endpoints do not start or control Factory Runs; existing Run and Build
+commands retain their original request bodies and authorization targets.

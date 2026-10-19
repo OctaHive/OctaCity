@@ -8,6 +8,7 @@ mod execution;
 mod factory;
 mod integrations;
 mod issue_workflows;
+mod issues;
 mod log_search;
 mod operational;
 mod operator_attention;

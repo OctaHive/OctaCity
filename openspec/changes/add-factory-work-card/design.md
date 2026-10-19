@@ -217,30 +217,30 @@ Proposed resources below `/api/v1`:
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET/POST | `/issues` | Bounded visible list / manual creation |
-| GET/PATCH | `/issues/{issue_id}` | Task card / preconditioned editable-field revision |
+| GET/POST | `/projects/{project_id}/issues` | Bounded visible list / manual creation |
+| GET/PATCH | `/projects/{project_id}/issues/{issue_id}` | Task card / preconditioned editable-field revision |
 | GET/POST | `/projects/{project_id}/issue-workflows` | Visible workflow versions / reviewed immutable publication and Project default selection |
-| GET | `/issues/{issue_id}/transitions` | Current permitted business moves and applicability/ownership reasons |
-| POST | `/issues/{issue_id}/transitions` | Explicit preconditioned organizational transition, not a Run control |
-| GET | `/issues/{issue_id}/status-history` | Bounded status transition receipts and safe provenance |
-| POST | `/issues/{issue_id}/workflow-adoption` | Explicit reviewed workflow/version/status correspondence |
-| GET | `/issues/{issue_id}/revisions` | Authorized bounded requirements history |
-| GET/POST | `/issues/{issue_id}/executions` | Execution history / explicit reviewed execution request |
-| GET | `/issues/{issue_id}/executions/{request_id}` | Recoverable publication/admission receipt |
-| GET | `/issues/{issue_id}/results` | Exact selected-execution checks and outcomes |
+| GET | `/projects/{project_id}/issues/{issue_id}/transitions` | Current permitted business moves and applicability/ownership reasons |
+| POST | `/projects/{project_id}/issues/{issue_id}/transitions` | Explicit preconditioned organizational transition, not a Run control |
+| GET | `/projects/{project_id}/issues/{issue_id}/status-history` | Bounded status transition receipts and safe provenance |
+| POST | `/projects/{project_id}/issues/{issue_id}/workflow-adoption` | Explicit reviewed workflow/version/status correspondence |
+| GET | `/projects/{project_id}/issues/{issue_id}/revisions` | Authorized bounded requirements history |
+| GET/POST | `/projects/{project_id}/issues/{issue_id}/executions` | Execution history / explicit reviewed execution request |
+| GET | `/projects/{project_id}/issues/{issue_id}/executions/{request_id}` | Recoverable publication/admission receipt |
+| GET | `/projects/{project_id}/issues/{issue_id}/results` | Exact selected-execution checks and outcomes |
 | GET | `/projects/{project_id}/issue-property-choices` | Visible property definitions, generated bounds and assignee-directory availability |
 | GET/POST | `/projects/{project_id}/issue-property-definitions` | Retained definition versions / reviewed immutable publication |
-| GET | `/issues/{issue_id}/children` | Visible bounded same-Project sub-issues |
-| GET/POST | `/issues/{issue_id}/code-reviews` | Observed PR/MR links / explicit scoped reviewed attachment |
-| GET | `/issues/{issue_id}/executions/{request_id}/journal` | Bounded exact execution hierarchy/event references and log-reader links |
-| GET | `/issues/{issue_id}/checks` | Subject-bound Factory and external CI observations with coverage |
-| GET | `/issues/{issue_id}/artifacts` | Visible exact input/output/report references and authorized preview/download links |
-| GET | `/issues/{issue_id}/timeline` | Safe system and discussion references |
-| GET/POST | `/issues/{issue_id}/comments` | Dedicated body reads / idempotent append |
-| GET/POST | `/issues/{issue_id}/source-link` | Source association / explicit attach with ownership review |
-| GET | `/issues/{issue_id}/synchronization` | Mapping, freshness, pending effects and conflicts |
-| POST | `/issues/{issue_id}/synchronization/resolve` | Reviewed versioned resolution within current grants |
-| GET | `/issues/{issue_id}/operator-actions` | Exact actions across associated executions |
+| GET | `/projects/{project_id}/issues/{issue_id}/children` | Visible bounded same-Project sub-issues |
+| GET/POST | `/projects/{project_id}/issues/{issue_id}/code-reviews` | Observed PR/MR links / explicit scoped reviewed attachment |
+| GET | `/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal` | Bounded exact execution hierarchy/event references and log-reader links |
+| GET | `/projects/{project_id}/issues/{issue_id}/checks` | Subject-bound Factory and external CI observations with coverage |
+| GET | `/projects/{project_id}/issues/{issue_id}/artifacts` | Visible exact input/output/report references and authorized preview/download links |
+| GET | `/projects/{project_id}/issues/{issue_id}/timeline` | Safe system and discussion references |
+| GET/POST | `/projects/{project_id}/issues/{issue_id}/comments` | Dedicated body reads / idempotent append |
+| GET/POST | `/projects/{project_id}/issues/{issue_id}/source-link` | Source association / explicit attach with ownership review |
+| GET | `/projects/{project_id}/issues/{issue_id}/synchronization` | Mapping, freshness, pending effects and conflicts |
+| POST | `/projects/{project_id}/issues/{issue_id}/synchronization/resolve` | Reviewed versioned resolution within current grants |
+| GET | `/projects/{project_id}/issues/{issue_id}/operator-actions` | Exact actions across associated executions |
 | GET | `/projects/{project_id}/factory-operator-actions` | Existing planned shared Project queue |
 | GET | `/factory-operator-actions` | Existing planned visible global queue |
 
@@ -250,7 +250,7 @@ Dedicated description/revision/comment body reads apply no-store and independent
 
 Property definition publication uses the existing authorized Project settings/versioned-definition pattern, with explicit administration rights and replay. Parent/assignee/property edits use the Issue edit boundary; status remains a transition command. Journal, review, check and artifact reads bind selected execution/revision and visibility before counts/cursors; dedicated bodies/outputs keep their separate reader policies. Review attachment is a metadata command with independent repository read authority, not permission to mutate a forge or set task state.
 
-Publish Issue identity as additive metadata on new admission/Run views after association. Existing Run routes, controls and Artifact intake remain usable, including before optional Issue features are enabled. The canonical card route is `/issues/{issue_id}`; URLs can select tabs and exact execution IDs, never bodies or command values. Issue-only creation works while Factory is unconfigured.
+Publish Issue identity as additive metadata on new admission/Run views after association. Existing Run routes, controls and Artifact intake remain usable, including before optional Issue features are enabled. The canonical card route is `/projects/{project_id}/issues/{issue_id}`; URLs can select tabs and exact execution IDs, never bodies or command values. Issue-only creation works while Factory is unconfigured.
 
 ### 8. Share prerequisites without expanding neighboring changes
 

@@ -133,13 +133,20 @@ fn operation_document(operation: &ManagementOperation) -> Value {
 
 fn responses(operation: &ManagementOperation) -> Value {
   let mut responses = Map::new();
-  responses.insert(
-    operation.success_status.to_owned(),
-    json!({
-      "description": "Successful operation",
-      "content": {"application/json": {"schema": schema_ref(operation.response_schema)}}
-    }),
-  );
+  let mut success = json!({
+    "description":"Successful operation",
+    "content":{"application/json":{"schema":schema_ref(operation.response_schema)}}
+  });
+  if operation.no_store_response {
+    success["headers"] = json!({
+      "Cache-Control":{"description":"Task content must not be cached","schema":{"type":"string","const":"no-store"}},
+      "ETag":{"description":"Strong exact Issue revision when this response describes one Issue","schema":{"type":"string"}}
+    });
+  }
+  responses.insert(operation.success_status.to_owned(), success.clone());
+  if operation.replay_success_response {
+    responses.insert("200".to_owned(), success);
+  }
   for (status, description) in [
     ("400", "Invalid request"),
     ("404", "Resource not found"),

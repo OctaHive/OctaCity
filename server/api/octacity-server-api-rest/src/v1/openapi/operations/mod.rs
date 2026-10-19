@@ -37,6 +37,8 @@ pub struct ManagementOperation {
   pub(super) parameter_profile: ParameterProfile,
   pub(super) capability_unavailable_response: bool,
   pub(super) precondition_failed_response: bool,
+  pub(super) no_store_response: bool,
+  pub(super) replay_success_response: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -86,6 +88,7 @@ pub(crate) enum ParameterProfile {
   IntegrationDiscovery,
   ProjectList,
   CurrentDefinitionList,
+  IssueHistory,
   FactoryConfigurationChoices,
   FactoryDiagnostics,
   WorkSourceInputChoices,
@@ -107,6 +110,14 @@ pub(crate) enum ParameterProfile {
 }
 
 impl ManagementOperation {
+  const fn with_no_store_response(mut self) -> Self {
+    self.no_store_response = true;
+    self
+  }
+  const fn with_replay_success_response(mut self) -> Self {
+    self.replay_success_response = true;
+    self
+  }
   const fn with_protected_ingress(mut self) -> Self {
     self.protected_ingress = true;
     self.precondition_failed_response = self.optimistic_precondition;
@@ -174,6 +185,8 @@ macro_rules! operation {
       parameter_profile: ParameterProfile::None,
       capability_unavailable_response: false,
       precondition_failed_response: false,
+      no_store_response: false,
+      replay_success_response: false,
     }
   };
 }
@@ -186,6 +199,7 @@ mod definitions;
 mod factory;
 mod integrations;
 mod issue_workflows;
+mod issues;
 mod search;
 mod triggers;
 
@@ -195,6 +209,7 @@ const GROUPS: &[&[ManagementOperation]] = &[
   definitions::OPERATIONS,
   factory::OPERATIONS,
   integrations::OPERATIONS,
+  issues::OPERATIONS,
   issue_workflows::OPERATIONS,
   triggers::OPERATIONS,
   builds::OPERATIONS,
@@ -202,7 +217,8 @@ const GROUPS: &[&[ManagementOperation]] = &[
   artifacts::OPERATIONS,
 ];
 
-const OPERATION_COUNT: usize = issue_workflows::OPERATIONS.len()
+const OPERATION_COUNT: usize = issues::OPERATIONS.len()
+  + issue_workflows::OPERATIONS.len()
   + core::OPERATIONS.len()
   + search::OPERATIONS.len()
   + definitions::OPERATIONS.len()
@@ -230,6 +246,8 @@ const EMPTY_OPERATION: ManagementOperation = ManagementOperation {
   parameter_profile: ParameterProfile::None,
   capability_unavailable_response: false,
   precondition_failed_response: false,
+  no_store_response: false,
+  replay_success_response: false,
 };
 
 const fn collect_operations() -> [ManagementOperation; OPERATION_COUNT] {

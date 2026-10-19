@@ -291,6 +291,7 @@ mod tests {
       let method_router = match operation.method {
         "GET" => get(management_context_probe),
         "POST" => post(management_context_probe),
+        "PATCH" => axum::routing::patch(management_context_probe),
         "DELETE" => delete(management_context_probe),
         other => panic!("unsupported management fixture method {other}"),
       };

@@ -7,6 +7,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
   for name in [
     "project_id",
     "workflow_id",
+    "issue_id",
     "pipeline_id",
     "repository_id",
     "configuration_id",
@@ -33,7 +34,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         "in": "path",
         "required": true,
         "schema": if name == "version" { positive_integer() }
-          else if name == "workflow_id" { json!({"type":"string","format":"uuid"}) }
+          else if matches!(name, "workflow_id" | "issue_id") { json!({"type":"string","format":"uuid"}) }
           else { non_empty_string() }
       }));
     }
@@ -57,6 +58,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       cursor_parameter(),
       limit_parameter(MAX_PROJECT_LIST_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT),
     ]),
+    ParameterProfile::IssueHistory => parameters.extend([json!({"name":"after","in":"query","required":false,"schema":positive_integer()}),limit_parameter(200,super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::CurrentDefinitionList => parameters.extend([
       cursor_parameter(),
       limit_parameter(

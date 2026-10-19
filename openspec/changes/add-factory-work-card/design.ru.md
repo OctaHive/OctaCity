@@ -219,30 +219,30 @@ Results привязывает каждого кандидата, отчёт с�
 
 | Метод | Путь | Назначение |
 | --- | --- | --- |
-| GET/POST | `/issues` | Ограниченный видимый список / ручное создание |
-| GET/PATCH | `/issues/{issue_id}` | Карточка задачи / редакция изменяемых полей с предусловием |
+| GET/POST | `/projects/{project_id}/issues` | Ограниченный видимый список / ручное создание |
+| GET/PATCH | `/projects/{project_id}/issues/{issue_id}` | Карточка задачи / редакция изменяемых полей с предусловием |
 | GET/POST | `/projects/{project_id}/issue-workflows` | Видимые версии workflow / проверенная неизменяемая публикация и выбор workflow Project по умолчанию |
-| GET | `/issues/{issue_id}/transitions` | Текущие разрешённые бизнес-переходы и причины применимости или владения |
-| POST | `/issues/{issue_id}/transitions` | Явный организационный переход с предусловием, а не управление Run |
-| GET | `/issues/{issue_id}/status-history` | Ограниченные квитанции переходов статуса и безопасное происхождение |
-| POST | `/issues/{issue_id}/workflow-adoption` | Явное проверенное соответствие workflow, версии и статуса |
-| GET | `/issues/{issue_id}/revisions` | Разрешённая ограниченная история требований |
-| GET/POST | `/issues/{issue_id}/executions` | История выполнений / явный проверенный запрос выполнения |
-| GET | `/issues/{issue_id}/executions/{request_id}` | Восстанавливаемая квитанция публикации и приёма |
-| GET | `/issues/{issue_id}/results` | Проверки и исходы точно выбранного выполнения |
+| GET | `/projects/{project_id}/issues/{issue_id}/transitions` | Текущие разрешённые бизнес-переходы и причины применимости или владения |
+| POST | `/projects/{project_id}/issues/{issue_id}/transitions` | Явный организационный переход с предусловием, а не управление Run |
+| GET | `/projects/{project_id}/issues/{issue_id}/status-history` | Ограниченные квитанции переходов статуса и безопасное происхождение |
+| POST | `/projects/{project_id}/issues/{issue_id}/workflow-adoption` | Явное проверенное соответствие workflow, версии и статуса |
+| GET | `/projects/{project_id}/issues/{issue_id}/revisions` | Разрешённая ограниченная история требований |
+| GET/POST | `/projects/{project_id}/issues/{issue_id}/executions` | История выполнений / явный проверенный запрос выполнения |
+| GET | `/projects/{project_id}/issues/{issue_id}/executions/{request_id}` | Восстанавливаемая квитанция публикации и приёма |
+| GET | `/projects/{project_id}/issues/{issue_id}/results` | Проверки и исходы точно выбранного выполнения |
 | GET | `/projects/{project_id}/issue-property-choices` | Видимые определения свойств, генерируемые ограничения и доступность каталога ответственных |
 | GET/POST | `/projects/{project_id}/issue-property-definitions` | Сохранённые версии определений / проверенная неизменяемая публикация |
-| GET | `/issues/{issue_id}/children` | Видимые ограниченные подзадачи того же Project |
-| GET/POST | `/issues/{issue_id}/code-reviews` | Наблюдаемые связи PR/MR / явное проверенное присоединение в разрешённой области |
-| GET | `/issues/{issue_id}/executions/{request_id}/journal` | Ограниченные ссылки на точную иерархию и события выполнения и читателей логов |
-| GET | `/issues/{issue_id}/checks` | Наблюдения Factory и внешнего CI с привязкой к объекту проверки и покрытием |
-| GET | `/issues/{issue_id}/artifacts` | Видимые точные ссылки входов, выходов и отчётов, разрешённые ссылки предпросмотра и скачивания |
-| GET | `/issues/{issue_id}/timeline` | Безопасные ссылки на системные события и обсуждение |
-| GET/POST | `/issues/{issue_id}/comments` | Отдельное чтение тела / идемпотентное добавление |
-| GET/POST | `/issues/{issue_id}/source-link` | Связь с источником / явное присоединение с проверкой владения |
-| GET | `/issues/{issue_id}/synchronization` | Маппинг, актуальность, ожидающие эффекты и конфликты |
-| POST | `/issues/{issue_id}/synchronization/resolve` | Проверенное версионируемое разрешение в пределах текущих прав |
-| GET | `/issues/{issue_id}/operator-actions` | Точные действия по связанным выполнениям |
+| GET | `/projects/{project_id}/issues/{issue_id}/children` | Видимые ограниченные подзадачи того же Project |
+| GET/POST | `/projects/{project_id}/issues/{issue_id}/code-reviews` | Наблюдаемые связи PR/MR / явное проверенное присоединение в разрешённой области |
+| GET | `/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal` | Ограниченные ссылки на точную иерархию и события выполнения и читателей логов |
+| GET | `/projects/{project_id}/issues/{issue_id}/checks` | Наблюдения Factory и внешнего CI с привязкой к объекту проверки и покрытием |
+| GET | `/projects/{project_id}/issues/{issue_id}/artifacts` | Видимые точные ссылки входов, выходов и отчётов, разрешённые ссылки предпросмотра и скачивания |
+| GET | `/projects/{project_id}/issues/{issue_id}/timeline` | Безопасные ссылки на системные события и обсуждение |
+| GET/POST | `/projects/{project_id}/issues/{issue_id}/comments` | Отдельное чтение тела / идемпотентное добавление |
+| GET/POST | `/projects/{project_id}/issues/{issue_id}/source-link` | Связь с источником / явное присоединение с проверкой владения |
+| GET | `/projects/{project_id}/issues/{issue_id}/synchronization` | Маппинг, актуальность, ожидающие эффекты и конфликты |
+| POST | `/projects/{project_id}/issues/{issue_id}/synchronization/resolve` | Проверенное версионируемое разрешение в пределах текущих прав |
+| GET | `/projects/{project_id}/issues/{issue_id}/operator-actions` | Точные действия по связанным выполнениям |
 | GET | `/projects/{project_id}/factory-operator-actions` | Уже запланированная общая очередь Project |
 | GET | `/factory-operator-actions` | Уже запланированная видимая глобальная очередь |
 
@@ -252,7 +252,7 @@ Results привязывает каждого кандидата, отчёт с�
 
 Публикация определений свойств использует существующий шаблон разрешённых настроек Project и версионируемых определений с явными правами администрирования и повтором. Редактирование родителя, ответственного и свойств использует границу редактирования Issue; статус остаётся командой перехода. Чтение журнала, review, проверок и артефактов привязывает выбранные выполнение, редакцию и видимость до вычисления количества и курсоров. Для отдельных тел и выходов сохраняются собственные политики читателей. Присоединение review — команда метаданных с независимыми полномочиями чтения репозитория, а не разрешение менять платформу разработки или состояние задачи.
 
-После связывания идентичность Issue публикуется как добавочные метаданные новых представлений приёма и Run. Существующие маршруты Run, управление и приём Artifact остаются доступны, в том числе до включения необязательных возможностей Issue. Канонический маршрут карточки — `/issues/{issue_id}`. URL могут выбирать вкладки и точные ID выполнения, но никогда не содержат тела и значения команд. Создание только Issue работает при ненастроенной Factory.
+После связывания идентичность Issue публикуется как добавочные метаданные новых представлений приёма и Run. Существующие маршруты Run, управление и приём Artifact остаются доступны, в том числе до включения необязательных возможностей Issue. Канонический маршрут карточки — `/projects/{project_id}/issues/{issue_id}`. URL могут выбирать вкладки и точные ID выполнения, но никогда не содержат тела и значения команд. Создание только Issue работает при ненастроенной Factory.
 
 ### 8. Общие предварительные условия без расширения соседних change
 

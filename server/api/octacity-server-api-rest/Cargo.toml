@@ -21,4 +21,5 @@ tokio.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+octacity-server-application = { path = "../../application", features = ["test-support"] }
 tower = { workspace = true, features = ["util"] }

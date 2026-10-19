@@ -1,0 +1,151 @@
+use super::{ManagementOperation, ParameterProfile};
+use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
+pub(super) const OPERATIONS: &[ManagementOperation] = &[
+  operation!(
+    octacity_server_application::AdoptIssueWorkflowCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/workflow-adoption",
+    "adoptIssueWorkflow",
+    "Issues",
+    "Adopt a reviewed exact workflow and status correspondence",
+    Some("AdoptIssueWorkflowRequest"),
+    "IssueTransitionResponse",
+    "200",
+    true,
+    true
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssueTransitionsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/transitions",
+    "getIssueTransitions",
+    "Issues",
+    "Review current direct business moves",
+    None,
+    "IssueTransitionChoices",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::TransitionIssueCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/transitions",
+    "transitionIssue",
+    "Issues",
+    "Apply one reviewed organizational move",
+    Some("TransitionIssueRequest"),
+    "IssueTransitionResponse",
+    "200",
+    true,
+    true
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListIssueStatusHistoryQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/status-history",
+    "listIssueStatusHistory",
+    "Issues",
+    "Read bounded organizational history",
+    None,
+    "IssueStatusHistoryPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::IssueHistory)
+  .with_visibility::<octacity_server_application::ListIssueStatusHistoryQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListIssueRevisionsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/revisions",
+    "listIssueRevisions",
+    "Issues",
+    "Discover retained revision headers",
+    None,
+    "IssueRevisionPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::IssueHistory)
+  .with_visibility::<octacity_server_application::ListIssueRevisionsQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListProjectIssuesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues",
+    "listProjectIssues",
+    "Issues",
+    "List visible tasks without requirements bodies",
+    None,
+    "IssueSummaryPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<octacity_server_application::ListProjectIssuesQuery>()
+  .with_no_store_response(),
+  operation!(
+    EditIssueCommand,
+    "PATCH",
+    "/api/v1/projects/{project_id}/issues/{issue_id}",
+    "editIssue",
+    "Issues",
+    "Revise editable requirements",
+    Some("IssueContent"),
+    "IssueMutationResponse",
+    "200",
+    true,
+    true
+  )
+  .with_no_store_response(),
+  operation!(
+    GetIssueQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/revisions/{version}",
+    "getIssueRevision",
+    "Issues",
+    "Read exact retained requirements",
+    None,
+    "IssueResource",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    CreateIssueCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues",
+    "createIssue",
+    "Issues",
+    "Create a manual task",
+    Some("IssueContent"),
+    "IssueMutationResponse",
+    "201",
+    true,
+    false
+  )
+  .with_no_store_response()
+  .with_replay_success_response(),
+  operation!(
+    GetIssueQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}",
+    "getIssue",
+    "Issues",
+    "Read current task requirements",
+    None,
+    "IssueResource",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+];

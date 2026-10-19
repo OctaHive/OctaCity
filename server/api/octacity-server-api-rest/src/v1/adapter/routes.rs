@@ -111,6 +111,15 @@ impl<S: Clone + Send + Sync + 'static> ManagementRoutes<S> {
     self.register::<Request>("DELETE", operation_id, delete(handler))
   }
 
+  fn patch<Request, HandlerType, HandlerArgs>(self, operation_id: &'static str, handler: HandlerType) -> Self
+  where
+    Request: ManagementAuthorizationTarget + 'static,
+    HandlerType: Handler<HandlerArgs, S>,
+    HandlerArgs: 'static,
+  {
+    self.register::<Request>("PATCH", operation_id, axum::routing::patch(handler))
+  }
+
   fn register<Request>(
     mut self,
     method: &'static str,
@@ -229,6 +238,22 @@ pub fn management_authorization_operations() -> Vec<ManagementAuthorizationOpera
 
 fn registered_routes() -> ManagementRoutes {
   ManagementRoutes::new()
+    .post::<octacity_server_application::AdoptIssueWorkflowCommand, _, _>("adoptIssueWorkflow", super::issue::adopt)
+    .get::<octacity_server_application::GetIssueTransitionsQuery, _, _>(
+      "getIssueTransitions",
+      super::issue::transitions,
+    )
+    .post::<octacity_server_application::TransitionIssueCommand, _, _>("transitionIssue", super::issue::transition)
+    .get::<octacity_server_application::ListIssueStatusHistoryQuery, _, _>(
+      "listIssueStatusHistory",
+      super::issue::history,
+    )
+    .get::<octacity_server_application::ListIssueRevisionsQuery, _, _>("listIssueRevisions", super::issue::revisions)
+    .get::<octacity_server_application::ListProjectIssuesQuery, _, _>("listProjectIssues", super::issue::list)
+    .patch::<octacity_server_application::EditIssueCommand, _, _>("editIssue", super::issue::edit)
+    .get::<octacity_server_application::GetIssueQuery, _, _>("getIssueRevision", super::issue::get_revision)
+    .post::<octacity_server_application::CreateIssueCommand, _, _>("createIssue", super::issue::create)
+    .get::<octacity_server_application::GetIssueQuery, _, _>("getIssue", super::issue::get)
     .get::<octacity_server_application::ListProjectIssueWorkflowsQuery, _, _>(
       "listProjectIssueWorkflows",
       super::issue_workflow::list,

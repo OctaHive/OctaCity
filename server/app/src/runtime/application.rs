@@ -222,6 +222,12 @@ pub(super) fn management_application(
   let workflows = Arc::new(octacity_server_application::IssueWorkflowHandlers::new(store.clone()));
   let workflow_commands = authorized_commands(&management_policy, workflows.clone());
   let workflow_queries = authorized_queries(&management_policy, workflows);
+  let issues = Arc::new(octacity_server_application::IssueHandlers::new(
+    store.clone(),
+    management_policy.clone(),
+  ));
+  let issue_commands = authorized_commands(&management_policy, issues.clone());
+  let issue_queries = authorized_queries(&management_policy, issues);
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
@@ -270,6 +276,10 @@ pub(super) fn management_application(
   .with_issue_workflows(octacity_server_api_rest::v1::IssueWorkflowManagementApplication::new(
     workflow_commands,
     workflow_queries,
+  ))
+  .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
+    issue_commands,
+    issue_queries,
   ));
   let application = match integrations {
     Some(integrations) => application.with_integrations(integrations),

@@ -62,6 +62,8 @@ mod factory;
 mod integration_contracts;
 #[path = "v1_handlers/issue_workflows.rs"]
 mod issue_workflows;
+#[path = "v1_handlers/issues.rs"]
+mod issues;
 #[path = "v1_handlers/log_search.rs"]
 mod log_search;
 #[path = "v1_handlers/openapi_drift.rs"]
@@ -227,6 +229,27 @@ impl ManagementQueryUseCase<GetOperationalMetadataQuery> for RecordingApplicatio
   }
 }
 
+unavailable_query!(octacity_server_application::ListProjectIssuesQuery, "list_issues");
+unavailable_query!(octacity_server_application::GetIssueQuery, "get_issue");
+unavailable_query!(
+  octacity_server_application::ListIssueRevisionsQuery,
+  "list_issue_revisions"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueTransitionsQuery,
+  "get_issue_transitions"
+);
+unavailable_query!(
+  octacity_server_application::ListIssueStatusHistoryQuery,
+  "list_issue_status_history"
+);
+unavailable_command!(octacity_server_application::CreateIssueCommand, "create_issue");
+unavailable_command!(octacity_server_application::EditIssueCommand, "edit_issue");
+unavailable_command!(octacity_server_application::TransitionIssueCommand, "transition_issue");
+unavailable_command!(
+  octacity_server_application::AdoptIssueWorkflowCommand,
+  "adopt_issue_workflow"
+);
 unavailable_query!(
   octacity_server_application::GetDefaultIssueWorkflowQuery,
   "get_default_issue_workflow"
@@ -999,6 +1022,16 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   let cache_session_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
   vec![
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues?limit=1"),None),
+    json_request("POST",&format!("/api/v1/projects/{project_id}/issues"),"draft",None,r#"{"title":"Draft","description":""}"#),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}"),None),
+    json_request("PATCH",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}"),"edit",Some("\"1\""),r#"{"title":"Draft","description":"Edited"}"#),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/revisions?limit=1"),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/revisions/1"),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/transitions"),None),
+    json_request("POST",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/transitions"),"move",Some("\"1\""),&serde_json::json!({"workflow_id":pipeline_id,"workflow_version":1,"expected_status_id":project_id,"transition_id":repository_id,"reason":null}).to_string()),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/status-history?limit=1"),None),
+    json_request("POST",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/workflow-adoption"),"adopt",Some("\"1\""),&serde_json::json!({"expected_workflow_id":pipeline_id,"expected_workflow_version":1,"expected_status_id":project_id,"target_workflow_id":repository_id,"target_workflow_version":1,"status_correspondence":{project_id:project_id},"expected_field_policy":{"source_owned":[],"status_mapping_workflow":null,"push":null}}).to_string()),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-workflows?limit=1"), None),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-workflows/{pipeline_id}"), None),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-workflows/{pipeline_id}/versions/1"), None),
@@ -1401,6 +1434,16 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
   assert_eq!(
     *application.calls.lock().unwrap(),
     [
+      "list_issues",
+      "create_issue",
+      "get_issue",
+      "edit_issue",
+      "list_issue_revisions",
+      "get_issue",
+      "get_issue_transitions",
+      "transition_issue",
+      "list_issue_status_history",
+      "adopt_issue_workflow",
       "list_issue_workflows",
       "get_issue_workflow",
       "get_issue_workflow",
