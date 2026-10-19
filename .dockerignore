@@ -85,6 +85,10 @@ shared/*/*
 !shared/*/build.rs
 !shared/*/src/
 !shared/*/src/**
+# The OpenAPI example also compiles the REST dev-dependency's store contracts.
+!shared/protocol-fixtures/coordinator/
+shared/protocol-fixtures/coordinator/*
+!shared/protocol-fixtures/coordinator/register-request-v1.json
 
 # Locked UI production build inputs. The ignored OpenAPI schema is generated
 # inside the builder from the checked-in Rust contract and generator script.
@@ -104,6 +108,7 @@ ui/scripts/*
 !ui/scripts/generate-api.mjs
 !ui/scripts/factory-authoring-schemas.mjs
 !ui/scripts/issue-workflow-constraints.mjs
+!ui/scripts/issue-constraints.mjs
 !ui/scripts/verify-architecture.mjs
 !ui/tsconfig.json
 !ui/vite.config.ts

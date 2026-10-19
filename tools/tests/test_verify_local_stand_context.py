@@ -113,8 +113,33 @@ class LocalStandContextTests(unittest.TestCase):
             with self.assertRaisesRegex(VERIFY.ContextError, "integration-contracts.json"):
                 VERIFY.validate_repository(root)
 
+    def test_openapi_credential_fixture_is_available_in_the_filtered_build_context(self):
+        rules = VERIFY.validate_dockerignore(REPOSITORY / ".dockerignore")
+        fixture = "shared/protocol-fixtures/coordinator/register-request-v1.json"
+        self.assertTrue(VERIFY.docker_path_included(
+            fixture, rules,
+        ))
+        for excluded in (
+            "shared/protocol-fixtures/coordinator/private-request.json",
+            "shared/protocol-fixtures/coordinator/register-request-v2.json",
+            "shared/protocol-fixtures/agent/register-request-v1.json",
+        ):
+            with self.subTest(path=excluded):
+                self.assertFalse(VERIFY.docker_path_included(excluded, rules))
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
+            for relative in VERIFY.REQUIRED_CONTEXT_PATHS:
+                if relative == fixture:
+                    continue
+                destination = root / relative
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(REPOSITORY / relative, destination)
+            with self.assertRaisesRegex(VERIFY.ContextError, "register-request-v1.json"):
+                VERIFY.validate_repository(root)
+
     def test_repository_verification_rejects_a_missing_generator_dependency(self):
-        for dependency in ("factory-authoring-schemas.mjs", "issue-workflow-constraints.mjs"):
+        for dependency in ("factory-authoring-schemas.mjs", "issue-workflow-constraints.mjs", "issue-constraints.mjs"):
             with self.subTest(dependency=dependency), tempfile.TemporaryDirectory() as temporary:
                 root = Path(temporary)
                 shutil.copyfile(REPOSITORY / ".dockerignore", root / ".dockerignore")
@@ -159,8 +184,28 @@ class LocalStandContextTests(unittest.TestCase):
             result = subprocess.run(
                 [node, "--input-type=module", "--eval", """
 import assert from 'node:assert/strict';
+import { issueConstraints } from './ui/scripts/issue-constraints.mjs';
 import { issueWorkflowConstraints } from './ui/scripts/issue-workflow-constraints.mjs';
 import { factoryAuthoringSchemas } from './ui/scripts/factory-authoring-schemas.mjs';
+assert.deepEqual(issueConstraints({
+  paths: {'/api/v1/projects/{project_id}/issues': {get: {
+    parameters: [{name: 'limit', schema: {default: 3}}],
+  }}},
+  components: {schemas: {
+    IssueContent: {properties: {
+      title: {'x-max-utf8-bytes': 64},
+      description: {'x-max-utf8-bytes': 1024},
+      acceptance: {anyOf: [{type: 'string', 'x-max-utf8-bytes': 512}, {type: 'null'}]},
+      priority: {anyOf: [{type: 'integer', minimum: 0, maximum: 9}, {type: 'null'}]},
+    }},
+    TransitionIssueRequest: {properties: {
+      reason: {anyOf: [{type: 'string', 'x-max-utf8-bytes': 80}, {type: 'null'}]},
+    }},
+  }},
+}), {
+  titleMaximumBytes: 64, descriptionMaximumBytes: 1024, acceptanceMaximumBytes: 512,
+  priorityMinimum: 0, priorityMaximum: 9, defaultPageSize: 3, reasonMaximumBytes: 80,
+});
 assert.deepEqual(issueWorkflowConstraints({components: {schemas: {
   IssueWorkflowDefinition: {properties: {
     name: {'x-max-utf8-bytes': 64},
