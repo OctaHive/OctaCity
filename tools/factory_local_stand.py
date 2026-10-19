@@ -76,11 +76,13 @@ def run_stand(root: Path, source: str, revision: str | None, *, github_repositor
     profiles = root / "factory-demo/factory-profiles.json"
     _private_json(profiles, {"version": 1, "projects": [{"project_id": resources["project"],
         "references": fixture["references"], "build_configurations": []}], "codex": []})
+    if github_repository is not None:
+        # Install against the final profile before starting the worker: a later
+        # server/gateway recreation would interrupt its outstanding lease poll.
+        server_config.generate_server_configuration(root, native.path, factory_profiles=profiles)
+        install_repository(root, github_repository)
     print("Starting the standard stand with Factory enabled", flush=True)
     launcher.run(launcher.parse_arguments(["up", "--root", str(root), "--factory-profiles", str(profiles)]))
-    if github_repository is not None:
-        install_repository(root, github_repository)
-        launcher._run_compose(root, 8443, ("up", "--detach", "--wait", "server", "gateway"), timeout_seconds=180)
     if github_repository is not None or (root / "config/integrations/server.toml").exists():
         probe = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
         for endpoint in ("/api/v1/integration-installations", "/api/v1/integrations"):

@@ -120,17 +120,21 @@ class FactoryLocalStandTests(unittest.TestCase):
             demo._private_json(root / "evidence/factory-demo-input.json", {"namespace":str(uuid.uuid4()), "source":source, "revision":"a"*40})
             retained = {"runs":{"manual":"retained-run"}}
             demo._private_json(root / "evidence/factory-demo.json", retained)
+            startup = []
             with patch.object(demo.initializer, "initialize"), \
-                    patch.object(demo.launcher, "_prepare_native_installation"), \
+                    patch.object(demo.launcher, "_prepare_native_installation", return_value=types.SimpleNamespace(path=root / "native")), \
                     patch.object(demo.launcher, "_build_images"), \
-                    patch.object(demo.launcher, "run"), \
-                    patch.object(demo, "install_repository", create=True) as install, \
+                    patch.object(demo.server_config, "generate_server_configuration"), \
+                    patch.object(demo.launcher, "run", side_effect=lambda *_: startup.append("start stand and agent")), \
+                    patch.object(demo, "install_repository", side_effect=lambda *_: startup.append("install integrations")) as install, \
                     patch.object(demo.launcher, "_run_compose") as compose, \
                     patch.object(demo.integration, "LocalStandClient") as client:
                 result = demo.run_stand(root, source, None, github_repository="Example/Tickets")
             self.assertEqual(result, retained)
             install.assert_called_once_with(root, "Example/Tickets")
-            self.assertEqual(compose.call_args.args[2], ("up", "--detach", "--wait", "server", "gateway"))
+            # Recreating the coordinator after worker startup cuts its pending lease poll.
+            self.assertEqual(startup, ["install integrations", "start stand and agent"])
+            compose.assert_not_called()
             self.assertEqual([call.args[0] for call in client.return_value.get.call_args_list],
                              ["/api/v1/integration-installations", "/api/v1/integrations"])
             client.return_value.post.assert_not_called()
