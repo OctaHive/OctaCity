@@ -45,6 +45,18 @@ export async function installOperatorFixture(page: Page) {
       await fulfill(route, installedWorkflow);
       return;
     }
+    if (url.pathname === `/api/v1/projects/${FIXTURE_IDS.project}/issue-property-choices`) {
+      await fulfill(route, {
+        definitions: {
+          project_id: FIXTURE_IDS.project,
+          version: 0,
+          published_at_unix_ms: 1,
+          definition: { labels: [], properties: [] },
+        },
+        assignees: { available: false, items: [] },
+      });
+      return;
+    }
     const issue = issueFixture(FIXTURE_IDS.project);
     const issueBase = `/api/v1/projects/${FIXTURE_IDS.project}/issues`;
     if (url.pathname === issueBase) {
@@ -70,6 +82,7 @@ export async function installOperatorFixture(page: Page) {
       return;
     }
     if (
+      url.pathname === `${issueBase}/${issue.id}/children` ||
       url.pathname === `${issueBase}/${issue.id}/status-history` ||
       url.pathname === `${issueBase}/${issue.id}/revisions`
     ) {

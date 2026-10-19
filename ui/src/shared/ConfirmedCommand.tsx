@@ -19,6 +19,7 @@ import styles from './ConfirmedCommand.module.css';
 
 interface ConfirmedCommandProps<Request, Result> {
   confirmLabel: string;
+  ready?: boolean;
   consequence: string;
   execute: (attempt: ConfirmedMutationAttempt<Request>) => Promise<Result>;
   fallbackFocusRef?: RefObject<HTMLElement | null>;
@@ -41,6 +42,7 @@ type CommandPhase<Result> =
 /** Runs one explicitly confirmed command and retains its identity only for safe transport replay. */
 export function ConfirmedCommand<Request, Result>({
   confirmLabel,
+  ready = true,
   consequence,
   execute,
   fallbackFocusRef,
@@ -85,6 +87,7 @@ export function ConfirmedCommand<Request, Result>({
   });
 
   const submit = async () => {
+    if (!ready && intentRef.current === null) return;
     const intent =
       intentRef.current ??
       createConfirmedMutationIntent({
@@ -163,7 +166,7 @@ export function ConfirmedCommand<Request, Result>({
           {phase.kind === 'succeeded' || (phase.kind === 'error' && !retryable) ? null : (
             <button
               className={styles.primary}
-              disabled={phase.kind === 'pending'}
+              disabled={phase.kind === 'pending' || (!ready && intentRef.current === null)}
               onClick={() => void submit()}
               ref={primaryButtonRef}
               type="button"

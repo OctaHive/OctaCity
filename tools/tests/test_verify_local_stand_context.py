@@ -192,6 +192,7 @@ assert.deepEqual(issueConstraints({
     parameters: [{name: 'limit', schema: {default: 3}}],
   }}},
   components: {schemas: {
+    IssuePlanning: {properties: {labels: {maxItems: 2}}},
     IssueContent: {properties: {
       title: {'x-max-utf8-bytes': 64},
       description: {'x-max-utf8-bytes': 1024},
@@ -203,7 +204,7 @@ assert.deepEqual(issueConstraints({
     }},
   }},
 }), {
-  titleMaximumBytes: 64, descriptionMaximumBytes: 1024, acceptanceMaximumBytes: 512,
+  labelsMaximumCount: 2, titleMaximumBytes: 64, descriptionMaximumBytes: 1024, acceptanceMaximumBytes: 512,
   priorityMinimum: 0, priorityMaximum: 9, defaultPageSize: 3, reasonMaximumBytes: 80,
 });
 assert.deepEqual(issueWorkflowConstraints({components: {schemas: {

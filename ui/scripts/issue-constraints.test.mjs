@@ -12,6 +12,7 @@ function contract() {
     },
     components: {
       schemas: {
+        IssuePlanning: { properties: { labels: { maxItems: 3 } } },
         IssueContent: {
           properties: {
             title: { 'x-max-utf8-bytes': 37 },
@@ -34,6 +35,7 @@ function contract() {
 
 test('derives reason UTF-8 bytes independently of its character bound', () => {
   assert.deepEqual(issueConstraints(contract()), {
+    labelsMaximumCount: 3,
     titleMaximumBytes: 37,
     descriptionMaximumBytes: 1024,
     acceptanceMaximumBytes: 2048,
@@ -49,4 +51,10 @@ test('runs task constraint regression tests in both standard UI suites', async (
   const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
   assert.match(manifest.scripts['test:unit'], /issue-constraints\.test\.mjs/u);
   assert.match(manifest.scripts.test, /issue-constraints\.test\.mjs/u);
+});
+
+test('derives the maximum selected labels from the planning schema', () => {
+  const document = contract();
+  document.components.schemas.IssuePlanning = { properties: { labels: { maxItems: 2 } } };
+  assert.equal(issueConstraints(document).labelsMaximumCount, 2);
 });

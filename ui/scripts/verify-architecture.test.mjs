@@ -252,15 +252,15 @@ test('retains a tight asset count for the complete console with Factory diagnost
   );
 });
 
-test('admits the measured lazy task workspace and rejects unplanned growth with the entry ceiling unchanged', async (context) => {
+test('admits the measured task Properties workspace and rejects unplanned growth with the entry ceiling unchanged', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
-  await write(root, 'dist/assets/index.js', 'x'.repeat(429_642));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(566_901));
-  await write(root, 'dist/assets/styles.css', 'x'.repeat(85_091));
+  await write(root, 'dist/assets/index.js', 'x'.repeat(430_767));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(586_500));
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(85_392));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
   assert.equal(policy.bundleBudgets.totalCssBytes, 86_016);

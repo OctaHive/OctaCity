@@ -1,4 +1,44 @@
 export const enMessages = {
+  'planning.firstParents': 'First parent choices',
+  'planning.nextParents': 'Next parent choices',
+
+  'planning.relationships': 'Related tasks',
+  'planning.noParent': 'No parent task',
+  'planning.children': 'Sub-issues',
+  'planning.noChildren': 'No visible sub-issues',
+  'planning.firstChildren': 'First sub-issues',
+  'planning.nextChildren': 'Next sub-issues',
+  'planning.relationshipHelp':
+    'Relationships do not grant access, roll up status or start execution.',
+
+  'planning.savedDefinition': 'Saved definitions · version {version}',
+  'planning.custom': 'Custom properties',
+  'planning.parent': 'Parent task',
+  'planning.stale':
+    'Planning changed. Reload properties and discard this draft before reviewing again.',
+  'planning.reload': 'Reload properties and discard draft',
+
+  'planning.retiredHelp': 'Retired values may be kept or removed; they cannot be selected again.',
+  'planning.clear': 'Clear {name}',
+
+  'planning.edit': 'Edit properties',
+  'planning.review': 'Review properties',
+  'planning.save': 'Save properties',
+
+  'planning.unassigned': 'Unassigned',
+  'planning.directoryMissing': 'No person directory is available. Tasks can remain unassigned.',
+  'planning.assignee': 'Responsible party',
+  'planning.labels': 'Labels',
+  'planning.dueDate': 'Due date',
+  'planning.empty': 'No configurable properties in this project.',
+  'planning.unavailableValue': 'Retained value unavailable',
+  'planning.assigneeUnavailable': 'Assigned person unavailable',
+  'planning.yes': 'Yes',
+  'planning.no': 'No',
+  'planning.definition': 'Planning definitions · version {version}',
+  'planning.help':
+    'Planning changes do not start an agent, move status or change execution inputs.',
+
   'issues.draftChanged':
     'The current task version is {version}; its requirements or field ownership changed. Review the latest values before keeping your editable changes. Source-managed fields use the latest values; other conflicts use your draft.',
   'issues.latestChanges': 'Latest changed values',

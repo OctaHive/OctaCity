@@ -1,6 +1,48 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'planning.firstParents': 'Первые варианты родительских задач',
+  'planning.nextParents': 'Следующие варианты родительских задач',
+
+  'planning.relationships': 'Связанные задачи',
+  'planning.noParent': 'Родительской задачи нет',
+  'planning.children': 'Подзадачи',
+  'planning.noChildren': 'Видимых подзадач нет',
+  'planning.firstChildren': 'Первые подзадачи',
+  'planning.nextChildren': 'Следующие подзадачи',
+  'planning.relationshipHelp':
+    'Связи не предоставляют доступ, не меняют статусы связанных задач и не запускают выполнение.',
+
+  'planning.savedDefinition': 'Сохранённые определения · версия {version}',
+  'planning.custom': 'Дополнительные свойства',
+  'planning.parent': 'Родительская задача',
+  'planning.stale':
+    'Свойства изменились. Перед повторной проверкой загрузите актуальные свойства и сбросьте черновик.',
+  'planning.reload': 'Обновить свойства и сбросить черновик',
+
+  'planning.retiredHelp':
+    'Выведенные из использования значения можно сохранить или удалить, но нельзя выбрать заново.',
+  'planning.clear': 'Очистить: {name}',
+
+  'planning.edit': 'Изменить свойства',
+  'planning.review': 'Проверить свойства',
+  'planning.save': 'Сохранить свойства',
+
+  'planning.unassigned': 'Не назначен',
+  'planning.directoryMissing':
+    'Справочник пользователей недоступен. Задачи можно оставлять без ответственного.',
+  'planning.assignee': 'Ответственный',
+  'planning.labels': 'Метки',
+  'planning.dueDate': 'Срок',
+  'planning.empty': 'В проекте нет настраиваемых свойств.',
+  'planning.unavailableValue': 'Сохранённое значение недоступно',
+  'planning.assigneeUnavailable': 'Назначенный ответственный недоступен',
+  'planning.yes': 'Да',
+  'planning.no': 'Нет',
+  'planning.definition': 'Определения свойств · версия {version}',
+  'planning.help':
+    'Изменение свойств не запускает агента, не меняет статус и входные данные выполнения.',
+
   'issues.draftChanged':
     'Текущая версия задачи — {version}; изменились требования или управление полями. Проверьте новые значения перед согласованием. Поля источника будут обновлены; в остальных конфликтах сохранятся ваши правки.',
   'issues.latestChanges': 'Новые значения изменённых полей',

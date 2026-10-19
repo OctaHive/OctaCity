@@ -387,3 +387,40 @@ content fields. Old
 retained revisions decode absent planning as empty. Empty planning stays omitted
 from revision JSON and creation intent, preserving the previous stored shape
 and creation fingerprint.
+
+
+## Console Properties and related tasks
+
+Open a Project task and use **Properties → Edit properties**. The panel shows
+organizational responsibility, Project labels, due date and installed scalar or
+choice definitions. Type/component/size are ordinary Project-defined fields,
+not provider names, agent roles or execution settings. An unconfigured Project
+shows an empty-definition explanation. Without a person directory, Unassigned
+remains usable; a retained unavailable assignment is identified honestly and can
+be cleared. Source-owned controls explain their ownership and remain disabled.
+
+The editor keeps drafts in mounted memory only. Review shows the exact task and
+catalog versions and readable selected values before a dedicated planning PATCH.
+A changed task, catalog, directory or ownership requires explicit reload/discard
+and a new review; refresh never silently rebases the draft. A command whose
+response was lost retries only its frozen original body, ETag and idempotency key.
+Planning saves preserve requirements, business status and active execution inputs,
+and start no agent, Work, Run or provider operation.
+
+Saved planning values resolve their names from the exact retained catalog when
+it differs from current definitions. Retired values may remain unchanged or be
+removed, but cannot be newly selected. Unchanged values survive tightened bounds;
+changed values use current definition bounds. Failed catalog refresh retains the
+readable prior data, marks it stale and blocks a new confirmation. An optional
+planning/relationship read failure does not hide the task or its manual
+requirements editor.
+
+Parent and sub-issue links show visible human task keys and titles. Parent
+selection reuses bounded authorized Project task pages, excludes the task itself
+and preserves one selected label across pages. Only one direct-child page is
+shown at a time. The server still checks visibility, Project scope and cycles;
+links grant no permissions, status roll-up or execution dependency. No raw ID or
+provider credential form is needed. Narrow layouts use the existing keyboard
+Properties trigger and confirmation focus restoration, preserving the selected
+historical requirements until explicit task navigation. English/Russian labels
+cover these controls; technical identifiers stay in collapsed details.

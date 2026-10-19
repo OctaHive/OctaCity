@@ -16,3 +16,44 @@ export function issueFixture(project_id = 'delivery'): components['schemas']['Is
     updated_at_unix_ms: 1700000000000,
   };
 }
+
+/** Installed project catalog shared by Properties component and HTTP/browser fixtures. */
+export function issuePropertyChoicesFixture(
+  project_id = 'delivery',
+): components['schemas']['IssuePropertyChoices'] {
+  const choices: components['schemas']['IssuePropertyChoices'] = {
+    definitions: {
+      project_id: 'delivery',
+      version: 7,
+      published_at_unix_ms: 1,
+      definition: {
+        labels: [],
+        properties: [
+          {
+            id: 'type',
+            name: 'Task type',
+            retired: false,
+            kind: { type: 'choice', choices: [{ id: 'defect', name: 'Defect', retired: false }] },
+          },
+          {
+            id: 'component',
+            name: 'Component',
+            retired: false,
+            kind: { type: 'text', max_bytes: 8 },
+          },
+          {
+            id: 'size',
+            name: 'Size estimate',
+            retired: false,
+            kind: { type: 'number', minimum: 1, maximum: 8 },
+          },
+          { id: 'verified', name: 'Verified', retired: false, kind: { type: 'boolean' } },
+          { id: 'scheduled', name: 'Scheduled date', retired: false, kind: { type: 'date' } },
+        ],
+      },
+    },
+    assignees: { available: false, items: [] },
+  };
+  choices.definitions.project_id = project_id;
+  return choices;
+}

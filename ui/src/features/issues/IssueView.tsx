@@ -11,6 +11,8 @@ import {
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import type { IssuesApi } from './api';
 import { IssueEditor } from './IssueEditor';
+import { IssueRelationships } from './IssueRelationships';
+import { IssueProperties } from './IssueProperties';
 import { IssueProjectNav, type IssueProjectReader } from './IssueProjectNav';
 import { IssueRevisions } from './IssueRevisions';
 import { IssueAdoption } from './IssueAdoption';
@@ -107,6 +109,15 @@ function Card({
     await current.refetch();
     await Promise.all([
       choices.refetch(),
+      queryClient.invalidateQueries({ queryKey: queryKeys.issueChildrenRoot(projectId, issueId) }),
+      ...(issue?.planning?.parent_id
+        ? [
+            queryClient.invalidateQueries({
+              queryKey: queryKeys.issue(projectId, issue.planning.parent_id),
+            }),
+          ]
+        : []),
+      queryClient.invalidateQueries({ queryKey: queryKeys.issuePropertyChoices(projectId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.issueHistoryRoot(projectId, issueId) }),
       queryClient.invalidateQueries({ queryKey: queryKeys.issueRevisionsRoot(projectId, issueId) }),
     ]);
@@ -299,6 +310,14 @@ function Card({
                     {t('issues.revision', { version: issue.workflow_version })}
                   </dd>
                 </dl>
+                <IssueRelationships api={api} issue={issue} />
+                <IssueProperties
+                  api={api}
+                  issue={issue}
+                  policy={choices.data?.field_policy}
+                  ready={fresh}
+                  onRefresh={refresh}
+                />
               </section>
               <section className={styles.panel}>
                 <h2>{t('issues.execution')}</h2>

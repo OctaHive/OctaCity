@@ -11,6 +11,9 @@ export function issueConstraints(document) {
     (p) => p.name === 'limit',
   )?.schema;
   return {
+    labelsMaximumCount: bound(
+      document.components?.schemas?.IssuePlanning?.properties?.labels?.maxItems,
+    ),
     titleMaximumBytes: bound(fields?.title?.['x-max-utf8-bytes']),
     descriptionMaximumBytes: bound(fields?.description?.['x-max-utf8-bytes']),
     acceptanceMaximumBytes: bound(unwrap(fields?.acceptance)?.['x-max-utf8-bytes']),
