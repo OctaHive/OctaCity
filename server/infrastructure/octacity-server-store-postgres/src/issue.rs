@@ -60,13 +60,7 @@ impl IssueStore for PostgresStore {
     };
     let rows:Vec<(Json<IssueRevision>,)>=sqlx::query_as("SELECT r.document FROM issues i JOIN issue_revisions r ON r.project_id=i.project_id AND r.issue_id=i.id AND r.version=i.current_version WHERE i.project_id=$1 AND ($2::uuid[] IS NULL OR i.id=ANY($2)) AND ($3::uuid IS NULL OR i.id>$3) ORDER BY i.id LIMIT $4")
       .bind(request.project_id().as_uuid()).bind(ids).bind(request.after().map(|id|id.as_uuid())).bind(i64::from(request.limit())+1).fetch_all(self.pool()).await.map_err(unavailable)?;
-    let mut items: Vec<_> = rows.into_iter().map(|(Json(i),)| IssueSummary::from(&i)).collect();
-    let more = items.len() > usize::from(request.limit());
-    if more {
-      items.pop();
-    }
-    let next_cursor = more.then(|| items.last().unwrap().id);
-    Ok(IssuePage { items, next_cursor })
+    Ok(page(rows, request.limit()))
   }
 
   async fn adopt_issue_workflow(
@@ -143,6 +137,10 @@ impl IssueStore for PostgresStore {
     if request.created_at < initial.published_at {
       return Err(invalid(StoreOperation::CreateIssue));
     }
+    crate::issue_planning::validate_parent(&mut tx, intent.project_id, request.id, intent.planning.parent_id).await?;
+    let catalog = crate::issue_planning::read(&mut tx, intent.project_id, None).await?;
+    intent.planning.validate(&catalog, None, &request.assignees)?;
+    crate::issue_planning::retain_initial(&mut tx, intent.project_id).await?;
     let workflow = issue_workflow::read_default(&mut tx, &initial).await?.workflow;
     if workflow.id == initial.id {
       issue_workflow::retain_initial(&mut tx, &initial).await?;
@@ -156,6 +154,7 @@ impl IssueStore for PostgresStore {
       version: IssueVersion::INITIAL,
       applicability_version: IssueVersion::INITIAL,
       content: intent.content.clone(),
+      planning: intent.planning.clone(),
       workflow_id: workflow.id,
       workflow_version: workflow.version,
       status_id: workflow.definition.initial_status_id,
@@ -361,8 +360,14 @@ async fn insert_revision(
   Ok(())
 }
 
-async fn lock(connection: &mut PgConnection, project_id: ProjectId, id: IssueId) -> Result<IssueRevision, StoreError> {
-  sqlx::query("SELECT id FROM issues WHERE project_id=$1 AND id=$2 FOR UPDATE")
+pub(super) async fn lock(
+  connection: &mut PgConnection,
+  project_id: ProjectId,
+  id: IssueId,
+) -> Result<IssueRevision, StoreError> {
+  // Parent foreign keys take KEY SHARE: metadata edits must exclude competing
+  // edits without blocking references to this stable Issue identity.
+  sqlx::query("SELECT id FROM issues WHERE project_id=$1 AND id=$2 FOR NO KEY UPDATE")
     .bind(project_id.as_uuid())
     .bind(id.as_uuid())
     .fetch_optional(&mut *connection)
@@ -373,7 +378,7 @@ async fn lock(connection: &mut PgConnection, project_id: ProjectId, id: IssueId)
     })?;
   read(connection, project_id, id, None).await
 }
-async fn publish<T: serde::Serialize>(
+pub(super) async fn publish<T: serde::Serialize>(
   mut tx: sqlx::Transaction<'_, sqlx::Postgres>,
   identity: &MutationIdentity,
   audit: &MutationAuditContext,
@@ -404,7 +409,7 @@ async fn publish<T: serde::Serialize>(
   .await
 }
 
-async fn field_policy(
+pub(super) async fn field_policy(
   connection: &mut PgConnection,
   project_id: ProjectId,
   id: IssueId,
@@ -417,4 +422,15 @@ async fn field_policy(
       .await
       .map_err(unavailable)?;
   Ok(policy.map(|Json(policy)| policy).unwrap_or_default())
+}
+
+// Ordinary discovery and child discovery expose the same bounded safe summary.
+pub(super) fn page(rows: Vec<(Json<IssueRevision>,)>, limit: u16) -> IssuePage {
+  let mut items: Vec<_> = rows.into_iter().map(|(Json(i),)| IssueSummary::from(&i)).collect();
+  let more = items.len() > usize::from(limit);
+  if more {
+    items.pop();
+  }
+  let next_cursor = more.then(|| items.last().unwrap().id);
+  IssuePage { items, next_cursor }
 }

@@ -65,6 +65,9 @@ pub struct IssueRevision {
   pub applicability_version: IssueVersion,
   /// Editable requirements snapshot.
   pub content: IssueContent,
+  /// Optional organizational snapshot; absent in prior retained revisions.
+  #[serde(default, skip_serializing_if = "crate::IssuePlanning::is_empty")]
+  pub planning: crate::IssuePlanning,
   /// Exact retained business workflow identity.
   pub workflow_id: IssueWorkflowId,
   /// Pinned workflow publication, unaffected by default changes.
@@ -86,6 +89,9 @@ impl IssueRevision {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateIssueIntent {
+  /// Optional local planning; ordinary tasks require no catalog or directory.
+  #[serde(default, skip_serializing_if = "crate::IssuePlanning::is_empty")]
+  pub planning: crate::IssuePlanning,
   /// Visible owning Project.
   pub project_id: ProjectId,
   /// Draft requirements requiring no acceptance document or provider.
@@ -94,6 +100,8 @@ pub struct CreateIssueIntent {
 /// Authorized store input; generated identity is excluded from replay equivalence.
 #[derive(Clone, Debug)]
 pub struct CreateIssue {
+  /// Independently server-resolved selectable identities, excluded from replay intent.
+  pub assignees: std::collections::BTreeSet<String>,
   /// Proposed internal identity, used only for the first application.
   pub id: IssueId,
   /// Frozen user intent.
@@ -266,6 +274,16 @@ pub struct IssueStatusHistoryPage {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueField {
+  /// Organizational assignee.
+  Assignee,
+  /// Project labels.
+  Labels,
+  /// Date-only planning target.
+  DueDate,
+  /// Configured simple planning values.
+  Properties,
+  /// Organizational parent reference.
+  Parent,
   /// Task title.
   Title,
   /// Task requirements description.

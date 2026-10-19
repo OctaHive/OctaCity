@@ -48,6 +48,7 @@ mod integration_connection;
 mod internal_trigger;
 mod internal_trigger_definition;
 mod issue;
+mod issue_planning;
 mod issue_workflow;
 mod job_claim;
 mod job_completion;

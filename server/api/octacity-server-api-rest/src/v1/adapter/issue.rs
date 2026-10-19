@@ -88,6 +88,7 @@ pub(super) async fn create(
   let content = body(payload, &id)?;
   let command = CreateIssueCommand {
     intent: CreateIssueIntent {
+      planning: Default::default(),
       project_id: project
         .parse()
         .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?,

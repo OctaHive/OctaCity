@@ -4,6 +4,10 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Publish organizational task planning without execution.
+  EditIssuePlanning,
+  /// Publish reviewed Project planning definitions.
+  PublishIssueProperties,
   /// Discover bounded visible current internal tasks.
   ListProjectIssues,
   /// Discover retained requirement revision headers.

@@ -17,8 +17,10 @@ fn key(value: &str) -> IdempotencyKey {
 }
 fn draft(project_id: ProjectId, replay: &str) -> CreateIssue {
   CreateIssue {
+    assignees: Default::default(),
     id: IssueId::generate(),
     intent: CreateIssueIntent {
+      planning: Default::default(),
       project_id,
       content: IssueContent {
         title: "Ручная задача".into(),
@@ -1435,3 +1437,45 @@ async fn issue_review_reads_retained_field_policy_without_granting_or_changing_i
   assert_eq!(store.issue(project.id, created.id, None).await.unwrap(), created);
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn manual_planning_is_retained_without_a_directory_or_factory() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let memory = InMemoryProjectStore::new();
+  let project = project(&store).await;
+  memory
+    .create_project(management_mutation(project.clone()))
+    .await
+    .unwrap();
+  let mut request = draft(project.id, "manual-planning");
+  request.intent.planning.due_date = Some("2028-02-29".into());
+  request.intent.planning.assignee = Some("untrusted-person".into());
+  assert!(store.create_issue(management_mutation(request.clone())).await.is_err());
+  request.intent.planning.assignee = None;
+  let created = store.create_issue(management_mutation(request.clone())).await.unwrap();
+  assert_eq!(
+    created,
+    memory.create_issue(management_mutation(request.clone())).await.unwrap()
+  );
+  assert_eq!(created.issue.display_key(), "ISS-1");
+  assert_eq!(created.issue.planning.due_date.as_deref(), Some("2028-02-29"));
+  let restarted = PostgresStore::new(database.pool.clone());
+  assert_eq!(
+    restarted.issue(project.id, created.issue.id, None).await.unwrap(),
+    created.issue
+  );
+  assert_eq!(
+    restarted
+      .create_issue(management_mutation(request))
+      .await
+      .unwrap()
+      .issue,
+    created.issue
+  );
+  database.cleanup().await;
+}
+
+#[path = "issues/planning.rs"]
+mod planning;

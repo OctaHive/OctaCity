@@ -6,6 +6,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod issue_planning;
+pub use issue_planning::*;
 mod issue;
 mod issue_policy;
 pub use issue::*;

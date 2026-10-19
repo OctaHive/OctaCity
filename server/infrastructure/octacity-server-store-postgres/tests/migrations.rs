@@ -69,7 +69,13 @@ const INTEGRATION_TABLES: [&str; 7] = [
   "integration_project_access",
   "integration_project_access_versions",
 ];
-const ISSUE_TABLES: [&str; 4] = ["issue_numbers", "issues", "issue_revisions", "issue_status_history"];
+const ISSUE_TABLES: [&str; 5] = [
+  "issue_numbers",
+  "issues",
+  "issue_revisions",
+  "issue_status_history",
+  "issue_property_versions",
+];
 const ISSUE_WORKFLOW_TABLES: [&str; 3] = ["issue_workflows", "issue_workflow_versions", "issue_workflow_defaults"];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
 const LEGACY_OPERATION_SCOPES: [(&str, &str, &str); 5] = [

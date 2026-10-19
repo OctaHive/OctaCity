@@ -60,12 +60,17 @@ impl ManagementAuthorizationTarget for GetIssueQuery {
 /// Thin composition of transactional task authority, with no execution or provider ports.
 pub struct IssueHandlers<S> {
   store: Arc<S>,
+  directory: Option<Arc<dyn IssueAssigneeDirectory>>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
 }
 impl<S> IssueHandlers<S> {
   /// Reuses the same Project/task store for atomic policy and revision publication.
   pub fn new(store: Arc<S>, policy: Arc<dyn ManagementAuthorizationPolicy>) -> Self {
-    Self { store, policy }
+    Self {
+      store,
+      policy,
+      directory: None,
+    }
   }
 }
 #[async_trait::async_trait]
@@ -88,12 +93,17 @@ impl<S: IssueStore> ManagementCommandUseCase<CreateIssueCommand> for IssueHandle
         .into(),
       );
     }
+    self.visible_parent(context, command.intent.planning.parent_id).await?;
+    let assignees = self
+      .planning_assignees(context, command.intent.project_id, &command.intent.planning)
+      .await?;
     Ok(
       self
         .store
         .create_issue(crate::management_security::audited_mutation(
           context,
           CreateIssue {
+            assignees,
             id: IssueId::generate(),
             intent: command.intent,
             idempotency_key: command.idempotency_key,
@@ -538,3 +548,7 @@ impl<S: IssueStore + IssueWorkflowStore> ManagementQueryUseCase<GetIssueTransiti
     })
   }
 }
+
+#[path = "issue_planning.rs"]
+mod planning;
+pub use planning::*;

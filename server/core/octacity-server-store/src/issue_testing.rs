@@ -5,6 +5,9 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Default)]
 pub(super) struct IssueMemoryState {
+  property_versions: BTreeMap<(ProjectId, u64), PublishedIssueProperties>,
+  property_publications: BTreeMap<ManagementIdempotencyKey, (PublishIssuePropertiesIntent, IssuePropertiesOutcome)>,
+  planning_edits: BTreeMap<ManagementIdempotencyKey, (EditIssuePlanningIntent, IssueMutationOutcome)>,
   next_failure: Option<crate::testing::MutationFailurePoint>,
   current: BTreeMap<(ProjectId, IssueId), IssueRevision>,
   revisions: BTreeMap<(IssueId, IssueVersion), IssueRevision>,
@@ -19,7 +22,12 @@ pub(super) struct IssueMemoryState {
 }
 impl IssueMemoryState {
   pub(super) fn mutation_count(&self) -> usize {
-    self.creates.len() + self.edits.len() + self.moves.len() + self.adoptions.len()
+    self.creates.len()
+      + self.edits.len()
+      + self.moves.len()
+      + self.adoptions.len()
+      + self.property_publications.len()
+      + self.planning_edits.len()
   }
 }
 #[async_trait::async_trait]
@@ -316,7 +324,18 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
         ..outcome.clone()
       });
     }
+    planning::validate_parent(
+      &state,
+      request.intent.project_id,
+      request.id,
+      request.intent.planning.parent_id,
+    )?;
     request.intent.content.validate()?;
+    request.intent.planning.validate(
+      &planning::definitions(&state, request.intent.project_id, None)?,
+      None,
+      &request.assignees,
+    )?;
     let project = state
       .projects
       .get(&request.intent.project_id)
@@ -347,6 +366,7 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
       version: IssueVersion::INITIAL,
       applicability_version: IssueVersion::INITIAL,
       content: request.intent.content.clone(),
+      planning: request.intent.planning.clone(),
       workflow_id: workflow.id,
       workflow_version: workflow.version,
       status_id: workflow.definition.initial_status_id,
@@ -492,3 +512,6 @@ impl crate::testing::InMemoryProjectStore {
     Ok(())
   }
 }
+
+#[path = "issue_planning_testing.rs"]
+mod planning;

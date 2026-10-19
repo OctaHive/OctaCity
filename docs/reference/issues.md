@@ -255,3 +255,94 @@ Transition reasons are bounded to 128 UTF-8 bytes. Their OpenAPI request and
 history schemas publish `x-max-utf8-bytes` in addition to the character bound.
 Console form generation uses the byte extension, not `maxLength` as a substitute
 for a byte count.
+
+## Optional planning properties and relationships
+
+The application supports an optional `IssuePlanning` snapshot on creation and a
+separate `EditIssuePlanningCommand` under ordinary Issue `Update` authority.
+Requirements edits preserve this snapshot. Planning changes publish an immutable
+Issue revision and original replay receipt without changing business status,
+status history, requirements applicability, frozen inputs or execution. They
+produce no provider write or assignment-triggered agent work.
+
+Project administrators publish `IssuePropertyDefinitionSet` through
+`PublishIssuePropertiesCommand`, using a current definition version and scoped
+idempotency key. `GetIssuePropertiesQuery` reads current or exact retained
+publications. Version zero is an empty declarative catalog requiring no setup or
+read-time writes. Ordinary manual creation can keep completely empty planning
+regardless of later catalog publication. Nonempty creation and planning edits
+bind the reviewed current catalog version; stale definitions conflict. All
+publications and referenced versions remain retained.
+
+Stable property and choice keys are bounded lowercase ASCII letters, digits and
+underscores, distinct from their editable display names. Project-defined choice
+fields can represent type, component and size without built-in domain enums or
+provider-specific names. Retire a field, label or choice rather than removing its
+identity or changing its type. New selections reject retired values; an unchanged
+retained value can survive an unrelated edit. Exact old revisions and their
+catalog versions preserve the original display meaning.
+
+| Supported property kind | Accepted values |
+| --- | --- |
+| Text | Plain text under the declared UTF-8 byte bound, at most 4,096 bytes; NUL rejected |
+| Choice | One active identity from the declared finite choices |
+| Boolean | A boolean organizational value |
+| Number | An integer within inclusive declared bounds and the safe client integer range |
+| Date | A valid `YYYY-MM-DD` calendar date, without a time or timezone |
+
+A catalog has at most 32 fields, 64 labels and 64 choices per choice field, and
+at most 65,536 serialized UTF-8 bytes. Keys have at most 64 bytes and names at
+most 128. A task selects at most 32 labels and 32 configured values. Unsupported
+kinds, duplicate identities, invalid dates, out-of-range values, formulas, nested
+value objects and reserved requirements/status/execution/authority setters are
+rejected. These bounds are public store constants for subsequent generated
+contracts, not provider configuration.
+
+`GetIssuePropertyChoicesQuery` exposes the exact catalog and explicit assignee
+availability. An optional `IssueAssigneeDirectory` resolves at most 200 currently
+selectable organizational people under the accepted operator and Project context.
+Without that directory, choices are unavailable and tasks remain usable as
+Unassigned; gateway/service identities are never fabricated as people. A new
+selection must be in the current authorized directory. Unchanged prior assignment
+can remain when a person is no longer selectable or the directory is unavailable.
+Trusted directory choices are excluded from caller intent and replay equivalence;
+replay retains the originally accepted revision. Assignment grants no rights,
+changes no worker/profile and does not replace actual audited actor attribution.
+
+`IssueFieldPolicy` separately protects assignee, labels, due date, configured
+values and parent, as well as the existing requirements/status fields. Changed
+source-owned fields conflict while unrelated local fields remain editable. These
+local planning fields do not advertise an installed native synchronization
+capability or infer a remote write mapping.
+
+A task may reference one visible parent in the same Project. Parent visibility
+is checked before lookup or original replay. Self, foreign, missing and cyclic
+links are rejected atomically against current relationships; competing memory
+mutations cannot jointly introduce a cycle. `ListIssueChildrenQuery` checks parent
+visibility and filters direct children before pagination and continuation. Shared
+Issue page bounds apply. Parent links do not grant read/edit access, move a
+parent's status, imply acceptance or create execution dependencies.
+
+Tasks 2.9–2.10 compose these contracts with memory and PostgreSQL using the same
+pure planning policy and existing Issue revision/evidence publisher. Migration
+`0069_issue_properties.sql` adds immutable Project catalogs and generated
+revision references to their exact versions and same-Project parents. These
+columns derive from the retained JSON, rather than another mutable property
+store. Foreign keys retain referenced versions and prevent foreign parents;
+a parent index supports bounded child discovery. Existing revisions keep their
+original JSON and reference the empty catalog. Reads never initialize settings.
+
+Creation, catalog publication and planning edits take the existing Project lock
+before an Issue head lock. This makes definition preconditions and ancestry
+checks atomic, including concurrent links that would jointly create a cycle.
+Issue head edits use `FOR NO KEY UPDATE` so stable parent references remain
+compatible with independent metadata edits. All reads and validations inside a
+mutation use its existing connection; a one-connection pool is supported.
+
+Planning publication/edit reuses security-scoped replay, audit and outbox in one
+transaction. Failure commits neither metadata nor evidence. Generic audit/outbox
+facts contain only Project/Issue identities and versions, with no property
+values, assignment bodies or push effect. Planning edits preserve content,
+status, applicability and status history, and never create or change Work/Run.
+Exact replay returns the original receipt after later edits, directory changes
+or a pool restart.

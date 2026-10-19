@@ -6,6 +6,9 @@ use octacity_server_store::{
 };
 use std::sync::Arc;
 
+#[path = "issue_planning_tests.rs"]
+mod planning;
+
 fn run_ready(future: impl std::future::Future<Output = ()>) {
   let mut future = std::pin::pin!(future);
   let mut context = std::task::Context::from_waker(std::task::Waker::noop());
@@ -63,6 +66,7 @@ fn issue_manual_draft_uses_default_without_execution_or_provider() {
     .workflow;
     let command = CreateIssueCommand {
       intent: CreateIssueIntent {
+        planning: Default::default(),
         project_id,
         content: draft(),
       },
@@ -101,6 +105,7 @@ fn issue_manual_draft_uses_default_without_execution_or_provider() {
 fn create(project_id: ProjectId, identity: &str) -> CreateIssueCommand {
   CreateIssueCommand {
     intent: CreateIssueIntent {
+      planning: Default::default(),
       project_id,
       content: draft(),
     },
