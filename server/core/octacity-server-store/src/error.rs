@@ -4,6 +4,12 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Retain one Project-owned private text input operation.
+  ReserveProjectTextInput,
+  /// Reserve one exact reviewed Issue execution.
+  RequestIssueExecution,
+  /// Link an existing immutable Work and its original Run to one Issue.
+  AssociateIssueWork,
   /// Publish organizational task planning without execution.
   EditIssuePlanning,
   /// Publish reviewed Project planning definitions.
@@ -323,6 +329,12 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// A Project text document violates its finite byte/control schema.
+  #[error("invalid Project text input")]
+  InvalidProjectTextInput,
+  /// A manual draft lacks the acceptance input required for explicit execution.
+  #[error("Issue execution requires nonblank acceptance text")]
+  IssueAcceptanceRequired,
   /// Task content or mutation bounds are invalid.
   #[error("invalid Issue input")]
   InvalidIssue,

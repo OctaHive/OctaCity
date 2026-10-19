@@ -424,3 +424,122 @@ provider credential form is needed. Narrow layouts use the existing keyboard
 Properties trigger and confirmation focus restoration, preserving the selected
 historical requirements until explicit task navigation. English/Russian labels
 cover these controls; technical identifiers stay in collapsed details.
+
+## Reviewed execution requests
+
+`RequestIssueExecutionCommand` reserves an explicit request for the exact reviewed
+Issue version. It requires Issue `Execute`, visible Project/Issue/Factory target
+and Repository references, and ordinary Project-owned Factory Run `Execute`.
+It validates immutable target/repository versions and reuses the ordinary base
+selection policy. Missing or whitespace-only acceptance returns the finite
+`IssueAcceptanceRequired` error; the same text remains a valid manual draft.
+
+The request retains its original revision, target, repository policy and finite
+`TitleDescriptionAcceptanceV1` mapping. Task bytes are UTF-8 title, two LF bytes,
+then description; acceptance bytes are unchanged. Content digests and byte sizes
+are retained without copying task bodies into generic request diagnostics.
+`IssueExecutionMapping::task_bytes` is the shared mapping for input publication.
+Later Issue edits do not modify these references or an associated Work.
+
+Scoped exact replay returns the original reservation receipt before target lookup
+or current-content validation; changed key reuse conflicts. Current rights and
+reference visibility still apply. `GetIssueExecutionQuery` returns the current
+exact request record without publication or admission. An absent association is
+pending preparation, never admitted execution. The request UUID determines stable
+ordinary manual admission and replay identities, independently of its transport
+key. A later intentional execution has a distinct request/Work identity.
+
+`AssociateIssueWork` is a trusted store command accepting an original ordinary
+`PublishedFactoryAdmission`, not caller-selected Work/Run IDs. It reuses admission
+relationship validation and atomically retains the same-Project Issue link and,
+when present, exact request association. Work/configuration/repository and mapped
+task/acceptance digests and sizes must match the reviewed request. A Work belongs
+to at most one Issue and its original Run; one request cannot be retargeted to
+another Work. Exact link replay preserves the original association. Legacy
+Artifact-based Work may remain unlinked or be linked with no invented requirements
+revision. Infrastructure retry stays under the original Run and link.
+
+These narrow application/store contracts have memory and PostgreSQL conformance
+and compose with the shared publication service and native runtime below.
+Execution HTTP/Console controls remain separate implementation slices.
+Reservation and association retain their own boundaries; explicit publication
+uses ordinary admission. Manual creation continues to use `IssueHandlers`
+without these execution dependencies.
+
+## Shared Project text publication
+
+`ProjectTextIntake` is the common application service for manual Project-owned
+input publication and ordinary Factory admission. `PublishIssueExecutionCommand`
+adapts a previously reserved Issue execution to this service; quickstart can call
+it with its reviewed submission without creating an Issue. The Issue adapter
+requires the original admission security partition and current Issue/Project/
+target rights. It uses the retained exact revision on first preparation, then the
+shared retained submission on replay; later text edits never replace its inputs.
+Explicit classification is frozen at the first shared reservation. The response
+contains a Work/Run association only after that association commits. A failed
+association retains the admitted Work and resumes the same link.
+
+`ProjectTextSubmission` pairs a reviewed `ProjectTextIntent` with exact private
+documents. Preparation reads retain only intent, object identities and the original
+receipt. PostgreSQL stores document bodies separately; the scoped
+`project_text_documents` read is used when recovery needs the original bytes.
+Artifact metadata, protected transfer and cleanup select only their required fields
+without loading the bodies or the admission Flow. Body retirement removes the
+separate record rather than creating empty, invalid documents in retained metadata.
+
+A shared submission binds Project, exact Configuration/Repository versions,
+reviewed source policy, classification, application mapping, external Work identity
+and replay key. Each document is nonblank UTF-8 within the common 1 MiB byte
+ceiling and aggregate Context bound. Tabs/CR/LF are preserved; other control
+characters are rejected. Deserialized commands are revalidated before reservation
+or effects. Quickstart applies its stricter 16 KiB field ceiling at its ingress.
+Private bodies are omitted from generic Debug diagnostics.
+
+The operation reserves both logical/upload identities and original private intent
+before byte I/O. A trusted VCS resolution is frozen under the current owner before
+publication. Recovery verifies existing bytes before writing a missing object and
+independently checks each published digest/size. The complete pair becomes visible
+atomically, then the existing ordinary admission transaction links its original
+Work/Run receipt. Current rights still apply to exact replay, which precedes
+mutable target/source resolution. Changed reuse conflicts.
+
+Memory and PostgreSQL conformance use a 30-second preparation lease, a five-minute original
+preparation deadline, at most 16 ownership attempts and an original 30-day private
+input lifetime. Recovery retains these bounds, the first committed base and the
+same object identities. Owner fences are checked before byte effects and at
+freeze/publication/admission. These preparation bounds are separate from Run
+budgets. PostgreSQL commits the original input receipt inside ordinary Factory
+admission; Issue association and its request/replay/audit commit separately as one
+atomic link. Interrupted association resumes that original Work/Run.
+
+`ProjectInputQueryStore` exposes only complete publication metadata within its
+owning Project. `FactoryArtifactReader::with_project_inputs` reads exact selected
+private inputs through the existing byte reader, with Project/digest/size/plain-text
+media and required retention-window checks. Build-output reads preserve their
+own authority and reject these inputs. Source and Project reads share byte and
+retention checks while retaining distinct provenance. No Build, Job, Agent or
+Source installation is fabricated to publish the original task.
+
+Native runtime resources share one retained input reader and the same text intake.
+Protected execution transfer resolves the exact Project publication without a
+producing Build, and caps its grant at the original private expiration.
+
+The existing supervised private-input cleanup worker includes abandoned Project
+reservations. Ordinary Build holds serialize with cleanup eligibility; a new hold
+conflicts once deletion has started. Physical deletion precedes its acknowledgement.
+The pair's private bodies are scrubbed after deletion; immutable receipts and
+cleanup identities remain. An indexed preparation due time selects initial cleanup
+and hourly rechecks without sorting all historical receipts. Each acknowledgement
+atomically advances that time to the earliest remaining object due time; a partially
+acknowledged pair remains immediately retryable. The original Run has an indexed
+reference for hold checks. Periodic rechecks remove late orphan writes. Completed
+replay compares retained byte digests/metadata and returns its original receipt
+without restoring bodies or minting new read authority.
+
+PostgreSQL restart/process-termination, transaction rollback, migration and native
+S3 qualification are recorded in [task 3.3 verification](../../openspec/changes/add-factory-work-card/verification-3.3.md).
+Storage separation and indexed cleanup are covered by the
+[review corrections](../../openspec/changes/add-factory-work-card/verification-review-fixes.md).
+HTTP/Console execution controls remain separate. See the
+[quickstart handoff](../../openspec/changes/add-factory-bugfix-quickstart/shared-project-inputs.md)
+for reuse and its remaining qualification.

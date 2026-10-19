@@ -155,12 +155,24 @@ impl FactoryExecutionInputRetentionStore for PostgresStore {
     }
     let rows: Vec<CleanupRow> = sqlx::query_as("SELECT input.artifact_id,input.upload_id,input.size_bytes,input.content_digest,input.media_type,manifest.expires_at_millis,manifest.run_id,input.deleted_at_millis FROM factory_execution_inputs input JOIN factory_execution_input_manifests manifest USING (operation_id) WHERE manifest.expires_at_millis <= $1 AND input.deleted_at_millis IS NULL ORDER BY manifest.expires_at_millis,input.artifact_id LIMIT $2")
       .bind(observed_at.unix_millis()).bind(i64::from(limit)).fetch_all(self.pool()).await.map_err(unavailable)?;
-    rows.iter().map(CleanupRow::input).collect()
+    let mut inputs = rows.iter().map(CleanupRow::input).collect::<Result<Vec<_>, _>>()?;
+    inputs.extend(
+      crate::project_text_retention::expired(
+        self.pool(),
+        observed_at,
+        limit - u16::try_from(inputs.len()).map_err(|_| conflict())?,
+      )
+      .await?,
+    );
+    Ok(inputs)
   }
   async fn complete_factory_execution_input_deletion(
     &self,
     request: CompleteFactoryExecutionInputDeletion,
   ) -> Result<(), StoreError> {
+    if crate::project_text_retention::complete(self.pool(), &request).await? {
+      return Ok(());
+    }
     let mut tx = self.pool().begin().await.map_err(unavailable)?;
     let row: Option<CleanupRow> = sqlx::query_as("SELECT input.artifact_id,input.upload_id,input.size_bytes,input.content_digest,input.media_type,manifest.expires_at_millis,manifest.run_id,input.deleted_at_millis FROM factory_execution_inputs input JOIN factory_execution_input_manifests manifest USING (operation_id) WHERE input.artifact_id=$1 FOR UPDATE OF input")
       .bind(request.expected.artifact_id.as_uuid()).fetch_optional(&mut *tx).await.map_err(unavailable)?;

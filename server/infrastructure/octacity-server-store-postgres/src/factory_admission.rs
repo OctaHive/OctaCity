@@ -150,7 +150,7 @@ pub(crate) async fn admit(
   request: ManagementMutation<AdmitFactoryWork>,
 ) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
   let probe = request.mutation().probe.clone();
-  match admit_once(pool, request, None).await {
+  match admit_once(pool, request, None, None).await {
     Err(error @ (StoreError::Duplicate { .. } | StoreError::Conflict { .. })) => {
       // Another observer may have won the existing unique admission identity.
       // Compare the original intent, never substitute the loser's prepared Work.
@@ -167,6 +167,7 @@ async fn admit_once(
   pool: &PgPool,
   request: ManagementMutation<AdmitFactoryWork>,
   guard: Option<octacity_server_store::AdmitPreparedWorkSource>,
+  project_guard: Option<octacity_server_store::ProjectTextGuard>,
 ) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
   let (request, audit) = request.into_parts();
   validate_admission(&request, &audit)?;
@@ -178,8 +179,26 @@ async fn admit_once(
       if let Some(guard) = &guard {
         crate::factory_source::correlate_replay(pool, guard, &request, &outcome.admission).await?;
       }
+      if let Some(guard) = &project_guard {
+        crate::project_text_input::correlate_replay(pool, guard, &request, &audit, &outcome.admission).await?;
+      }
       return Ok(outcome);
     }
+  };
+  let mut project_preparation = if let Some(guard) = &project_guard {
+    let preparation = crate::project_text_input::load(&mut transaction, guard.id).await?;
+    preparation.validate_admission(
+      guard,
+      &octacity_server_store::ManagementMutation::new(request.clone(), audit.clone()),
+    )?;
+    if let Some(outcome) = replay_admission_identity(&mut *transaction, &request.probe).await? {
+      transaction.rollback().await.map_err(unavailable)?;
+      crate::project_text_input::correlate_replay(pool, guard, &request, &audit, &outcome.admission).await?;
+      return Ok(outcome);
+    }
+    Some(preparation)
+  } else {
+    None
   };
   let preparation = if let Some(guard) = &guard {
     let preparation = crate::factory_source::lock_preparation(&mut transaction, guard, &request).await?;
@@ -326,6 +345,10 @@ async fn admit_once(
   };
   if let Some(preparation) = preparation {
     crate::factory_source::correlate(&mut transaction, preparation, &outcome.admission).await?;
+  }
+  if let Some(preparation) = &mut project_preparation {
+    preparation.admission = Some(outcome.admission.clone());
+    crate::project_text_input::save(&mut transaction, preparation).await?;
   }
   crate::mutation::commit(
     transaction,
@@ -670,10 +693,30 @@ pub(crate) async fn admit_prepared(
   request: ManagementMutation<AdmitFactoryWork>,
 ) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
   let original = request.mutation().clone();
-  match admit_once(pool, request, Some(guard.clone())).await {
+  match admit_once(pool, request, Some(guard.clone()), None).await {
     Err(error @ (StoreError::Duplicate { .. } | StoreError::Conflict { .. })) => {
       if let Some(receipt) = replay(pool, &original.probe).await? {
         crate::factory_source::correlate_replay(pool, &guard, &original, &receipt.admission).await?;
+        Ok(receipt)
+      } else {
+        Err(error)
+      }
+    }
+    result => result,
+  }
+}
+
+pub(crate) async fn admit_project_text(
+  pool: &PgPool,
+  guard: octacity_server_store::ProjectTextGuard,
+  request: ManagementMutation<AdmitFactoryWork>,
+) -> Result<FactoryAdmissionMutationOutcome, StoreError> {
+  let original = request.mutation().clone();
+  let audit = request.audit().clone();
+  match admit_once(pool, request, None, Some(guard.clone())).await {
+    Err(error @ (StoreError::Duplicate { .. } | StoreError::Conflict { .. })) => {
+      if let Some(receipt) = replay(pool, &original.probe).await? {
+        crate::project_text_input::correlate_replay(pool, &guard, &original, &audit, &receipt.admission).await?;
         Ok(receipt)
       } else {
         Err(error)

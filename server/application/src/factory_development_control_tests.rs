@@ -2,10 +2,11 @@
 use crate::factory_flow_tests::{Execution, FactoryTestBuildSeeder, Inputs, configured_fixture_from_template};
 use crate::factory_node_test_support::fixtures::{key, supplied_base_flow_template};
 use crate::factory_requirements_tests::claim_run;
+use crate::issue_test_support as issues;
 use crate::*;
 use async_trait::async_trait;
 use octacity_server_factory::*;
-use octacity_server_store::{FactoryRunStore, IdempotencyKey, testing};
+use octacity_server_store::{FactoryRunStore, IdempotencyKey, IssueExecutionStore, testing};
 use std::sync::{
   Arc, Weak,
   atomic::{AtomicBool, Ordering},
@@ -70,6 +71,46 @@ async fn verify_late_control(cancel: bool) {
   store
     .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
     .unwrap();
+  let issue_store = issues::manual_issue_store(admission.work.subject().project_id()).await;
+  let issue = AuthorizedCommandHandler::new(
+    Arc::new(TrustedNetworkManagementPolicy),
+    Arc::new(IssueHandlers::new(
+      issue_store.clone(),
+      Arc::new(TrustedNetworkManagementPolicy),
+    )),
+  )
+  .handle_command(
+    &crate::factory_admission_tests::context(),
+    CreateIssueCommand {
+      intent: CreateIssueIntent {
+        project_id: admission.work.subject().project_id(),
+        planning: Default::default(),
+        content: IssueContent {
+          title: "Existing execution".into(),
+          description: String::new(),
+          acceptance: None,
+          priority: None,
+        },
+      },
+      idempotency_key: "issue".parse().unwrap(),
+      created_at: at(1),
+    },
+  )
+  .await
+  .unwrap()
+  .issue;
+  let association = issue_store
+    .associate_issue_work(testing::management_mutation(
+      octacity_server_store::AssociateIssueWork {
+        project_id: issue.project_id,
+        issue_id: issue.id,
+        request_id: None,
+        admission: admission.clone(),
+      },
+    ))
+    .await
+    .unwrap()
+    .association;
   let mut claim = claim_run(store.as_ref(), admission.run.id(), 10).await;
   let mut held = None;
   let mut terminal = None;
@@ -160,6 +201,15 @@ async fn verify_late_control(cancel: bool) {
     }
   }
   let snapshot = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  assert_eq!(snapshot.run.id(), association.run_id);
+  assert_eq!(snapshot.run.work_id(), association.work_id);
+  assert_eq!(
+    issue_store
+      .issue_work_association(issue.project_id, admission.work.id())
+      .await
+      .unwrap(),
+    Some(association)
+  );
   let held = held.expect("the late execution must be controlled after both immutable inputs were selected");
   let mut validations = snapshot
     .flow

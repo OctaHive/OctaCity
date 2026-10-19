@@ -4,34 +4,14 @@ use crate::{
   source_conflict,
 };
 use async_trait::async_trait;
-use octacity_server_domain::{ArtifactId, ArtifactUploadId, ProjectId, Timestamp};
-use octacity_server_factory::{
-  FactoryArtifactReference, FactoryDigest, WorkArtifacts, WorkSourceInputId, WorkSourceInputVersion,
-};
+use octacity_server_domain::{ArtifactId, ProjectId, Timestamp};
+use octacity_server_factory::{FactoryDigest, WorkArtifacts, WorkSourceInputId, WorkSourceInputVersion};
 use serde::{Deserialize, Serialize};
 
-/// Only explicitly mapped Work inputs are published; no implicit specification fetch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum SourceArtifactRole {
-  /// Untrusted task document.
-  Task,
-  /// Explicit required acceptance document.
-  Acceptance,
-}
-/// Immutable private byte identity reserved before storage I/O.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct SourceArtifactObject {
-  /// Declared role, independent of content or labels.
-  pub role: SourceArtifactRole,
-  /// Exact logical identity, SHA-256 and encoded byte length.
-  pub artifact: FactoryArtifactReference,
-  /// Exact immutable byte publication identity.
-  pub upload_id: ArtifactUploadId,
-  /// Logical input format.
-  pub media_type: crate::ArtifactMediaType,
-}
+/// Explicit input document role; shared with Project text preparation.
+pub type SourceArtifactRole = crate::FactoryInputRole;
+/// Exact private byte identity; shared with Project text preparation.
+pub type SourceArtifactObject = crate::FactoryInputObject;
 /// Original immutable source materialization, with private retention.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

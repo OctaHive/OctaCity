@@ -125,28 +125,7 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     context: &crate::ManagementRequestContext,
     project_id: ProjectId,
   ) -> Result<(), ApplicationError> {
-    crate::factory_configuration_choices::require_visible_reference(
-      self.policy.as_ref(),
-      context,
-      ManagementResourceKind::Project,
-      project_id,
-    )
-    .await?;
-    let resource = owned_collection_resource(
-      ManagementResourceKind::FactoryRun,
-      ManagementResourceKind::Project,
-      project_id,
-    )
-    .map_err(|_| ApplicationError::invalid())?;
-    let grant = self
-      .policy
-      .authorize(context, ManagementAction::Execute, &resource)
-      .await
-      .map_err(|_| ApplicationError::invalid())?;
-    if matches!(grant.visibility().view(), crate::ManagementVisibilityView::None) {
-      return Err(ApplicationError::invalid());
-    }
-    Ok(())
+    authorize_project_admission(self.policy.as_ref(), context, project_id).await
   }
 
   async fn require_visible_dependencies(
@@ -263,12 +242,7 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       })
       .await?;
     let configuration = &admission_context.configuration.configuration;
-    if !configuration.is_enabled()
-      || configuration.reference().project_id() != command.project_id
-      || admission_context.repository.project_id != command.project_id
-    {
-      return Err(ApplicationError::invalid());
-    }
+    validate_admission_project(&admission_context, command.project_id)?;
     if let Some(input) = pinned_input {
       let repository = &admission_context.repository;
       let expected = &input.definition().repository;
@@ -288,35 +262,16 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
     let base_revision = self
       .revisions
       .resolve(RevisionResolutionRequest {
-        repository: admission_context.repository,
+        repository: admission_context.repository.clone(),
         selection: source,
       })
       .await
       .map_err(map_revision_error)?;
-    let work = WorkEnvelope::new(
-      WorkEnvelopeId::generate(),
-      configuration.reference().clone(),
-      command.external_identity,
-      octacity_server_factory::ExactSubject::new(command.project_id, command.repository_id, base_revision),
-      command.artifacts,
-      command.classification,
-    )
-    .map_err(|_| ApplicationError::invalid())?;
-    let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
-    let flow = octacity_server_factory::AdmittedFlow::from_configuration(configuration, &run)
-      .map_err(|_| ApplicationError::invalid())?;
-    Ok(AdmitFactoryWork {
-      probe,
-      repository_version: command.repository_version,
-      work,
-      run,
-      flow,
-      admitted_at: command.admitted_at,
-    })
+    materialize_resolved_admission(command, probe, admission_context, base_revision)
   }
 }
 
-fn admission_probe(
+pub(super) fn admission_probe(
   context: &crate::ManagementRequestContext,
   command: &AdmitManualFactoryWorkCommand,
 ) -> Result<FactoryAdmissionProbe, ApplicationError> {
@@ -362,7 +317,7 @@ pub(super) fn installed_source_scope(
   })
 }
 
-fn map_revision_error(error: RevisionResolutionError) -> ApplicationError {
+pub(super) fn map_revision_error(error: RevisionResolutionError) -> ApplicationError {
   match error {
     RevisionResolutionError::NotFound | RevisionResolutionError::Invalid => ApplicationError::invalid(),
     RevisionResolutionError::Transient | RevisionResolutionError::Cancelled | RevisionResolutionError::Unavailable => {
@@ -382,4 +337,77 @@ impl From<FactoryAdmissionMutationOutcome> for FactoryAdmissionOutcome {
       admitted_at: value.admission.admitted_at,
     }
   }
+}
+
+// Shared ordinary admission permission gate for prepared and direct intake.
+pub(crate) async fn authorize_project_admission(
+  policy: &dyn crate::ManagementAuthorizationPolicy,
+  context: &crate::ManagementRequestContext,
+  project_id: ProjectId,
+) -> Result<(), ApplicationError> {
+  crate::factory_configuration_choices::require_visible_reference(
+    policy,
+    context,
+    ManagementResourceKind::Project,
+    project_id,
+  )
+  .await?;
+  let resource = owned_collection_resource(
+    ManagementResourceKind::FactoryRun,
+    ManagementResourceKind::Project,
+    project_id,
+  )
+  .map_err(|_| ApplicationError::invalid())?;
+  let grant = policy
+    .authorize(context, ManagementAction::Execute, &resource)
+    .await
+    .map_err(|_| ApplicationError::invalid())?;
+  if matches!(grant.visibility().view(), crate::ManagementVisibilityView::None) {
+    return Err(ApplicationError::invalid());
+  }
+  Ok(())
+}
+
+// Shared ordinary Work/Run construction after trusted source resolution.
+pub(super) fn materialize_resolved_admission(
+  command: FactoryWorkAdmissionIntent,
+  probe: FactoryAdmissionProbe,
+  admission_context: octacity_server_store::FactoryAdmissionContext,
+  base_revision: octacity_server_domain::ImmutableRevision,
+) -> Result<AdmitFactoryWork, ApplicationError> {
+  let configuration = &admission_context.configuration.configuration;
+  let work = WorkEnvelope::new(
+    WorkEnvelopeId::generate(),
+    configuration.reference().clone(),
+    command.external_identity,
+    octacity_server_factory::ExactSubject::new(command.project_id, command.repository_id, base_revision),
+    command.artifacts,
+    command.classification,
+  )
+  .map_err(|_| ApplicationError::invalid())?;
+  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+  let flow = octacity_server_factory::AdmittedFlow::from_configuration(configuration, &run)
+    .map_err(|_| ApplicationError::invalid())?;
+  Ok(AdmitFactoryWork {
+    probe,
+    repository_version: command.repository_version,
+    work,
+    run,
+    flow,
+    admitted_at: command.admitted_at,
+  })
+}
+
+// Admission project/enabled checks remain identical across prepared and Artifact ingress.
+pub(super) fn validate_admission_project(
+  selected: &octacity_server_store::FactoryAdmissionContext,
+  project: ProjectId,
+) -> Result<(), ApplicationError> {
+  if !selected.configuration.configuration.is_enabled()
+    || selected.configuration.configuration.reference().project_id() != project
+    || selected.repository.project_id != project
+  {
+    return Err(ApplicationError::invalid());
+  }
+  Ok(())
 }

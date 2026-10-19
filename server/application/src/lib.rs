@@ -35,12 +35,21 @@ mod definition_discovery;
 mod diagnostic;
 mod error;
 mod issue;
+mod issue_execution;
+mod issue_execution_publication;
+pub use issue_execution_publication::*;
+mod project_text_intake;
+#[cfg(test)]
+mod project_text_intake_tests;
+pub use issue_execution::*;
+pub use project_text_intake::*;
+#[cfg(any(test, feature = "test-support"))]
+pub mod issue_test_support;
 #[cfg(test)]
 mod issue_tests;
-#[cfg(feature = "test-support")]
-#[path = "issue_test_support.rs"]
-pub mod testing;
 pub use issue::*;
+#[cfg(feature = "test-support")]
+pub use issue_test_support as testing;
 mod issue_workflow;
 pub use issue_workflow::*;
 mod external_trigger;

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Default)]
 pub(super) struct IssueMemoryState {
+  executions: execution::IssueExecutionMemoryState,
   property_versions: BTreeMap<(ProjectId, u64), PublishedIssueProperties>,
   property_publications: BTreeMap<ManagementIdempotencyKey, (PublishIssuePropertiesIntent, IssuePropertiesOutcome)>,
   planning_edits: BTreeMap<ManagementIdempotencyKey, (EditIssuePlanningIntent, IssueMutationOutcome)>,
@@ -22,7 +23,8 @@ pub(super) struct IssueMemoryState {
 }
 impl IssueMemoryState {
   pub(super) fn mutation_count(&self) -> usize {
-    self.creates.len()
+    self.executions.mutation_count()
+      + self.creates.len()
       + self.edits.len()
       + self.moves.len()
       + self.adoptions.len()
@@ -453,32 +455,61 @@ fn commit_issue_revision(
   history: Option<IssueStatusHistoryEntry>,
   record_replay: impl FnOnce(&mut IssueMemoryState),
 ) -> Result<(), StoreError> {
+  commit_issue_change(
+    state,
+    audit,
+    key,
+    operation,
+    issue.id,
+    |transaction| {
+      let push = transaction
+        .issues
+        .current
+        .get(&(issue.project_id, issue.id))
+        .and_then(|previous| {
+          transaction
+            .issues
+            .policies
+            .get(&issue.id)
+            .and_then(|policy| policy.push_intent(previous, issue))
+        });
+      transaction
+        .issues
+        .current
+        .insert((issue.project_id, issue.id), issue.clone());
+      transaction
+        .issues
+        .revisions
+        .insert((issue.id, issue.version), issue.clone());
+      if let Some(history) = history {
+        transaction.issues.history.insert((issue.id, issue.version), history);
+      }
+      transaction.active_references.insert(issue.project_id);
+      if let Some(push) = push.filter(|_| operation != StoreOperation::AdoptIssueWorkflow) {
+        transaction.issues.pushes.insert((issue.id, issue.version), push);
+      }
+      Ok(())
+    },
+    |memory| {
+      record_replay(memory);
+    },
+  )
+}
+
+// Shared atomic publication of domain state, replay and safe mutation evidence.
+fn commit_issue_change(
+  state: &mut crate::project_testing::ProjectMemoryState,
+  audit: &MutationAuditContext,
+  key: &ManagementIdempotencyKey,
+  operation: StoreOperation,
+  issue_id: IssueId,
+  change: impl FnOnce(&mut crate::project_testing::ProjectMemoryState) -> Result<(), StoreError>,
+  record_replay: impl FnOnce(&mut IssueMemoryState),
+) -> Result<(), StoreError> {
   use crate::{project_testing::inject_failure, testing::MutationFailurePoint};
   let failure = state.issues.next_failure.take();
   let mut transaction = state.clone();
-  let push = transaction
-    .issues
-    .current
-    .get(&(issue.project_id, issue.id))
-    .and_then(|previous| {
-      transaction
-        .issues
-        .policies
-        .get(&issue.id)
-        .and_then(|policy| policy.push_intent(previous, issue))
-    });
-  transaction
-    .issues
-    .current
-    .insert((issue.project_id, issue.id), issue.clone());
-  transaction
-    .issues
-    .revisions
-    .insert((issue.id, issue.version), issue.clone());
-  if let Some(history) = history {
-    transaction.issues.history.insert((issue.id, issue.version), history);
-  }
-  transaction.active_references.insert(issue.project_id);
+  change(&mut transaction)?;
   inject_failure(failure, MutationFailurePoint::DomainState)?;
   record_replay(&mut transaction.issues);
   inject_failure(failure, MutationFailurePoint::IdempotencyOutcome)?;
@@ -488,12 +519,9 @@ fn commit_issue_revision(
       audit,
       operation,
       EntityKind::Issue,
-      issue.id,
+      issue_id,
     ));
   inject_failure(failure, MutationFailurePoint::AuditFact)?;
-  if let Some(push) = push.filter(|_| operation != StoreOperation::AdoptIssueWorkflow) {
-    transaction.issues.pushes.insert((issue.id, issue.version), push);
-  }
   transaction
     .outbox_entries
     .insert(crate::testing::management_evidence_identity(
@@ -505,6 +533,7 @@ fn commit_issue_revision(
   *state = transaction;
   Ok(())
 }
+
 impl crate::testing::InMemoryProjectStore {
   /// Injects a one-shot transactional failure without committing task/history/replay/projection state.
   pub fn fail_next_issue_mutation_at(&self, point: crate::testing::MutationFailurePoint) -> Result<(), StoreError> {
@@ -515,3 +544,6 @@ impl crate::testing::InMemoryProjectStore {
 
 #[path = "issue_planning_testing.rs"]
 mod planning;
+
+#[path = "issue_execution_testing.rs"]
+mod execution;

@@ -1,4 +1,4 @@
-//! Trusted retained-input reads from ordinary Project-owned immutable Artifacts.
+//! Trusted retained-input reads from Build, Source and Project publication authorities.
 use crate::{ApplicationError, VerifiedFactoryArtifact};
 use octacity_artifact_store::{ArtifactByteReader, ArtifactObject, MAX_ARTIFACT_READ_BYTES};
 use octacity_server_domain::{ProjectId, Timestamp};
@@ -58,6 +58,7 @@ pub struct FactoryArtifactReader<A, S, B> {
   builds: Arc<S>,
   bytes: Arc<B>,
   source_inputs: Option<Arc<dyn SourceArtifactQueryStore>>,
+  project_inputs: Option<Arc<dyn octacity_server_store::ProjectInputQueryStore>>,
 }
 impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryArtifactReader<A, S, B> {
   /// Uses authoritative logical publication, ordinary Build ownership and bounded byte ports.
@@ -67,11 +68,17 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
       builds,
       bytes,
       source_inputs: None,
+      project_inputs: None,
     }
   }
   /// Installs private source input reads without granting produced-output provenance.
   pub fn with_source_inputs(mut self, store: Arc<dyn SourceArtifactQueryStore>) -> Self {
     self.source_inputs = Some(store);
+    self
+  }
+  /// Installs Project-owned private text without granting produced-output provenance.
+  pub fn with_project_inputs(mut self, store: Arc<dyn octacity_server_store::ProjectInputQueryStore>) -> Self {
+    self.project_inputs = Some(store);
     self
   }
   /// Reads explicit context data from its authoritative publication owner.
@@ -81,46 +88,89 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
         .source_artifact(request.project_id, request.artifact.artifact_id())
         .await?
     {
-      if source.project_id != request.project_id
-        || source.object.artifact != request.artifact
-        || request.artifact.encoded_size() > request.maximum_bytes
-        || request.maximum_bytes > MAX_ARTIFACT_READ_BYTES
-        || source.published_at > request.observed_at
-        || request.observed_at >= source.expires_at
-        || request.required_until <= request.observed_at
-        || request.required_until > source.expires_at
-      {
+      let provenance = serde_json::to_vec(&source).map_err(|_| ApplicationError::invalid())?;
+      let digest = FactoryDigest::sha256("octacity.factory.source-input-provenance.v1", &[&provenance]);
+      return self
+        .read_private_input(
+          &request,
+          source.project_id,
+          &source.object,
+          source.published_at,
+          source.expires_at,
+          digest,
+        )
+        .await;
+    }
+    if let Some(store) = &self.project_inputs
+      && let Some(input) = store
+        .project_input_artifact(request.project_id, request.artifact.artifact_id())
+        .await?
+    {
+      if input.object.media_type.as_str() != "text/plain" {
         return Err(ApplicationError::invalid());
       }
-      let object = ArtifactObject::new(
-        source.object.artifact.artifact_id(),
-        source.object.upload_id,
-        source.object.artifact.encoded_size(),
-        source.object.artifact.content_digest().to_string(),
-        source.object.media_type.as_str(),
-      )
-      .map_err(|_| ApplicationError::invalid())?;
-      let bytes = self
-        .bytes
-        .read_published(&object, request.maximum_bytes)
-        .await
-        .map_err(|_| ApplicationError::unavailable())?;
-      if bytes.len() as u64 != request.artifact.encoded_size()
-        || FactoryDigest::content_sha256(&bytes).as_bytes() != request.artifact.content_digest().as_bytes()
-      {
-        return Err(ApplicationError::unavailable());
-      }
-      let provenance = serde_json::to_vec(&source).map_err(|_| ApplicationError::invalid())?;
-      return Ok(FactoryRetainedInput {
-        bytes,
-        provenance_digest: FactoryDigest::sha256("octacity.factory.source-input-provenance.v1", &[&provenance]),
-      });
+      let provenance = serde_json::to_vec(&input).map_err(|_| ApplicationError::invalid())?;
+      let digest = FactoryDigest::sha256("octacity.factory.project-input-provenance.v1", &[&provenance]);
+      return self
+        .read_private_input(
+          &request,
+          input.project_id,
+          &input.object,
+          input.published_at,
+          input.expires_at,
+          digest,
+        )
+        .await;
     }
     let retained = self.read(request).await?;
     let provenance = serde_json::to_vec(retained.record().identity()).map_err(|_| ApplicationError::invalid())?;
     Ok(FactoryRetainedInput {
       bytes: retained.bytes().to_vec(),
       provenance_digest: FactoryDigest::sha256("octacity.factory.artifact-context-provenance.v1", &[&provenance]),
+    })
+  }
+  // Every non-Build input uses the same byte, Project and retention checks.
+  async fn read_private_input(
+    &self,
+    request: &ReadFactoryArtifact,
+    project: ProjectId,
+    object: &octacity_server_store::FactoryInputObject,
+    published_at: Timestamp,
+    expires_at: Timestamp,
+    provenance_digest: FactoryDigest,
+  ) -> Result<FactoryRetainedInput, ApplicationError> {
+    if project != request.project_id
+      || object.artifact != request.artifact
+      || request.artifact.encoded_size() > request.maximum_bytes
+      || request.maximum_bytes > MAX_ARTIFACT_READ_BYTES
+      || published_at > request.observed_at
+      || request.observed_at >= expires_at
+      || request.required_until <= request.observed_at
+      || request.required_until > expires_at
+    {
+      return Err(ApplicationError::invalid());
+    }
+    let description = ArtifactObject::new(
+      object.artifact.artifact_id(),
+      object.upload_id,
+      object.artifact.encoded_size(),
+      object.artifact.content_digest().to_string(),
+      object.media_type.as_str(),
+    )
+    .map_err(|_| ApplicationError::invalid())?;
+    let bytes = self
+      .bytes
+      .read_published(&description, request.maximum_bytes)
+      .await
+      .map_err(|_| ApplicationError::unavailable())?;
+    if bytes.len() as u64 != object.artifact.encoded_size()
+      || FactoryDigest::content_sha256(&bytes) != object.artifact.content_digest()
+    {
+      return Err(ApplicationError::unavailable());
+    }
+    Ok(FactoryRetainedInput {
+      bytes,
+      provenance_digest,
     })
   }
   /// Verifies selection and retention before any protected bytes are read.

@@ -9,6 +9,8 @@
 mod issue_planning;
 pub use issue_planning::*;
 mod issue;
+mod issue_execution;
+pub use issue_execution::*;
 mod issue_policy;
 pub use issue::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -52,7 +54,11 @@ pub use factory_admission_intent::{
 };
 mod factory_admission_model;
 mod factory_admission_port;
+mod project_text_input;
+pub use project_text_input::*;
 mod factory_source_artifact;
+#[cfg(any(test, feature = "test-support"))]
+mod project_text_input_testing;
 pub use factory_source_artifact::*;
 mod factory_source;
 mod factory_source_projection;

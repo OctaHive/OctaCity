@@ -79,6 +79,9 @@ impl ArtifactRecordStore for PostgresStore {
     if let Some(input) = crate::factory_source_artifact::execution_input(&self.pool, artifact_id).await? {
       return Ok(input);
     }
+    if let Some(input) = crate::project_text_input::execution_input(&self.pool, artifact_id).await? {
+      return Ok(input);
+    }
     let upload = self.published_artifact(artifact_id).await?;
     PublishedExecutionInput::from_artifact(&upload)
   }

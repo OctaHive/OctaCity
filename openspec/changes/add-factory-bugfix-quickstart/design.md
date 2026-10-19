@@ -42,6 +42,8 @@ Alternative considered: create a special `bugfix` lifecycle or have an LLM autho
 
 ### 2. Preserve Work references while introducing truthful manual-input provenance
 
+Implementation handoff: reuse the [shared Project input service](shared-project-inputs.md) delivered by work-card 3.2–3.3. Its application, PostgreSQL, runtime-reader, protected-transfer and cleanup contracts replace a second quickstart publication implementation; the remaining preset/readiness/HTTP qualification and stricter ingress bounds are recorded there.
+
 Keep Work's bounded task/acceptance reference shape and the existing signed input identity contracts. Add narrowly scoped managed Work-input records rather than synthetic Build outputs. Each record binds an Artifact-compatible logical identity and byte-store publication identity to its owning Project, text-submission identity, role (`description` or `acceptance`), exact UTF-8 digest/length, publisher kind `manual_work_input`, and retention. These roles describe documents, not Flow stages.
 
 Extend the retained Factory input source at the application boundary to return a verified source projection for either an existing Build Artifact or a managed Work input. Preserve existing Build ownership and provenance checks for the former; verify Project/submission ownership and publication/retention for the latter. Never manufacture an `ArtifactRecord` with false Build/Job/Agent identities to satisfy the current reader return type. Use the same bounded byte reader/publisher ports and object backend. New input records do not qualify as deterministic evidence or Agent output.

@@ -69,12 +69,17 @@ const INTEGRATION_TABLES: [&str; 7] = [
   "integration_project_access",
   "integration_project_access_versions",
 ];
-const ISSUE_TABLES: [&str; 5] = [
+const COLLABORATION_TABLES: [&str; 10] = [
   "issue_numbers",
   "issues",
   "issue_revisions",
   "issue_status_history",
   "issue_property_versions",
+  "issue_execution_requests",
+  "issue_work_associations",
+  "project_text_preparations",
+  "project_text_input_objects",
+  "project_text_documents",
 ];
 const ISSUE_WORKFLOW_TABLES: [&str; 3] = ["issue_workflows", "issue_workflow_versions", "issue_workflow_defaults"];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];
@@ -166,7 +171,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     .into_iter()
     .chain(INTEGRATION_TABLES)
     .chain(ISSUE_WORKFLOW_TABLES)
-    .chain(ISSUE_TABLES)
+    .chain(COLLABORATION_TABLES)
   {
     assert!(!table_exists(&previous.pool, table).await?);
   }
@@ -231,7 +236,7 @@ async fn verify_schema_rehearsal() -> Result<(), Box<dyn std::error::Error>> {
     .into_iter()
     .chain(INTEGRATION_TABLES)
     .chain(ISSUE_WORKFLOW_TABLES)
-    .chain(ISSUE_TABLES)
+    .chain(COLLABORATION_TABLES)
   {
     assert!(!table_exists(&rollback.pool, table).await?);
   }
@@ -523,7 +528,7 @@ async fn verify_migration(pool: &sqlx::PgPool) -> Result<(), Box<dyn std::error:
   .chain(FACTORY_RETENTION_TABLES)
   .chain(INTEGRATION_TABLES)
   .chain(ISSUE_WORKFLOW_TABLES)
-  .chain(ISSUE_TABLES)
+  .chain(COLLABORATION_TABLES)
   .map(str::to_owned)
   .collect();
   if actual != expected {

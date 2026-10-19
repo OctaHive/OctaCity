@@ -142,6 +142,7 @@ impl InMemoryFactoryConfigurationStore {
 
 #[derive(Default)]
 pub(super) struct FactoryConfigurationMemoryState {
+  pub(super) project_text: crate::project_text_input_testing::ProjectTextMemoryState,
   pub(super) integrations: crate::integration_connection_testing::IntegrationMemoryState,
   pub(super) sources: crate::factory_source_testing::SourceMemoryState,
   pub(super) projects: BTreeSet<ProjectId>,

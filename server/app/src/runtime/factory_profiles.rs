@@ -225,11 +225,7 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
     } else {
       Some(resources.tool_risk_authorizer(self.catalog.tool_risk.clone())?)
     };
-    let reader = Arc::new(FactoryArtifactReader::new(
-      resources.runs.clone(),
-      resources.builds,
-      resources.objects,
-    ));
+    let reader = resources.retained_artifact_reader();
     Ok(FactoryRuntimeInstallation {
       capabilities: Arc::new(ProjectCatalog(self.catalog.projects.clone())),
       executors,

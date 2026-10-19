@@ -157,11 +157,7 @@ impl FactoryRuntimeResources {
     let commands = profiles.iter().map(|profile| profile.command().clone()).collect();
     let candidates = Arc::new(CommandCandidates {
       runs: self.runs.clone(),
-      reader: Arc::new(FactoryArtifactReader::new(
-        self.runs.clone(),
-        self.builds.clone(),
-        self.objects.clone(),
-      )),
+      reader: self.retained_artifact_reader(),
       profiles: commands,
     });
     Ok(Arc::new(
@@ -276,11 +272,7 @@ impl FactoryRuntimeResources {
       }
     }
     let clock = Arc::new(SystemFactoryExecutionClock);
-    let reader = Arc::new(FactoryArtifactReader::new(
-      self.runs.clone(),
-      self.builds.clone(),
-      self.objects.clone(),
-    ));
+    let reader = self.retained_artifact_reader();
     let candidates = Arc::new(CommandCandidates {
       runs: self.runs.clone(),
       reader,
@@ -368,11 +360,7 @@ impl FactoryRuntimeResources {
       return Err(FactoryRuntimeInstallationError::Invalid);
     }
     let clock = Arc::new(SystemFactoryExecutionClock);
-    let reader = Arc::new(FactoryArtifactReader::new(
-      self.runs.clone(),
-      self.builds.clone(),
-      self.objects.clone(),
-    ));
+    let reader = self.retained_artifact_reader();
     let plans = Arc::new(FactoryStoredProtectedTestPlanSource::new(
       self.runs.clone(),
       profile.author_profile,

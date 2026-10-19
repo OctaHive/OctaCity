@@ -51,7 +51,8 @@ pub struct FactoryAdmissionContext {
 }
 
 /// Request for exact immutable admission definitions.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ReadFactoryAdmissionContext {
   /// Project that must own both definitions.
   pub project_id: ProjectId,
@@ -96,14 +97,7 @@ impl AdmitFactoryWork {
       ));
     }
     let valid = self.work.external_identity() == &self.probe.external_identity
-      && self.run.state() == FactoryRunState::Admitted
-      && self.run.version() == FactoryRunVersion::INITIAL
-      && self.run.configuration() == self.work.configuration()
-      && self.run.work_id() == self.work.id()
-      && self.run.subject() == self.work.subject()
-      && self.flow.root_run().factory_run_id() == self.run.id()
-      && self.flow.root_run().definition() == self.flow.closure().root()
-      && self.flow.initial_cycle().flow_run_id() == self.flow.root_run().id();
+      && initial_admission_matches(&self.work, &self.run, &self.flow);
     valid.then_some(()).ok_or_else(|| {
       StoreError::invalid(
         StoreOperation::AdmitFactoryWork,
@@ -152,4 +146,29 @@ pub struct FactoryAdmissionMutationOutcome {
   pub disposition: MutationDisposition,
   /// Immutable result committed by the original admission.
   pub admission: PublishedFactoryAdmission,
+}
+
+// Both newly admitted input and a retained receipt obey one original Work/Run relationship.
+fn initial_admission_matches(work: &WorkEnvelope, run: &FactoryRun, flow: &AdmittedFlow) -> bool {
+  run.state() == FactoryRunState::Admitted
+    && run.version() == FactoryRunVersion::INITIAL
+    && run.configuration() == work.configuration()
+    && run.work_id() == work.id()
+    && run.subject() == work.subject()
+    && flow.root_run().factory_run_id() == run.id()
+    && flow.root_run().definition() == flow.closure().root()
+    && flow.initial_cycle().flow_run_id() == flow.root_run().id()
+}
+impl PublishedFactoryAdmission {
+  /// Revalidates the original immutable admission receipt, never a later Run projection.
+  pub fn validate(&self) -> Result<(), StoreError> {
+    initial_admission_matches(&self.work, &self.run, &self.flow)
+      .then_some(())
+      .ok_or_else(|| {
+        StoreError::invalid(
+          StoreOperation::AdmitFactoryWork,
+          StoreInputError::InvalidFactoryAdmission,
+        )
+      })
+  }
 }

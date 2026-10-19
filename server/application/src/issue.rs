@@ -274,7 +274,7 @@ impl<S: IssueStore> ManagementQueryUseCase<ListIssueStatusHistoryQuery> for Issu
   }
 }
 
-fn visible_issue(grant: &ManagementAuthorizationGrant, id: IssueId) -> Result<(), ApplicationError> {
+pub(crate) fn visible_issue(grant: &ManagementAuthorizationGrant, id: IssueId) -> Result<(), ApplicationError> {
   match grant.visibility().view() {
     ManagementVisibilityView::All => Ok(()),
     ManagementVisibilityView::None => Err(

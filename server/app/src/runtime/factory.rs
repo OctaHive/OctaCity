@@ -20,6 +20,38 @@ pub struct FactoryRuntimeResources {
 }
 
 impl FactoryRuntimeResources {
+  /// Supplies ordinary outputs and Project-owned inputs to every native compiler.
+  pub fn retained_artifact_reader(
+    &self,
+  ) -> Arc<
+    octacity_server_application::FactoryArtifactReader<
+      PostgresStore,
+      PostgresAuthoritativeStore,
+      octacity_artifact_s3::S3ArtifactStore,
+    >,
+  > {
+    Arc::new(
+      octacity_server_application::FactoryArtifactReader::new(
+        self.runs.clone(),
+        self.builds.clone(),
+        self.objects.clone(),
+      )
+      .with_project_inputs(self.runs.clone()),
+    )
+  }
+  /// Shares the same provider-independent publication service with every text ingress.
+  pub fn project_text_intake(
+    &self,
+    authorization: Arc<dyn octacity_server_application::ManagementAuthorizationPolicy>,
+  ) -> octacity_server_application::ProjectTextIntake<PostgresStore, octacity_artifact_s3::S3ArtifactStore> {
+    octacity_server_application::ProjectTextIntake::new(
+      self.runs.clone(),
+      self.objects.clone(),
+      self.revisions.clone(),
+      authorization,
+      Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+    )
+  }
   /// Explicitly installs provider-neutral verified Reporter profiles through the existing outbox.
   /// Construction performs no dependency I/O; manual intake and ordinary Builds require no profiles.
   pub fn work_reporter_dispatcher(
@@ -115,11 +147,7 @@ impl FactoryRuntimeResources {
     &self,
     directories: std::collections::BTreeMap<octacity_server_factory::ImmutableReference, std::path::PathBuf>,
   ) -> Result<Arc<dyn super::FactoryDeliveryMaterializer>, FactoryRuntimeInstallationError> {
-    let reader = Arc::new(octacity_server_application::FactoryArtifactReader::new(
-      self.runs.clone(),
-      self.builds.clone(),
-      self.objects.clone(),
-    ));
+    let reader = self.retained_artifact_reader();
     super::RetainedFactoryDeliveryMaterializer::new(
       reader,
       directories,
@@ -286,11 +314,7 @@ impl FactoryRuntimeResources {
       policies,
       self.toolchain.clone(),
     ));
-    let reader = Arc::new(FactoryArtifactReader::new(
-      self.runs.clone(),
-      self.builds.clone(),
-      self.objects.clone(),
-    ));
+    let reader = self.retained_artifact_reader();
     let publisher = Arc::new(FactoryExecutionInputPublisher::new(
       self.runs.clone(),
       self.objects.clone(),
@@ -674,11 +698,7 @@ impl FactoryRuntimeResources {
       return Err(FactoryRuntimeInstallationError::Invalid);
     }
     let clock = Arc::new(SystemFactoryExecutionClock);
-    let reader = Arc::new(FactoryArtifactReader::new(
-      self.runs.clone(),
-      self.builds.clone(),
-      self.objects.clone(),
-    ));
+    let reader = self.retained_artifact_reader();
     let inputs = self.protected_validation_inputs(super::FactoryRuntimeProtectedValidationProfile {
       author_profile,
       policy,
