@@ -242,6 +242,19 @@ export const ruMessages = {
   'workflow.nameBound':
     'Названия должны быть непустыми, без пробелов по краям и управляющих символов, не более {bytes} байт UTF-8.',
 
+  'factory.issueWorkflowVersion': 'Версия процесса задачи',
+  'factory.reviewWorkflowVersion': 'Проверить версию процесса',
+  'factory.issueStatusAction': 'Локальное действие со статусом задачи',
+  'factory.issueWorkflow': 'Процесс задачи',
+  'factory.issueTransition': 'Переход задачи',
+  'factory.issueOutcome': 'Объявленный исход действия',
+  'factory.useIssueStatus': 'Использовать проверенное действие задачи',
+  'factory.issueStatusHelp':
+    'Переводит связанную задачу по точному переходу без подключения и Reporter. Нет связи — действие недоступно, задача не создаётся. Завершение запуска и текст модели не выбирают переход.',
+  'factory.issueStatusPinned':
+    'Закреплённый процесс {workflow} · v{version} · переход {transition} · исход {outcome}',
+  'factory.issueEvidenceHelp':
+    'Свяжите candidate и хеши свидетельств через редактор входов. Требования задаёт переход. Текст модели не служит свидетельством; вход без требований — {}.',
   'factory.deferredStatusProfile':
     'Для настройки эффектов источника выберите опубликованный профиль отложенного действия статуса.',
   'factory.stageSourceUpdate': 'Обновить исходную внешнюю задачу',

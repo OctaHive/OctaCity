@@ -260,12 +260,24 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ], &["status"]),
   );
   schemas.insert(
+    "FactoryIssueStatusActionParameters".to_owned(),
+    object(
+      [
+        ("workflow_id", json!({"type":"string","format":"uuid"})),
+        ("workflow_version", positive_integer()),
+        ("transition_id", json!({"type":"string","format":"uuid"})),
+        ("outcome", key()),
+      ],
+      &["workflow_id", "workflow_version", "transition_id", "outcome"],
+    ),
+  );
+  schemas.insert(
     "FactoryFlowAction".to_owned(),
     object(
       [
         ("plugin", schema_ref("FactoryImmutableReferenceResource")),
         ("action", key()),
-        ("parameters", json!({"description":"Plugin-owned parameters. The installed set_status action uses FactoryWorkStatusActionParameters; other installed actions retain their own contracts."})),
+        ("parameters", json!({"description":"Plugin-owned parameters. The installed set_status action uses FactoryWorkStatusActionParameters; transition_issue uses FactoryIssueStatusActionParameters and the existing visible Issue workflow contracts. Its typed input selects candidate and retained evidence digests; an absent Issue association is unavailable. Other installed actions retain their own contracts."})),
       ],
       &["plugin", "action", "parameters"],
     ),

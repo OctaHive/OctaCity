@@ -807,3 +807,44 @@ fn factory_cycle_collection_preserves_exact_causal_identity_and_rejects_foreign_
     );
   });
 }
+
+/// Configures a local action through the same immutable Flow constructors as publication.
+pub(crate) fn with_issue_status_action(
+  flow: &octacity_server_factory::FactoryFlowConfiguration,
+  selection: octacity_server_store::IssuePipelineStatusSelection,
+) -> octacity_server_factory::FactoryFlowConfiguration {
+  use octacity_server_factory::{FlowActionBinding, FlowDefinition, FlowDefinitionInput, PinnedFlowDefinitionClosure};
+  let original = flow.closure.definition(flow.closure.root()).unwrap();
+  let mut nodes = original.nodes().to_vec();
+  nodes[0] = nodes[0]
+    .clone()
+    .with_action(
+      FlowActionBinding::new(
+        nodes[0].action().unwrap().plugin().clone(),
+        key("transition_issue"),
+        serde_json::to_value(selection).unwrap(),
+      )
+      .unwrap(),
+    )
+    .unwrap();
+  let root = FlowDefinition::new(FlowDefinitionInput {
+    id: original.reference().id(),
+    version: original.reference().version(),
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes,
+    transitions: original.transitions().to_vec(),
+    terminals: original.terminals().to_vec(),
+    context_projections: original.context_projections().to_vec(),
+    data_projections: original.data_projections().to_vec(),
+    execution: original.execution().clone(),
+  })
+  .unwrap();
+  octacity_server_factory::FactoryFlowConfiguration::new(
+    PinnedFlowDefinitionClosure::new(root.reference(), vec![root]).unwrap(),
+    flow.limits.clone(),
+    flow.data_schemas.clone(),
+    flow.pools.clone(),
+  )
+  .unwrap()
+}

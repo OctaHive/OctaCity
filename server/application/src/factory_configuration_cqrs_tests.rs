@@ -1391,3 +1391,123 @@ fn configuration_publication_rejects_stage_source_effects_without_an_installed_a
     assert!(store.management_audit_facts().await.is_empty());
   });
 }
+
+#[test]
+fn issue_status_action_publication_requires_workflow_authorization() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let mut fixture = fixture(project);
+    fixture.draft.flow = Some(crate::factory_admission_tests::with_issue_status_action(
+      fixture.draft.flow.as_ref().unwrap(),
+      octacity_server_store::IssuePipelineStatusSelection {
+        workflow_id: "10000000-0000-4000-8000-000000000010".parse().unwrap(),
+        workflow_version: octacity_server_domain::IssueWorkflowVersion::INITIAL,
+        transition_id: "10000000-0000-4000-8000-000000000011".parse().unwrap(),
+        outcome: "succeeded".parse().unwrap(),
+      },
+    ));
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices).unwrap();
+    let error = query(
+      &FactoryConfigurationHandlers::new(store.clone()),
+      ValidateFactoryConfigurationQuery {
+        id: FactoryConfigurationId::generate(),
+        project_id: project,
+        definition_digest: digest(33),
+        draft: fixture.draft,
+      },
+    )
+    .await
+    .expect_err("a local status action must be checked against visible workflows");
+    assert_eq!(
+      error.classification(),
+      ApplicationFailure::CapabilityUnavailable,
+      "{error:?}"
+    );
+    assert!(store.management_audit_facts().await.is_empty());
+  });
+}
+
+#[test]
+fn issue_status_publication_uses_visible_retained_workflows_and_rejects_model_selected_moves() {
+  run_ready(async {
+    use octacity_server_store::{IssueWorkflowStore, ProjectStore};
+    let project = ProjectId::generate();
+    let issues = Arc::new(octacity_server_store::testing::InMemoryProjectStore::new());
+    issues
+      .create_project(octacity_server_store::testing::management_mutation(
+        octacity_server_store::CreateProject {
+          id: project,
+          parent_id: None,
+          name: octacity_server_domain::ProjectName::new("Manual policies").unwrap(),
+          idempotency_key: idempotency("policy-project"),
+          created_at: time(1),
+        },
+      ))
+      .await
+      .unwrap();
+    let workflow = issues.default_issue_workflow(project).await.unwrap().workflow;
+    let edge = workflow
+      .definition
+      .transitions
+      .iter()
+      .find(|edge| {
+        edge
+          .origins
+          .contains(&octacity_server_store::IssueTransitionOrigin::Pipeline)
+      })
+      .unwrap();
+    let selection = octacity_server_store::IssuePipelineStatusSelection {
+      workflow_id: workflow.id,
+      workflow_version: workflow.version,
+      transition_id: edge.id,
+      outcome: key("succeeded"),
+    };
+    let mut f = fixture(project);
+    let original = f.draft.flow.as_ref().unwrap().clone();
+    f.draft.flow = Some(crate::factory_admission_tests::with_issue_status_action(
+      &original,
+      selection.clone(),
+    ));
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, f.choices).unwrap();
+    let queries = Arc::new(crate::AuthorizedQueryHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(crate::IssueWorkflowHandlers::new(issues)),
+    ));
+    let handlers = FactoryConfigurationHandlers::new(store.clone()).with_issue_status_actions(queries);
+    let candidate = ValidateFactoryConfigurationQuery {
+      id: FactoryConfigurationId::generate(),
+      project_id: project,
+      definition_digest: digest(38),
+      draft: f.draft,
+    };
+    let validated = query(&handlers, candidate.clone()).await.unwrap();
+    assert_eq!(
+      validated.configuration.flow().closure.definitions()[0].nodes()[0]
+        .action()
+        .unwrap()
+        .parameters()["transition_id"],
+      serde_json::json!(edge.id)
+    );
+    for invalid in [
+      octacity_server_store::IssuePipelineStatusSelection {
+        outcome: key("completion-prose"),
+        ..selection.clone()
+      },
+      octacity_server_store::IssuePipelineStatusSelection {
+        transition_id: octacity_server_domain::IssueTransitionId::generate(),
+        ..selection
+      },
+    ] {
+      let mut candidate = candidate.clone();
+      candidate.draft.flow = Some(crate::factory_admission_tests::with_issue_status_action(
+        &original, invalid,
+      ));
+      assert!(query(&handlers, candidate).await.is_err());
+    }
+    assert!(store.management_audit_facts().await.is_empty());
+  });
+}

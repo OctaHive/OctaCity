@@ -196,6 +196,7 @@ export function createConsoleRoutes(
           path: childPath(CONSOLE_PATHS.factory),
           element: defer(
             <FactoryLandingView
+              workflows={dependencies.issueWorkflowsApi}
               api={dependencies.factoryApi}
               workSources={{
                 getProject: dependencies.projectsApi.getProject,

@@ -650,8 +650,22 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryFlowDefi
     &self,
     _context: &ManagementRequestContext,
     _grant: &ManagementAuthorizationGrant,
-    _query: octacity_server_application::ValidateFactoryFlowDefinitionQuery,
+    query: octacity_server_application::ValidateFactoryFlowDefinitionQuery,
   ) -> Result<octacity_server_application::FactoryFlowDefinitionValidation, Self::Error> {
+    if let Some(binding) = query
+      .draft
+      .root
+      .nodes
+      .iter()
+      .filter_map(|node| node.action())
+      .find(|binding| binding.action().as_str() == "transition_issue")
+    {
+      assert_eq!(
+        binding.parameters(),
+        &serde_json::json!({"workflow_id":"10000000-0000-4000-8000-000000000010","workflow_version":3,"transition_id":"10000000-0000-4000-8000-000000000011","outcome":"succeeded"})
+      );
+      self.record("validate_local_issue_action");
+    }
     self.record("validate_factory_flow_definition");
     if !self.successful_workflow {
       return Err(ApplicationError::unavailable());
@@ -1862,4 +1876,46 @@ async fn flow_validation_adds_safe_capability_and_permission_diagnostics_without
   );
   assert_eq!(*application.calls.lock().unwrap(), ["validate_factory_flow_definition"]);
   assert_json_matches_component(&openapi_document(), "FactoryFlowDefinitionValidation", &body);
+}
+
+#[test]
+fn local_issue_status_parameters_have_a_closed_provider_free_http_contract() {
+  let document = openapi_document();
+  let parameters = serde_json::json!({
+    "workflow_id":"10000000-0000-4000-8000-000000000010", "workflow_version":3,
+    "transition_id":"10000000-0000-4000-8000-000000000011", "outcome":"published"
+  });
+  assert_json_matches_component(&document, "FactoryIssueStatusActionParameters", &parameters);
+  let schema = &document["components"]["schemas"]["FactoryIssueStatusActionParameters"];
+  assert_eq!(schema["additionalProperties"], false);
+  assert_eq!(schema["required"].as_array().unwrap().len(), 4);
+  assert!(schema.to_string().contains("workflow_version"));
+  assert!(!schema.to_string().contains("connection"));
+}
+
+#[tokio::test]
+async fn existing_flow_validation_forwards_exact_local_issue_action_without_provider_fields() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let routes = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application.clone()),
+  );
+  let mut request = flow_draft_request();
+  request["definition"]["root"]["nodes"][0]["action"]["action"] = serde_json::json!("transition_issue");
+  request["definition"]["root"]["nodes"][0]["action"]["parameters"] = serde_json::json!({"workflow_id":"10000000-0000-4000-8000-000000000010","workflow_version":3,"transition_id":"10000000-0000-4000-8000-000000000011","outcome":"succeeded"});
+  let response = routes
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-definitions/validate",
+      "unused",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(
+    *application.calls.lock().unwrap(),
+    ["validate_local_issue_action", "validate_factory_flow_definition"]
+  );
 }

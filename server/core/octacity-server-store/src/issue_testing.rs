@@ -25,8 +25,7 @@ pub(super) struct IssueMemoryState {
 // A transient store failure leaves it pending; definitive business rejection stays historical.
 #[derive(Clone)]
 struct IssueMoveReplay {
-  intent: TransitionIssueIntent,
-  pipeline: Option<AcceptedIssueStatusAction>,
+  request: TransitionIssue,
   result: Option<Result<IssueTransitionOutcome, StoreError>>,
 }
 impl IssueMemoryState {
@@ -42,6 +41,24 @@ impl IssueMemoryState {
 }
 #[async_trait::async_trait]
 impl IssueStore for crate::testing::InMemoryProjectStore {
+  async fn issue_status_command(
+    &self,
+    project_id: ProjectId,
+    id: IssueId,
+    scope: &ManagementSecurityScope,
+    operation_id: octacity_server_factory::FactoryDigest,
+  ) -> Result<Option<RetainedIssueStatusCommand>, StoreError> {
+    let key = ManagementIdempotencyKey::new(scope.clone(), issue_status_operation_key(operation_id));
+    Ok(
+      self
+        .lock()?
+        .issues
+        .moves
+        .get(&key)
+        .filter(|r| r.request.intent.project_id == project_id && r.request.intent.id == id)
+        .and_then(|r| r.request.retained_pipeline_command()),
+    )
+  }
   async fn issue_field_policy(&self, project_id: ProjectId, id: IssueId) -> Result<IssueFieldPolicy, StoreError> {
     let state = self.lock()?;
     if !state.issues.current.contains_key(&(project_id, id)) {
@@ -226,11 +243,11 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
     &self,
     request: ManagementMutation<TransitionIssue>,
   ) -> Result<IssueTransitionOutcome, StoreError> {
-    let (request, audit) = request.into_parts();
+    let (mut request, audit) = request.into_parts();
     let key = audit.scoped_idempotency_key(&request.idempotency_key);
     let mut state = self.lock()?;
     if let Some(replay) = state.issues.moves.get(&key) {
-      if replay.intent != request.intent || replay.pipeline.as_ref() != request.pipeline_action() {
+      if replay.request.intent != request.intent || replay.request.pipeline_action() != request.pipeline_action() {
         return Err(StoreError::Conflict {
           entity: EntityKind::Issue,
         });
@@ -241,12 +258,14 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
           ..outcome
         });
       }
-    } else if let Some(action) = request.pipeline_action() {
+      if request.pipeline_action().is_some() {
+        request.moved_at = replay.request.moved_at;
+      }
+    } else if request.pipeline_action().is_some() {
       state.issues.moves.insert(
         key.clone(),
         IssueMoveReplay {
-          intent: request.intent.clone(),
-          pipeline: Some(action.clone()),
+          request: request.clone(),
           result: None,
         },
       );
@@ -306,8 +325,7 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
         memory.moves.insert(
           key.clone(),
           IssueMoveReplay {
-            intent: request.intent,
-            pipeline: request.pipeline,
+            request,
             result: Some(Ok(outcome.clone())),
           },
         );

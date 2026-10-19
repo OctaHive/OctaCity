@@ -34,9 +34,11 @@ mod definition_cqrs;
 mod definition_discovery;
 mod diagnostic;
 mod error;
+mod factory_issue_status_action;
 mod issue;
 mod issue_execution;
 mod issue_execution_publication;
+pub use factory_issue_status_action::*;
 pub use issue_execution_publication::*;
 mod project_text_intake;
 #[cfg(test)]
@@ -779,3 +781,6 @@ pub use integration_check::*;
 
 mod factory_source_configuration;
 pub use factory_source_configuration::*;
+
+mod factory_issue_status_authoring;
+pub use factory_issue_status_authoring::FactoryIssueStatusAuthorizer;

@@ -12,6 +12,23 @@ use sqlx::{PgConnection, types::Json};
 
 #[async_trait::async_trait]
 impl IssueStore for PostgresStore {
+  async fn issue_status_command(
+    &self,
+    project_id: ProjectId,
+    id: IssueId,
+    scope: &ManagementSecurityScope,
+    operation_id: octacity_server_factory::FactoryDigest,
+  ) -> Result<Option<RetainedIssueStatusCommand>, StoreError> {
+    let value: Option<Json<RetainedIssueStatusCommand>> = sqlx::query_scalar(
+      "SELECT outcome->'retained_command' FROM idempotency_records WHERE scope=$1 AND security_scope=$2 AND idempotency_key=$3 AND outcome ? 'retained_command'",
+    ).bind(MutationKind::TransitionIssue.scope()).bind(scope.as_str()).bind(issue_status_operation_key(operation_id).as_str())
+      .fetch_optional(self.pool()).await.map_err(unavailable)?;
+    Ok(
+      value
+        .map(|Json(command)| command)
+        .filter(|c| c.intent.project_id == project_id && c.intent.id == id),
+    )
+  }
   async fn issue_field_policy(&self, project_id: ProjectId, id: IssueId) -> Result<IssueFieldPolicy, StoreError> {
     self.issue(project_id, id, None).await?;
     field_policy(&mut *self.pool().acquire().await.map_err(unavailable)?, project_id, id).await
@@ -285,33 +302,101 @@ impl IssueStore for PostgresStore {
     &self,
     request: ManagementMutation<TransitionIssue>,
   ) -> Result<IssueTransitionOutcome, StoreError> {
-    // Pipeline applicability/recovery is installed by task 3.7; never fall back to manual policy.
-    if request.mutation().pipeline_action().is_some() {
-      return Err(StoreError::Unavailable);
-    }
-    let (request, audit) = request.into_parts();
-    let intent = &request.intent;
-    let identity = MutationIdentity::new_management(
-      &audit,
-      MutationKind::TransitionIssue,
-      request.idempotency_key.to_string(),
-      request.moved_at,
-      EntityKind::Issue,
-      intent,
-    )?;
-    let mut tx = match crate::mutation::begin(self.pool(), &identity).await? {
-      MutationStart::Replay(value) => {
-        let mut outcome: IssueTransitionOutcome = decode_outcome(value)?;
-        outcome.disposition = MutationDisposition::Replayed;
-        return Ok(outcome);
+    let (mut request, audit) = request.into_parts();
+    let command = request.retained_pipeline_command().map(|command| json!(command));
+    let canonical = request.pipeline_action().map(|action| {
+      json!({
+        "intent":request.intent,"selection":action.selection(),"provenance":action.provenance()
+      })
+    });
+    let mut identity = if let Some(canonical) = canonical {
+      MutationIdentity::new_management(
+        &audit,
+        MutationKind::TransitionIssue,
+        request.idempotency_key.to_string(),
+        request.moved_at,
+        EntityKind::Issue,
+        &canonical,
+      )?
+    } else {
+      // Preserve the exact pre-existing manual command digest/receipt encoding.
+      MutationIdentity::new_management(
+        &audit,
+        MutationKind::TransitionIssue,
+        request.idempotency_key.to_string(),
+        request.moved_at,
+        EntityKind::Issue,
+        &request.intent,
+      )?
+    };
+    if let Some(command) = &command {
+      // Seal accepted provenance before the business transaction. A crash can leave
+      // only the original pending command, never a retargetable empty reservation.
+      match crate::mutation::begin_retained(self.pool(), &identity, command.clone()).await? {
+        MutationStart::Replay(value) => return transition_replay(value),
+        MutationStart::Fresh(tx) => tx.commit().await.map_err(unavailable)?,
       }
+    }
+    let start = match command {
+      Some(command) => crate::mutation::begin_retained(self.pool(), &identity, command).await?,
+      None => crate::mutation::begin(self.pool(), &identity).await?,
+    };
+    let mut tx = match start {
+      MutationStart::Replay(value) => return transition_replay(value),
       MutationStart::Fresh(tx) => tx,
     };
-    let current = lock(&mut tx, intent.project_id, intent.id).await?;
-    let initial = issue_workflow::project_template(&mut tx, intent.project_id, false).await?;
-    let workflow = issue_workflow::read(&mut tx, &initial, current.workflow_id, Some(current.workflow_version)).await?;
-    let policy = field_policy(&mut tx, intent.project_id, intent.id).await?;
-    let outcome = current.transitioned(&request, &workflow, &policy, audit.actor())?;
+    if request.pipeline_action().is_some() {
+      let Json(original): Json<RetainedIssueStatusCommand> = sqlx::query_scalar(
+        "SELECT outcome->'retained_command' FROM idempotency_records WHERE scope=$1 AND security_scope=$2 AND idempotency_key=$3",
+      ).bind(identity.kind.scope()).bind(identity.persisted_security_scope()).bind(&identity.key)
+        .fetch_one(&mut *tx).await.map_err(unavailable)?;
+      // History and the shared audit/outbox publisher must retain the same command time.
+      identity.occurred_at = original.moved_at;
+      request.moved_at = original.moved_at;
+    }
+    let intent = &request.intent;
+    let evaluated = async {
+      let current = lock(&mut tx, intent.project_id, intent.id).await?;
+      if let Some(action) = request.pipeline_action() {
+        let p = action.provenance();
+        let association: Option<(Json<IssueWorkAssociation>,Option<i64>)> = sqlx::query_as(
+          "SELECT document,status_applicability_version FROM issue_work_associations WHERE project_id=$1 AND issue_id=$2 AND work_id=$3",
+        ).bind(current.project_id.as_uuid()).bind(current.id.as_uuid()).bind(p.work_id.as_uuid())
+          .fetch_optional(&mut *tx).await.map_err(unavailable)?;
+        if association.is_none_or(|(Json(a),marker)| a.issue_id != p.issue_id || a.run_id != p.run_id
+          || a.requirements_version != Some(p.requirements_version)
+          || marker != i64::try_from(current.applicability_version.get()).ok()) {
+          return Err(StoreError::Conflict { entity: EntityKind::Issue });
+        }
+      }
+      let initial = issue_workflow::project_template(&mut tx, intent.project_id, false).await?;
+      let workflow = issue_workflow::read(&mut tx, &initial, current.workflow_id, Some(current.workflow_version)).await?;
+      let policy = field_policy(&mut tx, intent.project_id, intent.id).await?;
+      let outcome = current.transitioned(&request, &workflow, &policy, audit.actor())?;
+      Ok((current,policy,outcome))
+    }.await;
+    let (current, policy, outcome) = match evaluated {
+      Ok(value) => value,
+      Err(error) => {
+        if request.pipeline_action().is_some()
+          && let Some(rejection) = TransitionRejection::from_error(&error)
+        {
+          crate::mutation::complete_record(tx, &identity, json!({"pipeline_rejection":rejection})).await?;
+        }
+        return Err(error);
+      }
+    };
+    if let Some(action) = request.pipeline_action() {
+      sqlx::query("UPDATE issue_work_associations SET status_applicability_version=$2 WHERE work_id=$1")
+        .bind(action.provenance().work_id.as_uuid())
+        .bind(number(
+          outcome.issue.applicability_version.get(),
+          StoreOperation::TransitionIssue,
+        )?)
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+    }
     publish(
       tx,
       &identity,
@@ -324,6 +409,53 @@ impl IssueStore for PostgresStore {
     .await?;
     Ok(outcome)
   }
+}
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum TransitionRejection {
+  Conflict,
+  MissingIssue,
+  Invalid,
+}
+impl TransitionRejection {
+  fn from_error(error: &StoreError) -> Option<Self> {
+    match error {
+      StoreError::Conflict {
+        entity: EntityKind::Issue,
+      } => Some(Self::Conflict),
+      StoreError::NotFound {
+        entity: EntityKind::Issue,
+      } => Some(Self::MissingIssue),
+      StoreError::InvalidInput {
+        operation: StoreOperation::TransitionIssue,
+        source: StoreInputError::InvalidIssue,
+      } => Some(Self::Invalid),
+      _ => None,
+    }
+  }
+  fn into_error(self) -> StoreError {
+    match self {
+      Self::Conflict => StoreError::Conflict {
+        entity: EntityKind::Issue,
+      },
+      Self::MissingIssue => StoreError::NotFound {
+        entity: EntityKind::Issue,
+      },
+      Self::Invalid => invalid(StoreOperation::TransitionIssue),
+    }
+  }
+}
+fn transition_replay(value: serde_json::Value) -> Result<IssueTransitionOutcome, StoreError> {
+  if let Some(rejection) = value.get("pipeline_rejection") {
+    return Err(
+      serde_json::from_value::<TransitionRejection>(rejection.clone())
+        .map_err(|_| StoreError::Unavailable)?
+        .into_error(),
+    );
+  }
+  let mut outcome: IssueTransitionOutcome = decode_outcome(value)?;
+  outcome.disposition = MutationDisposition::Replayed;
+  Ok(outcome)
 }
 fn invalid(operation: StoreOperation) -> StoreError {
   StoreError::InvalidInput {

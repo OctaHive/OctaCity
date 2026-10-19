@@ -18,6 +18,8 @@ use std::sync::{
 #[allow(dead_code)]
 #[path = "../../infrastructure/octacity-server-store-postgres/tests/support/mod.rs"]
 mod postgres;
+#[path = "project_text_intake/status_actions.rs"]
+mod status_actions;
 fn at(n: i64) -> Timestamp {
   Timestamp::from_unix_millis(n).unwrap()
 }

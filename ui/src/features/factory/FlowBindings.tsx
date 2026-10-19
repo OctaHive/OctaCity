@@ -4,6 +4,7 @@ import type { MessageKey } from '../../app/presentation/messages';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { ValueMappingEditor } from './ValueMappingEditor';
 import { SelectMenu } from '../../shared/SelectMenu';
+import { FlowIssueStatus, type FlowIssueServices } from './FlowIssueStatus';
 import { FlowSourceUpdate, type FlowSourceServices } from './FlowSourceUpdate';
 
 type Node = components['schemas']['FactoryFlowNodeDefinition'];
@@ -35,12 +36,14 @@ export function FlowBindings({
   schemas,
   onChange,
   sources: services,
+  issueStatus,
 }: {
   node: Node;
   root: Root;
   schemas: readonly Schema[];
   onChange: (node: Node) => void;
   sources?: FlowSourceServices | undefined;
+  issueStatus?: FlowIssueServices | undefined;
 }) {
   const { t } = usePresentation();
   const sources = node.input_binding?.sources ?? {};
@@ -60,6 +63,9 @@ export function FlowBindings({
   ) => onChange({ ...node, context_binding: { ...node.context_binding, entries } });
   return (
     <section>
+      {issueStatus && node.action?.action === 'transition_issue' ? (
+        <FlowIssueStatus key={node.key} node={node} services={issueStatus} onChange={onChange} />
+      ) : null}
       {services && node.action?.action === 'set_status' ? (
         <FlowSourceUpdate key={node.key} node={node} services={services} onChange={onChange} />
       ) : null}

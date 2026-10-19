@@ -673,11 +673,75 @@ recovery cannot retarget it to a newer head. A successful replay returns the
 original revision after later edits, subject to current authorization. Local
 status changes require no Reporter and preserve immutable Work/Run results.
 
-Task 3.6 qualifies this contract with the in-memory transactional store. The
-PostgreSQL adapter explicitly rejects pipeline commands as unavailable until
-task 3.7 installs durable applicability and recovery/composition. Generic
-Flow/action authoring and REST/Console controls remain task 3.8. No public
-pipeline-status endpoint or parallel transition journal is introduced here.
+PostgreSQL retains the Work applicability marker beside the existing association.
+Migration 78 initializes existing reviewed associations from their original
+requirements revision, never the latest head; legacy associations without a
+reviewed binding remain ineligible. Only the winning Work advances its marker
+in the same transaction as revision, history, audit, outbox and receipt. Migration
+79 keeps history metadata bounded at 64 KiB, accommodating the supported 256
+record references without storing evidence bodies.
+
+The existing idempotency record seals the pipeline command before business
+publication, retaining its original guard, selection, provenance and move time.
+Transient failure leaves that command pending; definitive rejection is retained
+without a business mutation or mutation evidence. Recovery cannot change the
+command or refresh its timestamp. The sealed time also supplies the shared audit
+and outbox publication metadata. Retained metadata contains no deserializable
+evidence-authority flags: the shared codec requalifies exact journal references
+for both initial publication and recovery. Candidate metadata without selected
+evidence is rejected.
+
+`FactoryRuntimeResources::issue_status_executor` explicitly installs the local
+action in the existing trusted-action adapter/registry. The host supplies accepted
+attribution, current authorization policy and execution clock. Binding parameters
+are the closed workflow/version/edge/outcome selection; projected input contains
+only optional candidate/evidence references (`{}` for an action without evidence).
+Evidence must belong to the frozen input's explicitly selected source records.
+Work/Run/Flow/cycle/attempt/operation identity comes from the common owner, never
+model payloads. Current Issue visibility and transition rights, execution windows
+and resource bounds are checked on recovery. Lost acknowledgement after a local
+commit returns the original receipt after later Issue edits, then the common node
+owner retains one result. Cancellation neither replays a move nor undoes one.
+No Reporter, provider connection, additional transition handler, execution journal,
+outbox or recovery worker is introduced. Manual task creation remains independent.
+
+Flow and Factory Configuration validation/publication use the same local-action
+checker. The existing generic `FactoryFlowAction` envelope remains extensible;
+`transition_issue` parameters use the closed `FactoryIssueStatusActionParameters`
+contract (`workflow_id`, `workflow_version`, `transition_id`, `outcome`). The
+installed plugin reference must still be selectable. Publication resolves the
+exact retained Project workflow under current read visibility and accepts only
+an explicit edge permitting the pipeline origin and an outcome declared by the
+node. Evidence requirements belong to that immutable edge; action parameters
+cannot weaken them, select a target Issue, carry source effects or infer a move
+from model prose. No public pipeline-status execution endpoint is introduced.
+
+The existing Console Flow editor reuses installed execution profiles and shows
+local Issue actions separately from `set_status` source/Reporter effects. Select
+a visible workflow, explicitly inspect its current or retained version, review
+pipeline edges and their evidence requirements, and choose a declared action
+outcome. Switching execution profiles discards the previous local binding review;
+applying reviewed edits preserves it. A retained workflow version remains visibly
+selected even when the catalog lists a newer version. The existing typed
+input/source mapper binds optional `candidate` and
+`evidence` record digests; it does not grant evidence authority. Review preserves
+an already configured outcome. The shared publication confirmation retains the
+exact Flow version precondition and frozen command on retry; stale publication
+requires refreshing and validating the draft again. Drafts remain in memory.
+
+An Issue execution request checks every local action's workflow pin against the
+reviewed card before reserving Work. Ordinary automatic Source input currently
+cannot supply a reviewed Issue association, so activation with a local Issue
+action is rejected; a disabled draft can be retained for repair. Legacy
+unassociated Work still yields explicit unavailable at execution rather than
+creating or guessing an Issue. Local actions and manual task creation require
+no provider connection, credential or external mapping. These authoring checks
+perform no status movement, provider calls or input publication.
 
 Contract Red/Green and regression results are recorded in
 [task 3.6 verification](../../openspec/changes/add-factory-work-card/verification-3.6.md).
+PostgreSQL migrations, interruption and native owner recovery are recorded in
+[task 3.7 verification](../../openspec/changes/add-factory-work-card/verification-3.7.md).
+
+REST/Console authoring, target compatibility and publication review are recorded in
+[task 3.8 verification](../../openspec/changes/add-factory-work-card/verification-3.8.md).

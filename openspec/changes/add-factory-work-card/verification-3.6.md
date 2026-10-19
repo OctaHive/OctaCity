@@ -39,9 +39,9 @@ leaves a resumable original command without partial business state or mutation
 evidence. Successful replay returns its historical result while checking current
 authorization. Work/Run results remain immutable.
 
-PostgreSQL explicitly fails closed for pipeline commands in this slice. Durable
+At the task 3.6 checkpoint, PostgreSQL explicitly failed closed for pipeline commands. Durable
 applicability, retained-command restart recovery and runtime composition are task
-3.7. Generic authoring and controls are task 3.8. These tasks remain unchecked.
+3.7 (qualified separately in [its report](verification-3.7.md)). Generic authoring and controls remain task 3.8.
 
 ## Observed Red/Green
 

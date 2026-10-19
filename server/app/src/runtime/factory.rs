@@ -20,6 +20,31 @@ pub struct FactoryRuntimeResources {
 }
 
 impl FactoryRuntimeResources {
+  /// Installs local Issue effects over the common action executor and transition command.
+  /// The host supplies accepted attribution, current policy and the shared execution clock;
+  /// neither provider configuration nor a Reporter is required.
+  pub fn issue_status_executor(
+    &self,
+    identity: octacity_server_factory::ImmutableReference,
+    context: octacity_server_application::ManagementRequestContext,
+    policy: Arc<dyn octacity_server_application::ManagementAuthorizationPolicy>,
+    clock: Arc<dyn octacity_server_application::FactoryExecutionClock>,
+  ) -> FactoryNodeExecutorBinding {
+    use octacity_server_application::{FactoryFlowActionAdapter, FactoryIssueStatusAction};
+    let action = FactoryIssueStatusAction::new(
+      identity.clone(),
+      self.runs.clone(),
+      self.runs.clone(),
+      context,
+      policy,
+      clock,
+    );
+    (
+      octacity_server_factory::FlowNodeKind::TrustedAction,
+      octacity_server_factory::NodeExecutionIdentity::External(identity),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
+    )
+  }
   /// Supplies ordinary outputs and Project-owned inputs to every native compiler.
   pub fn retained_artifact_reader(
     &self,

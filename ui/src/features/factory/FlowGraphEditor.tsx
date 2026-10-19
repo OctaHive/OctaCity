@@ -10,6 +10,7 @@ import styles from './Factory.module.css';
 import { ExecutionProfiles } from './ExecutionProfiles';
 import { FlowSettings } from './FlowSettings';
 import { FlowBindings } from './FlowBindings';
+import type { FlowIssueServices } from './FlowIssueStatus';
 import type { FlowSourceServices } from './FlowSourceUpdate';
 import { FlowProjections } from './FlowProjections';
 import { FlowTransitions } from './FlowTransitions';
@@ -22,6 +23,7 @@ interface Props {
   subflows: readonly components['schemas']['FactoryFlowDefinitionDetails'][];
   onChange: (value: Draft) => void;
   sources?: FlowSourceServices;
+  issueStatus?: FlowIssueServices | undefined;
 }
 
 const NODE_KINDS = {
@@ -37,7 +39,14 @@ const NODE_KINDS = {
 } satisfies Record<components['schemas']['FactoryFlowNodeKind'], MessageKey>;
 
 /** A component-memory draft over the closed technical grammar; names have no special meaning. */
-export function FlowGraphEditor({ value, onChange, choices, subflows, sources }: Props) {
+export function FlowGraphEditor({
+  value,
+  onChange,
+  choices,
+  subflows,
+  sources,
+  issueStatus,
+}: Props) {
   const { t } = usePresentation();
   const [selected, setSelected] = useState(() =>
     Math.max(
@@ -46,6 +55,7 @@ export function FlowGraphEditor({ value, onChange, choices, subflows, sources }:
     ),
   );
   const [settings, setSettings] = useState(false);
+  const [bindingRevision, setBindingRevision] = useState(0);
   const [admissionDeclarations] = useState(() => structuredClone(value.limits.permissions));
   const [permissionPreset, setPermissionPreset] = useState('');
   const permissionPresets = choices.filter(
@@ -237,9 +247,15 @@ export function FlowGraphEditor({ value, onChange, choices, subflows, sources }:
             node={node}
             choices={choices}
             flows={subflows}
-            onChange={onChange}
+            onChange={(next) => {
+              // Only profile selection resets binding drafts; applying their edits keeps the review.
+              setBindingRevision((revision) => revision + 1);
+              onChange(next);
+            }}
           />
           <FlowBindings
+            key={bindingRevision}
+            issueStatus={issueStatus}
             sources={sources}
             node={node}
             root={value.root}

@@ -122,6 +122,14 @@ pub struct IssueMutationOutcome {
 /// Transactional task authority independent of Factory and native systems.
 #[async_trait::async_trait]
 pub trait IssueStore: Send + Sync {
+  /// Reads one original pipeline command from the existing scoped replay record; reserves nothing.
+  async fn issue_status_command(
+    &self,
+    project_id: ProjectId,
+    id: IssueId,
+    scope: &crate::ManagementSecurityScope,
+    operation_id: octacity_server_factory::FactoryDigest,
+  ) -> Result<Option<crate::RetainedIssueStatusCommand>, StoreError>;
   /// Reads retained ownership/mapping preconditions; grants no authority to change them.
   async fn issue_field_policy(&self, project_id: ProjectId, id: IssueId) -> Result<IssueFieldPolicy, StoreError>;
   /// Reads bounded revision headers; bodies remain dedicated exact reads.

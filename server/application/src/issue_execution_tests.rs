@@ -767,3 +767,87 @@ fn issue_execution_association_rejects_work_with_another_reviewed_classification
 
 #[path = "issue_status_action_tests.rs"]
 mod status_actions;
+
+#[test]
+fn issue_execution_rejects_a_local_action_for_another_workflow_before_reserving_work() {
+  run_ready(async {
+    let (store, original_factory, issue, command) = fixture().await;
+    let target = &command.intent.target;
+    let selected = original_factory
+      .factory_admission_context(ReadFactoryAdmissionContext {
+        project_id: issue.project_id,
+        configuration_id: target.configuration_id,
+        configuration_version: target.configuration_version,
+        repository_id: target.repository_id,
+        repository_version: target.repository_version,
+      })
+      .await
+      .unwrap();
+    let flow = selected.configuration.configuration.flow();
+    let flow = crate::factory_admission_tests::with_issue_status_action(
+      flow,
+      IssuePipelineStatusSelection {
+        workflow_id: octacity_server_domain::IssueWorkflowId::generate(),
+        workflow_version: octacity_server_domain::IssueWorkflowVersion::INITIAL,
+        transition_id: octacity_server_domain::IssueTransitionId::generate(),
+        outcome: "succeeded".parse().unwrap(),
+      },
+    );
+    let factory = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
+    factory.seed_project(issue.project_id).unwrap();
+    factory
+      .seed_factory_configuration_version(PublishedFactoryConfiguration {
+        configuration: crate::factory_admission_tests::configuration_with_flow(
+          issue.project_id,
+          target.configuration_id,
+          Some(flow),
+        ),
+        published_at: at(1),
+      })
+      .unwrap();
+    factory.seed_repository_version(selected.repository).unwrap();
+    let before = store.mutation_evidence_counts().await;
+    let commands = AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(IssueExecutionHandlers::new(
+        store.clone(),
+        factory,
+        Arc::new(TrustedNetworkManagementPolicy),
+      )),
+    );
+    let result = commands.handle_command(&context(), command.clone()).await;
+    assert!(
+      result.is_err(),
+      "an incompatible workflow must not reserve an execution"
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
+    let mut content = issue.content.clone();
+    content.description = "later requirements".into();
+    store
+      .edit_issue(testing::management_mutation(EditIssue {
+        intent: EditIssueIntent {
+          project_id: issue.project_id,
+          id: issue.id,
+          expected_version: issue.version,
+          content,
+        },
+        idempotency_key: key("edit-before-target-review"),
+        edited_at: at(30),
+      }))
+      .await
+      .unwrap();
+    let after_edit = store.mutation_evidence_counts().await;
+    assert_eq!(
+      commands
+        .handle_command(&context(), command)
+        .await
+        .unwrap_err()
+        .application()
+        .unwrap()
+        .classification(),
+      ApplicationFailure::Conflict,
+      "stale Issue review must still request refresh before target repair"
+    );
+    assert_eq!(store.mutation_evidence_counts().await, after_edit);
+  });
+}

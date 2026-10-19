@@ -1,5 +1,8 @@
 mod support;
 
+#[path = "issue_execution/status_actions.rs"]
+mod status_actions;
+
 use octacity_server_domain::*;
 use octacity_server_factory::*;
 use octacity_server_store::{testing::*, *};

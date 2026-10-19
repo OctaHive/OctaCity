@@ -186,8 +186,9 @@ impl IssueExecutionStore for PostgresStore {
         association: previous,
       });
     }
-    sqlx::query("INSERT INTO issue_work_associations(work_id,run_id,project_id,issue_id,request_id,document) VALUES ($1,$2,$3,$4,$5,$6)")
-      .bind(association.work_id.as_uuid()).bind(association.run_id.as_uuid()).bind(association.project_id.as_uuid()).bind(association.issue_id.as_uuid()).bind(association.request_id.map(|id|id.as_uuid())).bind(Json(&association)).execute(&mut *tx).await.map_err(|e| {
+    sqlx::query("INSERT INTO issue_work_associations(work_id,run_id,project_id,issue_id,request_id,document,status_applicability_version) VALUES ($1,$2,$3,$4,$5,$6,(SELECT (document->>'applicability_version')::bigint FROM issue_revisions WHERE project_id=$3 AND issue_id=$4 AND version=$7))")
+      .bind(association.work_id.as_uuid()).bind(association.run_id.as_uuid()).bind(association.project_id.as_uuid()).bind(association.issue_id.as_uuid()).bind(association.request_id.map(|id|id.as_uuid())).bind(Json(&association))
+      .bind(association.requirements_version.map(|v|i64::try_from(v.get())).transpose().map_err(|_|conflict())?).execute(&mut *tx).await.map_err(|e| {
         if e.as_database_error().is_some_and(|e| e.is_unique_violation()) { conflict() } else { unavailable(e) }
       })?;
     if let Some(mut reviewed) = reviewed {

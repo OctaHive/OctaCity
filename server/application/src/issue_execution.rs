@@ -60,8 +60,8 @@ impl<S, F> IssueExecutionHandlers<S, F> {
   }
 }
 #[async_trait::async_trait]
-impl<S: IssueExecutionStore, F: FactoryAdmissionStore> ManagementCommandUseCase<RequestIssueExecutionCommand>
-  for IssueExecutionHandlers<S, F>
+impl<S: IssueExecutionStore + octacity_server_store::IssueStore, F: FactoryAdmissionStore>
+  ManagementCommandUseCase<RequestIssueExecutionCommand> for IssueExecutionHandlers<S, F>
 {
   type Error = ApplicationError;
   async fn execute_management_command(
@@ -119,6 +119,28 @@ impl<S: IssueExecutionStore, F: FactoryAdmissionStore> ManagementCommandUseCase<
       })
       .await?;
     crate::factory_admission::validate_admission_project(&selected, intent.project_id)?;
+    let mut actions =
+      crate::factory_issue_status_authoring::flow_issue_status_selections(selected.configuration.configuration.flow())
+        .peekable();
+    if actions.peek().is_some() {
+      let issue = self.store.issue(intent.project_id, intent.issue_id, None).await?;
+      if issue.version != intent.expected_version {
+        return Err(
+          octacity_server_store::StoreError::Conflict {
+            entity: octacity_server_domain::EntityKind::Issue,
+          }
+          .into(),
+        );
+      }
+
+      for action in actions {
+        let action = action?;
+        if action.workflow_id != issue.workflow_id || action.workflow_version != issue.workflow_version {
+          return Err(FactoryValidationDiagnostics::invalid("/target"));
+        }
+      }
+    }
+
     crate::manual_trigger::select_source(&target.source, &selected.repository)
       .map_err(|_| ApplicationError::InvalidInput)?;
     Ok(self.store.request_issue_execution(request).await?)

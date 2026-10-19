@@ -1,3 +1,4 @@
+import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import type { FactoryWorkSources } from './FactoryWorkForm';
@@ -18,9 +19,11 @@ import styles from './Factory.module.css';
 export function FactoryLandingView({
   api,
   workSources,
+  workflows,
 }: {
   api: FactoryApi;
   workSources?: FactoryWorkSources | undefined;
+  workflows?: IssueWorkflowsApi | undefined;
 }) {
   const { t } = usePresentation();
   const [params] = useSearchParams();
@@ -35,6 +38,7 @@ export function FactoryLandingView({
       <p>{t('factory.introduction')}</p>
       {projectId ? (
         <FactoryDefinitions
+          workflows={workflows}
           key={projectId}
           api={api}
           workSources={workSources}

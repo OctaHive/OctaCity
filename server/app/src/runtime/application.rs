@@ -157,10 +157,13 @@ pub(super) fn management_application(
   let resource_search = Arc::new(ResourceSearchHandlers::new(store.clone()));
   let operator_attention = Arc::new(OperatorAttentionHandlers::new(store.clone()));
   let management_policy: Arc<dyn ManagementAuthorizationPolicy> = Arc::new(TrustedNetworkManagementPolicy);
-  let factory = Arc::new(octacity_server_application::FactoryConfigurationHandlers::with_policy(
-    store.clone(),
-    management_policy.clone(),
-  ));
+  let workflows = Arc::new(octacity_server_application::IssueWorkflowHandlers::new(store.clone()));
+  let workflow_commands = authorized_commands(&management_policy, workflows.clone());
+  let workflow_queries = authorized_queries(&management_policy, workflows);
+  let factory = Arc::new(
+    octacity_server_application::FactoryConfigurationHandlers::with_policy(store.clone(), management_policy.clone())
+      .with_issue_status_actions(workflow_queries.clone()),
+  );
   let log_search = Arc::new(BuildLogSearch::new(store.clone(), log_search_index));
   let operational_metadata = Arc::new(OperationalMetadataQueries::new(operational_metadata));
   let project_commands = authorized_commands(&management_policy, projects.clone());
@@ -194,10 +197,10 @@ pub(super) fn management_application(
   let resource_search_queries = authorized_queries(&management_policy, resource_search);
   let operator_attention_queries = authorized_queries(&management_policy, operator_attention);
   let operational_queries = authorized_queries(&management_policy, operational_metadata);
-  let flow_handlers = Arc::new(octacity_server_application::FactoryFlowDefinitionHandlers::new(
-    store.clone(),
-    management_policy.clone(),
-  ));
+  let flow_handlers = Arc::new(
+    octacity_server_application::FactoryFlowDefinitionHandlers::new(store.clone(), management_policy.clone())
+      .with_issue_status_actions(workflow_queries.clone()),
+  );
   let flow_commands = authorized_commands(&management_policy, flow_handlers.clone());
   let flow_queries = authorized_queries(&management_policy, flow_handlers);
   let factory_admission = authorized_commands(
@@ -224,9 +227,6 @@ pub(super) fn management_application(
     )),
   );
   let factory_queries = authorized_queries(&management_policy, factory);
-  let workflows = Arc::new(octacity_server_application::IssueWorkflowHandlers::new(store.clone()));
-  let workflow_commands = authorized_commands(&management_policy, workflows.clone());
-  let workflow_queries = authorized_queries(&management_policy, workflows);
   let issues = Arc::new(octacity_server_application::IssueHandlers::new(
     store.clone(),
     management_policy.clone(),

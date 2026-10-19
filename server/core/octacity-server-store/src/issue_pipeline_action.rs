@@ -105,8 +105,7 @@ impl TransitionIssue {
     accepted: AcceptedIssueStatusAction,
     moved_at: octacity_server_domain::Timestamp,
   ) -> Self {
-    let idempotency_key =
-      IdempotencyKey::new(format!("issue-action.{}", accepted.provenance.operation_id)).expect("bounded action digest");
+    let idempotency_key = issue_status_operation_key(accepted.provenance.operation_id);
     Self {
       intent,
       idempotency_key,
@@ -117,6 +116,57 @@ impl TransitionIssue {
   /// Trusted pipeline origin; manual REST callers cannot supply this field.
   pub fn pipeline_action(&self) -> Option<&AcceptedIssueStatusAction> {
     self.pipeline.as_ref()
+  }
+  /// Stores original accepted metadata without serializing evidence authority flags.
+  pub fn retained_pipeline_command(&self) -> Option<RetainedIssueStatusCommand> {
+    self.pipeline_action().map(|action| RetainedIssueStatusCommand {
+      intent: self.intent.clone(),
+      selection: action.selection.clone(),
+      provenance: action.provenance.clone(),
+      moved_at: self.moved_at,
+    })
+  }
+}
+
+/// Stable replay namespace shared by command publication and recovery reads.
+pub fn issue_status_operation_key(operation_id: FactoryDigest) -> IdempotencyKey {
+  IdempotencyKey::new(format!("issue-action.{operation_id}")).expect("bounded action digest")
+}
+
+/// Sealed safe command metadata in the existing replay record, never a wire authority token.
+/// Evidence is requalified against the original immutable journal on restore.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainedIssueStatusCommand {
+  /// Original Issue/status/workflow preconditions; recovery cannot select a new head.
+  pub intent: TransitionIssueIntent,
+  /// Exact operator-published direct edge and outcome.
+  pub selection: IssuePipelineStatusSelection,
+  /// Accepted producing operation and exact selected record references.
+  pub provenance: IssuePipelineActionProvenance,
+  /// Original trusted move time, independent of retry observation time.
+  pub moved_at: octacity_server_domain::Timestamp,
+}
+impl RetainedIssueStatusCommand {
+  /// Restores only the sealed command; current authority/applicability still cross the shared port.
+  pub fn restore(&self, snapshot: &FactoryRunSnapshot) -> Result<TransitionIssue, StoreError> {
+    if snapshot.work.id() != self.provenance.work_id
+      || snapshot.run.id() != self.provenance.run_id
+      || snapshot.work.subject().project_id() != self.intent.project_id
+      || self.provenance.candidate.is_some() && self.provenance.evidence.is_empty()
+    {
+      return Err(StoreError::invalid(
+        StoreOperation::TransitionIssue,
+        StoreInputError::InvalidIssue,
+      ));
+    }
+    let mut provenance = self.provenance.clone();
+    let selected = std::mem::take(&mut provenance.evidence);
+    let mut accepted = AcceptedIssueStatusAction::for_selection(self.selection.clone(), provenance)?;
+    if !selected.is_empty() {
+      accepted = accepted.with_evidence(snapshot, &selected)?;
+    }
+    Ok(TransitionIssue::pipeline(self.intent.clone(), accepted, self.moved_at))
   }
 }
 

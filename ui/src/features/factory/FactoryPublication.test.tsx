@@ -348,3 +348,59 @@ it('reviews exact immutable per-stage effects before publishing the validated Fl
   expect(dialog.textContent).toContain(writer.binding.configuration.digest);
   expect(createFlow).not.toHaveBeenCalled();
 });
+
+it('reviews local Issue pins separately and requires fresh review after a stale Flow publication', async () => {
+  const { config, request } = setup();
+  const node = request.definition.root.nodes.find((node) => node.action)!;
+  const parameters = {
+    workflow_id: '20000000-0000-4000-8000-000000000001',
+    workflow_version: 3,
+    transition_id: '30000000-0000-4000-8000-000000000001',
+    outcome: node.outcomes[0]!.key,
+  };
+  node.action = { ...node.action!, action: 'transition_issue', parameters };
+  config.flow.closure.definitions[0]!.nodes = request.definition.root.nodes;
+  const replaceFlow = vi
+    .fn<FactoryApi['replaceFlow']>()
+    .mockRejectedValue(
+      new ManagementApiError({
+        code: 'precondition_failed',
+        message: 'Stale',
+        requestId: null,
+        retryAfterMilliseconds: null,
+        status: 412,
+      }),
+    );
+  const api = {
+    ...factoryApi,
+    validateFlow: vi.fn(async () => config.flow),
+    replaceFlow,
+    currentFlow: vi.fn(async () => ({
+      flow: {
+        ...config.flow,
+        closure: { ...config.flow.closure, root: { ...config.flow.closure.root, version: 2 } },
+      },
+      project_id: request.project_id,
+      published_at_unix_ms: 1,
+    })),
+  };
+  const router = createMemoryRouter([
+    {
+      path: '*',
+      element: <FactoryPublication api={api} subject={{ kind: 'flow', request }} version={1} />,
+    },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByText(new RegExp(parameters.transition_id))).toBeTruthy();
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm publish' }));
+  expect(replaceFlow.mock.calls[0]?.[2]['If-Match']).toBe('"1"');
+  expect(within(dialog).queryByRole('button', { name: 'Retry same command' })).toBeNull();
+  expect(await within(dialog).findByRole('button', { name: /Refresh/ })).toBeTruthy();
+});

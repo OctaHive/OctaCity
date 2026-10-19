@@ -12,6 +12,8 @@ pub struct FactoryFlowActionRequest<'a> {
   pub operation_id: FactoryDigest,
   /// Internal Work identity.
   pub work_id: WorkEnvelopeId,
+  /// Exact persisted attempt accepted by the common action adapter.
+  pub node_attempt_id: NodeAttemptId,
   /// Provider-neutral source identity used by the selected connector.
   pub external_identity: &'a ExternalWorkIdentity,
   /// Exact admitted source subject.
@@ -130,6 +132,7 @@ impl FactoryFlowActionAdapter {
     Ok(FactoryFlowActionRequest {
       operation_id,
       work_id: request.work.id(),
+      node_attempt_id: request.attempt.id(),
       external_identity: request.work.external_identity(),
       subject: request.work.subject(),
       binding,

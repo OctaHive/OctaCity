@@ -939,3 +939,67 @@ fn advertised_normalized_predicates_publish_immutable_inputs_for_open_provider_i
 mod examples;
 #[path = "factory_source_reporting_tests.rs"]
 mod reporting;
+
+#[test]
+fn source_input_cannot_enable_a_pipeline_requiring_an_issue_association_it_cannot_supply() {
+  run_ready(async {
+    let mut fixture = Fixture::new("custom-tracker").await;
+    let project = fixture.intent.project_id;
+    let input = &mut fixture.intent.inputs[0].definition;
+    let selected = fixture
+      .store
+      .factory_admission_context(ReadFactoryAdmissionContext {
+        project_id: project,
+        configuration_id: input.target.id(),
+        configuration_version: input.target.version(),
+        repository_id: input.repository.id,
+        repository_version: input.repository.version,
+      })
+      .await
+      .unwrap();
+    let flow = crate::factory_admission_tests::with_issue_status_action(
+      selected.configuration.configuration.flow(),
+      IssuePipelineStatusSelection {
+        workflow_id: octacity_server_domain::IssueWorkflowId::generate(),
+        workflow_version: octacity_server_domain::IssueWorkflowVersion::INITIAL,
+        transition_id: octacity_server_domain::IssueTransitionId::generate(),
+        outcome: "succeeded".parse().unwrap(),
+      },
+    );
+    let configuration =
+      crate::factory_admission_tests::configuration_with_flow(project, FactoryConfigurationId::generate(), Some(flow));
+    input.target = configuration.reference().clone();
+    fixture
+      .store
+      .seed_factory_configuration_version(PublishedFactoryConfiguration {
+        configuration,
+        published_at: time(1),
+      })
+      .unwrap();
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(fixture.handlers()));
+    let before = fixture.store.mutation_evidence_counts().await;
+    assert!(
+      queries
+        .handle_query(
+          &context(),
+          ValidateWorkSourceConfigurationQuery {
+            intent: fixture.intent.clone()
+          }
+        )
+        .await
+        .is_err(),
+      "enabled intake cannot provide the required Issue association"
+    );
+    assert_eq!(fixture.store.mutation_evidence_counts().await, before);
+    fixture.intent.inputs[0].definition.enabled = false;
+    let disabled = queries
+      .handle_query(
+        &context(),
+        ValidateWorkSourceConfigurationQuery { intent: fixture.intent },
+      )
+      .await
+      .unwrap();
+    assert!(!disabled.inputs[0].input.definition().enabled);
+    assert_eq!(fixture.store.mutation_evidence_counts().await, before);
+  });
+}

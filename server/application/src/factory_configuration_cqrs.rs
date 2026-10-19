@@ -392,6 +392,7 @@ pub struct FactoryConfigurationHandlers<S> {
   store: Arc<S>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
   source_actions: Option<Arc<dyn crate::FactoryStageSourceAuthorizer>>,
+  issue_status_actions: Option<Arc<dyn crate::FactoryIssueStatusAuthorizer>>,
 }
 
 impl<S> FactoryConfigurationHandlers<S> {
@@ -402,6 +403,7 @@ impl<S> FactoryConfigurationHandlers<S> {
       store,
       policy,
       source_actions: None,
+      issue_status_actions: None,
     }
   }
 
@@ -451,6 +453,12 @@ where
     self.source_actions = Some(authorizer);
     self
   }
+  /// Enables local status actions using exact visible Project workflow versions.
+  #[must_use]
+  pub fn with_issue_status_actions(mut self, authorizer: Arc<dyn crate::FactoryIssueStatusAuthorizer>) -> Self {
+    self.issue_status_actions = Some(authorizer);
+    self
+  }
   async fn resolve(
     &self,
     context: &crate::ManagementRequestContext,
@@ -472,6 +480,13 @@ where
       crate::factory_stage_source_update::validate_flow_source_updates(
         flow,
         self.source_actions.as_deref(),
+        context,
+        project_id,
+      )
+      .await?;
+      crate::factory_issue_status_authoring::validate_flow_issue_status_actions(
+        flow,
+        self.issue_status_actions.as_deref(),
         context,
         project_id,
       )

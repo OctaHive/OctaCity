@@ -322,6 +322,16 @@ impl<
     })?;
     validate_managed_work_source(&input, &metadata, &grant, &administration)?;
     validate_source_input_dependencies(&input, &selected.configuration.configuration, &selected.repository)?;
+    // This intake cannot supply a reviewed Issue revision/association. Disabled drafts remain repairable.
+    if input.definition().enabled
+      && crate::factory_issue_status_authoring::flow_issue_status_selections(
+        selected.configuration.configuration.flow(),
+      )
+      .next()
+      .is_some()
+    {
+      return Err(FactoryValidationDiagnostics::invalid("/target"));
+    }
     crate::factory_stage_source_update::validate_input_source_updates(
       input.definition(),
       selected.configuration.configuration.flow(),

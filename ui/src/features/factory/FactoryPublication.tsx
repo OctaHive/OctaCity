@@ -46,7 +46,7 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
   const [proof, setProof] = useState<{ signature: string; preview: Preview } | null>(null);
   const [review, setReview] = useState<{
     subject: Subject;
-    sourceSummary: string[];
+    actionSummary: string[];
     returnFocus: HTMLElement;
   } | null>(null);
   const latestSignatureRef = useRef('');
@@ -164,7 +164,7 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
               : proof.preview.value.configuration.flow;
           setReview({
             subject: structuredClone(subject),
-            sourceSummary: sourceEffectsSummary(flow.closure.definitions, t),
+            actionSummary: actionEffectsSummary(flow.closure.definitions, t),
             returnFocus: event.currentTarget,
           });
         }}
@@ -184,7 +184,7 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
               ? 'factory.publishFlowTitle'
               : 'factory.publishConfigurationTitle',
           )}
-          consequence={[t('factory.publishConsequence'), ...review.sourceSummary].join('\n')}
+          consequence={[t('factory.publishConsequence'), ...review.actionSummary].join('\n')}
           confirmLabel={t('factory.confirmPublish')}
           request={review.subject}
           execute={execute}
@@ -229,12 +229,19 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
     </section>
   );
 }
-function sourceEffectsSummary(
+function actionEffectsSummary(
   definitions: readonly components['schemas']['FactoryFlowDefinition'][],
   t: ReturnType<typeof usePresentation>['t'],
 ) {
   return definitions.flatMap((definition) =>
     definition.nodes.flatMap((node) => {
+      if (node.action?.action === 'transition_issue') {
+        const selected = node.action
+          .parameters as components['schemas']['FactoryIssueStatusActionParameters'];
+        return [
+          `${t('factory.issueStatusAction')} · ${node.key}: ${t('factory.issueStatusPinned', { workflow: selected.workflow_id, version: selected.workflow_version, transition: selected.transition_id, outcome: selected.outcome })}`,
+        ];
+      }
       if (node.action?.action !== 'set_status') return [];
       const parameters = node.action
         .parameters as components['schemas']['FactoryWorkStatusActionParameters'];

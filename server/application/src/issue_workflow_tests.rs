@@ -881,3 +881,107 @@ fn issue_workflow_reads_do_not_reveal_a_hidden_current_or_default_policy() {
     assert_eq!(store.mutation_evidence_counts().await, before);
   });
 }
+
+#[test]
+fn pipeline_authoring_accepts_only_an_exact_visible_pipeline_workflow_edge() {
+  run_ready(async {
+    let store = Arc::new(InMemoryProjectStore::new());
+    let project_id = project(&store).await;
+    let queries = AuthorizedQueryHandler::new(Arc::new(ReadOnly), Arc::new(IssueWorkflowHandlers::new(store.clone())));
+    let workflow = queries
+      .handle_query(&context(), GetDefaultIssueWorkflowQuery { project_id })
+      .await
+      .unwrap()
+      .workflow;
+    let edge = workflow
+      .definition
+      .transitions
+      .iter()
+      .find(|edge| edge.origins.contains(&IssueTransitionOrigin::Pipeline))
+      .unwrap();
+    let mut selection = octacity_server_store::IssuePipelineStatusSelection {
+      workflow_id: workflow.id,
+      workflow_version: workflow.version,
+      transition_id: edge.id,
+      outcome: octacity_server_factory::FactoryKey::new("published").unwrap(),
+    };
+    let before = store.mutation_evidence_counts().await;
+    queries
+      .validate_issue_status(&context(), project_id, &selection)
+      .await
+      .unwrap();
+    selection.transition_id = octacity_server_domain::IssueTransitionId::generate();
+    assert_eq!(
+      queries
+        .validate_issue_status(&context(), project_id, &selection)
+        .await
+        .unwrap_err()
+        .classification(),
+      ApplicationFailure::Invalid
+    );
+    assert!(
+      queries
+        .validate_issue_status(&context(), ProjectId::generate(), &selection)
+        .await
+        .is_err()
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
+    let mut manual_only = workflow.definition.clone();
+    for transition in &mut manual_only.transitions {
+      transition.origins = vec![IssueTransitionOrigin::Manual];
+    }
+    let commands = AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(IssueWorkflowHandlers::new(store.clone())),
+    );
+    commands
+      .handle_command(
+        &context(),
+        PublishIssueWorkflowCommand {
+          intent: PublishIssueWorkflowIntent {
+            project_id,
+            id: workflow.id,
+            expected_current_version: Some(workflow.version),
+            definition: manual_only,
+          },
+          idempotency_key: IdempotencyKey::new("manual-only-version").unwrap(),
+          published_at: Timestamp::from_unix_millis(20).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    selection.transition_id = edge.id;
+    queries
+      .validate_issue_status(&context(), project_id, &selection)
+      .await
+      .unwrap();
+    selection.workflow_version = IssueWorkflowVersion::new(2).unwrap();
+    assert!(
+      queries
+        .validate_issue_status(&context(), project_id, &selection)
+        .await
+        .is_err(),
+      "a retained edge in a manual-only version cannot be used by pipeline authoring"
+    );
+    struct Revoked;
+    #[async_trait]
+    impl ManagementAuthorizationPolicy for Revoked {
+      async fn authorize(
+        &self,
+        _: &ManagementRequestContext,
+        _: ManagementAction,
+        _: &ManagementResource,
+      ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+        Err(ManagementAuthorizationDenial::forbidden())
+      }
+    }
+    let revoked = AuthorizedQueryHandler::new(Arc::new(Revoked), Arc::new(IssueWorkflowHandlers::new(store)));
+    selection.workflow_version = workflow.version;
+    assert!(
+      revoked
+        .validate_issue_status(&context(), project_id, &selection)
+        .await
+        .is_err()
+    );
+  });
+}

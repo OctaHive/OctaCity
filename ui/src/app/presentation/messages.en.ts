@@ -237,6 +237,19 @@ export const enMessages = {
   'workflow.nameBound':
     'Names must be nonempty, unpadded, without control characters and at most {bytes} UTF-8 bytes.',
 
+  'factory.issueWorkflowVersion': 'Issue workflow version',
+  'factory.reviewWorkflowVersion': 'Review workflow version',
+  'factory.issueStatusAction': 'Local Issue status action',
+  'factory.issueWorkflow': 'Issue workflow',
+  'factory.issueTransition': 'Issue transition',
+  'factory.issueOutcome': 'Declared action outcome',
+  'factory.useIssueStatus': 'Use reviewed Issue action',
+  'factory.issueStatusHelp':
+    'Moves the associated Issue through this exact edge, without a connection or Reporter. Missing association: unavailable; no task is created. Completion or model text never selects a move.',
+  'factory.issueStatusPinned':
+    'Pinned workflow {workflow} · v{version} · transition {transition} · outcome {outcome}',
+  'factory.issueEvidenceHelp':
+    'Bind candidate and retained evidence digests through the typed input mapper. Requirements come from the edge. Model text is not evidence; unguarded input is {}.',
   'factory.deferredStatusProfile':
     'Select a published deferred status action profile to configure source effects.',
   'factory.stageSourceUpdate': 'Update original task source',

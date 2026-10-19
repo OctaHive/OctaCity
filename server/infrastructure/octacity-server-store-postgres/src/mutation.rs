@@ -823,6 +823,28 @@ pub(crate) enum MutationStart<'a> {
 }
 
 pub(crate) async fn begin<'a>(pool: &'a PgPool, identity: &MutationIdentity) -> Result<MutationStart<'a>, StoreError> {
+  begin_operation(pool, identity, None).await
+}
+
+/// Resumes the same sealed command; ordinary mutations keep their existing pending behavior.
+pub(crate) async fn begin_retained<'a>(
+  pool: &'a PgPool,
+  identity: &MutationIdentity,
+  command: Value,
+) -> Result<MutationStart<'a>, StoreError> {
+  begin_operation(pool, identity, Some(command)).await
+}
+
+async fn begin_operation<'a>(
+  pool: &'a PgPool,
+  identity: &MutationIdentity,
+  retained_command: Option<Value>,
+) -> Result<MutationStart<'a>, StoreError> {
+  let resumable = retained_command.is_some();
+  let mut pending = json!({"status": PENDING_OUTCOME});
+  if let Some(command) = retained_command {
+    pending["retained_command"] = command;
+  }
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   let inserted = sqlx::query(
     "INSERT INTO idempotency_records \
@@ -834,7 +856,7 @@ pub(crate) async fn begin<'a>(pool: &'a PgPool, identity: &MutationIdentity) -> 
   .bind(identity.persisted_security_scope())
   .bind(&identity.key)
   .bind(identity.request_digest.as_slice())
-  .bind(Json(json!({"status": PENDING_OUTCOME})))
+  .bind(Json(pending))
   .bind(identity.occurred_at.unix_millis())
   .execute(&mut *transaction)
   .await
@@ -859,6 +881,9 @@ pub(crate) async fn begin<'a>(pool: &'a PgPool, identity: &MutationIdentity) -> 
     });
   }
   if outcome.get("status").and_then(Value::as_str) == Some(PENDING_OUTCOME) {
+    if resumable && outcome.get("retained_command").is_some() {
+      return Ok(MutationStart::Fresh(transaction));
+    }
     return Err(StoreError::Unavailable);
   }
   transaction.commit().await.map_err(unavailable)?;
@@ -918,8 +943,20 @@ pub(crate) async fn commit(
   .await
   .map_err(unavailable)?;
 
+  complete_record(transaction, identity, outcome).await
+}
+
+/// Completes the existing replay record, preserving any sealed command for recovery.
+/// Rejection uses this without business mutation, audit or outbox publication.
+pub(crate) async fn complete_record(
+  mut transaction: Transaction<'_, Postgres>,
+  identity: &MutationIdentity,
+  outcome: Value,
+) -> Result<(), StoreError> {
   let updated = sqlx::query(
-    "UPDATE idempotency_records SET outcome = $1 \
+    "UPDATE idempotency_records SET outcome = $1 || \
+       CASE WHEN outcome ? 'retained_command' \
+         THEN jsonb_build_object('retained_command',outcome->'retained_command') ELSE '{}'::jsonb END \
      WHERE scope = $2 AND security_scope = $3 AND idempotency_key = $4",
   )
   .bind(Json(outcome))

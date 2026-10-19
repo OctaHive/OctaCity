@@ -10,12 +10,14 @@ import { ConfigurationEditor } from './ConfigurationEditor';
 import { SchemaEditor } from './SchemaEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { useFactoryChoices } from './useFactoryChoices';
+import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import { factorySourcesApi } from './sourceApi';
 
 type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
 /** Entire editor state is owned here and discarded when its immutable baseline or Project changes. */
 export function FactoryAuthoring({
   api,
+  workflows,
   baseline,
   onDiscard,
   projectId: newProjectId,
@@ -23,6 +25,7 @@ export function FactoryAuthoring({
   currentVersion,
 }: {
   api: FactoryApi;
+  workflows?: IssueWorkflowsApi | undefined;
   baseline?: FactoryConfigurationDetails | FactoryFlowDetails;
   projectId?: string;
   kind?: 'flow' | 'configuration';
@@ -122,6 +125,7 @@ export function FactoryAuthoring({
         ) : draft ? (
           <>
             <FlowGraphEditor
+              issueStatus={workflows ? { api: workflows, projectId } : undefined}
               sources={{ api: factorySourcesApi, projectId }}
               value={draft}
               choices={choices.data.pages.flatMap((page) => page.items)}

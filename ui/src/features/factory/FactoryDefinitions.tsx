@@ -1,3 +1,4 @@
+import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import { factoryResourceId } from './filters';
 import { useState } from 'react';
 import { FactoryAuthoring } from './FactoryAuthoring';
@@ -19,10 +20,12 @@ import styles from './Factory.module.css';
 /** Published identities are selected from visible bounded pages; edits use separate drafts. */
 export function FactoryDefinitions({
   api,
+  workflows,
   projectId,
   workSources,
 }: {
   api: FactoryApi;
+  workflows?: IssueWorkflowsApi | undefined;
   projectId: string;
   workSources?: FactoryWorkSources | undefined;
 }) {
@@ -139,6 +142,7 @@ export function FactoryDefinitions({
         />
       ) : authoring?.kind !== 'work' && authoring?.id === null ? (
         <FactoryAuthoring
+          workflows={workflows}
           key={authoring.kind}
           api={api}
           projectId={projectId}
@@ -172,6 +176,7 @@ export function FactoryDefinitions({
                 </button>
                 {selectedConfiguration === item.id ? (
                   <ConfigurationDetails
+                    workflows={workflows}
                     key={`${item.id}:${params.get('configuration_version')}`}
                     api={api}
                     summary={item}
@@ -231,6 +236,7 @@ export function FactoryDefinitions({
                 </button>
                 {selectedFlow === item.id ? (
                   <FlowDetails
+                    workflows={workflows}
                     key={`${item.id}:${params.get('flow_version')}`}
                     api={api}
                     summary={item}
@@ -272,6 +278,7 @@ function ConfigurationDetails({
   repositories,
   onManual,
   api,
+  workflows,
   summary,
   version,
   changeVersion,
@@ -283,6 +290,7 @@ function ConfigurationDetails({
   onManual?: (() => void) | undefined;
   repositories?: FactoryWorkSources | undefined;
   api: FactoryApi;
+  workflows?: IssueWorkflowsApi | undefined;
   summary: FactoryConfiguration;
   version: number;
   changeVersion: (version: number) => void;
@@ -325,6 +333,7 @@ function ConfigurationDetails({
       </dl>
       {editing ? (
         <FactoryAuthoring
+          workflows={workflows}
           api={api}
           baseline={query.data}
           currentVersion={summary.version}
@@ -347,6 +356,7 @@ function ConfigurationDetails({
 
 function FlowDetails({
   api,
+  workflows,
   summary,
   version,
   changeVersion,
@@ -356,6 +366,7 @@ function FlowDetails({
   canAuthor,
 }: {
   api: FactoryApi;
+  workflows?: IssueWorkflowsApi | undefined;
   summary: FactoryFlowDetails;
   version: number;
   changeVersion: (version: number) => void;
@@ -384,6 +395,7 @@ function FlowDetails({
       />
       {editing ? (
         <FactoryAuthoring
+          workflows={workflows}
           api={api}
           baseline={query.data}
           currentVersion={summary.flow.closure.root.version}

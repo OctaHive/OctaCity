@@ -781,6 +781,62 @@ fn issue_pipeline_action_atomic_failure_retains_original_command_and_recovers_on
 }
 
 #[test]
+fn issue_pipeline_action_pending_retry_preserves_original_move_time() {
+  run_ready(async {
+    let (store, issue, association, _factory) = linked().await;
+    let handlers = AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(IssueHandlers::new(
+        store.clone(),
+        Arc::new(TrustedNetworkManagementPolicy),
+      )),
+    );
+    let original = action(&issue, &association, "20000000-0000-4000-8000-000000000001", 25);
+    store
+      .fail_next_issue_mutation_at(testing::MutationFailurePoint::Commit)
+      .unwrap();
+    assert!(handlers.handle_command(&context(), original.clone()).await.is_err());
+    let mut retry = original.clone();
+    retry.moved_at = at(100);
+    let outcome = handlers.handle_command(&context(), retry).await.unwrap();
+    assert_eq!(outcome.transition.occurred_at, original.moved_at);
+    let retained = store
+      .issue_status_command(
+        issue.project_id,
+        issue.id,
+        &octacity_server_store::ManagementSecurityScope::trusted_network(),
+        original.accepted.provenance().operation_id,
+      )
+      .await
+      .unwrap()
+      .unwrap();
+    assert_eq!(retained.moved_at, original.moved_at);
+  });
+}
+
+#[test]
+fn issue_pipeline_action_restore_rejects_candidate_metadata_without_selected_evidence() {
+  run_ready(async {
+    let (store, issue, association, factory) = linked().await;
+    let snapshot = factory.factory_run_snapshot(association.run_id).await.unwrap();
+    let command = action(&issue, &association, "20000000-0000-4000-8000-000000000001", 26);
+    let mut retained = TransitionIssue::pipeline(command.intent, command.accepted, command.moved_at)
+      .retained_pipeline_command()
+      .unwrap();
+    retained.provenance.candidate = Some(octacity_server_factory::CandidateSubject::new(
+      snapshot.work.subject().clone(),
+      octacity_server_domain::ImmutableRevision::new("unverified-candidate").unwrap(),
+      FactoryDigest::from_bytes([77; 32]),
+    ));
+    assert!(
+      retained.restore(&snapshot).is_err(),
+      "unqualified candidate metadata is not accepted provenance"
+    );
+    assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
+  });
+}
+
+#[test]
 fn issue_pipeline_action_legacy_artifact_association_has_no_invented_requirements_authority() {
   run_ready(async {
     let (store, issue, association, factory) = linked().await;

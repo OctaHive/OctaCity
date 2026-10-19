@@ -270,3 +270,21 @@ test('admits the measured Issue execution workspace and rejects unplanned growth
   assert.ok(rejected.some((message) => message.includes('total JavaScript')));
   assert.ok(rejected.some((message) => message.includes('total static output')));
 });
+
+test('admits measured local Issue action authoring while rejecting a larger console', async (context) => {
+  const policy = JSON.parse(
+    await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
+  );
+  const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
+  await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
+  await write(root, 'dist/assets/index.js', 'x'.repeat(432_000));
+  await write(root, 'dist/assets/workbench.js', 'x'.repeat(606_000));
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(85_000));
+  assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
+  await write(root, 'dist/assets/workbench.js', 'x'.repeat(608_000));
+  assert.ok(
+    (await verifyArchitecture(root, { distDirectory: 'dist' })).some((message) =>
+      message.includes('total JavaScript'),
+    ),
+  );
+});
