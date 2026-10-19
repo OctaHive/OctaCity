@@ -1,7 +1,6 @@
 //! The management authoring contract over real immutable PostgreSQL authority.
 use async_trait::async_trait;
 use octacity_server_application::*;
-use octacity_server_domain::*;
 use octacity_server_factory::*;
 use octacity_server_store::{FactoryConfigurationAvailability, StoreError};
 use octacity_server_store_postgres::{FactoryCapabilitySource, PostgresStore};
