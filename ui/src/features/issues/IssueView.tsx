@@ -9,6 +9,10 @@ import {
   QueryBackgroundNotice,
 } from '../../shared/QueryStateNotice';
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
+import type { PipelineTargetSources } from '../../shared/PipelineTargetFields';
+import type { IssueExecutionsApi } from './executionApi';
+import { IssueExecutions } from './IssueExecutions';
+import { IssueExecutionForm } from './IssueExecutionForm';
 import type { IssuesApi } from './api';
 import { IssueEditor } from './IssueEditor';
 import { IssueRelationships } from './IssueRelationships';
@@ -24,15 +28,21 @@ export function IssueView({
   api,
   workflows,
   projects,
+  executions,
+  executionSources,
 }: {
   api: IssuesApi;
   workflows: IssueWorkflowsApi;
   projects: IssueProjectReader;
+  executions: IssueExecutionsApi;
+  executionSources: PipelineTargetSources;
 }) {
   const { projectId, issueId } = useParams<'projectId' | 'issueId'>();
   return projectId && issueId ? (
     <Card
       key={projectId + issueId}
+      executions={executions}
+      executionSources={executionSources}
       api={api}
       workflows={workflows}
       projects={projects}
@@ -45,25 +55,31 @@ function Card({
   api,
   workflows,
   projects,
+  executions,
+  executionSources,
   projectId,
   issueId,
 }: {
   api: IssuesApi;
   workflows: IssueWorkflowsApi;
   projects: IssueProjectReader;
+  executions: IssueExecutionsApi;
+  executionSources: PipelineTargetSources;
   projectId: string;
   issueId: string;
 }) {
   const { t, locale } = usePresentation();
   const queryClient = useQueryClient();
-  const [params] = useSearchParams();
+  const [params, setParams] = useSearchParams();
   const section = sections.find((s) => s === params.get('section')) ?? 'overview';
   const [editing, setEditing] = useState(false);
+  const [starting, setStarting] = useState<'requirements' | 'inputs' | null>(null);
   const selectedRevision = Number(params.get('revision'));
   const hasRevision = Number.isSafeInteger(selectedRevision) && selectedRevision > 0;
   function sectionSearch(value: string) {
     const next = new URLSearchParams();
     if (value !== 'overview') next.set('section', value);
+    if (params.get('execution')) next.set('execution', params.get('execution')!);
     if (hasRevision) next.set('revision', String(selectedRevision));
     return next.toString();
   }
@@ -150,7 +166,14 @@ function Card({
               <p>{t('issues.statusHelp')}</p>
             </div>
             <div className={styles.headerActions}>
-              <button type="button" disabled aria-describedby="issue-start-help">
+              <button
+                type="button"
+                disabled={starting !== null || current.isFetching || current.error !== null}
+                onClick={() =>
+                  setStarting(issue.content.acceptance?.trim() ? 'inputs' : 'requirements')
+                }
+                aria-describedby="issue-start-help"
+              >
                 {t('issues.start')}
               </button>
               <button
@@ -159,9 +182,41 @@ function Card({
               >
                 {t('issues.refresh')}
               </button>
-              <p id="issue-start-help">{t('issues.startUnavailable')}</p>
+              <p id="issue-start-help">{t('issues.startHelp')}</p>
             </div>
           </header>
+          {starting === 'inputs' ? (
+            <IssueExecutionForm
+              issue={issue}
+              api={executions}
+              sources={executionSources}
+              ready={current.error === null && !current.isFetching}
+              onRefresh={refresh}
+              onSelect={(id) =>
+                setParams((currentParams) => {
+                  const next = new URLSearchParams(currentParams);
+                  next.set('execution', id);
+                  return next;
+                })
+              }
+              onClose={() => setStarting(null)}
+            />
+          ) : null}
+          {starting === 'requirements' ? (
+            <section className={styles.panel} role="status">
+              <p>{t('issues.executionAcceptanceRequired')}</p>
+              <button
+                type="button"
+                onClick={() => {
+                  setParams(sectionSearch('overview'));
+                  setEditing(true);
+                  setStarting(null);
+                }}
+              >
+                {t('issues.addAcceptance')}
+              </button>
+            </section>
+          ) : null}
           {hasRevision ? (
             <Link to={{ search: sectionSearch('activity') }}>
               {t('issues.historicalSelection', { version: selectedRevision })}
@@ -238,6 +293,8 @@ function Card({
                   <IssueHistory api={api} workflows={workflows} issue={issue} />
                   <IssueRevisions api={api} issue={issue} />
                 </>
+              ) : section === 'runs' ? (
+                <IssueExecutions api={executions} issue={issue} />
               ) : section === 'actions' ? (
                 <>
                   {choices.isPending ? (
@@ -321,7 +378,7 @@ function Card({
               </section>
               <section className={styles.panel}>
                 <h2>{t('issues.execution')}</h2>
-                <p>{t('issues.executionUnavailable')}</p>
+                <Link to={{ search: sectionSearch('runs') }}>{t('issues.executionHistory')}</Link>
               </section>
               <details className={styles.panel}>
                 <summary>{t('issues.details')}</summary>

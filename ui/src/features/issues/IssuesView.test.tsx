@@ -63,7 +63,7 @@ it('renders the pinned workflow status, base properties and a real activity prev
     3,
     expect.any(AbortSignal),
   );
-  expect(screen.getByRole('button', { name: 'Start pipeline' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'Start pipeline' })).toHaveProperty('disabled', false);
   expect(
     screen.getByText('Task status does not approve a result or permit delivery.'),
   ).toBeTruthy();

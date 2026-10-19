@@ -53,6 +53,7 @@ fn request(issue: &IssueRevision) -> RequestIssueExecution {
   RequestIssueExecution {
     id: IssueExecutionRequestId::generate(),
     intent: RequestIssueExecutionIntent {
+      classification: None,
       project_id: issue.project_id,
       issue_id: issue.id,
       expected_version: issue.version,
@@ -601,5 +602,125 @@ async fn execution_migrations_upgrade_existing_manual_issues_and_are_repeatable(
   assert!(created.request.association.is_none());
   let manual = issue(&store).await;
   assert!(manual.content.acceptance.is_some());
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn execution_history_preserves_bounded_membership_and_order_after_restart() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let issue = issue(&store).await;
+  let mut requests = Vec::new();
+  for n in 1..=3 {
+    let mut reviewed = request(&issue);
+    reviewed.idempotency_key = key(&format!("history-{n}"));
+    reviewed.requested_at = at(n * 10);
+    requests.push(
+      store
+        .request_issue_execution(management_mutation(reviewed))
+        .await
+        .unwrap()
+        .request,
+    );
+  }
+  let first = store
+    .issue_executions(issue.project_id, issue.id, None, None, 2)
+    .await
+    .unwrap();
+  assert_eq!(first.items, requests[..2]);
+  assert_eq!(first.observation.issue_version, issue.version);
+  let mut later = request(&issue);
+  later.idempotency_key = key("history-later");
+  later.requested_at = at(40);
+  store.request_issue_execution(management_mutation(later)).await.unwrap();
+  let restarted = PostgresStore::new(database.pool.clone());
+  let last = restarted
+    .issue_executions(issue.project_id, issue.id, first.next, Some(first.observation), 2)
+    .await
+    .unwrap();
+  assert_eq!(last.items, requests[2..]);
+  assert_eq!(last.next, None);
+  assert_eq!(last.observation, first.observation);
+  assert!(
+    restarted
+      .issue_executions(ProjectId::generate(), issue.id, None, None, 2)
+      .await
+      .is_err()
+  );
+  assert!(
+    restarted
+      .issue_executions(issue.project_id, issue.id, None, None, 201)
+      .await
+      .is_err()
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn execution_review_accepts_full_valid_classification_without_storage_size_failures() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let issue = issue(&store).await;
+  let mut reviewed = request(&issue);
+  reviewed.intent.classification = Some(WorkClassification::new(
+    WorkPriority::new(10).unwrap(),
+    RiskClass::Medium,
+    FactoryMetadata::try_new((0..16).map(|n| (format!("field{n}"), "\\".repeat(500)))).unwrap(),
+  ));
+  let first = store
+    .request_issue_execution(management_mutation(reviewed.clone()))
+    .await
+    .unwrap();
+  assert_eq!(first.request.intent, reviewed.intent);
+  assert_eq!(
+    store
+      .request_issue_execution(management_mutation(reviewed))
+      .await
+      .unwrap()
+      .request,
+    first.request
+  );
+  database.cleanup().await;
+}
+
+async fn assert_issue_local_execution_watermark(store: &(impl ProjectStoreIssue + IssueExecutionStore)) {
+  let visible = issue(store).await;
+  let other = issue(store).await;
+  for (index, target) in [&visible, &other, &other, &visible].into_iter().enumerate() {
+    let mut reviewed = request(target);
+    reviewed.idempotency_key = key(&format!("local-watermark-{index}"));
+    reviewed.requested_at = at(index as i64 + 10);
+    store
+      .request_issue_execution(management_mutation(reviewed))
+      .await
+      .unwrap();
+  }
+  let first = store
+    .issue_executions(visible.project_id, visible.id, None, None, 1)
+    .await
+    .unwrap();
+  assert_eq!(
+    first.observation.watermark, 2,
+    "other Issues must not affect visible continuation metadata"
+  );
+  let last = store
+    .issue_executions(visible.project_id, visible.id, first.next, Some(first.observation), 1)
+    .await
+    .unwrap();
+  assert_eq!(last.items.len(), 1);
+  assert_eq!(last.observation, first.observation);
+  assert_eq!(last.next, None);
+}
+#[tokio::test]
+async fn execution_watermark_is_issue_local_in_memory() {
+  assert_issue_local_execution_watermark(&InMemoryProjectStore::new()).await;
+}
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn execution_watermark_is_issue_local_in_postgres() {
+  let database = TestDatabase::migrated().await;
+  assert_issue_local_execution_watermark(&PostgresStore::new(database.pool.clone())).await;
   database.cleanup().await;
 }

@@ -18,6 +18,8 @@ pub enum StoreOperation {
   ListProjectIssues,
   /// Discover retained requirement revision headers.
   ListIssueRevisions,
+  /// Read bounded exact Issue execution metadata.
+  ListIssueExecutions,
   /// Create a manual internal task.
   CreateIssue,
   /// Explicit reviewed adoption of an Issue workflow.
@@ -329,6 +331,10 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Issue execution continuation or page bound is invalid.
+  #[error("invalid Issue execution page")]
+  InvalidIssueExecutionPage,
+
   /// A Project text document violates its finite byte/control schema.
   #[error("invalid Project text input")]
   InvalidProjectTextInput,

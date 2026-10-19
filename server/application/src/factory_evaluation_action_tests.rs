@@ -94,7 +94,21 @@ struct Fixture {
 }
 
 fn fixture(trusted_assessment: bool, failing_evidence: bool, complete_selection: bool) -> Fixture {
-  let work = store_testing::factory_node_journal_contract_fixture().admission.work;
+  fixture_for_work(
+    store_testing::factory_node_journal_contract_fixture().admission.work,
+    FactoryRunId::generate(),
+    trusted_assessment,
+    failing_evidence,
+    complete_selection,
+  )
+}
+fn fixture_for_work(
+  work: WorkEnvelope,
+  run_id: FactoryRunId,
+  trusted_assessment: bool,
+  failing_evidence: bool,
+  complete_selection: bool,
+) -> Fixture {
   let candidate = CandidateSubject::new(
     work.subject().clone(),
     ImmutableRevision::new("reviewed-candidate").unwrap(),
@@ -439,7 +453,7 @@ fn fixture(trusted_assessment: bool, failing_evidence: bool, complete_selection:
     execution: FlowExecutionPolicy::new(total, permissions.clone(), 1).unwrap(),
   })
   .unwrap();
-  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+  let run = FactoryRun::admitted(run_id, &work);
   let flow = FlowRun::root(&run, definition.reference()).unwrap();
   let cycle = WorkflowCycle::initial(&flow).unwrap();
   let admitted = AdmittedFlow::new(
@@ -644,4 +658,21 @@ fn model_shaped_assessment_and_unselected_plan_cannot_authorize_a_decision() {
       }));
     }
   });
+}
+
+// Reuses real qualified evidence and Decision producers for accepted Issue-action contracts.
+pub(crate) async fn issue_action_records(
+  work: WorkEnvelope,
+  run_id: FactoryRunId,
+  failing: bool,
+  qualified: bool,
+) -> FactoryRunSnapshot {
+  let h = fixture_for_work(work, run_id, qualified, failing, true);
+  let result = run(&h).await;
+  if qualified {
+    result.unwrap()
+  } else {
+    assert!(result.is_err());
+    h.store.factory_run_snapshot(h.run).await.unwrap()
+  }
 }

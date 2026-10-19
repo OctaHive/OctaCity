@@ -16,7 +16,7 @@ pub struct PublishIssueExecutionCommand {
   pub issue_id: IssueId,
   /// Exact retained request; current text is never silently selected.
   pub request_id: IssueExecutionRequestId,
-  /// Explicit reviewed classification, frozen by the first intake reservation.
+  /// Explicit reviewed classification; must match the request when present.
   pub classification: WorkClassification,
 }
 impl Command for PublishIssueExecutionCommand {
@@ -87,6 +87,19 @@ impl<
         &context.security_scope().to_store(),
       )
       .await?;
+    if request
+      .intent
+      .classification
+      .as_ref()
+      .is_some_and(|reviewed| reviewed != &command.classification)
+    {
+      return Err(
+        octacity_server_store::StoreError::Conflict {
+          entity: octacity_server_domain::EntityKind::Issue,
+        }
+        .into(),
+      );
+    }
     let target = &request.intent.target;
     let selected = ReadFactoryAdmissionContext {
       project_id: command.project_id,

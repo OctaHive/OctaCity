@@ -3,7 +3,7 @@ import { createMemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
 import { App } from '../../src/App';
 import { createConsoleQueryClient } from '../../src/app/query';
-import { createConsoleRoutes } from '../../src/app/router';
+import { createConsoleRoutes, type ConsoleRouteDependencies } from '../../src/app/router';
 import { fakeProjectsApi, project } from '../../src/features/projects/ProjectTestSupport';
 import { issueFixture } from './issues';
 import { readFileSync } from 'node:fs';
@@ -71,6 +71,7 @@ export function fakeIssuesApi() {
 export function setup(
   path = '/projects/delivery/issues',
   configure?: (api: ReturnType<typeof fakeIssuesApi>) => void,
+  overrides: Partial<ConsoleRouteDependencies> = {},
 ) {
   const projects = fakeProjectsApi();
   projects.getProject.mockResolvedValue({
@@ -105,6 +106,7 @@ export function setup(
       issuesApi: api,
       issueWorkflowsApi: workflows,
       readinessProbe: async () => 'ready',
+      ...overrides,
     }),
     { initialEntries: [path] },
   );

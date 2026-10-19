@@ -238,6 +238,15 @@ pub fn management_authorization_operations() -> Vec<ManagementAuthorizationOpera
 
 fn registered_routes() -> ManagementRoutes {
   ManagementRoutes::new()
+    .get::<octacity_server_application::ListIssueExecutionsQuery, _, _>(
+      "listIssueExecutions",
+      super::issue_execution::list,
+    )
+    .post::<octacity_server_application::RequestIssueExecutionCommand, _, _>(
+      "requestIssueExecution",
+      super::issue_execution::start,
+    )
+    .get::<octacity_server_application::GetIssueExecutionQuery, _, _>("getIssueExecution", super::issue_execution::get)
     .get::<octacity_server_application::ListIssueChildrenQuery, _, _>(
       "listIssueChildren",
       super::issue::planning::children,

@@ -42,6 +42,9 @@ pub struct RequestIssueExecutionIntent {
   pub expected_version: IssueVersion,
   /// Frozen target, source policy and text selection.
   pub target: IssueExecutionTarget,
+  /// Reviewed ordinary admission classification; absent only in legacy reservations.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub classification: Option<octacity_server_factory::WorkClassification>,
 }
 /// Trusted request reservation with scoped replay and original time.
 #[derive(Clone, Debug)]
@@ -137,6 +140,15 @@ pub trait IssueExecutionStore: Send + Sync {
     &self,
     request: ManagementMutation<RequestIssueExecution>,
   ) -> Result<IssueExecutionOutcome, StoreError>;
+  /// Enumerates retained membership under an Issue-local observation, without publication.
+  async fn issue_executions(
+    &self,
+    project_id: ProjectId,
+    issue_id: IssueId,
+    after: Option<IssueExecutionPosition>,
+    observation: Option<IssueExecutionObservation>,
+    limit: u16,
+  ) -> Result<IssueExecutionReadPage, StoreError>;
   /// Reads one retained request without reserving or resuming execution.
   async fn issue_execution(
     &self,
@@ -205,6 +217,11 @@ impl AssociateIssueWork {
       if r.intent.project_id != self.project_id
         || r.intent.issue_id != self.issue_id
         || admission.work.external_identity() != &r.external_identity()
+        || r.intent.classification.as_ref().is_some_and(|reviewed| {
+          reviewed.priority() != admission.work.priority()
+            || reviewed.risk() != admission.work.risk()
+            || reviewed.metadata() != admission.work.metadata()
+        })
         || admission.work.configuration().id() != t.configuration_id
         || admission.work.configuration().version() != t.configuration_version
         || admission.work.subject().repository_id() != t.repository_id
@@ -270,6 +287,73 @@ impl RequestIssueExecution {
         requested_at: self.requested_at,
         association: None,
       },
+    })
+  }
+}
+
+/// Stable chronological continuation; timestamp ties use the original request identity.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueExecutionPosition {
+  /// Original trusted reservation time.
+  pub requested_at: Timestamp,
+  /// Original request, never a current Run pointer.
+  pub id: octacity_server_domain::IssueExecutionRequestId,
+}
+impl IssueExecutionRequest {
+  /// Immutable ordering key, independent of mutable execution progress.
+  pub fn position(&self) -> IssueExecutionPosition {
+    IssueExecutionPosition {
+      requested_at: self.requested_at,
+      id: self.id,
+    }
+  }
+}
+/// Retained membership boundary; associations remain live observations on each page.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueExecutionObservation {
+  /// Maximum committed reservation sequence at the start of this traversal.
+  pub watermark: u64,
+  /// Issue revision observed with that membership boundary.
+  pub issue_version: IssueVersion,
+}
+/// Bounded metadata page with no inferred totals or private documents.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct IssueExecutionReadPage {
+  /// Retained requests in chronological order.
+  pub items: Vec<IssueExecutionRequest>,
+  /// Strict continuation key, absent at the end of observed membership.
+  pub next: Option<IssueExecutionPosition>,
+  /// Original membership observation.
+  pub observation: IssueExecutionObservation,
+}
+impl IssueExecutionReadPage {
+  /// Shapes at most limit plus one already ordered observations from either backend.
+  pub fn bounded(
+    mut items: Vec<IssueExecutionRequest>,
+    observation: IssueExecutionObservation,
+    limit: u16,
+  ) -> Result<Self, StoreError> {
+    if limit == 0 || limit > crate::MAX_ISSUE_HISTORY_PAGE_SIZE || items.len() > usize::from(limit) + 1 {
+      return Err(StoreError::invalid(
+        crate::StoreOperation::ListIssueExecutions,
+        crate::StoreInputError::InvalidIssueExecutionPage,
+      ));
+    }
+    let more = items.len() > usize::from(limit);
+    if more {
+      items.pop();
+    }
+    let next = if more {
+      items.last().map(IssueExecutionRequest::position)
+    } else {
+      None
+    };
+    Ok(Self {
+      items,
+      next,
+      observation,
     })
   }
 }

@@ -52,8 +52,6 @@ export const ruMessages = {
 
   'issues.closeProperties': 'Закрыть свойства',
 
-  'issues.startUnavailable': 'Запуск pipeline из карточки пока недоступен.',
-
   'issues.breadcrumb': 'Навигация задачи',
 
   'issues.editBaseline': 'На основе версии задачи {version}',
@@ -111,6 +109,29 @@ export const ruMessages = {
   'issues.businessStatus': 'Статус задачи: {status}',
   'issues.unknownStatus': 'Недоступно',
   'issues.statusHelp': 'Статус задачи не подтверждает приёмку результата и не разрешает поставку.',
+  'issues.addAcceptance': 'Добавить критерии приёмки',
+  'issues.executionInputHelp':
+    'Сервер публикует задачу и критерии приёмки для выбранного pipeline. Бизнес-статус не меняется.',
+  'issues.configurePipeline': 'Настроить pipeline',
+  'issues.executionReview': 'Версия задачи {version}',
+  'issues.reviewExecution': 'Проверить запуск pipeline',
+  'issues.confirmExecution': 'Подтвердить запуск pipeline',
+  'issues.resumeExecution': 'Возобновить подготовку',
+  'issues.executionPending': 'Идёт подготовка — Work и Run ещё не допущены.',
+  'issues.executionAdmitted': 'Work и Run допущены. Это не означает завершение Run.',
+  'issues.executionEarlierRequirements':
+    'Выполнение использует предыдущие требования. Текущие изменения войдут в следующий запуск.',
+  'issues.executionAssociation': 'Work {work} · Run {run}',
+  'issues.openRun': 'Открыть Run',
+  'issues.resumeMemoryHelp':
+    'Возобновление использует исходные подтверждённые входы. При выходе из карточки локальное продолжение теряется; запрос остаётся на сервере.',
+  'issues.executionHistory': 'История выполнения',
+  'issues.noExecutions': 'Нет доступных выполнений',
+  'issues.selectedExecution': 'Выбранное выполнение',
+  'issues.refreshExecutions': 'Обновить выполнения',
+  'issues.startHelp':
+    'Сохранение требований не запускает выполнение. Входы pipeline подтверждаются отдельно.',
+  'issues.executionAcceptanceRequired': 'Добавьте критерии приёмки перед запуском pipeline.',
   'issues.start': 'Запустить pipeline',
   'issues.executionUnavailable':
     'Запуски и их результаты пока недоступны в базовой карточке. Существующие запуски доступны в Factory.',

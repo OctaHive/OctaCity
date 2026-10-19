@@ -186,6 +186,7 @@ impl IssueStore for PostgresStore {
       transition_id: None,
       previous_workflow: None,
       origin: IssueTransitionOrigin::Manual,
+      pipeline: None,
       reason: None,
       actor: audit.actor().clone(),
       occurred_at: issue.created_at,
@@ -284,6 +285,10 @@ impl IssueStore for PostgresStore {
     &self,
     request: ManagementMutation<TransitionIssue>,
   ) -> Result<IssueTransitionOutcome, StoreError> {
+    // Pipeline applicability/recovery is installed by task 3.7; never fall back to manual policy.
+    if request.mutation().pipeline_action().is_some() {
+      return Err(StoreError::Unavailable);
+    }
     let (request, audit) = request.into_parts();
     let intent = &request.intent;
     let identity = MutationIdentity::new_management(

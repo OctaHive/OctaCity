@@ -48,8 +48,6 @@ export const enMessages = {
 
   'issues.closeProperties': 'Close properties',
 
-  'issues.startUnavailable': 'Starting a pipeline from this card is not available yet.',
-
   'issues.breadcrumb': 'Task breadcrumb',
 
   'issues.editBaseline': 'Based on task version {version}',
@@ -106,6 +104,29 @@ export const enMessages = {
   'issues.businessStatus': 'Business status: {status}',
   'issues.unknownStatus': 'Unavailable',
   'issues.statusHelp': 'Task status does not approve a result or permit delivery.',
+  'issues.addAcceptance': 'Add acceptance criteria',
+  'issues.executionInputHelp':
+    'The server publishes this task and its acceptance criteria using the selected pipeline. Business status is unchanged.',
+  'issues.configurePipeline': 'Configure a pipeline',
+  'issues.executionReview': 'Task version {version}',
+  'issues.reviewExecution': 'Review pipeline launch',
+  'issues.confirmExecution': 'Confirm pipeline launch',
+  'issues.resumeExecution': 'Resume preparation',
+  'issues.executionPending': 'Preparation pending — Work and Run are not admitted yet.',
+  'issues.executionAdmitted': 'Work and Run admitted. This does not mean the Run has completed.',
+  'issues.executionEarlierRequirements':
+    'This execution uses earlier requirements. Current edits apply to a later execution.',
+  'issues.executionAssociation': 'Work {work} · Run {run}',
+  'issues.openRun': 'Open Run',
+  'issues.resumeMemoryHelp':
+    'Resume reuses the original confirmed inputs. Leaving this card discards the local continuation; the server retains its request.',
+  'issues.executionHistory': 'Execution history',
+  'issues.noExecutions': 'No visible executions',
+  'issues.selectedExecution': 'Selected execution',
+  'issues.refreshExecutions': 'Refresh executions',
+  'issues.startHelp':
+    'Saving requirements never starts execution. Review pipeline inputs separately.',
+  'issues.executionAcceptanceRequired': 'Add acceptance criteria before starting a pipeline.',
   'issues.start': 'Start pipeline',
   'issues.executionUnavailable':
     'Execution and its results are not available on this base card yet. Existing Factory runs remain available in Factory.',

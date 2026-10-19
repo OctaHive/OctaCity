@@ -83,6 +83,33 @@ describe('confirmed mutation intent', () => {
     expect(intent.state).toBe('succeeded');
   });
 
+  it('resumes an accepted preparation with the original frozen review until admission', async () => {
+    const request = { target: { version: 3 } };
+    const execute = vi
+      .fn()
+      .mockResolvedValueOnce({ state: 'pending' })
+      .mockResolvedValueOnce({ state: 'admitted' });
+    const intent = createConfirmedMutationIntent({
+      execute,
+      request,
+      version: 7,
+      invalidate: [],
+      queryClient: new QueryClient(),
+      isComplete: (result: { state: string }) => result.state === 'admitted',
+    });
+    await expect(intent.submit()).resolves.toEqual({ state: 'pending' });
+    expect(intent.state).toBe('accepted');
+    request.target.version = 4;
+    await expect(intent.submit()).resolves.toEqual({ state: 'admitted' });
+    expect(intent.state).toBe('succeeded');
+    expect(execute.mock.calls[0]?.[0]).toBe(execute.mock.calls[1]?.[0]);
+    expect(execute.mock.calls[1]?.[0]).toMatchObject({
+      headers: { 'If-Match': '"7"' },
+      request: { target: { version: 3 } },
+    });
+    await expect(intent.submit()).rejects.toThrow('already succeeded');
+  });
+
   it('shares one in-flight submission instead of issuing a concurrent duplicate', async () => {
     let resolveExecution: ((value: string) => void) | undefined;
     const execute = vi.fn(

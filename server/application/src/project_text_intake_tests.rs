@@ -719,6 +719,7 @@ fn project_text_intake_issue_publication_recovers_original_revision_and_associat
         &context(),
         RequestIssueExecutionCommand {
           intent: RequestIssueExecutionIntent {
+            classification: Some(generic.intent.classification.clone()),
             project_id: project,
             issue_id: original.id,
             expected_version: original.version,
@@ -754,6 +755,24 @@ fn project_text_intake_issue_publication_recovers_original_revision_and_associat
       request_id: request.id,
       classification: generic.intent.classification,
     };
+    let mut changed_review = command.clone();
+    changed_review.classification = octacity_server_factory::WorkClassification::new(
+      octacity_server_factory::WorkPriority::new(99).unwrap(),
+      octacity_server_factory::RiskClass::High,
+      Default::default(),
+    );
+    assert_eq!(
+      commands
+        .handle_command(&context(), changed_review)
+        .await
+        .unwrap_err()
+        .application()
+        .unwrap()
+        .classification(),
+      ApplicationFailure::Conflict
+    );
+    assert_eq!(resolver.call_count(), 0);
+    assert_eq!(bytes.writes.load(Ordering::SeqCst), 0);
     let other = ManagementRequestContext::new(
       ManagementActor::authenticated("other").unwrap(),
       crate::ManagementSecurityScope::new("operator:other").unwrap(),

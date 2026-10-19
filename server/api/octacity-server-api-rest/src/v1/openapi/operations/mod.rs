@@ -39,6 +39,7 @@ pub struct ManagementOperation {
   pub(super) precondition_failed_response: bool,
   pub(super) no_store_response: bool,
   pub(super) replay_success_response: bool,
+  pub(super) pending_response: bool,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -89,6 +90,7 @@ pub(crate) enum ParameterProfile {
   ProjectList,
   CurrentDefinitionList,
   IssueHistory,
+  IssueExecutions,
   FactoryConfigurationChoices,
   FactoryDiagnostics,
   WorkSourceInputChoices,
@@ -110,6 +112,10 @@ pub(crate) enum ParameterProfile {
 }
 
 impl ManagementOperation {
+  const fn with_pending_response(mut self) -> Self {
+    self.pending_response = true;
+    self
+  }
   const fn with_no_store_response(mut self) -> Self {
     self.no_store_response = true;
     self
@@ -187,6 +193,7 @@ macro_rules! operation {
       precondition_failed_response: false,
       no_store_response: false,
       replay_success_response: false,
+      pending_response: false,
     }
   };
 }
@@ -248,6 +255,7 @@ const EMPTY_OPERATION: ManagementOperation = ManagementOperation {
   precondition_failed_response: false,
   no_store_response: false,
   replay_success_response: false,
+  pending_response: false,
 };
 
 const fn collect_operations() -> [ManagementOperation; OPERATION_COUNT] {

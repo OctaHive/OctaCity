@@ -12,6 +12,6 @@ pub use application::{
 pub use documentation::documented_http_requests;
 pub use openapi::{assert_component_exists, assert_json_matches_component, assert_required_header};
 pub use request::{
-  concrete_path, configuration_version_body, empty_request, issue_workflow_definition, json_request, repository_body,
-  repository_version_body, request_examples,
+  concrete_path, configuration_version_body, empty_request, issue_execution_body, issue_workflow_definition,
+  json_request, repository_body, repository_version_body, request_examples,
 };

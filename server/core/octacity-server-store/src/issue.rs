@@ -213,9 +213,10 @@ pub struct TransitionIssueIntent {
   /// Optional bounded organizational explanation, absent from generic audit/outbox.
   pub reason: Option<String>,
 }
-/// Trusted manual business-command envelope; future accepted producers reuse this port.
+/// Shared trusted business-command envelope for manual and accepted pipeline moves.
 #[derive(Clone, Debug)]
 pub struct TransitionIssue {
+  pub(crate) pipeline: Option<crate::AcceptedIssueStatusAction>,
   /// Frozen edge and preconditions.
   pub intent: TransitionIssueIntent,
   /// Original scoped replay identity.
@@ -244,6 +245,9 @@ pub struct IssueStatusHistoryEntry {
   pub previous_workflow: Option<IssueWorkflowPin>,
   /// Trusted command producer kind, never derived from text.
   pub origin: crate::IssueTransitionOrigin,
+  /// Exact accepted action metadata, absent for manual placement/moves.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub pipeline: Option<crate::IssuePipelineActionProvenance>,
   /// Optional organizational explanation; no raw execution/provider output.
   pub reason: Option<String>,
   /// Actual accepted management actor, never a fabricated human.

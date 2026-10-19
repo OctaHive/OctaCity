@@ -9,6 +9,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "property_version",
     "workflow_id",
     "issue_id",
+    "request_id",
     "pipeline_id",
     "repository_id",
     "configuration_id",
@@ -36,7 +37,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         "required": true,
         "schema": if name == "property_version" { non_negative_integer() }
           else if name == "version" { positive_integer() }
-          else if matches!(name, "workflow_id" | "issue_id") { json!({"type":"string","format":"uuid"}) }
+          else if matches!(name, "workflow_id" | "issue_id" | "request_id") { json!({"type":"string","format":"uuid"}) }
           else { non_empty_string() }
       }));
     }
@@ -59,6 +60,10 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       json!({"name": "parent_id", "in": "query", "required": false, "schema": non_empty_string()}),
       cursor_parameter(),
       limit_parameter(MAX_PROJECT_LIST_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT),
+    ]),
+    ParameterProfile::IssueExecutions => parameters.extend([
+      cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_EXECUTION_CURSOR_BYTES),
+      limit_parameter(octacity_server_application::MAX_ISSUE_HISTORY_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT)
     ]),
     ParameterProfile::IssueHistory => parameters.extend([json!({"name":"after","in":"query","required":false,"schema":positive_integer()}),limit_parameter(200,super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::CurrentDefinitionList => parameters.extend([

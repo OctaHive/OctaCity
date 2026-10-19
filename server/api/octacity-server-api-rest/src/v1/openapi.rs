@@ -143,9 +143,19 @@ fn responses(operation: &ManagementOperation) -> Value {
       "ETag":{"description":"Strong exact Issue revision when this response describes one Issue","schema":{"type":"string"}}
     });
   }
+  if operation.pending_response {
+    success["headers"]["Location"] = json!({
+      "description":"Exact retained request status URL; repeat the original POST to resume",
+      "schema":{"type":"string","format":"uri-reference"}
+    });
+  }
   responses.insert(operation.success_status.to_owned(), success.clone());
   if operation.replay_success_response {
-    responses.insert("200".to_owned(), success);
+    responses.insert("200".to_owned(), success.clone());
+  }
+  if operation.pending_response {
+    success["description"] = json!("Request retained; repeat the exact POST to resume publication");
+    responses.insert("202".to_owned(), success);
   }
   for (status, description) in [
     ("400", "Invalid request"),

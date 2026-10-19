@@ -16,17 +16,25 @@ pub(super) struct IssueMemoryState {
   pushes: BTreeMap<(IssueId, IssueVersion), IssuePushIntent>,
   policies: BTreeMap<IssueId, IssueFieldPolicy>,
   adoptions: BTreeMap<ManagementIdempotencyKey, (AdoptIssueWorkflowIntent, IssueTransitionOutcome)>,
-  moves: BTreeMap<ManagementIdempotencyKey, (TransitionIssueIntent, IssueTransitionOutcome)>,
+  moves: BTreeMap<ManagementIdempotencyKey, IssueMoveReplay>,
   history: BTreeMap<(IssueId, IssueVersion), IssueStatusHistoryEntry>,
   edits: BTreeMap<ManagementIdempotencyKey, (EditIssueIntent, IssueMutationOutcome)>,
   creates: BTreeMap<ManagementIdempotencyKey, (CreateIssueIntent, IssueMutationOutcome)>,
+}
+// Accepted pipeline commands seal their original review before the atomic business move.
+// A transient store failure leaves it pending; definitive business rejection stays historical.
+#[derive(Clone)]
+struct IssueMoveReplay {
+  intent: TransitionIssueIntent,
+  pipeline: Option<AcceptedIssueStatusAction>,
+  result: Option<Result<IssueTransitionOutcome, StoreError>>,
 }
 impl IssueMemoryState {
   pub(super) fn mutation_count(&self) -> usize {
     self.executions.mutation_count()
       + self.creates.len()
       + self.edits.len()
-      + self.moves.len()
+      + self.moves.values().filter(|r| matches!(r.result, Some(Ok(_)))).count()
       + self.adoptions.len()
       + self.property_publications.len()
       + self.planning_edits.len()
@@ -221,37 +229,67 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
     let (request, audit) = request.into_parts();
     let key = audit.scoped_idempotency_key(&request.idempotency_key);
     let mut state = self.lock()?;
-    if let Some((intent, outcome)) = state.issues.moves.get(&key) {
-      if intent != &request.intent {
+    if let Some(replay) = state.issues.moves.get(&key) {
+      if replay.intent != request.intent || replay.pipeline.as_ref() != request.pipeline_action() {
         return Err(StoreError::Conflict {
           entity: EntityKind::Issue,
         });
       }
-      return Ok(IssueTransitionOutcome {
-        disposition: MutationDisposition::Replayed,
-        ..outcome.clone()
-      });
+      if let Some(result) = &replay.result {
+        return result.clone().map(|outcome| IssueTransitionOutcome {
+          disposition: MutationDisposition::Replayed,
+          ..outcome
+        });
+      }
+    } else if let Some(action) = request.pipeline_action() {
+      state.issues.moves.insert(
+        key.clone(),
+        IssueMoveReplay {
+          intent: request.intent.clone(),
+          pipeline: Some(action.clone()),
+          result: None,
+        },
+      );
     }
-    let intent = &request.intent;
-    let current = state
-      .issues
-      .current
-      .get(&(intent.project_id, intent.id))
-      .ok_or(StoreError::NotFound {
-        entity: EntityKind::Issue,
+    let evaluated = (|| {
+      let intent = &request.intent;
+      let current = state
+        .issues
+        .current
+        .get(&(intent.project_id, intent.id))
+        .ok_or(StoreError::NotFound {
+          entity: EntityKind::Issue,
+        })?;
+      if let Some(action) = request.pipeline_action() {
+        state.issues.executions.guard_action(action, current)?;
+      }
+      let project = state.projects.get(&intent.project_id).ok_or(StoreError::NotFound {
+        entity: EntityKind::Project,
       })?;
-    let project = state.projects.get(&intent.project_id).ok_or(StoreError::NotFound {
-      entity: EntityKind::Project,
-    })?;
-    let workflow = state
-      .workflows
-      .workflow(project, current.workflow_id, Some(current.workflow_version))?;
-    let outcome = current.transitioned(
-      &request,
-      &workflow,
-      &state.issues.policies.get(&intent.id).cloned().unwrap_or_default(),
-      audit.actor(),
-    )?;
+      let workflow = state
+        .workflows
+        .workflow(project, current.workflow_id, Some(current.workflow_version))?;
+      current.transitioned(
+        &request,
+        &workflow,
+        &state.issues.policies.get(&intent.id).cloned().unwrap_or_default(),
+        audit.actor(),
+      )
+    })();
+    let outcome = match evaluated {
+      Ok(outcome) => outcome,
+      Err(error) => {
+        if request.pipeline_action().is_some() && error != StoreError::Unavailable {
+          state
+            .issues
+            .moves
+            .get_mut(&key)
+            .expect("sealed accepted command")
+            .result = Some(Err(error.clone()));
+        }
+        return Err(error);
+      }
+    };
     let issue = outcome.issue.clone();
     let transition = outcome.transition.clone();
     commit_issue_revision(
@@ -262,7 +300,17 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
       &issue,
       Some(transition),
       |memory| {
-        memory.moves.insert(key.clone(), (request.intent, outcome.clone()));
+        if let Some(action) = request.pipeline_action() {
+          memory.executions.advance_action(action, issue.applicability_version);
+        }
+        memory.moves.insert(
+          key.clone(),
+          IssueMoveReplay {
+            intent: request.intent,
+            pipeline: request.pipeline,
+            result: Some(Ok(outcome.clone())),
+          },
+        );
       },
     )?;
     Ok(outcome)
@@ -389,6 +437,7 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
       transition_id: None,
       previous_workflow: None,
       origin: IssueTransitionOrigin::Manual,
+      pipeline: None,
       reason: None,
       actor: audit.actor().clone(),
       occurred_at: issue.created_at,

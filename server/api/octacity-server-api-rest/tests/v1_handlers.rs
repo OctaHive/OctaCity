@@ -81,7 +81,7 @@ mod webhook;
 use support::{
   JobEventApplication, agent_pool_create_body, agent_pool_publish_body, assert_component_exists,
   assert_json_matches_component, assert_required_header, concrete_path, configuration_version_body,
-  documented_http_requests, empty_request, json_request, recording_management_application,
+  documented_http_requests, empty_request, issue_execution_body, json_request, recording_management_application,
   recording_management_application_with_policy, recording_management_application_with_retention, repository_body,
   repository_version_body, request_examples,
 };
@@ -229,6 +229,22 @@ impl ManagementQueryUseCase<GetOperationalMetadataQuery> for RecordingApplicatio
   }
 }
 
+unavailable_query!(
+  octacity_server_application::ListIssueExecutionsQuery,
+  "list_issue_executions"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueExecutionQuery,
+  "get_issue_execution"
+);
+unavailable_command!(
+  octacity_server_application::RequestIssueExecutionCommand,
+  "request_issue_execution"
+);
+unavailable_command!(
+  octacity_server_application::PublishIssueExecutionCommand,
+  "publish_issue_execution"
+);
 unavailable_query!(octacity_server_application::ListProjectIssuesQuery, "list_issues");
 unavailable_query!(
   octacity_server_application::GetIssuePropertyChoicesQuery,
@@ -1026,6 +1042,9 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   let cache_session_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
   vec![
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions?limit=1"),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions/{repository_id}"),None),
+    json_request("POST",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions"),"execution",Some("\"1\""),&issue_execution_body()),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-choices"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-definitions"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-definitions/0"),None),
@@ -1444,6 +1463,9 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
   assert_eq!(
     *application.calls.lock().unwrap(),
     [
+      "list_issue_executions",
+      "get_issue_execution",
+      "request_issue_execution",
       "get_issue_property_choices",
       "get_issue_properties",
       "get_issue_properties",

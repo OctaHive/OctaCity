@@ -199,6 +199,7 @@ impl ServerRuntime {
       vcs_retry_policy,
       trigger_claim_lifetime: trigger_evaluation_policy.worker().claim_lifetime(),
       artifacts: artifact_service.clone(),
+      object_storage: resources.object_storage.clone(),
       cache: cache_service.clone(),
       log_search_index: log_search_index.clone(),
       operational_metadata: ManagementOperationalMetadataProjection {

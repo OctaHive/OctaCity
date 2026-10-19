@@ -18,6 +18,11 @@ import { useOverlayFocus } from './useOverlayFocus';
 import styles from './ConfirmedCommand.module.css';
 
 interface ConfirmedCommandProps<Request, Result> {
+  continuation?: {
+    isComplete: (result: Result) => boolean;
+    renderPending: (result: Result) => React.ReactNode;
+    resumeLabel: string;
+  };
   confirmLabel: string;
   ready?: boolean;
   consequence: string;
@@ -37,10 +42,11 @@ interface ConfirmedCommandProps<Request, Result> {
 type CommandPhase<Result> =
   | { kind: 'ready' | 'pending'; result?: never }
   | { kind: 'error'; result?: never }
-  | { kind: 'succeeded'; result: Result };
+  | { kind: 'accepted' | 'succeeded'; result: Result };
 
 /** Runs one explicitly confirmed command and retains its identity only for safe transport replay. */
 export function ConfirmedCommand<Request, Result>({
+  continuation,
   confirmLabel,
   ready = true,
   consequence,
@@ -62,6 +68,7 @@ export function ConfirmedCommand<Request, Result>({
   const dialogRef = useRef<HTMLElement>(null);
   const primaryButtonRef = useRef<HTMLButtonElement>(null);
   const terminalButtonRef = useRef<HTMLButtonElement>(null);
+  const continuationButtonRef = useRef<HTMLButtonElement>(null);
   const intentRef = useRef<ReturnType<
     typeof createConfirmedMutationIntent<Request, Result>
   > | null>(null);
@@ -79,6 +86,7 @@ export function ConfirmedCommand<Request, Result>({
     target?.focus();
   }, [fallbackFocusRef, returnFocus]);
   useOverlayFocus({
+    active: phase.kind !== 'accepted',
     containerRef: dialogRef,
     initialFocusRef: primaryButtonRef,
     onDismiss: dismiss,
@@ -92,6 +100,7 @@ export function ConfirmedCommand<Request, Result>({
       intentRef.current ??
       createConfirmedMutationIntent({
         execute,
+        ...(continuation ? { isComplete: continuation.isComplete } : {}),
         invalidate: invalidations,
         queryClient,
         request,
@@ -102,8 +111,12 @@ export function ConfirmedCommand<Request, Result>({
     setPhase({ kind: 'pending' });
     try {
       const result = await intent.submit();
-      reportCommandOutcome(notificationIntentRef.current, title, 'success');
-      setPhase({ kind: 'succeeded', result });
+      if (intent.state === 'accepted') {
+        setPhase({ kind: 'accepted', result });
+      } else {
+        reportCommandOutcome(notificationIntentRef.current, title, 'success');
+        setPhase({ kind: 'succeeded', result });
+      }
     } catch (caught) {
       if (isIndeterminateOutcome(caught)) {
         reportCommandIndeterminate(title);
@@ -120,7 +133,9 @@ export function ConfirmedCommand<Request, Result>({
     (error.code === 'precondition_failed' || error.code === 'conflict');
 
   useEffect(() => {
-    if (phase.kind === 'succeeded' || (phase.kind === 'error' && !retryable)) {
+    if (phase.kind === 'accepted') {
+      continuationButtonRef.current?.focus();
+    } else if (phase.kind === 'succeeded' || (phase.kind === 'error' && !retryable)) {
       terminalButtonRef.current?.focus();
     }
   }, [phase.kind, retryable]);
@@ -132,6 +147,25 @@ export function ConfirmedCommand<Request, Result>({
       dismiss();
     }
   };
+
+  // A durable preparation receipt releases modal focus so the card remains editable. Its
+  // continuation still belongs to this mounted, in-memory confirmation and keeps the same key.
+  if (phase.kind === 'accepted' && continuation) {
+    return (
+      <section aria-label={title} className={styles.dialog}>
+        <h2>{title}</h2>
+        <div role="status">{continuation.renderPending(phase.result)}</div>
+        <div className={styles.actions}>
+          <button type="button" ref={continuationButtonRef} onClick={() => void submit()}>
+            {continuation.resumeLabel}
+          </button>
+          <button type="button" onClick={dismiss}>
+            {t('command.abandon')}
+          </button>
+        </div>
+      </section>
+    );
+  }
 
   return (
     <div className={styles.layer}>

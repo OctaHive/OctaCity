@@ -263,6 +263,7 @@ async fn reviewed_request(
     .request_issue_execution(management_mutation(RequestIssueExecution {
       id: IssueExecutionRequestId::generate(),
       intent: RequestIssueExecutionIntent {
+        classification: None,
         project_id: issue.project_id,
         issue_id: issue.id,
         expected_version: issue.version,
@@ -1233,5 +1234,123 @@ async fn admitted_pending_issue_association_recovers_after_private_body_cleanup(
       .unwrap()
       .is_none()
   );
+  database.cleanup().await;
+}
+
+#[path = "support/runtime.rs"]
+mod http_runtime;
+
+#[tokio::test]
+#[ignore = "requires disposable PostgreSQL and MinIO"]
+async fn issue_execution_http_resumes_original_inputs_after_runtime_restart() {
+  use octacity_server::ServerRuntime;
+  use serde_json::{Value, json};
+  let database = postgres::TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let (issue, submission) = setup(&store).await;
+  let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
+  url.set_path(&database.name);
+  let root = tempfile::tempdir().unwrap();
+  let runtime = ServerRuntime::start(http_runtime::runtime_config(
+    root.path(),
+    url.as_str(),
+    "http://127.0.0.1:9",
+  ))
+  .await
+  .unwrap();
+  let client = reqwest::Client::new();
+  let path = format!("/api/v1/projects/{}/issues/{}/executions", issue.project_id, issue.id);
+  let origin = format!("http://{}", runtime.management_addr());
+  let history = client.get(format!("{origin}{path}")).send().await.unwrap();
+  assert_eq!(history.status(), reqwest::StatusCode::OK);
+  assert_eq!(history.json::<Value>().await.unwrap()["items"], json!([]));
+  let body = json!({"target":{
+    "configuration_id":submission.intent.target.configuration_id,"configuration_version":1,
+    "repository_id":submission.intent.target.repository_id,"repository_version":1,
+    "source":submission.intent.source,"mapping":"title_description_acceptance_v1"},
+    "classification":submission.intent.classification});
+  let post = |origin: &str, replay: &str, version: &str| {
+    client
+      .post(format!("{origin}{path}"))
+      .header("idempotency-key", replay)
+      .header("if-match", version)
+      .json(&body)
+  };
+  let response = post(&origin, "http-reviewed", "\"1\"").send().await.unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::ACCEPTED);
+  let location = response.headers()["location"].to_str().unwrap().to_owned();
+  let pending: Value = response.json().await.unwrap();
+  assert_eq!(pending["resource"]["state"], "pending");
+  assert_eq!(pending["resource"]["association"], Value::Null);
+  runtime.shutdown().await.unwrap();
+  store
+    .edit_issue(management_mutation(EditIssue {
+      intent: EditIssueIntent {
+        project_id: issue.project_id,
+        id: issue.id,
+        expected_version: issue.version,
+        content: IssueContent {
+          description: "Later requirements".into(),
+          ..issue.content.clone()
+        },
+      },
+      idempotency_key: key("http-edit"),
+      edited_at: at(11),
+    }))
+    .await
+    .unwrap();
+  let endpoint = std::env::var("OCTACITY_MINIO_ENDPOINT").unwrap();
+  let runtime = ServerRuntime::start(http_runtime::runtime_config(root.path(), url.as_str(), &endpoint))
+    .await
+    .unwrap();
+  let origin = format!("http://{}", runtime.management_addr());
+  let status = client.get(format!("{origin}{location}")).send().await.unwrap();
+  assert_eq!(status.status(), reqwest::StatusCode::OK);
+  assert_eq!(status.json::<Value>().await.unwrap()["state"], "pending");
+  let response = post(&origin, "http-reviewed", "\"1\"").send().await.unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::OK);
+  assert_eq!(response.headers()["location"], location);
+  let admitted: Value = response.json().await.unwrap();
+  assert_eq!(admitted["disposition"], "replayed");
+  assert_eq!(admitted["resource"]["state"], "admitted");
+  assert_eq!(admitted["resource"]["id"], pending["resource"]["id"]);
+  assert_eq!(admitted["resource"]["intent"]["expected_version"], 1);
+  assert_eq!(admitted["resource"]["task_digest"], pending["resource"]["task_digest"]);
+  let response = post(&origin, "http-reviewed", "\"1\"").send().await.unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::OK);
+  assert_eq!(response.json::<Value>().await.unwrap(), admitted);
+  assert_eq!(
+    post(&origin, "http-new", "\"1\"").send().await.unwrap().status(),
+    reqwest::StatusCode::CONFLICT
+  );
+  let second = post(&origin, "http-new", "\"2\"").send().await.unwrap();
+  assert_eq!(second.status(), reqwest::StatusCode::CREATED);
+  let second: Value = second.json().await.unwrap();
+  assert_ne!(
+    second["resource"]["association"]["run_id"],
+    admitted["resource"]["association"]["run_id"]
+  );
+  assert_ne!(second["resource"]["task_digest"], admitted["resource"]["task_digest"]);
+  let run_url = admitted["resource"]["run_url"].as_str().unwrap();
+  assert_eq!(
+    client.get(format!("{origin}{run_url}")).send().await.unwrap().status(),
+    reqwest::StatusCode::OK
+  );
+  let history = client.get(format!("{origin}{path}?limit=200")).send().await.unwrap();
+  assert_eq!(history.status(), reqwest::StatusCode::OK);
+  assert_eq!(
+    history.json::<Value>().await.unwrap()["items"]
+      .as_array()
+      .unwrap()
+      .len(),
+    2
+  );
+  let count: i64 = sqlx::query_scalar("SELECT count(*) FROM factory_runs WHERE project_id=$1")
+    .bind(issue.project_id.as_uuid())
+    .fetch_one(&database.pool)
+    .await
+    .unwrap();
+  assert_eq!(count, 2);
+  runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }

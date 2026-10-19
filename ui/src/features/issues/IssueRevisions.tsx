@@ -13,6 +13,13 @@ import styles from './Issues.module.css';
 export function IssueRevisions({ api, issue }: { api: IssuesApi; issue: Issue }) {
   const { t, locale } = usePresentation();
   const [params] = useSearchParams();
+  function revisionSearch(version: number | null) {
+    const next = new URLSearchParams(params);
+    next.set('section', 'activity');
+    if (version === null) next.delete('revision');
+    else next.set('revision', String(version));
+    return next.toString();
+  }
   const selected = Number(params.get('revision'));
   const version = Number.isSafeInteger(selected) && selected > 0 ? selected : null;
   const [after, setAfter] = useState<number | null>(null);
@@ -51,7 +58,7 @@ export function IssueRevisions({ api, issue }: { api: IssuesApi; issue: Issue })
               <li key={item.version}>
                 <Link
                   aria-current={item.version === version ? 'page' : undefined}
-                  to={{ search: `?section=activity&revision=${item.version}` }}
+                  to={{ search: revisionSearch(item.version) }}
                 >
                   {t('issues.readRevision', { version: item.version })}
                 </Link>{' '}
@@ -68,7 +75,7 @@ export function IssueRevisions({ api, issue }: { api: IssuesApi; issue: Issue })
       {version !== null ? (
         <section aria-label={t('issues.historical', { version })}>
           <h3>{t('issues.historical', { version })}</h3>
-          <Link to="?section=activity">{t('issues.closeRevision')}</Link>
+          <Link to={{ search: revisionSearch(null) }}>{t('issues.closeRevision')}</Link>
           {body.isPending ? (
             <QueryLoadingNotice label={t('issues.historical', { version })} />
           ) : body.data === undefined ? (

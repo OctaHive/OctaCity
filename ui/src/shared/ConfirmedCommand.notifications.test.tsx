@@ -53,7 +53,21 @@ describe('ConfirmedCommand notifications', () => {
   });
 });
 
-function renderCommand(execute: () => Promise<{ ok: true }>) {
+it('keeps an accepted preparation resumable without claiming completion or trapping editing', async () => {
+  const execute = vi.fn().mockResolvedValueOnce({ ok: false }).mockResolvedValueOnce({ ok: true });
+  const user = userEvent.setup();
+  renderCommand(execute, true);
+  await user.click(screen.getByRole('button', { name: 'Confirm command' }));
+  expect(await screen.findByText('Preparation retained.')).toBeTruthy();
+  expect(screen.getByText('History 0 empty')).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Resume preparation' }));
+  await user.click(screen.getByRole('button', { name: 'Resume preparation' }));
+  expect(await screen.findByText('History 1 success')).toBeTruthy();
+  expect(execute.mock.calls[0]?.[0]).toBe(execute.mock.calls[1]?.[0]);
+});
+
+function renderCommand(execute: () => Promise<{ ok: boolean }>, resumable = false) {
   const returnFocus = document.createElement('button');
   document.body.append(returnFocus);
   return render(
@@ -61,6 +75,15 @@ function renderCommand(execute: () => Promise<{ ok: true }>) {
       <NotificationProvider>
         <MemoryRouter>
           <ConfirmedCommand
+            {...(resumable
+              ? {
+                  continuation: {
+                    isComplete: (result: { ok: boolean }) => result.ok,
+                    renderPending: () => 'Preparation retained.',
+                    resumeLabel: 'Resume preparation',
+                  },
+                }
+              : {})}
             confirmLabel="Confirm command"
             consequence="This executes one test command."
             execute={execute}

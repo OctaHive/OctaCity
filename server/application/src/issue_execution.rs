@@ -144,3 +144,7 @@ impl<S: IssueExecutionStore, F: Send + Sync> ManagementQueryUseCase<GetIssueExec
     )
   }
 }
+
+#[path = "issue_execution_history.rs"]
+mod history;
+pub use history::*;

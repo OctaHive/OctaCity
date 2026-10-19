@@ -88,7 +88,7 @@ test('keeps Russian manual card and historical selection usable with keyboard Pr
   await expect(page.getByRole('complementary', { name: 'Свойства' })).toBeInViewport();
   await page.getByRole('button', { name: 'Закрыть свойства', exact: true }).click();
   await expect(trigger).toBeFocused();
-  await expect(page.getByRole('button', { name: 'Запустить pipeline' })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Запустить pipeline' })).toBeEnabled();
   await page.getByRole('link', { name: 'Обзор', exact: true }).click();
   await expect(page).toHaveURL(/revision=1/u);
   await expect(page.getByRole('heading', { name: 'Описание', exact: true })).toBeVisible();

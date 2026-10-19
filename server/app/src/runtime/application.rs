@@ -32,6 +32,9 @@ use super::{
   webhook::{HostedWebhookVerifier, UnavailableWebhookVerifier},
 };
 
+// HTTP wait only; the shared intake retains its own original leases/deadlines.
+const ISSUE_EXECUTION_PUBLICATION_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
 pub(super) struct ApplicationComponents {
   pub(super) management: ManagementApplication,
   pub(super) trigger_service: Arc<ManualTriggerService>,
@@ -61,6 +64,7 @@ pub(super) struct ApplicationAssembly {
   pub(super) vcs_retry_policy: DurableRetryPolicy,
   pub(super) trigger_claim_lifetime: std::time::Duration,
   pub(super) artifacts: Arc<ArtifactHandlers<PostgresStore, octacity_artifact_s3::S3ArtifactStore>>,
+  pub(super) object_storage: Arc<octacity_artifact_s3::S3ArtifactStore>,
   pub(super) cache: Arc<CacheSessionHandlers<PostgresStore>>,
   pub(super) log_search_index: Arc<PostgresLogSearchIndex>,
   pub(super) operational_metadata: ManagementOperationalMetadataProjection,
@@ -83,6 +87,7 @@ pub(super) fn management_application(
     vcs_retry_policy,
     trigger_claim_lifetime,
     artifacts,
+    object_storage,
     cache,
     log_search_index,
     operational_metadata,
@@ -199,7 +204,7 @@ pub(super) fn management_application(
     &management_policy,
     Arc::new(octacity_server_application::FactoryAdmissionHandlers::with_policy(
       store.clone(),
-      revision_resolver,
+      revision_resolver.clone(),
       management_policy.clone(),
     )),
   );
@@ -228,6 +233,19 @@ pub(super) fn management_application(
   ));
   let issue_commands = authorized_commands(&management_policy, issues.clone());
   let issue_queries = authorized_queries(&management_policy, issues);
+  let executions = Arc::new(octacity_server_application::IssueExecutionHandlers::new(
+    store.clone(),
+    store.clone(),
+    management_policy.clone(),
+  ));
+  let execution_publication = Arc::new(octacity_server_application::IssueExecutionPublisher::new(
+    store.clone(),
+    store.clone(),
+    object_storage,
+    revision_resolver,
+    management_policy.clone(),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+  ));
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
@@ -277,6 +295,17 @@ pub(super) fn management_application(
     workflow_commands,
     workflow_queries,
   ))
+  .with_issue_executions(
+    octacity_server_api_rest::v1::IssueExecutionManagementApplication::new(authorized_queries(
+      &management_policy,
+      executions.clone(),
+    ))
+    .with_publication(
+      authorized_commands(&management_policy, executions),
+      authorized_commands(&management_policy, execution_publication),
+      ISSUE_EXECUTION_PUBLICATION_WAIT,
+    ),
+  )
   .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
     issue_commands,
     issue_queries,

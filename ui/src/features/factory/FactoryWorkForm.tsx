@@ -14,20 +14,18 @@ import {
 } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
+import {
+  PipelineTargetFields,
+  usePipelineTarget,
+  type PipelineTargetSources,
+} from '../../shared/PipelineTargetFields';
 import type { FactoryApi } from './api';
 
 /** Read ports supplied by application composition; Factory does not import other feature internals. */
-export interface FactoryWorkSources extends Pick<ProjectHierarchyApi, 'getProject'> {
-  listRepositories(
-    projectId: string,
-    cursor: string | null,
-    signal?: AbortSignal,
-  ): Promise<components['schemas']['RepositorySummaryPage']>;
-  getRepository(
-    repositoryId: string,
-    version: number,
-    signal?: AbortSignal,
-  ): Promise<components['schemas']['RepositoryResource']>;
+export interface FactoryWorkSources
+  extends
+    Pick<ProjectHierarchyApi, 'getProject'>,
+    Pick<PipelineTargetSources, 'listRepositories' | 'getRepository'> {
   listBuilds(
     projectId: string,
     filters: { configurationId: string | null; state: components['schemas']['BuildState'] | null },
@@ -63,12 +61,8 @@ export function FactoryWorkForm({
 }) {
   const { t, locale } = usePresentation();
   const queryClient = useQueryClient();
-  const [configurationId, setConfigurationId] = useState('');
-  const [repositoryId, setRepositoryId] = useState('');
   const [buildId, setBuildId] = useState('');
   const [label, setLabel] = useState('');
-  const [sourceSelection, setSourceSelection] = useState('default');
-  const [revision, setRevision] = useState('');
   const [taskId, setTaskId] = useState('');
   const [acceptanceId, setAcceptanceId] = useState('');
   const [specificationIds, setSpecificationIds] = useState<string[]>([]);
@@ -83,35 +77,19 @@ export function FactoryWorkForm({
     queryKey: queryKeys.project(projectId),
     queryFn: ({ signal }) => sources.getProject(projectId, signal),
   });
-  const configurations = useCursorPage(
-    queryKeys.factoryConfigurations(projectId),
-    (cursor, signal) => api.listConfigurations(projectId, cursor, signal),
-  );
-  const repositories = useCursorPage(
-    queryKeys.factoryWorkSources(projectId, 'repositories'),
-    (cursor, signal) => sources.listRepositories(projectId, cursor, signal),
-  );
+  const targetSelection = usePipelineTarget(projectId, {
+    ...sources,
+    listConfigurations: api.listConfigurations,
+  });
+  const { configuration, repository, details: repositoryDetails } = targetSelection;
+  const source = targetSelection.target?.source ?? null;
   const builds = useCursorPage(
     queryKeys.factoryWorkSources(projectId, 'builds'),
     (cursor, signal) =>
       sources.listBuilds(projectId, { configurationId: null, state: null }, cursor, signal),
   );
-  const configurationItems =
-    configurations.data?.pages.flatMap((page) => page.items).filter((item) => item.enabled) ?? [];
-  const repositoryItems = repositories.data?.pages.flatMap((page) => page.items) ?? [];
   const buildItems = builds.data?.pages.flatMap((page) => page.items) ?? [];
-  const configuration =
-    configurationItems.find((item) => item.id === configurationId) ?? configurationItems[0];
-  const repository = repositoryItems.find((item) => item.id === repositoryId) ?? repositoryItems[0];
   const build = buildItems.find((item) => item.id === buildId) ?? buildItems[0];
-  const repositoryDetails = useQuery({
-    queryKey: queryKeys.repository(repository?.id ?? '', repository?.version ?? 0),
-    enabled: repository !== undefined,
-    queryFn: ({ signal }) => {
-      if (!repository) throw new Error('Repository selection is missing');
-      return sources.getRepository(repository.id, repository.version, signal);
-    },
-  });
   const artifacts = useQuery({
     queryKey: queryKeys.buildArtifacts(build?.id ?? ''),
     enabled: build !== undefined,
@@ -126,29 +104,6 @@ export function FactoryWorkForm({
     FACTORY_AUTHORING_SCHEMAS.FactoryWorkArtifacts.properties.specifications.maxItems;
   const task = artifactItems.find((item) => item.id === taskId);
   const acceptance = artifactItems.find((item) => item.id === acceptanceId);
-  const selection = repositoryDetails.data?.definition.selection;
-  const sourceOptions = [
-    ...(selection?.default_reference
-      ? [{ value: 'default', label: t('manualBuild.defaultReference') }]
-      : []),
-    ...(selection?.allowed_references.map((value) => ({ value: `ref:${value}`, label: value })) ??
-      []),
-    ...(selection?.allow_exact_revision
-      ? [{ value: 'exact', label: t('manualBuild.exactRevision') }]
-      : []),
-  ];
-  const selectedSource =
-    sourceOptions.find((item) => item.value === sourceSelection)?.value ?? sourceOptions[0]?.value;
-  const source: Request['source'] | null =
-    selectedSource === 'default'
-      ? { kind: 'default_reference' }
-      : selectedSource === 'exact'
-        ? revision.trim()
-          ? { kind: 'exact_revision', value: revision.trim() }
-          : null
-        : selectedSource?.startsWith('ref:')
-          ? { kind: 'reference', value: selectedSource.slice(4) }
-          : null;
   const valid =
     project.data &&
     project.error === null &&
@@ -163,13 +118,7 @@ export function FactoryWorkForm({
     Number.isSafeInteger(priority) &&
     priority >= classification.priority.minimum &&
     priority <= classification.priority.maximum &&
-    ![
-      configurations.error,
-      repositories.error,
-      builds.error,
-      repositoryDetails.error,
-      artifacts.error,
-    ].some(Boolean);
+    ![builds.error, repositoryDetails.error, artifacts.error].some(Boolean);
   const labels = (name: string) => ({
     failure: name,
     loading: name,
@@ -213,72 +162,7 @@ export function FactoryWorkForm({
             autoComplete="off"
           />
         </label>
-        <PagedExplorerBranch
-          query={configurations}
-          empty={t('factory.unconfigured')}
-          labels={labels(t('factory.configurations'))}
-        >
-          {() => (
-            <SelectMenu
-              ariaLabel={t('factory.configurations')}
-              value={configuration?.id ?? ''}
-              onValueChange={setConfigurationId}
-              options={configurationItems.map((item) => ({
-                value: item.id,
-                label: `${t('factory.configurationVersion', { version: item.version })} · ${item.id}`,
-              }))}
-            />
-          )}
-        </PagedExplorerBranch>
-        <PagedExplorerBranch
-          query={repositories}
-          empty={t('factory.noRepositories')}
-          labels={labels(t('factory.repository'))}
-        >
-          {(items) => (
-            <SelectMenu
-              ariaLabel={t('factory.repository')}
-              value={repository?.id ?? ''}
-              onValueChange={setRepositoryId}
-              options={items.map((item) => ({
-                value: item.id,
-                label: `${item.name} · v${item.version}`,
-              }))}
-            />
-          )}
-        </PagedExplorerBranch>
-        {repositoryDetails.data ? (
-          <QueryBackgroundNotice
-            label={t('factory.repository')}
-            error={repositoryDetails.error}
-            fetching={repositoryDetails.isFetching}
-            onRetry={repositoryDetails.refetch}
-          />
-        ) : repositoryDetails.error ? (
-          <QueryFailureNotice
-            title={t('factory.repository')}
-            error={repositoryDetails.error}
-            onRetry={repositoryDetails.refetch}
-          />
-        ) : repository && repositoryDetails.isPending ? (
-          <QueryLoadingNotice label={t('factory.repository')} />
-        ) : null}
-        <SelectMenu
-          ariaLabel={t('manualBuild.source')}
-          value={selectedSource ?? ''}
-          onValueChange={setSourceSelection}
-          options={sourceOptions}
-        />
-        {selectedSource === 'exact' ? (
-          <label>
-            {t('manualBuild.exactRevision')}
-            <input
-              value={revision}
-              onChange={(event) => setRevision(event.currentTarget.value)}
-              autoComplete="off"
-            />
-          </label>
-        ) : null}
+        <PipelineTargetFields selection={targetSelection} />
         <PagedExplorerBranch
           query={builds}
           empty={t('factory.noInputBuilds')}
@@ -386,7 +270,7 @@ export function FactoryWorkForm({
             };
             const reviewedSource =
               request.source.kind === 'default_reference'
-                ? selection?.default_reference
+                ? repositoryDetails.data?.definition.selection.default_reference
                 : request.source.value;
             setReview({
               returnFocus: event.currentTarget,

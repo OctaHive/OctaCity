@@ -3,10 +3,37 @@ use super::*;
 #[derive(Clone, Default)]
 pub(super) struct IssueExecutionMemoryState {
   associations: BTreeMap<octacity_server_factory::WorkEnvelopeId, IssueWorkAssociation>,
-  requests: BTreeMap<octacity_server_domain::IssueExecutionRequestId, (ManagementSecurityScope, IssueExecutionRequest)>,
+  requests:
+    BTreeMap<octacity_server_domain::IssueExecutionRequestId, (ManagementSecurityScope, u64, IssueExecutionRequest)>,
   replay: BTreeMap<ManagementIdempotencyKey, IssueExecutionOutcome>,
+  markers: BTreeMap<octacity_server_factory::WorkEnvelopeId, octacity_server_domain::IssueVersion>,
 }
 impl IssueExecutionMemoryState {
+  pub(super) fn guard_action(
+    &self,
+    action: &AcceptedIssueStatusAction,
+    issue: &IssueRevision,
+  ) -> Result<(), StoreError> {
+    let p = action.provenance();
+    let association = self.associations.get(&p.work_id).ok_or_else(conflict)?;
+    if association.project_id != issue.project_id
+      || association.issue_id != issue.id
+      || p.issue_id != issue.id
+      || association.run_id != p.run_id
+      || association.requirements_version != Some(p.requirements_version)
+      || self.markers.get(&p.work_id) != Some(&issue.applicability_version)
+    {
+      return Err(conflict());
+    }
+    Ok(())
+  }
+  pub(super) fn advance_action(
+    &mut self,
+    action: &AcceptedIssueStatusAction,
+    version: octacity_server_domain::IssueVersion,
+  ) {
+    self.markers.insert(action.provenance().work_id, version);
+  }
   pub(super) fn mutation_count(&self) -> usize {
     self.replay.len() + self.associations.len()
   }
@@ -52,8 +79,8 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
       .executions
       .requests
       .get(&request_id)
-      .filter(|(owner, r)| owner == scope && r.intent.project_id == project_id && r.intent.issue_id == issue_id)
-      .map(|(_, r)| r.clone())
+      .filter(|(owner, _, r)| owner == scope && r.intent.project_id == project_id && r.intent.issue_id == issue_id)
+      .map(|(_, _, r)| r.clone())
       .ok_or(StoreError::NotFound {
         entity: EntityKind::Issue,
       })
@@ -97,7 +124,7 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
           .executions
           .requests
           .get(&id)
-          .map(|(_, r)| r)
+          .map(|(_, _, r)| r)
           .filter(|r| r.intent.project_id == request.project_id && r.intent.issue_id == request.issue_id)
           .ok_or_else(conflict)
       })
@@ -112,6 +139,10 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
         association: previous.clone(),
       });
     }
+    let marker = association
+      .requirements_version
+      .and_then(|version| state.issues.revisions.get(&(association.issue_id, version)))
+      .map(|revision| revision.applicability_version);
     let key = audit.scoped_idempotency_key(
       &IdempotencyKey::new(format!("issue-work.{}", association.work_id)).expect("bounded Work identity"),
     );
@@ -127,6 +158,13 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
           .executions
           .associations
           .insert(association.work_id, association.clone());
+        if let Some(marker) = marker {
+          transaction
+            .issues
+            .executions
+            .markers
+            .insert(association.work_id, marker);
+        }
         if let Some(id) = association.request_id {
           transaction
             .issues
@@ -134,7 +172,7 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
             .requests
             .get_mut(&id)
             .ok_or_else(conflict)?
-            .1
+            .2
             .association = Some(association.clone());
         }
         Ok(())
@@ -179,11 +217,18 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
       StoreOperation::RequestIssueExecution,
       i.issue_id,
       |transaction| {
-        transaction
+        let sequence = transaction
           .issues
           .executions
           .requests
-          .insert(request.id, (audit.security_scope().clone(), outcome.request.clone()));
+          .values()
+          .filter(|(_, _, r)| r.intent.project_id == i.project_id && r.intent.issue_id == i.issue_id)
+          .count() as u64
+          + 1;
+        transaction.issues.executions.requests.insert(
+          request.id,
+          (audit.security_scope().clone(), sequence, outcome.request.clone()),
+        );
         Ok(())
       },
       |memory| {
@@ -191,6 +236,59 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
       },
     )?;
     Ok(outcome)
+  }
+  async fn issue_executions(
+    &self,
+    project_id: ProjectId,
+    issue_id: IssueId,
+    after: Option<IssueExecutionPosition>,
+    observation: Option<IssueExecutionObservation>,
+    limit: u16,
+  ) -> Result<IssueExecutionReadPage, StoreError> {
+    if limit == 0 || limit > MAX_ISSUE_HISTORY_PAGE_SIZE {
+      return Err(StoreError::invalid(
+        StoreOperation::ListIssueExecutions,
+        StoreInputError::InvalidIssueExecutionPage,
+      ));
+    }
+    let state = self.lock()?;
+    let issue = state
+      .issues
+      .current
+      .get(&(project_id, issue_id))
+      .ok_or(StoreError::NotFound {
+        entity: EntityKind::Issue,
+      })?;
+    let requests = &state.issues.executions.requests;
+    let maximum = requests
+      .values()
+      .filter(|(_, _, r)| r.intent.project_id == project_id && r.intent.issue_id == issue_id)
+      .map(|(_, sequence, _)| *sequence)
+      .max()
+      .unwrap_or(0);
+    let observation = observation.unwrap_or(IssueExecutionObservation {
+      watermark: maximum,
+      issue_version: issue.version,
+    });
+    if observation.watermark > maximum || observation.issue_version > issue.version {
+      return Err(StoreError::invalid(
+        StoreOperation::ListIssueExecutions,
+        StoreInputError::InvalidIssueExecutionPage,
+      ));
+    }
+    let mut items: Vec<_> = requests
+      .values()
+      .filter(|(_, sequence, r)| {
+        r.intent.project_id == project_id
+          && r.intent.issue_id == issue_id
+          && *sequence <= observation.watermark
+          && after.is_none_or(|p| r.position() > p)
+      })
+      .map(|(_, _, r)| r.clone())
+      .collect();
+    items.sort_by_key(IssueExecutionRequest::position);
+    items.truncate(usize::from(limit) + 1);
+    IssueExecutionReadPage::bounded(items, observation, limit)
   }
   async fn issue_execution(
     &self,
@@ -204,7 +302,7 @@ impl IssueExecutionStore for crate::testing::InMemoryProjectStore {
       .executions
       .requests
       .get(&request_id)
-      .map(|(_, r)| r)
+      .map(|(_, _, r)| r)
       .filter(|r| r.intent.project_id == project_id && r.intent.issue_id == issue_id)
       .cloned()
       .ok_or(StoreError::NotFound {

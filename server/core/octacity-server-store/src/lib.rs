@@ -11,8 +11,10 @@ pub use issue_planning::*;
 mod issue;
 mod issue_execution;
 pub use issue_execution::*;
+mod issue_pipeline_action;
 mod issue_policy;
 pub use issue::*;
+pub use issue_pipeline_action::*;
 #[cfg(any(test, feature = "test-support"))]
 mod issue_testing;
 mod issue_workflow;

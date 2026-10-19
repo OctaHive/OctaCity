@@ -540,6 +540,144 @@ PostgreSQL restart/process-termination, transaction rollback, migration and nati
 S3 qualification are recorded in [task 3.3 verification](../../openspec/changes/add-factory-work-card/verification-3.3.md).
 Storage separation and indexed cleanup are covered by the
 [review corrections](../../openspec/changes/add-factory-work-card/verification-review-fixes.md).
-HTTP/Console execution controls remain separate. See the
+HTTP execution receipts and Console controls are specified below. See the
 [quickstart handoff](../../openspec/changes/add-factory-bugfix-quickstart/shared-project-inputs.md)
 for reuse and its remaining qualification.
+
+## Reviewed execution HTTP contract
+
+Execution is optional and separate from manual Issue create/edit/discussion.
+`POST /api/v1/projects/{project_id}/issues/{issue_id}/executions` requires
+`Idempotency-Key`, the reviewed Issue revision in `If-Match`, and a closed body
+containing `target` (exact configuration/repository versions, source selection,
+versioned mapping) and ordinary Work `classification`. Issue execution rights,
+visible referenced resources and ordinary Project admission rights all apply.
+Saving a draft or reading an Issue never performs admission.
+
+A first durably linked request returns 201; exact completed replay returns 200.
+A retained request whose publication cannot finish within the bounded request
+window (five seconds in the native host) returns 202 with `state: pending`. All
+successful POST responses include `Location` for the exact request. Repeating the same body, If-Match and key resumes
+that request, including after a lost response or interrupted association; a
+changed replay conflicts. Legacy retained requests without classification remain
+readable with their original replay encoding. A new key is an intentional
+additional execution and must review the current Issue revision. The common Project text intake owns byte
+publication, frozen VCS resolution and ordinary Work/Run admission.
+
+`GET .../executions/{request_id}` reads retained metadata only. `pending` means
+there is no committed Issue-to-Work/Run association; `admitted` includes the exact
+association and existing `/api/v1/factory-runs/{run_id}` URL. It does not imply a
+running or successful Run. Requirements digests, sizes and exact target/revision
+lineage remain immutable; task/acceptance bodies and transfer authority are absent.
+Responses use `Cache-Control: no-store`; status has no Issue ETag because linking
+execution does not edit the Issue revision.
+
+`GET .../executions?limit=...&after=...` enumerates visible request metadata in
+ascending `(requested_at, request_id)` order, at most 200 entries per page. Its
+`request-watermark-v1` observation fixes membership at the first page’s maximum
+committed reservation sequence and records the observed Issue revision. New
+requests require a fresh traversal. Associations reflect each page’s current
+read; this is not a transaction snapshot of Run progress. There are no inferred
+totals. Opaque canonical cursors bind Project, Issue, security partition, current visibility and
+observation version; malformed or mismatched cursors return 400. Visibility is
+checked before reading, ordering or producing continuation metadata. GETs never
+resume publication. Existing Artifact admission bodies and Run/control URLs keep
+their contracts.
+
+HTTP Red/Green and native restart qualification are recorded in
+[task 3.4 verification](../../openspec/changes/add-factory-work-card/verification-3.4.md).
+
+
+## Console execution review and history
+
+The card's **Start pipeline** action is separate from saving an Issue. Missing
+acceptance criteria lead back to requirements editing. Pipeline configuration and
+repository setup links remain available when no visible enabled target exists.
+Catalog reads begin only when the operator opens execution inputs; ordinary manual
+create/edit requires neither a provider nor Factory setup.
+
+The card reuses the Factory Work form's configuration/repository/source selector.
+It offers authorized visible versions and repository-supported default reference,
+allowed reference or exact revision. Priority bounds and risk choices come from
+the generated ordinary Work schema. Review shows the exact target, source
+choice, classification, Issue revision and requirements. New confirmation is
+blocked during a refresh or after a failed refresh; retained choices remain
+visibly stale. Execution authority is independent of Issue transition choices.
+
+Confirmation calls the existing reviewed execution POST. The shared in-memory
+confirmed-intent mechanism freezes the body, `If-Match` and key. A lost response
+retries that same command. A 202 receipt retains the same continuation, releases
+modal focus and exposes **Resume preparation**, allowing requirements edits and
+section navigation without rewriting the original review. An admitted receipt
+links the exact existing Run; it does not imply successful completion or move the
+Issue's business status. After a definitive stale conflict, refresh and review
+again; target edits stay in the form and the next confirmation has a new key.
+A later intentional execution also gets a new key and its own retained selection.
+
+**Runs** reads bounded chronological request history and exact selected metadata
+through the existing GET contracts. `execution=<request_id>` in the card URL keeps
+historical selection across card sections, requirements revision links and reload.
+It contains no request body or admission key. Current Issue requirements remain
+separate; execution against an earlier revision is explicitly labelled. Refresh
+is read-only and retains last loaded metadata with a stale notice on failure.
+Existing Run pages own progress, diagnostics and attempt controls.
+
+Unsubmitted inputs and confirmed continuation keys exist only in the mounted
+form. Leaving or reloading discards them; the server's retained request/history
+remains readable. Reload restores historical selection, not a mutation key or an
+automatic retry. A response arriving after the form leaves cannot select an
+execution on a different page. No Console publication algorithm, provider adapter,
+background admission worker or second Work journal is introduced.
+
+Console Red/Green, browser and bundle qualification is recorded in
+[task 3.5 verification](../../openspec/changes/add-factory-work-card/verification-3.5.md).
+
+## Explicit accepted pipeline status actions
+
+The internal `ApplyIssuePipelineStatusCommand` uses the existing authorized
+`IssueStore::transition_issue` boundary. Its accepted input pins the Project Issue
+workflow, immutable version, direct edge and declared outcome. Work, Run, original
+reviewed requirements revision, Issue, Flow Run, cycle, node attempt and stable
+operation identity are retained as provenance. This is an accepted-producer
+contract, not a deserializable REST body: the trusted producer owns acceptance
+and supplies the Flow/attempt facts. The Issue boundary independently checks the
+Work association, original requirements, current applicability and pinned edge.
+Names, model prose, Run completion and accepted Factory Decisions never select
+an Issue move. Ordinary manual creation and transitions need no Factory or provider.
+
+Both origins share workflow, source-ownership and evidence rules. Evidence is
+qualified from explicitly selected immutable journal records for the exact
+Work/Run/candidate, using the existing journal validator and typed discovery
+facts matching their canonical payloads. Accepted execution requires an accepted
+Decision; required checks require a nonempty manifest with all required gates
+passed. Unknown, unrelated, unqualified, future or expired evidence cannot grant
+a move. History keeps safe provenance and record digests, never evidence bodies.
+
+A reviewed Work starts with the applicability marker of its original requirements
+revision. Its own successful move atomically advances that Work's marker with
+the Issue revision, status history and existing audit/outbox publication. This
+allows successive configured edges in the same lineage. Manual status moves,
+status moves from another execution, requirements edits and workflow adoption
+invalidate old applicability even if values later return to their originals.
+The shared contract requires the same invalidation for committed source status
+moves; source-transition integration remains outside task 3.6. Current source
+ownership is checked independently before a new move: source-owned Status blocks
+manual/pipeline replacement. A source-policy change alone does not advance the
+applicability marker. Reads, another execution request and unrelated priority
+edits do not invalidate it. Legacy Artifact associations without reviewed
+requirements cannot invent this authority.
+
+Accepted commands reuse the transition replay record and an operation-derived
+key. The first attempt retains its exact intent, including a rejected command;
+recovery cannot retarget it to a newer head. A successful replay returns the
+original revision after later edits, subject to current authorization. Local
+status changes require no Reporter and preserve immutable Work/Run results.
+
+Task 3.6 qualifies this contract with the in-memory transactional store. The
+PostgreSQL adapter explicitly rejects pipeline commands as unavailable until
+task 3.7 installs durable applicability and recovery/composition. Generic
+Flow/action authoring and REST/Console controls remain task 3.8. No public
+pipeline-status endpoint or parallel transition journal is introduced here.
+
+Contract Red/Green and regression results are recorded in
+[task 3.6 verification](../../openspec/changes/add-factory-work-card/verification-3.6.md).

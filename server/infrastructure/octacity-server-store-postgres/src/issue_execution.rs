@@ -58,7 +58,7 @@ impl IssueExecutionStore for PostgresStore {
     };
     let issue = crate::issue::lock(&mut tx, request.intent.project_id, request.intent.issue_id).await?;
     let outcome = request.reserve(&issue)?;
-    sqlx::query("INSERT INTO issue_execution_requests(id,project_id,issue_id,requirements_version,security_scope,document) VALUES ($1,$2,$3,$4,$5,$6)")
+    sqlx::query("INSERT INTO issue_execution_requests(id,project_id,issue_id,requirements_version,security_scope,document,sequence) SELECT $1,$2,$3,$4,$5,$6,COALESCE(max(sequence),0)+1 FROM issue_execution_requests WHERE project_id=$2 AND issue_id=$3")
       .bind(request.id.as_uuid()).bind(issue.project_id.as_uuid()).bind(issue.id.as_uuid()).bind(i64::try_from(issue.version.get()).map_err(|_| conflict())?)
       .bind(audit.security_scope().as_str()).bind(Json(&outcome.request)).execute(&mut *tx).await.map_err(unavailable)?;
     let metadata = json!({"project_id": issue.project_id, "issue_id": issue.id, "request_id": request.id, "requirements_version": issue.version});
@@ -70,6 +70,44 @@ impl IssueExecutionStore for PostgresStore {
     )
     .await?;
     Ok(outcome)
+  }
+  async fn issue_executions(
+    &self,
+    project: ProjectId,
+    issue: IssueId,
+    after: Option<IssueExecutionPosition>,
+    observation: Option<IssueExecutionObservation>,
+    limit: u16,
+  ) -> Result<IssueExecutionReadPage, StoreError> {
+    let invalid = || StoreError::InvalidInput {
+      operation: StoreOperation::ListIssueExecutions,
+      source: StoreInputError::InvalidIssueExecutionPage,
+    };
+    if limit == 0 || limit > MAX_ISSUE_HISTORY_PAGE_SIZE {
+      return Err(invalid());
+    }
+    let current: Option<(i64,i64)> = sqlx::query_as(
+      "SELECT i.current_version, COALESCE((SELECT max(sequence) FROM issue_execution_requests r WHERE r.project_id=i.project_id AND r.issue_id=i.id),0) FROM issues i WHERE i.project_id=$1 AND i.id=$2")
+      .bind(project.as_uuid()).bind(issue.as_uuid()).fetch_optional(self.pool()).await.map_err(unavailable)?;
+    let (version, maximum) = current.ok_or(StoreError::NotFound {
+      entity: EntityKind::Issue,
+    })?;
+    let current_version = octacity_server_domain::IssueVersion::new(u64::try_from(version).map_err(|_| invalid())?)
+      .map_err(|_| invalid())?;
+    let observation = observation.unwrap_or(IssueExecutionObservation {
+      watermark: u64::try_from(maximum).map_err(|_| invalid())?,
+      issue_version: current_version,
+    });
+    let watermark = i64::try_from(observation.watermark).map_err(|_| invalid())?;
+    if watermark > maximum || observation.issue_version > current_version {
+      return Err(invalid());
+    }
+    let rows: Vec<Json<IssueExecutionRequest>> = sqlx::query_scalar(
+      "SELECT document FROM issue_execution_requests WHERE project_id=$1 AND issue_id=$2 AND sequence<=$3 AND ($4::bigint IS NULL OR ((document->>'requested_at')::bigint,id)>($4,$5::uuid)) ORDER BY (document->>'requested_at')::bigint,id LIMIT $6")
+      .bind(project.as_uuid()).bind(issue.as_uuid()).bind(watermark)
+      .bind(after.map(|p|p.requested_at.unix_millis())).bind(after.map(|p|p.id.as_uuid()))
+      .bind(i64::from(limit)+1).fetch_all(self.pool()).await.map_err(unavailable)?;
+    IssueExecutionReadPage::bounded(rows.into_iter().map(|Json(r)| r).collect(), observation, limit)
   }
   async fn issue_execution(
     &self,

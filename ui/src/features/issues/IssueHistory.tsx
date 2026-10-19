@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { ISSUE_CONSTRAINTS as bounds } from '../../../.generated/api/constraints';
 import { useQuery } from '@tanstack/react-query';
 import type { components } from '../../../.generated/api/schema';
@@ -27,6 +27,9 @@ export function IssueHistory({
   preview?: boolean;
 }) {
   const { t } = usePresentation();
+  const [params] = useSearchParams();
+  const fullHistory = new URLSearchParams(params);
+  fullHistory.set('section', 'activity');
   const [after, setAfter] = useState<number | null>(null);
   const cursor = preview
     ? issue.version > bounds.defaultPageSize
@@ -73,7 +76,7 @@ export function IssueHistory({
           {preview ? (
             <>
               <p>{t('issues.previewCoverage', { count: bounds.defaultPageSize })}</p>
-              <Link to="?section=activity">{t('issues.fullHistory')}</Link>
+              <Link to={{ search: fullHistory.toString() }}>{t('issues.fullHistory')}</Link>
             </>
           ) : null}
           {!preview && after ? (

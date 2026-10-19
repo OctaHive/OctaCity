@@ -175,8 +175,8 @@ async fn edits_and_moves_match_memory_and_keep_original_replay_after_progress() 
           .contains(&octacity_server_store::IssueTransitionOrigin::Manual)
     })
     .unwrap();
-  let movement = TransitionIssue {
-    intent: TransitionIssueIntent {
+  let movement = TransitionIssue::manual(
+    TransitionIssueIntent {
       project_id: project.id,
       id: created.id,
       expected_version: edited.issue.version,
@@ -186,9 +186,9 @@ async fn edits_and_moves_match_memory_and_keep_original_replay_after_progress() 
       transition_id: edge.id,
       reason: Some("Reviewed".into()),
     },
-    idempotency_key: key("move"),
-    moved_at: at(4),
-  };
+    key("move"),
+    at(4),
+  );
   let expected = memory
     .transition_issue(management_mutation(movement.clone()))
     .await
@@ -405,8 +405,8 @@ async fn retained_source_ownership_blocks_edits_and_moves_without_partial_histor
     })
   ));
   let workflow = store.default_issue_workflow(project.id).await.unwrap().workflow;
-  let movement = TransitionIssue {
-    intent: TransitionIssueIntent {
+  let movement = TransitionIssue::manual(
+    TransitionIssueIntent {
       project_id: project.id,
       id: created.id,
       expected_version: created.version,
@@ -416,9 +416,9 @@ async fn retained_source_ownership_blocks_edits_and_moves_without_partial_histor
       transition_id: workflow.definition.transitions[0].id,
       reason: None,
     },
-    idempotency_key: key("blocked-move"),
-    moved_at: at(3),
-  };
+    key("blocked-move"),
+    at(3),
+  );
   assert!(matches!(
     store.transition_issue(management_mutation(movement)).await,
     Err(StoreError::Conflict {
@@ -598,19 +598,21 @@ async fn concurrent_keys_edits_and_status_moves_have_exact_winners() {
   );
   let edited = results.into_iter().find_map(Result::ok).unwrap().issue;
   let workflow = store.default_issue_workflow(project.id).await.unwrap().workflow;
-  let movement = |name: &str| TransitionIssue {
-    intent: TransitionIssueIntent {
-      project_id: project.id,
-      id: left.id,
-      expected_version: edited.version,
-      workflow_id: edited.workflow_id,
-      workflow_version: edited.workflow_version,
-      expected_status_id: edited.status_id,
-      transition_id: workflow.definition.transitions[0].id,
-      reason: None,
-    },
-    idempotency_key: key(name),
-    moved_at: at(4),
+  let movement = |name: &str| {
+    TransitionIssue::manual(
+      TransitionIssueIntent {
+        project_id: project.id,
+        id: left.id,
+        expected_version: edited.version,
+        workflow_id: edited.workflow_id,
+        workflow_version: edited.workflow_version,
+        expected_status_id: edited.status_id,
+        transition_id: workflow.definition.transitions[0].id,
+        reason: None,
+      },
+      key(name),
+      at(4),
+    )
   };
   let (first, second) = tokio::join!(
     store.transition_issue(management_mutation(movement("move-one"))),
@@ -729,8 +731,8 @@ async fn evidence_failure_rolls_back_revision_key_history_replay_and_push() {
   assert_eq!(edited.disposition, MutationDisposition::Applied);
   assert_eq!(outbox(&database, created.id, "issue.edited").await.len(), 1);
   let workflow = store.default_issue_workflow(project.id).await.unwrap().workflow;
-  let movement = TransitionIssue {
-    intent: TransitionIssueIntent {
+  let movement = TransitionIssue::manual(
+    TransitionIssueIntent {
       project_id: project.id,
       id: created.id,
       expected_version: edited.issue.version,
@@ -740,9 +742,9 @@ async fn evidence_failure_rolls_back_revision_key_history_replay_and_push() {
       transition_id: workflow.definition.transitions[0].id,
       reason: None,
     },
-    idempotency_key: key("recover-move"),
-    moved_at: at(4),
-  };
+    key("recover-move"),
+    at(4),
+  );
   sqlx::query(
     "ALTER TABLE outbox_entries ADD CONSTRAINT reject_issue_evidence CHECK (topic NOT LIKE 'issue.%') NOT VALID",
   )
@@ -1238,8 +1240,8 @@ async fn moves_and_adoption_complete_with_a_single_database_connection() {
     .unwrap()
     .workflow;
   let moved = store
-    .transition_issue(management_mutation(TransitionIssue {
-      intent: TransitionIssueIntent {
+    .transition_issue(management_mutation(TransitionIssue::manual(
+      TransitionIssueIntent {
         project_id: project.id,
         id: created.id,
         expected_version: created.version,
@@ -1249,9 +1251,9 @@ async fn moves_and_adoption_complete_with_a_single_database_connection() {
         transition_id: initial.definition.transitions[0].id,
         reason: None,
       },
-      idempotency_key: key("move"),
-      moved_at: at(4),
-    }))
+      key("move"),
+      at(4),
+    )))
     .await
     .unwrap()
     .issue;

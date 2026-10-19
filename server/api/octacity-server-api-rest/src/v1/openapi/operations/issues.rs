@@ -2,6 +2,52 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ListIssueExecutionsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/executions",
+    "listIssueExecutions",
+    "Issues",
+    "Read bounded execution membership and current association metadata",
+    None,
+    "IssueExecutionHistoryPage",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response()
+  .with_parameters(ParameterProfile::IssueExecutions)
+  .with_visibility::<octacity_server_application::ListIssueExecutionsQuery>(),
+  operation!(
+    octacity_server_application::RequestIssueExecutionCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/executions",
+    "requestIssueExecution",
+    "Issues",
+    "Reserve or resume the exact reviewed request through ordinary admission",
+    Some("RequestIssueExecutionRequest"),
+    "IssueExecutionMutationResponse",
+    "201",
+    true,
+    true
+  )
+  .with_no_store_response()
+  .with_replay_success_response()
+  .with_pending_response(),
+  operation!(
+    octacity_server_application::GetIssueExecutionQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}",
+    "getIssueExecution",
+    "Issues",
+    "Read exact execution request metadata without resuming publication",
+    None,
+    "IssueExecutionResource",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ListIssueChildrenQuery,
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/children",

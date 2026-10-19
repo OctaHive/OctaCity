@@ -1,5 +1,5 @@
 use super::*;
-use octacity_server_domain::{RepositoryId, RepositoryVersion};
+use octacity_server_domain::{IssueId, RepositoryId, RepositoryVersion};
 use octacity_server_factory::{FactoryConfigurationId, FactoryConfigurationVersion, FactoryDigest};
 use octacity_server_store::testing;
 use octacity_server_store::*;
@@ -146,6 +146,7 @@ fn request(
 ) -> RequestIssueExecutionCommand {
   RequestIssueExecutionCommand {
     intent: RequestIssueExecutionIntent {
+      classification: None,
       project_id: issue.project_id,
       issue_id: issue.id,
       expected_version: issue.version,
@@ -583,3 +584,186 @@ fn issue_execution_association_rejects_foreign_or_retargeted_work_without_partia
     );
   });
 }
+
+#[test]
+fn issue_execution_review_freezes_classification_before_publication() {
+  run_ready(async {
+    let (store, factory, _, mut command) = fixture().await;
+    let classification = octacity_server_factory::WorkClassification::new(
+      octacity_server_factory::WorkPriority::new(10).unwrap(),
+      octacity_server_factory::RiskClass::Low,
+      Default::default(),
+    );
+    command.intent.classification = Some(classification.clone());
+    let commands = AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(IssueExecutionHandlers::new(
+        store,
+        factory,
+        Arc::new(TrustedNetworkManagementPolicy),
+      )),
+    );
+    let original = commands.handle_command(&context(), command.clone()).await.unwrap();
+    assert_eq!(original.request.intent.classification, Some(classification));
+    let mut changed = command.clone();
+    changed.intent.classification = Some(octacity_server_factory::WorkClassification::new(
+      octacity_server_factory::WorkPriority::new(99).unwrap(),
+      octacity_server_factory::RiskClass::High,
+      Default::default(),
+    ));
+    assert_eq!(
+      commands
+        .handle_command(&context(), changed)
+        .await
+        .unwrap_err()
+        .application()
+        .unwrap()
+        .classification(),
+      ApplicationFailure::Conflict
+    );
+    assert_eq!(
+      commands.handle_command(&context(), command).await.unwrap().request,
+      original.request
+    );
+  });
+}
+
+#[test]
+fn issue_execution_history_is_bounded_watermarked_and_cursor_scoped_without_effects() {
+  run_ready(async {
+    let (store, factory, issue, mut command) = fixture().await;
+    let handlers = Arc::new(IssueExecutionHandlers::new(
+      store.clone(),
+      factory,
+      Arc::new(TrustedNetworkManagementPolicy),
+    ));
+    let commands = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers.clone());
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers.clone());
+    let mut requests = Vec::new();
+    for n in 1..=3 {
+      command.idempotency_key = key(&format!("history-{n}"));
+      command.requested_at = at(n * 10);
+      requests.push(
+        commands
+          .handle_command(&context(), command.clone())
+          .await
+          .unwrap()
+          .request,
+      );
+    }
+    let first = queries
+      .handle_query(
+        &context(),
+        ListIssueExecutionsQuery::try_new(issue.project_id, issue.id, None, 2).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(first.items, requests[..2]);
+    assert_eq!(first.observation, "request-watermark-v1");
+    assert_eq!(first.issue_version, issue.version);
+    assert!(first.next_cursor.is_some());
+    command.idempotency_key = key("history-new");
+    command.requested_at = at(40);
+    commands.handle_command(&context(), command).await.unwrap();
+    let before = store.mutation_evidence_counts().await;
+    let continuation = first.next_cursor.clone();
+    let last = queries
+      .handle_query(
+        &context(),
+        ListIssueExecutionsQuery::try_new(issue.project_id, issue.id, continuation.clone(), 2).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(last.items, requests[2..]);
+    assert_eq!(last.next_cursor, None);
+    assert_eq!(last.watermark, first.watermark);
+    assert!(
+      queries
+        .handle_query(
+          &context(),
+          ListIssueExecutionsQuery::try_new(issue.project_id, IssueId::generate(), continuation.clone(), 2).unwrap()
+        )
+        .await
+        .is_err()
+    );
+    let query = ListIssueExecutionsQuery::try_new(issue.project_id, issue.id, continuation, 2).unwrap();
+    let restricted = ManagementAuthorizationGrant::new(
+      ManagementVisibility::restricted([ManagementResource::instance(
+        ManagementResourceKind::Issue,
+        ManagementResourceIdentity::new(issue.id.to_string()).unwrap(),
+      )
+      .unwrap()])
+      .unwrap(),
+    );
+    assert_eq!(
+      handlers
+        .execute_management_query(&context(), &restricted, query.clone())
+        .await
+        .unwrap_err()
+        .classification(),
+      ApplicationFailure::Invalid
+    );
+    assert_eq!(
+      handlers
+        .execute_management_query(
+          &context(),
+          &ManagementAuthorizationGrant::new(ManagementVisibility::none()),
+          query
+        )
+        .await
+        .unwrap_err()
+        .classification(),
+      ApplicationFailure::NotFound
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
+    assert!(ListIssueExecutionsQuery::try_new(issue.project_id, issue.id, Some("garbage".into()), 2).is_err());
+    assert!(ListIssueExecutionsQuery::try_new(issue.project_id, issue.id, None, 201).is_err());
+    assert!(ListIssueExecutionsQuery::try_new(issue.project_id, issue.id, None, 0).is_err());
+  });
+}
+
+#[test]
+fn issue_execution_association_rejects_work_with_another_reviewed_classification() {
+  run_ready(async {
+    let (store, factory, issue, mut command) = fixture().await;
+    command.intent.classification = Some(octacity_server_factory::WorkClassification::new(
+      octacity_server_factory::WorkPriority::new(99).unwrap(),
+      octacity_server_factory::RiskClass::High,
+      Default::default(),
+    ));
+    let commands = AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(IssueExecutionHandlers::new(
+        store.clone(),
+        factory.clone(),
+        Arc::new(TrustedNetworkManagementPolicy),
+      )),
+    );
+    let request = commands.handle_command(&context(), command).await.unwrap().request;
+    let admission = admit_request(factory, &request).await;
+    let before = store.mutation_evidence_counts().await;
+    assert!(
+      store
+        .associate_issue_work(management_mutation(AssociateIssueWork {
+          project_id: issue.project_id,
+          issue_id: issue.id,
+          request_id: Some(request.id),
+          admission
+        }))
+        .await
+        .is_err()
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
+    assert!(
+      store
+        .issue_execution(issue.project_id, issue.id, request.id)
+        .await
+        .unwrap()
+        .association
+        .is_none()
+    );
+  });
+}
+
+#[path = "issue_status_action_tests.rs"]
+mod status_actions;

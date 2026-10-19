@@ -1,6 +1,7 @@
 .layer {
   position: fixed;
-  z-index: 100;
+  /* Keep confirmation controls above global command feedback. */
+  z-index: 130;
   inset: 0;
   display: grid;
   place-items: center;
@@ -17,6 +18,9 @@
 .dialog {
   position: relative;
   width: min(32rem, 100%);
+  max-height: calc(100dvh - 2 * var(--space-lg));
+  overflow-y: auto;
+  overflow-wrap: anywhere;
   padding: var(--space-lg);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-medium);

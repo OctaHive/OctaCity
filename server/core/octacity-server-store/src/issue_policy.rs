@@ -71,12 +71,28 @@ impl IssueRevision {
     {
       return Err(crate::issue::invalid_issue(StoreOperation::TransitionIssue));
     }
+    if request.pipeline_action().is_some_and(|a| !a.matches(intent)) {
+      return Err(conflict());
+    }
+    let origin = if request.pipeline_action().is_some() {
+      IssueTransitionOrigin::Pipeline
+    } else {
+      IssueTransitionOrigin::Manual
+    };
     let edge = workflow
       .definition
       .transitions
       .iter()
       .find(|e| {
-        e.id == intent.transition_id && e.from == self.status_id && e.manual_move_block_reason(policy).is_none()
+        e.id == intent.transition_id
+          && e.from == self.status_id
+          && e
+            .move_block_reason(policy, origin, |requirement| {
+              request
+                .pipeline_action()
+                .is_some_and(|action| action.satisfies(requirement, request.moved_at))
+            })
+            .is_none()
       })
       .ok_or_else(conflict)?;
     let issue = Self {
@@ -101,7 +117,8 @@ impl IssueRevision {
       to: issue.status_id,
       transition_id: Some(edge.id),
       previous_workflow: None,
-      origin: IssueTransitionOrigin::Manual,
+      origin,
+      pipeline: request.pipeline_action().map(|a| a.provenance().clone()),
       reason: intent.reason.clone(),
       actor: actor.clone(),
       occurred_at: request.moved_at,
@@ -220,6 +237,7 @@ impl IssueRevision {
         version: self.workflow_version,
       }),
       origin: IssueTransitionOrigin::Manual,
+      pipeline: None,
       reason: None,
       actor: actor.clone(),
       occurred_at: request.adopted_at,
@@ -236,11 +254,20 @@ impl IssueWorkflowTransition {
   /// Shared manual-edge eligibility for observation and authoritative mutation.
   /// Identity/from/version checks and permission authorization remain with their callers.
   pub fn manual_move_block_reason(&self, policy: &IssueFieldPolicy) -> Option<IssueMoveBlockReason> {
+    self.move_block_reason(policy, IssueTransitionOrigin::Manual, |_| false)
+  }
+
+  fn move_block_reason(
+    &self,
+    policy: &IssueFieldPolicy,
+    origin: IssueTransitionOrigin,
+    satisfies: impl Fn(&IssueTransitionEvidence) -> bool,
+  ) -> Option<IssueMoveBlockReason> {
     if policy.source_owned.contains(&IssueField::Status) {
       Some(IssueMoveBlockReason::SourceOwned)
-    } else if !self.origins.contains(&IssueTransitionOrigin::Manual) {
+    } else if !self.origins.contains(&origin) {
       Some(IssueMoveBlockReason::OriginNotAllowed)
-    } else if !self.evidence.is_empty() {
+    } else if !self.evidence.iter().all(satisfies) {
       Some(IssueMoveBlockReason::EvidenceRequired)
     } else {
       None

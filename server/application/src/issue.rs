@@ -209,11 +209,7 @@ impl<S: IssueStore> ManagementCommandUseCase<TransitionIssueCommand> for IssueHa
         .store
         .transition_issue(crate::management_security::audited_mutation(
           context,
-          TransitionIssue {
-            intent: command.intent,
-            idempotency_key: command.idempotency_key,
-            moved_at: command.moved_at,
-          },
+          TransitionIssue::manual(command.intent, command.idempotency_key, command.moved_at),
         )?)
         .await?,
     )
@@ -552,3 +548,44 @@ impl<S: IssueStore + IssueWorkflowStore> ManagementQueryUseCase<GetIssueTransiti
 #[path = "issue_planning.rs"]
 mod planning;
 pub use planning::*;
+
+/// Explicit accepted pipeline producer input; no public wire route accepts provenance.
+#[derive(Clone, Debug)]
+pub struct ApplyIssuePipelineStatusCommand {
+  /// Exact Issue/workflow/status preconditions and configured direct edge.
+  pub intent: TransitionIssueIntent,
+  /// Accepted immutable Work/Run/action origin.
+  pub accepted: octacity_server_store::AcceptedIssueStatusAction,
+  /// Trusted application time.
+  pub moved_at: Timestamp,
+}
+impl Command for ApplyIssuePipelineStatusCommand {
+  type Outcome = IssueTransitionOutcome;
+}
+impl ManagementAuthorizationTarget for ApplyIssuePipelineStatusCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping = TransitionIssueCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    crate::management_security::instance_resource(ManagementResourceKind::Issue, self.intent.id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: IssueStore> ManagementCommandUseCase<ApplyIssuePipelineStatusCommand> for IssueHandlers<S> {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    command: ApplyIssuePipelineStatusCommand,
+  ) -> Result<IssueTransitionOutcome, ApplicationError> {
+    visible_issue(grant, command.intent.id)?;
+    Ok(
+      self
+        .store
+        .transition_issue(crate::management_security::audited_mutation(
+          context,
+          TransitionIssue::pipeline(command.intent, command.accepted, command.moved_at),
+        )?)
+        .await?,
+    )
+  }
+}

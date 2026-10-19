@@ -5,6 +5,8 @@ use axum::{
 
 pub fn concrete_path(path: &str) -> String {
   path
+    .replace("{issue_id}", "60000000-0000-4000-8000-000000000001")
+    .replace("{request_id}", "60000000-0000-4000-8000-000000000002")
     .replace("{project_id}", "11111111-1111-4111-8111-111111111111")
     .replace("{workflow_id}", "22222222-2222-4222-8222-222222222222")
     .replace("{pipeline_id}", "22222222-2222-4222-8222-222222222222")
@@ -89,6 +91,10 @@ pub fn request_examples() -> Vec<(&'static str, serde_json::Value)> {
   .unwrap();
   let repository_version: serde_json::Value = serde_json::from_str(&repository_version_body()).unwrap();
   vec![
+    (
+      "RequestIssueExecutionRequest",
+      serde_json::from_str(&issue_execution_body()).unwrap(),
+    ),
     (
       "IssueWorkflowDefinitionRequest",
       serde_json::json!({"definition":issue_workflow_definition()}),
@@ -201,4 +207,12 @@ pub fn request_examples() -> Vec<(&'static str, serde_json::Value)> {
 
 pub fn issue_workflow_definition() -> serde_json::Value {
   serde_json::from_str(include_str!("../../fixtures/v1/issue-workflow-definition.json")).unwrap()
+}
+
+pub fn issue_execution_body() -> String {
+  serde_json::json!({"target":{"configuration_id":"60000000-0000-4000-8000-000000000003","configuration_version":3,
+    "repository_id":"60000000-0000-4000-8000-000000000004","repository_version":4,
+    "source":{"kind":"default_reference"},"mapping":"title_description_acceptance_v1"},
+    "classification":{"priority":20,"risk":"medium","metadata":{}}})
+  .to_string()
 }

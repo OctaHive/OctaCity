@@ -3,7 +3,7 @@ import type { QueryClient, QueryKey } from '@tanstack/react-query';
 import { ManagementApiError, idempotencyHeaders, versionedMutationHeaders } from '../api/client';
 
 export type ConfirmedIntentState =
-  'ready' | 'pending' | 'retryable' | 'succeeded' | 'failed' | 'abandoned';
+  'ready' | 'pending' | 'accepted' | 'retryable' | 'succeeded' | 'failed' | 'abandoned';
 
 type Immutable<T> = T extends (...arguments_: never[]) => unknown
   ? T
@@ -43,6 +43,8 @@ export interface QueryInvalidation {
 }
 
 interface ConfirmedMutationIntentOptions<Request, Result> {
+  /** A durable receipt may require an explicit continuation before completion. */
+  readonly isComplete?: (result: Result) => boolean;
   readonly execute: (attempt: ConfirmedMutationAttempt<Request>) => Promise<Result>;
   readonly invalidate: readonly QueryInvalidation[];
   readonly queryClient: Pick<QueryClient, 'invalidateQueries'>;
@@ -72,6 +74,7 @@ export function createConfirmedMutationIntent<Request, Result>(
 class InMemoryConfirmedMutationIntent<Request, Result> implements ConfirmedMutationIntent<Result> {
   private attempt: ConfirmedMutationAttempt<Request> | null;
   private readonly execute: (attempt: ConfirmedMutationAttempt<Request>) => Promise<Result>;
+  private readonly isComplete: (result: Result) => boolean;
   private failure: unknown = null;
   private inFlight: Promise<Result> | null = null;
   private readonly invalidations: readonly Required<QueryInvalidation>[];
@@ -99,6 +102,7 @@ class InMemoryConfirmedMutationIntent<Request, Result> implements ConfirmedMutat
       ),
     );
     this.execute = options.execute;
+    this.isComplete = options.isComplete ?? (() => true);
     this.queryClient = options.queryClient;
   }
 
@@ -144,8 +148,9 @@ class InMemoryConfirmedMutationIntent<Request, Result> implements ConfirmedMutat
       async (result) => {
         this.failure = null;
         this.retryAt = null;
-        this.intentState = 'succeeded';
-        this.attempt = null;
+        const complete = this.isComplete(result);
+        this.intentState = complete ? 'succeeded' : 'accepted';
+        if (complete) this.attempt = null;
         await this.invalidateQueries();
         return result;
       },
