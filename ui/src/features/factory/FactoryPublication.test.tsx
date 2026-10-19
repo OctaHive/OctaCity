@@ -360,17 +360,15 @@ it('reviews local Issue pins separately and requires fresh review after a stale 
   };
   node.action = { ...node.action!, action: 'transition_issue', parameters };
   config.flow.closure.definitions[0]!.nodes = request.definition.root.nodes;
-  const replaceFlow = vi
-    .fn<FactoryApi['replaceFlow']>()
-    .mockRejectedValue(
-      new ManagementApiError({
-        code: 'precondition_failed',
-        message: 'Stale',
-        requestId: null,
-        retryAfterMilliseconds: null,
-        status: 412,
-      }),
-    );
+  const replaceFlow = vi.fn<FactoryApi['replaceFlow']>().mockRejectedValue(
+    new ManagementApiError({
+      code: 'precondition_failed',
+      message: 'Stale',
+      requestId: null,
+      retryAfterMilliseconds: null,
+      status: 412,
+    }),
+  );
   const api = {
     ...factoryApi,
     validateFlow: vi.fn(async () => config.flow),
