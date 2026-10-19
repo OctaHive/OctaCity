@@ -1,7 +1,7 @@
 import { ISSUE_WORKFLOW_CONSTRAINTS as bounds } from '../../../.generated/api/issue-workflow';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
-import type { WorkflowDefinition } from './api';
+import type { WorkflowDefinition } from '../../api/issueWorkflows';
 import styles from './WorkflowView.module.css';
 
 type Props = { draft: WorkflowDefinition; onChange: (draft: WorkflowDefinition) => void };

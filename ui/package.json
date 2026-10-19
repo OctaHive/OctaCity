@@ -14,10 +14,10 @@
     "format": "prettier --check .",
     "lint": "eslint . --max-warnings=0 --report-unused-disable-directives",
     "typecheck": "tsc --noEmit",
-    "test": "node --test scripts/verify-architecture.test.mjs scripts/factory-authoring-schemas.test.mjs scripts/issue-workflow-constraints.test.mjs && vitest run && playwright test",
+    "test": "node --test scripts/verify-architecture.test.mjs scripts/factory-authoring-schemas.test.mjs scripts/issue-workflow-constraints.test.mjs scripts/issue-constraints.test.mjs && vitest run && playwright test",
     "test:accessibility": "playwright test tests/browser/accessibility.spec.ts",
     "test:browser": "playwright test",
-    "test:unit": "node --test scripts/verify-architecture.test.mjs scripts/factory-authoring-schemas.test.mjs scripts/issue-workflow-constraints.test.mjs && vitest run",
+    "test:unit": "node --test scripts/verify-architecture.test.mjs scripts/factory-authoring-schemas.test.mjs scripts/issue-workflow-constraints.test.mjs scripts/issue-constraints.test.mjs && vitest run",
     "test:visual": "playwright test tests/browser/visual.spec.ts"
   },
   "dependencies": {

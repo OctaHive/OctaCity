@@ -10,7 +10,8 @@ import type { IntegrationsApi } from '../features/integrations/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
-import { issueWorkflowsApi, type IssueWorkflowsApi } from '../features/issueWorkflows/api';
+import { issuesApi, type IssuesApi } from '../features/issues/api';
+import { issueWorkflowsApi, type IssueWorkflowsApi } from '../api/issueWorkflows';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
 import { WorkspaceWelcome, type WorkspaceWelcomeKind } from '../shared/WorkspaceWelcome';
 import { usePresentation } from './presentation/PresentationProvider';
@@ -75,6 +76,12 @@ const ProjectsLandingView = lazy(async () => {
   const module = await import('../features/projects/ProjectViews');
   return { default: module.ProjectsLandingView };
 });
+const IssuesView = lazy(async () => ({
+  default: (await import('../features/issues/IssuesView')).IssuesView,
+}));
+const IssueView = lazy(async () => ({
+  default: (await import('../features/issues/IssueView')).IssueView,
+}));
 const WorkflowView = lazy(async () => ({
   default: (await import('../features/issueWorkflows/WorkflowView')).WorkflowView,
 }));
@@ -115,6 +122,7 @@ export interface ConsoleRouteDependencies {
   readonly auditApi: AuditApi;
   readonly buildApi: BuildDiagnosticsApi;
   readonly capacityApi: CapacityApi;
+  readonly issuesApi: IssuesApi;
   readonly issueWorkflowsApi: IssueWorkflowsApi;
   readonly projectsApi: ProjectsApi;
   readonly readinessProbe: ReadinessProbe;
@@ -129,6 +137,7 @@ const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   capacityApi,
   projectsApi,
   issueWorkflowsApi,
+  issuesApi,
   readinessProbe: fetchReadiness,
   searchApi: resourceSearchApi,
 };
@@ -203,6 +212,22 @@ export function createConsoleRoutes(
         {
           path: childPath(CONSOLE_PATHS.projects),
           element: defer(<ProjectsLandingView />),
+        },
+        {
+          path: childPath(CONSOLE_PATHS.issues),
+          element: defer(
+            <IssuesView api={dependencies.issuesApi} projects={dependencies.projectsApi} />,
+          ),
+        },
+        {
+          path: childPath(CONSOLE_PATHS.issue),
+          element: defer(
+            <IssueView
+              api={dependencies.issuesApi}
+              workflows={dependencies.issueWorkflowsApi}
+              projects={dependencies.projectsApi}
+            />,
+          ),
         },
         {
           path: childPath(CONSOLE_PATHS.issueWorkflows),

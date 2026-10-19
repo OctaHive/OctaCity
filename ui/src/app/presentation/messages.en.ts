@@ -1,4 +1,116 @@
 export const enMessages = {
+  'issues.draftChanged':
+    'The current task version is {version}; its requirements or field ownership changed. Review the latest values before keeping your editable changes. Source-managed fields use the latest values; other conflicts use your draft.',
+  'issues.latestChanges': 'Latest changed values',
+  'issues.reconcileDraft': 'Use latest version and keep my edits',
+
+  'issues.saved': 'Saved task version {version}.',
+
+  'issues.closeProperties': 'Close properties',
+
+  'issues.startUnavailable': 'Starting a pipeline from this card is not available yet.',
+
+  'issues.breadcrumb': 'Task breadcrumb',
+
+  'issues.editBaseline': 'Based on task version {version}',
+
+  'issues.previewCoverage': 'Status changes in the last {count} task versions.',
+  'issues.noRecentActivity':
+    'No status changes in this recent window. Older history is available in Activity.',
+  'issues.fullHistory': 'Open full status history',
+
+  'issues.refresh': 'Refresh task',
+
+  'issues.historicalSelection':
+    'Selected historical requirements: version {version} · Open Activity',
+
+  'issues.byteLimit': '{field}: maximum {maximum} UTF-8 bytes.',
+  'issues.invalidTitle': 'Use a non-empty single-line title without surrounding whitespace.',
+
+  'issues.ownedFields': 'Managed by source: {fields}',
+
+  'issues.revisions': 'Requirements revisions',
+  'issues.readRevision': 'Read task version {version}',
+  'issues.historical': 'Historical requirements · Version {version}',
+  'issues.closeRevision': 'Close historical requirements',
+
+  'issues.adoption': 'Task workflow version',
+  'issues.adoptionHelp':
+    'Review the exact workflow and status correspondence. Existing execution inputs stay unchanged; no pipeline or provider action starts.',
+  'issues.changeWorkflow': 'Change task workflow',
+  'issues.targetWorkflow': 'Target workflow',
+  'issues.noWorkflows': 'No visible workflows are available.',
+  'issues.chooseWorkflow': 'Choose a workflow',
+  'issues.loadWorkflow': 'Load workflow version',
+  'issues.correspondence': 'Current status {status} →',
+  'issues.chooseStatus': 'Choose a corresponding status',
+  'issues.mappingConflict': 'The current source status mapping is incompatible with this workflow.',
+  'issues.reviewAdoption': 'Review workflow change',
+  'issues.applyAdoption': 'Apply workflow change',
+  'issues.adoptionSaved': 'Workflow recorded in task version {version}.',
+
+  'issues.moves': 'Available status moves',
+  'issues.move': 'Move task',
+  'issues.noMoves': 'No direct transitions are configured for this status.',
+  'issues.reason': 'Reason (optional)',
+  'issues.moved': 'Status recorded in version {version}.',
+  'issues.block.permission_required': 'You do not have permission to move this task.',
+  'issues.block.source_owned': 'The source controls this status.',
+  'issues.block.origin_not_allowed': 'This transition does not allow manual moves.',
+  'issues.block.evidence_required': 'Current execution evidence is required.',
+
+  'issues.edit': 'Edit requirements',
+  'issues.save': 'Save task',
+  'issues.memoryDraft': 'Unfinished changes stay here until you leave or reload this page.',
+
+  'issues.businessStatus': 'Business status: {status}',
+  'issues.unknownStatus': 'Unavailable',
+  'issues.statusHelp': 'Task status does not approve a result or permit delivery.',
+  'issues.start': 'Start pipeline',
+  'issues.executionUnavailable':
+    'Execution and its results are not available on this base card yet. Existing Factory runs remain available in Factory.',
+  'issues.workflow': 'Workflow',
+  'issues.sections': 'Task sections',
+  'issues.overview': 'Overview',
+  'issues.activity': 'Activity',
+  'issues.runs': 'Runs',
+  'issues.results': 'Results',
+  'issues.actions': 'Actions',
+  'issues.properties': 'Properties',
+  'issues.notSet': 'Not set',
+  'issues.execution': 'Execution',
+  'issues.details': 'Details',
+  'issues.identity': 'Task identity',
+  'issues.created': 'Created',
+  'issues.updated': 'Updated',
+  'issues.history': 'Status history',
+  'issues.revision': 'Version {version}',
+  'issues.origin.manual': 'Manual move',
+  'issues.origin.pipeline': 'Pipeline action',
+  'issues.origin.source': 'Source synchronization',
+  'issues.adopted': 'Workflow adopted explicitly.',
+  'issues.historyNamesUnavailable': 'Historical status names could not be loaded.',
+
+  'issues.tasks': 'Tasks',
+  'issues.task': 'Task',
+  'issues.create': 'Create task',
+  'issues.title': 'Title',
+  'issues.description': 'Description',
+  'issues.acceptance': 'Acceptance criteria',
+  'issues.priority': 'Priority',
+  'issues.review': 'Review task',
+  'issues.saveConsequence':
+    'Save task requirements only. No pipeline starts and no external system changes.',
+  'issues.open': 'Open {key}',
+  'issues.manualHelp': 'Create tasks manually without an integration, repository or Factory setup.',
+  'issues.empty': 'No tasks yet. Create your first task here.',
+  'issues.firstPage': 'First page',
+  'issues.nextPage': 'Next page',
+  'issues.noDescription': 'No description yet.',
+  'issues.noAcceptance': 'Acceptance criteria can be added before execution.',
+  'issues.activityPreview': 'Activity preview',
+  'issues.noActivity': 'No status history reported.',
+
   'workflow.catalog': 'Published workflows',
   'workflow.create': 'Create workflow',
   'workflow.newDefinition': 'New independent workflow',

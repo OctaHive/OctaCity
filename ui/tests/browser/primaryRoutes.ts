@@ -7,6 +7,7 @@ import {
   type ConsolePath,
 } from '../../src/app/routes';
 import { FIXTURE_IDS } from './operatorFixture';
+import { issueFixture } from '../fixtures/issues';
 import { integrationFixture } from '../fixtures/integrations';
 
 export interface PrimaryRoute {
@@ -46,6 +47,18 @@ const routesByTemplate = {
     id: 'projects',
     path: CONSOLE_PATHS.projects,
     retainedText: 'Accessible Project',
+  },
+  [CONSOLE_PATHS.issues]: {
+    heading: 'Tasks',
+    id: 'issues',
+    path: `${projectPath(FIXTURE_IDS.project)}/issues`,
+    retainedText: 'Investigate checkout',
+  },
+  [CONSOLE_PATHS.issue]: {
+    heading: 'ISS-42 · Investigate checkout',
+    id: 'issue',
+    path: `${projectPath(FIXTURE_IDS.project)}/issues/${issueFixture().id}`,
+    retainedText: 'Investigate checkout',
   },
   [CONSOLE_PATHS.issueWorkflows]: {
     heading: 'Task workflow',

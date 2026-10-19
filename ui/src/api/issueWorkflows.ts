@@ -1,9 +1,5 @@
-import type { components } from '../../../.generated/api/schema';
-import {
-  managementApi,
-  requireManagementResponse,
-  type IdempotencyRequestHeaders,
-} from '../../api/client';
+import type { components } from '../../.generated/api/schema';
+import { managementApi, requireManagementResponse, type IdempotencyRequestHeaders } from './client';
 export type WorkflowDefinition = components['schemas']['IssueWorkflowDefinition'];
 export type WorkflowResource = components['schemas']['IssueWorkflowResource'];
 export type WorkflowDefault = components['schemas']['IssueWorkflowDefault'];

@@ -1,6 +1,22 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  issues: (project: string) => ['issues', project] as const,
+  issueList: (project: string, after: string | null) => ['issues', project, 'list', after] as const,
+  issue: (project: string, id: string) => ['issues', project, id, 'current'] as const,
+  issueTransitions: (project: string, id: string) =>
+    ['issues', project, id, 'transitions'] as const,
+  issueHistoryRoot: (project: string, id: string) => ['issues', project, id, 'history'] as const,
+  issueHistory: (project: string, id: string, after: number | null) =>
+    ['issues', project, id, 'history', after] as const,
+  issueRevisionsRoot: (project: string, id: string) =>
+    ['issues', project, id, 'revisions'] as const,
+  issueRevisions: (project: string, id: string, after: number | null) =>
+    ['issues', project, id, 'revisions', after] as const,
+  issueRevision: (project: string, id: string, version: number | null) =>
+    ['issues', project, id, 'revision', version] as const,
+  issueWorkflowPage: (project: string, after: string | null) =>
+    ['issue-workflows', project, 'list', after] as const,
   issueWorkflow: (project: string, id: string | null, version?: number) =>
     ['issue-workflows', project, id, version ?? 'current'] as const,
   issueWorkflowDefault: (project: string) => ['issue-workflows', project, 'default'] as const,

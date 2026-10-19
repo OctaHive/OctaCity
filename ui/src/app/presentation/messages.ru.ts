@@ -1,6 +1,119 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'issues.draftChanged':
+    'Текущая версия задачи — {version}; изменились требования или управление полями. Проверьте новые значения перед согласованием. Поля источника будут обновлены; в остальных конфликтах сохранятся ваши правки.',
+  'issues.latestChanges': 'Новые значения изменённых полей',
+  'issues.reconcileDraft': 'Использовать новую версию и сохранить мои правки',
+
+  'issues.saved': 'Сохранена версия задачи {version}.',
+
+  'issues.closeProperties': 'Закрыть свойства',
+
+  'issues.startUnavailable': 'Запуск pipeline из карточки пока недоступен.',
+
+  'issues.breadcrumb': 'Навигация задачи',
+
+  'issues.editBaseline': 'На основе версии задачи {version}',
+
+  'issues.previewCoverage': 'Изменения статуса за последние {count} версий задачи.',
+  'issues.noRecentActivity':
+    'В этом диапазоне недавних версий изменений статуса нет. Более ранняя история доступна в разделе событий.',
+  'issues.fullHistory': 'Открыть полную историю статусов',
+
+  'issues.refresh': 'Обновить задачу',
+
+  'issues.historicalSelection':
+    'Выбраны исторические требования: версия {version} · Открыть события',
+
+  'issues.byteLimit': '{field}: не более {maximum} байт UTF-8.',
+  'issues.invalidTitle': 'Введите непустое название в одну строку без пробелов по краям.',
+
+  'issues.ownedFields': 'Управляется источником: {fields}',
+
+  'issues.revisions': 'Версии требований',
+  'issues.readRevision': 'Посмотреть версию задачи {version}',
+  'issues.historical': 'Исторические требования · Версия {version}',
+  'issues.closeRevision': 'Закрыть исторические требования',
+
+  'issues.adoption': 'Версия workflow задачи',
+  'issues.adoptionHelp':
+    'Проверьте точную версию workflow и соответствие статусов. Входы существующих запусков сохраняются; pipeline и действия провайдера не запускаются.',
+  'issues.changeWorkflow': 'Изменить workflow задачи',
+  'issues.targetWorkflow': 'Новый workflow',
+  'issues.noWorkflows': 'Нет доступных workflow.',
+  'issues.chooseWorkflow': 'Выберите workflow',
+  'issues.loadWorkflow': 'Загрузить версию workflow',
+  'issues.correspondence': 'Текущий статус {status} →',
+  'issues.chooseStatus': 'Выберите соответствующий статус',
+  'issues.mappingConflict': 'Текущий маппинг статуса источника несовместим с этим workflow.',
+  'issues.reviewAdoption': 'Проверить смену workflow',
+  'issues.applyAdoption': 'Применить смену workflow',
+  'issues.adoptionSaved': 'Workflow записан в версии задачи {version}.',
+
+  'issues.moves': 'Доступные переходы статуса',
+  'issues.move': 'Изменить статус',
+  'issues.noMoves': 'Для этого статуса нет настроенных прямых переходов.',
+  'issues.reason': 'Причина (необязательно)',
+  'issues.moved': 'Статус записан в версии {version}.',
+  'issues.block.permission_required': 'Недостаточно прав для перехода.',
+  'issues.block.source_owned': 'Этот статус управляется источником.',
+  'issues.block.origin_not_allowed': 'Для этого перехода ручное изменение запрещено.',
+  'issues.block.evidence_required': 'Требуются подтверждения текущего выполнения.',
+
+  'issues.edit': 'Редактировать требования',
+  'issues.save': 'Сохранить задачу',
+  'issues.memoryDraft':
+    'Несохранённые изменения хранятся здесь до выхода или перезагрузки страницы.',
+
+  'issues.businessStatus': 'Статус задачи: {status}',
+  'issues.unknownStatus': 'Недоступно',
+  'issues.statusHelp': 'Статус задачи не подтверждает приёмку результата и не разрешает поставку.',
+  'issues.start': 'Запустить pipeline',
+  'issues.executionUnavailable':
+    'Запуски и их результаты пока недоступны в базовой карточке. Существующие запуски доступны в Factory.',
+  'issues.workflow': 'Workflow',
+  'issues.sections': 'Разделы задачи',
+  'issues.overview': 'Обзор',
+  'issues.activity': 'События',
+  'issues.runs': 'Запуски',
+  'issues.results': 'Результаты',
+  'issues.actions': 'Действия',
+  'issues.properties': 'Свойства',
+  'issues.notSet': 'Не задан',
+  'issues.execution': 'Выполнение',
+  'issues.details': 'Подробности',
+  'issues.identity': 'Идентификатор задачи',
+  'issues.created': 'Создано',
+  'issues.updated': 'Обновлено',
+  'issues.history': 'История статусов',
+  'issues.revision': 'Версия {version}',
+  'issues.origin.manual': 'Ручной переход',
+  'issues.origin.pipeline': 'Действие pipeline',
+  'issues.origin.source': 'Синхронизация источника',
+  'issues.adopted': 'Workflow изменён явным действием.',
+  'issues.historyNamesUnavailable': 'Не удалось загрузить исторические названия статусов.',
+
+  'issues.tasks': 'Задачи',
+  'issues.task': 'Задача',
+  'issues.create': 'Создать задачу',
+  'issues.title': 'Название',
+  'issues.description': 'Описание',
+  'issues.acceptance': 'Критерии приёмки',
+  'issues.priority': 'Приоритет',
+  'issues.review': 'Проверить задачу',
+  'issues.saveConsequence':
+    'Сохранение требований задачи. Pipeline не запускается, внешняя система не изменяется.',
+  'issues.open': 'Открыть {key}',
+  'issues.manualHelp': 'Создавайте задачи вручную без интеграции, репозитория и настройки Factory.',
+  'issues.empty': 'Задач пока нет. Создайте первую задачу здесь.',
+  'issues.firstPage': 'Первая страница',
+  'issues.nextPage': 'Следующая страница',
+  'issues.noDescription': 'Описание пока не добавлено.',
+  'issues.noAcceptance': 'Критерии приёмки можно добавить до запуска.',
+  'issues.activityPreview': 'Последние события',
+  'issues.noActivity': 'История статусов пока не получена.',
+
   'workflow.catalog': 'Опубликованные workflow',
   'workflow.create': 'Создать workflow',
   'workflow.newDefinition': 'Новый независимый workflow',

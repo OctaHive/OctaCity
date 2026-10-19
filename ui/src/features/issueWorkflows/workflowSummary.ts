@@ -1,5 +1,5 @@
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import type { WorkflowDefinition } from './api';
+import type { WorkflowDefinition } from '../../api/issueWorkflows';
 
 /** One human-readable policy review shared by publication and exact default selection. */
 export function useWorkflowSummary(definition: WorkflowDefinition): string {

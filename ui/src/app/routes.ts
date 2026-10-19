@@ -12,6 +12,8 @@ export const CONSOLE_PATHS = {
   integrations: '/integrations',
   integration: '/integrations/:integrationId',
   project: '/projects/:projectId',
+  issues: '/projects/:projectId/issues',
+  issue: '/projects/:projectId/issues/:issueId',
   issueWorkflows: '/projects/:projectId/issue-workflows',
   projects: '/projects',
 } as const;
@@ -64,4 +66,11 @@ export function searchableResourcePath(
 /** Project-owned business workflow settings. */
 export function issueWorkflowsPath(projectId: string): string {
   return `${projectPath(projectId)}/issue-workflows`;
+}
+
+export function issuesPath(projectId: string): string {
+  return `${projectPath(projectId)}/issues`;
+}
+export function issuePath(projectId: string, issueId: string): string {
+  return `${issuesPath(projectId)}/${encodeURIComponent(issueId)}`;
 }

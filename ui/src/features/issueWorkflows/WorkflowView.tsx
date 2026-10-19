@@ -11,7 +11,7 @@ import {
 } from '../../shared/QueryStateNotice';
 import { WorkflowEditor } from './WorkflowEditor';
 import { WorkflowCatalog } from './WorkflowCatalog';
-import type { IssueWorkflowsApi, WorkflowResource } from './api';
+import type { IssueWorkflowsApi, WorkflowResource } from '../../api/issueWorkflows';
 import styles from './WorkflowView.module.css';
 
 export function WorkflowView({ api }: { api: IssueWorkflowsApi }) {

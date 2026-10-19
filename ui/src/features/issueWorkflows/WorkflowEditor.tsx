@@ -8,7 +8,11 @@ import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import { WorkflowFields } from './WorkflowFields';
 import { useWorkflowSummary } from './workflowSummary';
 import { ISSUE_WORKFLOW_CONSTRAINTS as bounds } from '../../../.generated/api/issue-workflow';
-import type { IssueWorkflowsApi, WorkflowResource, WorkflowDefinition } from './api';
+import type {
+  IssueWorkflowsApi,
+  WorkflowResource,
+  WorkflowDefinition,
+} from '../../api/issueWorkflows';
 import styles from './WorkflowView.module.css';
 
 /** Drafts and validation receipts live only in this mounted editor. Publication never changes the default. */

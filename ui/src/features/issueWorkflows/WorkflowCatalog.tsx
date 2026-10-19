@@ -9,7 +9,11 @@ import {
   QueryLoadingNotice,
   QueryBackgroundNotice,
 } from '../../shared/QueryStateNotice';
-import type { IssueWorkflowsApi, WorkflowResource, WorkflowDefault } from './api';
+import type {
+  IssueWorkflowsApi,
+  WorkflowResource,
+  WorkflowDefault,
+} from '../../api/issueWorkflows';
 import { useWorkflowSummary } from './workflowSummary';
 import styles from './WorkflowView.module.css';
 

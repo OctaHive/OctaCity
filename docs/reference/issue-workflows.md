@@ -82,6 +82,14 @@ preserves exact versions and original replay receipts. Migration upgrades data
 additively; rollback follows the existing snapshot-restore policy rather than
 deleting retained definitions to run an older binary.
 
+Existing Issues keep their exact pins. Reviewed adoption is a separate Issue
+`Administer` command, not workflow publication or default selection. It validates
+explicit status correspondence and current ownership/mapping, retains both
+policies and invalidates prior automated applicability without changing Work or
+emitting provider effects. See [Issue adoption](issues.md#reviewed-workflow-adoption-and-applicability)
+for its application/store contract. Its HTTP and Console composition follow the
+Issue-specific tasks.
+
 ## Management REST v1
 
 Workflow services are composed by the server independently of optional Factory
@@ -165,5 +173,6 @@ selection controls show the new version; exact historical reads remain unchanged
 Names are bounded in UTF-8 bytes and all form limits/origin/evidence choices are generated
 from OpenAPI. Business-policy validation and authorization remain on the server.
 
-Issue creation and the shared guarded movement command follow in 2.5; publishing
-policy alone enables no task transitions or execution.
+Manual Issue creation and guarded organizational movement use the separate
+[Issue application contracts](issues.md). Publishing policy alone moves no task
+and starts no execution. Issue persistence, REST and card UI remain later slices.

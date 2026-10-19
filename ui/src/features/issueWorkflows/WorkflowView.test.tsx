@@ -6,7 +6,7 @@ import { createMemoryRouter } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { App } from '../../App';
-import type { IssueWorkflowsApi, WorkflowResource } from './api';
+import type { IssueWorkflowsApi, WorkflowResource } from '../../api/issueWorkflows';
 import { createConsoleQueryClient } from '../../app/query';
 import { createConsoleRoutes } from '../../app/router';
 import { fakeProjectsApi, project } from '../projects/ProjectTestSupport';

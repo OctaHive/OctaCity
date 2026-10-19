@@ -1,6 +1,6 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { createManagementApiClient } from '../../api/client';
-import { createIssueWorkflowsApi } from './api';
+import { createIssueWorkflowsApi } from '../../api/issueWorkflows';
 import { workflowFixture } from '../../../tests/fixtures/issueWorkflows';
 
 afterEach(() => vi.unstubAllGlobals());

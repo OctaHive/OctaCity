@@ -1,4 +1,5 @@
 import { configurationFixture, runFixture, diagnosticFixture } from '../fixtures/factory';
+import { issueFixture } from '../fixtures/issues';
 import { workflowFixture } from '../fixtures/issueWorkflows';
 import { integrationFixture } from '../fixtures/integrations';
 import type { Page, Route } from '@playwright/test';
@@ -32,6 +33,47 @@ export async function installOperatorFixture(page: Page) {
         items: [{ ...workflow, name: workflow.definition.name }],
         next_cursor: null,
       });
+      return;
+    }
+    const installedWorkflow = workflowFixture(FIXTURE_IDS.project);
+    if (
+      url.pathname ===
+        `/api/v1/projects/${FIXTURE_IDS.project}/issue-workflows/${installedWorkflow.id}` ||
+      url.pathname ===
+        `/api/v1/projects/${FIXTURE_IDS.project}/issue-workflows/${installedWorkflow.id}/versions/${installedWorkflow.version}`
+    ) {
+      await fulfill(route, installedWorkflow);
+      return;
+    }
+    const issue = issueFixture(FIXTURE_IDS.project);
+    const issueBase = `/api/v1/projects/${FIXTURE_IDS.project}/issues`;
+    if (url.pathname === issueBase) {
+      await fulfill(route, {
+        items: [{ ...issue, title: issue.content.title }],
+        next_cursor: null,
+      });
+      return;
+    }
+    if (url.pathname === `${issueBase}/${issue.id}`) {
+      await fulfill(route, issue);
+      return;
+    }
+    if (url.pathname === `${issueBase}/${issue.id}/transitions`) {
+      await fulfill(route, {
+        issue_version: issue.version,
+        workflow_id: issue.workflow_id,
+        workflow_version: issue.workflow_version,
+        status_id: issue.status_id,
+        field_policy: { source_owned: [], status_mapping_workflow: null, push: null },
+        items: [],
+      });
+      return;
+    }
+    if (
+      url.pathname === `${issueBase}/${issue.id}/status-history` ||
+      url.pathname === `${issueBase}/${issue.id}/revisions`
+    ) {
+      await fulfill(route, { items: [], next_cursor: null });
       return;
     }
     const connection = integrationFixture('IntegrationConnection');
