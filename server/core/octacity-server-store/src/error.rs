@@ -4,6 +4,14 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Explicitly attach one authorized primary native task.
+  AttachIssueSource,
+  /// Resolve or create one canonical source-linked task.
+  ImportIssueSource,
+  /// Retain a reconciled native observation without execution.
+  RefreshIssueSource,
+  /// Change explicit retained-link pull enablement.
+  SetIssueSourcePull,
   /// Retain one Project-owned private text input operation.
   ReserveProjectTextInput,
   /// Reserve one exact reviewed Issue execution.

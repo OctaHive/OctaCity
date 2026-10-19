@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Default)]
 pub(super) struct IssueMemoryState {
+  sources: source::IssueSourceMemoryState,
   executions: execution::IssueExecutionMemoryState,
   property_versions: BTreeMap<(ProjectId, u64), PublishedIssueProperties>,
   property_publications: BTreeMap<ManagementIdempotencyKey, (PublishIssuePropertiesIntent, IssuePropertiesOutcome)>,
@@ -31,6 +32,7 @@ struct IssueMoveReplay {
 impl IssueMemoryState {
   pub(super) fn mutation_count(&self) -> usize {
     self.executions.mutation_count()
+      + self.sources.mutation_count()
       + self.creates.len()
       + self.edits.len()
       + self.moves.values().filter(|r| matches!(r.result, Some(Ok(_)))).count()
@@ -392,73 +394,11 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
         ..outcome.clone()
       });
     }
-    planning::validate_parent(
-      &state,
-      request.intent.project_id,
-      request.id,
-      request.intent.planning.parent_id,
-    )?;
-    request.intent.content.validate()?;
-    request.intent.planning.validate(
-      &planning::definitions(&state, request.intent.project_id, None)?,
-      None,
-      &request.assignees,
-    )?;
-    let project = state
-      .projects
-      .get(&request.intent.project_id)
-      .ok_or(StoreError::NotFound {
-        entity: EntityKind::Project,
-      })?;
-    if request.created_at < project.created_at {
-      return Err(crate::issue::invalid_issue(StoreOperation::CreateIssue));
-    }
-    let workflow = state.workflows.default(project)?.workflow;
-    let number = state
-      .issues
-      .numbers
-      .get(&project.id)
-      .copied()
-      .unwrap_or(0)
-      .checked_add(1)
-      .ok_or_else(|| crate::issue::invalid_issue(StoreOperation::CreateIssue))?;
-    if state.issues.current.keys().any(|(_, id)| *id == request.id) {
-      return Err(StoreError::Duplicate {
-        entity: EntityKind::Issue,
-      });
-    }
-    let issue = IssueRevision {
-      id: request.id,
-      project_id: project.id,
-      number,
-      version: IssueVersion::INITIAL,
-      applicability_version: IssueVersion::INITIAL,
-      content: request.intent.content.clone(),
-      planning: request.intent.planning.clone(),
-      workflow_id: workflow.id,
-      workflow_version: workflow.version,
-      status_id: workflow.definition.initial_status_id,
-      created_at: request.created_at,
-      updated_at: request.created_at,
-    };
+    let (issue, initial) = prepare_issue_creation(&state, &request, &audit)?;
+    let number = issue.number;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
       issue: issue.clone(),
-    };
-    let initial = IssueStatusHistoryEntry {
-      issue_id: issue.id,
-      version: issue.version,
-      workflow_id: issue.workflow_id,
-      workflow_version: issue.workflow_version,
-      from: None,
-      to: issue.status_id,
-      transition_id: None,
-      previous_workflow: None,
-      origin: IssueTransitionOrigin::Manual,
-      pipeline: None,
-      reason: None,
-      actor: audit.actor().clone(),
-      occurred_at: issue.created_at,
     };
     commit_issue_revision(
       &mut state,
@@ -474,6 +414,79 @@ impl IssueStore for crate::testing::InMemoryProjectStore {
     )?;
     Ok(outcome)
   }
+}
+
+// Shared creation policy for manual tasks and atomic canonical native import.
+fn prepare_issue_creation(
+  state: &crate::project_testing::ProjectMemoryState,
+  request: &CreateIssue,
+  audit: &MutationAuditContext,
+) -> Result<(IssueRevision, IssueStatusHistoryEntry), StoreError> {
+  planning::validate_parent(
+    state,
+    request.intent.project_id,
+    request.id,
+    request.intent.planning.parent_id,
+  )?;
+  request.intent.content.validate()?;
+  request.intent.planning.validate(
+    &planning::definitions(state, request.intent.project_id, None)?,
+    None,
+    &request.assignees,
+  )?;
+  let project = state
+    .projects
+    .get(&request.intent.project_id)
+    .ok_or(StoreError::NotFound {
+      entity: EntityKind::Project,
+    })?;
+  if request.created_at < project.created_at {
+    return Err(crate::issue::invalid_issue(StoreOperation::CreateIssue));
+  }
+  let workflow = state.workflows.default(project)?.workflow;
+  let number = state
+    .issues
+    .numbers
+    .get(&project.id)
+    .copied()
+    .unwrap_or(0)
+    .checked_add(1)
+    .ok_or_else(|| crate::issue::invalid_issue(StoreOperation::CreateIssue))?;
+  if state.issues.current.keys().any(|(_, id)| *id == request.id) {
+    return Err(StoreError::Duplicate {
+      entity: EntityKind::Issue,
+    });
+  }
+  let issue = IssueRevision {
+    id: request.id,
+    project_id: project.id,
+    number,
+    version: IssueVersion::INITIAL,
+    applicability_version: IssueVersion::INITIAL,
+    content: request.intent.content.clone(),
+    planning: request.intent.planning.clone(),
+    workflow_id: workflow.id,
+    workflow_version: workflow.version,
+    status_id: workflow.definition.initial_status_id,
+    created_at: request.created_at,
+    updated_at: request.created_at,
+  };
+  let initial = IssueStatusHistoryEntry {
+    issue_id: issue.id,
+    version: issue.version,
+    workflow_id: issue.workflow_id,
+    workflow_version: issue.workflow_version,
+    from: None,
+    to: issue.status_id,
+    transition_id: None,
+    previous_workflow: None,
+    origin: IssueTransitionOrigin::Manual,
+    pipeline: None,
+    reason: None,
+    actor: audit.actor().clone(),
+    occurred_at: issue.created_at,
+  };
+  Ok((issue, initial))
 }
 
 impl crate::testing::InMemoryProjectStore {
@@ -614,3 +627,6 @@ mod planning;
 
 #[path = "issue_execution_testing.rs"]
 mod execution;
+
+#[path = "issue_source_testing.rs"]
+mod source;

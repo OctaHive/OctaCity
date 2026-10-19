@@ -12,6 +12,9 @@ mod planning;
 #[path = "issue_execution_tests.rs"]
 mod execution;
 
+#[path = "issue_source_tests.rs"]
+mod source;
+
 fn run_ready(future: impl std::future::Future<Output = ()>) {
   let mut future = std::pin::pin!(future);
   let mut context = std::task::Context::from_waker(std::task::Waker::noop());

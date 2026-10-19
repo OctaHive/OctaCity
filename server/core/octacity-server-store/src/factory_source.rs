@@ -298,11 +298,11 @@ impl WorkSourceProgress {
 }
 /// Trusted clock and worker identity used to acquire a bounded scan lease.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ClaimWorkSourceScan {
+pub struct ClaimWorkSourceScan<T = WorkSourceScanTarget> {
   /// Owner of the pinned definitions.
   pub project_id: ProjectId,
-  /// Current enabled input or group revision.
-  pub target: WorkSourceScanTarget,
+  /// Exact current read target; Factory intake defaults to an enabled input or group.
+  pub target: T,
   /// Stable worker identity.
   pub owner: octacity_server_factory::FactoryKey,
   /// Injected trusted observation time.
@@ -313,11 +313,11 @@ pub struct ClaimWorkSourceScan {
 /// Fencing proof; every fresh write compares the complete retained claim.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkSourceScanClaim {
+pub struct WorkSourceScanClaim<T = WorkSourceScanTarget> {
   /// Owning Project.
   pub project_id: ProjectId,
   /// Exact pinned selection definition.
-  pub target: WorkSourceScanTarget,
+  pub target: T,
   /// Worker holding this lease.
   pub owner: octacity_server_factory::FactoryKey,
   /// Monotonically increasing token across all versions of the scan identity.
@@ -330,7 +330,7 @@ pub struct WorkSourceScanClaim {
 /// Retained scan lease and its last covered position.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkSourceScan {
+pub struct WorkSourceScan<T = WorkSourceScanTarget> {
   /// Last bounded classification, retained independently of covered page progress.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub last_selection: Option<crate::WorkSourceSelectionRecord>,
@@ -338,15 +338,15 @@ pub struct WorkSourceScan {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub schedule: Option<crate::WorkSourceSchedule>,
   /// Complete ownership proof.
-  pub claim: WorkSourceScanClaim,
+  pub claim: WorkSourceScanClaim<T>,
   /// Covered position, reset when the definition changes.
   pub progress: Option<WorkSourceProgress>,
 }
 /// Computes an acquisition while retaining progress and a monotonic fencing token.
-pub fn next_source_scan(
-  request: ClaimWorkSourceScan,
-  current: Option<&WorkSourceScan>,
-) -> Result<Option<WorkSourceScan>, StoreError> {
+pub fn next_source_scan<T: Clone + PartialEq>(
+  request: ClaimWorkSourceScan<T>,
+  current: Option<&WorkSourceScan<T>>,
+) -> Result<Option<WorkSourceScan<T>>, StoreError> {
   let duration = request.until.unix_millis() - request.now.unix_millis();
   if !(1..=300_000).contains(&duration) {
     return Err(source_conflict());
@@ -387,9 +387,9 @@ pub fn next_source_scan(
   }))
 }
 /// Validates complete ownership and trusted time before any fresh scan mutation.
-pub fn require_source_scan(
-  current: &WorkSourceScan,
-  claim: &WorkSourceScanClaim,
+pub fn require_source_scan<T: PartialEq>(
+  current: &WorkSourceScan<T>,
+  claim: &WorkSourceScanClaim<T>,
   now: octacity_server_domain::Timestamp,
 ) -> Result<(), StoreError> {
   if current.claim != *claim || now < claim.acquired_at || now >= claim.until {

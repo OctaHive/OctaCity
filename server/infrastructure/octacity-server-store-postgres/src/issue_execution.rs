@@ -162,6 +162,7 @@ impl IssueExecutionStore for PostgresStore {
     if authoritative.map(|v| v.0.0).as_ref() != Some(&request.admission.work) {
       return Err(conflict());
     }
+    crate::issue_source::guard_work_association(&mut tx, &request, audit.security_scope()).await?;
     if let Some(id) = request.request_id {
       let Json(current): Json<IssueExecutionRequest> =
         sqlx::query_scalar("SELECT document FROM issue_execution_requests WHERE id=$1 FOR UPDATE")

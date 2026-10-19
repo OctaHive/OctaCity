@@ -1,7 +1,7 @@
 //! Optional provider-neutral source worker composition; no forge SDK or manual-ingress dependency.
 use octacity_artifact_store::ArtifactBytePublisher;
 use octacity_server_application::*;
-use octacity_server_domain::{EntityKind, ProjectId};
+use octacity_server_domain::ProjectId;
 use octacity_server_factory::*;
 use octacity_server_store::*;
 use octacity_server_work_source::WorkAdapterRegistry;
@@ -297,55 +297,24 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
     }
   };
   let at = d.clock.now()?;
-  let schedule = match &result {
-    Ok(()) => {
-      outcome.completed += 1;
-      WorkSourceSchedule {
-        retry_at: add(at, settings.worker.poll_interval())?,
-        attempts: 0,
-        failure: None,
-        exhausted: false,
-      }
-    }
-    Err(error) => {
-      outcome.deferred += 1;
-      let (class, hint) = failure(error);
-      let previous = scan.schedule.as_ref().map_or(0, |v| v.attempts);
-      let budget_neutral = matches!(
-        class,
-        WorkSourceFailure::Cancelled | WorkSourceFailure::AdmissionCapacity | WorkSourceFailure::RetentionPending
-      );
-      let attempts = if budget_neutral {
-        previous
-      } else {
-        previous.saturating_add(1)
-      };
-      let retry = DurableRetryPolicy::new(
-        settings.max_attempts,
-        settings.worker.poll_interval().as_millis() as u64,
-        settings.worker.retry_policy().max_backoff().as_millis() as u64,
-      )
-      .map_err(|_| ApplicationError::invalid())?;
-      let earliest = hint
-        .map(|millis| add(at, Duration::from_millis(u64::from(millis))))
-        .transpose()?;
-      let next = if budget_neutral {
-        Some(add(at, settings.worker.poll_interval())?)
-      } else {
-        retry.retry_not_before(attempts, at, earliest)
-      };
-      WorkSourceSchedule {
-        retry_at: next.unwrap_or(at),
-        attempts,
-        failure: Some(class),
-        exhausted: next.is_none()
-          || matches!(
-            class,
-            WorkSourceFailure::InvalidConfiguration | WorkSourceFailure::ProtocolFault | WorkSourceFailure::Conflict
-          ),
-      }
-    }
-  };
+  if result.is_ok() {
+    outcome.completed += 1;
+  } else {
+    outcome.deferred += 1;
+  }
+  let retry = DurableRetryPolicy::new(
+    settings.max_attempts,
+    settings.worker.poll_interval().as_millis() as u64,
+    settings.worker.retry_policy().max_backoff().as_millis() as u64,
+  )
+  .map_err(|_| ApplicationError::invalid())?;
+  let schedule = source_scan_schedule(
+    scan.schedule.as_ref(),
+    at,
+    settings.worker.poll_interval(),
+    retry,
+    result.as_ref().err(),
+  )?;
   // A definition change may revoke this owner while the provider is in flight.
   // Such an owner must not write diagnostics into the replacement's state.
   match d.store.finish_source_scan(scan.claim.clone(), at, schedule).await {
@@ -367,22 +336,6 @@ fn add(
   )
   .map_err(|_| ApplicationError::invalid())
 }
-fn failure(error: &ApplicationError) -> (WorkSourceFailure, Option<u32>) {
-  match error {
-    ApplicationError::SourceDependency {
-      class,
-      retry_after_millis,
-    } => (*class, *retry_after_millis),
-    ApplicationError::CapabilityUnavailable => (WorkSourceFailure::Unavailable, None),
-    ApplicationError::Store(StoreError::Unavailable) => (WorkSourceFailure::Transient, None),
-    ApplicationError::Store(StoreError::Conflict {
-      entity: EntityKind::FactoryRun,
-    }) => (WorkSourceFailure::AdmissionCapacity, None),
-    ApplicationError::Store(_) => (WorkSourceFailure::Conflict, None),
-    _ => (WorkSourceFailure::InvalidConfiguration, None),
-  }
-}
-
 fn profiles_for(
   profiles: &[FactorySourceProfile],
   members: &[WorkSourceInput],

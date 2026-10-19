@@ -149,66 +149,7 @@ impl IssueStore for PostgresStore {
       }
       MutationStart::Fresh(tx) => tx,
     };
-    intent.content.validate()?;
-    let initial = issue_workflow::lock_project(&mut tx, intent.project_id).await?;
-    if request.created_at < initial.published_at {
-      return Err(invalid(StoreOperation::CreateIssue));
-    }
-    crate::issue_planning::validate_parent(&mut tx, intent.project_id, request.id, intent.planning.parent_id).await?;
-    let catalog = crate::issue_planning::read(&mut tx, intent.project_id, None).await?;
-    intent.planning.validate(&catalog, None, &request.assignees)?;
-    crate::issue_planning::retain_initial(&mut tx, intent.project_id).await?;
-    let workflow = issue_workflow::read_default(&mut tx, &initial).await?.workflow;
-    if workflow.id == initial.id {
-      issue_workflow::retain_initial(&mut tx, &initial).await?;
-    }
-    let allocated: i64 = sqlx::query_scalar("INSERT INTO issue_numbers (project_id,last_number) VALUES ($1,1) ON CONFLICT (project_id) DO UPDATE SET last_number=issue_numbers.last_number+1 RETURNING last_number")
-      .bind(intent.project_id.as_uuid()).fetch_one(&mut *tx).await.map_err(unavailable)?;
-    let issue = IssueRevision {
-      id: request.id,
-      project_id: intent.project_id,
-      number: u64::try_from(allocated).map_err(|_| StoreError::Unavailable)?,
-      version: IssueVersion::INITIAL,
-      applicability_version: IssueVersion::INITIAL,
-      content: intent.content.clone(),
-      planning: intent.planning.clone(),
-      workflow_id: workflow.id,
-      workflow_version: workflow.version,
-      status_id: workflow.definition.initial_status_id,
-      created_at: request.created_at,
-      updated_at: request.created_at,
-    };
-    sqlx::query("INSERT INTO issues (project_id,id,number,current_version) VALUES ($1,$2,$3,1)")
-      .bind(issue.project_id.as_uuid())
-      .bind(issue.id.as_uuid())
-      .bind(allocated)
-      .execute(&mut *tx)
-      .await
-      .map_err(|error| {
-        if error.as_database_error().is_some_and(|e| e.is_unique_violation()) {
-          StoreError::Duplicate {
-            entity: EntityKind::Issue,
-          }
-        } else {
-          unavailable(error)
-        }
-      })?;
-    let history = IssueStatusHistoryEntry {
-      issue_id: issue.id,
-      version: issue.version,
-      workflow_id: issue.workflow_id,
-      workflow_version: issue.workflow_version,
-      from: None,
-      to: issue.status_id,
-      transition_id: None,
-      previous_workflow: None,
-      origin: IssueTransitionOrigin::Manual,
-      pipeline: None,
-      reason: None,
-      actor: audit.actor().clone(),
-      occurred_at: issue.created_at,
-    };
-    insert_revision(&mut tx, &issue, Some(&history)).await?;
+    let issue = create_initial_issue(&mut tx, &request, &audit, IssueTransitionOrigin::Manual).await?;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
       issue,
@@ -570,4 +511,75 @@ pub(super) fn page(rows: Vec<(Json<IssueRevision>,)>, limit: u16) -> IssuePage {
   }
   let next_cursor = more.then(|| items.last().unwrap().id);
   IssuePage { items, next_cursor }
+}
+
+// Manual creation and canonical native import share all initial Issue policy and publication rows.
+pub(super) async fn create_initial_issue(
+  connection: &mut PgConnection,
+  request: &CreateIssue,
+  audit: &MutationAuditContext,
+  origin: IssueTransitionOrigin,
+) -> Result<IssueRevision, StoreError> {
+  let intent = &request.intent;
+  intent.content.validate()?;
+  let initial = issue_workflow::lock_project(connection, intent.project_id).await?;
+  if request.created_at < initial.published_at {
+    return Err(invalid(StoreOperation::CreateIssue));
+  }
+  crate::issue_planning::validate_parent(connection, intent.project_id, request.id, intent.planning.parent_id).await?;
+  let catalog = crate::issue_planning::read(connection, intent.project_id, None).await?;
+  intent.planning.validate(&catalog, None, &request.assignees)?;
+  crate::issue_planning::retain_initial(connection, intent.project_id).await?;
+  let workflow = issue_workflow::read_default(connection, &initial).await?.workflow;
+  if workflow.id == initial.id {
+    issue_workflow::retain_initial(connection, &initial).await?;
+  }
+  let allocated: i64 = sqlx::query_scalar("INSERT INTO issue_numbers (project_id,last_number) VALUES ($1,1) ON CONFLICT (project_id) DO UPDATE SET last_number=issue_numbers.last_number+1 RETURNING last_number")
+      .bind(intent.project_id.as_uuid()).fetch_one(&mut *connection).await.map_err(unavailable)?;
+  let issue = IssueRevision {
+    id: request.id,
+    project_id: intent.project_id,
+    number: u64::try_from(allocated).map_err(|_| StoreError::Unavailable)?,
+    version: IssueVersion::INITIAL,
+    applicability_version: IssueVersion::INITIAL,
+    content: intent.content.clone(),
+    planning: intent.planning.clone(),
+    workflow_id: workflow.id,
+    workflow_version: workflow.version,
+    status_id: workflow.definition.initial_status_id,
+    created_at: request.created_at,
+    updated_at: request.created_at,
+  };
+  sqlx::query("INSERT INTO issues (project_id,id,number,current_version) VALUES ($1,$2,$3,1)")
+    .bind(issue.project_id.as_uuid())
+    .bind(issue.id.as_uuid())
+    .bind(allocated)
+    .execute(&mut *connection)
+    .await
+    .map_err(|error| {
+      if error.as_database_error().is_some_and(|e| e.is_unique_violation()) {
+        StoreError::Duplicate {
+          entity: EntityKind::Issue,
+        }
+      } else {
+        unavailable(error)
+      }
+    })?;
+  let history = IssueStatusHistoryEntry {
+    issue_id: issue.id,
+    version: issue.version,
+    workflow_id: issue.workflow_id,
+    workflow_version: issue.workflow_version,
+    from: None,
+    to: issue.status_id,
+    transition_id: None,
+    previous_workflow: None,
+    origin,
+    pipeline: None,
+    reason: None,
+    actor: audit.actor().clone(),
+    occurred_at: issue.created_at,
+  };
+  insert_revision(connection, &issue, Some(&history)).await?;
+  Ok(issue)
 }

@@ -46,20 +46,26 @@ impl HostedWorkSourceObservations {
 }
 #[async_trait::async_trait]
 impl WorkSourceObservations for HostedWorkSourceObservations {
+  async fn authorize(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    source: WorkSourceBinding,
+  ) -> Result<(), ApplicationError> {
+    require_running(&self.cancellation)?;
+    self
+      .authorize_until(
+        self.profile(context, project, &source)?,
+        tokio::time::Instant::now() + self.timeout,
+      )
+      .await
+  }
   async fn read(
     &self,
     context: &ManagementRequestContext,
     request: ReadWorkSourceObservations,
   ) -> Result<WorkSourceObservationPage, ApplicationError> {
-    let profile = self
-      .profiles
-      .iter()
-      .find(|profile| {
-        profile.project_id == request.project_id
-          && profile.binding == request.source
-          && profile.context.security_scope() == context.security_scope()
-      })
-      .ok_or_else(ApplicationError::capability_unavailable)?;
+    let profile = self.profile(context, request.project_id, &request.source)?;
     if request.limit == 0 {
       return Err(ApplicationError::invalid());
     }
@@ -149,6 +155,22 @@ impl WorkSourceObservations for HostedWorkSourceObservations {
   }
 }
 impl HostedWorkSourceObservations {
+  fn profile(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    source: &WorkSourceBinding,
+  ) -> Result<&WorkSourceReadProfile, ApplicationError> {
+    self
+      .profiles
+      .iter()
+      .find(|profile| {
+        profile.project_id == project
+          && profile.binding == *source
+          && profile.context.security_scope() == context.security_scope()
+      })
+      .ok_or_else(ApplicationError::capability_unavailable)
+  }
   async fn authorize_until(
     &self,
     profile: &WorkSourceReadProfile,

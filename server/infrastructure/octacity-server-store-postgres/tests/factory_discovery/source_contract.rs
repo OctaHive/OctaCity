@@ -1,6 +1,8 @@
 use super::*;
 #[path = "source_configuration.rs"]
 mod configuration;
+#[path = "source_issue_association.rs"]
+mod issue_association;
 use octacity_server_factory::{
   WorkSourceBinding, WorkSourceCapability, WorkSourceCapabilityRole, WorkSourceGroup, WorkSourceGroupId,
   WorkSourceGroupVersion, WorkSourceInput, WorkSourceInputContext, WorkSourceInputDraft, WorkSourceInputId,

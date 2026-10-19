@@ -50,6 +50,8 @@ mod internal_trigger_definition;
 mod issue;
 mod issue_execution;
 mod issue_planning;
+mod issue_source;
+mod issue_source_read;
 mod issue_workflow;
 mod job_claim;
 mod job_completion;

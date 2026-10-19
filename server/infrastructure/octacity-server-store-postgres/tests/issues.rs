@@ -1,5 +1,8 @@
 mod support;
 
+#[path = "issues/source.rs"]
+mod source;
+
 use octacity_server_domain::{EntityKind, IssueId, IssueVersion, ProjectId, ProjectName, Timestamp};
 use octacity_server_store::{
   CreateIssue, CreateIssueIntent, CreateProject, IdempotencyKey, IssueContent, IssueStore, IssueWorkflowStore,

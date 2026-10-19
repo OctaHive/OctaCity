@@ -611,3 +611,33 @@ async fn observation_cancellation_drains_the_existing_process_without_handoff_or
     assert!(fixture.bytes.0.lock().unwrap().is_empty());
   }
 }
+
+#[tokio::test]
+async fn retained_observation_authority_can_be_rechecked_without_listing_another_page() {
+  let mut fixture = Fixture::enabled("fake-tracker").await;
+  let (access, id) = managed_access(&fixture, &fixture.profile.read.binding, IntegrationPurpose::TaskRead).await;
+  fixture.profile = fixture.profile.clone().with_managed_access(access);
+  let reader = reader(&fixture);
+  reader
+    .authorize(
+      &fixture.profile.read.context,
+      fixture.profile.read.project_id,
+      fixture.profile.read.binding.clone(),
+    )
+    .await
+    .unwrap();
+  revoke(&fixture, id).await;
+  assert!(
+    reader
+      .authorize(
+        &fixture.profile.read.context,
+        fixture.profile.read.project_id,
+        fixture.profile.read.binding.clone()
+      )
+      .await
+      .is_err()
+  );
+  let calls = std::fs::read_to_string(fixture.root.path().join("fake-tracker/requests.jsonl")).unwrap_or_default();
+  assert!(calls.is_empty(), "authority rechecks do not list tickets");
+  assert!(fixture.runs().await.is_empty());
+}

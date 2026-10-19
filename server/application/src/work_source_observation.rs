@@ -59,6 +59,18 @@ pub enum WorkSourceObservationFreshness {
   Stale,
 }
 impl WorkSourceObservation {
+  /// Retains safe exact provenance for Issue persistence without copying normalized native content.
+  pub fn issue_receipt(&self) -> octacity_server_store::IssueSourceObservation {
+    octacity_server_store::IssueSourceObservation {
+      source: self.source.clone(),
+      plugin: self.plugin.clone(),
+      provider_configuration: self.provider_configuration,
+      selection_digest: self.selection_digest,
+      snapshot_digest: self.snapshot_digest,
+      observed_at: self.observed_at,
+      expires_at: self.expires_at,
+    }
+  }
   /// Compares trusted read times and complete snapshot digests, never opaque update identifiers.
   /// Consumers retain their own latest accepted evidence; no hidden observation cache exists.
   pub fn freshness_at(&self, now: Timestamp, previous: Option<&Self>) -> WorkSourceObservationFreshness {
@@ -85,6 +97,16 @@ pub struct WorkSourceObservationPage {
 /// Installing it starts no polling or consumer subscription and creates no management endpoint.
 #[async_trait]
 pub trait WorkSourceObservations: Send + Sync {
+  /// Rechecks current installed read authority without listing another page.
+  /// Readers lacking independent reauthorization cannot resume retained private observations.
+  async fn authorize(
+    &self,
+    _context: &ManagementRequestContext,
+    _project: ProjectId,
+    _source: WorkSourceBinding,
+  ) -> Result<(), ApplicationError> {
+    Err(ApplicationError::capability_unavailable())
+  }
   /// Reads under current task-read authority, without admission, task storage or Reporter effects.
   async fn read(
     &self,

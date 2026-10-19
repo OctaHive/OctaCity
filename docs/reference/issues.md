@@ -4,6 +4,123 @@ An Issue is a persistent Project-owned task. It can exist as a manual draft
 without a provider, credentials, repository, Factory configuration or execution.
 Its business status does not establish a Factory Decision or execution permission.
 
+## Canonical primary source association
+
+`IssueSourceHandlers` provides optional application commands over the existing
+`WorkSourceObservations` read capability and the narrow `IssueSourceStore` port.
+Manual Issue handlers retain no Source dependency. The memory and PostgreSQL
+adapters share their existing Project lock, ordinary Issue creation policy,
+initial workflow and atomic revision/replay/audit publisher. Optional bounded
+import/refresh uses the same installed observation capability and Source progress
+machinery described below.
+
+`IssueSourceSelection` pins a Project, installed Source binding and verified
+native resource/item. Its canonical key reuses `source_native_issue`,
+`source_security_partition` and `source_native_correlation`. Only the accepted
+Project/security partition, installation identity, native resource and native
+item participate. Installation/configuration versions, pipeline inputs,
+connection display names, credentials, native display keys, task text and URLs
+do not determine canonical identity. Renaming or rotating a compatible installed
+connection cannot create another task for that native key.
+
+`ImportIssueSourceCommand` consumes one bounded authorized read and atomically
+resolves or creates the canonical Issue. Initial text is a bounded ordinary
+draft, with no fabricated acceptance or execution target. Competing imports
+resolve one Issue; a different native key or a manual task with identical text
+remains separate. An existing link is returned without refreshing requirements,
+changing status or admitting Work. Each accepted import key retains its original
+selection and receipt, including when it resolves an already existing link.
+Initial status history identifies Source origin while using the ordinary
+workflow initial status, with no native-state-derived transition.
+
+`AttachIssueSourceCommand` uses separate Issue `Administer` authority, current
+Issue visibility, an exact Issue version and a review of the existing field
+policy. The existing Source reader owns current installed resource/read grants;
+the application checks the returned Project, partition, binding, native identity
+and observation lifetime before publication. The shared clock is read again
+after asynchronous access; an expired or future observation cannot publish a
+link. An Issue has at most one primary
+link, and a native key belongs to at most one Issue in that Project/partition.
+Duplicate attachment returns a finite conflict with the canonical association
+only when visible; it never merges histories. Exact replay retains its original
+link and time after later Issue edits. Reusing a key with a changed selection,
+or submitting stale review, conflicts.
+
+Attachment preserves text, workflow, status, field ownership and execution
+history. The retained link starts with pull enabled for explicitly authorized
+refresh, but attachment starts no polling and activates no field ownership,
+push synchronization or retroactive reporting. Supported mappings and their
+activation have a separate reviewed contract.
+`GetIssueSourceLinkQuery` reads retained metadata under Issue visibility and the
+accepted partition, with no provider call or read-time creation. Hidden canonical
+imports are denied before replay/audit publication. Denied reads and conflicts
+leave manual tasks and their ordinary create/edit contracts usable.
+
+PostgreSQL retains primary links and bounded `IssueSourceObservation` receipts
+in additive tables. A receipt pins the exact installed Source/configuration
+references, verified plugin, transport/selector/snapshot digests and original
+read/deadline times. It contains no native body or credentials. Each distinct
+accepted observation remains independently addressable in its original
+Project/security partition; replay neither replaces it nor renews its deadline.
+These configuration pins retain read provenance, not authority to activate
+field ownership or an external status mapping.
+
+The ordinary `associate_issue_work` transaction checks settled, verified Source
+preparation provenance against the retained canonical link and the accepted
+Work security partition. A Work from another native task cannot be attached to
+that Issue. Separate inputs may attach their independently admitted original
+Work/Run pairs to one canonical Issue. Association retries reuse the shared
+replay/audit/outbox transaction after rollback, connection loss or a lost reply;
+they do not admit another Work or Run. Source preparation recovery still uses
+its existing journal. Legacy Source Artifact provenance is retained without
+inventing an Issue requirements revision. Manual Work association keeps its
+ordinary contract when no verified Source preparation exists.
+
+## Bounded Source import and refresh
+
+`IssueSourceReadHandlers` runs an explicitly authorized finite read for a Project
+and exact installed Source profile, optionally targeting one retained Issue
+link. It needs no Factory target, repository or admission/Reporter port.
+Construction starts no worker. Existing enabled execution inputs retain their
+independent admission semantics; an Issue import, refresh or pull echo starts
+no execution.
+
+The consumer and ordinary Factory intake share one bounded polling driver and
+the existing scan lease/fence, page/window/reconciliation progress and retry
+schedule model. PostgreSQL retains its separately scoped private journal.
+Restart resumes original unprocessed observations and opaque continuations;
+page/item/byte limits still apply. Page expiry cannot exceed the earliest
+original observation deadline. Expired private tails are discarded before a
+fresh read, without renewing old provenance. The installed read grant is
+rechecked before processing a retained item without listing another page.
+Project/Issue visibility and current mutation rights remain independent.
+
+`IssueSourceRefreshState` retains an accepted receipt and at most one pending
+changed receipt. Opaque native update identities are not sortable revisions.
+A changed snapshot remains `uncertain` until a later independent read under
+the same installed binding confirms it. Duplicate, unchanged and stale reads
+create no Issue revision; unchanged reads can advance the safe watermark.
+Only reconciled changes replace already declared source-owned title or
+description through the ordinary requirements/applicability policy. Local
+fields, acceptance, planning, workflow/status and frozen execution inputs stay
+under their existing owners. Mapping/ownership publication and external status
+translation retain their separate reviewed contracts.
+
+`SetIssueSourcePullCommand` changes explicit link pull enablement under an exact
+monotonic generation and scoped replay. Disabling pull stops that retained-link
+read; reenabling cannot revive an old owner or its retained page. A separately
+installed broader read profile may refresh the same native link when the task
+no longer matches an execution selector. Disabling an execution input does not
+disable link refresh. An independently authorized discovery pass may encounter
+a paused link and retain its import observation, but does not refresh its fields.
+If pull is disabled after discovery's preliminary check, publication retains a
+replayable `pull_disabled` result without advancing accepted or pending freshness.
+The remaining discovery page stays runnable, including after restart; reenabling
+pull does not turn replay of that skipped operation into a refresh.
+Rate limits, bounded retry exhaustion, disabled access and provider failures
+retain local task/history and do not block unrelated manual tasks. HTTP and
+Console controls for these contracts retain task 4.5.
+
 ## Identity and revisions
 
 `CreateIssueCommand` accepts a Project and `IssueContent`: title, description,

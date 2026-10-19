@@ -36,6 +36,8 @@ mod diagnostic;
 mod error;
 mod factory_issue_status_action;
 mod issue;
+mod issue_source;
+pub use issue_source::*;
 mod issue_execution;
 mod issue_execution_publication;
 pub use factory_issue_status_action::*;
@@ -66,6 +68,8 @@ mod factory_candidate_context;
 mod factory_source_admission;
 mod factory_source_input_retention;
 mod factory_source_mapping;
+mod source_polling;
+pub use source_polling::source_scan_schedule;
 mod factory_source_polling;
 mod factory_source_preparation;
 #[cfg(test)]
