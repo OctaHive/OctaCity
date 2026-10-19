@@ -51,7 +51,8 @@ fn representative_resource(kind: ManagementResourceKind) -> ManagementResource {
     ManagementResourceKind::AgentEnrollment => {
       ManagementResource::owned_collection(kind, ManagementResourceKind::AgentPool, identity()).unwrap()
     }
-    ManagementResourceKind::Pipeline
+    ManagementResourceKind::Issue
+    | ManagementResourceKind::Pipeline
     | ManagementResourceKind::Repository
     | ManagementResourceKind::IntegrationConnection
     | ManagementResourceKind::IntegrationCredential

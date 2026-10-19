@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 
 use octacity_server_domain::{
-  AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, IntegrationId, IssueWorkflowId,
-  JobId, PipelineId, PoolId, ProjectId, RepositoryId, TriggerId,
+  AgentId, ArtifactId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId, IntegrationId, IssueId,
+  IssueWorkflowId, JobId, PipelineId, PoolId, ProjectId, RepositoryId, TriggerId,
 };
 use octacity_server_factory::{FactoryChoiceIdentity, FactoryConfigurationId, FactoryRunId};
 use thiserror::Error;
@@ -275,4 +275,10 @@ query_visibility!(
   IssueWorkflowListVisibility,
   IssueWorkflowId,
   "Visible Project business workflow identities."
+);
+
+query_visibility!(
+  IssueListVisibility,
+  IssueId,
+  "Visible internal task identities, independent of provider scope."
 );

@@ -4,6 +4,18 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Discover bounded visible current internal tasks.
+  ListProjectIssues,
+  /// Discover retained requirement revision headers.
+  ListIssueRevisions,
+  /// Create a manual internal task.
+  CreateIssue,
+  /// Explicit reviewed adoption of an Issue workflow.
+  AdoptIssueWorkflow,
+  /// Publish an editable task revision.
+  EditIssue,
+  /// Apply one explicit business status edge.
+  TransitionIssue,
   /// Discover bounded visible current business workflows.
   ListProjectIssueWorkflows,
   /// Publish one immutable Project business workflow.
@@ -307,6 +319,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Task content or mutation bounds are invalid.
+  #[error("invalid Issue input")]
+  InvalidIssue,
   /// Business status/edge vocabulary is invalid or exceeds its finite bounds.
   #[error("invalid Issue workflow definition")]
   InvalidIssueWorkflow,

@@ -63,6 +63,11 @@ macro_rules! positive_version {
   };
 }
 
+positive_version!(
+  IssueVersion,
+  EntityKind::Issue,
+  "Optimistic version and immutable revision of a task."
+);
 positive_version!(ProjectVersion, EntityKind::Project, "Optimistic version of a Project.");
 positive_version!(
   IssueWorkflowVersion,

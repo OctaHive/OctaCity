@@ -6,6 +6,11 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod issue;
+mod issue_policy;
+pub use issue::*;
+#[cfg(any(test, feature = "test-support"))]
+mod issue_testing;
 mod issue_workflow;
 pub use issue_workflow::*;
 #[cfg(any(test, feature = "test-support"))]
@@ -424,7 +429,6 @@ pub use project_model::{
 pub use project_policy::ProjectPolicyDocument;
 pub use project_policy_port::ProjectPolicyStore;
 pub use project_port::ProjectStore;
-pub use read_visibility::IssueWorkflowListVisibility;
 pub use read_visibility::{
   AgentListVisibility, AgentPoolListVisibility, ArtifactListVisibility, AuditFactListVisibility,
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
@@ -434,6 +438,7 @@ pub use read_visibility::{
   ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility,
   TriggerDefinitionListVisibility,
 };
+pub use read_visibility::{IssueListVisibility, IssueWorkflowListVisibility};
 pub use resource_search_model::{
   MAX_RESOURCE_SEARCH_CONTEXT_BYTES, MAX_RESOURCE_SEARCH_LABEL_BYTES, MAX_RESOURCE_SEARCH_PAGE_SIZE,
   MAX_RESOURCE_SEARCH_QUERY_BYTES, NormalizedResourceSearchQuery, ResourceSearchKind, ResourceSearchPage,

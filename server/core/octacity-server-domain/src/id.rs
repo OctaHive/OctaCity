@@ -86,6 +86,7 @@ macro_rules! opaque_id {
   };
 }
 
+opaque_id!(IssueId, EntityKind::Issue, "Stable internal identity of a task.");
 opaque_id!(ProjectId, EntityKind::Project, "Opaque identity of a Project.");
 opaque_id!(
   IssueWorkflowId,

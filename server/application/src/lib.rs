@@ -34,6 +34,13 @@ mod definition_cqrs;
 mod definition_discovery;
 mod diagnostic;
 mod error;
+mod issue;
+#[cfg(test)]
+mod issue_tests;
+#[cfg(feature = "test-support")]
+#[path = "issue_test_support.rs"]
+pub mod testing;
+pub use issue::*;
 mod issue_workflow;
 pub use issue_workflow::*;
 mod external_trigger;

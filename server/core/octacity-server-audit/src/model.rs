@@ -3,9 +3,11 @@ use std::{fmt, str::FromStr};
 use octacity_server_domain::{AuditFactId, Timestamp};
 
 use crate::AuditMetadata;
+use serde::{Deserialize, Serialize};
 
 /// Stable actor classifications recorded by authoritative mutations.
-#[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AuditActorKind {
   /// A request accepted on the unauthenticated trusted-network listener.
   UnauthenticatedManagement,
@@ -63,7 +65,7 @@ impl FromStr for AuditActorKind {
 }
 
 /// Available actor identity without inventing an authenticated principal.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AuditActor {
   /// Stable actor classification.
   pub kind: AuditActorKind,

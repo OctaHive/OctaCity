@@ -45,6 +45,7 @@ macro_rules! instance_scoped_query_registry {
   ($apply:ident) => {
     $apply! {
       (ListProjectsQuery, ProjectListVisibility, ProjectId, ManagementResourceKind::Project, 1),
+      (crate::ListProjectIssuesQuery, octacity_server_store::IssueListVisibility, octacity_server_domain::IssueId, ManagementResourceKind::Issue, 20),
       (crate::ListProjectIssueWorkflowsQuery, octacity_server_store::IssueWorkflowListVisibility,
         octacity_server_domain::IssueWorkflowId, ManagementResourceKind::IssueWorkflow, 19),
       (crate::ListIntegrationConnectionsQuery, octacity_server_store::IntegrationConnectionListVisibility, octacity_server_domain::IntegrationId, ManagementResourceKind::IntegrationConnection, 18),
@@ -316,6 +317,22 @@ impl ManagementVisibilityTarget for crate::ListFactoryPhaseReadyQuery {
   const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::FactoryRun];
   fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
     <crate::ListFactoryRunsQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+
+impl ManagementVisibilityTarget for crate::ListIssueRevisionsQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+
+impl ManagementVisibilityTarget for crate::ListIssueStatusHistoryQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
   }
 }
 

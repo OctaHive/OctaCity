@@ -8,6 +8,9 @@ repository.workspace = true
 publish = false
 description = "Transport-independent CQRS application layer for OctaCity"
 
+[features]
+test-support = ["octacity-server-store/test-support"]
+
 [dependencies]
 async-trait.workspace = true
 base64.workspace = true

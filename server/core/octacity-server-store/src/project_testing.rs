@@ -61,6 +61,7 @@ impl InMemoryProjectStore {
 #[derive(Clone, Default)]
 pub(super) struct ProjectMemoryState {
   pub(super) projects: BTreeMap<ProjectId, Project>,
+  pub(super) issues: crate::issue_testing::IssueMemoryState,
   pub(super) workflows: crate::issue_workflow_testing::IssueWorkflowMemoryState,
   mutations: BTreeMap<(&'static str, ManagementIdempotencyKey), StoredMutation>,
   pub(super) active_references: BTreeSet<ProjectId>,
@@ -108,7 +109,7 @@ impl MutationEvidenceProbe for InMemoryProjectStore {
   async fn mutation_evidence_counts(&self) -> MutationEvidenceCounts {
     let state = self.lock().expect("in-memory Project store must remain available");
     MutationEvidenceCounts {
-      idempotency: state.mutations.len() + state.workflows.mutation_count(),
+      idempotency: state.mutations.len() + state.workflows.mutation_count() + state.issues.mutation_count(),
       audit: state.audit_facts.len(),
       outbox: state.outbox_entries.len(),
     }
@@ -454,7 +455,10 @@ fn record_outbox_entry(state: &mut ProjectMemoryState, scope: &'static str, key:
     .insert(crate::testing::management_evidence_identity(scope, key));
 }
 
-fn inject_failure(configured: Option<MutationFailurePoint>, current: MutationFailurePoint) -> Result<(), StoreError> {
+pub(super) fn inject_failure(
+  configured: Option<MutationFailurePoint>,
+  current: MutationFailurePoint,
+) -> Result<(), StoreError> {
   if configured == Some(current) {
     return Err(StoreError::Unavailable);
   }

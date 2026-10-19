@@ -17,7 +17,7 @@ impl IssueWorkflowMemoryState {
   pub(super) fn mutation_count(&self) -> usize {
     self.publications.len() + self.selections.len()
   }
-  fn default(&self, project: &Project) -> Result<IssueWorkflowDefault, StoreError> {
+  pub(super) fn default(&self, project: &Project) -> Result<IssueWorkflowDefault, StoreError> {
     match self.defaults.get(&project.id) {
       Some((version, id, workflow_version)) => Ok(IssueWorkflowDefault {
         version: *version,
@@ -29,7 +29,7 @@ impl IssueWorkflowMemoryState {
       }),
     }
   }
-  fn workflow(
+  pub(super) fn workflow(
     &self,
     project: &Project,
     id: IssueWorkflowId,
