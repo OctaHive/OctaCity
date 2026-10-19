@@ -2,6 +2,92 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ListIssueChildrenQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/children",
+    "listIssueChildren",
+    "Issues",
+    "List visible direct children without private planning bodies",
+    None,
+    "IssueSummaryPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<octacity_server_application::ListIssueChildrenQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::EditIssuePlanningCommand,
+    "PATCH",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/planning",
+    "editIssuePlanning",
+    "Issues",
+    "Replace planning under exact Issue and catalog preconditions",
+    Some("IssuePlanning"),
+    "IssueMutationResponse",
+    "200",
+    true,
+    true
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssuePropertiesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issue-property-definitions",
+    "getIssueProperties",
+    "Issues",
+    "Read current planning definitions",
+    None,
+    "PublishedIssueProperties",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssuePropertiesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issue-property-definitions/{property_version}",
+    "getIssuePropertiesVersion",
+    "Issues",
+    "Read an exact retained planning catalog",
+    None,
+    "PublishedIssueProperties",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::PublishIssuePropertiesCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issue-property-definitions",
+    "publishIssueProperties",
+    "Issues",
+    "Publish planning definitions under the required reviewed expected_version",
+    Some("PublishIssuePropertiesRequest"),
+    "IssuePropertiesMutationResponse",
+    "200",
+    true,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssuePropertyChoicesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issue-property-choices",
+    "getIssuePropertyChoices",
+    "Issues",
+    "Read authorized planning and organizational person choices",
+    None,
+    "IssuePropertyChoices",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::AdoptIssueWorkflowCommand,
     "POST",
     "/api/v1/projects/{project_id}/issues/{issue_id}/workflow-adoption",
@@ -126,7 +212,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "createIssue",
     "Issues",
     "Create a manual task",
-    Some("IssueContent"),
+    Some("CreateIssueRequest"),
     "IssueMutationResponse",
     "201",
     true,

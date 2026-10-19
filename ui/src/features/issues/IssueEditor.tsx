@@ -40,7 +40,10 @@ export function IssueEditor({
       ?.querySelector<HTMLElement>('input:not(:disabled), textarea:not(:disabled)')
       ?.focus();
   }, []);
-  const owned = policy?.source_owned.filter((field) => field !== 'status') ?? [];
+  const owned =
+    policy?.source_owned.filter((field): field is (typeof contentFields)[number] =>
+      contentFields.some((content) => content === field),
+    ) ?? [];
   const [draft, setDraft] = useState<IssueContent>(() =>
     issue
       ? structuredClone(issue.content)

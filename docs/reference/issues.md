@@ -346,3 +346,44 @@ values, assignment bodies or push effect. Planning edits preserve content,
 status, applicability and status history, and never create or change Work/Run.
 Exact replay returns the original receipt after later edits, directory changes
 or a pool restart.
+
+Task 2.11 exposes planning through the existing task service and generated REST
+client. All paths below use the `/api/v1` prefix:
+
+| Method | Path | Contract |
+| --- | --- | --- |
+| GET | `/projects/{project_id}/issue-property-choices` | Current definitions and bounded selectable people; explicit directory availability |
+| GET | `/projects/{project_id}/issue-property-definitions` | Current immutable catalog with a strong ETag |
+| GET | `/projects/{project_id}/issue-property-definitions/{property_version}` | Exact retained catalog, including the empty version zero |
+| POST | `/projects/{project_id}/issue-property-definitions` | Closed `{expected_version, definition}` publication with `Idempotency-Key` |
+| PATCH | `/projects/{project_id}/issues/{issue_id}/planning` | Closed `IssuePlanning` replacement with positive Issue `If-Match` and `Idempotency-Key` |
+| GET | `/projects/{project_id}/issues/{issue_id}/children` | Visible direct children with the existing bounded `after`/`limit` contract |
+
+Catalog publication reviews its exact version in the required body, including
+zero for the empty catalog. It does not use the positive-only Issue `If-Match`
+parser or an unconditional write. The application atomically checks that version,
+retains the immutable publication and returns original replay after later changes.
+Definition publication requires Project `Administer`; planning edits require
+Issue `Update`. Neither right implies the other. Current/exact catalog reads
+require visible Project scope. Parent choices reuse ordinary visible Project
+Issue discovery; there is no separate hierarchy, permission inheritance or
+provider lookup. Parent visibility is rechecked before mutation/replay, and child
+visibility is applied before pagination.
+
+Existing flat REST creation bodies remain valid and may additionally contain an
+optional closed `planning` snapshot. Dedicated current/revision responses include
+nonempty planning; safe summary and revision-header lists omit property bodies.
+Generic requirements editing remains content-only. Every property-bearing
+response and child read uses `Cache-Control: no-store`. OpenAPI publishes the
+closed scalar/choice grammar, supported counts and UTF-8 bounds. Incoming label
+arrays reject duplicates and excessive length before normalization to a set.
+Unknown fields, reserved setters, unsupported values and invalid dates fail
+without publication; changed stale/directory references retain conflict semantics.
+
+The server offers Unassigned when no person directory is installed and does not
+invent a person from the management principal. Existing assignments survive a
+directory outage. The requirements editor filters ownership to its own four
+content fields. Old
+retained revisions decode absent planning as empty. Empty planning stays omitted
+from revision JSON and creation intent, preserving the previous stored shape
+and creation fingerprint.

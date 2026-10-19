@@ -7,6 +7,7 @@ mod definition_discovery;
 mod execution;
 mod factory;
 mod integrations;
+mod issue_planning;
 mod issue_workflows;
 mod issues;
 mod log_search;

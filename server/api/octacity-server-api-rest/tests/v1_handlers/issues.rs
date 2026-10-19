@@ -15,11 +15,21 @@ async fn issue_router(policy: Arc<dyn ManagementAuthorizationPolicy>) -> axum::R
 async fn issue_router_with_store(
   policy: Arc<dyn ManagementAuthorizationPolicy>,
 ) -> (axum::Router, Arc<InMemoryProjectStore>) {
+  issue_router_with_directory(policy, None).await
+}
+async fn issue_router_with_directory(
+  policy: Arc<dyn ManagementAuthorizationPolicy>,
+  directory: Option<Arc<dyn octacity_server_application::IssueAssigneeDirectory>>,
+) -> (axum::Router, Arc<InMemoryProjectStore>) {
   let store = manual_issue_store(PROJECT.parse().unwrap()).await;
   let workflows = Arc::new(octacity_server_application::IssueWorkflowHandlers::new(store.clone()));
   let workflow_commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), workflows.clone()));
   let workflow_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), workflows));
-  let service = Arc::new(IssueHandlers::new(store.clone(), policy.clone()));
+  let mut service = IssueHandlers::new(store.clone(), policy.clone());
+  if let Some(directory) = directory {
+    service = service.with_assignee_directory(directory);
+  }
+  let service = Arc::new(service);
   let peer = Arc::new(RecordingApplication::default());
   let router = management_router_with_application(
     || true,
@@ -951,3 +961,6 @@ async fn issue_http_reason_limits_are_explicit_utf8_bytes_in_openapi_and_runtime
   assert_eq!(response.status(), StatusCode::OK);
   assert_eq!(document(response).await["transition"]["reason"], "я".repeat(64));
 }
+
+#[path = "issues/planning.rs"]
+mod planning;

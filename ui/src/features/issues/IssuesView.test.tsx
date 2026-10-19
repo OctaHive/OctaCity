@@ -898,3 +898,23 @@ it('requires reconciliation when field ownership changes without a new requireme
   await waitFor(() => expect(api.edit).toHaveBeenCalledTimes(1));
   expect(api.edit.mock.calls[0]![2].title).toBe(issue.content.title);
 });
+
+it('keeps planning ownership out of the requirements editor when the policy exposes new fields', async () => {
+  const { api } = setup('/projects/delivery/issues/' + issue.id);
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit requirements' }));
+  const choices = await api.transitions.mock.results[0]!.value;
+  api.transitions.mockResolvedValue({
+    ...choices,
+    field_policy: {
+      ...choices.field_policy,
+      source_owned: ['title', 'assignee', 'labels', 'properties', 'due_date', 'parent'],
+    },
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh task' }));
+  expect(await screen.findByText('Managed by source: Title')).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: 'Title' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('textbox', { name: 'Acceptance criteria' })).toHaveProperty(
+    'disabled',
+    false,
+  );
+});

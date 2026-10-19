@@ -35,3 +35,30 @@ pub struct AdoptIssueWorkflowRequest {
   /// Current reviewed ownership/mapping precondition; cannot install authority.
   pub expected_field_policy: octacity_server_application::IssueFieldPolicy,
 }
+
+/// Immutable Project planning publication; zero reviews the empty catalog.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishIssuePropertiesRequest {
+  /// Exact current catalog version reviewed by the caller, never an unconditional write.
+  pub expected_version: u64,
+  /// Closed bounded declarative definitions, validated by the shared policy.
+  pub definition: octacity_server_application::IssuePropertyDefinitionSet,
+}
+
+/// Backwards-compatible flat manual creation body with optional planning.
+#[derive(Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateIssueRequest {
+  /// Canonical task title, validated by the shared content policy.
+  pub title: String,
+  /// Plain-text requirements; empty drafts are valid.
+  pub description: String,
+  /// Optional incomplete acceptance text.
+  pub acceptance: Option<String>,
+  /// Optional bounded organizational priority.
+  pub priority: Option<u8>,
+  /// Optional closed planning snapshot; omission retains legacy creation replay.
+  #[serde(default)]
+  pub planning: octacity_server_application::IssuePlanning,
+}

@@ -238,6 +238,30 @@ pub fn management_authorization_operations() -> Vec<ManagementAuthorizationOpera
 
 fn registered_routes() -> ManagementRoutes {
   ManagementRoutes::new()
+    .get::<octacity_server_application::ListIssueChildrenQuery, _, _>(
+      "listIssueChildren",
+      super::issue::planning::children,
+    )
+    .patch::<octacity_server_application::EditIssuePlanningCommand, _, _>(
+      "editIssuePlanning",
+      super::issue::planning::edit,
+    )
+    .get::<octacity_server_application::GetIssuePropertiesQuery, _, _>(
+      "getIssueProperties",
+      super::issue::planning::current,
+    )
+    .get::<octacity_server_application::GetIssuePropertiesQuery, _, _>(
+      "getIssuePropertiesVersion",
+      super::issue::planning::version,
+    )
+    .post::<octacity_server_application::PublishIssuePropertiesCommand, _, _>(
+      "publishIssueProperties",
+      super::issue::planning::publish,
+    )
+    .get::<octacity_server_application::GetIssuePropertyChoicesQuery, _, _>(
+      "getIssuePropertyChoices",
+      super::issue::planning::choices,
+    )
     .post::<octacity_server_application::AdoptIssueWorkflowCommand, _, _>("adoptIssueWorkflow", super::issue::adopt)
     .get::<octacity_server_application::GetIssueTransitionsQuery, _, _>(
       "getIssueTransitions",

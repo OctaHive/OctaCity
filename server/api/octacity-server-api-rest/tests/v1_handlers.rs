@@ -230,6 +230,10 @@ impl ManagementQueryUseCase<GetOperationalMetadataQuery> for RecordingApplicatio
 }
 
 unavailable_query!(octacity_server_application::ListProjectIssuesQuery, "list_issues");
+unavailable_query!(
+  octacity_server_application::GetIssuePropertyChoicesQuery,
+  "get_issue_property_choices"
+);
 unavailable_query!(octacity_server_application::GetIssueQuery, "get_issue");
 unavailable_query!(
   octacity_server_application::ListIssueRevisionsQuery,
@@ -1022,6 +1026,12 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   let cache_session_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
   vec![
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-choices"),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-definitions"),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-definitions/0"),None),
+    json_request("POST",&format!("/api/v1/projects/{project_id}/issue-property-definitions"),"catalog",None,r#"{"expected_version":0,"definition":{"labels":[],"properties":[]}}"#),
+    json_request("PATCH",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/planning"),"planning",Some("\"1\""),r#"{"definition_version":0,"assignee":null,"labels":[],"due_date":null,"parent_id":null,"values":{}}"#),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/children?limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues?limit=1"),None),
     json_request("POST",&format!("/api/v1/projects/{project_id}/issues"),"draft",None,r#"{"title":"Draft","description":""}"#),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}"),None),
@@ -1434,6 +1444,12 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
   assert_eq!(
     *application.calls.lock().unwrap(),
     [
+      "get_issue_property_choices",
+      "get_issue_properties",
+      "get_issue_properties",
+      "publish_issue_properties",
+      "edit_issue_planning",
+      "list_issue_children",
       "list_issues",
       "create_issue",
       "get_issue",
@@ -1934,3 +1950,22 @@ async fn repository_publication_returns_the_authoritative_factory_input_digest()
     "7769e2da056209f6fd15391bd9d50a33be09c4236d01a789703778c55c922d53"
   );
 }
+
+unavailable_query!(
+  octacity_server_application::GetIssuePropertiesQuery,
+  "get_issue_properties"
+);
+unavailable_command!(
+  octacity_server_application::PublishIssuePropertiesCommand,
+  "publish_issue_properties"
+);
+
+unavailable_command!(
+  octacity_server_application::EditIssuePlanningCommand,
+  "edit_issue_planning"
+);
+
+unavailable_query!(
+  octacity_server_application::ListIssueChildrenQuery,
+  "list_issue_children"
+);

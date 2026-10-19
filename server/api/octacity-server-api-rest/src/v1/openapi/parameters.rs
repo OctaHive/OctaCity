@@ -6,6 +6,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
   let mut parameters = Vec::new();
   for name in [
     "project_id",
+    "property_version",
     "workflow_id",
     "issue_id",
     "pipeline_id",
@@ -33,7 +34,8 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         "name": name,
         "in": "path",
         "required": true,
-        "schema": if name == "version" { positive_integer() }
+        "schema": if name == "property_version" { non_negative_integer() }
+          else if name == "version" { positive_integer() }
           else if matches!(name, "workflow_id" | "issue_id") { json!({"type":"string","format":"uuid"}) }
           else { non_empty_string() }
       }));

@@ -19,6 +19,7 @@ pub fn concrete_path(path: &str) -> String {
     .replace("{artifact_id}", "cccccccc-cccc-4ccc-8ccc-cccccccccccc")
     .replace("{pool_id}", "66666666-6666-4666-8666-666666666666")
     .replace("{integration_id}", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+    .replace("{property_version}", "0")
     .replace("{version}", "1")
 }
 

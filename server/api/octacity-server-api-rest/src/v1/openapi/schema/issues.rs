@@ -20,7 +20,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["id", "version"],
     ),
   );
-  let fields = || json!({"type":"array","maxItems":5,"uniqueItems":true,"items":string_enum(&["title","description","acceptance","priority","status"])});
+  let fields = || json!({"type":"array","maxItems":10,"uniqueItems":true,"items":string_enum(&["title","description","acceptance","priority","status","assignee","labels","due_date","properties","parent"])});
   schemas.insert(
     "IssuePushPolicy".into(),
     object(

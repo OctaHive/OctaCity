@@ -9,6 +9,30 @@ use octacity_server_application::{
 
 /// Task services can be installed without Factory, providers or execution configuration.
 pub struct IssueManagementApplication {
+  children: Arc<
+    dyn AuthorizedManagementQueryHandler<octacity_server_application::ListIssueChildrenQuery, Error = ApplicationError>,
+  >,
+  edit_planning: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::EditIssuePlanningCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  definitions: Arc<
+    dyn AuthorizedManagementQueryHandler<octacity_server_application::GetIssuePropertiesQuery, Error = ApplicationError>,
+  >,
+  publish_properties: Arc<
+    dyn AuthorizedManagementCommandHandler<
+        octacity_server_application::PublishIssuePropertiesCommand,
+        Error = ApplicationError,
+      >,
+  >,
+  choices: Arc<
+    dyn AuthorizedManagementQueryHandler<
+        octacity_server_application::GetIssuePropertyChoicesQuery,
+        Error = ApplicationError,
+      >,
+  >,
   adopt: Arc<dyn AuthorizedManagementCommandHandler<AdoptIssueWorkflowCommand, Error = ApplicationError>>,
   transition: Arc<dyn AuthorizedManagementCommandHandler<TransitionIssueCommand, Error = ApplicationError>>,
   transitions: Arc<dyn AuthorizedManagementQueryHandler<GetIssueTransitionsQuery, Error = ApplicationError>>,
@@ -23,12 +47,23 @@ impl IssueManagementApplication {
   /// Composes already authorized task use cases.
   pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    C: AuthorizedManagementCommandHandler<CreateIssueCommand, Error = ApplicationError>
+    C: AuthorizedManagementCommandHandler<
+        octacity_server_application::PublishIssuePropertiesCommand,
+        Error = ApplicationError,
+      > + AuthorizedManagementCommandHandler<
+        octacity_server_application::EditIssuePlanningCommand,
+        Error = ApplicationError,
+      > + AuthorizedManagementCommandHandler<CreateIssueCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<EditIssueCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<TransitionIssueCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<AdoptIssueWorkflowCommand, Error = ApplicationError>
       + 'static,
-    Q: AuthorizedManagementQueryHandler<GetIssueQuery, Error = ApplicationError>
+    Q: AuthorizedManagementQueryHandler<
+        octacity_server_application::GetIssuePropertyChoicesQuery,
+        Error = ApplicationError,
+      > + AuthorizedManagementQueryHandler<octacity_server_application::GetIssuePropertiesQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<octacity_server_application::ListIssueChildrenQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<GetIssueQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ListProjectIssuesQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ListIssueRevisionsQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<GetIssueTransitionsQuery, Error = ApplicationError>
@@ -36,6 +71,11 @@ impl IssueManagementApplication {
       + 'static,
   {
     Self {
+      children: queries.clone(),
+      edit_planning: commands.clone(),
+      definitions: queries.clone(),
+      publish_properties: commands.clone(),
+      choices: queries.clone(),
       create: commands.clone(),
       edit: commands.clone(),
       transition: commands.clone(),
@@ -62,12 +102,14 @@ fn endpoints<'a>(app: &'a ManagementApplication, id: &RequestId) -> Result<&'a I
     .ok_or_else(|| application_error(ApplicationFailure::Unavailable, id))
 }
 fn representation(issue: &IssueRevision, id: &RequestId) -> Result<Value, ApiError> {
-  Ok(
-    json!({"id":issue.id.to_string(),"project_id":issue.project_id.to_string(),"number":issue.number,
+  let mut value = json!({"id":issue.id.to_string(),"project_id":issue.project_id.to_string(),"number":issue.number,
     "display_key":issue.display_key(),"version":issue.version.get(),"applicability_version":issue.applicability_version.get(),
     "content":encode(&issue.content,id)?,"workflow_id":issue.workflow_id.to_string(),"workflow_version":issue.workflow_version.get(),
-    "status_id":issue.status_id.to_string(),"created_at_unix_ms":issue.created_at.unix_millis(),"updated_at_unix_ms":issue.updated_at.unix_millis()}),
-  )
+    "status_id":issue.status_id.to_string(),"created_at_unix_ms":issue.created_at.unix_millis(),"updated_at_unix_ms":issue.updated_at.unix_millis()});
+  if !issue.planning.is_empty() {
+    value["planning"] = encode(&issue.planning, id)?;
+  }
+  Ok(value)
 }
 fn response(value: Value, version: u64, status: StatusCode) -> axum::response::Response {
   (
@@ -82,17 +124,22 @@ pub(super) async fn create(
   Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
   Path(project): Path<String>,
   headers: HeaderMap,
-  payload: Result<Json<IssueContent>, JsonRejection>,
+  payload: Result<Json<crate::v1::CreateIssueRequest>, JsonRejection>,
 ) -> Result<axum::response::Response, ApiError> {
   let key = idempotency_key(&headers, &id)?;
-  let content = body(payload, &id)?;
+  let request = body(payload, &id)?;
   let command = CreateIssueCommand {
     intent: CreateIssueIntent {
-      planning: Default::default(),
+      planning: request.planning,
       project_id: project
         .parse()
         .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?,
-      content,
+      content: IssueContent {
+        title: request.title,
+        description: request.description,
+        acceptance: request.acceptance,
+        priority: request.priority,
+      },
     },
     idempotency_key: key
       .as_str()
@@ -229,13 +276,7 @@ pub(super) async fn list(
     .handle_authorized_query(&context, query)
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;
-  Ok(
-    (
-      [("cache-control", "no-store")],
-      Json(json!({"items":encode(page.items,&id)?,"next_cursor":page.next_cursor.map(|i|i.to_string())})),
-    )
-      .into_response(),
-  )
+  issue_page(page, &id)
 }
 
 #[derive(Deserialize)]
@@ -403,4 +444,20 @@ pub(super) async fn adopt(
     outcome.issue.version.get(),
     StatusCode::OK,
   ))
+}
+
+#[path = "issue/planning.rs"]
+pub(super) mod planning;
+
+fn issue_page(
+  page: octacity_server_application::IssuePage,
+  id: &RequestId,
+) -> Result<axum::response::Response, ApiError> {
+  Ok(
+    (
+      [("cache-control", "no-store")],
+      Json(json!({"items":encode(page.items,id)?,"next_cursor":page.next_cursor.map(|i|i.to_string())})),
+    )
+      .into_response(),
+  )
 }
