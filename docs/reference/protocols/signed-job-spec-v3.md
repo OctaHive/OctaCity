@@ -427,7 +427,7 @@ proposal identity, so server-side Decision Signal deduplication still applies.
 Unsupported versions, operations and unknown fields are rejected. The existing
 status-byte/length response returns an empty body for authorization success.
 
-Octa 0.5.1 supplies the pinned synchronous Codex `PreToolUse` integration and
+Octa 0.6.0 supplies the pinned synchronous Codex `PreToolUse` integration and
 requires a protected native helper. OctaCity composes the bounded parser,
 deny/allow output encoder, redacted broker request, local permission checks,
 fenced request/receipt response binding, and final unchanged-action gate with a

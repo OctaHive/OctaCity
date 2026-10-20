@@ -117,8 +117,8 @@ Octa уже предоставляет task DAG, headless `octa-runner`, version
 process plugins, JSON Schema, structured outputs, progress, cancellation,
 artifacts, reports и digest-pinned `Octa.lock`.
 
-В закреплённом Octa release `v0.5.1` с source revision
-`e0a3c65fe010220c5a8162c52368b7c8f624ddb5` реализован и упакован официальный
+В закреплённом Octa release `v0.6.0` с source revision
+`3996594d5ff724d7b43888ac7db6df0b647e7d65` реализован и упакован официальный
 `octa_plugin_codex`. Он запускает Codex CLI
 как обычный Octa task, использует строгую schema, проверяет совместимую версию
 CLI (сейчас exact `0.161.0`) и явно выбранный absolute executable, передаёт
@@ -141,7 +141,7 @@ opt-in `codex` task к обычным Pipelines; он не включает Dark
 | Build execution substrate | Реализовано | Exact revision, immutable configuration snapshots, signed JobSpec, placement, fenced lifecycle и generic result publication работают end-to-end |
 | Isolation и resource policy | Реализовано для квалифицированных backends | v2 target фиксирует mode, platform и required guarantees; containerd, Microsandbox, Apple VF и Native имеют отдельные contracts без fallback на более слабый mode |
 | Network, secret и identity restrictions | Реализован Factory foundation | JobSpec v3, permission intersection, placement, Agent/backend enforcement, protected tool-action gate и fenced Codex authorization broker имеют positive/negative contracts; полная generic-flow qualification остаётся частью released pilot |
-| Codex execution в Octa | Реализовано и закреплено | Официальный `codex` plugin, blocking `PreToolUse` hook, Agent broker, fixtures, conformance и release metadata поставляются в pinned Octa `v0.5.1` |
+| Codex execution в Octa | Реализовано и закреплено | Официальный `codex` plugin, blocking `PreToolUse` hook, Agent broker, fixtures, conformance и release metadata поставляются в pinned Octa `v0.6.0` |
 | Source intake | Реализован manual foundation | Provider-neutral Work Envelope, manual admission, exact replay, PostgreSQL authority и Project/configuration visibility реализованы; REST и внешние polling/webhook Work Source adapters ещё впереди |
 | Factory Controller | Реализован fixed-stage core и persistence foundation | Factory Run, Stage Attempts, budgets, WIP, fenced reconciliation, operator retry authorization, ordinary-Build links и terminal provenance работают в pure core, in-memory и PostgreSQL paths; переход к immutable nested Flow Definitions ещё не выполнен |
 | ChangeSet capture | Реализованы capture, acceptance и exact rematerialization | Agent создаёт hook-free commit/bundle/manifest, server принимает только verified generic outputs, а поздние Builds воспроизводят candidate от исходного base без внешней ветки; crash/retry completion ещё не завершён |
@@ -1123,7 +1123,7 @@ target добавляет Delivery Adapter. Factory Controller не изменя
 | Квалифицированные isolation backends и запрет слабого fallback | Готово; pilot выбирает один поддерживаемый deployment profile |
 | Generic Artifact/report/result contracts | Готово |
 | Codex plugin conformance и release packaging в Octa | Готово upstream |
-| OctaCity release, закрепляющий Octa с Codex plugin | Готово: Octa `v0.5.1`, revision `e0a3c65fe010220c5a8162c52368b7c8f624ddb5` |
+| OctaCity release, закрепляющий Octa с Codex plugin | Готово: Octa `v0.6.0`, revision `3996594d5ff724d7b43888ac7db6df0b647e7d65` |
 | Factory Work/Task/ChangeSet/Assessment contracts и durable storage | Core contracts и in-memory history готовы; PostgreSQL и Task/Context schemas не готовы |
 | Decision Signal provider seam и JEV adapter | Foundation готов и fail-closed; runtime composition/persistence и shadow calibration не готовы |
 | Factory Permission Set и malicious-repository negative contracts | Частично; требуется закрыть gap из 14.1 |
@@ -1159,7 +1159,7 @@ adapter для GitHub/GitLab и Claude не являются условием м
 Завершены CI/CD Build/Attempt/Job lifecycle, PostgreSQL-backed orchestration,
 Agents/Pools, signed JobSpec, isolation backends, artifacts/cache/secrets,
 management REST, Operator Console и release/local-stand contracts. Официальный
-Codex task/plugin входит в закреплённый Octa `v0.5.1`, а OctaCity проверяет его
+Codex task/plugin входит в закреплённый Octa `v0.6.0`, а OctaCity проверяет его
 release metadata, plugin lock, blocking-hook capability и совместимость CLI.
 
 ### Phase A: factory contracts — частично выполнено

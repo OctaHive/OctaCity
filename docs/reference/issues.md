@@ -519,6 +519,8 @@ and persistence ports; an Issue ID or display key never substitutes for it.
 | POST   | `/{issue_id}/workflow-adoption`   | Explicitly adopt a reviewed retained policy/status correspondence  |
 | POST   | `/{issue_id}/comments`            | Append operator text with a metadata-only scoped replay receipt     |
 | GET    | `/{issue_id}/comments/{comment_id}` | Independently authorized no-store read of one exact comment body |
+| GET    | `/{issue_id}/timeline` | Bounded safe references with original local membership and independent Source coverage |
+| GET    | `/{issue_id}/results` | Exact Work/collection read with a Run version fence and explicit coverage |
 
 Creation accepts title and description, with optional acceptance and priority;
 empty requirements remain a valid draft. No repository, integration, Factory
@@ -1148,9 +1150,9 @@ Candidate, evidence, plan, assessment and Decision subjects retain their origina
 Flow/cycle/node/input identities. Empty evidence or Decision pages do not mean
 success, and indeterminate outcomes stay indeterminate. Original Work references
 and separate completion/stop collections remain available without aggregating
-inputs, protected outputs or transcripts. Merged timeline/result observation
-and HTTP contracts remain task 6.4; subject-bound detailed Checks/Artifacts
-expansion remains task 6.14.
+inputs, protected outputs or transcripts. The card pagination contracts below
+add a Run version fence over this existing reader; subject-bound detailed
+Checks/Artifacts expansion remains task 6.14.
 
 Optional `IssueExecutionJobHandlers` expands one Job only after verifying its
 exact retained Build-execution record under the selected Work and independently
@@ -1237,7 +1239,155 @@ lifetime hard caps, replay and independent permission mappings; the generated
 client includes these operations. A stricter trusted application composition can
 lower the hard caps; request documents cannot configure them.
 
-Merged timeline/HTTP metadata pagination remains task 6.4; Console discussion
-remains task 6.5 and retention/holds remain task 8.2. Evidence is recorded in
+Timeline metadata pagination uses the independent observation contract below.
+Console discussion uses the card contracts below; retention/holds remain task 8.2. Evidence is recorded in
 [task 6.2 verification](../../openspec/changes/add-factory-work-card/verification-6.2.md)
 and [task 6.3 verification](../../openspec/changes/add-factory-work-card/verification-6.3.md).
+
+
+## Bounded activity and result observations
+
+`GET .../issues/{issue_id}/timeline` uses `ListIssueTimelineQuery` and the narrow
+`IssueTimelineStore`. It merges retained revision headers, explicit status facts,
+original execution-request references, operator comment metadata and scoped
+Source read-receipt references. Rows exclude requirements/comment bodies, status
+reasons, provider payloads, native credentials, logs and technical Run detail.
+Dedicated content and execution readers retain their own permissions. Manual
+Issues need no Factory, input publication or installed provider to use this read.
+
+The default limit is 50, with a maximum of 200. Optional `kinds` is a comma-separated
+set of `revision,status,execution,discussion,source`; omission selects all kinds.
+Ordering is original timestamp, source kind in that order, then canonical stable
+identity lexically within the source. Continuation is exclusive. The initial
+observation binds the Issue revision, committed execution-request membership,
+lifetime discussion sequence and a scoped Source fingerprint. New edits, requests
+and comments cannot enter an existing traversal, even if their timestamps sort
+before its current position. `current_version` reports the independently current
+Issue head; it does not rewrite original requirements or facts.
+
+The Source fingerprint binds native-link correlation, append-only retained
+observation membership, pull generation and mapping version. A changed fingerprint
+omits only the Source section and marks `source_stale`; other frozen local
+sections remain readable. PostgreSQL uses a read-only repeatable-read transaction
+and an optional-section savepoint. Source storage failure marks
+`source_unavailable` without discarding local metadata. If Source was unavailable
+at the first page (`boundary.source = null`), it stays unavailable for that
+traversal; a fresh traversal can capture recovered Source data. Receipt
+`expires_at` is the original provenance proof deadline, not a promise that body
+content remains retained or that provider data is current.
+
+`GET .../issues/{issue_id}/results?work_id=...&collection=...` uses
+`ListIssueResultsQuery` over the existing authorized Factory diagnostic reader.
+`work_id` is an exact retained Issue association, and `collection` is one existing
+Factory diagnostic collection. Its default limit is 50, maximum 100. This read
+requires current Issue visibility and independent Factory/Project authorization;
+no provider is contacted. Nullable legacy requirements provenance stays absent.
+The original local boundary and selected Work/Run/collection remain fixed, while
+current Issue version and Source freshness are reported separately.
+
+The `issue-result-run-version-v1` continuation carries the original Run version.
+The reader checks that version before and after the common record read. A changed
+Run returns `coverage: stale`, no records and no continuation, requiring a fresh
+traversal. A retained association whose technical content is missing, hidden or
+unavailable returns `coverage: unavailable`, no records and no continuation.
+Readable bounded collections use `coverage: partial`, including an empty or final
+page. None of these observations establishes complete verification, successful
+checks or acceptance; original candidate/evidence/Decision subjects keep their
+own authority. Detailed journal and Checks/Artifacts expansion remain their
+separate tasks.
+
+Both routes use closed query grammar, no-store responses and the shared canonical
+opaque cursor codec (maximum 2,048 bytes). Cursors bind Project, Issue, current
+security partition, normalized visibility, filters/selected execution and original
+observation. Current visibility is checked before lookup, ordering or pagination;
+a hidden Issue returns not-found. Invalid, noncanonical, foreign-scope or future
+membership cursors are rejected. Each section is independently observed; these
+contracts claim no atomic snapshot across external systems and perform no writes.
+OpenAPI supplies the bounded schemas and generated Console reads. See
+[task 6.4 verification](../../openspec/changes/add-factory-work-card/verification-6.4.md).
+
+
+## Console Activity, Runs and Results
+
+Overview includes a bounded Activity preview. Activity renders server-ordered safe
+references with original timestamps, explicit Source/revision observation coverage,
+and independently expanded plain-text comments. Root replies are identified and
+only retained root comments offer Reply. Comment bodies are loaded through their
+dedicated authorized endpoint with browser `cache: no-store`; their query data is
+discarded when expansion unmounts. Neither comment text nor mentions can start
+execution, approve results or answer a gate.
+
+The operator discussion form uses the generated UTF-8 byte ceiling and the shared
+`ConfirmedCommand` lifecycle. Review freezes the original body, optional parent and
+idempotency key. Transport retry repeats that exact command; definitive rejection
+requires another explicit review. Confirmation feedback contains no comment body.
+Drafts, confirmed values and keys stay in component memory, leave no browser storage
+or URL entry, and are discarded when leaving/reloading. Only successful append
+clears the submitted draft. Discussion does not require a configured provider or
+Factory target.
+
+Runs and Results share the exact URL-selected `execution` request. Pending input
+preparation remains distinct from admission and technical Run state. Selected Runs
+reuse the existing authorized summary and expose only reported model/tool profile
+references; missing profiles/Jobs remain Not reported. Declared clarification
+responses open the exact advanced Run controls and retain their ordinary typed
+contracts, Run preconditions and replay. There is no comment-to-gate translation.
+
+Original Build/Attempt/Job links preserve `attempt_id`, `job_id` and Job log scope.
+The existing Build view reads that exact retained Attempt, verifies its identity and
+owning Build, and cannot substitute the latest retry or another Job when the target
+is unavailable. Historical Attempt labels explain that Build controls still target
+the current Build. Existing unselected Build URLs retain their current-Attempt
+behavior.
+
+Results uses the bounded Issue result contract and common safe Factory record
+renderer for changesets, evidence, review plans, assessments, Decisions, delivery
+and promotion. `result_collection`, `result_id` and optional `result_after` preserve
+metadata-only historical navigation across sections and reload.
+Selecting another execution clears the previous execution's `result_after` and
+`result_id`; reselecting the same execution preserves both. Empty/final pages
+retain Partial coverage; Stale/Unavailable remain explicit. Failed refresh retains
+loaded data with stale feedback; failed continuations offer a fresh first page.
+No partial collection or successful Build becomes overall Issue acceptance.
+
+The shared read-only renderer, Run summary and styles live outside feature internals;
+Issues and Factory reuse them without an import-policy exception or another
+execution owner. Sections use explicit bounded reads and no new background poller.
+English/Russian component/browser checks cover confirmation focus, plain text,
+frozen lost-response replay, discarded drafts, historical selection and narrow
+layouts. Detailed qualified event journals, PR/MR/CI and artifact expansion remain
+their separately scheduled tasks. See [task 6.5 verification](../../openspec/changes/add-factory-work-card/verification-6.5.md).
+
+## Qualified execution observations
+
+OctaCity pins [Octa v0.6.0](https://github.com/OctaHive/octa/releases/tag/v0.6.0)
+at source revision `3996594d5ff724d7b43888ac7db6df0b647e7d65`, including the
+`public-command-file-observations.v1` capability alongside blocking tool authorization.
+Task 6.6 qualifies the Codex process adapter's public command/file observations
+through the existing runner event channel. The optional `progress.observation`
+contract is owned by Octa's shared runner protocol and is provider-neutral.
+OctaCity validates it before accepting Agent events and exposes only the typed
+allowlisted metadata through `RunnerEventPayload::public_operation_observation`.
+Other payload fields, prose, token claims, private invocation content and output
+cannot enter that projection. Unsupported categories are absent/Not reported;
+a reported start cannot claim completion or an exit status.
+
+The existing fenced Job/attempt append preserves the original event sequence,
+runner sequence/timestamp, Agent observation time and adapter operation time,
+including replay after a lost acknowledgement. Existing run/step/command
+references and exact Build/Attempt/Job log targets remain the navigation boundary;
+metadata alone creates no log chunk or new content authority. No provider link,
+new journal, migration, executor or Agent protocol version is required.
+
+Reported input/cached-input/output tokens remain in the existing result/provenance
+usage contract. Empty counters stay unknown; model token caching is separate from
+Octa task-result cache events, and budget reservation is not measured usage.
+Operation outcomes and model summaries grant no verification or acceptance
+power. Command arguments, environment, prompts, transcripts, file bodies/diffs
+and protected outputs are excluded from public operation metadata. The qualified
+fixture runs the real plugin and runner around a controlled Codex CLI process;
+it is not a live-provider qualification. Detailed Issue journal HTTP reads and
+Console rendering remain tasks 6.7 and 6.8.
+
+See [task 6.6 verification](../../openspec/changes/add-factory-work-card/verification-6.6.md)
+for the process fixtures, Red/Green outcomes and regression commands.

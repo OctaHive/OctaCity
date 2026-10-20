@@ -7,7 +7,7 @@ Flow Definitions. It compares three domains without claiming that they should
 share an implementation:
 
 - the Octa task DAG at revision
-  `e0a3c65fe010220c5a8162c52368b7c8f624ddb5`;
+  `3996594d5ff724d7b43888ac7db6df0b647e7d65`;
 - the existing OctaCity persisted Job DAG;
 - the target immutable Factory Flow Definition.
 
