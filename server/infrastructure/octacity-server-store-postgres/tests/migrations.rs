@@ -14,6 +14,52 @@ use sqlx::{
 };
 use support::TestDatabase;
 
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn completed_issue_publication_recovery_does_not_read_history_on_readiness_or_claim() {
+  let database = TestDatabase::migrated().await;
+  let reader = sqlx::postgres::PgPoolOptions::new()
+    .max_connections(1)
+    .connect_with((*database.pool.connect_options()).clone())
+    .await
+    .unwrap();
+  sqlx::query("SET statement_timeout='500ms'")
+    .execute(&reader)
+    .await
+    .unwrap();
+  let mut history = database.pool.begin().await.unwrap();
+  // An unavailable historical-publication dependency cannot affect the completed
+  // migration or the ordinary claim port. No wall-clock performance assertion.
+  sqlx::query("LOCK TABLE outbox_entries IN ACCESS EXCLUSIVE MODE")
+    .execute(&mut *history)
+    .await
+    .unwrap();
+  assert_eq!(
+    octacity_server_store_postgres::migration_status(&reader).await.unwrap(),
+    MigrationStatus::Current,
+    "completed recovery must not rescan historical publications"
+  );
+  use octacity_server_store::{ClaimFactoryOutbox, FactoryRunStore};
+  let claim = ClaimFactoryOutbox::new(
+    octacity_server_factory::FactoryKey::new("issue-reporter").unwrap(),
+    octacity_server_domain::Timestamp::from_unix_millis(1).unwrap(),
+    octacity_server_domain::Timestamp::from_unix_millis(10).unwrap(),
+    1,
+  )
+  .unwrap()
+  .only_kind(octacity_server_factory::FactoryKey::new("issue.status.projection").unwrap());
+  assert!(
+    octacity_server_store_postgres::PostgresStore::new(reader.clone())
+      .claim_factory_outbox(claim)
+      .await
+      .unwrap()
+      .is_empty()
+  );
+  history.rollback().await.unwrap();
+  reader.close().await;
+  database.cleanup().await;
+}
+
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
@@ -69,7 +115,7 @@ const INTEGRATION_TABLES: [&str; 7] = [
   "integration_project_access",
   "integration_project_access_versions",
 ];
-const COLLABORATION_TABLES: [&str; 15] = [
+const COLLABORATION_TABLES: [&str; 16] = [
   "issue_numbers",
   "issues",
   "issue_revisions",
@@ -82,6 +128,7 @@ const COLLABORATION_TABLES: [&str; 15] = [
   "issue_source_refresh",
   "issue_source_reads",
   "issue_source_mappings",
+  "issue_reporter_recovery",
   "project_text_preparations",
   "project_text_input_objects",
   "project_text_documents",

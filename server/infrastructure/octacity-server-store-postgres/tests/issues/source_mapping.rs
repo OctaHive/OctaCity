@@ -514,8 +514,27 @@ async fn source_push_freezes_original_desired_effects_in_the_existing_mutation_o
   );
   let original = &claimed[0].record;
   assert_eq!(original.subject.run_id(), None);
-  let retained = restarted.issue_push_projection(original.operation_id).await.unwrap();
+  // Observe database I/O through the public read port, rather than copying its SQL
+  // into an EXPLAIN test. Disabling sequential plans checks index eligibility
+  // independently of the small fixture's planner cost estimates.
+  let reader = sqlx::postgres::PgPoolOptions::new()
+    .max_connections(1)
+    .connect_with((*database.pool.connect_options()).clone())
+    .await
+    .unwrap();
+  sqlx::query("SET enable_seqscan=off").execute(&reader).await.unwrap();
+  let scans_before = publication_scans(&reader).await;
+  let retained = PostgresStore::new(reader.clone())
+    .issue_push_projection(original.operation_id)
+    .await
+    .unwrap();
   assert_eq!(serde_json::to_value(&retained.intent).unwrap(), *push);
+  assert_eq!(
+    publication_scans(&reader).await,
+    scans_before,
+    "reading one original intent must have an indexed path through the shared publication history"
+  );
+  reader.close().await;
   let mut coordination = SourceProjectionRequest {
     project_id: project.id,
     work_id: None,
@@ -588,4 +607,19 @@ async fn source_push_freezes_original_desired_effects_in_the_existing_mutation_o
     SourceProjectionState::Released
   );
   database.cleanup().await;
+}
+
+async fn publication_scans(pool: &sqlx::PgPool) -> i64 {
+  sqlx::query("SELECT pg_stat_force_next_flush()")
+    .execute(pool)
+    .await
+    .unwrap();
+  sqlx::query("SELECT pg_stat_clear_snapshot()")
+    .execute(pool)
+    .await
+    .unwrap();
+  sqlx::query_scalar("SELECT seq_scan FROM pg_stat_all_tables WHERE relid='outbox_entries'::regclass")
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }

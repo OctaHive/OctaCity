@@ -378,10 +378,7 @@ async fn issue_reporter_upgrade_recovers_only_original_desired_material_once() {
     .execute(&database.pool)
     .await
     .unwrap();
-  // Simulate restart after SQL migration committed but before the recoverable data phase.
-  octacity_server_store_postgres::run_migrator(&database.pool, &octacity_server_store_postgres::MIGRATOR)
-    .await
-    .unwrap();
+  restart_before_publication_recovery(&database.pool).await;
   assert_eq!(
     octacity_server_store_postgres::migration_status(&database.pool)
       .await
@@ -831,6 +828,7 @@ async fn issue_reporter_recovery_cannot_order_an_old_revision_after_a_newer_acce
     .execute(&database.pool)
     .await
     .unwrap();
+  restart_before_publication_recovery(&database.pool).await;
   assert!(
     matches!(
       store
@@ -880,4 +878,19 @@ async fn issue_reporter_recovery_cannot_order_an_old_revision_after_a_newer_acce
   ));
   assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), newest);
   database.cleanup().await;
+}
+
+// Simulate restart after SQL commit, with the one-time data phase still pending.
+async fn restart_before_publication_recovery(pool: &sqlx::PgPool) {
+  sqlx::query("DROP TABLE issue_reporter_recovery")
+    .execute(pool)
+    .await
+    .unwrap();
+  sqlx::query("DELETE FROM _sqlx_migrations WHERE version=86")
+    .execute(pool)
+    .await
+    .unwrap();
+  octacity_server_store_postgres::run_migrator(pool, &octacity_server_store_postgres::MIGRATOR)
+    .await
+    .unwrap();
 }

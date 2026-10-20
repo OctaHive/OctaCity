@@ -15,9 +15,17 @@ pub(crate) async fn read(
     return Err(source_conflict());
   };
   let rows: Vec<(Json<serde_json::Value>, i64)> = sqlx::query_as(
-    "SELECT payload, FLOOR(EXTRACT(EPOCH FROM created_at)*1000)::BIGINT FROM outbox_entries WHERE aggregate_identity=$1 AND payload->'push_intent'->>'version'=$2 AND payload->'push_intent'->>'project_id'=$3 LIMIT 2"
-  ).bind(subject.issue_id.to_string()).bind(subject.version.get().to_string()).bind(subject.project_id.to_string())
-    .fetch_all(&mut **tx).await.map_err(unavailable)?;
+    "SELECT payload, FLOOR(EXTRACT(EPOCH FROM created_at)*1000)::BIGINT FROM outbox_entries \
+     WHERE aggregate_identity=$1 AND (payload->'push_intent'->>'version')::bigint=$2 \
+       AND payload->'push_intent'->>'project_id'=$3 \
+       AND payload->'push_intent'->'desired' IS NOT NULL AND payload->'push_intent'->'desired'<>'null'::jsonb LIMIT 2",
+  )
+  .bind(subject.issue_id.to_string())
+  .bind(subject.version.get() as i64)
+  .bind(subject.project_id.to_string())
+  .fetch_all(&mut **tx)
+  .await
+  .map_err(unavailable)?;
   if rows.len() != 1 {
     return Err(source_conflict());
   }
@@ -48,22 +56,20 @@ impl IssueSourceProjectionStore for PostgresStore {
   }
 }
 
-const PENDING_PUBLICATIONS: &str = "SELECT entry.payload->'push_intent', FLOOR(EXTRACT(EPOCH FROM entry.created_at)*1000)::BIGINT FROM outbox_entries entry \
+const PENDING_PUBLICATIONS: &str = "SELECT entry.payload->'push_intent', FLOOR(EXTRACT(EPOCH FROM entry.created_at)*1000)::BIGINT, \
+   entry.aggregate_identity,(entry.payload->'push_intent'->>'version')::bigint,entry.id FROM outbox_entries entry \
    WHERE entry.payload->'push_intent'->'desired' IS NOT NULL AND entry.payload->'push_intent'->'desired'<>'null'::jsonb \
+   AND (entry.aggregate_identity,(entry.payload->'push_intent'->>'version')::bigint,entry.id)>($2,$3,$4) \
    AND NOT EXISTS(SELECT 1 FROM factory_outbox_records effect WHERE effect.issue IS NOT NULL AND effect.issue->>'project_id'=entry.payload->'push_intent'->>'project_id' \
      AND effect.issue->>'issue_id'=entry.aggregate_identity AND effect.issue->>'version'=entry.payload->'push_intent'->>'version') \
    ORDER BY entry.aggregate_identity,(entry.payload->'push_intent'->>'version')::bigint,entry.id LIMIT $1";
 
-// Readiness checks the same bounded selector, so a crash after SQL migration
-// cannot hide an unfinished recoverable publication phase behind a Current schema.
+// The one-time recovery marker keeps historical scans out of readiness and claims.
+// A missing marker is an error, never evidence that recovery is complete.
 pub(crate) async fn has_pending_publications(pool: &sqlx::PgPool) -> Result<bool, sqlx::Error> {
-  Ok(
-    sqlx::query(PENDING_PUBLICATIONS)
-      .bind(1_i64)
-      .fetch_optional(pool)
-      .await?
-      .is_some(),
-  )
+  sqlx::query_scalar("SELECT NOT completed FROM issue_reporter_recovery WHERE singleton")
+    .fetch_one(pool)
+    .await
 }
 
 // Resume publication of already frozen 5.1 inputs after schema upgrade. Each batch
@@ -71,15 +77,36 @@ pub(crate) async fn has_pending_publications(pool: &sqlx::PgPool) -> Result<bool
 pub(crate) async fn recover_publications(pool: &sqlx::PgPool) -> Result<(), StoreError> {
   loop {
     let mut tx = pool.begin().await.map_err(unavailable)?;
-    let rows: Vec<(Json<serde_json::Value>, i64)> = sqlx::query_as(PENDING_PUBLICATIONS)
+    // Serialize migration replicas and commit the cursor with its original effects.
+    let (completed, aggregate, version, id): (bool, String, i64, uuid::Uuid) = sqlx::query_as(
+      "SELECT completed,last_aggregate,last_version,last_id FROM issue_reporter_recovery WHERE singleton FOR UPDATE",
+    )
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    if completed {
+      return Ok(());
+    }
+    let rows: Vec<(Json<serde_json::Value>, i64, String, i64, uuid::Uuid)> = sqlx::query_as(PENDING_PUBLICATIONS)
       .bind(i64::from(MAX_FACTORY_OUTBOX_BATCH_SIZE))
+      .bind(aggregate)
+      .bind(version)
+      .bind(id)
       .fetch_all(&mut *tx)
       .await
       .map_err(unavailable)?;
     if rows.is_empty() {
+      sqlx::query("UPDATE issue_reporter_recovery SET completed=TRUE WHERE singleton")
+        .execute(&mut *tx)
+        .await
+        .map_err(unavailable)?;
+      tx.commit().await.map_err(unavailable)?;
       return Ok(());
     }
-    for (Json(value), at) in rows {
+    // The cursor follows inspected input, including an already-published concurrent row.
+    let (_, _, aggregate, version, id) = rows.last().ok_or(StoreError::Unavailable)?;
+    let cursor = (aggregate.clone(), *version, *id);
+    for (Json(value), at, _, _, _) in rows {
       let intent: IssuePushIntent = serde_json::from_value(value).map_err(|_| StoreError::Unavailable)?;
       let accepted_at = octacity_server_domain::Timestamp::from_unix_millis(at).map_err(|_| StoreError::Unavailable)?;
       let row = intent.projection_record(accepted_at).ok_or_else(source_conflict)?;
@@ -126,6 +153,13 @@ pub(crate) async fn recover_publications(pool: &sqlx::PgPool) -> Result<(), Stor
       }
       crate::factory_run::insert_outbox(&mut tx, &row).await?;
     }
+    sqlx::query("UPDATE issue_reporter_recovery SET last_aggregate=$1,last_version=$2,last_id=$3 WHERE singleton")
+      .bind(cursor.0)
+      .bind(cursor.1)
+      .bind(cursor.2)
+      .execute(&mut *tx)
+      .await
+      .map_err(unavailable)?;
     tx.commit().await.map_err(unavailable)?;
   }
 }

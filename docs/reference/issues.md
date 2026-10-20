@@ -275,7 +275,11 @@ process invocation; a Source read grant does not supply writer credentials.
 Migration 0085 resumes original pre-5.2 desired material in bounded atomic batches
 without reconstructing legacy intents from current links or mappings. Repeated
 migration is idempotent. Readiness also detects an unfinished publication phase;
-Issue claims wait until all retained inputs are published. When a newer Issue
+Issue claims wait until all retained inputs are published. Migration 0086 retains
+one recovery cursor and completion marker, committed with each batch. Completed
+recovery checks read that marker; ordinary dispatch does not rescan publication
+history. Original intent reads use the existing desired-publication index.
+When a newer Issue
 effect or a different producer already occupies the native bucket, or another
 Issue link makes its ownership ambiguous, recovery retains the original input
 without an ordering permit and dispatch fails closed. New commands publish their
