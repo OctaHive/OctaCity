@@ -517,6 +517,8 @@ and persistence ports; an Issue ID or display key never substitutes for it.
 | POST   | `/{issue_id}/transitions`         | Apply one explicit reviewed direct edge                            |
 | GET    | `/{issue_id}/status-history`      | Bounded organizational events, distinct from execution history     |
 | POST   | `/{issue_id}/workflow-adoption`   | Explicitly adopt a reviewed retained policy/status correspondence  |
+| POST   | `/{issue_id}/comments`            | Append operator text with a metadata-only scoped replay receipt     |
+| GET    | `/{issue_id}/comments/{comment_id}` | Independently authorized no-store read of one exact comment body |
 
 Creation accepts title and description, with optional acceptance and priority;
 empty requirements remain a valid draft. No repository, integration, Factory
@@ -1115,3 +1117,127 @@ PostgreSQL migrations, interruption and native owner recovery are recorded in
 
 REST/Console authoring, target compatibility and publication review are recorded in
 [task 3.8 verification](../../openspec/changes/add-factory-work-card/verification-3.8.md).
+
+## Safe card and selected execution projections
+
+The application read contracts in task 6.1 compose existing authorities rather
+than persist another execution projection. `GetIssueCardQuery` returns safe
+current task metadata, optional planning values and the exact retained workflow.
+Requirements bodies keep their dedicated reader. Business transition history
+continues through `ListIssueStatusHistoryQuery`, including original workflow,
+before/after statuses, actor and optional accepted pipeline/source provenance.
+Neither a newer Project workflow nor a completed Run replaces those facts.
+
+`GetIssueExecutionProjectionQuery` reads one exact execution request. Preparation
+without a durable association, an available original Run and unavailable Run
+discovery are distinct. The existing bounded request history enumerates requests;
+each selected request has its own technical observation, including parallel or
+queued Runs. Frozen title/description/acceptance digests determine whether its
+requirements still match the card. That comparison is not status-action
+applicability, a current-candidate verdict or execution acceptance. Later card
+edits never replace the selected Work/Run. `GetIssueWorkExecutionQuery` also reads
+imported or legacy Artifact associations directly; missing request/requirements
+identities remain absent rather than fabricated.
+
+`ListIssueExecutionRecordsQuery` selects one existing Factory diagnostic
+collection for that exact associated Work. It reuses common bounds, Run/collection
+cursors, subject-bound safe records and current Factory/Project authorization.
+The declared `live-factory-collection-v1` contract observes collections
+independently; it is not an atomic card snapshot or complete verification verdict.
+Candidate, evidence, plan, assessment and Decision subjects retain their original
+Flow/cycle/node/input identities. Empty evidence or Decision pages do not mean
+success, and indeterminate outcomes stay indeterminate. Original Work references
+and separate completion/stop collections remain available without aggregating
+inputs, protected outputs or transcripts. Merged timeline/result observation
+and HTTP contracts remain task 6.4; subject-bound detailed Checks/Artifacts
+expansion remains task 6.14.
+
+Optional `IssueExecutionJobHandlers` expands one Job only after verifying its
+exact retained Build-execution record under the selected Work and independently
+checking current Build/Job visibility. It reuses the ordinary authorized Job
+reader. Worker assignment comes from the actual enrolled Agent/Pool record;
+optional frozen model/tool profile facts come from the original Build intent.
+Neither a queued Job nor an absent profile invents an AI role or assigned worker.
+Safe Job lifecycle/times and terminal classification exclude JobSpec, placement,
+output references and ownership material. Log navigation retains the original
+Build/Attempt/Job and event cursor, never a later retry or latest Attempt. Following
+that reference still requires the existing authorized log/event reader; no log
+body, transfer URL or content privilege is returned here.
+
+All these queries are read-only and require no provider call, input publication,
+admission, status change or new execution owner. Manual card reads install no
+Factory or ordinary Job dependency. Synchronization remains an independent read.
+The contracts are qualified through application tests; new REST/Console and
+qualified tool-event production remain their separately scheduled section 6 tasks.
+
+## Operator-only discussion
+
+Tasks 6.2–6.3 add optional `IssueDiscussionHandlers` over the narrow
+`IssueDiscussionStore` contract with memory and PostgreSQL adapters. It requires the existing Project/Issue
+authority, management policy and trusted clock, with no execution, Context,
+provider or input-publication port. Saving or reading discussion never changes
+the Issue revision/status, starts a Run, records a gate response or supplies
+requirements to a later execution. Mentions and approval-like prose remain text.
+
+`AppendIssueCommentCommand` freezes plain text, the owning Project/Issue and an
+optional root parent. Comment identity and original time are server-generated;
+actor provenance comes only from the accepted management context. Trusted-network
+requests retain unauthenticated-management attribution rather than a fabricated
+person. The closed intent accepts no actor, sequence, timestamp, execution or
+attachment fields. UTF-8 bodies must be nonblank and at most 16,384 bytes, permit
+ordinary multiline text and retain original whitespace. Recognized credential
+and private-capability markers use the same conservative check as Factory safe
+text and execution traces. This filter is not a complete secret detector; body
+access remains a separate protected content boundary. Debug formatting redacts
+the body and validation errors contain no supplied text.
+
+Validated deployment limits may narrow the body ceiling and the lifetime limit
+of 1,000 comments per Issue. Roots and replies share that quota. Sequence/lifetime
+count is separate from retained body records, so future retention cleanup must
+not reset it. Only a retained root in the same Issue can be a parent; nested,
+absent and foreign parents reject without publishing state. Failed appends and
+exact replay consume no sequence or quota. A winning scoped replay retains its
+original identity, actor, time and metadata even after limits are narrowed;
+changed body/parent/target reuse conflicts.
+
+Both adapters reuse the existing Issue transaction, scoped replay and safe
+audit/outbox evidence. It commits body, sequence and
+original receipt together; replay fingerprints/receipts contain a digest and
+metadata rather than another body copy. No second execution journal or reporting
+outbox is introduced.
+
+Append uses `Create` on the Issue-scoped `IssueDiscussion` resource, independently
+of Issue editing, execution or status rights. Dedicated `GetIssueCommentBodyQuery`
+uses `View` on that discussion resource. Both also require current owning-Issue
+visibility before parent/replay/body lookup. `ListIssueCommentsQuery` needs Issue
+visibility and returns only bounded sequence-ordered metadata, without granting
+body access. Its sequence continuation is an application contract, not an opaque
+HTTP cursor or an atomic cross-section observation.
+
+Migration `0089_issue_discussion.sql` adds `issue_comments` with separate body and
+metadata columns and an Issue lifetime counter independent of the revision.
+Concurrent appends serialize on the existing Issue lock. Counter allocation,
+body, replay outcome, audit and outbox publication form one transaction; failure
+at any publication stage leaves no consumed sequence or partial comment. The
+common mutation registry retains only a request digest and metadata receipt,
+including across server restart. Discussion publishes no native-sync intent.
+
+`POST .../comments` accepts only `body` and optional `parent_id`, with a required
+`Idempotency-Key` and no Issue `If-Match`: append does not revise the card.
+Applied appends return `201`; exact replay returns `200`, both with metadata-only
+`IssueCommentOutcome`, `Location` for the dedicated read and `Cache-Control:
+no-store`. Changed reuse returns `409`; invalid bodies, parents and exhausted
+quotas return generic `400` errors that contain no supplied text.
+
+`GET .../comments/{comment_id}` returns `IssueCommentContent` only after separate
+discussion and owning-Issue visibility checks. Successful responses use
+`Cache-Control: no-store`. Forged actor/time/sequence/control/attachment/target
+fields reject. OpenAPI publishes closed request/response schemas, UTF-8 byte and
+lifetime hard caps, replay and independent permission mappings; the generated
+client includes these operations. A stricter trusted application composition can
+lower the hard caps; request documents cannot configure them.
+
+Merged timeline/HTTP metadata pagination remains task 6.4; Console discussion
+remains task 6.5 and retention/holds remain task 8.2. Evidence is recorded in
+[task 6.2 verification](../../openspec/changes/add-factory-work-card/verification-6.2.md)
+and [task 6.3 verification](../../openspec/changes/add-factory-work-card/verification-6.3.md).

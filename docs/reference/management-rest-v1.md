@@ -972,3 +972,11 @@ workflow adoption. Paths remain scoped by the owning Project. See
 closed input grammar, separate rights, exact replay and cursor/precondition rules.
 These endpoints do not start or control Factory Runs; existing Run and Build
 commands retain their original request bodies and authorization targets.
+
+
+Issue-owned operator discussion uses `POST .../issues/{issue_id}/comments` for
+idempotent plain-text append and `GET .../issues/{issue_id}/comments/{comment_id}`
+for an independently authorized no-store body read. Append receipts, audit and
+queue payloads contain metadata only; comment text grants no execution, approval
+or Context authority. See [operator discussion](issues.md#operator-only-discussion)
+for closed schemas, bounds, permissions and recovery behavior.
