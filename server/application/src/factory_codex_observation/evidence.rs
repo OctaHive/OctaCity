@@ -232,7 +232,9 @@ fn valid_trace_value(value: &serde_json::Value, depth: usize, remaining: &mut us
   match value {
     serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => true,
     serde_json::Value::String(value) => {
-      value.len() <= MAX_TRACE_STRING_BYTES && control_free(value) && !contains_sensitive_trace_material(value)
+      value.len() <= MAX_TRACE_STRING_BYTES
+        && control_free(value)
+        && !octacity_server_factory::contains_sensitive_material(value)
     }
     serde_json::Value::Array(values) => values
       .iter()
@@ -250,27 +252,6 @@ fn valid_trace_key(value: &str) -> bool {
       value.to_ascii_lowercase().as_str(),
       "authorization" | "credential" | "password" | "private_key" | "secret" | "signature" | "token"
     )
-}
-
-fn contains_sensitive_trace_material(value: &str) -> bool {
-  let value = value.to_ascii_lowercase();
-  [
-    "-----begin ",
-    "authorization:",
-    "aws_secret_access_key",
-    "bearer ",
-    "github_pat_",
-    "ghp_",
-    "password=",
-    "password\":",
-    "private_key=",
-    "secret=",
-    "sk-proj-",
-    "token=",
-    "x-amz-signature",
-  ]
-  .iter()
-  .any(|marker| value.contains(marker))
 }
 
 pub(super) fn valid_runner_events(events: &[RunnerEventPayload]) -> bool {

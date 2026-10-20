@@ -507,7 +507,9 @@ fn sensitive_key(key: &str) -> bool {
   ) || key.contains("presigned")
 }
 
-fn contains_sensitive_material(value: &str) -> bool {
+/// Conservative shared credential/private-capability marker check, not a complete secret detector.
+#[must_use]
+pub fn contains_sensitive_material(value: &str) -> bool {
   let lowercase = value.to_ascii_lowercase();
   [
     "-----begin ",

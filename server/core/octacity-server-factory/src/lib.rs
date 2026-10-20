@@ -235,7 +235,7 @@ pub use value::{
   MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES,
   MAX_FACTORY_METADATA_KEY_BYTES, MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES,
   MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY, NodeAttemptNumber, ReportingAttemptNumber, WorkPriority,
-  WorkSourceGroupVersion, WorkSourceInputVersion, WorkflowCycleNumber,
+  WorkSourceGroupVersion, WorkSourceInputVersion, WorkflowCycleNumber, contains_sensitive_material,
 };
 
 #[cfg(test)]
