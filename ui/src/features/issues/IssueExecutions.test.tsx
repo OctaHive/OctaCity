@@ -74,6 +74,31 @@ it('resumes a lost response and pending preparation with frozen inputs even afte
   expect(new URLSearchParams(window.location.search).get('Idempotency-Key')).toBeNull();
 });
 
+it('clears previous result selection when pipeline admission selects another execution', async () => {
+  const { executions, router } = setupExecution(
+    `${card}?section=results&execution=old-request&result_collection=decisions&result_after=original-result-page&result_id=old-decision`,
+  );
+  const original = executionFixture('admitted', 'old-request');
+  const later = executionFixture('admitted', 'later-request');
+  if (!later.association) throw new Error('admitted execution fixture');
+  later.association.work_id = 'later-work';
+  later.association.run_id = 'later-run';
+  executions.get.mockImplementation(async (_p, _i, id) =>
+    id === 'later-request' ? later : original,
+  );
+  executions.start.mockResolvedValue({ disposition: 'applied', resource: later });
+  await userEvent.click(await screen.findByRole('button', { name: 'Start pipeline' }));
+  await screen.findByRole('combobox', { name: 'Factory Configurations' });
+  await userEvent.click(await screen.findByRole('button', { name: 'Review pipeline launch' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Confirm pipeline launch' }));
+  await within(screen.getByRole('dialog')).findByRole('link', { name: 'Open Run' });
+  const selected = new URLSearchParams(router.state.location.search);
+  expect(selected.get('execution')).toBe('later-request');
+  expect(selected.get('result_after')).toBeNull();
+  expect(selected.get('result_id')).toBeNull();
+  expect(selected.get('result_collection')).toBe('decisions');
+});
+
 it('requires a fresh review after a stale conflict, preserves inputs, and gives later executions new keys', async () => {
   const { executions, api, router } = setupExecution();
   executions.start.mockRejectedValueOnce(

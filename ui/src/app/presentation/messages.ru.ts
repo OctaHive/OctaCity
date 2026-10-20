@@ -1,6 +1,69 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'issues.rootReply': 'Ответ на корневой комментарий',
+
+  'diagnostics.jobUnavailable': 'Выбранная Job недоступна в этой сохранённой Attempt.',
+
+  'diagnostics.attemptUnavailable': 'Сохранённая Attempt, соответствующая этому Build, недоступна.',
+
+  'diagnostics.historicalAttempt':
+    'Историческая Attempt. Команды Build по-прежнему относятся к текущему Build.',
+
+  'issues.executionProfiles': 'Профили выполнения',
+  'issues.executionJobs': 'Исходные Job выполнения',
+  'issues.profileNotReported': 'Профиль выполнения не сообщён.',
+  'issues.jobsNotReported': 'В этом наблюдении исходные Job не сообщены.',
+  'issues.originalJobLogs': 'Открыть исходные логи Job',
+  'issues.gateHelp':
+    'Уточнения отправляются через объявленную форму ответа конкретного Run. Обсуждение операторов ведётся отдельно.',
+  'issues.openGate': 'Открыть объявленные ответы Run',
+
+  'issues.executionResults': 'Результаты выполнения',
+  'issues.selectExecution':
+    'Выберите выполнение в разделе «Запуски», чтобы посмотреть его исходные результаты.',
+  'issues.resultCollection': 'Коллекция результатов',
+  'issues.resultCoverage.partial':
+    'Частичное наблюдение. Пустая или последняя страница не подтверждает проверку или приёмку.',
+  'issues.resultCoverage.stale':
+    'Выбранный Run изменился. Начните новое наблюдение перед продолжением.',
+  'issues.resultCoverage.unavailable':
+    'Ссылка на выполнение сохранена, но технические данные недоступны или ограничены.',
+  'issues.noResults':
+    'В наблюдаемой коллекции нет записей. Обязательные доказательства могут отсутствовать.',
+  'issues.inspectResult': 'Посмотреть результат',
+  'issues.refreshResults': 'Обновить результаты',
+
+  'issues.operatorDiscussion': 'Обсуждение операторов',
+  'issues.replying': 'Ответ на комментарий №{sequence}',
+  'issues.cancelReply': 'Отменить ответ',
+  'issues.comment': 'Комментарий',
+  'issues.commentBytes': 'Байты UTF-8: {used} / {maximum}',
+  'issues.reviewComment': 'Проверить комментарий',
+  'issues.appendComment': 'Добавить комментарий',
+  'issues.commentRecorded':
+    'Комментарий оператора записан. Выполнение и ответ шлюзу не отправлялись.',
+  'issues.replyComment': 'Ответить на комментарий',
+
+  'issues.taskActivity': 'Активность задачи',
+  'issues.noTimeline': 'В этом наблюдении нет событий.',
+  'issues.timelinePreview': 'Открыть активность задачи',
+  'issues.refreshActivity': 'Обновить активность',
+  'issues.readComment': 'Прочитать комментарий',
+  'issues.hideComment': 'Скрыть комментарий',
+  'issues.commentContent': 'Текст комментария',
+  'issues.discussionHelp':
+    'Комментарии не запускают агентов, не принимают результаты и не отвечают на объявленный шлюз.',
+  'issues.managementActor': 'Оператор управления (без аутентификации)',
+  'issues.unknownActor': 'Неизвестный автор',
+  'issues.statusEvent': 'Изменён бизнес-статус',
+  'issues.sourceEvent': 'Наблюдение источника',
+  'issues.sourceStale':
+    'Источник изменился после наблюдения. Остальные разделы сохраняют исходные границы.',
+  'issues.sourceUnavailable': 'Данные источника недоступны в этом наблюдении.',
+  'issues.timelineHistorical':
+    'Активность наблюдалась на версии задачи {version}; текущая версия — {current}.',
+
   'issueSync.observedNative': 'Последний согласованный статус источника: {state}',
   'issueSync.observationScope':
     'Сохранённые значения Source не являются текущей проверкой Reporter. Показаны исходные mapping и наблюдение.',

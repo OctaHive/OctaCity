@@ -1,6 +1,7 @@
-import { usePresentation } from '../../app/presentation/PresentationProvider';
-import type { FactoryRun } from './api';
-import styles from './Factory.module.css';
+import { usePresentation } from '../app/presentation/PresentationProvider';
+import type { components } from '../../.generated/api/schema';
+type FactoryRun = components['schemas']['FactoryRunSummaryResource'];
+import styles from './FactoryRead.module.css';
 
 const metrics = [
   ['attempts', 'max_attempts', 'factory.budgetAttempts'],

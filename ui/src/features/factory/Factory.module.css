@@ -248,53 +248,10 @@
   gap: var(--space-lg);
 }
 .panel {
-  padding: var(--space-lg);
-  border: 1px solid var(--color-border);
-  border-radius: var(--radius-small);
-  background: var(--color-surface);
-}
-.panel > h2 {
-  font-size: 1.1rem;
-  margin-bottom: var(--space-sm);
-}
-.panel > h3 {
-  font-size: 0.95rem;
-  margin-top: var(--space-lg);
-  margin-bottom: var(--space-sm);
+  composes: panel from '../../shared/FactoryRead.module.css';
 }
 .supportingText {
-  color: var(--color-text-muted);
-  font-size: 0.85rem;
-  line-height: 1.5;
-  margin-bottom: var(--space-md);
-}
-.runFacts,
-.budgetMetrics {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
-  gap: var(--space-lg);
-  margin: var(--space-lg) 0;
-}
-.runFacts dt,
-.budgetMetrics dt {
-  color: var(--color-text-muted);
-  font-size: 0.8rem;
-  margin-bottom: var(--space-xs);
-}
-.runFacts dd,
-.budgetMetrics dd {
-  margin: 0;
-  font-weight: 600;
-}
-.budgetMetrics {
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8rem), 1fr));
-}
-.budgetMetrics dd span {
-  color: var(--color-text-muted);
-  font-weight: 400;
-}
-.identity {
-  font-size: 0.9rem;
+  composes: supportingText from '../../shared/FactoryRead.module.css';
 }
 .recordCard {
   padding: var(--space-md) 0;

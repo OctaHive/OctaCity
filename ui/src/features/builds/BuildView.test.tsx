@@ -525,3 +525,64 @@ function pendingUntilAbort(signal: AbortSignal): Promise<never> {
     else signal.addEventListener('abort', rejectAbort, { once: true });
   });
 }
+
+it('opens the exact historical Attempt and Job from an Issue log link instead of the latest retry', async () => {
+  const job = {
+    ...jobResource('old-job', 'Original job', 'failed', []),
+    attempt_id: 'old-attempt',
+  };
+  const original = {
+    ...attemptResource([job], []),
+    attempt: { ...buildResource().current_attempt, id: 'old-attempt' },
+  };
+  const getAttempt = vi.fn<BuildDiagnosticsApi['getAttempt']>().mockResolvedValue(original);
+  const { api, router } = renderBuild(
+    original,
+    { getAttempt },
+    `/builds/${BUILD_ID}?attempt_id=old-attempt&job_id=old-job&log_scope=job%3Aold-job`,
+  );
+  expect(await screen.findByRole('region', { name: 'Selected Job' })).toBeTruthy();
+  expect(api.getAttempt).toHaveBeenCalledWith('old-attempt', expect.any(AbortSignal));
+  expect(
+    screen.getByText('Historical Attempt. Build controls still target the current Build.'),
+  ).toBeTruthy();
+  expect(new URLSearchParams(router.state.location.search).get('attempt_id')).toBe('old-attempt');
+  expect(new URLSearchParams(router.state.location.search).get('job_id')).toBe('old-job');
+});
+
+it.each(['foreign-build', 'wrong-attempt'])(
+  'does not render %s metadata as the selected Build Attempt',
+  async (kind) => {
+    const retained = attemptResource([jobResource('job-only', 'Only job', 'failed', [])], []);
+    retained.attempt = {
+      ...retained.attempt,
+      ...(kind === 'foreign-build' ? { build_id: 'another-build' } : { id: 'another-attempt' }),
+    };
+    const { api } = renderBuild(
+      retained,
+      {},
+      `/builds/${BUILD_ID}?attempt_id=${ATTEMPT_ID}&job_id=job-only`,
+    );
+    expect(
+      await screen.findByText('No matching retained Attempt is available for this Build.'),
+    ).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Selected Job' })).toBeNull();
+    expect(api.getJob).not.toHaveBeenCalled();
+  },
+);
+
+it('keeps an unavailable exact Job target instead of opening another Job or its logs', async () => {
+  const retained = attemptResource([jobResource('other-job', 'Other job', 'failed', [])], []);
+  const { api, router } = renderBuild(
+    retained,
+    {},
+    `/builds/${BUILD_ID}?attempt_id=${ATTEMPT_ID}&job_id=missing-job&log_scope=job%3Amissing-job`,
+  );
+  expect(
+    await screen.findByText('The selected Job is not available in this retained Attempt.'),
+  ).toBeTruthy();
+  expect(screen.queryByRole('region', { name: 'Selected Job' })).toBeNull();
+  expect(api.getJob).not.toHaveBeenCalled();
+  expect(api.searchBuildLogs).not.toHaveBeenCalled();
+  expect(new URLSearchParams(router.state.location.search).get('job_id')).toBe('missing-job');
+});

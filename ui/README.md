@@ -52,9 +52,13 @@ external fonts, icon fonts, analytics integrations, and copied template assets. 
 `architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
 the build reports any measured value that exceeds them. Task Source ownership authoring reuses
 shared Source references, row identities and Reporter effects, adding no runtime dependencies.
-The measured Source workspace is approximately 1,069,000 bytes JavaScript and 1,155,000 bytes static output; aggregate ceilings are 1,050 KiB JavaScript,
-82 KiB CSS, 1,130 KiB static output and 51 assets. The entry ceiling remains 450 KiB.
-Architecture tests admit the measured footprint and reject another unplanned 8,000 bytes.
+The measured task Activity/Runs/Results workspace is approximately 1,100,292 bytes
+JavaScript, 86,462 bytes CSS and 1,187,376 bytes static output across 52 assets.
+Aggregate ceilings are 1,078 KiB JavaScript, 85 KiB CSS, 1,164 KiB static output
+and 52 assets. The entry ceiling remains 450 KiB. Common diagnostic rendering and
+Run summaries are shared rather than copied between features. Architecture tests
+admit this measured footprint and reject another unplanned 8,000 bytes; feature
+import, network and persistence boundaries remain enforced.
 
 Release packaging consumes this exact `dist/` directory without rebuilding the application:
 

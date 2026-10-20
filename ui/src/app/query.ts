@@ -1,6 +1,18 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  issueResults: (
+    project: string,
+    id: string,
+    work: string,
+    collection: string,
+    after: string | null,
+  ) => ['issues', project, id, 'results', work, collection, after] as const,
+  issueTimelineRoot: (project: string, id: string) => ['issues', project, id, 'timeline'] as const,
+  issueTimeline: (project: string, id: string, after: string | null) =>
+    ['issues', project, id, 'timeline', after] as const,
+  issueComment: (project: string, id: string, comment: string) =>
+    ['issues', project, id, 'comment', comment] as const,
   issueProjections: (project: string, id: string, after: string | null) =>
     ['issues', project, id, 'projections', after] as const,
   issueRoot: (project: string, id: string) => ['issues', project, id] as const,

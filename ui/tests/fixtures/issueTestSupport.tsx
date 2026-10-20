@@ -5,6 +5,7 @@ import { App } from '../../src/App';
 import { createConsoleQueryClient } from '../../src/app/query';
 import { createConsoleRoutes, type ConsoleRouteDependencies } from '../../src/app/router';
 import { fakeProjectsApi, project } from '../../src/features/projects/ProjectTestSupport';
+import { fakeActivity, timelineFixture } from './issueActivity';
 import { issueFixture } from './issues';
 import { readFileSync } from 'node:fs';
 export const workflow = {
@@ -131,6 +132,10 @@ export function setup(
     createConsoleRoutes({
       projectsApi: projects,
       issuesApi: api,
+      issueActivityApi: {
+        ...fakeActivity(vi),
+        timeline: vi.fn().mockResolvedValue(timelineFixture([])),
+      },
       issueSourcesApi: fakeIssueSourcesApi(),
       issueWorkflowsApi: workflows,
       readinessProbe: async () => 'ready',

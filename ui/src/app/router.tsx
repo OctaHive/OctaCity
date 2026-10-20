@@ -10,6 +10,7 @@ import type { IntegrationsApi } from '../features/integrations/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
+import { issueActivityApi, type IssueActivityApi } from '../features/issues/activityApi';
 import { issueExecutionsApi, type IssueExecutionsApi } from '../features/issues/executionApi';
 import { issuesApi, type IssuesApi } from '../features/issues/api';
 import { issueSourcesApi, type IssueSourcesApi } from '../features/issues/sourceApi';
@@ -124,6 +125,7 @@ export interface ConsoleRouteDependencies {
   readonly auditApi: AuditApi;
   readonly buildApi: BuildDiagnosticsApi;
   readonly capacityApi: CapacityApi;
+  readonly issueActivityApi: IssueActivityApi;
   readonly issueExecutionsApi: IssueExecutionsApi;
   readonly issuesApi: IssuesApi;
   readonly issueSourcesApi: IssueSourcesApi;
@@ -134,6 +136,7 @@ export interface ConsoleRouteDependencies {
 }
 
 const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
+  issueActivityApi,
   factoryApi,
   attentionApi: operatorAttentionApi,
   auditApi,
@@ -230,6 +233,8 @@ export function createConsoleRoutes(
           path: childPath(CONSOLE_PATHS.issue),
           element: defer(
             <IssueView
+              factory={dependencies.factoryApi}
+              activity={dependencies.issueActivityApi}
               sources={dependencies.issueSourcesApi}
               executions={dependencies.issueExecutionsApi}
               executionSources={{

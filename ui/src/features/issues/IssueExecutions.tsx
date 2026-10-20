@@ -12,10 +12,25 @@ import {
 import type { Issue } from './api';
 import type { IssueExecutionsApi } from './executionApi';
 import { ExecutionReceipt } from './IssueExecutionReceipt';
+import { useIssueExecution } from './useIssueExecution';
+import { IssueRunDetails } from './IssueRunDetails';
+import { selectIssueExecution } from './issueExecutionSelection';
+import type { IssueRunReader } from './activityApi';
+import type { IssueActivityApi } from './activityApi';
 import styles from './Issues.module.css';
 
 /** Bounded, read-only history; selecting or refreshing an execution never publishes inputs. */
-export function IssueExecutions({ api, issue }: { api: IssueExecutionsApi; issue: Issue }) {
+export function IssueExecutions({
+  api,
+  issue,
+  factory,
+  activity,
+}: {
+  api: IssueExecutionsApi;
+  issue: Issue;
+  factory: IssueRunReader;
+  activity: IssueActivityApi;
+}) {
   const { t, locale } = usePresentation();
   const [params] = useSearchParams();
   const requestId = params.get('execution');
@@ -25,12 +40,7 @@ export function IssueExecutions({ api, issue }: { api: IssueExecutionsApi; issue
     gcTime: 0,
     queryFn: ({ signal }) => api.list(issue.project_id, issue.id, after, signal),
   });
-  const selected = useQuery({
-    queryKey: queryKeys.issueExecution(issue.project_id, issue.id, requestId ?? ''),
-    gcTime: 0,
-    enabled: !!requestId,
-    queryFn: ({ signal }) => api.get(issue.project_id, issue.id, requestId!, signal),
-  });
+  const selected = useIssueExecution(api, issue, requestId);
   return (
     <section className={styles.panel} aria-label={t('issues.executionHistory')}>
       <h2>{t('issues.executionHistory')}</h2>
@@ -53,8 +63,7 @@ export function IssueExecutions({ api, issue }: { api: IssueExecutionsApi; issue
           {history.data.items.length ? (
             <ol className={styles.list}>
               {history.data.items.map((entry) => {
-                const search = new URLSearchParams(params);
-                search.set('execution', entry.id);
+                const search = selectIssueExecution(params, entry.id);
                 return (
                   <li key={entry.id}>
                     <Link
@@ -115,6 +124,14 @@ export function IssueExecutions({ api, issue }: { api: IssueExecutionsApi; issue
                 onRetry={selected.refetch}
               />
               <ExecutionReceipt execution={selected.data} currentVersion={issue.version} />
+              {selected.data.association ? (
+                <IssueRunDetails
+                  factory={factory}
+                  activity={activity}
+                  issue={issue}
+                  execution={selected.data}
+                />
+              ) : null}
               <dl>
                 <dt>{t('factory.configurations')}</dt>
                 <dd>

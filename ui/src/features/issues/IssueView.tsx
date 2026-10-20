@@ -11,7 +11,12 @@ import {
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import type { PipelineTargetSources } from '../../shared/PipelineTargetFields';
 import type { IssueExecutionsApi } from './executionApi';
+import type { IssueRunReader } from './activityApi';
+import { IssueResults } from './IssueResults';
+import { IssueActivity } from './IssueActivity';
+import type { IssueActivityApi } from './activityApi';
 import { IssueExecutions } from './IssueExecutions';
+import { selectIssueExecution } from './issueExecutionSelection';
 import { IssueExecutionForm } from './IssueExecutionForm';
 import type { IssuesApi } from './api';
 import type { IssueSourcesApi } from './sourceApi';
@@ -27,6 +32,8 @@ import { IssueHistory } from './IssueHistory';
 import styles from './Issues.module.css';
 const sections = ['overview', 'activity', 'runs', 'results', 'actions'] as const;
 export function IssueView({
+  factory,
+  activity,
   sources,
   api,
   workflows,
@@ -34,6 +41,8 @@ export function IssueView({
   executions,
   executionSources,
 }: {
+  factory: IssueRunReader;
+  activity: IssueActivityApi;
   sources: IssueSourcesApi;
   api: IssuesApi;
   workflows: IssueWorkflowsApi;
@@ -44,6 +53,8 @@ export function IssueView({
   const { projectId, issueId } = useParams<'projectId' | 'issueId'>();
   return projectId && issueId ? (
     <Card
+      factory={factory}
+      activity={activity}
       sources={sources}
       key={projectId + issueId}
       executions={executions}
@@ -57,6 +68,8 @@ export function IssueView({
   ) : null;
 }
 function Card({
+  factory,
+  activity,
   sources,
   api,
   workflows,
@@ -66,6 +79,8 @@ function Card({
   projectId,
   issueId,
 }: {
+  factory: IssueRunReader;
+  activity: IssueActivityApi;
   sources: IssueSourcesApi;
   api: IssuesApi;
   workflows: IssueWorkflowsApi;
@@ -88,6 +103,10 @@ function Card({
     if (value !== 'overview') next.set('section', value);
     if (params.get('execution')) next.set('execution', params.get('execution')!);
     if (hasRevision) next.set('revision', String(selectedRevision));
+    for (const key of ['result_collection', 'result_id', 'result_after']) {
+      const value = params.get(key);
+      if (value) next.set(key, value);
+    }
     return next.toString();
   }
   const [propertiesOpen, setPropertiesOpen] = useState(false);
@@ -200,11 +219,7 @@ function Card({
               ready={current.error === null && !current.isFetching}
               onRefresh={refresh}
               onSelect={(id) =>
-                setParams((currentParams) => {
-                  const next = new URLSearchParams(currentParams);
-                  next.set('execution', id);
-                  return next;
-                })
+                setParams((currentParams) => selectIssueExecution(currentParams, id))
               }
               onClose={() => setStarting(null)}
             />
@@ -293,16 +308,25 @@ function Card({
                     </p>
                     <p>{t('issues.revision', { version: issue.version })}</p>
                   </section>
+                  <IssueActivity api={activity} issue={issue} preview />
                   <IssueHistory api={api} workflows={workflows} issue={issue} preview />
                 </>
               ) : section === 'activity' ? (
                 <>
+                  <IssueActivity api={activity} issue={issue} />
                   <IssueHistory api={api} workflows={workflows} issue={issue} />
                   <IssueRevisions api={api} issue={issue} />
                 </>
               ) : section === 'runs' ? (
-                <IssueExecutions api={executions} issue={issue} />
-              ) : section === 'actions' ? (
+                <IssueExecutions
+                  api={executions}
+                  issue={issue}
+                  factory={factory}
+                  activity={activity}
+                />
+              ) : section === 'results' ? (
+                <IssueResults api={activity} executions={executions} issue={issue} />
+              ) : (
                 <>
                   {choices.isPending ? (
                     <QueryLoadingNotice label={t('issues.moves')} />
@@ -340,11 +364,6 @@ function Card({
                     </>
                   )}
                 </>
-              ) : (
-                <section className={styles.panel}>
-                  <h2>{t(`issues.${section}`)}</h2>
-                  <p>{t('issues.executionUnavailable')}</p>
-                </section>
               )}
             </div>
             <aside

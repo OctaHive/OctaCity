@@ -14,6 +14,9 @@ export function issueConstraints(document) {
     (p) => p.name === 'limit',
   )?.schema;
   return {
+    commentMaximumBytes: bound(
+      document.components?.schemas?.IssueCommentBody?.['x-max-utf8-bytes'],
+    ),
     labelsMaximumCount: bound(
       document.components?.schemas?.IssuePlanning?.properties?.labels?.maxItems,
     ),

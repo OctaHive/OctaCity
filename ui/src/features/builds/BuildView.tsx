@@ -220,7 +220,8 @@ function BuildHeading({
 
 function AttemptPanel({ api, build }: { api: BuildDiagnosticsApi; build: BuildResource }) {
   const { t } = usePresentation();
-  const attemptId = build.current_attempt.id;
+  const [parameters] = useSearchParams();
+  const attemptId = parameters.get('attempt_id') ?? build.current_attempt.id;
   const attempt = useQuery({
     queryFn: ({ signal }) => api.getAttempt(attemptId, signal),
     queryKey: queryKeys.attempt(attemptId),
@@ -244,15 +245,22 @@ function AttemptPanel({ api, build }: { api: BuildDiagnosticsApi; build: BuildRe
       />
     );
   }
+  if (attempt.data.attempt.id !== attemptId || attempt.data.attempt.build_id !== build.id)
+    return <p role="alert">{t('diagnostics.attemptUnavailable')}</p>;
   return (
-    <AttemptDiagnostics
-      api={api}
-      attempt={attempt.data}
-      build={build}
-      isFetching={attempt.isFetching}
-      onRefresh={attempt.refetch}
-      refreshError={attempt.error}
-    />
+    <>
+      {attemptId !== build.current_attempt.id ? (
+        <p role="status">{t('diagnostics.historicalAttempt')}</p>
+      ) : null}
+      <AttemptDiagnostics
+        api={api}
+        attempt={attempt.data}
+        build={build}
+        isFetching={attempt.isFetching}
+        onRefresh={attempt.refetch}
+        refreshError={attempt.error}
+      />
+    </>
   );
 }
 
@@ -275,16 +283,21 @@ function AttemptDiagnostics({
   const [searchParameters, setSearchParameters] = useSearchParams();
   const queryClient = useQueryClient();
   const requestedJobId = searchParameters.get(JOB_SELECTION_PARAMETER);
-  const selectedJob =
-    attempt.jobs.find((job) => job.id === requestedJobId) ?? attempt.jobs[0] ?? null;
+  const exactJobMissing =
+    searchParameters.has('attempt_id') &&
+    requestedJobId !== null &&
+    !attempt.jobs.some((job) => job.id === requestedJobId);
+  const selectedJob = exactJobMissing
+    ? null
+    : (attempt.jobs.find((job) => job.id === requestedJobId) ?? attempt.jobs[0] ?? null);
   const selectedJobId = selectedJob?.id ?? null;
 
   useEffect(() => {
-    if (requestedJobId === null || selectedJob?.id === requestedJobId) return;
+    if (exactJobMissing || requestedJobId === null || selectedJob?.id === requestedJobId) return;
     const next = new URLSearchParams(searchParameters);
     next.delete(JOB_SELECTION_PARAMETER);
     setSearchParameters(next, { replace: true });
-  }, [requestedJobId, searchParameters, selectedJob?.id, setSearchParameters]);
+  }, [exactJobMissing, requestedJobId, searchParameters, selectedJob?.id, setSearchParameters]);
 
   function selectJob(jobId: string) {
     const next = new URLSearchParams(searchParameters);
@@ -373,13 +386,17 @@ function AttemptDiagnostics({
       {selectedJob === null ? null : (
         <JobDetails api={api} job={selectedJob} onJobUpdate={updateObservedJob} />
       )}
-      <BuildLogSearch
-        api={api}
-        attemptId={attempt.attempt.id}
-        buildId={build.id}
-        jobs={attempt.jobs}
-        projectId={build.project_id}
-      />
+      {exactJobMissing ? (
+        <p role="alert">{t('diagnostics.jobUnavailable')}</p>
+      ) : (
+        <BuildLogSearch
+          api={api}
+          attemptId={attempt.attempt.id}
+          buildId={build.id}
+          jobs={attempt.jobs}
+          projectId={build.project_id}
+        />
+      )}
     </div>
   );
 }

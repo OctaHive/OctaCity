@@ -1,4 +1,65 @@
 export const enMessages = {
+  'issues.rootReply': 'Reply to a root comment',
+
+  'diagnostics.jobUnavailable': 'The selected Job is not available in this retained Attempt.',
+
+  'diagnostics.attemptUnavailable': 'No matching retained Attempt is available for this Build.',
+
+  'diagnostics.historicalAttempt':
+    'Historical Attempt. Build controls still target the current Build.',
+
+  'issues.executionProfiles': 'Execution profiles',
+  'issues.executionJobs': 'Original execution Jobs',
+  'issues.profileNotReported': 'Execution profile not reported.',
+  'issues.jobsNotReported': 'No original Jobs reported in this observation.',
+  'issues.originalJobLogs': 'Open original Job logs',
+  'issues.gateHelp':
+    'Clarification uses the exact Run’s declared response form. Operator discussion is separate.',
+  'issues.openGate': 'Open declared Run responses',
+
+  'issues.executionResults': 'Execution results',
+  'issues.selectExecution': 'Choose an execution in Runs to inspect its original results.',
+  'issues.resultCollection': 'Result collection',
+  'issues.resultCoverage.partial':
+    'Partial observation. Empty or final pages do not establish verification or acceptance.',
+  'issues.resultCoverage.stale':
+    'The selected Run changed. Start a fresh observation before continuing.',
+  'issues.resultCoverage.unavailable':
+    'This execution reference is retained, but its technical content is unavailable or restricted.',
+  'issues.noResults': 'No records in this observed collection. Required evidence may be missing.',
+  'issues.inspectResult': 'Inspect result',
+  'issues.refreshResults': 'Refresh results',
+
+  'issues.operatorDiscussion': 'Operator discussion',
+  'issues.replying': 'Replying to comment #{sequence}',
+  'issues.cancelReply': 'Cancel reply',
+  'issues.comment': 'Comment',
+  'issues.commentBytes': 'UTF-8 bytes: {used} / {maximum}',
+  'issues.reviewComment': 'Review comment',
+  'issues.appendComment': 'Append comment',
+  'issues.commentRecorded':
+    'Operator comment recorded. No execution or gate response was submitted.',
+  'issues.replyComment': 'Reply to comment',
+
+  'issues.taskActivity': 'Task activity',
+  'issues.noTimeline': 'No activity in this observation.',
+  'issues.timelinePreview': 'Open task activity',
+  'issues.refreshActivity': 'Refresh activity',
+  'issues.readComment': 'Read comment',
+  'issues.hideComment': 'Hide comment',
+  'issues.commentContent': 'Comment content',
+  'issues.discussionHelp':
+    'Comments do not start agents, approve results or answer a declared gate.',
+  'issues.managementActor': 'Management operator (unauthenticated)',
+  'issues.unknownActor': 'Unknown actor',
+  'issues.statusEvent': 'Business status changed',
+  'issues.sourceEvent': 'Source observation',
+  'issues.sourceStale':
+    'Source changed after this observation. Other sections retain their original boundary.',
+  'issues.sourceUnavailable': 'Source coverage is unavailable in this observation.',
+  'issues.timelineHistorical':
+    'Activity observed at task version {version}; the current task is version {current}.',
+
   'issueSync.observedNative': 'Last reconciled native status: {state}',
   'issueSync.observationScope':
     'Retained Source values are not a current Reporter inspection. Their original mapping and observation remain authoritative for this display.',
