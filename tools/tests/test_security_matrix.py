@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sys
 import tempfile
+import tomllib
 import unittest
 from pathlib import Path
 
@@ -17,6 +18,22 @@ SPEC.loader.exec_module(SECURITY_MATRIX)
 
 
 class SecurityMatrixTests(unittest.TestCase):
+    def test_fuzz_lockfile_retains_the_pinned_octa_wire_contract(self):
+        workspace = tomllib.loads((REPOSITORY / "Cargo.toml").read_text())
+        lockfile = tomllib.loads((REPOSITORY / "fuzz/Cargo.lock").read_text())
+        packages = {package["name"]: package for package in lockfile["package"]}
+        for name in ("octa-cache-protocol", "octa-plugin-lock", "octa-runner-protocol"):
+            with self.subTest(package=name):
+                self.assertEqual(
+                    packages[name]["version"],
+                    workspace["workspace"]["dependencies"][name]["version"],
+                )
+        self.assertIn(
+            "octa-runner-protocol",
+            packages["octacity-protocol"]["dependencies"],
+            "fuzzing must include the shared public-operation observation contract",
+        )
+
     def test_catalog_covers_every_boundary_and_security_property(self):
         SECURITY_MATRIX.validate_contracts()
 

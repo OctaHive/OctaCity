@@ -79,3 +79,18 @@ removed. Both verification checkouts retain clean tracked state and lockfiles
 remain byte-identical to the committed versions. The final documentation commit
 changes only documentation, measured UI README figures and OpenSpec completion
 markers; it does not change the tested production code.
+
+## Follow-up: separate fuzz lockfile
+
+The initial upgrade missed the independent `fuzz/Cargo.lock`. The CI command
+`cargo metadata --locked --offline --manifest-path fuzz/Cargo.toml --format-version 1`
+reproduced exit 101. Before fixing it,
+`python3 -m unittest tools.tests.test_security_matrix.SecurityMatrixTests.test_fuzz_lockfile_retains_the_pinned_octa_wire_contract`
+failed on all three stale Octa versions and the missing shared-protocol dependency.
+Updating only those three packages offline also restored the required
+`octacity-protocol -> octa-runner-protocol` edge. The metadata command then passed,
+as did all seven tests in `tools.tests.test_security_matrix`. Both were repeated
+in an isolated checkout with the two-file fix applied and Octa detached at the
+pinned release revision. Root locked metadata and `git diff --check` passed too.
+CI retains `--locked`; no unrelated packages changed. No Rust compilation was
+needed. Temporary checkouts were removed; free disk remained approximately 14 GiB.
