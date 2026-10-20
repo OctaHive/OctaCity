@@ -10,6 +10,10 @@ pub use octacity_server_store::{
 use octacity_server_store::{CreateIssue, EditIssue, IdempotencyKey, TransitionIssue};
 use std::sync::Arc;
 
+#[path = "issue_card.rs"]
+mod card;
+pub use card::*;
+
 /// Manual task creation independent of workflow administration or execution setup.
 #[derive(Clone, Debug)]
 pub struct CreateIssueCommand {

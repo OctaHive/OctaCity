@@ -111,6 +111,39 @@ impl InMemoryFactoryConfigurationStore {
     Ok(())
   }
 
+  /// Seeds a validated admission and its discovery index for cross-boundary read fixtures.
+  pub fn seed_factory_admission(
+    &self,
+    admission: PublishedFactoryAdmission,
+    source_scope: FactoryWorkSourceScope,
+    intent_digest: FactoryDigest,
+    audit: &crate::MutationAuditContext,
+  ) -> Result<(), StoreError> {
+    admission.validate()?;
+    let stored = StoredFactoryRun::admitted(&admission, intent_digest, audit)?;
+    let mut state = self.lock()?;
+    if state.factory_runs.contains_key(&admission.run.id())
+      || state
+        .admissions
+        .contains_key(&(source_scope.clone(), admission.work.external_identity().clone()))
+    {
+      return Err(StoreError::Duplicate {
+        entity: EntityKind::FactoryRun,
+      });
+    }
+    state.factory_runs.insert(admission.run.id(), stored);
+    state.admissions.insert(
+      (source_scope.clone(), admission.work.external_identity().clone()),
+      StoredAdmission {
+        source_scope,
+        external_identity: admission.work.external_identity().clone(),
+        intent_digest,
+        outcome: admission,
+      },
+    );
+    Ok(())
+  }
+
   /// Seeds one exact immutable Repository version for admission tests.
   pub fn seed_repository_version(&self, repository: PublishedRepository) -> Result<(), StoreError> {
     repository

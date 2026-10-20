@@ -4,6 +4,9 @@ use octacity_server_factory::{FactoryConfigurationId, FactoryConfigurationVersio
 use octacity_server_store::testing;
 use octacity_server_store::*;
 
+#[path = "issue_execution_read_tests.rs"]
+mod projections;
+
 #[test]
 fn issue_execution_request_freezes_reviewed_revision_and_replays_before_current_text() {
   run_ready(async {

@@ -12,6 +12,9 @@ mod planning;
 #[path = "issue_execution_tests.rs"]
 mod execution;
 
+#[path = "issue_projection_tests.rs"]
+mod projections;
+
 #[path = "issue_source_tests.rs"]
 mod source;
 
