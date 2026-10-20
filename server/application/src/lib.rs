@@ -183,6 +183,8 @@ pub use factory_review_invocation::{
 mod factory_review_invocation_tests;
 mod factory_review_planning;
 pub use factory_review_planning::{FactoryReviewPlanningAction, FactoryReviewPlanningProfile};
+mod issue_reporter;
+pub use issue_reporter::*;
 mod factory_work_status_outbox;
 pub use factory_candidate_publication::{
   FactoryCandidatePublication, FactoryCandidatePublicationAction, FactoryCandidatePublicationRequest,

@@ -50,7 +50,7 @@ pub trait FactoryOutboxDispatcher: Send + Sync {
   /// Runs one bounded fenced dispatch pass; source state never enters the owner.
   async fn dispatch_once(&self, at: Timestamp) -> Result<FactoryOutboxDispatchSummary, ApplicationError>;
 }
-/// Arbitrary Work status projection from accepted node records only.
+/// Source effects from accepted Factory records or explicitly enabled Issue metadata.
 /// Unknown-response recovery reuses the original operation identity and leaves
 /// authoritative Flow data untouched, regardless of reporter availability.
 pub struct FactoryWorkStatusOutboxWorker<S> {
@@ -59,8 +59,35 @@ pub struct FactoryWorkStatusOutboxWorker<S> {
   settings: FactoryReporterWorkerSettings,
   clock: Arc<dyn FactoryExecutionClock>,
 }
+enum ReporterRequest {
+  Work(Box<FactoryWorkStatusRequest>),
+  Issue(crate::IssueStatusProjectionRequest),
+}
+impl ReporterRequest {
+  fn deadline(&self) -> Timestamp {
+    match self {
+      Self::Work(r) => r.deadline,
+      Self::Issue(r) => r.deadline,
+    }
+  }
+  fn budget(&self) -> BudgetLimit {
+    match self {
+      Self::Work(r) => r.budget,
+      Self::Issue(r) => r.budget,
+    }
+  }
+  async fn dispatch(
+    &self,
+    projector: &dyn FactoryWorkStatusProjector,
+  ) -> Result<(FactoryDigest, BudgetUsage), ApplicationError> {
+    match self {
+      Self::Work(r) => projector.set_status(r.as_ref().clone()).await,
+      Self::Issue(r) => projector.set_issue_status(r.clone()).await,
+    }
+  }
+}
 struct ProjectionMaterial<'a> {
-  request: FactoryWorkStatusRequest,
+  request: ReporterRequest,
   policy: crate::factory_flow_action::FactoryReporterRetryPolicy,
   projector: &'a Arc<dyn FactoryWorkStatusProjector>,
   original_deadline: Timestamp,
@@ -87,7 +114,7 @@ impl<S> FactoryWorkStatusOutboxWorker<S> {
     self.clock.now().map(|now| now.max(at))
   }
 }
-impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
+impl<S: FactoryRunStore + IssueSourceProjectionStore> FactoryWorkStatusOutboxWorker<S> {
   /// Claims only reporting events, then settles under the same live fence.
   pub async fn run_once(&self, at: Timestamp) -> Result<FactoryOutboxDispatchSummary, ApplicationError> {
     let at = self.now(at)?;
@@ -97,11 +124,14 @@ impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
         .ok_or_else(ApplicationError::invalid)?,
     )
     .map_err(|_| ApplicationError::invalid())?;
+    let mut kinds = vec![FactoryKey::new("work.status.projection").map_err(|_| ApplicationError::invalid())?];
+    if self.projectors.values().any(|p| p.supports_issue_delivery()) {
+      kinds.push(FactoryKey::new("issue.status.projection").map_err(|_| ApplicationError::invalid())?);
+    }
     let claimed = self
       .store
       .claim_factory_outbox(
-        ClaimFactoryOutbox::new(self.settings.owner.clone(), at, expires, self.settings.limit)?
-          .only_kind(FactoryKey::new("work.status.projection").map_err(|_| ApplicationError::invalid())?),
+        ClaimFactoryOutbox::new(self.settings.owner.clone(), at, expires, self.settings.limit)?.only_kinds(kinds)?,
       )
       .await?;
     let mut summary = FactoryOutboxDispatchSummary {
@@ -111,9 +141,18 @@ impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
     for owned in claimed {
       let row = owned.record;
       let claim = row.claim.ok_or_else(ApplicationError::invalid)?;
-      let snapshot = self.store.factory_run_snapshot(row.run_id).await?;
-      let material = self.material(&snapshot, &row, at);
+      let snapshot;
+      let material = match row.subject {
+        FactoryOutboxSubject::Run(run) => {
+          snapshot = self.store.factory_run_snapshot(run).await?;
+          self.material(&snapshot, &row, at)
+        }
+        FactoryOutboxSubject::Issue(_) => self.issue_material(&row, at).await,
+      };
       let settlement = match material {
+        // Unavailable accepted material leaves ownership recoverable after expiry.
+        // It cannot establish a terminal delivery failure or authorize another input.
+        Err(error) if transient(&error) => return Err(error),
         Err(_) => FactoryOutboxSettlement::Failed,
         Ok(ProjectionMaterial {
           request,
@@ -121,17 +160,17 @@ impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
           projector,
           original_deadline,
         }) => {
-          if row.attempt >= policy.max_attempts || self.now(at)? >= request.deadline {
+          if row.attempt >= policy.max_attempts || self.now(at)? >= request.deadline() {
             FactoryOutboxSettlement::Failed
           } else {
-            let result = projector.set_status(request.clone()).await;
+            let result = request.dispatch(projector.as_ref()).await;
             let now = self.now(at)?;
             claim
               .verify_fence(claim.fence(), now)
               .map_err(|_| ApplicationError::invalid())?;
             match result {
               Ok((_, usage))
-                if usage.attempts == 0 && usage.validate(request.budget).is_ok() && now < request.deadline =>
+                if usage.attempts == 0 && usage.validate(request.budget()).is_ok() && now < request.deadline() =>
               {
                 FactoryOutboxSettlement::Delivered
               }
@@ -179,6 +218,33 @@ impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
     }
     Ok(summary)
   }
+  async fn issue_material<'a>(
+    &'a self,
+    row: &FactoryOutboxRecord,
+    at: Timestamp,
+  ) -> Result<ProjectionMaterial<'a>, ApplicationError> {
+    let projection = self.store.issue_push_projection(row.operation_id).await?;
+    if projection.record != *row {
+      return Err(ApplicationError::invalid());
+    }
+    let desired = projection
+      .intent
+      .desired
+      .as_ref()
+      .ok_or_else(ApplicationError::invalid)?;
+    let projector = self
+      .projectors
+      .get(&desired.reporter.capability)
+      .ok_or_else(ApplicationError::invalid)?;
+    let policy = projector.issue_delivery_policy(&projection.intent)?;
+    let request = crate::accepted_issue_status_request(&projection, policy, at)?;
+    Ok(ProjectionMaterial {
+      request: ReporterRequest::Issue(request),
+      policy: policy.retry,
+      original_deadline: policy.deadline(projection.accepted_at)?,
+      projector,
+    })
+  }
   fn material<'a>(
     &'a self,
     snapshot: &FactoryRunSnapshot,
@@ -187,7 +253,7 @@ impl<S: FactoryRunStore> FactoryWorkStatusOutboxWorker<S> {
   ) -> Result<ProjectionMaterial<'a>, ApplicationError> {
     let material = accepted_status_material(snapshot, row, at)?;
     Ok(ProjectionMaterial {
-      request: material.request,
+      request: ReporterRequest::Work(Box::new(material.request)),
       policy: material.policy,
       projector: self
         .projectors
@@ -284,7 +350,9 @@ fn accepted_status_material<'a>(
 }
 
 #[async_trait::async_trait]
-impl<S: FactoryRunStore + 'static> FactoryOutboxDispatcher for FactoryWorkStatusOutboxWorker<S> {
+impl<S: FactoryRunStore + IssueSourceProjectionStore + 'static> FactoryOutboxDispatcher
+  for FactoryWorkStatusOutboxWorker<S>
+{
   async fn dispatch_once(&self, at: Timestamp) -> Result<FactoryOutboxDispatchSummary, ApplicationError> {
     self.run_once(at).await
   }

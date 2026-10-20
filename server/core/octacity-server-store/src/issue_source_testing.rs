@@ -260,6 +260,7 @@ impl IssueSourceStore for crate::testing::InMemoryProjectStore {
     let (issue, mut initial) = prepare_issue_creation(&state, &create, &audit)?;
     initial.origin = IssueTransitionOrigin::Source;
     let link = IssueSourceLink {
+      display_id: request.observation.display_id.clone(),
       issue_id: issue.id,
       selection: request.selection.clone(),
       native_correlation: native,
@@ -372,6 +373,7 @@ impl IssueSourceStore for crate::testing::InMemoryProjectStore {
       return Ok(IssueSourceOutcome::Conflict { canonical: None });
     }
     let link = IssueSourceLink {
+      display_id: request.observation.display_id.clone(),
       issue_id: issue.id,
       selection: intent.selection.clone(),
       native_correlation: native,

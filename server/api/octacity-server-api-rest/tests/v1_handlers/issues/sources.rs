@@ -620,6 +620,7 @@ async fn issue_source_http_explicit_attachment_preserves_manual_requirements_and
   let original = document(response).await;
   assert_eq!(original["kind"], "linked");
   assert_eq!(original["link"]["issue_id"], issue);
+  assert_eq!(original["link"]["display_id"], "NATIVE-7");
   assert_json_matches_component(&openapi_document(), "IssueSourceOutcome", &original);
   let current = document(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await;
   assert_eq!(current, created["resource"]);
@@ -1012,6 +1013,16 @@ fn issue_source_http_schema_publishes_utf8_bounds_for_generated_mapping_forms() 
   assert_eq!(
     schemas["IssueSourceItem"]["properties"]["item"]["x-max-utf8-bytes"],
     256
+  );
+  assert_eq!(
+    schemas["IssueSourceLink"]["properties"]["display_id"]["x-max-utf8-bytes"],
+    256
+  );
+  assert!(
+    !schemas["IssueSourceLink"]["required"]
+      .as_array()
+      .unwrap()
+      .contains(&serde_json::json!("display_id"))
   );
 }
 

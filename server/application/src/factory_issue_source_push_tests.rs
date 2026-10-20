@@ -263,6 +263,7 @@ pub(crate) async fn install_push_mapping(
           expected_field_policy: store.issue_field_policy(issue.project_id, issue.id).await.unwrap(),
         },
         observation: IssueSourceObservation {
+          display_id: None,
           source: source.clone(),
           plugin: reference("native-reader"),
           provider_configuration: FactoryDigest::from_bytes([7; 32]),

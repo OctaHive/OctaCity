@@ -145,7 +145,13 @@ async fn github_fixture_and_second_source_share_native_task_contracts_and_isolat
       attached_at: time(100),
     };
     let result = commands.handle_command(context, attach.clone()).await.unwrap();
-    assert!(matches!(result, IssueSourceOutcome::Linked { .. }));
+    let IssueSourceOutcome::Linked { ref link, .. } = result else {
+      panic!("verified link")
+    };
+    assert_eq!(
+      link.display_id.as_deref(),
+      Some(if provider == "github" { "17" } else { "TASK-7" })
+    );
     assert_eq!(store.issue(project, original.id, None).await.unwrap(), original);
     let choices = queries
       .handle_query(

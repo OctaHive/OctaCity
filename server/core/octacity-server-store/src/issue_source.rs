@@ -31,6 +31,9 @@ impl IssueSourceSelection {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssueSourceLink {
+  /// Original verified display/route locator; never native identity or write authority.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub display_id: Option<String>,
   /// Owning visible local task.
   pub issue_id: IssueId,
   /// Original installed selection, retained across later connection/profile changes.
@@ -155,6 +158,9 @@ pub trait IssueSourceStore: IssueStore {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssueSourceObservation {
+  /// Verified bounded native display/route locator, absent in legacy provenance.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub display_id: Option<String>,
   /// Exact installed selector/mapping, resource and capability versions used by this read.
   pub source: WorkSourceBinding,
   /// Content-verified executable, independent of canonical native identity.
@@ -193,7 +199,11 @@ impl IssueSourceObservation {
       .unix_millis()
       .checked_sub(self.observed_at.unix_millis())
       .and_then(|v| u64::try_from(v).ok());
-    if self.source != selection.source
+    if self
+      .display_id
+      .as_ref()
+      .is_some_and(|id| octacity_server_factory::ExternalWorkIdentity::new(id.clone()).is_err())
+      || self.source != selection.source
       || at < self.observed_at
       || at >= self.expires_at
       || lifetime.is_none_or(|v| v == 0 || v > crate::MAX_SOURCE_RETENTION_MILLIS)

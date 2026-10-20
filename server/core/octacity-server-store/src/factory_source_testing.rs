@@ -45,7 +45,8 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
       .preparations
       .values()
       .find(|p| {
-        p.input.project_id() == request.project_id && p.admission.as_ref().is_some_and(|a| a.work_id == request.work_id)
+        p.input.project_id() == request.project_id
+          && p.admission.as_ref().is_some_and(|a| Some(a.work_id) == request.work_id)
       })
       .ok_or_else(source_conflict)?;
     let issue = preparation.projection_item();

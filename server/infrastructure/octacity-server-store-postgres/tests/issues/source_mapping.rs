@@ -494,5 +494,98 @@ async fn source_push_freezes_original_desired_effects_in_the_existing_mutation_o
     moved.issue
   );
   assert_eq!(outbox(&database, issue.id, "issue.transitioned").await, records);
+  let claimed = restarted
+    .claim_factory_outbox(
+      ClaimFactoryOutbox::new(
+        octacity_server_factory::FactoryKey::new("issue-reporter").unwrap(),
+        at(6),
+        at(16),
+        4,
+      )
+      .unwrap()
+      .only_kind(octacity_server_factory::FactoryKey::new("issue.status.projection").unwrap()),
+    )
+    .await
+    .unwrap();
+  assert_eq!(
+    claimed.len(),
+    1,
+    "an accepted Issue push must enter the existing fenced outbox without a Run"
+  );
+  let original = &claimed[0].record;
+  assert_eq!(original.subject.run_id(), None);
+  let retained = restarted.issue_push_projection(original.operation_id).await.unwrap();
+  assert_eq!(serde_json::to_value(&retained.intent).unwrap(), *push);
+  let mut coordination = SourceProjectionRequest {
+    project_id: project.id,
+    work_id: None,
+    operation_id: original.operation_id,
+    claim: original.claim.unwrap(),
+    observed_at: at(6),
+    fields: vec![octacity_server_factory::FactoryDigest::from_bytes([1; 32])],
+    action: SourceProjectionAction::Register,
+  };
+  assert!(matches!(
+    restarted
+      .coordinate_source_projection(coordination.clone())
+      .await
+      .unwrap(),
+    SourceProjectionState::Ready { .. }
+  ));
+  let step = octacity_server_factory::FactoryDigest::from_bytes([2; 32]);
+  coordination.action = SourceProjectionAction::Begin {
+    step_id: step,
+    fields: coordination.fields.clone(),
+  };
+  assert!(matches!(
+    restarted
+      .coordinate_source_projection(coordination.clone())
+      .await
+      .unwrap(),
+    SourceProjectionState::Granted { .. }
+  ));
+  let replacement = restarted
+    .claim_factory_outbox(
+      ClaimFactoryOutbox::new(
+        octacity_server_factory::FactoryKey::new("restarted-issue-reporter").unwrap(),
+        at(16),
+        at(26),
+        1,
+      )
+      .unwrap()
+      .only_kind(original.kind.clone()),
+    )
+    .await
+    .unwrap();
+  assert_eq!(replacement.len(), 1);
+  assert_eq!(replacement[0].record.operation_id, original.operation_id);
+  coordination.observed_at = at(16);
+  assert!(
+    restarted
+      .coordinate_source_projection(coordination.clone())
+      .await
+      .is_err()
+  );
+  assert!(
+    restarted
+      .settle_factory_outbox(SettleFactoryOutbox {
+        operation_id: original.operation_id,
+        owner: original.owner.clone().unwrap(),
+        fence: original.claim.unwrap().fence(),
+        observed_at: at(16),
+        settlement: FactoryOutboxSettlement::Delivered,
+      })
+      .await
+      .is_err()
+  );
+  // A known late completion may release only its original permit, never begin another write.
+  coordination.action = SourceProjectionAction::Finish {
+    step_id: step,
+    uncertain: false,
+  };
+  assert_eq!(
+    restarted.coordinate_source_projection(coordination).await.unwrap(),
+    SourceProjectionState::Released
+  );
   database.cleanup().await;
 }

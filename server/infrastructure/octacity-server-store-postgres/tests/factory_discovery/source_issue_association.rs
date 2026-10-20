@@ -141,6 +141,7 @@ async fn imported(store: &PostgresStore, input: &WorkSourceInput, item: WorkSour
     item,
   };
   let observation = IssueSourceObservation {
+    display_id: None,
     source: selection.source.clone(),
     plugin: ImmutableReference::new(key("verified-reader"), key("v1"), digest(3)),
     provider_configuration: digest(4),

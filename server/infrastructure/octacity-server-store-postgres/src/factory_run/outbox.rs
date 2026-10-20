@@ -12,6 +12,19 @@ pub(crate) async fn claim_outbox(
   pool: &PgPool,
   request: ClaimFactoryOutbox,
 ) -> Result<Vec<ClaimedFactoryOutbox>, StoreError> {
+  // A restarted worker must not dispatch a partial legacy publication batch.
+  // Work-only consumers remain independent of Issue recovery.
+  if (request.kinds.is_empty()
+    || request
+      .kinds
+      .iter()
+      .any(|kind| kind.as_str() == "issue.status.projection"))
+    && crate::issue_reporter::has_pending_publications(pool)
+      .await
+      .map_err(unavailable)?
+  {
+    return Err(StoreError::Unavailable);
+  }
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   let operation_ids: Vec<Vec<u8>> = sqlx::query_scalar(
     "WITH latest AS ( \
@@ -21,14 +34,14 @@ pub(crate) async fn claim_outbox(
          CASE state WHEN 'pending' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END DESC, recorded_at DESC, id DESC \
      ) \
      SELECT operation_id FROM latest \
-     WHERE ($3::text IS NULL OR kind = $3) AND ( \
+     WHERE ($3::text[] IS NULL OR kind = ANY($3)) AND ( \
        (state = 'pending' AND available_at <= to_timestamp($1::double precision / 1000.0)) \
         OR (state = 'claimed' AND claim_expires_at <= to_timestamp($1::double precision / 1000.0))) \
      ORDER BY available_at, operation_id LIMIT $2",
   )
   .bind(request.observed_at.unix_millis())
   .bind(i64::from(request.limit.get()))
-  .bind(request.kind.as_ref().map(FactoryKey::as_str))
+  .bind((!request.kinds.is_empty()).then(|| request.kinds.iter().map(FactoryKey::as_str).collect::<Vec<_>>()))
   .fetch_all(&mut *transaction)
   .await
   .map_err(unavailable)?;
@@ -38,11 +51,7 @@ pub(crate) async fn claim_outbox(
     let Some(initial) = latest(&mut transaction, operation_id).await? else {
       continue;
     };
-    sqlx::query("SELECT id FROM factory_runs WHERE id = $1 FOR UPDATE")
-      .bind(initial.run_id.as_uuid())
-      .execute(&mut *transaction)
-      .await
-      .map_err(unavailable)?;
+    lock_subject(&mut transaction, initial.subject).await?;
     let Some(current) = latest(&mut transaction, operation_id).await? else {
       continue;
     };
@@ -89,11 +98,9 @@ pub(crate) async fn claim_outbox(
       request.observed_at,
     );
     insert_outbox(&mut transaction, &record).await?;
-    insert_audit(
-      &mut transaction,
-      &worker_audit(&request.owner, &record, "factory.outbox.claimed", "accepted"),
-    )
-    .await?;
+    if let Some(audit) = worker_audit(&request.owner, &record, "factory.outbox.claimed", "accepted") {
+      insert_audit(&mut transaction, &audit).await?;
+    }
     claimed.push(ClaimedFactoryOutbox { record });
   }
   transaction.commit().await.map_err(unavailable)?;
@@ -110,11 +117,7 @@ pub(crate) async fn settle_outbox(
     .ok_or(StoreError::NotFound {
       entity: octacity_server_domain::EntityKind::FactoryRun,
     })?;
-  sqlx::query("SELECT id FROM factory_runs WHERE id = $1 FOR UPDATE")
-    .bind(current.run_id.as_uuid())
-    .execute(&mut *transaction)
-    .await
-    .map_err(unavailable)?;
+  lock_subject(&mut transaction, current.subject).await?;
   let current = latest(&mut transaction, request.operation_id)
     .await?
     .ok_or(StoreError::Unavailable)?;
@@ -162,21 +165,19 @@ pub(crate) async fn settle_outbox(
     }
   };
   insert_outbox(&mut transaction, &next).await?;
-  insert_audit(
-    &mut transaction,
-    &worker_audit(&request.owner, &next, "factory.outbox.settled", outcome),
-  )
-  .await?;
+  if let Some(audit) = worker_audit(&request.owner, &next, "factory.outbox.settled", outcome) {
+    insert_audit(&mut transaction, &audit).await?;
+  }
   transaction.commit().await.map_err(unavailable)?;
   Ok(next)
 }
 
-async fn latest(
+pub(crate) async fn latest(
   transaction: &mut Transaction<'_, Postgres>,
   operation_id: FactoryDigest,
 ) -> Result<Option<FactoryOutboxRecord>, StoreError> {
   sqlx::query_as::<_, OutboxRow>(
-    "SELECT id, operation_id, run_id, kind, input_digest, state, attempt, \
+    "SELECT id, operation_id, run_id, issue, kind, input_digest, state, attempt, \
             FLOOR(EXTRACT(EPOCH FROM available_at) * 1000)::BIGINT AS available_at_millis, \
             FLOOR(EXTRACT(EPOCH FROM recorded_at) * 1000)::BIGINT AS recorded_at_millis, \
             owner, fence, FLOOR(EXTRACT(EPOCH FROM claimed_at) * 1000)::BIGINT AS claimed_at_millis, \
@@ -193,9 +194,14 @@ async fn latest(
   .transpose()
 }
 
-fn worker_audit(owner: &FactoryKey, record: &FactoryOutboxRecord, operation: &str, outcome: &str) -> FactoryAuditFact {
-  FactoryAuditFact::new(
-    record.run_id,
+fn worker_audit(
+  owner: &FactoryKey,
+  record: &FactoryOutboxRecord,
+  operation: &str,
+  outcome: &str,
+) -> Option<FactoryAuditFact> {
+  Some(FactoryAuditFact::new(
+    record.subject.run_id()?,
     AuditActorKind::Worker,
     Some(FactoryDigest::sha256(
       "octacity.factory.audit-worker.v1",
@@ -205,5 +211,30 @@ fn worker_audit(owner: &FactoryKey, record: &FactoryOutboxRecord, operation: &st
     record.operation_id,
     FactoryKey::new(outcome).expect("static Factory key is valid"),
     record.recorded_at,
-  )
+  ))
+}
+
+// Lock the accepted owner, never create a Run for an Issue-owned effect.
+pub(crate) async fn lock_subject(
+  tx: &mut Transaction<'_, Postgres>,
+  subject: octacity_server_store::FactoryOutboxSubject,
+) -> Result<(), StoreError> {
+  match subject {
+    octacity_server_store::FactoryOutboxSubject::Run(run) => {
+      sqlx::query("SELECT id FROM factory_runs WHERE id=$1 FOR UPDATE")
+        .bind(run.as_uuid())
+        .execute(&mut **tx)
+        .await
+        .map_err(unavailable)?;
+    }
+    octacity_server_store::FactoryOutboxSubject::Issue(issue) => {
+      sqlx::query("SELECT id FROM issues WHERE project_id=$1 AND id=$2 FOR NO KEY UPDATE")
+        .bind(issue.project_id.as_uuid())
+        .bind(issue.issue_id.as_uuid())
+        .execute(&mut **tx)
+        .await
+        .map_err(unavailable)?;
+    }
+  }
+  Ok(())
 }

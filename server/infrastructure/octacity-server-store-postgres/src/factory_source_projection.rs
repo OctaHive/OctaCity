@@ -72,62 +72,100 @@ pub(crate) async fn record_publications(
     {
       continue;
     }
-    let existing: Option<(uuid::Uuid, Vec<u8>)> =
-      sqlx::query_as("SELECT project_id,issue FROM factory_source_projection_intents WHERE operation_id=$1")
-        .bind(row.operation_id.as_bytes().to_vec())
-        .fetch_optional(&mut **transaction)
-        .await
-        .map_err(unavailable)?;
-    if let Some((project, issue)) = existing {
-      if project != scope.project.as_uuid() || issue != scope.issue {
-        return Err(source_conflict());
-      }
-      continue;
-    }
-    let sequence:i64=sqlx::query_scalar("UPDATE factory_source_projection_journals SET next_sequence=next_sequence+1 WHERE project_id=$1 AND issue=$2 AND next_sequence<9223372036854775807 RETURNING next_sequence")
-      .bind(scope.project.as_uuid()).bind(&scope.issue).fetch_optional(&mut **transaction).await.map_err(unavailable)?.ok_or_else(source_conflict)?;
-    sqlx::query(
-      "INSERT INTO factory_source_projection_intents (operation_id,project_id,issue,sequence) VALUES ($1,$2,$3,$4)",
-    )
-    .bind(row.operation_id.as_bytes().to_vec())
-    .bind(scope.project.as_uuid())
-    .bind(&scope.issue)
-    .bind(sequence)
-    .execute(&mut **transaction)
-    .await
-    .map_err(unavailable)?;
+    record_intent(transaction, scope.project, &scope.issue, row.operation_id).await?;
   }
   Ok(())
+}
+async fn record_intent(
+  transaction: &mut Transaction<'_, Postgres>,
+  project: ProjectId,
+  issue: &[u8],
+  operation: FactoryDigest,
+) -> Result<(), StoreError> {
+  let existing: Option<(uuid::Uuid, Vec<u8>)> =
+    sqlx::query_as("SELECT project_id,issue FROM factory_source_projection_intents WHERE operation_id=$1")
+      .bind(operation.as_bytes().to_vec())
+      .fetch_optional(&mut **transaction)
+      .await
+      .map_err(unavailable)?;
+  if let Some((retained_project, retained_issue)) = existing {
+    if retained_project != project.as_uuid() || retained_issue != issue {
+      return Err(source_conflict());
+    }
+    return Ok(());
+  }
+  let sequence:i64=sqlx::query_scalar("UPDATE factory_source_projection_journals SET next_sequence=next_sequence+1 WHERE project_id=$1 AND issue=$2 AND next_sequence<9223372036854775807 RETURNING next_sequence")
+      .bind(project.as_uuid()).bind(issue).fetch_optional(&mut **transaction).await.map_err(unavailable)?.ok_or_else(source_conflict)?;
+  sqlx::query(
+    "INSERT INTO factory_source_projection_intents (operation_id,project_id,issue,sequence) VALUES ($1,$2,$3,$4)",
+  )
+  .bind(operation.as_bytes().to_vec())
+  .bind(project.as_uuid())
+  .bind(issue)
+  .bind(sequence)
+  .execute(&mut **transaction)
+  .await
+  .map_err(unavailable)?;
+  Ok(())
+}
+pub(crate) async fn record_issue_publication(
+  transaction: &mut Transaction<'_, Postgres>,
+  intent: &octacity_server_store::IssuePushIntent,
+  row: &FactoryOutboxRecord,
+) -> Result<(), StoreError> {
+  let desired = intent.desired.as_ref().ok_or_else(source_conflict)?;
+  let item = desired.link.selection.item.projection_item();
+  lock_issue(transaction, intent.project_id, &item.as_bytes()).await?;
+  record_intent(transaction, intent.project_id, &item.as_bytes(), row.operation_id).await
 }
 pub(crate) async fn coordinate(
   store: &PostgresStore,
   request: SourceProjectionRequest,
 ) -> Result<SourceProjectionState, StoreError> {
   let mut transaction = store.pool().begin().await.map_err(unavailable)?;
-  let documents: Vec<Vec<u8>> = sqlx::query_scalar(
-    "SELECT document FROM factory_source_preparations WHERE project_id=$1 AND work_id=$2 AND settled LIMIT 2",
-  )
-  .bind(request.project_id.as_uuid())
-  .bind(request.work_id.as_uuid())
-  .fetch_all(&mut *transaction)
-  .await
-  .map_err(unavailable)?;
-  if documents.len() != 1 {
-    return Err(source_conflict());
-  }
-  let preparation: WorkSourcePreparation =
-    serde_json::from_slice(&documents[0]).map_err(|_| StoreError::Unavailable)?;
-  if preparation.input.project_id() != request.project_id {
-    return Err(source_conflict());
-  }
-  let reporter = preparation
-    .input
-    .definition()
-    .reporter
-    .as_ref()
-    .ok_or_else(source_conflict)?;
-  let association = preparation.admission.as_ref().ok_or_else(source_conflict)?;
-  let issue = preparation.projection_item().as_bytes().to_vec();
+  let work = if let Some(work) = request.work_id {
+    let documents: Vec<Vec<u8>> = sqlx::query_scalar(
+      "SELECT document FROM factory_source_preparations WHERE project_id=$1 AND work_id=$2 AND settled LIMIT 2",
+    )
+    .bind(request.project_id.as_uuid())
+    .bind(work.as_uuid())
+    .fetch_all(&mut *transaction)
+    .await
+    .map_err(unavailable)?;
+    if documents.len() != 1 {
+      return Err(source_conflict());
+    }
+    let preparation: WorkSourcePreparation =
+      serde_json::from_slice(&documents[0]).map_err(|_| StoreError::Unavailable)?;
+    if preparation.input.project_id() != request.project_id {
+      return Err(source_conflict());
+    }
+    Some(preparation)
+  } else {
+    None
+  };
+  let issue = if let Some(preparation) = &work {
+    preparation.projection_item().as_bytes().to_vec()
+  } else {
+    let projection = crate::issue_reporter::read(&mut transaction, request.operation_id).await?;
+    if projection.intent.project_id != request.project_id {
+      return Err(source_conflict());
+    }
+    // Claims and Issue publication share this owner row. Lock it before the
+    // native journal, preserving the Issue -> item order through permit commit.
+    factory_run::lock_outbox_subject(&mut transaction, projection.record.subject).await?;
+    projection
+      .intent
+      .desired
+      .as_ref()
+      .ok_or_else(source_conflict)?
+      .link
+      .selection
+      .item
+      .projection_item()
+      .as_bytes()
+      .to_vec()
+  };
   let mut journal = lock_issue(&mut transaction, request.project_id, &issue).await?;
   let record:Option<(i64,Option<Json<Vec<FactoryDigest>>>)>=sqlx::query_as("SELECT sequence,managed_fields FROM factory_source_projection_intents WHERE operation_id=$1 AND project_id=$2 AND issue=$3 FOR UPDATE")
     .bind(request.operation_id.as_bytes().to_vec()).bind(request.project_id.as_uuid()).bind(&issue).fetch_optional(&mut *transaction).await.map_err(unavailable)?;
@@ -136,14 +174,41 @@ pub(crate) async fn coordinate(
     sequence: u64::try_from(sequence).map_err(|_| StoreError::Unavailable)?,
     fields: fields.map(|v| v.0),
   };
-  let snapshot = factory_run::read_snapshot_in_transaction(&mut transaction, association.run_id).await?;
-  let candidates = source_projection_candidates(&[snapshot])?;
-  if !candidates
-    .iter()
-    .any(|c| c.operation_id == request.operation_id && c.capability == reporter.capability)
-  {
-    return Err(source_conflict());
-  }
+  let candidates = if let Some(preparation) = work {
+    let reporter = preparation
+      .input
+      .definition()
+      .reporter
+      .as_ref()
+      .ok_or_else(source_conflict)?;
+    let association = preparation.admission.as_ref().ok_or_else(source_conflict)?;
+    let snapshot = factory_run::read_snapshot_in_transaction(&mut transaction, association.run_id).await?;
+    let candidates = source_projection_candidates(&[snapshot])?;
+    if !candidates
+      .iter()
+      .any(|c| c.operation_id == request.operation_id && c.capability == reporter.capability)
+    {
+      return Err(source_conflict());
+    }
+    candidates
+  } else {
+    // Reread ownership after the item lock: an expired claim may have been replaced while waiting.
+    let projection = crate::issue_reporter::read(&mut transaction, request.operation_id).await?;
+    let desired = projection.intent.desired.as_ref().ok_or_else(source_conflict)?;
+    vec![octacity_server_store::SourceProjectionCandidate {
+      operation_id: request.operation_id,
+      work_id: None,
+      accepted_at: projection.accepted_at,
+      capability: desired.reporter.capability.clone(),
+      deadline: projection
+        .record
+        .claim
+        .map_or(projection.accepted_at, |c| c.expires_at()),
+      claim: (projection.record.state == octacity_server_store::FactoryOutboxState::Claimed)
+        .then_some(projection.record.claim)
+        .flatten(),
+    }]
+  };
   let newer_unknown:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM factory_source_projection_intents WHERE project_id=$1 AND issue=$2 AND sequence>$3 AND managed_fields IS NULL)")
     .bind(request.project_id.as_uuid()).bind(&issue).bind(sequence).fetch_one(&mut *transaction).await.map_err(unavailable)?;
   let state = journal.coordinate(&request, &candidates, &mut order, newer_unknown)?;

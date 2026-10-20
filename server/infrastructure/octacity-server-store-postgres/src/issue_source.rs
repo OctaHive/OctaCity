@@ -115,6 +115,7 @@ impl IssueSourceStore for PostgresStore {
         )
         .await?;
         let link = IssueSourceLink {
+          display_id: request.observation.display_id.clone(),
           issue_id: issue.id,
           selection: request.selection,
           native_correlation: native,
@@ -195,6 +196,7 @@ impl IssueSourceStore for PostgresStore {
       return Ok(IssueSourceOutcome::Conflict { canonical: None });
     }
     let link = IssueSourceLink {
+      display_id: request.observation.display_id.clone(),
       issue_id: issue.id,
       selection: intent.selection.clone(),
       native_correlation: native,

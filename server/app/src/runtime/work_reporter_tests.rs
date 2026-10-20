@@ -10,6 +10,7 @@ fn reference(s: &str) -> ImmutableReference {
 }
 pub(super) fn draft(provider: &str) -> FactoryReporterProfileDraft {
   FactoryReporterProfileDraft {
+    issue_delivery: None,
     reporting_policy: None,
     project_id: ProjectId::generate(),
     installation: reference(provider),
@@ -175,4 +176,33 @@ async fn reporter_metadata_reads_share_the_original_deadline_even_when_the_store
   );
   assert!(result.unwrap().is_err());
   pool.close().await;
+}
+
+#[test]
+fn issue_reporter_delivery_is_explicit_bounded_and_part_of_the_original_profile_pin() {
+  use octacity_server_application::{FactoryReporterRetryPolicy, IssueReporterDeliveryPolicy};
+  let mut draft = draft("opaque-provider");
+  let work_only = FactoryReporterProfile::new(key("writer"), key("v1"), draft.clone()).unwrap();
+  let policy = IssueReporterDeliveryPolicy {
+    retry: FactoryReporterRetryPolicy {
+      max_attempts: 3,
+      retry_delay_millis: 100,
+    },
+    window_millis: 5000,
+    budget: BudgetLimit::new(1, 1000, 0, 0, 10000).unwrap(),
+  };
+  draft.issue_delivery = Some(policy);
+  let enabled = FactoryReporterProfile::new(key("writer"), key("v1"), draft.clone()).unwrap();
+  assert_ne!(enabled.binding(), work_only.binding());
+  draft.issue_delivery.as_mut().unwrap().window_millis = 6000;
+  assert_ne!(
+    FactoryReporterProfile::new(key("writer"), key("v1"), draft.clone())
+      .unwrap()
+      .binding(),
+    enabled.binding()
+  );
+  for window in [0, IssueReporterDeliveryPolicy::MAX_WINDOW_MILLIS + 1] {
+    draft.issue_delivery.as_mut().unwrap().window_millis = window;
+    assert!(FactoryReporterProfile::new(key("writer"), key("v1"), draft.clone()).is_err());
+  }
 }

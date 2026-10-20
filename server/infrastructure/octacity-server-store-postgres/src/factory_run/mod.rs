@@ -36,7 +36,7 @@ pub(crate) use claim::{claim, claim_batch};
 pub(crate) use control::apply_control;
 pub(crate) use diagnostics::list_diagnostics;
 pub(crate) use history::{append_history, history_rows};
-pub(crate) use outbox::{claim_outbox, settle_outbox};
+pub(crate) use outbox::{claim_outbox, latest as latest_outbox, lock_subject as lock_outbox_subject, settle_outbox};
 pub(crate) use phase_pool::{
   list_phase_ready_entries, phase_ready_entries, publish_phase_ready, ready_phase_policies, select_phase_ready,
   selection_for_claim,
@@ -145,7 +145,8 @@ struct LockedRun {
 struct OutboxRow {
   id: Vec<u8>,
   operation_id: Vec<u8>,
-  run_id: uuid::Uuid,
+  run_id: Option<uuid::Uuid>,
+  issue: Option<Json<octacity_server_store::IssueProjectionSubject>>,
   kind: String,
   input_digest: Vec<u8>,
   state: String,
@@ -362,7 +363,7 @@ async fn read_audit(
   row.map(decode_audit_row).transpose()
 }
 
-async fn insert_outbox(
+pub(crate) async fn insert_outbox(
   transaction: &mut Transaction<'_, Postgres>,
   record: &FactoryOutboxRecord,
 ) -> Result<(), StoreError> {
@@ -378,15 +379,15 @@ async fn insert_outbox(
   sqlx::query(
     "INSERT INTO factory_outbox_records \
        (id, operation_id, run_id, kind, input_digest, state, attempt, available_at, recorded_at, \
-        owner, fence, claimed_at, claim_expires_at) \
+        owner, fence, claimed_at, claim_expires_at, issue) \
      VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8::double precision / 1000.0), \
              to_timestamp($9::double precision / 1000.0), $10, $11, \
              CASE WHEN $12::BIGINT IS NULL THEN NULL ELSE to_timestamp($12::double precision / 1000.0) END, \
-             CASE WHEN $13::BIGINT IS NULL THEN NULL ELSE to_timestamp($13::double precision / 1000.0) END)",
+             CASE WHEN $13::BIGINT IS NULL THEN NULL ELSE to_timestamp($13::double precision / 1000.0) END, $14)",
   )
   .bind(record.id.as_bytes().as_slice())
   .bind(record.operation_id.as_bytes().as_slice())
-  .bind(record.run_id.as_uuid())
+  .bind(record.subject.run_id().map(|r| r.as_uuid()))
   .bind(record.kind.as_str())
   .bind(record.input_digest.as_bytes().as_slice())
   .bind(outbox_state(record.state))
@@ -397,6 +398,10 @@ async fn insert_outbox(
   .bind(fence)
   .bind(claimed_at)
   .bind(expires_at)
+  .bind(match record.subject {
+    octacity_server_store::FactoryOutboxSubject::Issue(issue) => Some(Json(issue)),
+    _ => None,
+  })
   .execute(&mut **transaction)
   .await
   .map_err(unavailable)?;
@@ -505,7 +510,13 @@ fn decode_outbox(row: OutboxRow) -> Result<FactoryOutboxRecord, StoreError> {
   let record = FactoryOutboxRecord {
     id: digest(&row.id)?,
     operation_id: digest(&row.operation_id)?,
-    run_id: FactoryRunId::from_uuid(row.run_id).map_err(|_| StoreError::Unavailable)?,
+    subject: match (row.run_id, row.issue) {
+      (Some(run), None) => octacity_server_store::FactoryOutboxSubject::Run(
+        FactoryRunId::from_uuid(run).map_err(|_| StoreError::Unavailable)?,
+      ),
+      (None, Some(Json(issue))) => octacity_server_store::FactoryOutboxSubject::Issue(issue),
+      _ => return Err(StoreError::Unavailable),
+    },
     kind: FactoryKey::new(row.kind).map_err(|_| StoreError::Unavailable)?,
     input_digest: digest(&row.input_digest)?,
     state,

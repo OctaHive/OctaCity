@@ -1,7 +1,7 @@
 //! Durable ordering at the existing source/action/store public boundary.
 use super::*;
 #[path = "work_reporter_postgres_tests.rs"]
-mod postgres;
+pub(super) mod postgres;
 
 #[tokio::test]
 async fn accepted_projection_registers_opaque_fields_and_rejects_scope_or_fence_drift() {
@@ -23,7 +23,7 @@ async fn accepted_projection_registers_opaque_fields_and_rejects_scope_or_fence_
     .record;
   let mut request = SourceProjectionRequest {
     project_id: fixture.input.project_id(),
-    work_id: before.work.id(),
+    work_id: Some(before.work.id()),
     operation_id: row.operation_id,
     claim: row.claim.unwrap(),
     observed_at: time(120),
@@ -185,11 +185,17 @@ async fn newer_accepted_inputs_block_unknown_scopes_and_supersede_only_overlappi
       )
       .await
       .unwrap();
-    let original = rows.iter().find(|r| r.record.run_id == old_run).unwrap();
-    let newer = rows.iter().find(|r| r.record.run_id == new_run).unwrap();
+    let original = rows
+      .iter()
+      .find(|r| r.record.subject.run_id() == Some(old_run))
+      .unwrap();
+    let newer = rows
+      .iter()
+      .find(|r| r.record.subject.run_id() == Some(new_run))
+      .unwrap();
     let mut old_request = SourceProjectionRequest {
       project_id: fixture.input.project_id(),
-      work_id: old.work.id(),
+      work_id: Some(old.work.id()),
       operation_id: original.record.operation_id,
       claim: original.record.claim.unwrap(),
       observed_at: time(220),
@@ -208,7 +214,7 @@ async fn newer_accepted_inputs_block_unknown_scopes_and_supersede_only_overlappi
     let field = if overlaps { digest(1) } else { digest(2) };
     let new_request = SourceProjectionRequest {
       project_id: fixture.input.project_id(),
-      work_id: new.work.id(),
+      work_id: Some(new.work.id()),
       operation_id: newer.record.operation_id,
       claim: newer.record.claim.unwrap(),
       observed_at: time(220),
@@ -281,7 +287,7 @@ async fn older_inflight_steps_require_known_completion_and_expired_uncertainty_i
       .record;
     let mut old_request = SourceProjectionRequest {
       project_id: fixture.input.project_id(),
-      work_id: old.work.id(),
+      work_id: Some(old.work.id()),
       operation_id: row.operation_id,
       claim: row.claim.unwrap(),
       observed_at: time(120),
@@ -322,7 +328,7 @@ async fn older_inflight_steps_require_known_completion_and_expired_uncertainty_i
       .record;
     let mut new_request = SourceProjectionRequest {
       project_id: fixture.input.project_id(),
-      work_id: new.work.id(),
+      work_id: Some(new.work.id()),
       operation_id: row.operation_id,
       claim: row.claim.unwrap(),
       observed_at: time(220),
@@ -378,7 +384,7 @@ async fn older_inflight_steps_require_known_completion_and_expired_uncertainty_i
         .unwrap();
       new_request.claim = rows
         .iter()
-        .find(|r| r.record.run_id == new_run)
+        .find(|r| r.record.subject.run_id() == Some(new_run))
         .unwrap()
         .record
         .claim
@@ -428,7 +434,7 @@ async fn completed_writes_invalidate_an_earlier_observation_even_after_the_lease
     .record;
   let mut request = SourceProjectionRequest {
     project_id: fixture.input.project_id(),
-    work_id: snapshot.work.id(),
+    work_id: Some(snapshot.work.id()),
     operation_id: row.operation_id,
     claim: row.claim.unwrap(),
     observed_at: time(120),
@@ -514,6 +520,7 @@ fn mapped_installation_profile<S>(
     key(mapping),
     key("v1"),
     FactoryReporterProfileDraft {
+      issue_delivery: None,
       reporting_policy: None,
       project_id: fixture.input.project_id(),
       installation,
@@ -585,7 +592,9 @@ async fn source_status_dispatch_skips_superseded_intents_across_provider_binding
   }
 }
 
-async fn late_write_contract<S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + 'static>(
+async fn late_write_contract<
+  S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + IssueSourceProjectionStore + 'static,
+>(
   mut fixture: Fixture<S>,
   original: FactoryReporterProfile,
   lose_fence: bool,
@@ -832,7 +841,9 @@ async fn human_conflict_and_continuous_edits_fail_bounded_reporting_without_chan
   }
 }
 
-async fn acceptance_order_contract<S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + 'static>(
+async fn acceptance_order_contract<
+  S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + IssueSourceProjectionStore + 'static,
+>(
   mut fixture: Fixture<S>,
   profile: FactoryReporterProfile,
 ) {
@@ -851,11 +862,17 @@ async fn acceptance_order_contract<S: WorkSourceArtifactStore + FactoryDiscovery
     )
     .await
     .unwrap();
-  let old_row = rows.iter().find(|r| r.record.run_id == old_run).unwrap();
-  let new_row = rows.iter().find(|r| r.record.run_id == new_run).unwrap();
+  let old_row = rows
+    .iter()
+    .find(|r| r.record.subject.run_id() == Some(old_run))
+    .unwrap();
+  let new_row = rows
+    .iter()
+    .find(|r| r.record.subject.run_id() == Some(new_run))
+    .unwrap();
   let old_request = SourceProjectionRequest {
     project_id: fixture.input.project_id(),
-    work_id: old.work.id(),
+    work_id: Some(old.work.id()),
     operation_id: old_row.record.operation_id,
     claim: old_row.record.claim.unwrap(),
     observed_at: time(220),
@@ -873,7 +890,7 @@ async fn acceptance_order_contract<S: WorkSourceArtifactStore + FactoryDiscovery
   );
   let newer = SourceProjectionRequest {
     project_id: fixture.input.project_id(),
-    work_id: new.work.id(),
+    work_id: Some(new.work.id()),
     operation_id: new_row.record.operation_id,
     claim: new_row.record.claim.unwrap(),
     observed_at: time(220),
@@ -893,7 +910,7 @@ async fn source_projection_order_follows_atomic_acceptance_even_when_clocks_move
 }
 
 async fn disjoint_observation_contract<
-  S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + 'static,
+  S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + IssueSourceProjectionStore + 'static,
 >(
   mut fixture: Fixture<S>,
   profile: FactoryReporterProfile,
@@ -914,11 +931,17 @@ async fn disjoint_observation_contract<
     )
     .await
     .unwrap();
-  let old_row = rows.iter().find(|r| r.record.run_id == old_run).unwrap();
-  let new_row = rows.iter().find(|r| r.record.run_id == new_run).unwrap();
+  let old_row = rows
+    .iter()
+    .find(|r| r.record.subject.run_id() == Some(old_run))
+    .unwrap();
+  let new_row = rows
+    .iter()
+    .find(|r| r.record.subject.run_id() == Some(new_run))
+    .unwrap();
   let mut old_request = SourceProjectionRequest {
     project_id: fixture.input.project_id(),
-    work_id: old.work.id(),
+    work_id: Some(old.work.id()),
     operation_id: old_row.record.operation_id,
     claim: old_row.record.claim.unwrap(),
     observed_at: time(220),
@@ -932,7 +955,7 @@ async fn disjoint_observation_contract<
     .unwrap();
   let mut newer = SourceProjectionRequest {
     project_id: fixture.input.project_id(),
-    work_id: new.work.id(),
+    work_id: Some(new.work.id()),
     operation_id: new_row.record.operation_id,
     claim: new_row.record.claim.unwrap(),
     observed_at: time(220),

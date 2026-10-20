@@ -92,6 +92,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("issue_id", id()),
+        ("display_id", native()),
         ("selection", schema_ref("IssueSourceSelection")),
         ("native_correlation", schema_ref("FactoryDigest")),
         ("linked_at", non_negative_integer()),
@@ -124,6 +125,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "IssueSourceObservation".into(),
     object(
       [
+        ("display_id", native()),
         ("source", schema_ref("WorkSourceBinding")),
         ("plugin", pin()),
         ("provider_configuration", schema_ref("FactoryDigest")),

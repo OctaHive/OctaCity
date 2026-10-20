@@ -272,6 +272,7 @@ async fn source_observations_retain_each_original_mapping_and_provenance_across_
 
 fn observation(selection: &IssueSourceSelection) -> octacity_server_store::IssueSourceObservation {
   octacity_server_store::IssueSourceObservation {
+    display_id: None,
     source: selection.source.clone(),
     plugin: exact("verified-reader"),
     provider_configuration: FactoryDigest::content_sha256(b"transport settings"),
@@ -1068,6 +1069,7 @@ async fn source_refresh_upgrade_retains_the_original_schema_81_link_and_read_pro
   let scope = ManagementSecurityScope::trusted_network();
   let selected = selection(project.id);
   let link = IssueSourceLink {
+    display_id: None,
     issue_id: manual.id,
     native_correlation: selected.native_correlation(&scope),
     selection: selected.clone(),

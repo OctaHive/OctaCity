@@ -136,6 +136,7 @@ pub(super) async fn fixture_with_reporting_policy(
   )
   .await;
   let draft = FactoryReporterProfileDraft {
+    issue_delivery: None,
     reporting_policy: policy.clone(),
     project_id: fixture.input.project_id(),
     installation: fixture.profile.read.binding.installation.clone(),
@@ -219,7 +220,7 @@ pub(super) async fn fixture_with_reporting_policy(
   std::fs::OpenOptions::new().append(true).open(dir.join("adapter.toml")).unwrap().write_all(format!("\n[protocol.reporter]\nmin=1\nmax=2\n[capabilities.reporter]\ncustom_effects=true\nobserve=true\nproject=true\ncancel=true\nidempotency=\"observe_before_retry\"\ncredential_class=\"work_reporter_write\"\nconfiguration_digest=\"{}\"\n","d".repeat(64)).as_bytes()).unwrap();
   (fixture, profile)
 }
-pub(super) fn hosted<S: FactorySourceStore + FactoryRunStore + 'static>(
+pub(super) fn hosted<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore + 'static>(
   fixture: &Fixture<S>,
   profiles: Vec<FactoryReporterProfile>,
 ) -> Arc<HostedFactoryWorkStatusProjector<S>> {
@@ -236,13 +237,17 @@ pub(super) fn hosted<S: FactorySourceStore + FactoryRunStore + 'static>(
     .unwrap(),
   )
 }
-pub(super) async fn queue<S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + 'static>(
+pub(super) async fn queue<
+  S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + IssueSourceProjectionStore + 'static,
+>(
   fixture: &Fixture<S>,
   projector: Arc<HostedFactoryWorkStatusProjector<S>>,
 ) -> FactoryRunId {
   queue_at(fixture, projector, 100).await
 }
-pub(super) async fn queue_at<S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + 'static>(
+pub(super) async fn queue_at<
+  S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + IssueSourceProjectionStore + 'static,
+>(
   fixture: &Fixture<S>,
   projector: Arc<HostedFactoryWorkStatusProjector<S>>,
   base: i64,
@@ -252,7 +257,9 @@ pub(super) async fn queue_at<S: WorkSourceArtifactStore + FactoryDiscoveryStore 
   run
 }
 // Admission can be prepared before a race; the status intent is accepted later.
-pub(super) async fn admit_at<S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + 'static>(
+pub(super) async fn admit_at<
+  S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + IssueSourceProjectionStore + 'static,
+>(
   fixture: &Fixture<S>,
   base: i64,
 ) -> FactoryRunId {
@@ -275,7 +282,7 @@ pub(super) async fn admit_at<S: WorkSourceArtifactStore + FactoryDiscoveryStore 
     .unwrap()
     .id
 }
-pub(super) async fn accept_status_at<S: FactorySourceStore + FactoryRunStore + 'static>(
+pub(super) async fn accept_status_at<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore + 'static>(
   fixture: &Fixture<S>,
   projector: Arc<HostedFactoryWorkStatusProjector<S>>,
   run: FactoryRunId,
@@ -362,7 +369,7 @@ pub(super) fn original_intent(call: &serde_json::Value) -> &serde_json::Value {
   payload.get("intent").unwrap_or(payload)
 }
 
-pub(super) fn reporting_worker<S: FactoryRunStore>(
+pub(super) fn reporting_worker<S: FactoryRunStore + IssueSourceProjectionStore>(
   fixture: &Fixture<S>,
   projector: Arc<dyn FactoryWorkStatusProjector>,
   owner: &str,

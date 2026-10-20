@@ -383,7 +383,7 @@ impl StoredFactoryRun {
       self
         .outbox
         .values()
-        .all(|record| record.run_id == run_id && record.is_canonical()),
+        .all(|record| record.subject == crate::FactoryOutboxSubject::Run(run_id) && record.is_canonical()),
     )?;
     validate_outbox(self)?;
     Ok(())
@@ -692,7 +692,7 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
       .flat_map(|(run_id, stored)| {
         latest_outbox_records(stored)
           .into_iter()
-          .filter(|record| request.kind.as_ref().is_none_or(|kind| kind == &record.kind))
+          .filter(|record| request.kinds.is_empty() || request.kinds.contains(&record.kind))
           .filter(|record| match record.state {
             crate::FactoryOutboxState::Pending => record.available_at <= request.observed_at,
             crate::FactoryOutboxState::Claimed => record
@@ -1183,7 +1183,7 @@ fn validate_outbox(stored: &StoredFactoryRun) -> Result<(), StoreError> {
         unreachable!("outbox windows have two rows")
       };
       let same_input =
-        previous.run_id == next.run_id && previous.kind == next.kind && previous.input_digest == next.input_digest;
+        previous.subject == next.subject && previous.kind == next.kind && previous.input_digest == next.input_digest;
       let valid_state = match (previous.state, next.state) {
         (crate::FactoryOutboxState::Pending, crate::FactoryOutboxState::Claimed) => {
           previous.attempt == next.attempt && next.owner.is_some() && next.claim.is_some()

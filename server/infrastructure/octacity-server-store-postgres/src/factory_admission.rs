@@ -581,7 +581,7 @@ async fn insert_factory_outbox(
   )
   .bind(record.id.as_bytes().as_slice())
   .bind(record.operation_id.as_bytes().as_slice())
-  .bind(record.run_id.as_uuid())
+  .bind(record.subject.run_id().ok_or(StoreError::Unavailable)?.as_uuid())
   .bind(record.kind.as_str())
   .bind(record.input_digest.as_bytes().as_slice())
   .bind(i32::from(record.attempt))

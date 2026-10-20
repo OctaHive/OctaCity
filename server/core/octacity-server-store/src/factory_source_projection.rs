@@ -13,8 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub struct SourceProjectionRequest {
   /// Owning Project.
   pub project_id: ProjectId,
-  /// Original source-associated Work.
-  pub work_id: WorkEnvelopeId,
+  /// Original source-associated Work, absent for an accepted Issue metadata effect.
+  pub work_id: Option<WorkEnvelopeId>,
   /// Original accepted status operation.
   pub operation_id: FactoryDigest,
   /// Independent outbox claim, never the Flow owner claim.
@@ -89,8 +89,8 @@ pub enum SourceProjectionState {
 pub struct SourceProjectionCandidate {
   /// Original accepted operation.
   pub operation_id: FactoryDigest,
-  /// Original source-associated Work.
-  pub work_id: WorkEnvelopeId,
+  /// Original source-associated Work, absent for an accepted Issue metadata effect.
+  pub work_id: Option<WorkEnvelopeId>,
   /// Immutable enqueue time for provenance; ordering uses the store-assigned sequence.
   pub accepted_at: Timestamp,
   /// Exact accepted action capability; unrelated status adapters do not share this source order.
@@ -171,7 +171,7 @@ pub fn source_projection_candidates(
         .ok_or_else(source_conflict)?;
       result.push(SourceProjectionCandidate {
         operation_id: initial.operation_id,
-        work_id: snapshot.work.id(),
+        work_id: Some(snapshot.work.id()),
         accepted_at: initial.recorded_at,
         capability: binding.plugin().clone(),
         deadline: attempt.deadline(),

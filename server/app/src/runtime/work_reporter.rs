@@ -1,7 +1,8 @@
 //! Optional provider-neutral projection through the verified Reporter process and existing outbox.
 use octacity_server_application::{
   ApplicationError, FactoryExecutionClock, FactoryWorkStatusProjector, FactoryWorkStatusRequest,
-  ManagedIntegrationAccess, ManagedIntegrationConnections, WorkSourceSnapshot, accepted_factory_status_source_update,
+  IssueReporterDeliveryPolicy, ManagedIntegrationAccess, ManagedIntegrationConnections, WorkSourceSnapshot,
+  accepted_factory_status_source_update,
 };
 use octacity_server_domain::ProjectId;
 use octacity_server_factory::*;
@@ -17,6 +18,9 @@ mod projection;
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryReporterProfileDraft {
+  /// Optional immutable bounds for accepted task metadata effects, independent of Factory nodes.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub issue_delivery: Option<IssueReporterDeliveryPolicy>,
   /// Explicit native adapter editing ceiling; absence preserves installed-only effects.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub reporting_policy: Option<WorkSourceReportingPolicy>,
@@ -55,6 +59,9 @@ impl FactoryReporterProfile {
     version: FactoryKey,
     draft: FactoryReporterProfileDraft,
   ) -> Result<Self, ApplicationError> {
+    if let Some(policy) = draft.issue_delivery {
+      policy.validate()?;
+    }
     draft
       .access
       .validate(octacity_work_source_protocol::CredentialClass::WorkReporterWrite)

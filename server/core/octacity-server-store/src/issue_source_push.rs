@@ -4,6 +4,18 @@ use octacity_server_domain::IssueStatusId;
 use octacity_server_factory::{WorkSourceBinding, WorkSourceStatusEffects};
 use serde::{Deserialize, Serialize};
 
+/// Immutable local revision owning a Reporter effect, independently of execution.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueProjectionSubject {
+  /// Owning Project.
+  pub project_id: octacity_server_domain::ProjectId,
+  /// Original local task.
+  pub issue_id: octacity_server_domain::IssueId,
+  /// Accepted revision; dispatch never substitutes the current head.
+  pub version: octacity_server_domain::IssueVersion,
+}
+
 /// Credential-free command attribution retained with an accepted desired state.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -35,6 +47,24 @@ pub struct IssueSourceDesiredState {
   pub command: IssuePushCommand,
 }
 impl IssuePushIntent {
+  /// Stable operation and immutable input for the existing deferred-effect journal.
+  pub fn projection_record(&self, accepted_at: octacity_server_domain::Timestamp) -> Option<FactoryOutboxRecord> {
+    self.desired.as_ref()?;
+    let bytes = serde_json::to_vec(self).ok()?;
+    let digest = octacity_server_factory::FactoryDigest::sha256("octacity.issue.push.v1", &[&bytes]);
+    Some(FactoryOutboxRecord::pending(
+      digest,
+      crate::FactoryOutboxSubject::Issue(IssueProjectionSubject {
+        project_id: self.project_id,
+        issue_id: self.issue_id,
+        version: self.version,
+      }),
+      octacity_server_factory::FactoryKey::new("issue.status.projection").expect("static key"),
+      digest,
+      accepted_at,
+      accepted_at,
+    ))
+  }
   /// Resolves only original publication facts; a later mapping/link cannot retrofit an intent.
   pub fn desired_state(
     &self,
@@ -90,3 +120,28 @@ impl IssuePushIntent {
     })
   }
 }
+
+/// Original desired material and current independently fenced delivery record.
+#[derive(Clone, Debug)]
+pub struct IssuePushProjection {
+  /// Immutable accepted desired state, never reconstructed from the current mapping.
+  pub intent: IssuePushIntent,
+  /// Immutable original publication time.
+  pub accepted_at: octacity_server_domain::Timestamp,
+  /// Latest existing Reporter outbox state.
+  pub record: FactoryOutboxRecord,
+}
+/// Narrow Reporter read over already committed Issue effects; no metadata mutation or admission.
+#[async_trait::async_trait]
+pub trait IssueSourceProjectionStore: Send + Sync {
+  /// Reads original material and latest delivery state by stable operation identity.
+  async fn issue_push_projection(
+    &self,
+    _operation: octacity_server_factory::FactoryDigest,
+  ) -> Result<IssuePushProjection, StoreError> {
+    Err(StoreError::Unavailable)
+  }
+}
+// This fixture backend owns Factory records only; it cannot invent an Issue publication.
+#[cfg(any(test, feature = "test-support"))]
+impl IssueSourceProjectionStore for crate::factory_configuration_testing::InMemoryFactoryConfigurationStore {}

@@ -215,8 +215,31 @@ pub enum FactoryOutboxState {
   Claimed,
   /// The external effect was observed or completed idempotently.
   Delivered,
-  /// Bounded retry policy was exhausted.
+  /// Technical delivery is terminally unavailable or its retry policy was exhausted.
   Failed,
+}
+
+/// Accepted owner of a deferred effect; no synthetic Work or Run is introduced.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FactoryOutboxSubject {
+  /// Existing configured Factory action.
+  Run(FactoryRunId),
+  /// Authorized metadata revision of a local task.
+  Issue(crate::IssueProjectionSubject),
+}
+impl From<FactoryRunId> for FactoryOutboxSubject {
+  fn from(run: FactoryRunId) -> Self {
+    Self::Run(run)
+  }
+}
+impl FactoryOutboxSubject {
+  /// Original Run when the effect belongs to execution.
+  pub fn run_id(self) -> Option<FactoryRunId> {
+    match self {
+      Self::Run(id) => Some(id),
+      Self::Issue(_) => None,
+    }
+  }
 }
 
 /// Immutable outbox state row for one stable logical side effect.
@@ -226,8 +249,8 @@ pub struct FactoryOutboxRecord {
   pub id: FactoryDigest,
   /// Stable identity shared by every state row for the logical side effect.
   pub operation_id: FactoryDigest,
-  /// Factory Run that owns the side effect.
-  pub run_id: FactoryRunId,
+  /// Original accepted owner; an Issue effect requires no execution.
+  pub subject: FactoryOutboxSubject,
   /// Bounded side-effect kind.
   pub kind: FactoryKey,
   /// Digest of the complete immutable side-effect input.
@@ -262,7 +285,7 @@ impl FactoryOutboxRecord {
   #[must_use]
   pub fn pending(
     operation_id: FactoryDigest,
-    run_id: FactoryRunId,
+    subject: impl Into<FactoryOutboxSubject>,
     kind: FactoryKey,
     input_digest: FactoryDigest,
     available_at: Timestamp,
@@ -270,7 +293,7 @@ impl FactoryOutboxRecord {
   ) -> Self {
     Self::new_state(
       operation_id,
-      run_id,
+      subject.into(),
       kind,
       input_digest,
       FactoryOutboxState::Pending,
@@ -293,7 +316,7 @@ impl FactoryOutboxRecord {
   ) -> Self {
     Self::new_state(
       previous.operation_id,
-      previous.run_id,
+      previous.subject,
       previous.kind.clone(),
       previous.input_digest,
       FactoryOutboxState::Claimed,
@@ -314,7 +337,7 @@ impl FactoryOutboxRecord {
     ));
     Self::new_state(
       previous.operation_id,
-      previous.run_id,
+      previous.subject,
       previous.kind.clone(),
       previous.input_digest,
       state,
@@ -332,7 +355,7 @@ impl FactoryOutboxRecord {
     let attempt = previous.attempt.checked_add(1)?;
     Some(Self::new_state(
       previous.operation_id,
-      previous.run_id,
+      previous.subject,
       previous.kind.clone(),
       previous.input_digest,
       FactoryOutboxState::Pending,
@@ -347,7 +370,7 @@ impl FactoryOutboxRecord {
   #[allow(clippy::too_many_arguments)]
   fn new_state(
     operation_id: FactoryDigest,
-    run_id: FactoryRunId,
+    subject: FactoryOutboxSubject,
     kind: FactoryKey,
     input_digest: FactoryDigest,
     state: FactoryOutboxState,
@@ -374,11 +397,15 @@ impl FactoryOutboxRecord {
     let expires_at = claim
       .map_or(0_i64, |claim| claim.expires_at().unix_millis())
       .to_be_bytes();
+    let subject_bytes = match subject {
+      FactoryOutboxSubject::Run(run) => run.as_uuid().as_bytes().to_vec(),
+      FactoryOutboxSubject::Issue(issue) => serde_json::to_vec(&issue).expect("finite Issue subject serializes"),
+    };
     let id = FactoryDigest::sha256(
       "octacity.factory.outbox.v1",
       &[
         &operation_id.as_bytes(),
-        run_id.as_uuid().as_bytes(),
+        &subject_bytes,
         kind.as_str().as_bytes(),
         &input_digest.as_bytes(),
         state_name.as_bytes(),
@@ -394,7 +421,7 @@ impl FactoryOutboxRecord {
     Self {
       id,
       operation_id,
-      run_id,
+      subject,
       kind,
       input_digest,
       state,
@@ -419,7 +446,7 @@ impl FactoryOutboxRecord {
       && self
         == &Self::new_state(
           self.operation_id,
-          self.run_id,
+          self.subject,
           self.kind.clone(),
           self.input_digest,
           self.state,
@@ -443,8 +470,8 @@ pub struct ClaimFactoryOutbox {
   pub claim_expires_at: Timestamp,
   /// Positive bounded batch size.
   pub limit: NonZeroU16,
-  /// Optional exact effect kind; workers never take another capability's events.
-  pub kind: Option<FactoryKey>,
+  /// Exact effect families; empty preserves the unfiltered administrative claim.
+  pub kinds: Vec<FactoryKey>,
 }
 
 impl ClaimFactoryOutbox {
@@ -474,13 +501,21 @@ impl ClaimFactoryOutbox {
       observed_at,
       claim_expires_at,
       limit,
-      kind: None,
+      kinds: vec![],
     })
+  }
+  /// Narrows a bounded pass to the installed effect families.
+  pub fn only_kinds(mut self, kinds: Vec<FactoryKey>) -> Result<Self, StoreError> {
+    if kinds.is_empty() || kinds.len() > 256 {
+      return Err(crate::source_conflict());
+    }
+    self.kinds = kinds;
+    Ok(self)
   }
   /// Narrows this bounded claim to one configured effect family.
   #[must_use]
   pub fn only_kind(mut self, kind: FactoryKey) -> Self {
-    self.kind = Some(kind);
+    self.kinds = vec![kind];
     self
   }
 }

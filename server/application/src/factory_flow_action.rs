@@ -246,6 +246,26 @@ pub struct FactoryWorkStatusRequest {
 /// Projection failure cannot undo an accepted node result or grant authority.
 #[async_trait]
 pub trait FactoryWorkStatusProjector: Send + Sync {
+  /// Explicit installed task delivery support; Work-only consumers leave Issue events untouched.
+  fn supports_issue_delivery(&self) -> bool {
+    false
+  }
+
+  /// Reads exact installed Issue delivery policy; absence grants no Issue projection.
+  fn issue_delivery_policy(
+    &self,
+    _: &octacity_server_store::IssuePushIntent,
+  ) -> Result<crate::IssueReporterDeliveryPolicy, ApplicationError> {
+    Err(ApplicationError::capability_unavailable())
+  }
+  /// Delivers one accepted task metadata effect under the same Reporter fence.
+  async fn set_issue_status(
+    &self,
+    _: crate::IssueStatusProjectionRequest,
+  ) -> Result<(FactoryDigest, BudgetUsage), ApplicationError> {
+    Err(ApplicationError::capability_unavailable())
+  }
+
   /// Observes/stops the existing projection without replaying writes or creating it.
   /// A terminal observation returns measured usage; None requires another observation.
   async fn cancel_status(
@@ -299,7 +319,7 @@ impl StatusParameters {
   }
 }
 /// Published bounded retry policy for non-authoritative source projection.
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryReporterRetryPolicy {
   /// Maximum actual dispatches, including the first.

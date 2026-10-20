@@ -524,18 +524,21 @@ pub struct PublishSourcePreparationIntent {
   /// Trusted observation time.
   pub now: octacity_server_domain::Timestamp,
 }
+impl WorkSourceItem {
+  /// Shared native ordering bucket; provider field digests isolate actual installations.
+  pub fn projection_item(&self) -> FactoryDigest {
+    FactoryDigest::sha256(
+      "octacity.factory.projection-item.v1",
+      &[self.resource.as_str().as_bytes(), self.item.as_str().as_bytes()],
+    )
+  }
+}
 impl WorkSourcePreparation {
   /// Technical ordering bucket shared across installations for the same opaque native ids.
   /// Admission/correlation retains its installation scope. Adapter field digests must
   /// additionally namespace the actual provider instance, isolating coincident ids.
   pub fn projection_item(&self) -> FactoryDigest {
-    FactoryDigest::sha256(
-      "octacity.factory.projection-item.v1",
-      &[
-        self.item.resource.as_str().as_bytes(),
-        self.item.item.as_str().as_bytes(),
-      ],
-    )
+    self.item.projection_item()
   }
 
   /// Existing admission identity; definition versions and observation content are excluded.

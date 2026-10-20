@@ -203,7 +203,7 @@ pub fn validate_factory_transition(
     request.audit.recorded_at,
   );
   let outbox_is_valid = request.outbox.iter().all(|record| {
-    record.run_id == request.run_id
+    record.subject == crate::FactoryOutboxSubject::Run(request.run_id)
       && record.recorded_at == request.committed_at
       && record.available_at >= request.committed_at
       && record.state == FactoryOutboxState::Pending

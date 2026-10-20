@@ -46,12 +46,12 @@ pub(crate) async fn recover_restored_ownership(
 
   let claimed = sqlx::query_as::<_, OutboxRow>(
     "WITH latest AS (\
-       SELECT DISTINCT ON (operation_id) id, operation_id, run_id, kind, input_digest, state, attempt, \
+       SELECT DISTINCT ON (operation_id) id, operation_id, run_id, issue, kind, input_digest, state, attempt, \
          available_at, recorded_at, owner, fence, claimed_at, claim_expires_at \
        FROM factory_outbox_records \
        ORDER BY operation_id, attempt DESC, \
          CASE state WHEN 'pending' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END DESC, recorded_at DESC, id DESC\
-     ) SELECT id, operation_id, run_id, kind, input_digest, state, attempt, \
+     ) SELECT id, operation_id, run_id, issue, kind, input_digest, state, attempt, \
        FLOOR(EXTRACT(EPOCH FROM available_at) * 1000)::BIGINT AS available_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM recorded_at) * 1000)::BIGINT AS recorded_at_millis, \
        owner, fence, FLOOR(EXTRACT(EPOCH FROM claimed_at) * 1000)::BIGINT AS claimed_at_millis, \
@@ -68,16 +68,13 @@ pub(crate) async fn recover_restored_ownership(
     let retry = octacity_server_store::FactoryOutboxRecord::retry(&current, observed_at, observed_at)
       .ok_or(StoreError::Unavailable)?;
     insert_outbox(&mut transaction, &retry).await?;
-    insert_audit(
-      &mut transaction,
-      &restoration_audit(
-        retry.run_id.as_uuid(),
-        "factory.restore.outbox_requeued",
-        retry.id,
-        observed_at,
-      )?,
-    )
-    .await?;
+    if let Some(run) = retry.subject.run_id() {
+      insert_audit(
+        &mut transaction,
+        &restoration_audit(run.as_uuid(), "factory.restore.outbox_requeued", retry.id, observed_at)?,
+      )
+      .await?;
+    }
   }
 
   let expired_retention_claims: Vec<(uuid::Uuid, String, Option<i64>)> = sqlx::query_as(

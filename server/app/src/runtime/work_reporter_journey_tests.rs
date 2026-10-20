@@ -7,6 +7,8 @@ use octacity_work_source_protocol::{ConfigurationReference, CredentialClass, Cre
 mod configuration;
 #[path = "work_reporter_deadline_tests.rs"]
 mod deadline;
+#[path = "issue_reporter_tests.rs"]
+mod issues;
 #[path = "work_reporter_ordering_tests.rs"]
 mod ordering;
 #[path = "work_reporter_recovery_tests.rs"]

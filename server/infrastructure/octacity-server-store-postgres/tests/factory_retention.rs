@@ -527,7 +527,7 @@ async fn insert_outbox(transaction: &mut sqlx::Transaction<'_, sqlx::Postgres>, 
   )
   .bind(record.id.as_bytes().as_slice())
   .bind(record.operation_id.as_bytes().as_slice())
-  .bind(record.run_id.as_uuid())
+  .bind(record.subject.run_id().unwrap().as_uuid())
   .bind(record.kind.as_str())
   .bind(record.input_digest.as_bytes().as_slice())
   .bind(match record.state {

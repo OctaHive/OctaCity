@@ -50,7 +50,11 @@ if request['family'] == 'reporter':
             receipt['resource_id'] = intent['resource']['resource_id']
             receipt['matches'] = all(values.get(field) == desired for field in fields)
             token = hashlib.sha256(json.dumps([intent, {field: values.get(field) for field in fields}], sort_keys=True).encode()).hexdigest()
-            return {'receipt':receipt, 'fields':fields, 'steps':[] if receipt['matches'] else [{'fields':fields, 'token':token}]}
+            steps = [] if receipt['matches'] else [{'fields':fields, 'token':token}]
+            if mode.get('split_steps'):
+                steps = [{'fields':[field], 'token':hashlib.sha256(json.dumps([intent, field, values.get(field)], sort_keys=True).encode()).hexdigest()}
+                         for field in fields if values.get(field) != desired]
+            return {'receipt':receipt, 'fields':fields, 'steps':steps}
         current = plan(read_state())
         if command == 'apply':
             if mode.get('conflict_on_apply') or payload['step'] not in current['steps']:
@@ -68,7 +72,7 @@ if request['family'] == 'reporter':
                 state.seek(0)
                 text = state.read()
                 values = json.loads(text) if text else {}
-                for field in fields:
+                for field in payload['step']['fields']:
                     values[field] = 'human-edit' if mode.get('undo_after_apply') else desired
                 state.seek(0)
                 state.truncate()

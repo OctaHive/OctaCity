@@ -507,6 +507,7 @@ async fn managed_push_intent_is_retained_once_with_original_mapping_and_no_body(
   let records = outbox(&database, created.id, "issue.edited").await;
   assert_eq!(records.len(), 1);
   let expected = IssuePushIntent {
+    desired: None,
     project_id: project.id,
     issue_id: created.id,
     version: edited.issue.version,

@@ -82,6 +82,7 @@ impl WorkSourceObservation {
   /// Retains safe exact provenance for Issue persistence without copying normalized native content.
   pub fn issue_receipt(&self) -> octacity_server_store::IssueSourceObservation {
     octacity_server_store::IssueSourceObservation {
+      display_id: Some(self.snapshot.display_id.clone()),
       source: self.source.clone(),
       plugin: self.plugin.clone(),
       provider_configuration: self.provider_configuration,

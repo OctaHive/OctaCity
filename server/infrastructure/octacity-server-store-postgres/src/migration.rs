@@ -25,7 +25,12 @@ pub fn current_schema_version() -> i64 {
 
 /// Applies every pending forward migration to one PostgreSQL database.
 pub async fn migrate(pool: &PgPool) -> Result<(), MigrateError> {
-  run_migrator(pool, &MIGRATOR).await
+  run_migrator(pool, &MIGRATOR).await?;
+  crate::issue_reporter::recover_publications(pool).await.map_err(|_| {
+    MigrateError::Execute(sqlx::Error::Protocol(
+      "Issue Reporter publication recovery failed".into(),
+    ))
+  })
 }
 
 /// Runs an explicit migration set and discards a failed database session.
@@ -44,12 +49,12 @@ pub async fn run_migrator(pool: &PgPool, migrator: &Migrator) -> Result<(), Migr
   result
 }
 
-/// Read-only compatibility state of the database migration history.
+/// Read-only compatibility and completion state of database migration.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum MigrationStatus {
-  /// Every embedded forward migration is applied with its original checksum.
+  /// Forward migrations and retained publication recovery are complete.
   Current,
-  /// The migration table is absent or the applied history is an exact prefix.
+  /// SQL history or its recoverable retained-publication phase is incomplete.
   Pending,
   /// Applied history is dirty, newer, discontinuous, or has a changed checksum.
   Incompatible,
@@ -58,7 +63,7 @@ pub enum MigrationStatus {
 /// Inspects migration compatibility without taking the migrator advisory lock.
 ///
 /// Readiness can call this frequently. The comparatively expensive, locking
-/// migration path is needed only while the schema is actually behind. Applied
+/// migration path is needed only while schema or publication recovery is pending. Applied
 /// migrations must be an exact checksum-matching prefix: a newer, reordered,
 /// or gapped history is incompatible with this binary.
 pub async fn migration_status(pool: &PgPool) -> Result<MigrationStatus, sqlx::Error> {
@@ -92,11 +97,13 @@ pub async fn migration_status(pool: &PgPool) -> Result<MigrationStatus, sqlx::Er
     }
   }
 
-  Ok(if applied.len() == expected.len() {
-    MigrationStatus::Current
-  } else {
-    MigrationStatus::Pending
-  })
+  Ok(
+    if applied.len() == expected.len() && !crate::issue_reporter::has_pending_publications(pool).await? {
+      MigrationStatus::Current
+    } else {
+      MigrationStatus::Pending
+    },
+  )
 }
 
 #[cfg(test)]

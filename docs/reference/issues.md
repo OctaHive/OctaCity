@@ -249,9 +249,41 @@ mapping; an opaque legacy effect scope requires a single producer when the card
 has managed effects. Separate managed fields remain allowed. Native resource
 aliases do not bypass the same-item check.
 
-Reporter delivery and durable recovery remain in tasks 5.2–5.3. Mapping
-publication starts no Reporter or polling loop. REST and Console expose the
-separate mapping review described below.
+Issue delivery reuses the existing Reporter worker, append-only outbox and native
+ordering journal. Outbox ownership identifies either a Run or an accepted Issue
+revision; a manual task needs no synthetic Work, Run or Factory target. Original
+desired material stays in the atomic mutation event. The worker claims it under
+the existing bounded fence and uses the same Inspect/Apply protocol, field-group
+ordering, observation generations and late-write hazards as direct Factory
+effects. It rechecks accepted material and live ownership before each native
+write. An unknown response is recovered by observing the same original intent;
+mapping replacement cannot change its native item, writer or effects.
+The verified Source observation and link retain an optional bounded `display_id`
+for the existing Reporter route contract. It remains separate from stable native
+identity; old links without that original locator grant no guessed provider call.
+
+Explicit installed `FactoryReporterProfileDraft.issue_delivery` supplies the
+existing finite retry policy, per-dispatch budget and a total window measured
+from original acceptance. These settings participate in the immutable writer
+profile binding. Claims, retries and restart cannot renew the original window.
+Work-only projectors leave Issue events untouched. Temporary failure to read
+accepted material leaves a recoverable claim; provider failure cannot undo the
+Issue transition or accepted Factory result. Profiles carrying
+`ManagedIntegrationAccess` retain its current TaskUpdate checks before each
+process invocation; a Source read grant does not supply writer credentials.
+
+Migration 0085 resumes original pre-5.2 desired material in bounded atomic batches
+without reconstructing legacy intents from current links or mappings. Repeated
+migration is idempotent. Readiness also detects an unfinished publication phase;
+Issue claims wait until all retained inputs are published. When a newer Issue
+effect or a different producer already occupies the native bucket, or another
+Issue link makes its ownership ambiguous, recovery retains the original input
+without an ordering permit and dispatch fails closed. New commands publish their
+shared order atomically with the accepted revision.
+
+Explicit conflict classification/resolution and synchronization feedback remain
+tasks 5.3–5.4. Mapping publication starts no Reporter or polling loop. REST and
+Console expose the separate mapping review described below.
 
 ## Source HTTP and Console contracts
 
@@ -325,8 +357,9 @@ no adapters. Deployments may use `ServerRuntime::start_with_issue_sources` with
 safe mapping choices independently of Factory targets. Installation starts no
 polling or provider I/O; `HostedWorkSourceObservations` is the shared verified
 process reader. Writer authorization uses the separate managed connection and
-TaskUpdate contract. This API adds no profile file or credential loader. Reporter
-dispatch/recovery remains tasks 5.1–5.3.
+TaskUpdate contract. This API adds no profile file or credential loader. Deferred
+delivery uses the independently installed Reporter dispatcher described above;
+Source read installation alone does not enable it.
 
 ## Implementation scope
 

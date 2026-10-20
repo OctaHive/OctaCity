@@ -4,7 +4,7 @@ use octacity_server_store_postgres::PostgresStore;
 use sqlx::{Connection as _, PgConnection, PgPool, postgres::PgConnectOptions, types::Json};
 use std::str::FromStr as _;
 
-struct Database {
+pub(crate) struct Database {
   admin: PgConnection,
   pool: PgPool,
   name: String,
@@ -42,7 +42,7 @@ impl Database {
       .unwrap();
     octacity_server_store_postgres::migrate(&self.pool).await.unwrap();
   }
-  async fn cleanup(mut self) {
+  pub(crate) async fn cleanup(mut self) {
     self.pool.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(
       "DROP DATABASE \"{}\" WITH (FORCE)",
@@ -53,7 +53,7 @@ impl Database {
     .unwrap();
   }
 }
-async fn postgres_fixture(fixture: Fixture) -> (Fixture<PostgresStore>, Database) {
+pub(crate) async fn postgres_fixture(fixture: Fixture) -> (Fixture<PostgresStore>, Database) {
   let database = Database::new().await;
   let project = fixture.input.project_id();
   sqlx::query("INSERT INTO projects (id,parent_id,name,version,created_at,updated_at) VALUES ($1,NULL,'reporter-ordering',1,to_timestamp(0),to_timestamp(0))").bind(project.as_uuid()).execute(&database.pool).await.unwrap();
@@ -167,7 +167,7 @@ async fn ordered_projection_claims_and_hazards_survive_postgres_restart() {
       .record;
     let mut request = SourceProjectionRequest {
       project_id: fixture.input.project_id(),
-      work_id: old.work.id(),
+      work_id: Some(old.work.id()),
       operation_id: row.operation_id,
       claim: row.claim.unwrap(),
       observed_at: time(120),
@@ -211,7 +211,7 @@ async fn ordered_projection_claims_and_hazards_survive_postgres_restart() {
       .record;
     let newer = SourceProjectionRequest {
       project_id: fixture.input.project_id(),
-      work_id: new.work.id(),
+      work_id: Some(new.work.id()),
       operation_id: row.operation_id,
       claim: row.claim.unwrap(),
       observed_at: time(220),

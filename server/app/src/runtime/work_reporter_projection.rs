@@ -1,9 +1,55 @@
 //! Original source association and accepted-action authorization precede every process dispatch.
 use super::*;
+use octacity_server_application::{
+  IssueReporterDeliveryPolicy, IssueStatusProjectionRequest, accepted_issue_status_request,
+};
+use octacity_server_store::{IssuePushIntent, IssueSourceProjectionStore};
 use octacity_work_source_protocol::{FailureClass, Request, Response, reporter};
 #[path = "work_reporter_ordering.rs"]
 mod ordering;
 
+enum OrderedRequest<'a> {
+  Work(&'a FactoryWorkStatusRequest),
+  Issue(&'a IssueStatusProjectionRequest),
+}
+impl OrderedRequest<'_> {
+  fn budget(&self) -> BudgetLimit {
+    match self {
+      Self::Work(r) => r.budget,
+      Self::Issue(r) => r.budget,
+    }
+  }
+  fn deadline(&self) -> octacity_server_domain::Timestamp {
+    match self {
+      Self::Work(r) => r.deadline,
+      Self::Issue(r) => r.deadline,
+    }
+  }
+  fn operation_id(&self) -> FactoryDigest {
+    match self {
+      Self::Work(r) => r.operation_id,
+      Self::Issue(r) => r.operation_id,
+    }
+  }
+  fn project_id(&self) -> ProjectId {
+    match self {
+      Self::Work(r) => r.subject.project_id(),
+      Self::Issue(r) => r.project_id,
+    }
+  }
+  fn work_id(&self) -> Option<WorkEnvelopeId> {
+    match self {
+      Self::Work(r) => Some(r.work_id),
+      Self::Issue(_) => None,
+    }
+  }
+  fn claim(&self) -> Result<FactoryClaim, ApplicationError> {
+    match self {
+      Self::Work(r) => r.outbox_claim.ok_or_else(ApplicationError::invalid),
+      Self::Issue(r) => Ok(r.claim),
+    }
+  }
+}
 // A failed request and an unfinished remote write have different ordering consequences.
 struct InvocationFailure {
   error: ApplicationError,
@@ -20,7 +66,25 @@ impl From<InvocationFailure> for ApplicationError {
   }
 }
 
-impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S> {
+impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> HostedFactoryWorkStatusProjector<S> {
+  fn projection_end(
+    &self,
+    deadline: octacity_server_domain::Timestamp,
+    budget: BudgetLimit,
+    started: tokio::time::Instant,
+  ) -> Result<tokio::time::Instant, ApplicationError> {
+    let duration = u64::try_from(deadline.unix_millis() - self.clock.now()?.unix_millis())
+      .ok()
+      .filter(|n| *n > 0)
+      .ok_or_else(ApplicationError::invalid)?;
+    Ok(
+      started
+        + self
+          .timeout
+          .min(Duration::from_millis(duration))
+          .min(Duration::from_millis(budget.max_elapsed_millis())),
+    )
+  }
   async fn material(
     &self,
     request: &FactoryWorkStatusRequest,
@@ -131,6 +195,64 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
     }
     Ok((profile, intent))
   }
+  fn issue_profile(&self, intent: &IssuePushIntent) -> Result<FactoryReporterProfile, ApplicationError> {
+    let desired = intent.desired.as_ref().ok_or_else(ApplicationError::invalid)?;
+    self
+      .profiles
+      .iter()
+      .find(|p| p.draft.project_id == intent.project_id && p.binding == desired.reporter)
+      .cloned()
+      .ok_or_else(ApplicationError::capability_unavailable)
+  }
+  async fn issue_material(
+    &self,
+    request: &IssueStatusProjectionRequest,
+  ) -> Result<(FactoryReporterProfile, reporter::ProjectionIntent), ApplicationError> {
+    let original = self.store.issue_push_projection(request.operation_id).await?;
+    let profile = self.issue_profile(&original.intent)?;
+    let policy = profile
+      .draft
+      .issue_delivery
+      .ok_or_else(ApplicationError::capability_unavailable)?;
+    if accepted_issue_status_request(&original, policy, self.clock.now()?)? != *request {
+      return Err(ApplicationError::invalid());
+    }
+    let desired = original.intent.desired.as_ref().ok_or_else(ApplicationError::invalid)?;
+    let effects = desired.effects.as_ref().ok_or_else(ApplicationError::invalid)?;
+    profile
+      .draft
+      .reporting_policy
+      .as_ref()
+      .ok_or_else(ApplicationError::invalid)?
+      .validate_mapping(&WorkSourceStatusMapping {
+        statuses: vec![effects.clone()],
+      })
+      .map_err(|_| ApplicationError::invalid())?;
+    if desired.link.selection.item.resource.as_str() != profile.draft.access.resource_id {
+      return Err(ApplicationError::invalid());
+    }
+    let intent = reporter::ProjectionIntent {
+      projection_id: request.operation_id.to_string(),
+      configuration_digest: profile.draft.provider_configuration.to_string(),
+      resource: profile.draft.access.clone(),
+      item_id: desired.link.selection.item.item.as_str().into(),
+      display_id: desired
+        .link
+        .display_id
+        .clone()
+        .ok_or_else(ApplicationError::capability_unavailable)?,
+      mapping: profile.draft.mapping.clone(),
+      status: desired.status_id.to_string(),
+      effects: Some(reporter::ProjectionEffects {
+        add: effects.add.clone(),
+        remove: effects.remove.clone(),
+        state: effects.state.clone(),
+      }),
+      network_hosts: profile.draft.network_hosts.clone(),
+    };
+    intent.validate().map_err(|_| ApplicationError::invalid())?;
+    Ok((profile, intent))
+  }
   async fn invoke(
     &self,
     profile: &FactoryReporterProfile,
@@ -239,26 +361,44 @@ impl<S: FactorySourceStore + FactoryRunStore> HostedFactoryWorkStatusProjector<S
   }
 }
 #[async_trait::async_trait]
-impl<S: FactorySourceStore + FactoryRunStore> FactoryWorkStatusProjector for HostedFactoryWorkStatusProjector<S> {
+impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> FactoryWorkStatusProjector
+  for HostedFactoryWorkStatusProjector<S>
+{
+  fn supports_issue_delivery(&self) -> bool {
+    self.profiles.iter().any(|p| p.draft.issue_delivery.is_some())
+  }
+  fn issue_delivery_policy(&self, intent: &IssuePushIntent) -> Result<IssueReporterDeliveryPolicy, ApplicationError> {
+    self
+      .issue_profile(intent)?
+      .draft
+      .issue_delivery
+      .ok_or_else(ApplicationError::capability_unavailable)
+  }
+  async fn set_issue_status(
+    &self,
+    request: IssueStatusProjectionRequest,
+  ) -> Result<(FactoryDigest, BudgetUsage), ApplicationError> {
+    let started = tokio::time::Instant::now();
+    let end = self.projection_end(request.deadline, request.budget, started)?;
+    let (profile, intent) = tokio::time::timeout_at(end, self.issue_material(&request))
+      .await
+      .map_err(|_| ApplicationError::unavailable())??;
+    self
+      .project_ordered(&OrderedRequest::Issue(&request), &profile, intent, started, end)
+      .await
+  }
   async fn set_status(
     &self,
     request: FactoryWorkStatusRequest,
   ) -> Result<(FactoryDigest, BudgetUsage), ApplicationError> {
     let started = tokio::time::Instant::now();
-    let now = self.clock.now()?;
-    let duration = u64::try_from(request.deadline.unix_millis() - now.unix_millis())
-      .ok()
-      .filter(|v| *v > 0)
-      .ok_or_else(ApplicationError::invalid)?;
-    let end = started
-      + self
-        .timeout
-        .min(Duration::from_millis(duration))
-        .min(Duration::from_millis(request.budget.max_elapsed_millis()));
+    let end = self.projection_end(request.deadline, request.budget, started)?;
     let (profile, intent) = tokio::time::timeout_at(end, self.material(&request))
       .await
       .map_err(|_| ApplicationError::unavailable())??;
-    self.project_ordered(&request, &profile, intent, started, end).await
+    self
+      .project_ordered(&OrderedRequest::Work(&request), &profile, intent, started, end)
+      .await
   }
 
   async fn cancel_status(
