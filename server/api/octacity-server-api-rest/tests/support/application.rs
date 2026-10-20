@@ -176,6 +176,10 @@ where
       .with_commands(source_commands.clone())
       .with_resolution(source_commands),
   )
+  .with_issue_discussion(octacity_server_api_rest::v1::IssueDiscussionManagementApplication::new(
+    issue_commands.clone(),
+    issue_queries.clone(),
+  ))
   .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
     issue_commands,
     issue_queries,

@@ -30,6 +30,13 @@ async fn issue_router_with_directory(
     service = service.with_assignee_directory(directory);
   }
   let service = Arc::new(service);
+  let discussion = Arc::new(octacity_server_application::IssueDiscussionHandlers::new(
+    store.clone(),
+    policy.clone(),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+  ));
+  let discussion_commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), discussion.clone()));
+  let discussion_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), discussion));
   let peer = Arc::new(RecordingApplication::default());
   let router = management_router_with_application(
     || true,
@@ -37,6 +44,10 @@ async fn issue_router_with_directory(
       .with_issues(IssueManagementApplication::new(
         Arc::new(AuthorizedCommandHandler::new(policy.clone(), service.clone())),
         Arc::new(AuthorizedQueryHandler::new(policy, service)),
+      ))
+      .with_issue_discussion(octacity_server_api_rest::v1::IssueDiscussionManagementApplication::new(
+        discussion_commands,
+        discussion_queries,
       ))
       .with_issue_workflows(octacity_server_api_rest::v1::IssueWorkflowManagementApplication::new(
         workflow_commands,
@@ -970,3 +981,6 @@ mod executions;
 
 #[path = "issues/sources.rs"]
 mod sources;
+
+#[path = "issues/discussion.rs"]
+mod discussion;

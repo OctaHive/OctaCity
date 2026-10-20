@@ -235,6 +235,11 @@ pub(super) fn management_application(
   ));
   let issue_commands = authorized_commands(&management_policy, issues.clone());
   let issue_queries = authorized_queries(&management_policy, issues);
+  let discussion = Arc::new(octacity_server_application::IssueDiscussionHandlers::new(
+    store.clone(),
+    management_policy.clone(),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+  ));
   let executions = Arc::new(octacity_server_application::IssueExecutionHandlers::new(
     store.clone(),
     store.clone(),
@@ -322,6 +327,10 @@ pub(super) fn management_application(
   .with_issue_workflows(octacity_server_api_rest::v1::IssueWorkflowManagementApplication::new(
     workflow_commands,
     workflow_queries,
+  ))
+  .with_issue_discussion(octacity_server_api_rest::v1::IssueDiscussionManagementApplication::new(
+    authorized_commands(&management_policy, discussion.clone()),
+    authorized_queries(&management_policy, discussion),
   ))
   .with_issue_executions(
     octacity_server_api_rest::v1::IssueExecutionManagementApplication::new(authorized_queries(

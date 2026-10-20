@@ -269,6 +269,14 @@ unavailable_command!(
   octacity_server_application::SetIssueSourcePullCommand,
   "set_issue_source_pull"
 );
+unavailable_command!(
+  octacity_server_application::AppendIssueCommentCommand,
+  "append_issue_comment"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueCommentBodyQuery,
+  "get_issue_comment_body"
+);
 unavailable_query!(
   octacity_server_application::ListIssueExecutionsQuery,
   "list_issue_executions"
@@ -1097,6 +1105,8 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     json_request("POST",&format!("{source_path}/synchronization/refresh"),"refresh",None,&serde_json::json!({"source":source}).to_string()),
     json_request("POST",&format!("{source_path}/synchronization/pull"),"pull",None,r#"{"expected_generation":1,"enabled":false}"#),
 
+    json_request("POST",&format!("{source_path}/comments"),"comment",None,r#"{"body":"operator discussion"}"#),
+    empty_request("GET",&format!("{source_path}/comments/{repository_id}"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions?limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions/{repository_id}"),None),
     json_request("POST",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions"),"execution",Some("\"1\""),&issue_execution_body()),
@@ -1529,6 +1539,8 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "resolve_issue_source_conflict",
       "observe_issue_source",
       "set_issue_source_pull",
+      "append_issue_comment",
+      "get_issue_comment_body",
       "list_issue_executions",
       "get_issue_execution",
       "request_issue_execution",

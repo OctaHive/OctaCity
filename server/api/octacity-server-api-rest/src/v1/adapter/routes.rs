@@ -282,6 +282,14 @@ fn registered_routes() -> ManagementRoutes {
       "getIssueSourceLink",
       super::issue_source::link,
     )
+    .post::<octacity_server_application::AppendIssueCommentCommand, _, _>(
+      "appendIssueComment",
+      super::issue_discussion::append,
+    )
+    .get::<octacity_server_application::GetIssueCommentBodyQuery, _, _>(
+      "getIssueCommentBody",
+      super::issue_discussion::get_body,
+    )
     .get::<octacity_server_application::ListIssueExecutionsQuery, _, _>(
       "listIssueExecutions",
       super::issue_execution::list,

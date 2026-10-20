@@ -2,6 +2,35 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::AppendIssueCommentCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/comments",
+    "appendIssueComment",
+    "Issues",
+    "Append plain operator discussion without execution or approval authority",
+    Some("AppendIssueCommentRequest"),
+    "IssueCommentOutcome",
+    "201",
+    true,
+    false
+  )
+  .with_no_store_response()
+  .with_replay_success_response(),
+  operation!(
+    octacity_server_application::GetIssueCommentBodyQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/comments/{comment_id}",
+    "getIssueCommentBody",
+    "Issues",
+    "Read one independently authorized comment body without provider access",
+    None,
+    "IssueCommentContent",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ListIssueSourceProjectionsQuery,
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/synchronization/projections",
