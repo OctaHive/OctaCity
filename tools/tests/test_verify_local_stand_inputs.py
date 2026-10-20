@@ -35,6 +35,21 @@ class LocalStandInputTests(unittest.TestCase):
         VERIFIER.validate_repository_pins(self.document, tags, REPOSITORY)
         self.assertEqual(set(tags), VERIFIER.EXPECTED_IMAGE_ROLES)
 
+    def test_pins_the_released_observation_capable_octa(self):
+        octa = self.document["native"]["octa"]
+        self.assertEqual(octa["version"], "0.6.0")
+        self.assertEqual(octa["source_revision"], "3996594d5ff724d7b43888ac7db6df0b647e7d65")
+        self.assertEqual(
+            octa["sha256"],
+            "1b0c1f14583359f638c4f98aec4cdafbdbc88628b43b23f552ed82d9aeb404df",
+        )
+        self.assertEqual(octa["codex"]["required_capabilities"], [
+            "codex.blocking-pre-tool-authorization.v1",
+            "public-command-file-observations.v1",
+        ])
+        tags = self.validate()
+        VERIFIER.validate_repository_pins(self.document, tags, REPOSITORY)
+
     def test_rejects_an_image_without_a_digest(self):
         document = deepcopy(self.document)
         document["images"]["rust"]["reference"] = "docker.io/library/rust:1.99.0-bookworm"

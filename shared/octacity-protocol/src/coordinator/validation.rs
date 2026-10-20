@@ -505,6 +505,11 @@ impl AttemptEventEnvelope {
         if event.schema_version == 0 || event.sequence == 0 || event.timestamp.is_empty() || event.category.is_empty() {
           return invalid("runner event header is invalid");
         }
+        if event.data.get("progress").and_then(|v| v.get("observation")).is_some()
+          && event.public_operation_observation().is_none()
+        {
+          return invalid("public operation observation is invalid");
+        }
       }
       AttemptEventKind::Agent { event } => match event {
         AgentLifecycleEvent::ResourceUsage { usage } => usage.validate()?,

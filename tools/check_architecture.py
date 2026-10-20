@@ -98,7 +98,9 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     # contract boundary. Keep the cryptographic primitive package-specific so
     # other shared crates cannot acquire implementation dependencies by
     # implication.
-    "octacity-protocol": frozenset({"sha2"}),
+    # Public operation metadata reuses Octa's runtime-free wire DTOs. This does
+    # not admit the runner, executor, plugin host or any provider implementation.
+    "octacity-protocol": frozenset({"sha2", "octa-runner-protocol"}),
     # The shared observability contract emits through provider-neutral facades;
     # it owns no recorder, exporter, queue, or subscriber. tracing-subscriber
     # is test-only and verifies structured correlation at the facade boundary.

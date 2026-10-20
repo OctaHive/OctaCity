@@ -15,6 +15,7 @@ consumers = ["agent", "server"]
 base64.workspace = true
 ed25519-dalek.workspace = true
 octa-cache-protocol.workspace = true
+octa-runner-protocol.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

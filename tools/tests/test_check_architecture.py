@@ -54,6 +54,20 @@ def package_fixture(
 
 
 class ArchitecturePolicyTests(unittest.TestCase):
+    def test_runner_observation_contract_is_protocol_specific(self):
+        for name, dependency, expected in (
+            ("octacity-protocol", "octa-runner-protocol", []),
+            ("another-shared", "octa-runner-protocol", ["ARCH007_SHARED_IMPLEMENTATION_DEPENDENCY"]),
+            ("octacity-protocol", "tokio", ["ARCH007_SHARED_IMPLEMENTATION_DEPENDENCY"]),
+        ):
+            with self.subTest(package=name, dependency=dependency):
+                metadata = json.loads((FIXTURES / "valid.json").read_text().replace("fixture-shared", name))
+                contract = next(p for p in metadata["packages"] if p["name"] == name)
+                contract["dependencies"] = [{"name": dependency, "kind": None, "path": None}]
+                self.assertEqual([v.code for v in ARCHITECTURE.check(
+                    ARCHITECTURE.graph_from_metadata(metadata)
+                )], expected)
+
     def test_decision_signal_adapters_are_independent_workspace_packages(self):
         metadata = ARCHITECTURE.cargo_metadata(REPOSITORY)
         packages = {package["name"]: package for package in metadata["packages"]}

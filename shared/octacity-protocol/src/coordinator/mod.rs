@@ -7,6 +7,7 @@
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
+
 use thiserror::Error;
 use zeroize::Zeroize as _;
 
@@ -14,6 +15,8 @@ pub use octa_cache_protocol::{
   ACTION_KEY_FORMAT_V1 as CACHE_ACTION_KEY_FORMAT_V1, TASK_RESULT_CACHE_FEATURE_V1 as CACHE_FEATURE_V1,
   TASK_RESULT_CACHE_HTTP_FEATURE_V1 as CACHE_HTTP_FEATURE_V1,
 };
+
+pub use octa_runner_protocol::OperationObservation;
 
 use crate::{
   ArtifactTransferCapability, CachePolicy, ExecutionCapabilityV2, ExecutionContractRange, ExecutionEvidenceV2,
@@ -437,6 +440,20 @@ pub struct RunnerEventPayload {
   pub category: String,
   /// Category-specific data preserved without interpretation by the agent.
   pub data: serde_json::Map<String, serde_json::Value>,
+}
+
+impl RunnerEventPayload {
+  /// Returns only validated public operation facts. No prose, raw invocation,
+  /// output, token claims or other runner fields can enter this projection.
+  /// Absence means not reported; it never establishes execution acceptance.
+  pub fn public_operation_observation(&self) -> Option<OperationObservation> {
+    if self.category != "execution" || self.data.get("type")?.as_str()? != "progress" {
+      return None;
+    }
+    let value = self.data.get("progress")?.get("observation")?;
+    let observation: OperationObservation = serde_json::from_value(value.clone()).ok()?;
+    observation.is_valid().then_some(observation)
+  }
 }
 
 /// Agent-owned lifecycle information kept separate from Octa runner events.

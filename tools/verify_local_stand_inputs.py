@@ -334,7 +334,10 @@ def validate_octa(value: dict[str, Any]) -> None:
         "manifest": "plugins/codex.plugin.yml",
         "plugin_name": "codex",
         "plugin_protocol": 2,
-        "required_capabilities": ["codex.blocking-pre-tool-authorization.v1"],
+        "required_capabilities": [
+            "codex.blocking-pre-tool-authorization.v1",
+            "public-command-file-observations.v1",
+        ],
         "selection_environment": "OCTA_CODEX_EXECUTABLE",
         "supported_cli_versions": ["0.161.0"],
     }:

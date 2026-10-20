@@ -124,12 +124,12 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         )
         (self.installation / "octa/Octa.lock").write_text(
             "version: 1\nplugins:\n  codex:\n"
-            "    version: '0.5.1'\n"
+            "    version: '0.6.0'\n"
             "    protocol: 2\n"
             "    platforms: [linux-aarch64]\n"
             "    entrypoint: octa_plugin_codex\n"
             f"    sha256: {codex_digest}\n"
-            "    capabilities: [codex.blocking-pre-tool-authorization.v1]\n"
+            "    capabilities: [codex.blocking-pre-tool-authorization.v1, public-command-file-observations.v1]\n"
             "    source: codex.plugin.yml\n",
             encoding="utf-8",
         )
@@ -139,11 +139,12 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
                     "format_version": 2,
                     "plugin": {
                         "name": "codex",
-                        "version": "0.5.1",
+                        "version": "0.6.0",
                         "protocol": 2,
                         "manifest": "plugins/codex.plugin.yml",
                         "capabilities": [
-                            "codex.blocking-pre-tool-authorization.v1"
+                            "codex.blocking-pre-tool-authorization.v1",
+                            "public-command-file-observations.v1",
                         ],
                     },
                     "executable": {
@@ -165,7 +166,7 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
             json.dumps(
                 {
                     "type": "capabilities",
-                    "octa_version": "0.5.1",
+                    "octa_version": "0.6.0",
                     "runner_protocols": [1],
                     "event_schemas": [1],
                     "plugin_protocols": [2],

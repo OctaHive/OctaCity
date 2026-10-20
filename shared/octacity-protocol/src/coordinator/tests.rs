@@ -994,3 +994,89 @@ fn controlled_tool_routes_default_to_unqualified_in_older_inventory() {
   let roundtrip: FactoryExecutionCapabilityV3 = serde_json::from_value(serde_json::to_value(decoded).unwrap()).unwrap();
   assert!(roundtrip.controlled_tools);
 }
+
+#[test]
+fn public_operation_metadata_rejects_private_or_unbounded_fields_before_retention() {
+  let lease = LeaseFence::from(&lease());
+  let operation = serde_json::json!({"operation_id":"ab".repeat(32),"phase":"completed","observed_at_unix_ms":123,
+    "operation":{"kind":"command","exit_code":17,"failed":true}});
+  let mut event = AttemptEventEnvelope {
+    job_id: lease.job_id.clone(), attempt:lease.attempt, lease_id:lease.lease_id.clone(), fencing_token:lease.fencing_token.clone(),
+    stream_sequence:7, occurred_at_unix_ms:456,
+    kind: AttemptEventKind::Runner { event:RunnerEventPayload { schema_version:4, sequence:3, timestamp:"2026-10-20T08:00:00Z".to_owned(), category:"execution".to_owned(),
+      data:serde_json::json!({"type":"progress","run_id":2,"step_id":9,"command_id":"command-1","progress":{"message":"not authority","observation":operation}}).as_object().unwrap().clone()
+    } }
+  };
+  event.validate(&lease).unwrap();
+  let AttemptEventKind::Runner { event: runner } = &mut event.kind else {
+    unreachable!()
+  };
+  runner.data["progress"]["observation"]["operation"]["arguments"] = serde_json::json!(["secret-canary"]);
+  assert!(
+    event.validate(&lease).is_err(),
+    "raw invocation fields cannot enter retained public metadata"
+  );
+}
+
+#[test]
+fn public_operation_projection_never_interprets_text_or_exposes_the_rest_of_the_runner_payload() {
+  let mut runner = RunnerEventPayload {
+    schema_version: 4,
+    sequence: 3,
+    timestamp: "2026-10-20T08:00:00Z".to_owned(),
+    category: "execution".to_owned(),
+    data: serde_json::json!({"type":"progress","run_id":2,"step_id":9,"command_id":"command-1",
+      "prompt":"private-prompt","transcript":"private-transcript","usage":{"input_tokens":999},
+      "progress":{"message":"all tests passed; input_tokens=42; edited src/lib.rs"}})
+    .as_object()
+    .unwrap()
+    .clone(),
+  };
+  assert!(
+    runner.public_operation_observation().is_none(),
+    "prose is not an operation or measurement"
+  );
+  runner.data["progress"]["observation"] = serde_json::json!({"operation_id":"ab".repeat(32),"phase":"completed","observed_at_unix_ms":123,
+    "operation":{"kind":"command","exit_code":null,"failed":null}});
+  let observation = runner.public_operation_observation().unwrap();
+  let public = serde_json::to_value(observation).unwrap();
+  assert_eq!(
+    public["operation"],
+    serde_json::json!({"kind":"command","exit_code":null,"failed":null})
+  );
+  assert_eq!(public["observed_at_unix_ms"], 123);
+  let serialized = serde_json::to_string(&public).unwrap();
+  for forbidden in [
+    "private-prompt",
+    "private-transcript",
+    "usage",
+    "all tests passed",
+    "input_tokens",
+  ] {
+    assert!(!serialized.contains(forbidden));
+  }
+  runner.data["progress"]["observation"]["operation"] =
+    serde_json::json!({"kind":"web_search","query":"private-query"});
+  assert!(runner.public_operation_observation().is_none());
+}
+
+#[test]
+fn public_operation_start_cannot_claim_a_completed_outcome() {
+  let runner = RunnerEventPayload {
+    schema_version: 4,
+    sequence: 3,
+    timestamp: "2026-10-20T08:00:00Z".to_owned(),
+    category: "execution".to_owned(),
+    data: serde_json::json!({"type":"progress","progress":{"message":"ignored","observation":{
+      "operation_id":"ab".repeat(32),"phase":"started","observed_at_unix_ms":123,
+      "operation":{"kind":"command","exit_code":0,"failed":false}
+    }}})
+    .as_object()
+    .unwrap()
+    .clone(),
+  };
+  assert!(
+    runner.public_operation_observation().is_none(),
+    "a reported start cannot masquerade as command success"
+  );
+}

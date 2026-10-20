@@ -598,6 +598,50 @@ mod tests {
   }
 
   #[test]
+  fn public_operation_replay_keeps_the_original_fenced_stream_and_observation_times() {
+    let registrations = Arc::new(RegistrationStub {
+      operations: Mutex::new(Vec::new()),
+    });
+    let store = Arc::new(RecordingStore::default());
+    let service = AgentExecutionService::new(registrations.clone(), store.clone());
+    let mut input = append_input(2_000);
+    input.request.events[0].kind = AttemptEventKind::Runner { event: octacity_protocol::RunnerEventPayload {
+      schema_version:4, sequence:3, timestamp:"2026-10-20T08:00:00Z".to_owned(), category:"execution".to_owned(),
+      data: serde_json::json!({"type":"progress", "run_id":2,"step_id":9,"command_id":"command-1",
+        "progress":{"message":"Reported operation","observation":{"operation_id":"ab".repeat(32),"phase":"completed","observed_at_unix_ms":123,
+          "operation":{"kind":"file","path":"src/lib.rs","change":"modified","failed":false}}}
+      }).as_object().unwrap().clone(),
+    }};
+    let mut wrong_attempt = input.clone();
+    wrong_attempt.request.events[0].attempt += 1;
+    assert_eq!(
+      run_ready(service.append_events(wrong_attempt)),
+      Err(AgentExecutionError::InvalidRequest)
+    );
+    assert!(store.appends.lock().unwrap().is_empty());
+    assert!(registrations.operations.lock().unwrap().is_empty());
+    assert_eq!(run_ready(service.append_events(input.clone())), Ok(1));
+    input.observed_at_unix_ms = 9_000;
+    assert_eq!(run_ready(service.append_events(input)), Ok(1));
+    let appends = store.appends.lock().unwrap();
+    assert_eq!(appends[0].lease, appends[1].lease);
+    assert_eq!(appends[0].events, appends[1].events);
+    assert_eq!(appends[0].events[0].sequence().get(), 1);
+    assert_eq!(appends[0].events[0].occurred_at().unix_millis(), 1_234);
+    let retained: AttemptEventKind = serde_json::from_value(appends[0].events[0].payload().clone()).unwrap();
+    let AttemptEventKind::Runner { event } = retained else {
+      panic!("original runner observation lost");
+    };
+    assert_eq!(event.sequence, 3);
+    assert_eq!(event.timestamp, "2026-10-20T08:00:00Z");
+    assert_eq!(event.public_operation_observation().unwrap().observed_at_unix_ms, 123);
+    assert!(
+      appends.iter().all(|append| append.log_chunks.is_empty()),
+      "metadata cannot fabricate a log body or chunk"
+    );
+  }
+
+  #[test]
   fn stdout_is_redacted_and_verified_before_the_atomic_acknowledgement() {
     let registrations = Arc::new(RegistrationStub {
       operations: Mutex::new(Vec::new()),
