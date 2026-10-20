@@ -1,6 +1,6 @@
 import { factoryFieldId } from './fieldFocus';
 import { FlowGraphOverview } from './FlowGraphOverview';
-import { useDraftRowKeys } from './useDraftRowKeys';
+import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import type { components } from '../../../.generated/api/schema';
 import { useState } from 'react';
 import { usePresentation } from '../../app/presentation/PresentationProvider';

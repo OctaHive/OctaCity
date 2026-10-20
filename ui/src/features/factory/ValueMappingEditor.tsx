@@ -1,6 +1,6 @@
 import { ScalarEditor } from './ScalarEditor';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
-import { useDraftRowKeys } from './useDraftRowKeys';
+import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import type { components } from '../../../.generated/api/schema';
 import type { MessageKey } from '../../app/presentation/messages';
 import { usePresentation } from '../../app/presentation/PresentationProvider';

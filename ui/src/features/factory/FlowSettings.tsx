@@ -1,4 +1,4 @@
-import { useDraftRowKeys } from './useDraftRowKeys';
+import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import type { components } from '../../../.generated/api/schema';
 import type { MessageKey } from '../../app/presentation/messages';
 import { usePresentation } from '../../app/presentation/PresentationProvider';

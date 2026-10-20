@@ -252,39 +252,21 @@ test('retains a tight asset count for the complete console with Factory diagnost
   );
 });
 
-test('admits the measured Issue execution workspace and rejects unplanned growth with the entry ceiling unchanged', async (context) => {
+test('admits measured task Source ownership authoring and rejects unplanned aggregate growth', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
-  await write(root, 'dist/assets/index.js', 'x'.repeat(431_830));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(599_510));
+  await write(root, 'dist/assets/index.js', 'x'.repeat(285_926));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(782_104));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(85_477));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
   assert.equal(policy.bundleBudgets.totalCssBytes, 86_016);
-  assert.equal(policy.bundleBudgets.assetCount, 50);
+  assert.equal(policy.bundleBudgets.assetCount, 51);
   await write(root, 'dist/assets/unplanned.js', 'x'.repeat(8_000));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });
   assert.ok(rejected.some((message) => message.includes('total JavaScript')));
   assert.ok(rejected.some((message) => message.includes('total static output')));
-});
-
-test('admits measured local Issue action authoring while rejecting a larger console', async (context) => {
-  const policy = JSON.parse(
-    await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
-  );
-  const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
-  await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
-  await write(root, 'dist/assets/index.js', 'x'.repeat(432_000));
-  await write(root, 'dist/assets/workbench.js', 'x'.repeat(606_000));
-  await write(root, 'dist/assets/styles.css', 'x'.repeat(85_000));
-  assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
-  await write(root, 'dist/assets/workbench.js', 'x'.repeat(608_000));
-  assert.ok(
-    (await verifyArchitecture(root, { distDirectory: 'dist' })).some((message) =>
-      message.includes('total JavaScript'),
-    ),
-  );
 });

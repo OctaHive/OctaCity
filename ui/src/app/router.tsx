@@ -12,6 +12,7 @@ import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
 import { issueExecutionsApi, type IssueExecutionsApi } from '../features/issues/executionApi';
 import { issuesApi, type IssuesApi } from '../features/issues/api';
+import { issueSourcesApi, type IssueSourcesApi } from '../features/issues/sourceApi';
 import { issueWorkflowsApi, type IssueWorkflowsApi } from '../api/issueWorkflows';
 import { projectsApi, type ProjectsApi } from '../features/projects/api';
 import { WorkspaceWelcome, type WorkspaceWelcomeKind } from '../shared/WorkspaceWelcome';
@@ -125,6 +126,7 @@ export interface ConsoleRouteDependencies {
   readonly capacityApi: CapacityApi;
   readonly issueExecutionsApi: IssueExecutionsApi;
   readonly issuesApi: IssuesApi;
+  readonly issueSourcesApi: IssueSourcesApi;
   readonly issueWorkflowsApi: IssueWorkflowsApi;
   readonly projectsApi: ProjectsApi;
   readonly readinessProbe: ReadinessProbe;
@@ -140,6 +142,7 @@ const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   projectsApi,
   issueWorkflowsApi,
   issuesApi,
+  issueSourcesApi,
   issueExecutionsApi,
   readinessProbe: fetchReadiness,
   searchApi: resourceSearchApi,
@@ -227,6 +230,7 @@ export function createConsoleRoutes(
           path: childPath(CONSOLE_PATHS.issue),
           element: defer(
             <IssueView
+              sources={dependencies.issueSourcesApi}
               executions={dependencies.issueExecutionsApi}
               executionSources={{
                 listConfigurations: dependencies.factoryApi.listConfigurations,

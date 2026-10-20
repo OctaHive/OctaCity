@@ -33,6 +33,7 @@ interface ConfirmedCommandProps<Request, Result> {
   onRefresh?: () => unknown | Promise<unknown>;
   queryClient: Pick<QueryClient, 'invalidateQueries'>;
   renderSuccess: (result: Result) => React.ReactNode;
+  renderFailure?: (error: unknown) => React.ReactNode;
   request: Request;
   returnFocus: HTMLElement;
   title: string;
@@ -57,6 +58,7 @@ export function ConfirmedCommand<Request, Result>({
   onRefresh,
   queryClient,
   renderSuccess,
+  renderFailure,
   request,
   returnFocus,
   title,
@@ -190,7 +192,12 @@ export function ConfirmedCommand<Request, Result>({
             {renderSuccess(phase.result)}
           </div>
         ) : null}
-        {phase.kind === 'error' ? <CommandFailure error={error} retryable={retryable} /> : null}
+        {phase.kind === 'error' ? (
+          <>
+            <CommandFailure error={error} retryable={retryable} />
+            {renderFailure?.(error)}
+          </>
+        ) : null}
         <div className={styles.actions}>
           {phase.kind === 'error' && staleVersion && onRefresh !== undefined ? (
             <button onClick={() => void refresh()} ref={terminalButtonRef} type="button">

@@ -6,9 +6,9 @@ import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { QueryFailureNotice } from '../../shared/QueryStateNotice';
-import { SourceReporting } from './SourceReporting';
+import { SourceReporting } from '../../shared/SourceReporting';
 import type { FactorySourcesApi } from './sourceApi';
-import { sourceBindingKey, sourceReferenceKey } from './sourceReferences';
+import { sourceBindingKey, sourceReferenceKey } from '../../shared/sourceReferences';
 
 type Node = components['schemas']['FactoryFlowNodeDefinition'];
 type Parameters = components['schemas']['FactoryWorkStatusActionParameters'];

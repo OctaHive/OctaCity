@@ -1,4 +1,5 @@
 import { configurationFixture, runFixture, diagnosticFixture } from '../fixtures/factory';
+import { issueSourceReview } from '../fixtures/issueSources';
 import { issueFixture } from '../fixtures/issues';
 import { workflowFixture } from '../fixtures/issueWorkflows';
 import { integrationFixture } from '../fixtures/integrations';
@@ -68,6 +69,14 @@ export async function installOperatorFixture(page: Page) {
     }
     if (url.pathname === `${issueBase}/${issue.id}`) {
       await fulfill(route, issue);
+      return;
+    }
+    if (url.pathname === `${issueBase}/${issue.id}/synchronization`) {
+      await fulfill(route, issueSourceReview());
+      return;
+    }
+    if (url.pathname === `${issueBase}/${issue.id}/source-choices`) {
+      await fulfill(route, { issue_version: issue.version, items: [] });
       return;
     }
     if (url.pathname === `${issueBase}/${issue.id}/transitions`) {

@@ -1,6 +1,7 @@
-import type { components } from '../../../.generated/api/schema';
-import { usePresentation } from '../../app/presentation/PresentationProvider';
-import { SelectMenu } from '../../shared/SelectMenu';
+import { ISSUE_SOURCE_CONSTRAINTS as bounds } from '../../.generated/api/constraints';
+import type { components } from '../../.generated/api/schema';
+import { usePresentation } from '../app/presentation/PresentationProvider';
+import { SelectMenu } from './SelectMenu';
 import { useDraftRowKeys } from './useDraftRowKeys';
 
 type Mapping = components['schemas']['WorkSourceStatusMapping'];
@@ -13,12 +14,16 @@ export function SourceReporting({
   draft,
   onChange,
   single = false,
+  statusChoices,
+  maximumRows,
 }: {
   mapping: Mapping | undefined;
   policy: Policy | null | undefined;
   draft: Mapping | null;
   onChange: (mapping: Mapping | null) => void;
   single?: boolean;
+  statusChoices?: readonly { value: string; label: string }[];
+  maximumRows?: number;
 }) {
   const { t } = usePresentation();
   const rows = draft?.statuses ?? mapping?.statuses ?? [];
@@ -48,13 +53,22 @@ export function SourceReporting({
           {rows.map((row, index) => (
             <fieldset key={keys[index]}>
               <legend>{t('factory.mappingRow', { number: index + 1 })}</legend>
-              <label>
-                {t('factory.logicalStatus')}
-                <input
+              {statusChoices ? (
+                <SelectMenu
+                  ariaLabel={t('factory.logicalStatus')}
                   value={row.status}
-                  onChange={(event) => change(index, { status: event.target.value })}
+                  options={[{ value: '', label: t('issueSource.chooseStatus') }, ...statusChoices]}
+                  onValueChange={(status) => change(index, { status })}
                 />
-              </label>
+              ) : (
+                <label>
+                  {t('factory.logicalStatus')}
+                  <input
+                    value={row.status}
+                    onChange={(event) => change(index, { status: event.target.value })}
+                  />
+                </label>
+              )}
               {(['add', 'remove'] as const).map((effect) => (
                 <fieldset key={effect}>
                   <legend>
@@ -69,6 +83,10 @@ export function SourceReporting({
                           { label },
                         )}
                         checked={row[effect].includes(label)}
+                        disabled={
+                          !row[effect].includes(label) &&
+                          row[effect].length >= bounds.effectMaximumLabels
+                        }
                         onChange={(event) =>
                           change(index, {
                             [effect]: event.target.checked
@@ -104,6 +122,7 @@ export function SourceReporting({
           {!single ? (
             <button
               type="button"
+              disabled={maximumRows !== undefined && rows.length >= maximumRows}
               onClick={() =>
                 onChange({ statuses: [...rows, { status: '', add: [], remove: [], state: null }] })
               }

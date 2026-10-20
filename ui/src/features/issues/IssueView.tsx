@@ -14,6 +14,8 @@ import type { IssueExecutionsApi } from './executionApi';
 import { IssueExecutions } from './IssueExecutions';
 import { IssueExecutionForm } from './IssueExecutionForm';
 import type { IssuesApi } from './api';
+import type { IssueSourcesApi } from './sourceApi';
+import { IssueSource } from './IssueSource';
 import { IssueEditor } from './IssueEditor';
 import { IssueRelationships } from './IssueRelationships';
 import { IssueProperties } from './IssueProperties';
@@ -25,12 +27,14 @@ import { IssueHistory } from './IssueHistory';
 import styles from './Issues.module.css';
 const sections = ['overview', 'activity', 'runs', 'results', 'actions'] as const;
 export function IssueView({
+  sources,
   api,
   workflows,
   projects,
   executions,
   executionSources,
 }: {
+  sources: IssueSourcesApi;
   api: IssuesApi;
   workflows: IssueWorkflowsApi;
   projects: IssueProjectReader;
@@ -40,6 +44,7 @@ export function IssueView({
   const { projectId, issueId } = useParams<'projectId' | 'issueId'>();
   return projectId && issueId ? (
     <Card
+      sources={sources}
       key={projectId + issueId}
       executions={executions}
       executionSources={executionSources}
@@ -52,6 +57,7 @@ export function IssueView({
   ) : null;
 }
 function Card({
+  sources,
   api,
   workflows,
   projects,
@@ -60,6 +66,7 @@ function Card({
   projectId,
   issueId,
 }: {
+  sources: IssueSourcesApi;
   api: IssuesApi;
   workflows: IssueWorkflowsApi;
   projects: IssueProjectReader;
@@ -380,6 +387,7 @@ function Card({
                 <h2>{t('issues.execution')}</h2>
                 <Link to={{ search: sectionSearch('runs') }}>{t('issues.executionHistory')}</Link>
               </section>
+              <IssueSource issue={issue} api={sources} workflow={workflow.data} />
               <details className={styles.panel}>
                 <summary>{t('issues.details')}</summary>
                 <dl>

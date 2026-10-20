@@ -16,7 +16,7 @@ import { FactoryFlowRunGraph } from './FactoryFlowRunGraph';
 import { FactoryPools } from './FactoryPools';
 import { FactoryRunCommands } from './FactoryRunCommands';
 import styles from './Factory.module.css';
-import { useDraftRowKeys } from './useDraftRowKeys';
+import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import type { FactoryApi, FactoryRun, FactoryDiagnostic, FactoryDiagnosticCollection } from './api';
 
 export const DIAGNOSTIC_LABELS = {

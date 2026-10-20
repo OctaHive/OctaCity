@@ -1,5 +1,5 @@
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
-import { useDraftRowKeys } from './useDraftRowKeys';
+import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import { ScalarEditor } from './ScalarEditor';
 import { useState } from 'react';
 import type { FactoryApi } from './api';

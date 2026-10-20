@@ -1,6 +1,7 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  issueRoot: (project: string, id: string) => ['issues', project, id] as const,
   issueExecutionsRoot: (project: string, id: string) =>
     ['issues', project, id, 'executions'] as const,
   issueExecutions: (project: string, id: string, after: string | null) =>
@@ -16,6 +17,9 @@ export const queryKeys = {
   issues: (project: string) => ['issues', project] as const,
   issueList: (project: string, after: string | null) => ['issues', project, 'list', after] as const,
   issue: (project: string, id: string) => ['issues', project, id, 'current'] as const,
+  issueSynchronization: (project: string, id: string) => ['issues', project, id, 'source'] as const,
+  issueSourceChoices: (project: string, id: string) =>
+    ['issues', project, id, 'source', 'choices'] as const,
   issueTransitions: (project: string, id: string) =>
     ['issues', project, id, 'transitions'] as const,
   issueHistoryRoot: (project: string, id: string) => ['issues', project, id, 'history'] as const,

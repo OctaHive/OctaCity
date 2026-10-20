@@ -1,4 +1,4 @@
-import type { components } from '../../../.generated/api/schema';
+import type { components } from '../../.generated/api/schema';
 type Binding = components['schemas']['WorkSourceBinding'];
 /** Exact immutable pins keep a refreshed choice list from changing a draft's selection. */
 export const sourceReferenceKey = (reference: Binding['resource']) =>

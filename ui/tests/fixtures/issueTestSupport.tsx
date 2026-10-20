@@ -21,6 +21,26 @@ export const workflow = {
 };
 
 export const issue = issueFixture();
+export function fakeIssueSourcesApi() {
+  return {
+    review: vi.fn().mockResolvedValue({
+      issue_version: issue.version,
+      workflow: { id: issue.workflow_id, version: issue.workflow_version },
+      field_policy: { source_owned: [], status_mapping_workflow: null, push: null },
+      link: null,
+      mapping: null,
+      mapping_reference: null,
+      observation: null,
+    }),
+    choices: vi.fn().mockResolvedValue({ issue_version: issue.version, items: [] }),
+    candidates: vi.fn(),
+    attach: vi.fn(),
+    publishMapping: vi.fn(),
+    mappingVersion: vi.fn(),
+    refresh: vi.fn(),
+    setPull: vi.fn(),
+  };
+}
 export function fakeIssuesApi() {
   return {
     editPlanning: vi
@@ -104,6 +124,7 @@ export function setup(
     createConsoleRoutes({
       projectsApi: projects,
       issuesApi: api,
+      issueSourcesApi: fakeIssueSourcesApi(),
       issueWorkflowsApi: workflows,
       readinessProbe: async () => 'ready',
       ...overrides,

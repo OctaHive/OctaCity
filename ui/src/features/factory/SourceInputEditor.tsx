@@ -14,11 +14,11 @@ import type {
   SourceSnapshot,
 } from './sourceApi';
 import { SourcePublication } from './SourcePublication';
-import { SourceReporting } from './SourceReporting';
+import { SourceReporting } from '../../shared/SourceReporting';
 import {
   sourceReferenceKey as referenceKey,
   sourceBindingKey as bindingKey,
-} from './sourceReferences';
+} from '../../shared/sourceReferences';
 
 export type SourceRepositories = Pick<FactoryWorkSources, 'listRepositories' | 'getRepository'>;
 type Input = components['schemas']['WorkSourceInput'];
