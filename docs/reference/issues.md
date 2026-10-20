@@ -285,9 +285,72 @@ Issue link makes its ownership ambiguous, recovery retains the original input
 without an ordering permit and dispatch fails closed. New commands publish their
 shared order atomically with the accepted revision.
 
-Explicit conflict classification/resolution and synchronization feedback remain
-tasks 5.3–5.4. Mapping publication starts no Reporter or polling loop. REST and
-Console expose the separate mapping review described below.
+Reporter terminal rows retain safe conflict, forbidden, unsupported or exhausted
+reasons independently of the Issue status and accepted execution results. A
+conditional-write conflict and an unsupported operation are terminal; a temporary
+dependency failure retries only within the original installed attempt/time bounds.
+Legacy generic failures remain readable. No provider diagnostics or credentials
+are stored in the reason. Managed connection revocation or disablement is checked
+before each process invocation, including observation before a retry.
+New managed mapping publications retain the original writer connection/version
+and configuration alias privately with accepted intents. Delivery resolves that
+original authority through the existing connection resolver or an exactly matching
+managed profile; an identical legacy binding cannot bypass current grant checks.
+This private authority is excluded from public mapping/choice documents.
+
+Explicit resolution publishes a new reviewed mapping version and one new desired
+intent through the same atomic publication and Reporter ordering path. It requires
+the current Issue version, current mapping pin and exact terminal outbox receipt
+of the failed operation in the visible original native-link/security scope. The
+command rechecks independent installed Source/writer grants and supported effects.
+Its intent links back to the failed operation; the old input and terminal receipt
+remain unchanged. Resolution neither adds a status-history action nor changes the
+Issue revision, requirements, business status or accepted execution. Concurrent or
+stale reviews conflict, and scoped replay returns the original policy/effect.
+The new effect still uses conditional Inspect/Apply, fencing and finite installed
+bounds. There is no unconditional overwrite or reopen-old-operation control.
+
+`POST /api/v1/projects/{project_id}/issues/{issue_id}/synchronization/resolve`
+uses Issue administration, `If-Match` for the current Issue revision and an
+idempotency key. Its closed body contains `mapping` (the ordinary reviewed mapping
+request) and `review` (`operation_id`, `expected_record`). The no-store response
+contains the new mapping/reference and `projection` operation identity; publication
+returns 201 and exact replay 200. Bodies cannot supply credentials, endpoints,
+execution instructions or a force flag. The capability is installed separately
+from ordinary manual-task services. Ordinary mapping publication starts no Reporter or
+polling loop and creates no resolution effect.
+
+`GET /api/v1/projects/{project_id}/issues/{issue_id}/synchronization/projections`
+reads original Issue-owned desired-state publications and their latest existing
+Reporter receipts without provider access. Issue visibility and the original
+native security partition apply before projection or pagination. The bounded
+`limit` and opaque `after` cursor use the shared history/cursor mechanisms;
+continuation binds Project, Issue, security scope and current visibility.
+`live-reporter-v1` declares live operation membership in stable operation-identity
+order and independently current delivery facts. It provides neither a complete
+provider snapshot nor a frozen membership watermark: refresh from the first page
+to discover newly accepted operations. There is no total or aggregate acceptance
+verdict derived from a page. Responses use `no-store`.
+
+Each item exposes the exact operation/receipt, original Issue revision, mapping,
+native correlation, workflow/status, configured effects, acceptance time and safe
+optional Work/Run/action provenance. Resolution lineage remains explicit. Latest
+pending/claimed/delivered/failed state, finite failure reason, retry ordinal and
+technical times remain independent of business status and execution results.
+Private writer authority, credentials, provider diagnostics, task bodies,
+security scopes and command replay keys are excluded. PostgreSQL composes the
+existing mutation publication and Reporter journal; an optional read service is
+installed independently of Source profiles or dispatch workers.
+
+Qualified fresh/unchanged Source reads retain the opaque native status and only
+labels referenced by the original mapping alongside its exact observation and
+mapping references in the existing freshness record. Reads from before mapping
+publication, stale/uncertain reads and disabled pull do not relabel these values.
+Earlier receipts without retained values remain explicitly unavailable. These
+are last reconciled Source values, not current Reporter inspection facts; their
+accepted receipt time, expiry and original policy remain visible. Migration 0088
+keeps the existing typed JSON record bounded at 65,536 bytes so supported escaped
+managed values and receipt metadata fit without truncation or another journal.
 
 ## Source HTTP and Console contracts
 
@@ -299,6 +362,7 @@ separate from ordinary Issue editing and workflow administration.
 | --- | --- |
 | GET `source-link` | Nullable original primary association; no provider read |
 | GET `synchronization` | Issue/workflow review, field policy, mapping/pin and retained observation conditions |
+| GET `synchronization/projections` | Bounded live Reporter receipts and exact original desired effects/provenance; opaque `after` and history `limit` |
 | GET `source-choices` | Authorized exact read profiles compatible with an existing native association; independent writer/effect choices |
 | POST `source-link/candidates` | Explicit bounded native identity discovery with original scan ID/opaque continuation; no import or attachment |
 | POST `source-link` | Existing-task attachment with Issue `If-Match`, reviewed field policy and `Idempotency-Key`; no field overwrite |
@@ -344,6 +408,23 @@ IDs and opaque advertised native states/labels. Push reuses the common Reporter
 effect editor and requires a separate enable switch. Generated OpenAPI bounds
 constrain rows and UTF-8 mapping size. Current server authorization and transition
 policy remain authoritative.
+
+Source feedback shows field directions, last reconciled native values and their
+provenance separately from original outgoing desired effects. Outgoing pages
+explain pending delivery, conflict, exhausted bounds, blocked access, unsupported
+writes and observed delivery without changing an execution outcome or claiming
+acceptance. Exact originating execution links and receipt details are progressive.
+Explicit refresh reads only retained server state; there is no automatic provider
+poll from the card. Independent refresh failures retain stale visible data.
+
+A failed receipt can open the same mapping editor for a reviewed resolution.
+Current Issue/mapping/workflow, installed supported choices and the exact original
+receipt must remain fresh before a new confirmation. The shared confirmed-command
+mechanism freezes the policy, receipt and replay identity; ordinary mapping saves
+and explicit resolution remain distinct commands. It offers no unconditional
+overwrite or automatic retry of an obsolete intent. English/Russian and narrow
+keyboard layouts retain these distinctions. Manual tasks without a source remain
+editable and do not request outgoing synchronization history.
 
 Workflow/mapping/head or advertised-choice changes preserve the draft and block
 a new review until explicit reload. Confirmed commands use the shared in-memory
