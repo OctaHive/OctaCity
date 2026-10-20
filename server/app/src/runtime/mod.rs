@@ -73,6 +73,18 @@ pub use maintenance::{
   reconcile_restored_state,
 };
 
+/// Explicit task Source installation, usable without a Factory target or worker.
+/// The reader owns current credential/grant checks; mappings expose only finite safe choices.
+/// Construction and server startup perform no Source read or Reporter dispatch.
+pub struct IssueSourceRuntimeInstallation {
+  /// Existing authorized, bounded Source read port.
+  pub reader: Arc<dyn octacity_server_application::WorkSourceObservations>,
+  /// Existing finite Source read budgets, retry cadence and crash-recoverable ownership lease.
+  pub refresh_policy: octacity_server_application::IssueSourceRefreshPolicy,
+  /// Exact installed field/status capabilities, independent of workflow administration.
+  pub mappings: Vec<octacity_server_application::InstalledIssueSourceMapping>,
+}
+
 type ListenerTaskResult = Result<&'static str, (&'static str, std::io::Error)>;
 
 /// Running server process and ownership handle for its cancellation tree.

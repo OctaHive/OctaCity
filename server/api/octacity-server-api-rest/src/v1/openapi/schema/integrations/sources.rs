@@ -88,7 +88,9 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["connection_id", "connection_version", "access_version", "items"],
   );
   let mut predicate = labels.clone();
-  predicate["properties"]["state"] = nullable(text(128));
+  let mut state = text(octacity_server_application::MAX_WORK_SOURCE_PREDICATE_STATE_BYTES);
+  state["x-max-utf8-bytes"] = json!(octacity_server_application::MAX_WORK_SOURCE_PREDICATE_STATE_BYTES);
+  predicate["properties"]["state"] = nullable(state);
   for labels in ["all_of", "any_of", "none_of"] {
     predicate["properties"][labels]["items"]["x-max-utf8-bytes"] =
       json!(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES);

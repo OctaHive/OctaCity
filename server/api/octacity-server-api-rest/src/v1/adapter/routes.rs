@@ -238,6 +238,42 @@ pub fn management_authorization_operations() -> Vec<ManagementAuthorizationOpera
 
 fn registered_routes() -> ManagementRoutes {
   ManagementRoutes::new()
+    .post::<octacity_server_application::SetIssueSourcePullCommand, _, _>(
+      "setIssueSourcePull",
+      super::issue_source::pull,
+    )
+    .post::<octacity_server_application::ObserveIssueSourceCommand, _, _>(
+      "refreshIssueSource",
+      super::issue_source::refresh,
+    )
+    .post::<octacity_server_application::PublishIssueSourceMappingCommand, _, _>(
+      "publishIssueSourceMapping",
+      super::issue_source::publish_mapping,
+    )
+    .get::<octacity_server_application::GetIssueSourceMappingQuery, _, _>(
+      "getIssueSourceMappingVersion",
+      super::issue_source::mapping_version,
+    )
+    .post::<octacity_server_application::PreviewIssueSourceCommand, _, _>(
+      "previewIssueSource",
+      super::issue_source::preview,
+    )
+    .post::<octacity_server_application::AttachIssueSourceCommand, _, _>(
+      "attachIssueSource",
+      super::issue_source::attach,
+    )
+    .get::<octacity_server_application::GetIssueSourceChoicesQuery, _, _>(
+      "getIssueSourceChoices",
+      super::issue_source::choices,
+    )
+    .get::<octacity_server_application::GetIssueSynchronizationQuery, _, _>(
+      "getIssueSynchronization",
+      super::issue_source::review,
+    )
+    .get::<octacity_server_application::GetIssueSynchronizationQuery, _, _>(
+      "getIssueSourceLink",
+      super::issue_source::link,
+    )
     .get::<octacity_server_application::ListIssueExecutionsQuery, _, _>(
       "listIssueExecutions",
       super::issue_execution::list,

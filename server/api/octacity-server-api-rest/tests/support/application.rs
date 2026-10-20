@@ -109,6 +109,8 @@ where
   let execution_queries = queries.clone();
   let issue_commands = commands.clone();
   let issue_queries = queries.clone();
+  let source_queries = queries.clone();
+  let source_commands = commands.clone();
   let workflow_commands = commands.clone();
   let workflow_queries = queries.clone();
   let retention_queries = Arc::new(AuthorizedQueryHandler::new(policy, retention));
@@ -167,6 +169,9 @@ where
       execution_commands,
       Duration::from_millis(5),
     ),
+  )
+  .with_issue_sources(
+    octacity_server_api_rest::v1::IssueSourceManagementApplication::new(source_queries).with_commands(source_commands),
   )
   .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
     issue_commands,

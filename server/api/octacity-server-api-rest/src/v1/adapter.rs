@@ -84,6 +84,8 @@ mod issue;
 pub use issue::IssueManagementApplication;
 mod issue_execution;
 pub use issue_execution::IssueExecutionManagementApplication;
+mod issue_source;
+pub use issue_source::IssueSourceManagementApplication;
 mod issue_workflow;
 pub use issue_workflow::IssueWorkflowManagementApplication;
 mod job_event;
@@ -192,6 +194,7 @@ pub struct ManagementApplication {
   issue_workflows: Option<IssueWorkflowManagementApplication>,
   issues: Option<IssueManagementApplication>,
   issue_executions: Option<IssueExecutionManagementApplication>,
+  issue_sources: Option<IssueSourceManagementApplication>,
   projects: ProjectManagementApplication,
   pipelines: PipelineManagementApplication,
   configurations: ConfigurationManagementApplication,
@@ -273,6 +276,7 @@ impl ManagementApplication {
       issue_workflows: None,
       issues: None,
       issue_executions: None,
+      issue_sources: None,
       agent_pools,
       agents,
       builds,

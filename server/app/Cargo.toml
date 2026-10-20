@@ -70,3 +70,5 @@ tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 tower = { workspace = true, features = ["util"] }
 uuid.workspace = true
+rcgen.workspace = true
+tokio-rustls.workspace = true

@@ -9,6 +9,7 @@ mod factory;
 mod integrations;
 mod issue_executions;
 mod issue_planning;
+mod issue_sources;
 mod issue_workflows;
 mod issues;
 mod log_search;

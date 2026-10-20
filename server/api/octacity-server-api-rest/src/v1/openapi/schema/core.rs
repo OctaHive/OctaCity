@@ -29,6 +29,7 @@ pub(crate) fn component_schemas() -> Value {
   let mut schemas = Map::new();
   insert_common_schemas(&mut schemas);
   super::issues::insert(&mut schemas);
+  super::issue_sources::insert(&mut schemas);
   super::issue_executions::insert(&mut schemas);
   super::issue_planning::insert(&mut schemas);
   super::issue_workflows::insert(&mut schemas);

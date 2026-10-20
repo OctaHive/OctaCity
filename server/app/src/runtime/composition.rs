@@ -36,23 +36,8 @@ use crate::{ServerConfig, readiness::WorkerHealth};
 impl ServerRuntime {
   /// Binds the listener and starts supervised work from validated configuration.
   pub async fn start(config: ServerConfig) -> Result<Self, ServerRuntimeError> {
-    let installer = match config.factory_profiles_file() {
-      Some(path) => {
-        let providers = match config.factory_signal_connectors_file() {
-          Some(connectors) => super::load_factory_signal_connectors(connectors)
-            .await
-            .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
-          None => vec![],
-        };
-        Some(Arc::new(
-          super::factory_profile_file::FileProfileInstaller::load(path, &providers)
-            .await
-            .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
-        ) as Arc<dyn super::FactoryRuntimeInstaller>)
-      }
-      None => None,
-    };
-    Self::start_configured(config, installer).await
+    let installer = configured_factory_installer(&config).await?;
+    Self::start_configured(config, installer, None).await
   }
 
   /// Starts the optional common Flow owner using explicitly installed capability bindings.
@@ -60,12 +45,22 @@ impl ServerRuntime {
     config: ServerConfig,
     installer: Arc<dyn super::FactoryRuntimeInstaller>,
   ) -> Result<Self, ServerRuntimeError> {
-    Self::start_configured(config, Some(installer)).await
+    Self::start_configured(config, Some(installer), None).await
+  }
+
+  /// Installs task Source reads and mapping choices independently from optional Factory admission.
+  pub async fn start_with_issue_sources(
+    config: ServerConfig,
+    sources: super::IssueSourceRuntimeInstallation,
+  ) -> Result<Self, ServerRuntimeError> {
+    let installer = configured_factory_installer(&config).await?;
+    Self::start_configured(config, installer, Some(sources)).await
   }
 
   async fn start_configured(
     config: ServerConfig,
     installer: Option<Arc<dyn super::FactoryRuntimeInstaller>>,
+    issue_sources: Option<super::IssueSourceRuntimeInstallation>,
   ) -> Result<Self, ServerRuntimeError> {
     if config.factory().is_some() && installer.is_none() {
       return Err(ServerRuntimeError::MissingFactoryInstallation);
@@ -181,6 +176,7 @@ impl ServerRuntime {
       webhook_verifier,
       webhook_provider,
     } = management_application(ApplicationAssembly {
+      issue_sources,
       store: registration_store.clone(),
       integrations: super::integration_management::install(
         &config,
@@ -466,4 +462,27 @@ impl ServerRuntime {
     )
     .await
   }
+}
+
+// Both public entry points use the same optional Factory profile installation policy.
+async fn configured_factory_installer(
+  config: &ServerConfig,
+) -> Result<Option<Arc<dyn super::FactoryRuntimeInstaller>>, ServerRuntimeError> {
+  let installer = match config.factory_profiles_file() {
+    Some(path) => {
+      let providers = match config.factory_signal_connectors_file() {
+        Some(connectors) => super::load_factory_signal_connectors(connectors)
+          .await
+          .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
+        None => vec![],
+      };
+      Some(Arc::new(
+        super::factory_profile_file::FileProfileInstaller::load(path, &providers)
+          .await
+          .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
+      ) as Arc<dyn super::FactoryRuntimeInstaller>)
+    }
+    None => None,
+  };
+  Ok(installer)
 }

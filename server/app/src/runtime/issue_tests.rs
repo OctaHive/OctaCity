@@ -45,6 +45,27 @@ async fn runtime_issue_journey_and_original_replay_survive_restart_without_facto
   let created = accepted(response, reqwest::StatusCode::CREATED).await;
   assert_eq!(created["resource"]["display_key"], "ISS-1");
   let path = format!("{collection}/{}", created["resource"]["id"].as_str().unwrap());
+  let sync = accepted(
+    client
+      .get(format!("{origin}{path}/synchronization"))
+      .send()
+      .await
+      .unwrap(),
+    reqwest::StatusCode::OK,
+  )
+  .await;
+  assert!(sync["link"].is_null());
+  assert!(sync["mapping"].is_null());
+  let choices = accepted(
+    client
+      .get(format!("{origin}{path}/source-choices"))
+      .send()
+      .await
+      .unwrap(),
+    reqwest::StatusCode::OK,
+  )
+  .await;
+  assert_eq!(choices["items"], json!([]));
   let mut edited = draft.clone();
   edited["description"] = json!("Reviewed requirements");
   let edited = accepted(
@@ -182,6 +203,156 @@ async fn runtime_issue_journey_and_original_replay_survive_restart_without_facto
   )
   .await;
   assert_eq!(retained, created["resource"]);
+  runtime.shutdown().await.unwrap();
+  database.cleanup().await;
+}
+
+struct UnavailableInstalledSource;
+#[async_trait::async_trait]
+impl octacity_server_application::WorkSourceObservations for UnavailableInstalledSource {
+  async fn authorize(
+    &self,
+    _: &octacity_server_application::ManagementRequestContext,
+    _: octacity_server_domain::ProjectId,
+    _: octacity_server_factory::WorkSourceBinding,
+  ) -> Result<(), octacity_server_application::ApplicationError> {
+    Ok(())
+  }
+  async fn read(
+    &self,
+    _: &octacity_server_application::ManagementRequestContext,
+    _: octacity_server_application::ReadWorkSourceObservations,
+  ) -> Result<octacity_server_application::WorkSourceObservationPage, octacity_server_application::ApplicationError> {
+    Err(octacity_server_application::ApplicationError::SourceDependency {
+      class: octacity_server_store::WorkSourceFailure::Transient,
+      retry_after_millis: None,
+    })
+  }
+}
+#[tokio::test]
+#[ignore = "requires OCTACITY_POSTGRES_URL pointing to disposable PostgreSQL"]
+async fn runtime_installs_issue_sources_independently_and_provider_outages_preserve_manual_edits() {
+  let database = postgres::TestDatabase::migrated().await;
+  let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
+  url.set_path(&database.name);
+  let root = tempfile::tempdir().unwrap();
+  let settings = config::runtime_config(root.path(), url.as_str(), "http://127.0.0.1:9");
+  let runtime = ServerRuntime::start(settings.clone()).await.unwrap();
+  let client = reqwest::Client::new();
+  let origin = format!("http://{}", runtime.management_addr());
+  let project = accepted(
+    client
+      .post(format!("{origin}/api/v1/projects"))
+      .header("idempotency-key", "project")
+      .json(&json!({"name":"Manual source"}))
+      .send()
+      .await
+      .unwrap(),
+    reqwest::StatusCode::CREATED,
+  )
+  .await;
+  let project = project["resource"]["id"].as_str().unwrap();
+  let issue = accepted(
+    client
+      .post(format!("{origin}/api/v1/projects/{project}/issues"))
+      .header("idempotency-key", "draft")
+      .json(&json!({"title":"Local","description":"","acceptance":null,"priority":null}))
+      .send()
+      .await
+      .unwrap(),
+    reqwest::StatusCode::CREATED,
+  )
+  .await;
+  runtime.shutdown().await.unwrap();
+  let pin = |id: &str| json!({"identity":id,"version":"v1","digest":"01".repeat(32)});
+  let source=serde_json::from_value(json!({"installation":pin("fake-source"),"capability":pin("read"),"configuration":pin("scope"),"resource":pin("board")})).unwrap();
+  let runtime = ServerRuntime::start_with_issue_sources(
+    settings,
+    IssueSourceRuntimeInstallation {
+      reader: Arc::new(UnavailableInstalledSource),
+      refresh_policy: octacity_server_application::IssueSourceRefreshPolicy {
+        read: octacity_server_application::IssueSourceReadPolicy {
+          polling: octacity_server_application::SourcePollingPolicy {
+            page_items: 100,
+            max_pages: 1,
+            max_items: 100,
+            max_bytes: 65536,
+            max_page_bytes: 65536,
+            overlap_millis: 1,
+            reconciliation_interval_millis: 1000,
+            retention_millis: 86400000,
+          },
+          retry: octacity_server_application::DurableRetryPolicy::new(3, 1, 100).unwrap(),
+          poll_interval_millis: 1,
+        },
+        claim_lifetime: std::time::Duration::from_secs(30),
+      },
+      mappings: vec![octacity_server_application::InstalledIssueSourceMapping {
+        project_id: project.parse().unwrap(),
+        source,
+        native_resource: octacity_server_factory::ExternalWorkIdentity::new("board-9").unwrap(),
+        readable: octacity_server_factory::WorkSourceReportingPolicy {
+          states: vec!["Waiting for native review".into()],
+          labels: vec![],
+        },
+        writer: None,
+      }],
+    },
+  )
+  .await
+  .unwrap();
+  let path = format!(
+    "http://{}/api/v1/projects/{project}/issues/{}",
+    runtime.management_addr(),
+    issue["resource"]["id"].as_str().unwrap()
+  );
+  let choices = accepted(
+    client.get(format!("{path}/source-choices")).send().await.unwrap(),
+    reqwest::StatusCode::OK,
+  )
+  .await;
+  assert_eq!(
+    choices["items"][0]["readable"]["states"],
+    json!(["Waiting for native review"])
+  );
+  let response = client
+    .post(format!("{path}/source-link/candidates"))
+    .json(&json!({"source":choices["items"][0]["source"]}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+  let mut absent = choices["items"][0]["source"].clone();
+  absent["installation"]["identity"] = json!("absent-adapter");
+  let response = client
+    .post(format!("{path}/source-link/candidates"))
+    .json(&json!({"source":absent}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::UNPROCESSABLE_ENTITY);
+
+  let edited = accepted(
+    client
+      .patch(&path)
+      .header("idempotency-key", "edit")
+      .header("if-match", "\"1\"")
+      .json(&json!({"title":"Still local","description":"","acceptance":null,"priority":null}))
+      .send()
+      .await
+      .unwrap(),
+    reqwest::StatusCode::OK,
+  )
+  .await;
+  assert_eq!(edited["resource"]["version"], 2);
+  assert!(
+    accepted(
+      client.get(format!("{path}/synchronization")).send().await.unwrap(),
+      reqwest::StatusCode::OK
+    )
+    .await["link"]
+      .is_null()
+  );
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }

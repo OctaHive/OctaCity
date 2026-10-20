@@ -52,6 +52,7 @@ type WebhookHostConfiguration = (
 );
 
 pub(super) struct ApplicationAssembly {
+  pub(super) issue_sources: Option<super::IssueSourceRuntimeInstallation>,
   pub(super) store: Arc<PostgresStore>,
   pub(super) authoritative_store: Arc<PostgresAuthoritativeStore>,
   pub(super) toolchain: JobSpecToolchainPolicy,
@@ -75,6 +76,7 @@ pub(super) fn management_application(
   assembly: ApplicationAssembly,
 ) -> Result<ApplicationComponents, ServerRuntimeError> {
   let ApplicationAssembly {
+    issue_sources,
     store,
     authoritative_store,
     toolchain,
@@ -246,6 +248,32 @@ pub(super) fn management_application(
     management_policy.clone(),
     Arc::new(octacity_server_application::SystemFactoryExecutionClock),
   ));
+  let (reader, mappings, refresh_policy) = match issue_sources {
+    Some(super::IssueSourceRuntimeInstallation {
+      reader,
+      mappings,
+      refresh_policy,
+    }) => (reader, mappings, Some(refresh_policy)),
+    None => (
+      Arc::new(UnavailableIssueSource) as Arc<dyn octacity_server_application::WorkSourceObservations>,
+      vec![],
+      None,
+    ),
+  };
+  let sources = octacity_server_application::IssueSourceHandlers::new(
+    store.clone(),
+    reader,
+    management_policy.clone(),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+  )
+  .with_source_mappings(mappings)
+  .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+  let sources = Arc::new(match refresh_policy {
+    Some(policy) => sources
+      .with_refresh_policy(policy)
+      .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?,
+    None => sources,
+  });
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
@@ -306,6 +334,13 @@ pub(super) fn management_application(
       ISSUE_EXECUTION_PUBLICATION_WAIT,
     ),
   )
+  .with_issue_sources(
+    octacity_server_api_rest::v1::IssueSourceManagementApplication::new(authorized_queries(
+      &management_policy,
+      sources.clone(),
+    ))
+    .with_commands(authorized_commands(&management_policy, sources)),
+  )
   .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
     issue_commands,
     issue_queries,
@@ -336,4 +371,17 @@ fn authorized_queries<H>(
   handler: Arc<H>,
 ) -> Arc<AuthorizedQueryHandler<H>> {
   Arc::new(AuthorizedQueryHandler::new(policy.clone(), handler))
+}
+
+// Default task composition retains metadata and local pull control without installing a provider.
+struct UnavailableIssueSource;
+#[async_trait::async_trait]
+impl octacity_server_application::WorkSourceObservations for UnavailableIssueSource {
+  async fn read(
+    &self,
+    _: &octacity_server_application::ManagementRequestContext,
+    _: octacity_server_application::ReadWorkSourceObservations,
+  ) -> Result<octacity_server_application::WorkSourceObservationPage, octacity_server_application::ApplicationError> {
+    Err(octacity_server_application::ApplicationError::capability_unavailable())
+  }
 }

@@ -230,6 +230,38 @@ impl ManagementQueryUseCase<GetOperationalMetadataQuery> for RecordingApplicatio
 }
 
 unavailable_query!(
+  octacity_server_application::GetIssueSynchronizationQuery,
+  "get_issue_synchronization"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueSourceChoicesQuery,
+  "get_issue_source_choices"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueSourceMappingQuery,
+  "get_issue_source_mapping"
+);
+unavailable_command!(
+  octacity_server_application::AttachIssueSourceCommand,
+  "attach_issue_source"
+);
+unavailable_command!(
+  octacity_server_application::PreviewIssueSourceCommand,
+  "preview_issue_source"
+);
+unavailable_command!(
+  octacity_server_application::PublishIssueSourceMappingCommand,
+  "publish_issue_source_mapping"
+);
+unavailable_command!(
+  octacity_server_application::ObserveIssueSourceCommand,
+  "observe_issue_source"
+);
+unavailable_command!(
+  octacity_server_application::SetIssueSourcePullCommand,
+  "set_issue_source_pull"
+);
+unavailable_query!(
   octacity_server_application::ListIssueExecutionsQuery,
   "list_issue_executions"
 );
@@ -1041,7 +1073,20 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   let artifact_id = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
   let cache_session_id = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 
+  let pin = |id: &str| serde_json::json!({"identity":id,"version":"v1","digest":"01".repeat(32)});
+  let source = serde_json::json!({"installation":pin("installed-source"),"capability":pin("read"),"configuration":pin("scope"),"resource":pin("board")});
+  let source_path = format!("/api/v1/projects/{project_id}/issues/{pipeline_id}");
   vec![
+    empty_request("GET",&format!("{source_path}/source-link"),None),
+    empty_request("GET",&format!("{source_path}/synchronization"),None),
+    empty_request("GET",&format!("{source_path}/source-choices"),None),
+    empty_request("GET",&format!("{source_path}/source-link/mappings/1"),None),
+    json_request("POST",&format!("{source_path}/source-link/candidates"),"preview",None,&serde_json::json!({"source":source}).to_string()),
+    json_request("POST",&format!("{source_path}/source-link"),"attach",Some("\"1\""),&serde_json::json!({"source":source,"item":{"resource":"board-9","item":"task-7"},"expected_field_policy":{"source_owned":[],"status_mapping_workflow":null,"push":null}}).to_string()),
+    json_request("POST",&format!("{source_path}/source-link/mappings"),"mapping",Some("\"1\""),&serde_json::json!({"expected_mapping":null,"definition":{"source":source,"reporter":null,"push_enabled":false,"fields":{},"status":null}}).to_string()),
+    json_request("POST",&format!("{source_path}/synchronization/refresh"),"refresh",None,&serde_json::json!({"source":source}).to_string()),
+    json_request("POST",&format!("{source_path}/synchronization/pull"),"pull",None,r#"{"expected_generation":1,"enabled":false}"#),
+
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions?limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions/{repository_id}"),None),
     json_request("POST",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions"),"execution",Some("\"1\""),&issue_execution_body()),
@@ -1463,6 +1508,15 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
   assert_eq!(
     *application.calls.lock().unwrap(),
     [
+      "get_issue_synchronization",
+      "get_issue_synchronization",
+      "get_issue_source_choices",
+      "get_issue_source_mapping",
+      "preview_issue_source",
+      "attach_issue_source",
+      "publish_issue_source_mapping",
+      "observe_issue_source",
+      "set_issue_source_pull",
       "list_issue_executions",
       "get_issue_execution",
       "request_issue_execution",

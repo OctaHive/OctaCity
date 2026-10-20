@@ -641,3 +641,6 @@ async fn retained_observation_authority_can_be_rechecked_without_listing_another
   assert!(calls.is_empty(), "authority rechecks do not list tickets");
   assert!(fixture.runs().await.is_empty());
 }
+
+#[path = "work_source_issue_contract_tests.rs"]
+mod issue_contracts;

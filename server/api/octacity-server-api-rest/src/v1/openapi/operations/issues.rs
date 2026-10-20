@@ -2,6 +2,134 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::SetIssueSourcePullCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/synchronization/pull",
+    "setIssueSourcePull",
+    "Issues",
+    "Change explicit pull enablement under its original reviewed generation",
+    Some("SetIssueSourcePullRequest"),
+    "IssueSourcePullOutcome",
+    "200",
+    true,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ObserveIssueSourceCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/synchronization/refresh",
+    "refreshIssueSource",
+    "Issues",
+    "Explicitly reconcile an authorized Source observation through retained freshness and shared transitions",
+    Some("RefreshIssueSourceRequest"),
+    "IssueSourceRefreshOutcome",
+    "200",
+    true,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::PublishIssueSourceMappingCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/source-link/mappings",
+    "publishIssueSourceMapping",
+    "Issues",
+    "Publish reviewed field ownership and native status translation independently of workflows",
+    Some("PublishIssueSourceMappingRequest"),
+    "IssueSourceMappingMutationResponse",
+    "201",
+    true,
+    true
+  )
+  .with_no_store_response()
+  .with_replay_success_response(),
+  operation!(
+    octacity_server_application::GetIssueSourceMappingQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/source-link/mappings/{version}",
+    "getIssueSourceMappingVersion",
+    "Issues",
+    "Read one original immutable mapping under current task visibility",
+    None,
+    "PublishedIssueSourceMapping",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::PreviewIssueSourceCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/source-link/candidates",
+    "previewIssueSource",
+    "Issues",
+    "Explicitly read bounded native identities without attaching or importing tasks",
+    Some("PreviewIssueSourceRequest"),
+    "IssueSourceCandidates",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::AttachIssueSourceCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/source-link",
+    "attachIssueSource",
+    "Issues",
+    "Attach an existing authorized native task under reviewed field ownership",
+    Some("AttachIssueSourceRequest"),
+    "IssueSourceOutcome",
+    "201",
+    true,
+    true
+  )
+  .with_no_store_response()
+  .with_replay_success_response(),
+  operation!(
+    octacity_server_application::GetIssueSourceChoicesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/source-choices",
+    "getIssueSourceChoices",
+    "Issues",
+    "Read current authorized installed Source directions and native values",
+    None,
+    "IssueSourceChoices",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssueSynchronizationQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/synchronization",
+    "getIssueSynchronization",
+    "Issues",
+    "Read retained mapping and freshness without provider access",
+    None,
+    "IssueSynchronization",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssueSynchronizationQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/source-link",
+    "getIssueSourceLink",
+    "Issues",
+    "Read the optional primary source association",
+    None,
+    "IssueSourceLinkResponse",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ListIssueExecutionsQuery,
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/executions",
