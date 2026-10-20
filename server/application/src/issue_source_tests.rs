@@ -1837,3 +1837,116 @@ fn issue_source_read_pass_identity_is_partitioned_before_provider_continuations(
     );
   });
 }
+
+#[test]
+fn issue_timeline_binds_source_watermark_and_marks_only_changed_source_section_stale() {
+  run_ready(async {
+    let store = Arc::new(InMemoryProjectStore::new());
+    let project_id = project(&store).await;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let sources = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(source_handlers(
+        store.clone(),
+        Arc::new(Reader::default()),
+        policy.clone(),
+      )),
+    );
+    let link = linked(
+      sources
+        .handle_command(&context(), import(selection(project_id), "timeline-import"))
+        .await
+        .unwrap(),
+    );
+    let reads = AuthorizedQueryHandler::new(
+      policy,
+      Arc::new(IssueActivityHandlers::new(
+        store.clone(),
+        Arc::new(Clock(std::sync::atomic::AtomicI64::new(40))),
+      )),
+    );
+    let source_only = reads
+      .handle_query(
+        &context(),
+        ListIssueTimelineQuery::try_new(
+          project_id,
+          link.issue_id,
+          Some([IssueTimelineKind::Source].into()),
+          None,
+          10,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(source_only.items.len(), 1);
+    assert_eq!(source_only.items[0].position().kind, IssueTimelineKind::Source);
+    assert!(!source_only.source_stale);
+    let value = serde_json::to_string(&source_only).unwrap();
+    for private in [
+      "Same human title",
+      "opaque-revision",
+      "provider_configuration",
+      "selection_digest",
+    ] {
+      assert!(!value.contains(private));
+    }
+    let first = reads
+      .handle_query(
+        &context(),
+        ListIssueTimelineQuery::try_new(project_id, link.issue_id, None, None, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    sources
+      .handle_command(
+        &context(),
+        SetIssueSourcePullCommand {
+          project_id,
+          issue_id: link.issue_id,
+          expected_generation: 1,
+          enabled: false,
+          idempotency_key: key("timeline-disable"),
+          changed_at: at(40),
+        },
+      )
+      .await
+      .unwrap();
+    let next = reads
+      .handle_query(
+        &context(),
+        ListIssueTimelineQuery::try_new(project_id, link.issue_id, None, first.next_cursor, 10).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert!(next.source_stale);
+    assert_eq!(next.boundary, first.boundary);
+    assert!(
+      next
+        .items
+        .iter()
+        .all(|r| r.position().kind != IssueTimelineKind::Source)
+    );
+    assert!(
+      next
+        .items
+        .iter()
+        .any(|r| r.position().kind == IssueTimelineKind::Status)
+    );
+    let fresh = reads
+      .handle_query(
+        &context(),
+        ListIssueTimelineQuery::try_new(project_id, link.issue_id, None, None, 10).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_ne!(fresh.boundary.source, next.boundary.source);
+    assert!(!fresh.source_stale);
+    assert!(
+      fresh
+        .items
+        .iter()
+        .any(|r| r.position().kind == IssueTimelineKind::Source)
+    );
+  });
+}

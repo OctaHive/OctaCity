@@ -56,11 +56,35 @@ async fn issue_discussion_runtime_replays_after_restart_without_factory_or_provi
   assert_eq!(response.status(), reqwest::StatusCode::CREATED);
   let location = response.headers()["location"].to_str().unwrap().to_owned();
   let original: Value = response.json().await.unwrap();
+  let timeline_path = format!("/api/v1/projects/{project_id}/issues/{issue}/timeline");
+  let first = client
+    .get(format!("{origin}{timeline_path}?limit=1"))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(first.status(), reqwest::StatusCode::OK);
+  assert_eq!(first.headers()["cache-control"], "no-store");
+  let first: Value = first.json().await.unwrap();
+  let cursor = first["next_cursor"].as_str().unwrap();
   server.shutdown().await.unwrap();
   let server = ServerRuntime::start(runtime::runtime_config(root.path(), url.as_str(), "http://127.0.0.1:9"))
     .await
     .unwrap();
   let origin = format!("http://{}", server.management_addr());
+  let continuation = client
+    .get(format!("{origin}{timeline_path}?limit=200&after={cursor}"))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(continuation.status(), reqwest::StatusCode::OK);
+  let continuation: Value = continuation.json().await.unwrap();
+  assert_eq!(continuation["boundary"], first["boundary"]);
+  assert_eq!(continuation["items"].as_array().unwrap().len(), 2);
+  assert!(continuation["next_cursor"].is_null());
+  assert!(!continuation.to_string().contains("operator discussion"));
+  let missing=client.get(format!("{origin}/api/v1/projects/{project_id}/issues/{issue}/results?work_id=11111111-1111-4111-8111-111111111111&collection=evidence")).send().await.unwrap();
+  assert_eq!(missing.status(), reqwest::StatusCode::NOT_FOUND);
+
   let response = client
     .post(format!("{origin}{path}"))
     .header("idempotency-key", "comment")

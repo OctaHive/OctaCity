@@ -416,3 +416,199 @@ fn issue_execution_projection_keeps_preparation_parallel_runs_and_old_requiremen
     assert_eq!(store.mutation_evidence_counts().await, before);
   });
 }
+
+#[test]
+fn issue_results_bind_pages_to_original_run_observation_and_keep_incomplete_coverage_explicit() {
+  run_ready(async {
+    let (store, factory, issue, fixture) = associated_journal().await;
+    testing::verify_factory_node_journal_contract(&*factory, &*factory, &fixture).await;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let handlers = Arc::new(IssueExecutionHandlers::new(
+      store.clone(),
+      factory.clone(),
+      policy.clone(),
+    ));
+    let queries = AuthorizedQueryHandler::new(policy, handlers);
+    let selection = GetIssueWorkExecutionQuery {
+      project_id: issue.project_id,
+      issue_id: issue.id,
+      work_id: fixture.admission.work.id(),
+    };
+    let first = queries
+      .handle_query(
+        &context(),
+        ListIssueResultsQuery::try_new(selection.clone(), FactoryDiagnosticCollection::Budgets, None, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(first.coverage, IssueResultCoverage::Partial);
+    assert_eq!(first.items.len(), 1);
+    let cursor = first.next_cursor.clone().expect("more budgets");
+    let mut content = draft();
+    content.description = "changed current requirements".into();
+    AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(IssueHandlers::new(
+        store.clone(),
+        Arc::new(TrustedNetworkManagementPolicy),
+      )),
+    )
+    .handle_command(
+      &context(),
+      EditIssueCommand {
+        intent: EditIssueIntent {
+          project_id: issue.project_id,
+          id: issue.id,
+          expected_version: issue.version,
+          content,
+        },
+        idempotency_key: key("edit-observed-card"),
+        edited_at: at(40),
+      },
+    )
+    .await
+    .unwrap();
+    let last = queries
+      .handle_query(
+        &context(),
+        ListIssueResultsQuery::try_new(
+          selection.clone(),
+          FactoryDiagnosticCollection::Budgets,
+          Some(cursor.clone()),
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(first.boundary, last.boundary);
+    assert!(last.current_version > first.boundary.issue_version);
+    assert_eq!(first.run_version, last.run_version);
+    assert_eq!(last.coverage, IssueResultCoverage::Partial);
+    assert_ne!(
+      serde_json::to_value(&first.items).unwrap(),
+      serde_json::to_value(&last.items).unwrap()
+    );
+    AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(FactoryControlHandlers::new(factory.clone())),
+    )
+    .handle_command(
+      &context(),
+      CancelFactoryRunCommand {
+        run_id: fixture.admission.run.id(),
+        expected_version: first.run_version.unwrap(),
+        idempotency_key: key("change-observed-run"),
+        requested_at: at(50),
+      },
+    )
+    .await
+    .unwrap();
+    let stale = queries
+      .handle_query(
+        &context(),
+        ListIssueResultsQuery::try_new(selection.clone(), FactoryDiagnosticCollection::Budgets, Some(cursor), 1)
+          .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(stale.coverage, IssueResultCoverage::Stale);
+    assert!(stale.items.is_empty());
+    assert!(stale.next_cursor.is_none());
+    let missing = queries
+      .handle_query(
+        &context(),
+        ListIssueResultsQuery::try_new(selection, FactoryDiagnosticCollection::Evidence, None, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(missing.coverage, IssueResultCoverage::Partial);
+    assert!(missing.items.is_empty());
+    assert!(serde_json::to_value(missing).unwrap().get("accepted").is_none());
+  });
+}
+
+#[test]
+fn issue_results_keep_retained_references_unavailable_without_factory_rights_and_bind_cursor_filters() {
+  run_ready(async {
+    let (store, factory, issue, fixture) = associated_journal().await;
+    testing::verify_factory_node_journal_contract(&*factory, &*factory, &fixture).await;
+    let selection = GetIssueWorkExecutionQuery {
+      project_id: issue.project_id,
+      issue_id: issue.id,
+      work_id: fixture.admission.work.id(),
+    };
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let queries = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(IssueExecutionHandlers::new(store.clone(), factory.clone(), policy)),
+    );
+    let first = queries
+      .handle_query(
+        &context(),
+        ListIssueResultsQuery::try_new(selection.clone(), FactoryDiagnosticCollection::Budgets, None, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    let cursor = first.next_cursor.unwrap();
+    for (execution, collection) in [
+      (selection.clone(), FactoryDiagnosticCollection::Evidence),
+      (
+        GetIssueWorkExecutionQuery {
+          work_id: octacity_server_factory::WorkEnvelopeId::generate(),
+          ..selection.clone()
+        },
+        FactoryDiagnosticCollection::Budgets,
+      ),
+    ] {
+      assert_eq!(
+        queries
+          .handle_query(
+            &context(),
+            ListIssueResultsQuery::try_new(execution, collection, Some(cursor.clone()), 1).unwrap()
+          )
+          .await
+          .unwrap_err()
+          .application()
+          .unwrap()
+          .classification(),
+        ApplicationFailure::Invalid
+      );
+    }
+    for blocked in [ManagementResourceKind::FactoryRun, ManagementResourceKind::Project] {
+      let policy = Arc::new(ResourcePolicy { blocked });
+      let queries = AuthorizedQueryHandler::new(
+        policy.clone(),
+        Arc::new(IssueExecutionHandlers::new(store.clone(), factory.clone(), policy)),
+      );
+      let page = queries
+        .handle_query(
+          &context(),
+          ListIssueResultsQuery::try_new(selection.clone(), FactoryDiagnosticCollection::Evidence, None, 1).unwrap(),
+        )
+        .await
+        .unwrap();
+      assert_eq!(page.coverage, IssueResultCoverage::Unavailable);
+      assert!(page.items.is_empty());
+      assert!(page.next_cursor.is_none());
+      assert!(page.run_version.is_none());
+      assert_eq!(page.association.work_id, selection.work_id);
+    }
+    for limit in [0, 101] {
+      assert!(
+        ListIssueResultsQuery::try_new(selection.clone(), FactoryDiagnosticCollection::Evidence, None, limit).is_err()
+      );
+    }
+    for cursor in ["bad".to_owned(), "x".repeat(MAX_ISSUE_OBSERVATION_CURSOR_BYTES + 1)] {
+      assert!(
+        ListIssueResultsQuery::try_new(
+          selection.clone(),
+          FactoryDiagnosticCollection::Evidence,
+          Some(cursor),
+          1
+        )
+        .is_err()
+      );
+    }
+  });
+}

@@ -5,8 +5,8 @@ use octacity_server_factory::FactoryDigest;
 type Fingerprint = (ProjectId, IssueId, Option<IssueCommentId>, FactoryDigest);
 #[derive(Clone, Default)]
 pub(super) struct IssueDiscussionMemoryState {
-  comments: BTreeMap<(IssueId, u64), (IssueCommentMetadata, IssueCommentBody)>,
-  lifetime: BTreeMap<IssueId, u64>,
+  pub(super) comments: BTreeMap<(IssueId, u64), (IssueCommentMetadata, IssueCommentBody)>,
+  pub(super) lifetime: BTreeMap<IssueId, u64>,
   replays: BTreeMap<ManagementIdempotencyKey, (Fingerprint, IssueCommentMetadata)>,
 }
 impl IssueDiscussionMemoryState {

@@ -35,6 +35,7 @@ pub(crate) fn component_schemas() -> Value {
   super::issue_planning::insert(&mut schemas);
   super::issue_workflows::insert(&mut schemas);
   factory::insert_factory_schemas(&mut schemas);
+  super::issue_activity::insert(&mut schemas);
   super::integrations::insert(&mut schemas);
   operational::insert_operational_schemas(&mut schemas);
   audit::insert_audit_schemas(&mut schemas);

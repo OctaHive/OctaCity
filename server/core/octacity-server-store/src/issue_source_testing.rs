@@ -5,15 +5,16 @@ mod mapping;
 #[derive(Clone, Default)]
 pub(super) struct IssueSourceMemoryState {
   writers: BTreeMap<(IssueId, octacity_server_domain::IssueSourceMappingVersion), IssueSourceWriterAccess>,
-  mappings: BTreeMap<(IssueId, octacity_server_domain::IssueSourceMappingVersion), PublishedIssueSourceMapping>,
+  pub(super) mappings:
+    BTreeMap<(IssueId, octacity_server_domain::IssueSourceMappingVersion), PublishedIssueSourceMapping>,
   mapping_publications:
     BTreeMap<ManagementIdempotencyKey, (PublishIssueSourceMappingIntent, IssueSourceMappingOutcome)>,
   pulls: BTreeMap<ManagementIdempotencyKey, SourcePullReplay>,
   scans: BTreeMap<octacity_server_factory::FactoryDigest, IssueSourceReadScan>,
   refreshes: BTreeMap<(bool, ManagementIdempotencyKey), SourceRefreshReplay>,
-  states: BTreeMap<IssueId, IssueSourceRefreshState>,
-  observations: BTreeMap<(IssueId, octacity_server_factory::FactoryDigest), IssueSourceObservation>,
-  links: BTreeMap<IssueId, (ManagementSecurityScope, IssueSourceLink)>,
+  pub(super) states: BTreeMap<IssueId, IssueSourceRefreshState>,
+  pub(super) observations: BTreeMap<(IssueId, octacity_server_factory::FactoryDigest), IssueSourceObservation>,
+  pub(super) links: BTreeMap<IssueId, (ManagementSecurityScope, IssueSourceLink)>,
   native: BTreeMap<octacity_server_factory::FactoryDigest, IssueId>,
   attaches: BTreeMap<ManagementIdempotencyKey, (AttachIssueSourceIntent, IssueSourceLink)>,
   imports: BTreeMap<ManagementIdempotencyKey, (IssueSourceSelection, IssueSourceLink)>,

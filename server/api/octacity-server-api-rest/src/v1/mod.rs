@@ -31,6 +31,7 @@ mod resource_search;
 mod retention;
 mod trigger;
 
+pub use adapter::IssueActivityManagementApplication;
 pub use adapter::IssueDiscussionManagementApplication;
 pub use adapter::IssueExecutionManagementApplication;
 pub use adapter::IssueSourceManagementApplication;

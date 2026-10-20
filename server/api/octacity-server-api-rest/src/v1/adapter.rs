@@ -82,6 +82,8 @@ pub mod integrations;
 mod internal_trigger;
 mod issue;
 pub use issue::IssueManagementApplication;
+mod issue_activity;
+pub use issue_activity::IssueActivityManagementApplication;
 mod issue_discussion;
 pub use issue_discussion::IssueDiscussionManagementApplication;
 mod issue_execution;
@@ -196,6 +198,7 @@ pub struct ManagementApplication {
   issue_workflows: Option<IssueWorkflowManagementApplication>,
   issues: Option<IssueManagementApplication>,
   issue_executions: Option<IssueExecutionManagementApplication>,
+  issue_activity: Option<IssueActivityManagementApplication>,
   issue_discussion: Option<IssueDiscussionManagementApplication>,
   issue_sources: Option<IssueSourceManagementApplication>,
   projects: ProjectManagementApplication,
@@ -280,6 +283,7 @@ impl ManagementApplication {
       issues: None,
       issue_executions: None,
       issue_discussion: None,
+      issue_activity: None,
       issue_sources: None,
       agent_pools,
       agents,

@@ -328,6 +328,16 @@ pub(super) fn management_application(
     workflow_commands,
     workflow_queries,
   ))
+  .with_issue_activity(
+    octacity_server_api_rest::v1::IssueActivityManagementApplication::new(authorized_queries(
+      &management_policy,
+      Arc::new(octacity_server_application::IssueActivityHandlers::new(
+        store.clone(),
+        Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      )),
+    ))
+    .with_results(authorized_queries(&management_policy, executions.clone())),
+  )
   .with_issue_discussion(octacity_server_api_rest::v1::IssueDiscussionManagementApplication::new(
     authorized_commands(&management_policy, discussion.clone()),
     authorized_queries(&management_policy, discussion),

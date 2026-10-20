@@ -653,3 +653,6 @@ mod source;
 
 #[path = "issue_discussion_testing.rs"]
 mod discussion;
+
+#[path = "issue_activity_testing.rs"]
+mod activity;

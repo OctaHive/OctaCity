@@ -1488,3 +1488,6 @@ mod planning;
 
 #[path = "issues/discussion.rs"]
 mod discussion;
+
+#[path = "issues/activity.rs"]
+mod activity;

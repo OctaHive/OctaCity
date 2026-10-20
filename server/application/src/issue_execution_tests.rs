@@ -929,3 +929,84 @@ fn issue_execution_rejects_a_local_action_for_another_workflow_before_reserving_
     assert_eq!(store.mutation_evidence_counts().await, after_edit);
   });
 }
+
+#[test]
+fn issue_timeline_freezes_execution_membership_and_revision_while_new_requests_and_edits_arrive() {
+  run_ready(async {
+    let (store, factory, issue, command) = fixture().await;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let commands = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(IssueExecutionHandlers::new(store.clone(), factory, policy.clone())),
+    );
+    let mut expected = Vec::new();
+    for name in ["timeline-one", "timeline-two"] {
+      let mut request = command.clone();
+      request.idempotency_key = key(name);
+      expected.push(
+        commands
+          .handle_command(&context(), request)
+          .await
+          .unwrap()
+          .request
+          .id
+          .to_string(),
+      );
+    }
+    expected.sort();
+    let reads = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(IssueActivityHandlers::new(
+        store.clone(),
+        crate::factory_node_test_support::clock(),
+      )),
+    );
+    let kinds = Some([IssueTimelineKind::Execution].into());
+    let first = reads
+      .handle_query(
+        &context(),
+        ListIssueTimelineQuery::try_new(issue.project_id, issue.id, kinds.clone(), None, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(first.items.len(), 1);
+    assert_eq!(first.items[0].position().identity, expected[0]);
+    assert_eq!(first.boundary.executions, 2);
+    let mut later = command;
+    later.idempotency_key = key("timeline-new-request");
+    let later = commands.handle_command(&context(), later).await.unwrap().request;
+    let edited = AuthorizedCommandHandler::new(policy.clone(), Arc::new(IssueHandlers::new(store.clone(), policy)))
+      .handle_command(
+        &context(),
+        EditIssueCommand {
+          intent: EditIssueIntent {
+            project_id: issue.project_id,
+            id: issue.id,
+            expected_version: issue.version,
+            content: IssueContent {
+              title: "changed later".into(),
+              ..issue.content.clone()
+            },
+          },
+          idempotency_key: key("timeline-edit"),
+          edited_at: at(100),
+        },
+      )
+      .await
+      .unwrap();
+    let last = reads
+      .handle_query(
+        &context(),
+        ListIssueTimelineQuery::try_new(issue.project_id, issue.id, kinds, first.next_cursor, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(last.items.len(), 1);
+    assert_eq!(last.items[0].position().identity, expected[1]);
+    assert_ne!(last.items[0].position().identity, later.id.to_string());
+    assert_eq!(last.boundary, first.boundary);
+    assert_eq!(last.current_version, edited.issue.version);
+    assert_eq!(last.boundary.issue_version, issue.version);
+    assert!(last.next_cursor.is_none());
+  });
+}

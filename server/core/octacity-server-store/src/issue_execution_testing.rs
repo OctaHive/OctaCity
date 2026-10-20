@@ -3,7 +3,7 @@ use super::*;
 #[derive(Clone, Default)]
 pub(super) struct IssueExecutionMemoryState {
   associations: BTreeMap<octacity_server_factory::WorkEnvelopeId, IssueWorkAssociation>,
-  requests:
+  pub(super) requests:
     BTreeMap<octacity_server_domain::IssueExecutionRequestId, (ManagementSecurityScope, u64, IssueExecutionRequest)>,
   replay: BTreeMap<ManagementIdempotencyKey, IssueExecutionOutcome>,
   markers: BTreeMap<octacity_server_factory::WorkEnvelopeId, octacity_server_domain::IssueVersion>,

@@ -62,6 +62,12 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
       cursor_parameter(),
       limit_parameter(MAX_PROJECT_LIST_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT),
     ]),
+    ParameterProfile::IssueTimeline | ParameterProfile::IssueResults => {
+      parameters.push(cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_OBSERVATION_CURSOR_BYTES));
+      if matches!(operation.parameter_profile,ParameterProfile::IssueTimeline) {
+        parameters.extend([limit_parameter(octacity_server_application::MAX_ISSUE_HISTORY_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT),json!({"name":"kinds","in":"query","required":false,"schema":{"type":"array","minItems":1,"maxItems":octacity_server_application::IssueTimelineKind::ALL.len(),"uniqueItems":true,"items":{"type":"string","enum":octacity_server_application::IssueTimelineKind::ALL}},"style":"form","explode":false})]);
+      } else {parameters.extend([limit_parameter(octacity_server_application::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT),json!({"name":"work_id","in":"query","required":true,"schema":{"type":"string","format":"uuid"}}),json!({"name":"collection","in":"query","required":true,"schema":{"type":"string","enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|c|c.as_str()).collect::<Vec<_>>()}})]);}
+    },
     ParameterProfile::IssueExecutions => parameters.extend([
       cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_EXECUTION_CURSOR_BYTES),
       limit_parameter(octacity_server_application::MAX_ISSUE_HISTORY_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT)

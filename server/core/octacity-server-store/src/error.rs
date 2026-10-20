@@ -32,6 +32,8 @@ pub enum StoreOperation {
   ListIssueRevisions,
   /// Read bounded exact Issue execution metadata.
   ListIssueExecutions,
+  /// Read independently bounded safe Issue activity observations.
+  ListIssueTimeline,
   /// Create a manual internal task.
   CreateIssue,
   /// Explicit reviewed adoption of an Issue workflow.
@@ -352,6 +354,9 @@ pub enum StoreInputError {
   /// Issue execution continuation or page bound is invalid.
   #[error("invalid Issue execution page")]
   InvalidIssueExecutionPage,
+  /// Invalid bounded activity membership, filter or continuation.
+  #[error("invalid issue activity observation")]
+  InvalidIssueActivityPage,
 
   /// A Project text document violates its finite byte/control schema.
   #[error("invalid Project text input")]

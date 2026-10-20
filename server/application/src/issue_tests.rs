@@ -1531,3 +1531,6 @@ fn issue_workflow_adoption_requires_separate_authority_and_current_visibility() 
     assert_eq!(store.mutation_evidence_counts().await, before);
   });
 }
+
+#[path = "issue_activity_tests.rs"]
+mod activity;

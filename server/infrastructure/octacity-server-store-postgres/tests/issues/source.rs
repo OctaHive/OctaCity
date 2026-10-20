@@ -1145,3 +1145,6 @@ async fn source_private_read_progress_does_not_anchor_an_otherwise_empty_project
   ));
   database.cleanup().await;
 }
+
+#[path = "source_activity.rs"]
+mod activity;

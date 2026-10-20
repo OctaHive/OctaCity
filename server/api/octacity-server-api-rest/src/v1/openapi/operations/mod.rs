@@ -91,6 +91,8 @@ pub(crate) enum ParameterProfile {
   CurrentDefinitionList,
   IssueHistory,
   IssueExecutions,
+  IssueTimeline,
+  IssueResults,
   FactoryConfigurationChoices,
   FactoryDiagnostics,
   WorkSourceInputChoices,

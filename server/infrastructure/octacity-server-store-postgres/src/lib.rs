@@ -48,6 +48,7 @@ mod integration_connection;
 mod internal_trigger;
 mod internal_trigger_definition;
 mod issue;
+mod issue_activity;
 mod issue_discussion;
 mod issue_execution;
 mod issue_planning;

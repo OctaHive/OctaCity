@@ -5,7 +5,10 @@ use serde::Serialize;
 
 #[path = "issue_execution_records.rs"]
 mod records;
+#[path = "issue_execution_results.rs"]
+mod results;
 pub use records::*;
+pub use results::*;
 
 #[path = "issue_execution_job.rs"]
 mod job;

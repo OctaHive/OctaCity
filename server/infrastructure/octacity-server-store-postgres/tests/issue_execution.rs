@@ -727,3 +727,57 @@ async fn execution_watermark_is_issue_local_in_postgres() {
   assert_issue_local_execution_watermark(&PostgresStore::new(database.pool.clone())).await;
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn timeline_execution_membership_retains_original_request_references_after_restart() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let issue = issue(&store).await;
+  let mut expected = Vec::new();
+  for n in 0..2 {
+    let mut next = request(&issue);
+    next.idempotency_key = key(&format!("timeline-request-{n}"));
+    next.requested_at = at(10);
+    expected.push(
+      store
+        .request_issue_execution(management_mutation(next))
+        .await
+        .unwrap()
+        .request
+        .id,
+    );
+  }
+  expected.sort();
+  let query = ReadIssueTimeline {
+    project_id: issue.project_id,
+    issue_id: issue.id,
+    scope: ManagementSecurityScope::trusted_network(),
+    kinds: [IssueTimelineKind::Execution].into_iter().collect(),
+    boundary: None,
+    after: None,
+    limit: 1,
+  };
+  let first = store.issue_timeline(query.clone()).await.unwrap();
+  assert!(
+    matches!(&first.items[0],IssueTimelineReference::Execution {request_id,requirements_version,..} if *request_id==expected[0] && *requirements_version==issue.version)
+  );
+  let mut late = request(&issue);
+  late.idempotency_key = key("late-timeline-request");
+  late.requested_at = at(5);
+  store.request_issue_execution(management_mutation(late)).await.unwrap();
+  let restarted = PostgresStore::new(database.pool.clone());
+  let last = restarted
+    .issue_timeline(ReadIssueTimeline {
+      boundary: Some(first.boundary),
+      after: first.next,
+      ..query
+    })
+    .await
+    .unwrap();
+  assert_eq!(last.items.len(), 1);
+  assert!(matches!(&last.items[0],IssueTimelineReference::Execution {request_id,..} if *request_id==expected[1]));
+  assert!(last.next.is_none());
+  assert_eq!(last.boundary, first.boundary);
+  database.cleanup().await;
+}

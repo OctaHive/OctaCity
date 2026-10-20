@@ -43,7 +43,16 @@ async fn issue_router_with_directory(
     recording_management_application(peer.clone(), peer)
       .with_issues(IssueManagementApplication::new(
         Arc::new(AuthorizedCommandHandler::new(policy.clone(), service.clone())),
-        Arc::new(AuthorizedQueryHandler::new(policy, service)),
+        Arc::new(AuthorizedQueryHandler::new(policy.clone(), service)),
+      ))
+      .with_issue_activity(octacity_server_api_rest::v1::IssueActivityManagementApplication::new(
+        Arc::new(AuthorizedQueryHandler::new(
+          policy.clone(),
+          Arc::new(octacity_server_application::IssueActivityHandlers::new(
+            store.clone(),
+            Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+          )),
+        )),
       ))
       .with_issue_discussion(octacity_server_api_rest::v1::IssueDiscussionManagementApplication::new(
         discussion_commands,
@@ -984,3 +993,6 @@ mod sources;
 
 #[path = "issues/discussion.rs"]
 mod discussion;
+
+#[path = "issues/activity.rs"]
+mod activity;

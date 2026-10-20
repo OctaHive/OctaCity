@@ -374,6 +374,21 @@ impl ManagementVisibilityTarget for crate::ListIssueStatusHistoryQuery {
   }
 }
 
+impl ManagementVisibilityTarget for crate::ListIssueTimelineQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+impl ManagementVisibilityTarget for crate::ListIssueResultsQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use std::any::TypeId;

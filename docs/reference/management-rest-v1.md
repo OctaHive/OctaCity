@@ -980,3 +980,13 @@ for an independently authorized no-store body read. Append receipts, audit and
 queue payloads contain metadata only; comment text grants no execution, approval
 or Context authority. See [operator discussion](issues.md#operator-only-discussion)
 for closed schemas, bounds, permissions and recovery behavior.
+
+
+Issue activity uses `GET .../issues/{issue_id}/timeline` for safe merged references
+and `GET .../issues/{issue_id}/results?work_id=...&collection=...` for an exact
+associated execution collection. Both are bounded, read-only and no-store;
+continuations bind current visibility/security and original observations. Result
+coverage distinguishes partial, stale and unavailable without an acceptance
+verdict. See [activity and result observations](issues.md#bounded-activity-and-result-observations)
+for page bounds, Source freshness, Run version fencing and independent content
+permissions.

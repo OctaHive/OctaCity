@@ -2,6 +2,38 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ListIssueTimelineQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/timeline",
+    "listIssueTimeline",
+    "Issues",
+    "Read bounded safe activity references with independent section coverage",
+    None,
+    "IssueTimelinePage",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response()
+  .with_parameters(ParameterProfile::IssueTimeline)
+  .with_visibility::<octacity_server_application::ListIssueTimelineQuery>(),
+  operation!(
+    octacity_server_application::ListIssueResultsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/results",
+    "listIssueResults",
+    "Issues",
+    "Read one exact execution collection under a Run version fence",
+    None,
+    "IssueResultPage",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response()
+  .with_parameters(ParameterProfile::IssueResults)
+  .with_visibility::<octacity_server_application::ListIssueResultsQuery>(),
+  operation!(
     octacity_server_application::AppendIssueCommentCommand,
     "POST",
     "/api/v1/projects/{project_id}/issues/{issue_id}/comments",

@@ -290,6 +290,11 @@ fn registered_routes() -> ManagementRoutes {
       "getIssueCommentBody",
       super::issue_discussion::get_body,
     )
+    .get::<octacity_server_application::ListIssueTimelineQuery, _, _>(
+      "listIssueTimeline",
+      super::issue_activity::timeline,
+    )
+    .get::<octacity_server_application::ListIssueResultsQuery, _, _>("listIssueResults", super::issue_activity::results)
     .get::<octacity_server_application::ListIssueExecutionsQuery, _, _>(
       "listIssueExecutions",
       super::issue_execution::list,
