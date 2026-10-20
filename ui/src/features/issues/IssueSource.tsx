@@ -8,10 +8,11 @@ import {
   QueryLoadingNotice,
 } from '../../shared/QueryStateNotice';
 import type { Issue } from './api';
-import type { IssueSourcesApi } from './sourceApi';
+import type { IssueSourcesApi, IssueSourceProjection } from './sourceApi';
 import { IssueSourceAttachment } from './IssueSourceAttachment';
 import { IssueSourceObservation } from './IssueSourceObservation';
 import { IssueSourceMapping } from './IssueSourceMapping';
+import { IssueSourceProjections } from './IssueSourceProjections';
 import type { WorkflowResource } from '../../api/issueWorkflows';
 import styles from './Issues.module.css';
 
@@ -28,11 +29,19 @@ export function IssueSource({
   const { t } = usePresentation();
   const [mode, setMode] = useState<'attachment' | 'mapping' | null>(null);
   const [generation, setGeneration] = useState(0);
+  const [resolution, setResolution] = useState<IssueSourceProjection | null>(null);
   const toggleRef = useRef<HTMLButtonElement>(null);
   const review = useQuery({
     queryKey: queryKeys.issueSynchronization(issue.project_id, issue.id),
     gcTime: 0,
     queryFn: ({ signal }) => api.review(issue.project_id, issue.id, signal),
+  });
+  const [after, setAfter] = useState<string | null>(null);
+  const outbound = useQuery({
+    queryKey: queryKeys.issueProjections(issue.project_id, issue.id, after),
+    gcTime: 0,
+    enabled: !!review.data?.link,
+    queryFn: ({ signal }) => api.projections(issue.project_id, issue.id, after, signal),
   });
   const choices = useQuery({
     queryKey: queryKeys.issueSourceChoices(issue.project_id, issue.id),
@@ -47,6 +56,16 @@ export function IssueSource({
     !review.error &&
     !choices.isFetching &&
     !choices.error;
+  const resolutionReady =
+    !resolution ||
+    (!outbound.isFetching &&
+      !outbound.error &&
+      outbound.data?.items.some(
+        (row) =>
+          row.operation_id === resolution.operation_id &&
+          row.record_id === resolution.record_id &&
+          row.state === 'failed',
+      ) === true);
   async function reload() {
     const [current, available] = await Promise.all([review.refetch(), choices.refetch()]);
     if (current.data && available.data && !current.error && !available.error) {
@@ -78,9 +97,10 @@ export function IssueSource({
             type="button"
             ref={toggleRef}
             disabled={review.isFetching || review.error !== null}
-            onClick={() =>
-              setMode(mode === null ? (review.data?.link ? 'mapping' : 'attachment') : null)
-            }
+            onClick={() => {
+              setResolution(null);
+              setMode(mode === null ? (review.data?.link ? 'mapping' : 'attachment') : null);
+            }}
           >
             {t(mode === null ? 'issueSource.configure' : 'command.abandon')}
           </button>
@@ -94,6 +114,19 @@ export function IssueSource({
             fallbackFocusRef={toggleRef}
             onReload={review.refetch}
           />
+          {review.data.link ? (
+            <IssueSourceProjections
+              query={outbound}
+              workflow={workflow}
+              after={after}
+              onPage={setAfter}
+              onResolve={(row) => {
+                setResolution(structuredClone(row));
+                setGeneration((v) => v + 1);
+                setMode('mapping');
+              }}
+            />
+          ) : null}
           {mode !== null ? (
             choices.isPending ? (
               <QueryLoadingNotice label={t('issueSource.profile')} />
@@ -130,7 +163,8 @@ export function IssueSource({
                     review={review.data}
                     choices={choices.data.items}
                     workflow={workflow}
-                    ready={ready}
+                    ready={ready && resolutionReady}
+                    resolution={resolution}
                     onReload={reload}
                     fallbackFocusRef={toggleRef}
                   />

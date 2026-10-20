@@ -252,14 +252,14 @@ test('retains a tight asset count for the complete console with Factory diagnost
   );
 });
 
-test('admits measured task Source ownership authoring and rejects unplanned aggregate growth', async (context) => {
+test('admits measured task synchronization and rejects unplanned aggregate growth', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
-  await write(root, 'dist/assets/index.js', 'x'.repeat(285_926));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(782_104));
+  await write(root, 'dist/assets/index.js', 'x'.repeat(287_580));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(791_272));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(85_477));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);

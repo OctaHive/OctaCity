@@ -8,6 +8,8 @@ import {
 import type { VersionedMutationHeaders } from '../../shared/confirmedIntent';
 
 export type IssueSynchronization = components['schemas']['IssueSynchronization'];
+export type IssueSourceProjection = components['schemas']['IssueSourceProjection'];
+export type IssueSourceProjectionPage = components['schemas']['IssueSourceProjectionPage'];
 export type IssueSourceChoice = components['schemas']['IssueSourceChoice'];
 export type IssueSourceMappingDefinition = components['schemas']['IssueSourceMappingDefinition'];
 export type IssueSourceAttachment = components['schemas']['AttachIssueSourceRequest'];
@@ -29,6 +31,45 @@ export class IssueSourceAssociationConflict extends ManagementApiError {
 /** Optional task synchronization transport; retained reads never dispatch a provider. */
 export function createIssueSourcesApi(client = managementApi) {
   return {
+    async projections(
+      project_id: string,
+      issue_id: string,
+      after: string | null,
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.GET(
+            '/api/v1/projects/{project_id}/issues/{issue_id}/synchronization/projections',
+            {
+              params: {
+                path: { project_id, issue_id },
+                query: { ...(after ? { after } : {}), limit: 20 },
+              },
+              signal: signal ?? null,
+            },
+          )
+        ).data,
+      );
+    },
+    async resolve(
+      project_id: string,
+      issue_id: string,
+      body: components['schemas']['ResolveIssueSourceConflictRequest'],
+      headers: VersionedMutationHeaders,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.POST(
+            '/api/v1/projects/{project_id}/issues/{issue_id}/synchronization/resolve',
+            {
+              params: { path: { project_id, issue_id }, header: headers },
+              body,
+            },
+          )
+        ).data,
+      );
+    },
     async choices(project_id: string, issue_id: string, signal?: AbortSignal) {
       return requireManagementResponse(
         (

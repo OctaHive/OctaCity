@@ -2,6 +2,82 @@ import { expect, test } from '@playwright/test';
 import { installOperatorFixture, FIXTURE_IDS } from './operatorFixture';
 import { issueFixture } from '../fixtures/issues';
 import { issueSourceChoice, issueSourceReview } from '../fixtures/issueSources';
+import { DEFAULT_PREFERENCES, PREFERENCES_KEY } from '../../src/app/presentation/preferences';
+
+for (const language of ['en', 'ru']) {
+  test(`retains independent pending Reporter feedback at narrow width in ${language}`, async ({
+    page,
+  }) => {
+    await installOperatorFixture(page);
+    await page.addInitScript(
+      ({ key, preferences }) => localStorage.setItem(key, JSON.stringify(preferences)),
+      { key: PREFERENCES_KEY, preferences: { ...DEFAULT_PREFERENCES, language } },
+    );
+    await page.setViewportSize({ width: 390, height: 844 });
+    const issue = issueFixture(FIXTURE_IDS.project);
+    const sync = issueSourceReview(true);
+    const base = `/api/v1/projects/${issue.project_id}/issues/${issue.id}`;
+    const commands: string[] = [];
+    page.on('request', (request) => {
+      if (request.method() !== 'GET') commands.push(request.url());
+    });
+    await page.route(`**${base}/synchronization`, (route) => route.fulfill({ json: sync }));
+    await page.route(`**${base}/synchronization/projections*`, (route) =>
+      route.fulfill({
+        json: {
+          items: [
+            {
+              operation_id: '11'.repeat(32),
+              record_id: '22'.repeat(32),
+              issue_version: 1,
+              mapping: sync.link!.selection.source.configuration,
+              native_correlation: sync.link!.native_correlation,
+              workflow: sync.workflow,
+              status_id: issue.status_id,
+              effects: { status: issue.status_id, add: ['custom-ready'], remove: [], state: null },
+              pipeline: null,
+              resolves: null,
+              accepted_at: 1700000000000,
+              state: 'pending',
+              failure: null,
+              attempt: 0,
+              recorded_at: 1700000000000,
+              available_at: 1700000001000,
+            },
+          ],
+          next_cursor: null,
+          observation: 'live-reporter-v1',
+          observed_at: 1700000002000,
+        },
+      }),
+    );
+    await page.goto(`/projects/${issue.project_id}/issues/${issue.id}`);
+    await page
+      .getByRole('button', { name: language === 'en' ? 'Properties' : 'Свойства', exact: true })
+      .click();
+    const section = page.getByRole('region', {
+      name: language === 'en' ? 'Outgoing synchronization' : 'Исходящая синхронизация',
+    });
+    await expect(
+      section.getByText(language === 'en' ? 'Pending delivery' : 'Ожидает доставки', {
+        exact: true,
+      }),
+    ).toBeVisible();
+    await expect(section.getByText(/custom-ready/)).toBeVisible();
+    const details = section.getByText(
+      language === 'en' ? 'Exact synchronization provenance' : 'Точное происхождение синхронизации',
+    );
+    await details.focus();
+    await page.keyboard.press('Enter');
+    await expect(section.getByText(/1111111111111111/)).toBeVisible();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+    expect(commands).toEqual([]);
+  });
+}
 
 test('reviews source ownership with keyboard at 390px without provider discovery or workflow edits', async ({
   page,

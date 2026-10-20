@@ -1,6 +1,38 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'issueSync.observedNative': 'Последний согласованный статус источника: {state}',
+  'issueSync.observationScope':
+    'Сохранённые значения Source не являются текущей проверкой Reporter. Показаны исходные mapping и наблюдение.',
+  'issueSync.observationProvenance': 'Происхождение наблюдения источника',
+  'issueSync.noValues': 'Значения источника не сохранены для этого наблюдения.',
+  'issueSync.review': 'Рассмотреть разрешение синхронизации',
+  'issueSync.reviewPolicy': 'Проверить политику разрешения',
+  'issueSync.publishResolution': 'Опубликовать намерение разрешения',
+  'issueSync.resolutionConsequence':
+    'Опубликовать новую поддерживаемую политику и намерение доставки для операции {operation}, квитанция {receipt}. Исходная квитанция и результат выполнения сохраняются.',
+  'issueSync.outbound': 'Исходящая синхронизация',
+  'issueSync.independent':
+    'Синхронизация не определяет приёмку выполнения. Бизнес-статус и результаты выполнения независимы.',
+  'issueSync.pending': 'Ожидает доставки',
+  'issueSync.claimed': 'Доставка выполняется',
+  'issueSync.delivered': 'Доставка подтверждена наблюдением',
+  'issueSync.failed': 'Ошибка доставки',
+  'issueSync.conflict': 'Конфликт управляемого поля · требуется review',
+  'issueSync.exhausted': 'Лимиты доставки исчерпаны · требуется review',
+  'issueSync.forbidden': 'Доставка заблокирована текущими правами',
+  'issueSync.unsupported': 'Запрошенная запись не поддерживается',
+  'issueSync.live':
+    'Текущие квитанции Reporter. Страница не подтверждает полную синхронизацию или актуальное состояние провайдера.',
+  'issueSync.empty': 'На этой странице нет исходящих операций.',
+  'issueSync.desired': 'Ожидаемые изменения в источнике',
+  'issueSync.execution': 'Открыть исходное выполнение',
+  'issueSync.metadata': 'Команда метаданных · без полномочий выполнения',
+  'issueSync.acceptedAt': 'Намерение принято: {time}',
+  'issueSync.provenance': 'Точное происхождение синхронизации',
+  'issueSync.attempt': 'Номер повтора: {attempt}',
+  'issueSync.resolves': 'Разрешает исходную операцию',
+  'issueSync.refresh': 'Обновить состояние доставки',
   'issueSource.refreshScanning': 'Поиск в Source продолжается. Продолжите исходное обновление.',
   'issueSource.continueRefresh': 'Продолжить обновление',
   'issueSource.expired': 'Наблюдение устарело · обновите явно',

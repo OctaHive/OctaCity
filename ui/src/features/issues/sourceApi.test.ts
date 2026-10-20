@@ -9,6 +9,43 @@ import { createIssueSourcesApi } from './sourceApi';
 import { issueSourceChoice } from '../../../tests/fixtures/issueSources';
 
 afterEach(() => vi.unstubAllGlobals());
+it('reads bounded Reporter receipts and submits a reviewed resolution through generated routes', async () => {
+  vi.stubGlobal('location', { origin: 'https://console.example' });
+  const calls: Request[] = [];
+  const api = createIssueSourcesApi(
+    createManagementApiClient(async (request) => {
+      calls.push(request);
+      return Response.json({});
+    }),
+  );
+  await api.projections('project', 'issue', 'scoped-cursor');
+  const body = {
+    review: { operation_id: '11'.repeat(32), expected_record: '22'.repeat(32) },
+    mapping: {
+      expected_mapping: null,
+      definition: {
+        source: issueSourceChoice().source,
+        reporter: null,
+        push_enabled: false,
+        fields: {},
+        status: null,
+      },
+    },
+  };
+  await api.resolve('project', 'issue', body, versionedMutationHeaders('repair', 8));
+  expect(new URL(calls[0]!.url).pathname).toBe(
+    '/api/v1/projects/project/issues/issue/synchronization/projections',
+  );
+  expect(new URL(calls[0]!.url).searchParams.get('after')).toBe('scoped-cursor');
+  expect(new URL(calls[0]!.url).searchParams.get('limit')).toBe('20');
+  expect(calls[1]!.method).toBe('POST');
+  expect(new URL(calls[1]!.url).pathname).toBe(
+    '/api/v1/projects/project/issues/issue/synchronization/resolve',
+  );
+  expect(calls[1]!.headers.get('If-Match')).toBe('"8"');
+  expect(calls[1]!.headers.get('Idempotency-Key')).toBe('repair');
+  expect(await calls[1]!.json()).toEqual(body);
+});
 it('uses generated Source routes with independent Issue/mapping/pull preconditions and no provider transport', async () => {
   vi.stubGlobal('location', { origin: 'https://console.example' });
   const calls: Request[] = [];

@@ -5,6 +5,7 @@ import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import type { Issue } from './api';
 import type { IssueSourcesApi, IssueSynchronization } from './sourceApi';
+import { sourceAuthorityLabel, sourceFieldLabel } from './issueSourcePresentation';
 type Action =
   | { kind: 'refresh'; source: Parameters<IssueSourcesApi['refresh']>[2]['source'] }
   | { kind: 'pull'; expected_generation: number; enabled: boolean };
@@ -38,7 +39,14 @@ export function IssueSourceObservation({
         </p>
       ) : null}
       {review.mapping ? (
-        <p>{t('issueSource.mappingPublished', { version: review.mapping.version })}</p>
+        <>
+          <p>{t('issueSource.mappingPublished', { version: review.mapping.version })}</p>
+          {Object.entries(review.mapping.definition.fields).map(([field, authority]) => (
+            <p key={field}>
+              {sourceFieldLabel(field, t)}: {sourceAuthorityLabel(authority, t)}
+            </p>
+          ))}
+        </>
       ) : null}
       {observation ? (
         <>
@@ -47,6 +55,23 @@ export function IssueSourceObservation({
               time: new Date(observation.accepted.observed_at).toLocaleString(locale),
             })}
           </p>
+          {observation.values ? (
+            <>
+              <p>{t('issueSync.observedNative', { state: observation.values.state })}</p>
+              <p>{observation.values.labels.join(', ')}</p>
+              <p>{t('issueSync.observationScope')}</p>
+              <details>
+                <summary>{t('issueSync.observationProvenance')}</summary>
+                <p>{observation.values.observation}</p>
+                <p>
+                  {observation.values.mapping.identity} · {observation.values.mapping.version} ·{' '}
+                  {observation.values.mapping.digest}
+                </p>
+              </details>
+            </>
+          ) : (
+            <p>{t('issueSync.noValues')}</p>
+          )}
           <ObservationExpiry
             key={observation.accepted.expires_at}
             expiresAt={observation.accepted.expires_at}

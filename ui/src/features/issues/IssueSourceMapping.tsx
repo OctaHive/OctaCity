@@ -24,6 +24,7 @@ import type {
   IssueSourceMappingRequest,
   IssueSourcesApi,
   IssueSynchronization,
+  IssueSourceProjection,
 } from './sourceApi';
 
 /** Reviews field translation against a pinned workflow; it cannot edit that workflow. */
@@ -36,6 +37,7 @@ export function IssueSourceMapping({
   ready,
   onReload,
   fallbackFocusRef,
+  resolution,
 }: {
   issue: Issue;
   api: IssueSourcesApi;
@@ -45,10 +47,12 @@ export function IssueSourceMapping({
   ready: boolean;
   onReload: () => unknown;
   fallbackFocusRef: RefObject<HTMLButtonElement | null>;
+  resolution?: IssueSourceProjection | null;
 }) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
   const [baseline] = useState(() => structuredClone(review));
+  const [originalResolution] = useState(() => (resolution ? structuredClone(resolution) : null));
   const [definition, setDefinition] = useState<IssueSourceMappingDefinition>(() =>
     structuredClone(
       review.mapping?.definition ?? {
@@ -70,6 +74,7 @@ export function IssueSourceMapping({
   const currentPin = review.mapping_reference ? sourceReferenceKey(review.mapping_reference) : '';
   const fresh =
     ready &&
+    originalResolution?.record_id === resolution?.record_id &&
     reviewedChoices === JSON.stringify(choices) &&
     review.issue_version === baseline.issue_version &&
     originalPin === currentPin &&
@@ -97,6 +102,14 @@ export function IssueSourceMapping({
     fresh &&
     !!choice &&
     (!push || (!!choice.writer && !!definition.status?.push?.statuses.length)) &&
+    (!originalResolution ||
+      (push &&
+        definition.push_enabled &&
+        definition.status?.push?.statuses.some(
+          (e) =>
+            e.status === issue.status_id &&
+            (e.add.length > 0 || e.remove.length > 0 || e.state !== null),
+        ) === true)) &&
     new TextEncoder().encode(JSON.stringify(definition)).length <= bounds.mappingMaximumBytes;
   const [requested, setRequested] = useState<IssueSourceMappingRequest | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -224,14 +237,22 @@ export function IssueSourceMapping({
             })
           }
         >
-          {t('issueSource.reviewMapping')}
+          {t(originalResolution ? 'issueSync.reviewPolicy' : 'issueSource.reviewMapping')}
         </button>
       </fieldset>
       {requested ? (
         <ConfirmedCommand
-          title={t('issueSource.reviewMapping')}
-          confirmLabel={t('issueSource.publishMapping')}
+          title={t(originalResolution ? 'issueSync.reviewPolicy' : 'issueSource.reviewMapping')}
+          confirmLabel={t(
+            originalResolution ? 'issueSync.publishResolution' : 'issueSource.publishMapping',
+          )}
           consequence={
+            (originalResolution
+              ? t('issueSync.resolutionConsequence', {
+                  operation: originalResolution.operation_id,
+                  receipt: originalResolution.record_id,
+                }) + ' '
+              : '') +
             t('issueSource.mappingConsequence', {
               workflow: workflow?.definition.name ?? baseline.workflow.id,
               version: baseline.workflow.version,
@@ -256,13 +277,26 @@ export function IssueSourceMapping({
           request={requested}
           version={baseline.issue_version}
           ready={canReview}
-          execute={({ request, headers }) =>
-            api.publishMapping(
-              issue.project_id,
-              issue.id,
-              structuredClone(request) as IssueSourceMappingRequest,
-              requireVersionedMutationHeaders(headers),
-            )
+          execute={async ({ request, headers }) =>
+            originalResolution
+              ? await api.resolve(
+                  issue.project_id,
+                  issue.id,
+                  {
+                    mapping: structuredClone(request) as IssueSourceMappingRequest,
+                    review: {
+                      operation_id: originalResolution.operation_id,
+                      expected_record: originalResolution.record_id,
+                    },
+                  },
+                  requireVersionedMutationHeaders(headers),
+                )
+              : await api.publishMapping(
+                  issue.project_id,
+                  issue.id,
+                  structuredClone(request) as IssueSourceMappingRequest,
+                  requireVersionedMutationHeaders(headers),
+                )
           }
           queryClient={queryClient}
           invalidations={[{ queryKey: queryKeys.issueRoot(issue.project_id, issue.id) }]}

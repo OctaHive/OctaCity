@@ -23,6 +23,13 @@ export const workflow = {
 export const issue = issueFixture();
 export function fakeIssueSourcesApi() {
   return {
+    projections: vi.fn().mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      observation: 'live-reporter-v1',
+      observed_at: 1700000000000,
+    }),
+    resolve: vi.fn(),
     review: vi.fn().mockResolvedValue({
       issue_version: issue.version,
       workflow: { id: issue.workflow_id, version: issue.workflow_version },
