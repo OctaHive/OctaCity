@@ -62,6 +62,8 @@ pub enum ManagementResourceKind {
   ProjectPolicy,
   /// Persistent Project-owned task.
   Issue,
+  /// Operator-only task discussion, independently authorized from editing and execution.
+  IssueDiscussion,
   /// Project-owned business workflow, separately administered from execution.
   IssueWorkflow,
   /// Immutable Pipeline definition and versions.
@@ -118,12 +120,13 @@ pub enum ManagementResourceKind {
 
 impl ManagementResourceKind {
   /// Complete closed resource-kind vocabulary used by coverage and policy tests.
-  pub const ALL: [Self; 30] = [
+  pub const ALL: [Self; 31] = [
     Self::ControlPlane,
     Self::Project,
     Self::ProjectPolicy,
     Self::IssueWorkflow,
     Self::Issue,
+    Self::IssueDiscussion,
     Self::Pipeline,
     Self::Repository,
     Self::BuildConfiguration,
@@ -425,6 +428,7 @@ const fn supports_instance(kind: ManagementResourceKind) -> bool {
     ManagementResourceKind::Project
       | ManagementResourceKind::IssueWorkflow
       | ManagementResourceKind::Issue
+      | ManagementResourceKind::IssueDiscussion
       | ManagementResourceKind::Pipeline
       | ManagementResourceKind::Repository
       | ManagementResourceKind::BuildConfiguration

@@ -152,6 +152,21 @@ pub trait ManagementVisibilityTarget: Query {
 instance_scoped_query_registry!(implement_instance_scoped_queries);
 
 impl sealed::VisibilityInput for octacity_server_store::FactoryChoiceListVisibility {}
+impl ManagementVisibilityTarget for crate::GetIssueCommentBodyQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::IssueDiscussion];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    translate_visibility(
+      grant,
+      |resource| {
+        instance_identity::<octacity_server_domain::IssueId>(resource, ManagementResourceKind::IssueDiscussion)
+      },
+      Self::Visibility::all,
+      Self::Visibility::none,
+      Self::Visibility::restricted,
+    )
+  }
+}
 impl ManagementVisibilityInput for octacity_server_store::FactoryChoiceListVisibility {}
 
 impl ManagementVisibilityTarget for crate::ListFactoryConfigurationChoicesQuery {

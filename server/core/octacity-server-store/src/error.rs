@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Append operator-only discussion without changing an Issue revision or execution.
+  AppendIssueComment,
   /// Publish reviewed immutable native synchronization ownership and mapping.
   PublishIssueSourceMapping,
   /// Explicitly attach one authorized primary native task.
@@ -341,6 +343,12 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Discussion text, parent or configured bounds are invalid; excludes body/parent details.
+  #[error("invalid Issue discussion input")]
+  InvalidIssueDiscussion,
+  /// The Issue's lifetime comment quota is exhausted, regardless of retained body count.
+  #[error("Issue discussion lifetime quota reached")]
+  IssueDiscussionQuotaReached,
   /// Issue execution continuation or page bound is invalid.
   #[error("invalid Issue execution page")]
   InvalidIssueExecutionPage,

@@ -52,6 +52,7 @@ fn representative_resource(kind: ManagementResourceKind) -> ManagementResource {
       ManagementResource::owned_collection(kind, ManagementResourceKind::AgentPool, identity()).unwrap()
     }
     ManagementResourceKind::Issue
+    | ManagementResourceKind::IssueDiscussion
     | ManagementResourceKind::Pipeline
     | ManagementResourceKind::Repository
     | ManagementResourceKind::IntegrationConnection

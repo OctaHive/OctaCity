@@ -36,6 +36,8 @@ mod diagnostic;
 mod error;
 mod factory_issue_status_action;
 mod issue;
+mod issue_discussion;
+pub use issue_discussion::*;
 mod issue_source;
 pub use issue_source::*;
 mod issue_execution;

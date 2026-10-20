@@ -92,6 +92,11 @@ opaque_id!(
   "Stable identity of one explicit task execution request."
 );
 opaque_id!(IssueId, EntityKind::Issue, "Stable internal identity of a task.");
+opaque_id!(
+  IssueCommentId,
+  EntityKind::Issue,
+  "Stable identity of an operator comment on a task."
+);
 opaque_id!(ProjectId, EntityKind::Project, "Opaque identity of a Project.");
 opaque_id!(
   IssueWorkflowId,

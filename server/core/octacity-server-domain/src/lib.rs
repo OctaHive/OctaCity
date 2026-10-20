@@ -26,7 +26,7 @@ pub use id::{
   EnrollmentCredentialId, IntegrationId, JobId, LeaseId, LogChunkId, LogIndexingWorkId, PipelineId, PoolId, ProjectId,
   RegistrationCredentialId, RepositoryId, RetentionWorkId, TriggerId, TriggerOccurrenceId,
 };
-pub use id::{IssueExecutionRequestId, IssueId, IssueStatusId, IssueTransitionId, IssueWorkflowId};
+pub use id::{IssueCommentId, IssueExecutionRequestId, IssueId, IssueStatusId, IssueTransitionId, IssueWorkflowId};
 pub use identity::{MAX_PIPELINE_NODE_ID_BYTES, MAX_TRIGGER_IDENTITY_BYTES, PipelineNodeId, TriggerIdentity};
 pub use json::{JsonCanonicalizationError, MAX_CANONICAL_JSON_DEPTH, canonicalize_json};
 pub use name::{

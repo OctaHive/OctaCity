@@ -15,6 +15,9 @@ mod execution;
 #[path = "issue_projection_tests.rs"]
 mod projections;
 
+#[path = "issue_discussion_tests.rs"]
+mod discussion;
+
 #[path = "issue_source_tests.rs"]
 mod source;
 

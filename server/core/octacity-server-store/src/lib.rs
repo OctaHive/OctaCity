@@ -9,6 +9,8 @@
 mod issue_planning;
 pub use issue_planning::*;
 mod issue;
+mod issue_discussion;
+pub use issue_discussion::*;
 mod issue_source_read;
 pub use issue_source_read::*;
 mod issue_source_refresh;
