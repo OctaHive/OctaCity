@@ -566,6 +566,7 @@ pub(super) async fn create_initial_issue(
       }
     })?;
   let history = IssueStatusHistoryEntry {
+    source: None,
     issue_id: issue.id,
     version: issue.version,
     workflow_id: issue.workflow_id,

@@ -472,6 +472,7 @@ fn prepare_issue_creation(
     updated_at: request.created_at,
   };
   let initial = IssueStatusHistoryEntry {
+    source: None,
     issue_id: issue.id,
     version: issue.version,
     workflow_id: issue.workflow_id,

@@ -1,4 +1,6 @@
 use super::*;
+#[path = "issue_source_mapping_tests.rs"]
+mod mapping;
 use octacity_server_factory::{ExternalWorkIdentity, FactoryDigest, ImmutableReference, WorkSourceBinding};
 use octacity_server_store::{
   IssueTransitionOrigin, WorkSourceItem, source_native_correlation, source_native_issue, source_security_partition,
@@ -33,6 +35,7 @@ fn read(selection: &IssueSourceSelection) -> ReadWorkSourceObservations {
   }
 }
 struct Reader {
+  state: Option<String>,
   title: Option<String>,
   item: Option<WorkSourceItem>,
   observed_at: i64,
@@ -43,6 +46,7 @@ struct Reader {
 impl Default for Reader {
   fn default() -> Self {
     Self {
+      state: None,
       title: None,
       item: None,
       observed_at: 20,
@@ -87,7 +91,7 @@ impl WorkSourceObservations for Reader {
       body: Some("Native task body".into()),
       fields: Default::default(),
       labels: vec![],
-      state: "opaque-state".into(),
+      state: self.state.clone().unwrap_or_else(|| "opaque-state".into()),
     };
     Ok(WorkSourceObservationPage {
       observations: vec![WorkSourceObservation {

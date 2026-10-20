@@ -224,6 +224,7 @@ pub struct TransitionIssueIntent {
 /// Shared trusted business-command envelope for manual and accepted pipeline moves.
 #[derive(Clone, Debug)]
 pub struct TransitionIssue {
+  pub(crate) source: Option<crate::IssueSourceStatusProvenance>,
   pub(crate) pipeline: Option<crate::AcceptedIssueStatusAction>,
   /// Frozen edge and preconditions.
   pub intent: TransitionIssueIntent,
@@ -235,6 +236,9 @@ pub struct TransitionIssue {
 /// Append-only organizational event, independent of execution history.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IssueStatusHistoryEntry {
+  /// Exact mapped observation; absent for manual/pipeline moves and legacy history.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub source: Option<crate::IssueSourceStatusProvenance>,
   /// Stable Issue identity.
   pub issue_id: IssueId,
   /// Revision committed with this event.

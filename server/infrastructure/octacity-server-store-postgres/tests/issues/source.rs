@@ -5,6 +5,10 @@ use octacity_server_store::{
   IssueSourceStore, ManagementSecurityScope,
 };
 use octacity_server_store::{ImportIssueSource, IssueListVisibility};
+#[path = "source_mapping.rs"]
+mod mapping;
+#[path = "source_refresh_command.rs"]
+mod refresh_command;
 
 fn exact(name: &str) -> ImmutableReference {
   ImmutableReference::new(
@@ -58,6 +62,14 @@ async fn source_attachment_matches_memory_and_keeps_original_replay_after_restar
     idempotency_key: key("attach"),
     attached_at: at(3),
   };
+  let scope = ManagementSecurityScope::trusted_network();
+  assert!(
+    postgres
+      .issue_source_attachment_replay(&scope, &request.intent, &request.idempotency_key)
+      .await
+      .unwrap()
+      .is_none()
+  );
   let expected = memory
     .attach_issue_source(management_mutation(request.clone()))
     .await
@@ -84,6 +96,25 @@ async fn source_attachment_matches_memory_and_keeps_original_replay_after_restar
       Some(request.observation.clone())
     );
   }
+  let probe = postgres
+    .issue_source_attachment_replay(&scope, &request.intent, &request.idempotency_key)
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(
+    probe,
+    IssueSourceOutcome::Linked {
+      link: link.clone(),
+      disposition: MutationDisposition::Replayed
+    }
+  );
+  assert_eq!(
+    memory
+      .issue_source_attachment_replay(&scope, &request.intent, &request.idempotency_key)
+      .await
+      .unwrap(),
+    Some(probe.clone())
+  );
   let restarted = PostgresStore::new(database.pool.clone());
   assert_eq!(
     restarted
@@ -581,6 +612,8 @@ async fn source_refresh_reconciliation_and_receipts_survive_restart_and_publicat
   )
   .await;
   let mut refresh = RefreshIssueSource {
+    explicit_read: None,
+    status: None,
     read_claim: None,
     selection: request.selection,
     issue_id: link.issue_id,
@@ -698,6 +731,8 @@ async fn source_refresh_paused_publication_is_a_durable_skip_without_advancing_f
     .unwrap()
     .unwrap();
   let mut refresh = RefreshIssueSource {
+    explicit_read: None,
+    status: None,
     read_claim: Some(scan.claim),
     selection: request.selection,
     issue_id: issue.id,

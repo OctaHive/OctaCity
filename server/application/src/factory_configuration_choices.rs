@@ -460,10 +460,19 @@ pub(super) async fn require_visible_reference(
   kind: ManagementResourceKind,
   id: impl ToString,
 ) -> Result<(), ApplicationError> {
+  require_authorized_reference(policy, context, ManagementAction::View, kind, id).await
+}
+pub(super) async fn require_authorized_reference(
+  policy: &dyn crate::ManagementAuthorizationPolicy,
+  context: &crate::ManagementRequestContext,
+  action: ManagementAction,
+  kind: ManagementResourceKind,
+  id: impl ToString,
+) -> Result<(), ApplicationError> {
   let resource =
     crate::management_security::instance_resource(kind, id.to_string()).map_err(|_| ApplicationError::invalid())?;
   let grant = policy
-    .authorize(context, ManagementAction::View, &resource)
+    .authorize(context, action, &resource)
     .await
     .map_err(|_| ApplicationError::invalid())?;
   match grant.visibility().view() {

@@ -326,6 +326,10 @@ impl ManagedIntegrationConnections {
   }
 }
 impl ManagedIntegrationAccess {
+  /// Original connection identity for independent management visibility/use checks.
+  pub fn connection_id(&self) -> IntegrationId {
+    self.connection_id
+  }
   /// Pins the reviewed connection version without reading credentials, granting access or contacting providers.
   pub fn new<
     S: IntegrationProjectAccessStore + IntegrationConnectionStore + IntegrationAdministrationStore + 'static,

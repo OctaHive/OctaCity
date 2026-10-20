@@ -7,6 +7,12 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssueSourceRefreshState {
+  /// Last mapping reconciled by a new read; absent in older retained rows.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub mapping: Option<octacity_server_factory::ImmutableReference>,
+  /// Last safe mapping condition, independently of content freshness.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub status: Option<crate::IssueSourceStatusOutcome>,
   /// Explicit pull access for this retained link, independent of execution inputs.
   pub enabled: bool,
   /// Monotonic reviewed pull policy generation; invalidates old read owners.
@@ -20,6 +26,10 @@ pub struct IssueSourceRefreshState {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum IssueSourceRefreshDisposition {
+  /// One explicit bounded read slice finished; the existing pass can be resumed.
+  Scanning,
+  /// The current mapping pins a different read profile; retain data without refreshing its fields.
+  ReadProfileMismatch,
   /// Pull was disabled at publication; retain a replayable skip without advancing freshness.
   PullDisabled,
   /// Changed snapshot confirmed by an independent later read.
@@ -36,6 +46,9 @@ pub enum IssueSourceRefreshDisposition {
 /// Exact safe result; task content is read separately.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct IssueSourceRefreshOutcome {
+  /// Safe explicit status translation condition, absent without a status mapping.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub status: Option<crate::IssueSourceStatusOutcome>,
   /// Retained local task.
   pub issue_id: IssueId,
   /// Observation classification, never lifecycle authority.
@@ -44,6 +57,10 @@ pub struct IssueSourceRefreshOutcome {
 /// Trusted installed read validated by the application, with no execution target.
 #[derive(Clone)]
 pub struct RefreshIssueSource {
+  /// Frozen one-shot client read fingerprint; absent for existing retained observation producers.
+  pub explicit_read: Option<octacity_server_factory::FactoryDigest>,
+  /// Original normalized status facts, never native lifecycle authority.
+  pub status: Option<crate::IssueSourceStatusObservation>,
   /// Optional original bounded read fence; checked atomically before new publication.
   pub read_claim: Option<crate::IssueSourceReadClaim>,
   /// Exact retained native identity with the authorized current read binding.
@@ -59,10 +76,44 @@ pub struct RefreshIssueSource {
   /// Trusted post-read time.
   pub refreshed_at: Timestamp,
 }
+/// Shared adapter replay shape; the legacy observation tuple keeps its original encoding.
+#[derive(Serialize)]
+#[serde(untagged)]
+pub enum IssueSourceRefreshReplayIntent<'a> {
+  /// An existing producer replays the exact retained observation.
+  Observation((&'a IssueSourceSelection, IssueId, &'a IssueSourceObservation)),
+  /// A one-shot client command accepts its first qualified observation only.
+  Explicit(
+    (
+      &'a IssueSourceSelection,
+      IssueId,
+      octacity_server_factory::FactoryDigest,
+    ),
+  ),
+}
+impl RefreshIssueSource {
+  /// Canonical request shape shared by both mutation adapters.
+  pub fn replay_intent(&self) -> IssueSourceRefreshReplayIntent<'_> {
+    match self.explicit_read {
+      Some(digest) => IssueSourceRefreshReplayIntent::Explicit((&self.selection, self.issue_id, digest)),
+      None => IssueSourceRefreshReplayIntent::Observation((&self.selection, self.issue_id, &self.observation)),
+    }
+  }
+}
 impl IssueSourceRefreshState {
+  /// A newly reviewed mapping invalidates prior read owners without resetting native freshness or pull enablement.
+  pub fn mapping_published(&mut self) -> Result<(), StoreError> {
+    self.generation = self
+      .generation
+      .checked_add(1)
+      .ok_or_else(crate::issue_source_mapping::mapping_conflict)?;
+    Ok(())
+  }
   /// Initializes retained provenance; reads still require an explicit authorized invocation.
   pub fn new(accepted: IssueSourceObservation) -> Self {
     Self {
+      mapping: None,
+      status: None,
       enabled: true,
       generation: 1,
       accepted,
@@ -139,6 +190,15 @@ impl IssueRevision {
 /// Optional persistence capability; manual Issue handlers have no dependency on it.
 #[async_trait::async_trait]
 pub trait IssueSourceRefreshStore: IssueSourceStore {
+  /// Probes a scoped original one-shot receipt before provider access; reserves nothing.
+  async fn issue_source_refresh_replay(
+    &self,
+    project: octacity_server_domain::ProjectId,
+    issue: IssueId,
+    scope: &ManagementSecurityScope,
+    explicit_read: octacity_server_factory::FactoryDigest,
+    key: &IdempotencyKey,
+  ) -> Result<Option<IssueSourceRefreshOutcome>, StoreError>;
   /// Reads safe retained freshness/control metadata in its original native partition.
   async fn issue_source_refresh_state(
     &self,

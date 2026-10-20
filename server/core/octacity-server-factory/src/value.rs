@@ -367,6 +367,11 @@ impl FactoryKey {
   }
 }
 
+impl AsRef<str> for FactoryKey {
+  fn as_ref(&self) -> &str {
+    self.as_str()
+  }
+}
 impl fmt::Display for FactoryKey {
   fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     formatter.write_str(&self.0)

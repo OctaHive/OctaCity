@@ -1,6 +1,7 @@
 //! Explicit native association consumes the existing authorized, bounded Source reader.
 use crate::*;
-use octacity_server_domain::{IssueId, ProjectId, Timestamp};
+pub use octacity_server_domain::IssueId;
+use octacity_server_domain::{ProjectId, Timestamp};
 use octacity_server_store::{AttachIssueSource, IdempotencyKey, ImportIssueSource};
 pub use octacity_server_store::{
   AttachIssueSourceIntent, IssueSourceLink, IssueSourceOutcome, IssueSourceRefreshDisposition, IssueSourceSelection,
@@ -8,8 +9,14 @@ pub use octacity_server_store::{
 };
 use std::sync::Arc;
 
+#[path = "issue_source_management.rs"]
+mod management;
+pub use management::*;
+
 /// Source association owner; no admission, Reporter or credential port is installed here.
 pub struct IssueSourceHandlers<S> {
+  mappings: Vec<InstalledIssueSourceMapping>,
+  refresh_policy: Option<IssueSourceRefreshPolicy>,
   store: Arc<S>,
   reader: Arc<dyn WorkSourceObservations>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
@@ -24,6 +31,8 @@ impl<S> IssueSourceHandlers<S> {
     clock: Arc<dyn FactoryExecutionClock>,
   ) -> Self {
     Self {
+      mappings: vec![],
+      refresh_policy: None,
       store,
       reader,
       policy,
@@ -111,10 +120,12 @@ impl<S: IssueSourceStore> IssueSourceHandlers<S> {
     selection: &IssueSourceSelection,
     read: ReadWorkSourceObservations,
     now: Timestamp,
+    operation: octacity_server_store::StoreOperation,
   ) -> Result<(WorkSourceObservation, Timestamp), ApplicationError> {
     if read.project_id != selection.project_id || read.source != selection.source || read.limit == 0 {
       return Err(ApplicationError::invalid());
     }
+    octacity_server_store::validate_source_cursor(&read.continuation).map_err(|_| ApplicationError::invalid())?;
     let limit = usize::from(read.limit);
     let page = self.reader.read(context, read).await?;
     // Read again after asynchronous provider access; an observation can expire in flight.
@@ -127,15 +138,10 @@ impl<S: IssueSourceStore> IssueSourceHandlers<S> {
       .into_iter()
       .filter(|o| o.snapshot.item == selection.item);
     let observation = matches.next().ok_or_else(ApplicationError::capability_unavailable)?;
-    if matches.next().is_some()
-      || observation.project_id != selection.project_id
-      || observation.source != selection.source
-      || observation.security_scope != *context.security_scope()
-      || observation.native_correlation != selection.native_correlation(&context.security_scope().to_store())
-      || observation.freshness_at(now, None) == WorkSourceObservationFreshness::Stale
-    {
+    if matches.next().is_some() {
       return Err(ApplicationError::invalid());
     }
+    observation.validate_issue_read(context, selection, now, operation)?;
     Ok((observation, now))
   }
   async fn visible_outcome(
@@ -189,7 +195,13 @@ impl<S: IssueSourceStore> ManagementCommandUseCase<ImportIssueSourceCommand> for
       .visibility_for::<ListProjectIssuesQuery>()
       .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?;
     let (observation, imported_at) = self
-      .observe(context, &command.selection, command.read, command.imported_at)
+      .observe(
+        context,
+        &command.selection,
+        command.read,
+        command.imported_at,
+        octacity_server_store::StoreOperation::ImportIssueSource,
+      )
       .await?;
     let outcome = self
       .store
@@ -225,8 +237,25 @@ impl<S: IssueSourceStore> ManagementCommandUseCase<AttachIssueSourceCommand> for
       .store
       .issue(command.intent.selection.project_id, command.intent.issue_id, None)
       .await?;
+    if let Some(replay) = self
+      .store
+      .issue_source_attachment_replay(
+        &context.security_scope().to_store(),
+        &command.intent,
+        &command.idempotency_key,
+      )
+      .await?
+    {
+      return self.visible_outcome(context, replay).await;
+    }
     let (observation, attached_at) = self
-      .observe(context, &command.intent.selection, command.read, command.attached_at)
+      .observe(
+        context,
+        &command.intent.selection,
+        command.read,
+        command.attached_at,
+        octacity_server_store::StoreOperation::AttachIssueSource,
+      )
       .await?;
     let outcome = self
       .store
@@ -297,6 +326,45 @@ impl<S: octacity_server_store::IssueSourceRefreshStore> ManagementCommandUseCase
     grant: &ManagementAuthorizationGrant,
     command: RefreshIssueSourceCommand,
   ) -> Result<octacity_server_store::IssueSourceRefreshOutcome, ApplicationError> {
+    self.refresh_source(context, grant, command).await
+  }
+}
+/// One explicit client read; exact retries recover the first accepted observation without provider access.
+#[derive(Clone)]
+pub struct ObserveIssueSourceCommand {
+  /// Existing authorized Source read and its original client operation key.
+  pub refresh: RefreshIssueSourceCommand,
+}
+impl Command for ObserveIssueSourceCommand {
+  type Outcome = octacity_server_store::IssueSourceRefreshOutcome;
+}
+impl ManagementAuthorizationTarget for ObserveIssueSourceCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping = RefreshIssueSourceCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    self.refresh.management_resource()
+  }
+}
+#[async_trait::async_trait]
+impl<S: octacity_server_store::IssueSourceReadStore> ManagementCommandUseCase<ObserveIssueSourceCommand>
+  for IssueSourceHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    command: ObserveIssueSourceCommand,
+  ) -> Result<octacity_server_store::IssueSourceRefreshOutcome, ApplicationError> {
+    self.refresh_paged(context, grant, command.refresh).await
+  }
+}
+impl<S: octacity_server_store::IssueSourceRefreshStore> IssueSourceHandlers<S> {
+  async fn refresh_source(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    command: RefreshIssueSourceCommand,
+  ) -> Result<octacity_server_store::IssueSourceRefreshOutcome, ApplicationError> {
     crate::issue::visible_issue(grant, command.issue_id)?;
     self.visible(context, command.issue_id).await?;
     let link = self
@@ -311,6 +379,10 @@ impl<S: octacity_server_store::IssueSourceRefreshStore> ManagementCommandUseCase
     if command.read.source.installation.identity() != link.selection.source.installation.identity() {
       return Err(ApplicationError::invalid());
     }
+    let selection = IssueSourceSelection {
+      source: command.read.source.clone(),
+      ..link.selection
+    };
     if !self
       .store
       .issue_source_refresh_state(
@@ -323,12 +395,14 @@ impl<S: octacity_server_store::IssueSourceRefreshStore> ManagementCommandUseCase
     {
       return Err(ApplicationError::capability_unavailable());
     }
-    let selection = IssueSourceSelection {
-      source: command.read.source.clone(),
-      ..link.selection
-    };
     let (observation, refreshed_at) = self
-      .observe(context, &selection, command.read, command.refreshed_at)
+      .observe(
+        context,
+        &selection,
+        command.read,
+        command.refreshed_at,
+        octacity_server_store::StoreOperation::RefreshIssueSource,
+      )
       .await?;
     let receipt = observation.issue_receipt();
     Ok(
@@ -337,6 +411,8 @@ impl<S: octacity_server_store::IssueSourceRefreshStore> ManagementCommandUseCase
         .refresh_issue_source(crate::management_security::audited_mutation(
           context,
           octacity_server_store::RefreshIssueSource {
+            explicit_read: None,
+            status: Some(source_status(&observation.snapshot)),
             read_claim: None,
             content: source_draft(observation.snapshot),
             selection,
@@ -354,6 +430,9 @@ impl<S: octacity_server_store::IssueSourceRefreshStore> ManagementCommandUseCase
 #[path = "issue_source_read.rs"]
 mod reads;
 pub use reads::*;
+#[path = "issue_source_mapping.rs"]
+mod mapping;
+pub use mapping::*;
 
 /// Reviewed control shared with the trusted store request; no provider or Factory settings.
 pub use octacity_server_store::SetIssueSourcePull as SetIssueSourcePullCommand;
@@ -396,5 +475,11 @@ fn source_draft(snapshot: WorkSourceSnapshot) -> IssueContent {
     description: snapshot.body.unwrap_or_default(),
     acceptance: None,
     priority: None,
+  }
+}
+fn source_status(snapshot: &WorkSourceSnapshot) -> octacity_server_store::IssueSourceStatusObservation {
+  octacity_server_store::IssueSourceStatusObservation {
+    state: snapshot.state.clone(),
+    labels: snapshot.labels.clone(),
   }
 }

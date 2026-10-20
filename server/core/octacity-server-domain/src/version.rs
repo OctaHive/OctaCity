@@ -70,6 +70,11 @@ positive_version!(
 );
 positive_version!(ProjectVersion, EntityKind::Project, "Optimistic version of a Project.");
 positive_version!(
+  IssueSourceMappingVersion,
+  EntityKind::Issue,
+  "Immutable per-link synchronization mapping version."
+);
+positive_version!(
   IssueWorkflowVersion,
   EntityKind::IssueWorkflow,
   "Immutable Issue workflow version."

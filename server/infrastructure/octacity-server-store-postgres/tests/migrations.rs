@@ -69,7 +69,7 @@ const INTEGRATION_TABLES: [&str; 7] = [
   "integration_project_access",
   "integration_project_access_versions",
 ];
-const COLLABORATION_TABLES: [&str; 14] = [
+const COLLABORATION_TABLES: [&str; 15] = [
   "issue_numbers",
   "issues",
   "issue_revisions",
@@ -81,6 +81,7 @@ const COLLABORATION_TABLES: [&str; 14] = [
   "issue_source_observations",
   "issue_source_refresh",
   "issue_source_reads",
+  "issue_source_mappings",
   "project_text_preparations",
   "project_text_input_objects",
   "project_text_documents",

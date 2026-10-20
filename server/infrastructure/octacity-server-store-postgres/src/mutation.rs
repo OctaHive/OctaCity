@@ -306,8 +306,10 @@ pub(crate) enum MutationKind {
   PublishProjectPolicy,
   CreateIssue,
   AttachIssueSource,
+  PublishIssueSourceMapping,
   ImportIssueSource,
   RefreshIssueSource,
+  ObserveIssueSource,
   SetIssueSourcePull,
   RequestIssueExecution,
   AssociateIssueWork,
@@ -463,6 +465,12 @@ impl MutationKind {
         "issue",
         "issue.source-attached"
       ),
+      Self::PublishIssueSourceMapping => metadata!(
+        b"octacity.publish-issue-source-mapping.v1\0",
+        "publish-issue-source-mapping",
+        "issue",
+        "issue.source-mapping-published"
+      ),
       Self::SetIssueSourcePull => metadata!(
         b"octacity.set-issue-source-pull.v1\0",
         "set-issue-source-pull",
@@ -472,6 +480,12 @@ impl MutationKind {
       Self::RefreshIssueSource => metadata!(
         b"octacity.refresh-issue-source.v1\0",
         "refresh-issue-source",
+        "issue",
+        "issue.source-refreshed"
+      ),
+      Self::ObserveIssueSource => metadata!(
+        b"octacity.observe-issue-source.v1\0",
+        "observe-issue-source",
         "issue",
         "issue.source-refreshed"
       ),
@@ -848,6 +862,26 @@ pub(crate) fn decode_outcome<T: DeserializeOwned>(outcome: Value) -> Result<T, S
 pub(crate) enum MutationStart<'a> {
   Fresh(Transaction<'a, Postgres>),
   Replay(Value),
+}
+
+/// Non-locking receipt lookup under an already authorized immutable management identity.
+/// Publication still rechecks replay while acquiring its transaction lock.
+pub(crate) async fn probe(pool: &PgPool, identity: &MutationIdentity) -> Result<Option<Value>, StoreError> {
+  let row:Option<(Vec<u8>,Json<Value>)>=sqlx::query_as("SELECT request_digest,outcome FROM idempotency_records WHERE scope=$1 AND security_scope=$2 AND idempotency_key=$3")
+    .bind(identity.kind.scope()).bind(identity.persisted_security_scope()).bind(&identity.key).fetch_optional(pool).await.map_err(unavailable)?;
+  row
+    .map(|(digest, Json(outcome))| {
+      if digest != identity.request_digest {
+        return Err(StoreError::Conflict {
+          entity: identity.conflict_entity,
+        });
+      }
+      if outcome.get("status").and_then(Value::as_str) == Some(PENDING_OUTCOME) {
+        return Err(StoreError::Unavailable);
+      }
+      Ok(outcome)
+    })
+    .transpose()
 }
 
 pub(crate) async fn begin<'a>(pool: &'a PgPool, identity: &MutationIdentity) -> Result<MutationStart<'a>, StoreError> {

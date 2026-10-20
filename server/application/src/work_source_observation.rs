@@ -59,6 +59,26 @@ pub enum WorkSourceObservationFreshness {
   Stale,
 }
 impl WorkSourceObservation {
+  /// One shared check for explicit and paged Issue consumers before native data gains authority.
+  pub(crate) fn validate_issue_read(
+    &self,
+    context: &ManagementRequestContext,
+    selection: &octacity_server_store::IssueSourceSelection,
+    now: Timestamp,
+    operation: octacity_server_store::StoreOperation,
+  ) -> Result<(), ApplicationError> {
+    self.issue_receipt().validate(selection, now, operation)?;
+    if self.project_id != selection.project_id
+      || self.security_scope != *context.security_scope()
+      || self.snapshot.item != selection.item
+      || self.native_correlation != selection.native_correlation(&context.security_scope().to_store())
+      || self.snapshot_digest
+        != FactoryDigest::content_sha256(&serde_json::to_vec(&self.snapshot).map_err(|_| ApplicationError::invalid())?)
+    {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
   /// Retains safe exact provenance for Issue persistence without copying normalized native content.
   pub fn issue_receipt(&self) -> octacity_server_store::IssueSourceObservation {
     octacity_server_store::IssueSourceObservation {

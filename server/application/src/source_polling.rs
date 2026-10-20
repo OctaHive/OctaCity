@@ -26,6 +26,11 @@ pub(crate) struct SourcePollingPage {
 }
 #[async_trait::async_trait]
 pub(crate) trait SourcePollingSession: Send + Sync {
+  /// A targeted consumer can stop after its original receipt and covered checkpoint commit.
+  fn complete(&self) -> bool {
+    false
+  }
+
   async fn read(&self, request: SourcePollingRequest) -> Result<SourcePollingPage, ApplicationError>;
   async fn settle(&self, candidate: serde_json::Value) -> Result<(), ApplicationError>;
   async fn checkpoint(
@@ -184,6 +189,9 @@ impl<S: SourcePollingSession> SourcePollingDriver<'_, S> {
         charged = false;
       }
       self.save(&self.lease, &mut expected, &progress).await?;
+      if self.session.complete() {
+        break;
+      }
     }
     Ok(outcome)
   }

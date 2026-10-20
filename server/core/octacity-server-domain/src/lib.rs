@@ -45,4 +45,4 @@ pub use version::{
   IntegrationVersion, JobVersion, LeaseVersion, PipelineVersion, PoolVersion, ProjectPolicyVersion, ProjectVersion,
   RepositoryVersion, RetentionHoldVersion, TriggerVersion,
 };
-pub use version::{IssueVersion, IssueWorkflowSelectionVersion, IssueWorkflowVersion};
+pub use version::{IssueSourceMappingVersion, IssueVersion, IssueWorkflowSelectionVersion, IssueWorkflowVersion};

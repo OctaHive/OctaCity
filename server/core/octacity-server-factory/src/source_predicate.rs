@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 pub const MAX_WORK_SOURCE_PREDICATE_LABELS: usize = 64;
 /// UTF-8 byte ceiling per literal label.
 pub const MAX_WORK_SOURCE_PREDICATE_LABEL_BYTES: usize = 256;
+/// UTF-8 ceiling for an opaque normalized Source state, independent of key syntax.
+pub const MAX_WORK_SOURCE_PREDICATE_STATE_BYTES: usize = 128;
 /// Safe explanation of a normalized selection mismatch.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -21,12 +23,13 @@ pub enum WorkSourcePredicateMismatch {
   /// Another installed provider predicate did not match.
   PredicateMismatch,
 }
-/// Immutable input-owned narrowing profile. The installed Source scope remains authoritative.
+/// Immutable literal narrowing. Intake retains canonical keys; native status translation can use opaque text.
+/// The installed Source scope remains authoritative for either representation.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-pub struct WorkSourcePredicate {
+pub struct WorkSourcePredicate<State = FactoryKey> {
   /// An advertised opaque normalized state; None means no extra state restriction.
-  pub state: Option<FactoryKey>,
+  pub state: Option<State>,
   /// Every literal label must be present.
   pub all_of: Vec<String>,
   /// At least one alternative must be present when nonempty.
@@ -34,12 +37,18 @@ pub struct WorkSourcePredicate {
   /// None of these literal labels may be present.
   pub none_of: Vec<String>,
 }
-impl WorkSourcePredicate {
+impl<State: AsRef<str>> WorkSourcePredicate<State> {
   /// Rejects unbounded, repeated, invalid and unsatisfiable predicates before publication.
   pub fn validate(&self) -> Result<(), FactoryError> {
     let invalid = || FactoryError::InvalidConfiguration {
       field: "source input predicate",
     };
+    if self.state.as_ref().is_some_and(|s| {
+      let s = s.as_ref();
+      s.trim().is_empty() || s.len() > MAX_WORK_SOURCE_PREDICATE_STATE_BYTES || s.chars().any(char::is_control)
+    }) {
+      return Err(invalid());
+    }
     for labels in [&self.all_of, &self.any_of, &self.none_of] {
       if labels.len() > MAX_WORK_SOURCE_PREDICATE_LABELS
         || labels.iter().any(|s| {
@@ -61,7 +70,7 @@ impl WorkSourcePredicate {
   pub fn mismatches(&self, state: &str, labels: &[String]) -> Vec<WorkSourcePredicateMismatch> {
     use WorkSourcePredicateMismatch::*;
     let mut reasons = vec![];
-    if self.state.as_ref().is_some_and(|s| s.as_str() != state) {
+    if self.state.as_ref().is_some_and(|s| s.as_ref() != state) {
       reasons.push(StateMismatch);
     }
     if self.all_of.iter().any(|s| !labels.contains(s)) {

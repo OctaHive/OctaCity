@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Publish reviewed immutable native synchronization ownership and mapping.
+  PublishIssueSourceMapping,
   /// Explicitly attach one authorized primary native task.
   AttachIssueSource,
   /// Resolve or create one canonical source-linked task.

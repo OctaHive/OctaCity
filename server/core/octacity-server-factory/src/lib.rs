@@ -101,8 +101,8 @@ pub use source_reporting::*;
 mod source_predicate;
 pub use source_group::{MAX_WORK_SOURCE_GROUP_MEMBERS, WorkSourceGroup, WorkSourceSelection, WorkSourceSelectionPass};
 pub use source_predicate::{
-  MAX_WORK_SOURCE_PREDICATE_LABEL_BYTES, MAX_WORK_SOURCE_PREDICATE_LABELS, WorkSourcePredicate,
-  WorkSourcePredicateMismatch,
+  MAX_WORK_SOURCE_PREDICATE_LABEL_BYTES, MAX_WORK_SOURCE_PREDICATE_LABELS, MAX_WORK_SOURCE_PREDICATE_STATE_BYTES,
+  WorkSourcePredicate, WorkSourcePredicateMismatch,
 };
 mod subject;
 pub use source_input::{

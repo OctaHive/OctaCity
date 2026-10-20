@@ -74,7 +74,20 @@ impl IssueRevision {
     if request.pipeline_action().is_some_and(|a| !a.matches(intent)) {
       return Err(conflict());
     }
-    let origin = if request.pipeline_action().is_some() {
+    if request.source.is_some()
+      && (request.pipeline_action().is_some()
+        || !policy.source_owned.contains(&IssueField::Status)
+        || policy.status_mapping_workflow
+          != Some(IssueWorkflowPin {
+            id: self.workflow_id,
+            version: self.workflow_version,
+          }))
+    {
+      return Err(conflict());
+    }
+    let origin = if request.source.is_some() {
+      IssueTransitionOrigin::Source
+    } else if request.pipeline_action().is_some() {
       IssueTransitionOrigin::Pipeline
     } else {
       IssueTransitionOrigin::Manual
@@ -109,6 +122,7 @@ impl IssueRevision {
       ..self.clone()
     };
     let transition = IssueStatusHistoryEntry {
+      source: request.source.clone(),
       issue_id: issue.id,
       version: issue.version,
       workflow_id: issue.workflow_id,
@@ -225,6 +239,7 @@ impl IssueRevision {
       ..self.clone()
     };
     let transition = IssueStatusHistoryEntry {
+      source: None,
       issue_id: self.id,
       version,
       workflow_id: target.id,
@@ -257,15 +272,17 @@ impl IssueWorkflowTransition {
     self.move_block_reason(policy, IssueTransitionOrigin::Manual, |_| false)
   }
 
-  fn move_block_reason(
+  pub(crate) fn move_block_reason(
     &self,
     policy: &IssueFieldPolicy,
     origin: IssueTransitionOrigin,
     satisfies: impl Fn(&IssueTransitionEvidence) -> bool,
   ) -> Option<IssueMoveBlockReason> {
-    if policy.source_owned.contains(&IssueField::Status) {
+    if policy.source_owned.contains(&IssueField::Status) && origin != IssueTransitionOrigin::Source {
       Some(IssueMoveBlockReason::SourceOwned)
-    } else if !self.origins.contains(&origin) {
+    } else if (origin == IssueTransitionOrigin::Source && !policy.source_owned.contains(&IssueField::Status))
+      || !self.origins.contains(&origin)
+    {
       Some(IssueMoveBlockReason::OriginNotAllowed)
     } else if !self.evidence.iter().all(satisfies) {
       Some(IssueMoveBlockReason::EvidenceRequired)

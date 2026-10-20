@@ -1,24 +1,29 @@
 //! Uses the same Project lock and atomic mutation publisher as manual Issues.
 use super::*;
+#[path = "issue_source_mapping_testing.rs"]
+mod mapping;
 #[derive(Clone, Default)]
 pub(super) struct IssueSourceMemoryState {
+  mappings: BTreeMap<(IssueId, octacity_server_domain::IssueSourceMappingVersion), PublishedIssueSourceMapping>,
+  mapping_publications:
+    BTreeMap<ManagementIdempotencyKey, (PublishIssueSourceMappingIntent, IssueSourceMappingOutcome)>,
   pulls: BTreeMap<ManagementIdempotencyKey, SourcePullReplay>,
   scans: BTreeMap<octacity_server_factory::FactoryDigest, IssueSourceReadScan>,
-  refreshes: BTreeMap<
-    ManagementIdempotencyKey,
-    (
-      IssueSourceSelection,
-      IssueId,
-      IssueSourceObservation,
-      IssueSourceRefreshOutcome,
-    ),
-  >,
+  refreshes: BTreeMap<(bool, ManagementIdempotencyKey), SourceRefreshReplay>,
   states: BTreeMap<IssueId, IssueSourceRefreshState>,
   observations: BTreeMap<(IssueId, octacity_server_factory::FactoryDigest), IssueSourceObservation>,
   links: BTreeMap<IssueId, (ManagementSecurityScope, IssueSourceLink)>,
   native: BTreeMap<octacity_server_factory::FactoryDigest, IssueId>,
   attaches: BTreeMap<ManagementIdempotencyKey, (AttachIssueSourceIntent, IssueSourceLink)>,
   imports: BTreeMap<ManagementIdempotencyKey, (IssueSourceSelection, IssueSourceLink)>,
+}
+#[derive(Clone)]
+struct SourceRefreshReplay {
+  project_id: ProjectId,
+  issue_id: IssueId,
+  explicit_read: Option<octacity_server_factory::FactoryDigest>,
+  intent: serde_json::Value,
+  outcome: IssueSourceRefreshOutcome,
 }
 #[derive(Clone)]
 struct SourcePullReplay {
@@ -89,11 +94,35 @@ impl IssueSourceMemoryState {
     require_source_scan(self.scans.get(&key).ok_or_else(crate::source_conflict)?, claim, at)
   }
   pub(super) fn mutation_count(&self) -> usize {
-    self.attaches.len() + self.imports.len() + self.refreshes.len() + self.pulls.len()
+    self.attaches.len() + self.imports.len() + self.refreshes.len() + self.pulls.len() + self.mapping_publications.len()
   }
 }
 #[async_trait::async_trait]
 impl IssueSourceStore for crate::testing::InMemoryProjectStore {
+  async fn issue_source_attachment_replay(
+    &self,
+    scope: &ManagementSecurityScope,
+    intent: &AttachIssueSourceIntent,
+    key: &IdempotencyKey,
+  ) -> Result<Option<IssueSourceOutcome>, StoreError> {
+    self
+      .lock()?
+      .issues
+      .sources
+      .attaches
+      .get(&ManagementIdempotencyKey::new(scope.clone(), key.clone()))
+      .map(|(original, link)| {
+        if original != intent {
+          return Err(crate::issue_source_mapping::mapping_conflict());
+        }
+        Ok(IssueSourceOutcome::Linked {
+          link: link.clone(),
+          disposition: MutationDisposition::Replayed,
+        })
+      })
+      .transpose()
+  }
+
   async fn issue_source_observation(
     &self,
     project: ProjectId,
@@ -362,6 +391,37 @@ impl IssueSourceStore for crate::testing::InMemoryProjectStore {
 
 #[async_trait::async_trait]
 impl IssueSourceRefreshStore for crate::testing::InMemoryProjectStore {
+  async fn issue_source_refresh_replay(
+    &self,
+    project: ProjectId,
+    issue: IssueId,
+    scope: &ManagementSecurityScope,
+    explicit_read: octacity_server_factory::FactoryDigest,
+    key: &IdempotencyKey,
+  ) -> Result<Option<IssueSourceRefreshOutcome>, StoreError> {
+    let state = self.lock()?;
+    if !state
+      .issues
+      .sources
+      .links
+      .get(&issue)
+      .is_some_and(|(s, l)| s == scope && l.selection.project_id == project)
+    {
+      return Err(crate::source_conflict());
+    }
+    state
+      .issues
+      .sources
+      .refreshes
+      .get(&(true, ManagementIdempotencyKey::new(scope.clone(), key.clone())))
+      .map(|r| {
+        if r.project_id != project || r.issue_id != issue || r.explicit_read != Some(explicit_read) {
+          return Err(crate::source_conflict());
+        }
+        Ok(r.outcome.clone())
+      })
+      .transpose()
+  }
   async fn issue_source_refresh_state(
     &self,
     project: ProjectId,
@@ -442,12 +502,14 @@ impl IssueSourceRefreshStore for crate::testing::InMemoryProjectStore {
   ) -> Result<IssueSourceRefreshOutcome, StoreError> {
     let (request, audit) = request.into_parts();
     let key = audit.scoped_idempotency_key(&request.idempotency_key);
+    let replay_key = (request.explicit_read.is_some(), key.clone());
+    let intent = serde_json::to_value(request.replay_intent()).map_err(|_| StoreError::Unavailable)?;
     let mut state = self.lock()?;
-    if let Some((selection, issue, observation, outcome)) = state.issues.sources.refreshes.get(&key) {
-      if selection != &request.selection || issue != &request.issue_id || observation != &request.observation {
+    if let Some(replay) = state.issues.sources.refreshes.get(&replay_key) {
+      if replay.intent != intent {
         return Err(crate::source_conflict());
       }
-      return Ok(outcome.clone());
+      return Ok(replay.outcome.clone());
     }
     if let Some(claim) = &request.read_claim {
       state.issues.sources.require_read_claim(
@@ -481,24 +543,37 @@ impl IssueSourceRefreshStore for crate::testing::InMemoryProjectStore {
       .get(&link.issue_id)
       .cloned()
       .ok_or(StoreError::Unavailable)?;
-    let disposition = refresh.observe(&request.observation);
     let current = state
       .issues
       .current
       .get(&(link.selection.project_id, link.issue_id))
       .ok_or_else(crate::source_conflict)?;
-    let next = if disposition == IssueSourceRefreshDisposition::Fresh {
-      current.refreshed_source(
-        &request,
-        &state.issues.policies.get(&link.issue_id).cloned().unwrap_or_default(),
-      )?
-    } else {
-      None
-    };
-    let outcome = IssueSourceRefreshOutcome {
-      issue_id: link.issue_id,
-      disposition,
-    };
+    let mapping = state
+      .issues
+      .sources
+      .mappings
+      .values()
+      .rev()
+      .find(|m| m.issue_id == current.id);
+    let project = state
+      .projects
+      .get(&current.project_id)
+      .ok_or_else(crate::source_conflict)?;
+    let workflow = state
+      .workflows
+      .workflow(project, current.workflow_id, Some(current.workflow_version))?;
+    let plan = refresh.plan(
+      current,
+      &request,
+      &state.issues.policies.get(&link.issue_id).cloned().unwrap_or_default(),
+      mapping.map(|mapping| IssueSourceMappingContext {
+        mapping,
+        workflow: &workflow,
+        native_correlation: link.native_correlation,
+      }),
+      audit.actor(),
+    )?;
+    let outcome = plan.outcome;
     let id = request.observation.id(link.native_correlation)?;
     let record = |memory: &mut IssueMemoryState| {
       memory.sources.states.insert(link.issue_id, refresh);
@@ -507,23 +582,24 @@ impl IssueSourceRefreshStore for crate::testing::InMemoryProjectStore {
         .observations
         .insert((link.issue_id, id), request.observation.clone());
       memory.sources.refreshes.insert(
-        key.clone(),
-        (
-          request.selection,
-          request.issue_id,
-          request.observation,
-          outcome.clone(),
-        ),
+        replay_key,
+        SourceRefreshReplay {
+          project_id: request.selection.project_id,
+          issue_id: request.issue_id,
+          explicit_read: request.explicit_read,
+          intent,
+          outcome: outcome.clone(),
+        },
       );
     };
-    if let Some(next) = next {
+    if let Some(next) = plan.revision {
       commit_issue_revision(
         &mut state,
         &audit,
         &key,
         StoreOperation::RefreshIssueSource,
         &next,
-        None,
+        plan.transition,
         record,
       )?;
     } else {

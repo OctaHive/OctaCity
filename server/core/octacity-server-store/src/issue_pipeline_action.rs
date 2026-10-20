@@ -97,6 +97,7 @@ impl TransitionIssue {
       idempotency_key,
       moved_at,
       pipeline: None,
+      source: None,
     }
   }
   /// Reuses the one transition boundary with a stable identity from accepted pipeline provenance.
@@ -111,6 +112,7 @@ impl TransitionIssue {
       idempotency_key,
       moved_at,
       pipeline: Some(accepted),
+      source: None,
     }
   }
   /// Trusted pipeline origin; manual REST callers cannot supply this field.

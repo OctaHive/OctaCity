@@ -40,6 +40,17 @@ pub struct IssueSourceLink {
   /// Original server attachment time.
   pub linked_at: Timestamp,
 }
+impl IssueSourceLink {
+  /// Checks immutable native association compatibility; this grants no read or write authority.
+  pub fn supports_profile(
+    &self,
+    source: &WorkSourceBinding,
+    native_resource: &octacity_server_factory::ExternalWorkIdentity,
+  ) -> bool {
+    self.selection.item.resource == *native_resource
+      && self.selection.source.installation.identity() == source.installation.identity()
+  }
+}
 /// Frozen manual attachment and ownership review; it cannot replace a link or mapping.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -105,6 +116,14 @@ pub enum IssueSourceOutcome {
 /// Narrow atomic association authority; provider reads belong to the existing Source port.
 #[async_trait::async_trait]
 pub trait IssueSourceStore: IssueStore {
+  /// Reads the original scoped attachment receipt before another provider read; reserves nothing.
+  async fn issue_source_attachment_replay(
+    &self,
+    scope: &ManagementSecurityScope,
+    intent: &AttachIssueSourceIntent,
+    key: &IdempotencyKey,
+  ) -> Result<Option<IssueSourceOutcome>, StoreError>;
+
   /// Reads one retained safe observation under its original native link and partition.
   async fn issue_source_observation(
     &self,

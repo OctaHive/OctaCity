@@ -10,8 +10,34 @@ use octacity_server_store::*;
 use serde_json::json;
 use sqlx::{PgConnection, types::Json};
 
+#[derive(serde::Deserialize, serde::Serialize)]
+struct ExplicitRefreshReplay {
+  explicit_read: FactoryDigest,
+  outcome: IssueSourceRefreshOutcome,
+}
+
 #[async_trait::async_trait]
 impl IssueSourceStore for PostgresStore {
+  async fn issue_source_attachment_replay(
+    &self,
+    scope: &ManagementSecurityScope,
+    intent: &AttachIssueSourceIntent,
+    key: &IdempotencyKey,
+  ) -> Result<Option<IssueSourceOutcome>, StoreError> {
+    let identity = MutationIdentity::new_management_replay(
+      scope,
+      MutationKind::AttachIssueSource,
+      key.to_string(),
+      octacity_server_domain::Timestamp::from_unix_millis(0).map_err(|_| StoreError::Unavailable)?,
+      EntityKind::Issue,
+      intent,
+    )?;
+    crate::mutation::probe(self.pool(), &identity)
+      .await?
+      .map(replay)
+      .transpose()
+  }
+
   async fn issue_source_observation(
     &self,
     project: ProjectId,
@@ -299,6 +325,36 @@ async fn commit(
 
 #[async_trait::async_trait]
 impl IssueSourceRefreshStore for PostgresStore {
+  async fn issue_source_refresh_replay(
+    &self,
+    project: ProjectId,
+    issue: IssueId,
+    scope: &ManagementSecurityScope,
+    explicit_read: FactoryDigest,
+    key: &IdempotencyKey,
+  ) -> Result<Option<IssueSourceRefreshOutcome>, StoreError> {
+    if self.issue_source_link(project, issue, scope).await?.is_none() {
+      return Err(conflict());
+    }
+    let value: Option<Json<serde_json::Value>> = sqlx::query_scalar(
+      "SELECT outcome FROM idempotency_records WHERE scope=$1 AND security_scope=$2 AND idempotency_key=$3",
+    )
+    .bind(MutationKind::ObserveIssueSource.scope())
+    .bind(scope.as_str())
+    .bind(key.as_str())
+    .fetch_optional(self.pool())
+    .await
+    .map_err(unavailable)?;
+    value
+      .map(|Json(value)| {
+        let replay: ExplicitRefreshReplay = decode_outcome(value)?;
+        if replay.explicit_read != explicit_read || replay.outcome.issue_id != issue {
+          return Err(conflict());
+        }
+        Ok(replay.outcome)
+      })
+      .transpose()
+  }
   async fn issue_source_refresh_state(
     &self,
     project: ProjectId,
@@ -394,14 +450,24 @@ impl IssueSourceRefreshStore for PostgresStore {
     let (request, audit) = request.into_parts();
     let identity = MutationIdentity::new_management(
       &audit,
-      MutationKind::RefreshIssueSource,
+      if request.explicit_read.is_some() {
+        MutationKind::ObserveIssueSource
+      } else {
+        MutationKind::RefreshIssueSource
+      },
       request.idempotency_key.to_string(),
       request.refreshed_at,
       EntityKind::Issue,
-      &(&request.selection, request.issue_id, &request.observation),
+      &request.replay_intent(),
     )?;
     let mut tx = match crate::mutation::begin(self.pool(), &identity).await? {
-      MutationStart::Replay(value) => return decode_outcome(value),
+      MutationStart::Replay(value) => {
+        return if request.explicit_read.is_some() {
+          decode_outcome::<ExplicitRefreshReplay>(value).map(|r| r.outcome)
+        } else {
+          decode_outcome(value)
+        };
+      }
       MutationStart::Fresh(tx) => tx,
     };
     let current = crate::issue::lock(&mut tx, request.selection.project_id, request.issue_id).await?;
@@ -434,15 +500,21 @@ impl IssueSourceRefreshStore for PostgresStore {
         .fetch_one(&mut *tx)
         .await
         .map_err(unavailable)?;
-    let disposition = state.observe(&request.observation);
-    let next = if disposition == IssueSourceRefreshDisposition::Fresh {
-      current.refreshed_source(
-        &request,
-        &crate::issue::field_policy(&mut tx, current.project_id, current.id).await?,
-      )?
-    } else {
-      None
-    };
+    let mapping = crate::issue_source_mapping::read(&mut tx, current.project_id, current.id, None).await?;
+    let initial = crate::issue_workflow::project_template(&mut tx, current.project_id, false).await?;
+    let workflow =
+      crate::issue_workflow::read(&mut tx, &initial, current.workflow_id, Some(current.workflow_version)).await?;
+    let plan = state.plan(
+      &current,
+      &request,
+      &crate::issue::field_policy(&mut tx, current.project_id, current.id).await?,
+      mapping.as_ref().map(|mapping| IssueSourceMappingContext {
+        mapping,
+        workflow: &workflow,
+        native_correlation: link.native_correlation,
+      }),
+      audit.actor(),
+    )?;
     insert_observation(&mut tx, &link, audit.security_scope(), &request.observation).await?;
     sqlx::query("UPDATE issue_source_refresh SET document=$3 WHERE project_id=$1 AND issue_id=$2")
       .bind(current.project_id.as_uuid())
@@ -451,19 +523,25 @@ impl IssueSourceRefreshStore for PostgresStore {
       .execute(&mut *tx)
       .await
       .map_err(unavailable)?;
-    let outcome = IssueSourceRefreshOutcome {
-      issue_id: current.id,
-      disposition,
-    };
-    if let Some(next) = next {
-      crate::issue::publish(tx, &identity, &audit, &next, None, &outcome, None).await?;
+    let outcome = plan.outcome;
+    let stored = if let Some(explicit_read) = request.explicit_read {
+      serde_json::to_value(ExplicitRefreshReplay {
+        explicit_read,
+        outcome: outcome.clone(),
+      })
     } else {
-      let metadata = json!({"project_id":current.project_id,"issue_id":current.id,"disposition":disposition});
+      serde_json::to_value(&outcome)
+    }
+    .map_err(|_| StoreError::Unavailable)?;
+    if let Some(next) = plan.revision {
+      crate::issue::publish(tx, &identity, &audit, &next, plan.transition.as_ref(), &stored, None).await?;
+    } else {
+      let metadata = json!({"project_id":current.project_id,"issue_id":current.id,"disposition":outcome.disposition});
       crate::mutation::commit(
         tx,
         &identity,
         MutationFacts::management(&audit, current.id.to_string(), metadata.clone(), metadata),
-        encode_outcome(&outcome)?,
+        encode_outcome(&stored)?,
       )
       .await?;
     }

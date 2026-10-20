@@ -14,6 +14,35 @@ pub struct IssueSourceReadPolicy {
   /// Positive delay between completed slices.
   pub poll_interval_millis: u64,
 }
+/// Explicit card refresh uses the existing read budgets and a separately bounded ownership lease.
+#[derive(Clone)]
+pub struct IssueSourceRefreshPolicy {
+  /// Existing page, retry and cadence policy; no execution target is required.
+  pub read: IssueSourceReadPolicy,
+  /// Positive finite lease; a crashed HTTP reader cannot retain ownership indefinitely.
+  pub claim_lifetime: std::time::Duration,
+}
+impl<S> IssueSourceHandlers<S> {
+  /// Enables resumable card reads using the existing Source progress journal.
+  pub fn with_refresh_policy(mut self, policy: IssueSourceRefreshPolicy) -> Result<Self, ApplicationError> {
+    policy.read.polling.validate()?;
+    if policy.read.poll_interval_millis == 0
+      || policy.read.poll_interval_millis > i64::MAX as u64
+      || policy.claim_lifetime.is_zero()
+      || policy.claim_lifetime.as_millis() > i64::MAX as u128
+    {
+      return Err(ApplicationError::invalid());
+    }
+    self.refresh_policy = Some(policy);
+    Ok(self)
+  }
+}
+#[derive(Clone)]
+struct ExplicitRefresh {
+  digest: octacity_server_factory::FactoryDigest,
+  key: IdempotencyKey,
+}
+
 /// Optional consumer owner; construction starts no worker or provider access.
 pub struct IssueSourceReadHandlers<S> {
   inner: IssueSourceHandlers<S>,
@@ -77,9 +106,15 @@ struct IssueReadSession<'a, S> {
   owner: &'a IssueSourceReadHandlers<S>,
   context: &'a ManagementRequestContext,
   claim: IssueSourceReadClaim,
+  explicit: Option<ExplicitRefresh>,
+  complete: std::sync::atomic::AtomicBool,
 }
 #[async_trait::async_trait]
 impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
+  fn complete(&self) -> bool {
+    self.complete.load(std::sync::atomic::Ordering::SeqCst)
+  }
+
   async fn read(&self, request: SourcePollingRequest) -> Result<SourcePollingPage, ApplicationError> {
     let page = self
       .owner
@@ -109,21 +144,12 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
         item: observation.snapshot.item.clone(),
       };
       let receipt = observation.issue_receipt();
-      receipt.validate(
+      observation.validate_issue_read(
+        self.context,
         &selection,
         self.owner.inner.clock.now()?,
         octacity_server_store::StoreOperation::RefreshIssueSource,
       )?;
-      if observation.project_id != self.claim.project_id
-        || observation.security_scope != *self.context.security_scope()
-        || observation.native_correlation != selection.native_correlation(&self.context.security_scope().to_store())
-        || observation.snapshot_digest
-          != octacity_server_factory::FactoryDigest::content_sha256(
-            &serde_json::to_vec(&observation.snapshot).map_err(|_| ApplicationError::invalid())?,
-          )
-      {
-        return Err(ApplicationError::invalid());
-      }
       candidates.push(
         serde_json::to_value(ObservedCandidate {
           observation: receipt,
@@ -154,6 +180,7 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
     let at = inner.clock.now()?;
     let scope = self.context.security_scope().to_store();
     let receipt_id = candidate.observation.id(selection.native_correlation(&scope))?;
+    let status = Some(source_status(&candidate.snapshot));
     let content = source_draft(candidate.snapshot);
     let issue = if let Some(issue) = self.claim.target.issue_id {
       inner.visible(self.context, issue).await?;
@@ -240,17 +267,26 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
       .refresh_issue_source(crate::management_security::audited_mutation(
         self.context,
         octacity_server_store::RefreshIssueSource {
+          explicit_read: self.explicit.as_ref().map(|e| e.digest),
+          status,
           read_claim: Some(self.claim.clone()),
           selection,
           issue_id: issue,
           observation: candidate.observation,
           content,
-          idempotency_key: IdempotencyKey::new(format!("source-refresh.{receipt_id}"))
-            .map_err(|_| ApplicationError::invalid())?,
+          idempotency_key: match &self.explicit {
+            Some(e) => e.key.clone(),
+            None => {
+              IdempotencyKey::new(format!("source-refresh.{receipt_id}")).map_err(|_| ApplicationError::invalid())?
+            }
+          },
           refreshed_at: at,
         },
       )?)
       .await?;
+    if self.explicit.is_some() {
+      self.complete.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
     Ok(())
   }
   async fn checkpoint(
@@ -295,6 +331,16 @@ impl<S: IssueSourceReadStore> ManagementCommandUseCase<RunIssueSourceReadCommand
         .into(),
       );
     }
+    self.run(context, command, None).await
+  }
+}
+impl<S: IssueSourceReadStore> IssueSourceReadHandlers<S> {
+  async fn run(
+    &self,
+    context: &ManagementRequestContext,
+    command: RunIssueSourceReadCommand,
+    explicit: Option<ExplicitRefresh>,
+  ) -> Result<Option<SourcePollOutcome>, ApplicationError> {
     let now = self.inner.clock.now()?;
     if let Some(issue) = command.target.issue_id {
       self.inner.visible(context, issue).await?;
@@ -314,7 +360,11 @@ impl<S: IssueSourceReadStore> ManagementCommandUseCase<RunIssueSourceReadCommand
         .await?
         .ok_or_else(ApplicationError::capability_unavailable)?;
       if !state.enabled {
-        return Ok(None);
+        return if explicit.is_some() {
+          Err(ApplicationError::capability_unavailable())
+        } else {
+          Ok(None)
+        };
       }
     }
     let scan = self
@@ -345,6 +395,8 @@ impl<S: IssueSourceReadStore> ManagementCommandUseCase<RunIssueSourceReadCommand
       owner: self,
       context,
       claim: scan.claim.clone(),
+      explicit,
+      complete: std::sync::atomic::AtomicBool::new(false),
     };
     let result = SourcePollingDriver {
       session: &session,
@@ -368,5 +420,124 @@ impl<S: IssueSourceReadStore> ManagementCommandUseCase<RunIssueSourceReadCommand
       .finish_issue_source_read(&context.security_scope().to_store(), scan.claim, now, schedule)
       .await?;
     result.map(Some)
+  }
+}
+
+impl<S: IssueSourceReadStore> IssueSourceHandlers<S> {
+  pub(super) async fn refresh_paged(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    command: RefreshIssueSourceCommand,
+  ) -> Result<octacity_server_store::IssueSourceRefreshOutcome, ApplicationError> {
+    crate::issue::visible_issue(grant, command.issue_id)?;
+    self.visible(context, command.issue_id).await?;
+    let scope = context.security_scope().to_store();
+    let link = self
+      .store
+      .issue_source_link(command.project_id, command.issue_id, &scope)
+      .await?
+      .ok_or_else(ApplicationError::capability_unavailable)?;
+    if command.read.project_id != command.project_id
+      || command.read.source.installation.identity() != link.selection.source.installation.identity()
+    {
+      return Err(ApplicationError::invalid());
+    }
+    let selection = IssueSourceSelection {
+      source: command.read.source.clone(),
+      ..link.selection
+    };
+    let digest = octacity_server_factory::FactoryDigest::content_sha256(
+      &serde_json::to_vec(&(
+        &selection,
+        command.issue_id,
+        command.read.project_id,
+        command.read.scan_id,
+        command.read.window,
+        &command.read.continuation,
+        command.read.limit,
+      ))
+      .map_err(|_| ApplicationError::invalid())?,
+    );
+    if let Some(receipt) = self
+      .store
+      .issue_source_refresh_replay(
+        command.project_id,
+        command.issue_id,
+        &scope,
+        digest,
+        &command.idempotency_key,
+      )
+      .await?
+    {
+      return Ok(receipt);
+    }
+    if command.read.continuation.is_some() || command.read.window.is_some() {
+      return Err(ApplicationError::invalid());
+    }
+    self
+      .reader
+      .authorize(context, command.project_id, command.read.source.clone())
+      .await?;
+    let policy = self
+      .refresh_policy
+      .as_ref()
+      .ok_or_else(ApplicationError::capability_unavailable)?;
+    let now = self.clock.now()?;
+    let until = Timestamp::from_unix_millis(
+      now
+        .unix_millis()
+        .checked_add(policy.claim_lifetime.as_millis() as i64)
+        .ok_or_else(ApplicationError::invalid)?,
+    )
+    .map_err(|_| ApplicationError::invalid())?;
+    let owner = IssueSourceReadHandlers::new(
+      self.store.clone(),
+      self.reader.clone(),
+      self.policy.clone(),
+      self.clock.clone(),
+      policy.read.clone(),
+    )?;
+    let result = owner
+      .run(
+        context,
+        RunIssueSourceReadCommand {
+          project_id: command.project_id,
+          target: IssueSourceReadTarget {
+            pull_generation: 0,
+            source: command.read.source.clone(),
+            issue_id: Some(command.issue_id),
+          },
+          owner: format!("issue-refresh.{digest}")
+            .parse()
+            .map_err(|_| ApplicationError::invalid())?,
+          until,
+        },
+        Some(ExplicitRefresh {
+          digest,
+          key: command.idempotency_key.clone(),
+        }),
+      )
+      .await;
+    // A lost checkpoint or later failure cannot hide an already committed original receipt.
+    if let Some(receipt) = self
+      .store
+      .issue_source_refresh_replay(
+        command.project_id,
+        command.issue_id,
+        &scope,
+        digest,
+        &command.idempotency_key,
+      )
+      .await?
+    {
+      return Ok(receipt);
+    }
+    result?;
+    Ok(octacity_server_store::IssueSourceRefreshOutcome {
+      issue_id: command.issue_id,
+      disposition: IssueSourceRefreshDisposition::Scanning,
+      status: None,
+    })
   }
 }

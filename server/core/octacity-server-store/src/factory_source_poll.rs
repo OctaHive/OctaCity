@@ -3,6 +3,8 @@ use octacity_server_factory::FactoryDigest;
 
 /// Shared normalized page item ceiling, independent of provider service quotas.
 pub const MAX_SOURCE_POLL_PAGE_ITEMS: u16 = 100;
+/// Shared opaque continuation ceiling for normalized Source consumers.
+pub const MAX_SOURCE_POLL_CURSOR_BYTES: usize = 4096;
 /// Complete normalized private page ceiling.
 pub const MAX_SOURCE_POLL_PAGE_BYTES: u32 = 4 * crate::MAX_SOURCE_INPUT_BYTES;
 
@@ -92,10 +94,10 @@ impl WorkSourcePollingState {
       {
         return Err(crate::source_conflict());
       }
-      cursor(&other.continuation)?;
+      validate_source_cursor(&other.continuation)?;
     }
     if let Some(page) = &self.pending_page {
-      cursor(&page.next_cursor)?;
+      validate_source_cursor(&page.next_cursor)?;
       if page.candidates.len() > usize::from(MAX_SOURCE_POLL_PAGE_ITEMS)
         || page.encoded_payload_bytes()? > MAX_SOURCE_POLL_PAGE_BYTES as usize
       {
@@ -114,10 +116,11 @@ impl WorkSourcePollingState {
     Ok(())
   }
 }
-fn cursor(value: &Option<String>) -> Result<(), crate::StoreError> {
+/// Shared byte/control-character validation before a Source continuation gains authority.
+pub fn validate_source_cursor(value: &Option<String>) -> Result<(), crate::StoreError> {
   if value
     .as_ref()
-    .is_some_and(|v| v.is_empty() || v.len() > 4096 || v.chars().any(char::is_control))
+    .is_some_and(|v| v.is_empty() || v.len() > MAX_SOURCE_POLL_CURSOR_BYTES || v.chars().any(char::is_control))
   {
     return Err(crate::source_conflict());
   }
