@@ -66,12 +66,13 @@ async fn issue_source_http_resolution_requires_reviewed_versions_and_returns_one
   let result = document(response).await;
   assert_eq!(result["projection"], "33".repeat(32));
   assert_json_matches_component(&openapi_document(), "IssueSourceResolutionResponse", &result);
-  let captured = peer.0.lock().unwrap();
-  assert_eq!(captured.len(), 1);
-  assert_eq!(captured[0].intent.mapping.expected_issue_version.get(), 2);
-  assert_eq!(captured[0].intent.mapping.issue_id.to_string(), issue);
-  assert_eq!(captured[0].intent.review.expected_record.to_string(), "22".repeat(32));
-  drop(captured);
+  {
+    let captured = peer.0.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0].intent.mapping.expected_issue_version.get(), 2);
+    assert_eq!(captured[0].intent.mapping.issue_id.to_string(), issue);
+    assert_eq!(captured[0].intent.review.expected_record.to_string(), "22".repeat(32));
+  }
   let mut unsafe_body = body.clone();
   unsafe_body["force"] = serde_json::json!(true);
   let rejected = router
