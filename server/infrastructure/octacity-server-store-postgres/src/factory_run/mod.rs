@@ -150,6 +150,7 @@ struct OutboxRow {
   kind: String,
   input_digest: Vec<u8>,
   state: String,
+  failure: Option<Json<octacity_server_store::FactoryOutboxFailure>>,
   attempt: i32,
   available_at_millis: i64,
   recorded_at_millis: i64,
@@ -379,11 +380,11 @@ pub(crate) async fn insert_outbox(
   sqlx::query(
     "INSERT INTO factory_outbox_records \
        (id, operation_id, run_id, kind, input_digest, state, attempt, available_at, recorded_at, \
-        owner, fence, claimed_at, claim_expires_at, issue) \
+        owner, fence, claimed_at, claim_expires_at, issue, failure) \
      VALUES ($1, $2, $3, $4, $5, $6, $7, to_timestamp($8::double precision / 1000.0), \
              to_timestamp($9::double precision / 1000.0), $10, $11, \
              CASE WHEN $12::BIGINT IS NULL THEN NULL ELSE to_timestamp($12::double precision / 1000.0) END, \
-             CASE WHEN $13::BIGINT IS NULL THEN NULL ELSE to_timestamp($13::double precision / 1000.0) END, $14)",
+             CASE WHEN $13::BIGINT IS NULL THEN NULL ELSE to_timestamp($13::double precision / 1000.0) END, $14, $15)",
   )
   .bind(record.id.as_bytes().as_slice())
   .bind(record.operation_id.as_bytes().as_slice())
@@ -402,6 +403,7 @@ pub(crate) async fn insert_outbox(
     octacity_server_store::FactoryOutboxSubject::Issue(issue) => Some(Json(issue)),
     _ => None,
   })
+  .bind(record.failure.map(Json))
   .execute(&mut **transaction)
   .await
   .map_err(unavailable)?;
@@ -520,6 +522,7 @@ fn decode_outbox(row: OutboxRow) -> Result<FactoryOutboxRecord, StoreError> {
     kind: FactoryKey::new(row.kind).map_err(|_| StoreError::Unavailable)?,
     input_digest: digest(&row.input_digest)?,
     state,
+    failure: row.failure.map(|Json(reason)| reason),
     attempt: u16::try_from(row.attempt).map_err(|_| StoreError::Unavailable)?,
     available_at: timestamp(row.available_at_millis)?,
     recorded_at: timestamp(row.recorded_at_millis)?,

@@ -1,7 +1,10 @@
 //! Closed safe Source metadata; native vocabulary stays in installed capabilities.
 use super::super::*;
+#[path = "issue_synchronization.rs"]
+mod synchronization;
 
 pub(super) fn insert(schemas: &mut Map<String, Value>) {
+  synchronization::insert(schemas);
   let id = || json!({"type":"string","format":"uuid"});
   let pin = || schema_ref("FactoryImmutableReferenceResource");
   let native = || json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_EXTERNAL_WORK_IDENTITY_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_EXTERNAL_WORK_IDENTITY_BYTES});
@@ -189,6 +192,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("pending", nullable(schema_ref("IssueSourceObservation"))),
         ("mapping", pin()),
         ("status", schema_ref("IssueSourceStatusOutcome")),
+        ("values", schema_ref("IssueSourceObservedStatus")),
       ],
       &["enabled", "generation", "accepted", "pending"],
     ),
@@ -281,6 +285,38 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("mapping_reference", pin()),
       ],
       &["disposition", "resource", "mapping_reference"],
+    ),
+  );
+  schemas.insert(
+    "IssueSourceResolutionReview".into(),
+    object(
+      [
+        ("operation_id", schema_ref("FactoryDigest")),
+        ("expected_record", schema_ref("FactoryDigest")),
+      ],
+      &["operation_id", "expected_record"],
+    ),
+  );
+  schemas.insert(
+    "ResolveIssueSourceConflictRequest".into(),
+    object(
+      [
+        ("mapping", schema_ref("PublishIssueSourceMappingRequest")),
+        ("review", schema_ref("IssueSourceResolutionReview")),
+      ],
+      &["mapping", "review"],
+    ),
+  );
+  schemas.insert(
+    "IssueSourceResolutionResponse".into(),
+    object(
+      [
+        ("disposition", string_enum(&["applied", "replayed"])),
+        ("resource", schema_ref("PublishedIssueSourceMapping")),
+        ("mapping_reference", pin()),
+        ("projection", schema_ref("FactoryDigest")),
+      ],
+      &["disposition", "resource", "mapping_reference", "projection"],
     ),
   );
   schemas.insert(

@@ -81,6 +81,7 @@ impl IssueSourceMappingStore for crate::testing::InMemoryProjectStore {
       .workflow(project, current.workflow_id, Some(current.workflow_version))?;
     let mapping = request.resolve(current, link, previous, &workflow)?;
     let outcome = IssueSourceMappingOutcome {
+      projection: None,
       disposition: MutationDisposition::Applied,
       mapping: mapping.clone(),
     };
@@ -101,6 +102,12 @@ impl IssueSourceMappingStore for crate::testing::InMemoryProjectStore {
         Ok(())
       },
       |memory| {
+        if let Some(pin) = &request.writer_access {
+          memory
+            .sources
+            .writers
+            .insert((i.issue_id, mapping.version), pin.clone());
+        }
         memory
           .sources
           .mappings
@@ -127,6 +134,7 @@ fn mapping_replay(
         return Err(crate::issue_source_mapping::mapping_conflict());
       }
       Ok(IssueSourceMappingOutcome {
+        projection: outcome.projection,
         disposition: MutationDisposition::Replayed,
         ..outcome.clone()
       })

@@ -20,6 +20,9 @@ pub struct IssueProjectionSubject {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssuePushCommand {
+  /// Original failed effect resolved by this new reviewed policy command.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub resolves: Option<octacity_server_factory::FactoryDigest>,
   /// Original scoped operation; retries cannot select a later revision or mapping.
   pub idempotency_key: IdempotencyKey,
   /// Accepted management partition, never a provider credential.
@@ -29,10 +32,24 @@ pub struct IssuePushCommand {
   /// Original accepted Factory action, absent for a manual metadata command.
   pub pipeline: Option<IssuePipelineActionProvenance>,
 }
+/// Credential-free origin of managed writer authority, retained only in private publication material.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueSourceWriterAccess {
+  /// Original independently managed connection.
+  pub connection_id: octacity_server_domain::IntegrationId,
+  /// Reviewed metadata version; current grants and enablement are still checked at dispatch.
+  pub connection_version: octacity_server_domain::IntegrationVersion,
+  /// Underlying managed capability configuration when the accepted binding uses an input alias.
+  pub configuration: Option<octacity_server_factory::ImmutableReference>,
+}
 /// Exact material for the existing finite Reporter effects contract, not a dispatch permit.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssueSourceDesiredState {
+  /// Original managed authority, absent only for trusted legacy writer publications.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub writer_access: Option<IssueSourceWriterAccess>,
   /// Original primary native association; later attachment cannot populate this value.
   pub link: IssueSourceLink,
   /// Exact independently authorized writer from the accepted mapping.
@@ -75,6 +92,20 @@ impl IssuePushIntent {
     key: &IdempotencyKey,
     history: Option<&IssueStatusHistoryEntry>,
   ) -> Result<IssueSourceDesiredState, StoreError> {
+    self.desired_state_at(issue, link, mapping, audit, key, history, issue.updated_at)
+  }
+  /// Freezes a separately accepted policy-resolution time without changing the Issue revision.
+  #[allow(clippy::too_many_arguments)]
+  pub fn desired_state_at(
+    &self,
+    issue: &IssueRevision,
+    link: &IssueSourceLink,
+    mapping: &PublishedIssueSourceMapping,
+    audit: &MutationAuditContext,
+    key: &IdempotencyKey,
+    history: Option<&IssueStatusHistoryEntry>,
+    accepted_at: octacity_server_domain::Timestamp,
+  ) -> Result<IssueSourceDesiredState, StoreError> {
     let invalid = crate::issue_source_mapping::mapping_conflict;
     let status = mapping.definition.status.as_ref().ok_or_else(invalid)?;
     if self.project_id != issue.project_id
@@ -85,8 +116,9 @@ impl IssuePushIntent {
       || mapping.project_id != issue.project_id
       || link.issue_id != issue.id
       || link.selection.project_id != issue.project_id
-      || link.linked_at > issue.updated_at
-      || mapping.published_at > issue.updated_at
+      || accepted_at < issue.updated_at
+      || link.linked_at > accepted_at
+      || mapping.published_at > accepted_at
       || !mapping.definition.push_enabled
       || self.fields != [IssueField::Status].into()
       || mapping.definition.fields.get(&IssueField::Status) != Some(&IssueSourceFieldAuthority::OctacityOwnedPush)
@@ -102,6 +134,7 @@ impl IssuePushIntent {
       return Err(invalid());
     }
     Ok(IssueSourceDesiredState {
+      writer_access: None,
       link: link.clone(),
       reporter: mapping.definition.reporter.clone().ok_or_else(invalid)?,
       workflow: status.workflow.clone(),
@@ -112,6 +145,7 @@ impl IssuePushIntent {
         .and_then(|p| p.effects(&issue.status_id.to_string()))
         .cloned(),
       command: IssuePushCommand {
+        resolves: None,
         idempotency_key: key.clone(),
         security_scope: audit.security_scope().as_str().into(),
         actor: audit.actor().clone(),
@@ -134,6 +168,18 @@ pub struct IssuePushProjection {
 /// Narrow Reporter read over already committed Issue effects; no metadata mutation or admission.
 #[async_trait::async_trait]
 pub trait IssueSourceProjectionStore: Send + Sync {
+  /// Bounded live membership in operation-identity order, restricted to the original native partition.
+  /// Returned material is private; public readers must project an explicit safe allowlist.
+  async fn issue_push_projections(
+    &self,
+    _project: octacity_server_domain::ProjectId,
+    _issue: octacity_server_domain::IssueId,
+    _scope: &ManagementSecurityScope,
+    _after: Option<octacity_server_factory::FactoryDigest>,
+    _limit: u16,
+  ) -> Result<Vec<IssuePushProjection>, StoreError> {
+    Err(StoreError::Unavailable)
+  }
   /// Reads original material and latest delivery state by stable operation identity.
   async fn issue_push_projection(
     &self,

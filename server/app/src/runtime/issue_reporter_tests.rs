@@ -2,6 +2,10 @@
 use super::*;
 use crate::runtime::postgres_test_support::TestDatabase;
 use octacity_server_store::testing::management_mutation;
+#[path = "issue_reporter_conflict_tests.rs"]
+mod conflicts;
+#[path = "issue_synchronization_tests.rs"]
+mod synchronization;
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
@@ -114,6 +118,7 @@ async fn replace_with_removal(
   effects.remove = vec!["custom-ready".into()];
   store
     .publish_issue_source_mapping(management_mutation(PublishIssueSourceMapping {
+      writer_access: None,
       intent: PublishIssueSourceMappingIntent {
         project_id: issue.project_id,
         issue_id: issue.id,
@@ -267,6 +272,7 @@ async fn manual_issue<S>(
     .clone();
   store
     .publish_issue_source_mapping(management_mutation(PublishIssueSourceMapping {
+      writer_access: None,
       intent: PublishIssueSourceMappingIntent {
         project_id: project,
         issue_id: issue.id,
@@ -330,18 +336,28 @@ fn issue_worker<S>(
   store: Arc<octacity_server_store_postgres::PostgresStore>,
   profiles: Vec<FactoryReporterProfile>,
 ) -> FactoryWorkStatusOutboxWorker<octacity_server_store_postgres::PostgresStore> {
-  let projector = Arc::new(
-    HostedFactoryWorkStatusProjector::new(
-      store.clone(),
-      Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
-      profiles,
-      fixture.clock.clone(),
-      Duration::from_secs(2),
-      Duration::from_millis(20),
-      CancellationToken::new(),
-    )
-    .unwrap(),
-  );
+  issue_worker_with_connections(fixture, store, profiles, None)
+}
+fn issue_worker_with_connections<S>(
+  fixture: &Fixture<S>,
+  store: Arc<octacity_server_store_postgres::PostgresStore>,
+  profiles: Vec<FactoryReporterProfile>,
+  connections: Option<ManagedIntegrationConnections>,
+) -> FactoryWorkStatusOutboxWorker<octacity_server_store_postgres::PostgresStore> {
+  let mut projector = HostedFactoryWorkStatusProjector::new(
+    store.clone(),
+    Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
+    profiles,
+    fixture.clock.clone(),
+    Duration::from_secs(2),
+    Duration::from_millis(20),
+    CancellationToken::new(),
+  )
+  .unwrap();
+  if let Some(connections) = connections {
+    projector = projector.with_managed_connections(connections);
+  }
+  let projector = Arc::new(projector);
   FactoryWorkStatusOutboxWorker::new(
     store,
     std::collections::BTreeMap::from([(capability(), projector as Arc<dyn FactoryWorkStatusProjector>)]),

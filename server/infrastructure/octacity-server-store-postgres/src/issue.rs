@@ -497,11 +497,12 @@ pub(super) async fn publish<T: serde::Serialize>(
         .filter(|m| m.reference() == intent.mapping)
     {
       let key = IdempotencyKey::new(identity.key.clone()).map_err(|_| StoreError::Unavailable)?;
-      intent.desired = Some(intent.desired_state(issue, &link, &mapping, audit, &key, history)?);
+      let mut desired = intent.desired_state(issue, &link, &mapping, audit, &key, history)?;
+      desired.writer_access = crate::issue_source_mapping::writer_access(&mut tx, &mapping).await?;
+      intent.desired = Some(desired);
     }
-    if let Some(row) = intent.projection_record(issue.updated_at) {
-      crate::factory_source_projection::record_issue_publication(&mut tx, &intent, &row).await?;
-      crate::factory_run::insert_outbox(&mut tx, &row).await?;
+    if intent.desired.is_some() {
+      payload["push_operation"] = json!(crate::issue_reporter::publish(&mut tx, &intent, issue.updated_at).await?);
     }
     payload["push_intent"] = serde_json::to_value(intent).map_err(|_| StoreError::Unavailable)?;
   }

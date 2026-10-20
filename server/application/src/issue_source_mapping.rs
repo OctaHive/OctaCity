@@ -121,6 +121,23 @@ impl<S: IssueSourceMappingStore> ManagementCommandUseCase<PublishIssueSourceMapp
     {
       return Ok(replay);
     }
+    let publication = self.authorized_mapping_publication(context, command).await?;
+    Ok(
+      self
+        .store
+        .publish_issue_source_mapping(crate::management_security::audited_mutation(context, publication)?)
+        .await?,
+    )
+  }
+}
+
+impl<S> IssueSourceHandlers<S> {
+  // One installed read/write qualification path for publication and explicit resolution.
+  pub(super) async fn authorized_mapping_publication(
+    &self,
+    context: &ManagementRequestContext,
+    command: PublishIssueSourceMappingCommand,
+  ) -> Result<PublishIssueSourceMapping, ApplicationError> {
     let installed = self
       .mappings
       .iter()
@@ -150,21 +167,19 @@ impl<S: IssueSourceMappingStore> ManagementCommandUseCase<PublishIssueSourceMapp
     } else {
       None
     };
-    Ok(
-      self
-        .store
-        .publish_issue_source_mapping(crate::management_security::audited_mutation(
-          context,
-          PublishIssueSourceMapping {
-            intent: command.intent,
-            native_resource: installed.native_resource.clone(),
-            readable: installed.readable.clone(),
-            writable,
-            idempotency_key: command.idempotency_key,
-            published_at: self.clock.now()?.max(command.published_at),
-          },
-        )?)
-        .await?,
-    )
+    let writer_access = installed
+      .writer
+      .as_ref()
+      .filter(|w| Some(&w.binding) == command.intent.definition.reporter.as_ref())
+      .map(|w| w.access.issue_writer_access());
+    Ok(PublishIssueSourceMapping {
+      writer_access,
+      intent: command.intent,
+      native_resource: installed.native_resource.clone(),
+      readable: installed.readable.clone(),
+      writable,
+      idempotency_key: command.idempotency_key,
+      published_at: self.clock.now()?.max(command.published_at),
+    })
   }
 }

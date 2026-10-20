@@ -327,6 +327,13 @@ impl ManagementVisibilityTarget for crate::ListIssueExecutionsQuery {
     <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
   }
 }
+impl ManagementVisibilityTarget for crate::ListIssueSourceProjectionsQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
 
 impl ManagementVisibilityTarget for crate::ListIssueRevisionsQuery {
   type Visibility = octacity_server_store::IssueListVisibility;

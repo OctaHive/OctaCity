@@ -4,6 +4,7 @@ use super::*;
 mod mapping;
 #[derive(Clone, Default)]
 pub(super) struct IssueSourceMemoryState {
+  writers: BTreeMap<(IssueId, octacity_server_domain::IssueSourceMappingVersion), IssueSourceWriterAccess>,
   mappings: BTreeMap<(IssueId, octacity_server_domain::IssueSourceMappingVersion), PublishedIssueSourceMapping>,
   mapping_publications:
     BTreeMap<ManagementIdempotencyKey, (PublishIssueSourceMappingIntent, IssueSourceMappingOutcome)>,
@@ -53,7 +54,9 @@ impl IssueSourceMemoryState {
     else {
       return Ok(None);
     };
-    push.desired_state(issue, link, mapping, audit, key, history).map(Some)
+    let mut desired = push.desired_state(issue, link, mapping, audit, key, history)?;
+    desired.writer_access = self.writers.get(&(issue.id, mapping.version)).cloned();
+    Ok(Some(desired))
   }
 
   fn update_read(

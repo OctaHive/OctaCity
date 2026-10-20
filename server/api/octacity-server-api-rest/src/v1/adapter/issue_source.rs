@@ -2,16 +2,22 @@
 use super::*;
 use octacity_server_application::{
   ApplicationError, AttachIssueSourceCommand, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler,
-  GetIssueSourceChoicesQuery, GetIssueSourceMappingQuery, GetIssueSynchronizationQuery, ObserveIssueSourceCommand,
-  PreviewIssueSourceCommand, PublishIssueSourceMappingCommand, RefreshIssueSourceCommand, SetIssueSourcePullCommand,
+  GetIssueSourceChoicesQuery, GetIssueSourceMappingQuery, GetIssueSynchronizationQuery,
+  ListIssueSourceProjectionsQuery, ObserveIssueSourceCommand, PreviewIssueSourceCommand,
+  PublishIssueSourceMappingCommand, RefreshIssueSourceCommand, ResolveIssueSourceConflictCommand,
+  SetIssueSourcePullCommand,
 };
 
 /// Installs task Source review independently of admission and provider availability.
 pub struct IssueSourceManagementApplication {
+  projections:
+    Option<Arc<dyn AuthorizedManagementQueryHandler<ListIssueSourceProjectionsQuery, Error = ApplicationError>>>,
   review: Arc<dyn AuthorizedManagementQueryHandler<GetIssueSynchronizationQuery, Error = ApplicationError>>,
   choices: Arc<dyn AuthorizedManagementQueryHandler<GetIssueSourceChoicesQuery, Error = ApplicationError>>,
   mapping: Arc<dyn AuthorizedManagementQueryHandler<GetIssueSourceMappingQuery, Error = ApplicationError>>,
   commands: Option<IssueSourceCommands>,
+  resolution:
+    Option<Arc<dyn AuthorizedManagementCommandHandler<ResolveIssueSourceConflictCommand, Error = ApplicationError>>>,
 }
 struct IssueSourceCommands {
   attach: Arc<dyn AuthorizedManagementCommandHandler<AttachIssueSourceCommand, Error = ApplicationError>>,
@@ -30,11 +36,29 @@ impl IssueSourceManagementApplication {
       + 'static,
   {
     Self {
+      projections: None,
       review: queries.clone(),
       choices: queries.clone(),
       mapping: queries,
       commands: None,
+      resolution: None,
     }
+  }
+  /// Installs retained Reporter reads independently of provider and manual-task capabilities.
+  pub fn with_projection_queries(
+    mut self,
+    handler: Arc<dyn AuthorizedManagementQueryHandler<ListIssueSourceProjectionsQuery, Error = ApplicationError>>,
+  ) -> Self {
+    self.projections = Some(handler);
+    self
+  }
+  /// Installs reviewed conflict commands independently of ordinary manual-task services.
+  pub fn with_resolution(
+    mut self,
+    handler: Arc<dyn AuthorizedManagementCommandHandler<ResolveIssueSourceConflictCommand, Error = ApplicationError>>,
+  ) -> Self {
+    self.resolution = Some(handler);
+    self
   }
   /// Installs explicit reviewed Source mutations; constructing services starts no read or worker.
   pub fn with_commands<C>(mut self, commands: Arc<C>) -> Self
@@ -55,6 +79,39 @@ impl IssueSourceManagementApplication {
     });
     self
   }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProjectionParameters {
+  after: Option<String>,
+  limit: Option<u16>,
+}
+pub(super) async fn projections(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, issue)): Path<(String, String)>,
+  parameters: Result<Query<ProjectionParameters>, QueryRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  let invalid = || application_error(ApplicationFailure::Invalid, &id);
+  let Query(parameters) = parameters.map_err(|_| invalid())?;
+  let query = ListIssueSourceProjectionsQuery::try_new(
+    project.parse().map_err(|_| invalid())?,
+    issue.parse().map_err(|_| invalid())?,
+    parameters.after,
+    parameters.limit.unwrap_or(DEFAULT_PAGE_LIMIT),
+  )
+  .map_err(|e| application_error(e.classification(), &id))?;
+  let handler = app
+    .issue_sources
+    .as_ref()
+    .and_then(|s| s.projections.as_ref())
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?;
+  let page = handler
+    .handle_authorized_query(&context, query)
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(([(axum::http::header::CACHE_CONTROL, "no-store")], Json(page)).into_response())
 }
 
 #[derive(Deserialize)]
@@ -174,9 +231,7 @@ pub(super) async fn publish_mapping(
   headers: HeaderMap,
   payload: Result<Json<MappingRequest>, JsonRejection>,
 ) -> Result<axum::response::Response, ApiError> {
-  use octacity_server_application::{
-    IssueVersion, PublishIssueSourceMappingIntent, StoreMutationDisposition, Timestamp,
-  };
+  use octacity_server_application::{IssueVersion, PublishIssueSourceMappingIntent, Timestamp};
   let expected = precondition(&headers, &id)?;
   let key = idempotency_key(&headers, &id)?;
   let request = body(payload, &id)?;
@@ -204,20 +259,23 @@ pub(super) async fn publish_mapping(
     )
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;
+  mapping_response(result, &id)
+}
+fn mapping_response(
+  result: <PublishIssueSourceMappingCommand as octacity_server_application::Command>::Outcome,
+  id: &RequestId,
+) -> Result<axum::response::Response, ApiError> {
+  use octacity_server_application::StoreMutationDisposition;
   let status = if result.disposition == StoreMutationDisposition::Applied {
     StatusCode::CREATED
   } else {
     StatusCode::OK
   };
-  Ok(
-    (
-      status,
-      [("cache-control", "no-store")],
-      Json(json!({"disposition":encode(result.disposition,&id)?,
-    "mapping_reference":encode(result.mapping.reference(),&id)?,"resource":encode(result.mapping,&id)?})),
-    )
-      .into_response(),
-  )
+  let mut response = json!({"disposition":encode(result.disposition,id)?,"mapping_reference":encode(result.mapping.reference(),id)?,"resource":encode(result.mapping,id)?});
+  if let Some(projection) = result.projection {
+    response["projection"] = encode(projection, id)?;
+  }
+  Ok((status, [("cache-control", "no-store")], Json(response)).into_response())
 }
 pub(super) async fn mapping_version(
   State(app): State<Arc<ManagementApplication>>,
@@ -428,4 +486,55 @@ pub(super) async fn link(
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;
   Ok(([("cache-control", "no-store")], Json(encode(&result.link, &id)?)).into_response())
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ResolutionRequest {
+  mapping: MappingRequest,
+  review: octacity_server_application::IssueSourceResolutionReview,
+}
+pub(super) async fn resolve(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, issue)): Path<(String, String)>,
+  headers: HeaderMap,
+  payload: Result<Json<ResolutionRequest>, JsonRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  use octacity_server_application::{
+    IssueVersion, PublishIssueSourceMappingIntent, ResolveIssueSourceConflictIntent, Timestamp,
+  };
+  let expected = precondition(&headers, &id)?;
+  let key = idempotency_key(&headers, &id)?;
+  let request = body(payload, &id)?;
+  let invalid = || application_error(ApplicationFailure::Invalid, &id);
+  let handler = app
+    .issue_sources
+    .as_ref()
+    .and_then(|s| s.resolution.as_ref())
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?;
+  let result = handler
+    .handle_authorized_command(
+      &context,
+      ResolveIssueSourceConflictCommand {
+        intent: ResolveIssueSourceConflictIntent {
+          review: request.review,
+          mapping: PublishIssueSourceMappingIntent {
+            project_id: project.parse().map_err(|_| invalid())?,
+            issue_id: issue.parse().map_err(|_| invalid())?,
+            expected_issue_version: IssueVersion::new(expected.version()).map_err(|_| invalid())?,
+            expected_mapping: request.mapping.expected_mapping,
+            definition: request.mapping.definition,
+          },
+        },
+        idempotency_key: key.as_str().parse().map_err(|_| invalid())?,
+        resolved_at: Timestamp::from_unix_millis(now_unix_ms(&id)?).map_err(|_| invalid())?,
+      },
+    )
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  if result.projection.is_none() {
+    return Err(application_error(ApplicationFailure::Unavailable, &id));
+  }
+  mapping_response(result, &id)
 }

@@ -302,6 +302,22 @@ impl ManagedIntegrationConnections {
       authorizer: Arc::new(StoredIntegrationAuthorizer(store)),
     }
   }
+  /// Reuses current-authority resolution for the original private Issue writer pin.
+  pub fn for_issue_writer(
+    &self,
+    pin: &octacity_server_store::IssueSourceWriterAccess,
+    binding: &octacity_server_factory::WorkSourceBinding,
+  ) -> ManagedIntegrationAccess {
+    ManagedIntegrationAccess {
+      connection_id: pin.connection_id,
+      version: pin.connection_version,
+      authorizer: self.authorizer.clone(),
+      work_configuration: pin
+        .configuration
+        .as_ref()
+        .map(|c| (binding.configuration.clone(), c.clone())),
+    }
+  }
   /// Binds one published input profile to its exact connection profile; this grants no authority.
   pub fn for_work_binding(
     &self,
@@ -329,6 +345,17 @@ impl ManagedIntegrationAccess {
   /// Original connection identity for independent management visibility/use checks.
   pub fn connection_id(&self) -> IntegrationId {
     self.connection_id
+  }
+  /// Freezes only the original managed writer identity, never a credential or continuing grant.
+  pub fn issue_writer_access(&self) -> octacity_server_store::IssueSourceWriterAccess {
+    octacity_server_store::IssueSourceWriterAccess {
+      connection_id: self.connection_id,
+      connection_version: self.version,
+      configuration: self
+        .work_configuration
+        .as_ref()
+        .map(|(_, configuration)| configuration.clone()),
+    }
   }
   /// Pins the reviewed connection version without reading credentials, granting access or contacting providers.
   pub fn new<

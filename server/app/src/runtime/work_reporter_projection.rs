@@ -209,7 +209,7 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
     request: &IssueStatusProjectionRequest,
   ) -> Result<(FactoryReporterProfile, reporter::ProjectionIntent), ApplicationError> {
     let original = self.store.issue_push_projection(request.operation_id).await?;
-    let profile = self.issue_profile(&original.intent)?;
+    let mut profile = self.issue_profile(&original.intent)?;
     let policy = profile
       .draft
       .issue_delivery
@@ -218,6 +218,19 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
       return Err(ApplicationError::invalid());
     }
     let desired = original.intent.desired.as_ref().ok_or_else(ApplicationError::invalid)?;
+    if let Some(pin) = &desired.writer_access {
+      if let Some(connections) = &self.managed_connections {
+        profile.managed_access = Some(connections.for_issue_writer(pin, &desired.reporter));
+      } else if !profile
+        .managed_access
+        .as_ref()
+        .is_some_and(|a| a.issue_writer_access() == *pin)
+      {
+        return Err(ApplicationError::ReporterRejected(
+          octacity_server_store::FactoryOutboxFailure::Forbidden,
+        ));
+      }
+    }
     let effects = desired.effects.as_ref().ok_or_else(ApplicationError::invalid)?;
     profile
       .draft
@@ -277,7 +290,13 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
       .await
       .unwrap_or_else(|_| Err(ApplicationError::unavailable()))
       .map_err(|error| InvocationFailure {
-        error,
+        error: match error {
+          ApplicationError::CapabilityUnavailable
+          | ApplicationError::Store(octacity_server_store::StoreError::CredentialRejected) => {
+            ApplicationError::ReporterRejected(octacity_server_store::FactoryOutboxFailure::Forbidden)
+          }
+          other => other,
+        },
         uncertain: false,
       })?;
     }
@@ -352,7 +371,10 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
             },
             retry_after_millis: failure.retry_after_millis,
           },
-          FailureClass::Unsupported | FailureClass::Cancelled => ApplicationError::unavailable(),
+          FailureClass::Unsupported => {
+            ApplicationError::ReporterRejected(octacity_server_store::FactoryOutboxFailure::Unsupported)
+          }
+          FailureClass::Cancelled => ApplicationError::unavailable(),
           _ => ApplicationError::invalid(),
         },
       }),

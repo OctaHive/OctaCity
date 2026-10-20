@@ -18,42 +18,105 @@ pub(crate) async fn read(
     "SELECT payload, FLOOR(EXTRACT(EPOCH FROM created_at)*1000)::BIGINT FROM outbox_entries \
      WHERE aggregate_identity=$1 AND (payload->'push_intent'->>'version')::bigint=$2 \
        AND payload->'push_intent'->>'project_id'=$3 \
+       AND (payload->>'push_operation' IS NULL OR payload->>'push_operation'=$4) \
        AND payload->'push_intent'->'desired' IS NOT NULL AND payload->'push_intent'->'desired'<>'null'::jsonb LIMIT 2",
   )
   .bind(subject.issue_id.to_string())
   .bind(subject.version.get() as i64)
   .bind(subject.project_id.to_string())
+  .bind(operation.to_string())
   .fetch_all(&mut **tx)
   .await
   .map_err(unavailable)?;
-  if rows.len() != 1 {
+  let mut matching = Vec::new();
+  for (Json(payload), at) in rows {
+    let intent: IssuePushIntent =
+      serde_json::from_value(payload["push_intent"].clone()).map_err(|_| StoreError::Unavailable)?;
+    let accepted_at = octacity_server_domain::Timestamp::from_unix_millis(at).map_err(|_| StoreError::Unavailable)?;
+    let original = intent.projection_record(accepted_at).ok_or_else(source_conflict)?;
+    if original.operation_id != operation {
+      continue;
+    }
+    if original.subject != record.subject || original.input_digest != record.input_digest {
+      return Err(source_conflict());
+    }
+    matching.push(IssuePushProjection {
+      intent,
+      accepted_at,
+      record: record.clone(),
+    });
+  }
+  if matching.len() != 1 {
     return Err(source_conflict());
   }
-  let (Json(payload), at) = &rows[0];
-  let intent: IssuePushIntent =
-    serde_json::from_value(payload["push_intent"].clone()).map_err(|_| StoreError::Unavailable)?;
-  let accepted_at = octacity_server_domain::Timestamp::from_unix_millis(*at).map_err(|_| StoreError::Unavailable)?;
-  let original = intent.projection_record(accepted_at).ok_or_else(source_conflict)?;
-  if original.operation_id != operation
-    || original.subject != record.subject
-    || original.input_digest != record.input_digest
-  {
-    return Err(source_conflict());
-  }
-  Ok(IssuePushProjection {
-    intent,
-    accepted_at,
-    record,
-  })
+  matching.pop().ok_or_else(source_conflict)
 }
 #[async_trait::async_trait]
 impl IssueSourceProjectionStore for PostgresStore {
+  async fn issue_push_projections(
+    &self,
+    project: octacity_server_domain::ProjectId,
+    issue: octacity_server_domain::IssueId,
+    scope: &ManagementSecurityScope,
+    after: Option<FactoryDigest>,
+    limit: u16,
+  ) -> Result<Vec<IssuePushProjection>, StoreError> {
+    if limit == 0 || limit > MAX_ISSUE_HISTORY_PAGE_SIZE + 1 {
+      return Err(source_conflict());
+    }
+    let mut tx = self.pool().begin().await.map_err(unavailable)?;
+    let operations: Vec<Vec<u8>> = sqlx::query_scalar(
+      "SELECT DISTINCT o.operation_id FROM factory_outbox_records o \
+       JOIN issue_source_links l ON l.project_id=$1 AND l.issue_id=$2 AND l.security_scope=$3 \
+       WHERE o.issue->>'project_id'=$4 AND o.issue->>'issue_id'=$5 \
+         AND o.state='pending' AND o.attempt=0 AND ($6::bytea IS NULL OR o.operation_id>$6) \
+       ORDER BY o.operation_id LIMIT $7",
+    )
+    .bind(project.as_uuid())
+    .bind(issue.as_uuid())
+    .bind(scope.as_str())
+    .bind(project.to_string())
+    .bind(issue.to_string())
+    .bind(after.map(|d| d.as_bytes().to_vec()))
+    .bind(i64::from(limit))
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    let mut result = Vec::with_capacity(operations.len());
+    for operation in operations {
+      let operation = FactoryDigest::from_bytes(operation.try_into().map_err(|_| StoreError::Unavailable)?);
+      let projection = read(&mut tx, operation).await?;
+      if !projection
+        .intent
+        .desired
+        .as_ref()
+        .is_some_and(|d| d.command.security_scope == scope.as_str())
+      {
+        return Err(StoreError::Unavailable);
+      }
+      result.push(projection);
+    }
+    tx.commit().await.map_err(unavailable)?;
+    Ok(result)
+  }
   async fn issue_push_projection(&self, operation: FactoryDigest) -> Result<IssuePushProjection, StoreError> {
     let mut tx = self.pool().begin().await.map_err(unavailable)?;
     let result = read(&mut tx, operation).await?;
     tx.commit().await.map_err(unavailable)?;
     Ok(result)
   }
+}
+
+// Both metadata transitions and reviewed policy resolutions use this publication path.
+pub(crate) async fn publish(
+  tx: &mut Transaction<'_, Postgres>,
+  intent: &IssuePushIntent,
+  accepted_at: octacity_server_domain::Timestamp,
+) -> Result<FactoryDigest, StoreError> {
+  let row = intent.projection_record(accepted_at).ok_or_else(source_conflict)?;
+  crate::factory_source_projection::record_issue_publication(tx, intent, &row).await?;
+  crate::factory_run::insert_outbox(tx, &row).await?;
+  Ok(row.operation_id)
 }
 
 const PENDING_PUBLICATIONS: &str = "SELECT entry.payload->'push_intent', FLOOR(EXTRACT(EPOCH FROM entry.created_at)*1000)::BIGINT, \

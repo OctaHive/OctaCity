@@ -280,6 +280,7 @@ pub(crate) async fn install_push_mapping(
   }
   store
     .publish_issue_source_mapping(store_testing::management_mutation(PublishIssueSourceMapping {
+      writer_access: None,
       intent: PublishIssueSourceMappingIntent {
         project_id: issue.project_id,
         issue_id: issue.id,

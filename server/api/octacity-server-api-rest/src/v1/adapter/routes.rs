@@ -246,6 +246,10 @@ fn registered_routes() -> ManagementRoutes {
       "refreshIssueSource",
       super::issue_source::refresh,
     )
+    .post::<octacity_server_application::ResolveIssueSourceConflictCommand, _, _>(
+      "resolveIssueSourceConflict",
+      super::issue_source::resolve,
+    )
     .post::<octacity_server_application::PublishIssueSourceMappingCommand, _, _>(
       "publishIssueSourceMapping",
       super::issue_source::publish_mapping,
@@ -269,6 +273,10 @@ fn registered_routes() -> ManagementRoutes {
     .get::<octacity_server_application::GetIssueSynchronizationQuery, _, _>(
       "getIssueSynchronization",
       super::issue_source::review,
+    )
+    .get::<octacity_server_application::ListIssueSourceProjectionsQuery, _, _>(
+      "listIssueSourceProjections",
+      super::issue_source::projections,
     )
     .get::<octacity_server_application::GetIssueSynchronizationQuery, _, _>(
       "getIssueSourceLink",

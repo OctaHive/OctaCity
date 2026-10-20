@@ -307,6 +307,7 @@ pub(crate) enum MutationKind {
   CreateIssue,
   AttachIssueSource,
   PublishIssueSourceMapping,
+  ResolveIssueSourceConflict,
   ImportIssueSource,
   RefreshIssueSource,
   ObserveIssueSource,
@@ -464,6 +465,12 @@ impl MutationKind {
         "attach-issue-source",
         "issue",
         "issue.source-attached"
+      ),
+      Self::ResolveIssueSourceConflict => metadata!(
+        b"octacity.resolve-issue-source-conflict.v1\0",
+        "resolve-issue-source-conflict",
+        "issue",
+        "issue.source-conflict-resolved"
       ),
       Self::PublishIssueSourceMapping => metadata!(
         b"octacity.publish-issue-source-mapping.v1\0",

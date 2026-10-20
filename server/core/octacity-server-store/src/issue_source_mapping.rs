@@ -104,6 +104,8 @@ pub struct PublishIssueSourceMappingIntent {
 /// Trusted application resolution; declarations are not wire authority grants.
 #[derive(Clone)]
 pub struct PublishIssueSourceMapping {
+  /// Trusted installed writer origin, never supplied by a management body.
+  pub writer_access: Option<crate::IssueSourceWriterAccess>,
   /// Reviewed intent, excluding mutable capability material.
   pub intent: PublishIssueSourceMappingIntent,
   /// Installed native container, independently verified from profile metadata.
@@ -120,6 +122,9 @@ pub struct PublishIssueSourceMapping {
 /// Original exact mapping receipt; no provider dispatch or Issue revision.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IssueSourceMappingOutcome {
+  /// New reviewed resolution effect, absent for ordinary policy publication.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub projection: Option<FactoryDigest>,
   /// Applied or replayed publication.
   pub disposition: MutationDisposition,
   /// Retained original mapping.

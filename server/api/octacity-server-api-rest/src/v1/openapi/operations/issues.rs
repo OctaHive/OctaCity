@@ -2,6 +2,37 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ListIssueSourceProjectionsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/synchronization/projections",
+    "listIssueSourceProjections",
+    "Issues",
+    "Read bounded live Reporter outcomes and original desired-state provenance without provider access",
+    None,
+    "IssueSourceProjectionPage",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response()
+  .with_parameters(ParameterProfile::IssueExecutions)
+  .with_visibility::<octacity_server_application::ListIssueSourceProjectionsQuery>(),
+  operation!(
+    octacity_server_application::ResolveIssueSourceConflictCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/synchronization/resolve",
+    "resolveIssueSourceConflict",
+    "Issues",
+    "Publish a new supported policy intent for an exactly reviewed terminal sync receipt",
+    Some("ResolveIssueSourceConflictRequest"),
+    "IssueSourceResolutionResponse",
+    "201",
+    true,
+    true
+  )
+  .with_no_store_response()
+  .with_replay_success_response(),
+  operation!(
     octacity_server_application::SetIssueSourcePullCommand,
     "POST",
     "/api/v1/projects/{project_id}/issues/{issue_id}/synchronization/pull",

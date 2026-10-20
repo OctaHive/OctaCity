@@ -2,6 +2,102 @@
 use super::*;
 use octacity_server_store::*;
 
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn synchronization_retains_supported_managed_values_with_receipt_across_restart() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let project = project(&store).await;
+  let imported = import(project.id, "sync-values");
+  let IssueSourceOutcome::Linked { link, .. } = store
+    .import_issue_source(management_mutation(imported.clone()))
+    .await
+    .unwrap()
+  else {
+    panic!("linked Issue")
+  };
+  let issue = store.issue(project.id, link.issue_id, None).await.unwrap();
+  let labels: Vec<String> = (0..63).map(|i| format!("{}{i:06}", "\"".repeat(250))).collect();
+  let mut publication = ownership(&issue, &imported, "value-scope", 4);
+  publication
+    .intent
+    .definition
+    .fields
+    .insert(IssueField::Status, IssueSourceFieldAuthority::SourceOwnedPull);
+  publication.intent.definition.status = Some(IssueSourceStatusMapping {
+    workflow: IssueWorkflowPin {
+      id: issue.workflow_id,
+      version: issue.workflow_version,
+    },
+    pull: vec![IssueSourceStatusRule {
+      native: octacity_server_factory::WorkSourcePredicate {
+        state: Some("opaque-native".into()),
+        all_of: labels.clone(),
+        any_of: vec![],
+        none_of: vec![],
+      },
+      status_id: issue.status_id,
+    }],
+    push: None,
+  });
+  publication.readable.labels = labels.clone();
+  publication.readable.states = vec!["opaque-native".into()];
+  let mapping = store
+    .publish_issue_source_mapping(management_mutation(publication))
+    .await
+    .unwrap()
+    .mapping;
+  let mut observed_labels = labels.clone();
+  observed_labels.push("unmanaged-private-label".into());
+  let mut refresh = RefreshIssueSource {
+    explicit_read: None,
+    read_claim: None,
+    selection: imported.selection,
+    issue_id: issue.id,
+    observation: imported.observation,
+    content: issue.content.clone(),
+    status: Some(IssueSourceStatusObservation {
+      state: "opaque-native".into(),
+      labels: observed_labels,
+    }),
+    idempotency_key: key("values-read"),
+    refreshed_at: at(6),
+  };
+  refresh.observation.observed_at = at(5);
+  assert_eq!(
+    store
+      .refresh_issue_source(management_mutation(refresh))
+      .await
+      .unwrap()
+      .status
+      .unwrap()
+      .condition,
+    IssueSourceStatusCondition::Echo
+  );
+  let restarted = PostgresStore::new(database.pool.clone());
+  let retained = restarted
+    .issue_source_refresh_state(project.id, issue.id, &ManagementSecurityScope::trusted_network())
+    .await
+    .unwrap()
+    .unwrap();
+  let values = serde_json::to_value(&retained).unwrap();
+  assert_eq!(values["values"]["labels"], serde_json::json!(labels));
+  assert_eq!(values["values"]["mapping"], serde_json::json!(mapping.reference()));
+  assert_eq!(values["values"]["state"], "opaque-native");
+  assert!(!values.to_string().contains("unmanaged-private-label"));
+  assert_eq!(restarted.issue(project.id, issue.id, None).await.unwrap(), issue);
+  assert_eq!(
+    restarted
+      .issue_status_history(project.id, issue.id, None, 10)
+      .await
+      .unwrap()
+      .items
+      .len(),
+    1
+  );
+  database.cleanup().await;
+}
+
 fn ownership(
   issue: &IssueRevision,
   imported: &ImportIssueSource,
@@ -9,6 +105,7 @@ fn ownership(
   published_at: i64,
 ) -> PublishIssueSourceMapping {
   PublishIssueSourceMapping {
+    writer_access: None,
     intent: PublishIssueSourceMappingIntent {
       project_id: issue.project_id,
       issue_id: issue.id,
@@ -166,6 +263,7 @@ async fn source_mapping_publication_and_transition_survive_restart_as_one_origin
   let workflow = store.default_issue_workflow(project.id).await.unwrap().workflow;
   let target = workflow.definition.transitions[0].to;
   let publish = PublishIssueSourceMapping {
+    writer_access: None,
     intent: PublishIssueSourceMappingIntent {
       project_id: project.id,
       issue_id: before.id,

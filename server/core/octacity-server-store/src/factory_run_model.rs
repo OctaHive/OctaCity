@@ -207,7 +207,8 @@ impl FactoryAuditFact {
 }
 
 /// Append-only lifecycle state of one stable external side effect.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FactoryOutboxState {
   /// Durable work is ready for dispatch.
   Pending,
@@ -217,6 +218,20 @@ pub enum FactoryOutboxState {
   Delivered,
   /// Technical delivery is terminally unavailable or its retry policy was exhausted.
   Failed,
+}
+
+/// Safe durable reason for a terminal Reporter rejection, without provider diagnostics.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryOutboxFailure {
+  /// Current managed write grant or connection no longer permits calls.
+  Forbidden,
+  /// Installed operation or writer cannot support the reviewed effects.
+  Unsupported,
+  /// The original attempt, time or resource ceiling was exhausted.
+  Exhausted,
+  /// Conditional native write or managed-field order could not safely converge.
+  Conflict,
 }
 
 /// Accepted owner of a deferred effect; no synthetic Work or Run is introduced.
@@ -257,6 +272,8 @@ pub struct FactoryOutboxRecord {
   pub input_digest: FactoryDigest,
   /// Append-only state observed by workers.
   pub state: FactoryOutboxState,
+  /// Classified terminal rejection; absent for legacy generic failures.
+  pub failure: Option<FactoryOutboxFailure>,
   /// Zero-based dispatch attempt associated with this state row.
   pub attempt: u16,
   /// Earliest authoritative time at which work may be dispatched.
@@ -349,6 +366,25 @@ impl FactoryOutboxRecord {
     )
   }
 
+  /// Retains a classified rejection under the same owned outbox claim.
+  #[must_use]
+  pub fn rejected(previous: &Self, failure: FactoryOutboxFailure, recorded_at: Timestamp) -> Self {
+    Self::terminal(previous, FactoryOutboxState::Failed, recorded_at).with_failure(Some(failure))
+  }
+  fn with_failure(mut self, failure: Option<FactoryOutboxFailure>) -> Self {
+    if let Some(reason) = failure {
+      self.id = FactoryDigest::sha256(
+        "octacity.factory.outbox-failure.v1",
+        &[
+          &self.id.as_bytes(),
+          &serde_json::to_vec(&reason).expect("finite rejection serializes"),
+        ],
+      );
+    }
+    self.failure = failure;
+    self
+  }
+
   /// Appends a due retry after an owned claim produced no authoritative outcome.
   #[must_use]
   pub fn retry(previous: &Self, available_at: Timestamp, recorded_at: Timestamp) -> Option<Self> {
@@ -425,6 +461,7 @@ impl FactoryOutboxRecord {
       kind,
       input_digest,
       state,
+      failure: None,
       attempt,
       available_at,
       recorded_at,
@@ -443,6 +480,7 @@ impl FactoryOutboxRecord {
       }
     };
     ownership_is_valid
+      && (self.failure.is_none() || self.state == FactoryOutboxState::Failed)
       && self
         == &Self::new_state(
           self.operation_id,
@@ -456,6 +494,7 @@ impl FactoryOutboxRecord {
           self.owner.clone(),
           self.claim,
         )
+        .with_failure(self.failure)
   }
 }
 
@@ -534,6 +573,8 @@ pub enum FactoryOutboxSettlement {
   Delivered,
   /// A bounded retry may begin at this authoritative time.
   RetryAt(Timestamp),
+  /// Terminal conflict with retained safe cause; never an unconditional retry.
+  Rejected(FactoryOutboxFailure),
   /// Retry policy is exhausted and the operation remains terminally failed.
   Failed,
 }

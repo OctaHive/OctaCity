@@ -12,6 +12,9 @@ use std::sync::Arc;
 #[path = "issue_source_management.rs"]
 mod management;
 pub use management::*;
+#[path = "issue_synchronization.rs"]
+mod synchronization;
+pub use synchronization::*;
 
 /// Source association owner; no admission, Reporter or credential port is installed here.
 pub struct IssueSourceHandlers<S> {
@@ -430,6 +433,9 @@ impl<S: octacity_server_store::IssueSourceRefreshStore> IssueSourceHandlers<S> {
 #[path = "issue_source_read.rs"]
 mod reads;
 pub use reads::*;
+#[path = "issue_source_resolution.rs"]
+mod resolution;
+pub use resolution::*;
 #[path = "issue_source_mapping.rs"]
 mod mapping;
 pub use mapping::*;

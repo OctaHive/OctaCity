@@ -153,6 +153,10 @@ impl<S: FactoryRunStore + IssueSourceProjectionStore> FactoryWorkStatusOutboxWor
         // Unavailable accepted material leaves ownership recoverable after expiry.
         // It cannot establish a terminal delivery failure or authorize another input.
         Err(error) if transient(&error) => return Err(error),
+        Err(ApplicationError::ReporterRejected(reason)) => FactoryOutboxSettlement::Rejected(reason),
+        Err(ApplicationError::CapabilityUnavailable) => {
+          FactoryOutboxSettlement::Rejected(FactoryOutboxFailure::Unsupported)
+        }
         Err(_) => FactoryOutboxSettlement::Failed,
         Ok(ProjectionMaterial {
           request,
@@ -161,7 +165,7 @@ impl<S: FactoryRunStore + IssueSourceProjectionStore> FactoryWorkStatusOutboxWor
           original_deadline,
         }) => {
           if row.attempt >= policy.max_attempts || self.now(at)? >= request.deadline() {
-            FactoryOutboxSettlement::Failed
+            FactoryOutboxSettlement::Rejected(FactoryOutboxFailure::Exhausted)
           } else {
             let result = request.dispatch(projector.as_ref()).await;
             let now = self.now(at)?;
@@ -188,9 +192,15 @@ impl<S: FactoryRunStore + IssueSourceProjectionStore> FactoryWorkStatusOutboxWor
                   .and_then(|n| Timestamp::from_unix_millis(n).ok());
                 match retry {
                   Some(retry) if retry < original_deadline => FactoryOutboxSettlement::RetryAt(retry),
-                  _ => FactoryOutboxSettlement::Failed,
+                  _ => FactoryOutboxSettlement::Rejected(FactoryOutboxFailure::Exhausted),
                 }
               }
+              Err(ApplicationError::SourceDependency {
+                class: WorkSourceFailure::Conflict,
+                ..
+              }) => FactoryOutboxSettlement::Rejected(FactoryOutboxFailure::Conflict),
+              Err(ApplicationError::ReporterRejected(reason)) => FactoryOutboxSettlement::Rejected(reason),
+              Err(error) if transient(&error) => FactoryOutboxSettlement::Rejected(FactoryOutboxFailure::Exhausted),
               _ => FactoryOutboxSettlement::Failed,
             }
           }
@@ -213,7 +223,7 @@ impl<S: FactoryRunStore + IssueSourceProjectionStore> FactoryWorkStatusOutboxWor
       match settlement {
         FactoryOutboxSettlement::Delivered => summary.delivered += 1,
         FactoryOutboxSettlement::RetryAt(_) => summary.retrying += 1,
-        FactoryOutboxSettlement::Failed => summary.failed += 1,
+        FactoryOutboxSettlement::Failed | FactoryOutboxSettlement::Rejected(_) => summary.failed += 1,
       }
     }
     Ok(summary)

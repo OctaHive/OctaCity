@@ -17,6 +17,8 @@ mod issue_source;
 pub use issue_source::*;
 mod issue_source_mapping;
 pub use issue_source_mapping::*;
+mod issue_source_resolution;
+pub use issue_source_resolution::*;
 mod issue_source_push;
 pub use issue_source_push::*;
 mod issue_source_status;
@@ -348,10 +350,10 @@ pub use factory_run_model::{
   ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns, ClaimedFactoryOutbox,
   ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome, FactoryAuditFact,
   FactoryBudgetRecord, FactoryBuildExecutionDiagnostic, FactoryCallProfileDiagnostic, FactoryDomainDiagnostic,
-  FactoryFlowHistory, FactoryLifecycleCheckpoint, FactoryOutboxRecord, FactoryOutboxSettlement, FactoryOutboxState,
-  FactoryOutboxSubject, FactoryRunClaimRecord, FactoryRunCurrentProjection, FactoryRunDiagnosticKind,
-  FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord, FactoryRunHistoryAppend, FactoryRunSnapshot,
-  ListFactoryRunDiagnostics, MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
+  FactoryFlowHistory, FactoryLifecycleCheckpoint, FactoryOutboxFailure, FactoryOutboxRecord, FactoryOutboxSettlement,
+  FactoryOutboxState, FactoryOutboxSubject, FactoryRunClaimRecord, FactoryRunCurrentProjection,
+  FactoryRunDiagnosticKind, FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord, FactoryRunHistoryAppend,
+  FactoryRunSnapshot, ListFactoryRunDiagnostics, MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
   MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE, MAX_FACTORY_RUN_SNAPSHOT_RECORDS, MAX_FACTORY_TRANSITION_OUTBOX_RECORDS,
   MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
 };

@@ -12,6 +12,19 @@ pub struct IssueSourceStatusObservation {
   /// Literal observed labels, including unmanaged values.
   pub labels: Vec<String>,
 }
+/// Bounded retained native values for reviewed synchronization; excludes unrelated labels and bodies.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssueSourceObservedStatus {
+  /// Mapping that selected the managed label scope, independent of the current mapping.
+  pub mapping: ImmutableReference,
+  /// Exact accepted Source receipt, not a Reporter inspection or current provider snapshot.
+  pub observation: FactoryDigest,
+  /// Opaque native status, without inferred business meaning.
+  pub state: String,
+  /// Only observed labels referenced by that mapping's supported predicates/effects.
+  pub labels: Vec<String>,
+}
 /// Exact original mapping and safe observation references for status history.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IssueSourceStatusProvenance {
@@ -112,6 +125,33 @@ impl IssueSourceRefreshState {
     let mut transition = None;
     let mut status = None;
     if let Some(context) = mapping {
+      if matches!(
+        disposition,
+        IssueSourceRefreshDisposition::Fresh | IssueSourceRefreshDisposition::Unchanged
+      ) && request.observation.observed_at > context.mapping.published_at
+        && let Some(facts) = &request.status
+      {
+        let status = context.mapping.definition.status.as_ref();
+        let managed: std::collections::BTreeSet<_> = status
+          .into_iter()
+          .flat_map(|s| {
+            s.pull
+              .iter()
+              .flat_map(|r| r.native.all_of.iter().chain(&r.native.any_of).chain(&r.native.none_of))
+              .chain(
+                s.push
+                  .iter()
+                  .flat_map(|p| p.statuses.iter().flat_map(|e| e.add.iter().chain(&e.remove))),
+              )
+          })
+          .collect();
+        self.values = Some(IssueSourceObservedStatus {
+          mapping: context.mapping.reference(),
+          observation: request.observation.id(context.native_correlation)?,
+          state: facts.state.clone(),
+          labels: facts.labels.iter().filter(|l| managed.contains(l)).cloned().collect(),
+        });
+      }
       if context.mapping.definition.status.is_some() {
         let (result, moved) = context.source_move(current, request, policy, applicable, actor)?;
         if let Some(moved) = moved {

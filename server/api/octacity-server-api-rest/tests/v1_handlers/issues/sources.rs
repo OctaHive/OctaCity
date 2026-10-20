@@ -2,6 +2,11 @@
 use super::*;
 use octacity_server_application::*;
 
+#[path = "source_projections.rs"]
+mod projections;
+#[path = "source_resolution.rs"]
+mod resolution;
+
 struct NoSource;
 #[async_trait]
 impl WorkSourceObservations for NoSource {
@@ -26,6 +31,29 @@ async fn source_router_with_policy(
   reader: Arc<dyn WorkSourceObservations>,
   choices: Vec<InstalledIssueSourceMapping>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
+) -> axum::Router {
+  source_router_with_resolution(reader, choices, policy, None).await
+}
+async fn source_router_with_resolution(
+  reader: Arc<dyn WorkSourceObservations>,
+  choices: Vec<InstalledIssueSourceMapping>,
+  policy: Arc<dyn ManagementAuthorizationPolicy>,
+  resolution: Option<
+    Arc<dyn AuthorizedManagementCommandHandler<ResolveIssueSourceConflictCommand, Error = ApplicationError>>,
+  >,
+) -> axum::Router {
+  source_router_with_projections(reader, choices, policy, resolution, None).await
+}
+async fn source_router_with_projections(
+  reader: Arc<dyn WorkSourceObservations>,
+  choices: Vec<InstalledIssueSourceMapping>,
+  policy: Arc<dyn ManagementAuthorizationPolicy>,
+  resolution: Option<
+    Arc<dyn AuthorizedManagementCommandHandler<ResolveIssueSourceConflictCommand, Error = ApplicationError>>,
+  >,
+  projections: Option<
+    Arc<dyn AuthorizedManagementQueryHandler<ListIssueSourceProjectionsQuery, Error = ApplicationError>>,
+  >,
 ) -> axum::Router {
   let store = manual_issue_store(PROJECT.parse().unwrap()).await;
   let issues = Arc::new(IssueHandlers::new(store.clone(), policy.clone()));
@@ -54,6 +82,16 @@ async fn source_router_with_policy(
       .unwrap(),
   );
   let peer = Arc::new(RecordingApplication::default());
+  let mut source_application = octacity_server_api_rest::v1::IssueSourceManagementApplication::new(Arc::new(
+    AuthorizedQueryHandler::new(policy.clone(), sources.clone()),
+  ))
+  .with_commands(Arc::new(AuthorizedCommandHandler::new(policy.clone(), sources)));
+  if let Some(handler) = resolution {
+    source_application = source_application.with_resolution(handler);
+  }
+  if let Some(handler) = projections {
+    source_application = source_application.with_projection_queries(handler);
+  }
   management_router_with_application(
     || true,
     recording_management_application(peer.clone(), peer)
@@ -65,13 +103,7 @@ async fn source_router_with_policy(
         Arc::new(AuthorizedCommandHandler::new(policy.clone(), workflows.clone())),
         Arc::new(AuthorizedQueryHandler::new(policy.clone(), workflows)),
       ))
-      .with_issue_sources(
-        octacity_server_api_rest::v1::IssueSourceManagementApplication::new(Arc::new(AuthorizedQueryHandler::new(
-          policy.clone(),
-          sources.clone(),
-        )))
-        .with_commands(Arc::new(AuthorizedCommandHandler::new(policy, sources))),
-      ),
+      .with_issue_sources(source_application),
   )
 }
 

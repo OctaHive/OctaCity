@@ -778,11 +778,12 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
     let current = latest_outbox_record(stored, request.operation_id)
       .cloned()
       .ok_or(StoreError::Unavailable)?;
-    if matches!(
+    if (matches!(
       (current.state, request.settlement),
       (crate::FactoryOutboxState::Delivered, FactoryOutboxSettlement::Delivered)
         | (crate::FactoryOutboxState::Failed, FactoryOutboxSettlement::Failed)
-    ) && current.owner.as_ref() == Some(&request.owner)
+    ) || matches!(request.settlement, FactoryOutboxSettlement::Rejected(reason) if current.state == crate::FactoryOutboxState::Failed && current.failure == Some(reason)))
+      && current.owner.as_ref() == Some(&request.owner)
       && current.claim.is_some_and(|claim| claim.fence() == request.fence)
     {
       return Ok(current);
@@ -799,6 +800,7 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
       FactoryOutboxSettlement::Delivered => {
         FactoryOutboxRecord::terminal(&current, crate::FactoryOutboxState::Delivered, request.observed_at)
       }
+      FactoryOutboxSettlement::Rejected(reason) => FactoryOutboxRecord::rejected(&current, reason, request.observed_at),
       FactoryOutboxSettlement::Failed => {
         FactoryOutboxRecord::terminal(&current, crate::FactoryOutboxState::Failed, request.observed_at)
       }

@@ -339,7 +339,15 @@ pub(super) fn management_application(
       &management_policy,
       sources.clone(),
     ))
-    .with_commands(authorized_commands(&management_policy, sources)),
+    .with_commands(authorized_commands(&management_policy, sources.clone()))
+    .with_resolution(authorized_commands(&management_policy, sources))
+    .with_projection_queries(authorized_queries(
+      &management_policy,
+      Arc::new(octacity_server_application::IssueSynchronizationHandlers::new(
+        store.clone(),
+        Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      )),
+    )),
   )
   .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
     issue_commands,

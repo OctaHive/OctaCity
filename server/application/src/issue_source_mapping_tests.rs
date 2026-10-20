@@ -1,6 +1,8 @@
 //! Mapping publication uses ordinary Issue authority and the existing installed read capability.
 use super::*;
-use octacity_server_store::{IssueField, IssueFieldPolicy, IssueSourceFieldAuthority, IssueSourceMappingDefinition};
+use octacity_server_store::{
+  IssueField, IssueFieldPolicy, IssueSourceFieldAuthority, IssueSourceMappingDefinition, IssueSourceRefreshStore,
+};
 #[path = "issue_source_mapping_contract_tests.rs"]
 mod contracts;
 #[path = "issue_source_mapping_read_tests.rs"]
@@ -354,6 +356,39 @@ fn issue_source_status_pull_uses_the_shared_edge_once_and_preserves_echo_and_sou
     assert_eq!(moved.origin, IssueTransitionOrigin::Source);
     assert_eq!(moved.transition_id, Some(edge.id));
     assert_eq!(moved.source.as_ref().unwrap().mapping, mapping.reference());
+    let review = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(source_handlers(
+        store.clone(),
+        Arc::new(Reader {
+          denied: true,
+          ..Default::default()
+        }),
+        policy,
+      )),
+    )
+    .handle_query(
+      &context(),
+      GetIssueSynchronizationQuery {
+        project_id,
+        issue_id: before.id,
+      },
+    )
+    .await
+    .unwrap();
+    let wire = serde_json::to_value(review).unwrap();
+    assert_eq!(wire["observation"]["values"]["state"], "opaque-state");
+    assert_eq!(wire["observation"]["values"]["labels"], serde_json::json!([]));
+    assert_eq!(
+      wire["observation"]["values"]["mapping"],
+      serde_json::json!(mapping.reference())
+    );
+    assert_eq!(wire["observation"]["accepted"]["observed_at"], 33);
+    assert!(
+      store.retained_issue_push_intents().unwrap().is_empty(),
+      "pull echoes cannot emit an action"
+    );
+    assert_eq!(store.issue(project_id, before.id, None).await.unwrap().version.get(), 2);
   });
 }
 
@@ -428,6 +463,16 @@ fn issue_source_status_mapping_cannot_reinterpret_an_observation_from_before_its
         .await
         .unwrap();
       assert_eq!(outcome.status.unwrap().condition, expected);
+      let state = store
+        .issue_source_refresh_state(project_id, before.id, &context().security_scope().to_store())
+        .await
+        .unwrap()
+        .unwrap();
+      assert_eq!(
+        serde_json::to_value(state).unwrap().get("values").is_some(),
+        observed_at > 31,
+        "a cached read from before mapping publication cannot be relabeled as new-policy values"
+      );
       assert_eq!(
         store.issue(project_id, before.id, None).await.unwrap().version.get(),
         if observed_at <= 31 { 1 } else { 2 }

@@ -356,7 +356,7 @@ async fn outbox_rows(
   run_id: FactoryRunId,
 ) -> Result<Vec<octacity_server_store::FactoryOutboxRecord>, StoreError> {
   sqlx::query_as::<_, OutboxRow>(
-    "SELECT id, operation_id, run_id, issue, kind, input_digest, state, attempt, \
+    "SELECT id, operation_id, run_id, issue, kind, input_digest, state, failure, attempt, \
             FLOOR(EXTRACT(EPOCH FROM available_at) * 1000)::BIGINT AS available_at_millis, \
             FLOOR(EXTRACT(EPOCH FROM recorded_at) * 1000)::BIGINT AS recorded_at_millis, \
             owner, fence, FLOOR(EXTRACT(EPOCH FROM claimed_at) * 1000)::BIGINT AS claimed_at_millis, \

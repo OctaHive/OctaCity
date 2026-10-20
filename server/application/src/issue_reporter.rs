@@ -63,13 +63,16 @@ pub fn accepted_issue_status_request(
     .projection_record(projection.accepted_at)
     .ok_or_else(ApplicationError::invalid)?;
   let deadline = policy.deadline(projection.accepted_at)?.min(claim.expires_at());
+  if row.attempt >= policy.retry.max_attempts || at >= deadline {
+    return Err(ApplicationError::ReporterRejected(
+      octacity_server_store::FactoryOutboxFailure::Exhausted,
+    ));
+  }
   if row.state != FactoryOutboxState::Claimed
     || row.subject != original.subject
     || row.operation_id != original.operation_id
     || row.input_digest != original.input_digest
     || row.kind != original.kind
-    || row.attempt >= policy.retry.max_attempts
-    || at >= deadline
     || claim.verify_fence(claim.fence(), at).is_err()
   {
     return Err(ApplicationError::invalid());

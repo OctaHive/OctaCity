@@ -171,7 +171,10 @@ where
     ),
   )
   .with_issue_sources(
-    octacity_server_api_rest::v1::IssueSourceManagementApplication::new(source_queries).with_commands(source_commands),
+    octacity_server_api_rest::v1::IssueSourceManagementApplication::new(source_queries.clone())
+      .with_projection_queries(source_queries)
+      .with_commands(source_commands.clone())
+      .with_resolution(source_commands),
   )
   .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
     issue_commands,

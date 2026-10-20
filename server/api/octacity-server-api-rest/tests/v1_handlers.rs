@@ -234,6 +234,10 @@ unavailable_query!(
   "get_issue_synchronization"
 );
 unavailable_query!(
+  octacity_server_application::ListIssueSourceProjectionsQuery,
+  "list_issue_source_projections"
+);
+unavailable_query!(
   octacity_server_application::GetIssueSourceChoicesQuery,
   "get_issue_source_choices"
 );
@@ -252,6 +256,10 @@ unavailable_command!(
 unavailable_command!(
   octacity_server_application::PublishIssueSourceMappingCommand,
   "publish_issue_source_mapping"
+);
+unavailable_command!(
+  octacity_server_application::ResolveIssueSourceConflictCommand,
+  "resolve_issue_source_conflict"
 );
 unavailable_command!(
   octacity_server_application::ObserveIssueSourceCommand,
@@ -1079,11 +1087,13 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   vec![
     empty_request("GET",&format!("{source_path}/source-link"),None),
     empty_request("GET",&format!("{source_path}/synchronization"),None),
+    empty_request("GET",&format!("{source_path}/synchronization/projections?limit=1"),None),
     empty_request("GET",&format!("{source_path}/source-choices"),None),
     empty_request("GET",&format!("{source_path}/source-link/mappings/1"),None),
     json_request("POST",&format!("{source_path}/source-link/candidates"),"preview",None,&serde_json::json!({"source":source}).to_string()),
     json_request("POST",&format!("{source_path}/source-link"),"attach",Some("\"1\""),&serde_json::json!({"source":source,"item":{"resource":"board-9","item":"task-7"},"expected_field_policy":{"source_owned":[],"status_mapping_workflow":null,"push":null}}).to_string()),
     json_request("POST",&format!("{source_path}/source-link/mappings"),"mapping",Some("\"1\""),&serde_json::json!({"expected_mapping":null,"definition":{"source":source,"reporter":null,"push_enabled":false,"fields":{},"status":null}}).to_string()),
+    json_request("POST",&format!("{source_path}/synchronization/resolve"),"resolve",Some("\"1\""),&serde_json::json!({"review":{"operation_id":"11".repeat(32),"expected_record":"22".repeat(32)},"mapping":{"expected_mapping":pin("mapping"),"definition":{"source":source,"reporter":null,"push_enabled":false,"fields":{},"status":null}}}).to_string()),
     json_request("POST",&format!("{source_path}/synchronization/refresh"),"refresh",None,&serde_json::json!({"source":source}).to_string()),
     json_request("POST",&format!("{source_path}/synchronization/pull"),"pull",None,r#"{"expected_generation":1,"enabled":false}"#),
 
@@ -1510,11 +1520,13 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
     [
       "get_issue_synchronization",
       "get_issue_synchronization",
+      "list_issue_source_projections",
       "get_issue_source_choices",
       "get_issue_source_mapping",
       "preview_issue_source",
       "attach_issue_source",
       "publish_issue_source_mapping",
+      "resolve_issue_source_conflict",
       "observe_issue_source",
       "set_issue_source_pull",
       "list_issue_executions",

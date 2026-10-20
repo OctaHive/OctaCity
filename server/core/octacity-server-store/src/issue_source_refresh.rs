@@ -7,6 +7,10 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssueSourceRefreshState {
+  /// Last reconciled native status values, qualified by their original mapping and receipt.
+  /// Legacy observations without retained values remain explicitly unavailable.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub values: Option<crate::issue_source_status::IssueSourceObservedStatus>,
   /// Last mapping reconciled by a new read; absent in older retained rows.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub mapping: Option<octacity_server_factory::ImmutableReference>,
@@ -112,6 +116,7 @@ impl IssueSourceRefreshState {
   /// Initializes retained provenance; reads still require an explicit authorized invocation.
   pub fn new(accepted: IssueSourceObservation) -> Self {
     Self {
+      values: None,
       mapping: None,
       status: None,
       enabled: true,

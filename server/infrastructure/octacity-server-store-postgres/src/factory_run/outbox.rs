@@ -121,11 +121,12 @@ pub(crate) async fn settle_outbox(
   let current = latest(&mut transaction, request.operation_id)
     .await?
     .ok_or(StoreError::Unavailable)?;
-  if matches!(
+  if (matches!(
     (current.state, request.settlement),
     (FactoryOutboxState::Delivered, FactoryOutboxSettlement::Delivered)
       | (FactoryOutboxState::Failed, FactoryOutboxSettlement::Failed)
-  ) && current.owner.as_ref() == Some(&request.owner)
+  ) || matches!(request.settlement, FactoryOutboxSettlement::Rejected(reason) if current.state == FactoryOutboxState::Failed && current.failure == Some(reason)))
+    && current.owner.as_ref() == Some(&request.owner)
     && current.claim.is_some_and(|claim| claim.fence() == request.fence)
   {
     transaction.commit().await.map_err(unavailable)?;
@@ -143,6 +144,10 @@ pub(crate) async fn settle_outbox(
     FactoryOutboxSettlement::Delivered => (
       FactoryOutboxRecord::terminal(&current, FactoryOutboxState::Delivered, request.observed_at),
       "delivered",
+    ),
+    FactoryOutboxSettlement::Rejected(reason) => (
+      FactoryOutboxRecord::rejected(&current, reason, request.observed_at),
+      "rejected",
     ),
     FactoryOutboxSettlement::Failed => (
       FactoryOutboxRecord::terminal(&current, FactoryOutboxState::Failed, request.observed_at),
@@ -177,7 +182,7 @@ pub(crate) async fn latest(
   operation_id: FactoryDigest,
 ) -> Result<Option<FactoryOutboxRecord>, StoreError> {
   sqlx::query_as::<_, OutboxRow>(
-    "SELECT id, operation_id, run_id, issue, kind, input_digest, state, attempt, \
+    "SELECT id, operation_id, run_id, issue, kind, input_digest, state, failure, attempt, \
             FLOOR(EXTRACT(EPOCH FROM available_at) * 1000)::BIGINT AS available_at_millis, \
             FLOOR(EXTRACT(EPOCH FROM recorded_at) * 1000)::BIGINT AS recorded_at_millis, \
             owner, fence, FLOOR(EXTRACT(EPOCH FROM claimed_at) * 1000)::BIGINT AS claimed_at_millis, \
