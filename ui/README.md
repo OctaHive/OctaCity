@@ -50,10 +50,11 @@ timing constants, colors, and SVG icon imports behind their intended boundaries 
 external fonts, icon fonts, analytics integrations, and copied template assets. Run
 `check:architecture` for the source-only gate or `check:bundle` against an existing `dist/`.
 `architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
-the build reports any measured value that exceeds them. Project workflow settings add one lazy
-JavaScript chunk and one stylesheet, with no new dependencies; the measured aggregate ceilings
-are 944 KiB JavaScript, 82 KiB CSS and 45 assets. The ordinary entry ceiling remains 450 KiB.
-The architecture tests admit the measured feature and reject additional unplanned growth.
+the build reports any measured value that exceeds them. Task Source ownership authoring reuses
+shared Source references, row identities and Reporter effects, adding no runtime dependencies.
+The measured Source workspace is approximately 1,069,000 bytes JavaScript and 1,155,000 bytes static output; aggregate ceilings are 1,050 KiB JavaScript,
+82 KiB CSS, 1,130 KiB static output and 51 assets. The entry ceiling remains 450 KiB.
+Architecture tests admit the measured footprint and reject another unplanned 8,000 bytes.
 
 Release packaging consumes this exact `dist/` directory without rebuilding the application:
 

@@ -98,28 +98,34 @@ Project/Issue visibility and current mutation rights remain independent.
 `IssueSourceRefreshState` retains an accepted receipt and at most one pending
 changed receipt. Opaque native update identities are not sortable revisions.
 A changed snapshot remains `uncertain` until a later independent read under
-the same installed binding confirms it. Duplicate, unchanged and stale reads
-create no Issue revision; unchanged reads can advance the safe watermark.
-Only reconciled changes replace already declared source-owned title or
-description through the ordinary requirements/applicability policy. Local
-fields, acceptance, planning, workflow/status and frozen execution inputs stay
-under their existing owners. Mapping/ownership publication and external status
-translation retain their separate reviewed contracts.
+the same installed binding confirms it. Under the same reviewed mapping,
+duplicate, unchanged and stale reads create no Issue revision; unchanged reads
+can advance the safe watermark. A newly published mapping can reconcile an
+unchanged snapshot from a new independent read strictly after publication.
+Only reconciled authorized observations replace declared source-owned title or
+description through the ordinary requirements/applicability policy. Acceptance,
+planning and frozen execution inputs stay under their existing owners. Explicit
+status translation uses the shared transition contract described below.
 
 `SetIssueSourcePullCommand` changes explicit link pull enablement under an exact
 monotonic generation and scoped replay. Disabling pull stops that retained-link
-read; reenabling cannot revive an old owner or its retained page. A separately
-installed broader read profile may refresh the same native link when the task
-no longer matches an execution selector. Disabling an execution input does not
-disable link refresh. An independently authorized discovery pass may encounter
+read; reenabling cannot revive an old owner or its retained page. Mapping
+publication also advances this generation without changing pull enablement.
+A separately installed broader read profile may refresh the same native link
+when the task no longer matches an execution selector. A published mapping pins
+its exact read profile: another profile retains a replayable
+`read_profile_mismatch` skip without advancing accepted or pending freshness.
+The remaining discovery page can continue after restart. Disabling an execution
+input does not disable link refresh. An independently authorized discovery pass may encounter
 a paused link and retain its import observation, but does not refresh its fields.
 If pull is disabled after discovery's preliminary check, publication retains a
 replayable `pull_disabled` result without advancing accepted or pending freshness.
 The remaining discovery page stays runnable, including after restart; reenabling
 pull does not turn replay of that skipped operation into a refresh.
 Rate limits, bounded retry exhaustion, disabled access and provider failures
-retain local task/history and do not block unrelated manual tasks. HTTP and
-Console controls for these contracts retain task 4.5.
+retain local task/history and do not block unrelated manual tasks. The HTTP and
+Console controls expose explicit discovery, attachment, refresh, pull enablement
+and separate ownership/status mapping review, as described below.
 
 ## Identity and revisions
 
@@ -178,6 +184,37 @@ Work/Run, calls a provider, completes a gate or grants delivery authority.
 
 ## Ownership and retained projection intent
 
+`PublishIssueSourceMappingCommand` is an optional application contract over
+`IssueSourceMappingStore`, requiring Issue administration, current visibility
+and an authorized installed Source reader. Each primary link has immutable
+mapping versions separate from Issue revisions and workflows. Publication
+reviews both the exact Issue version and the previous mapping reference (or
+its absence), and atomically installs the derived `IssueFieldPolicy` with
+mapping/replay/audit/outbox state. It edits no task content. Historical mappings
+and original operation receipts survive replacement and restart.
+
+Each field has one authority: source-owned pull, OctaCity-owned push or
+unsynchronized; omitted fields are unsynchronized. Title and description support
+pull, and status supports pull or explicitly enabled push. Other managed
+directions are rejected. Status mapping separately pins the exact workflow and
+stable status IDs. Its predicates use bounded literal native states and labels
+advertised by the installed capability; native names never select a workflow
+or imply an open/closed business status. Push uses the existing finite Reporter
+state/label effect contract. Enabling it additionally requires current
+connection visibility/use and an independent `TaskUpdate` resource grant;
+`TaskRead` alone cannot activate writes.
+
+Source-owned status blocks manual and pipeline moves. An eligible observation
+must match one distinct internal target and a permitted direct Source edge.
+The ordinary transition policy enforces ownership, workflow, evidence and
+applicability rules, with no invented intermediate moves or execution evidence.
+Unmapped, ambiguous, workflow-incompatible, forbidden, evidence-required and
+not-fresh observations retain explicit conditions without a status move. An
+echo creates no revision or status event. OctaCity-owned status treats native
+divergence as data. An applied move retains exact mapping, observation and
+native-correlation references in ordinary status history. Text and status from
+one observation share one atomic Issue revision and history publication.
+
 `IssueFieldPolicy` is retained trusted association state, separate from ordinary
 create/edit/move input. Source-owned fields cannot be replaced locally; unchanged
 source-owned values do not block unrelated edits. An approved push policy pins
@@ -189,9 +226,84 @@ transaction retains an `IssuePushIntent` identifying the original Project,
 Issue revision, exact mapping and changed fields. It contains no credentials or
 provider request. A later mapping replacement cannot retarget this intent and
 replay cannot create another one. Unlinked manual tasks retain no push intent.
-Delivery, source association/mapping publication and accepted automated command
-provenance belong to the later source/action slices; this contract adds no
-second Reporter, polling loop or execution journal.
+Reporter delivery and originating execution/producer qualification remain in
+tasks 5.1–5.3. Mapping publication starts no Reporter, polling loop or execution
+journal. REST and Console expose the separate mapping review described below.
+
+## Source HTTP and Console contracts
+
+Task Source endpoints live under `/api/v1/projects/{project_id}/issues/{issue_id}`.
+Retained responses use `Cache-Control: no-store`. Source administration is
+separate from ordinary Issue editing and workflow administration.
+
+| Method and suffix | Contract |
+| --- | --- |
+| GET `source-link` | Nullable original primary association; no provider read |
+| GET `synchronization` | Issue/workflow review, field policy, mapping/pin and retained observation conditions |
+| GET `source-choices` | Authorized exact read profiles compatible with an existing native association; independent writer/effect choices |
+| POST `source-link/candidates` | Explicit bounded native identity discovery with original scan ID/opaque continuation; no import or attachment |
+| POST `source-link` | Existing-task attachment with Issue `If-Match`, reviewed field policy and `Idempotency-Key`; no field overwrite |
+| POST `source-link/mappings` | Immutable ownership/status mapping publication with Issue `If-Match`, previous mapping pin (or null) and `Idempotency-Key` |
+| GET `source-link/mappings/{version}` | Original immutable mapping under current task visibility |
+| POST `synchronization/refresh` | Explicit installed read with `Idempotency-Key`; shared ownership/observation/transition publication |
+| POST `synchronization/pull` | Pause/resume using `expected_generation`, `enabled` and `Idempotency-Key`; independent of Issue version and outbound enablement |
+
+Attachment retains the selected preview page’s original `scan_id` and opaque
+continuation; later pages cannot be attached under a new scan identity. The scan
+ID is optional for first-page clients. Attachment returns 201 for a new link and
+200 for an original replay. An exact retry recovers its original receipt before
+provider access; the ordinary publisher rechecks replay atomically for concurrent
+requests. A native
+collision is a finite 200 outcome `{kind:"conflict",canonical:link_or_null}`;
+only a currently visible canonical task may be returned. It never merges tasks
+or discloses a hidden association. Stale review remains an ordinary conflict.
+Mapping publication returns 201 or 200 with its original resource and exact
+server-computed mapping reference; clients do not reconstruct the digest.
+
+An explicit refresh fingerprints the original selection, task and read request.
+It uses the existing durable Source read journal and shared bounded page driver.
+The installed `IssueSourceRefreshPolicy` supplies finite read/retry budgets,
+cadence and a crash-recoverable ownership lease; no Factory target is required.
+A slice that has not yet reached the linked native item returns `scanning`. The
+Console continues it through the common confirmed-command mechanism with the
+same frozen request and `Idempotency-Key`. The server retains the original scan,
+window, pending page and opaque continuation; clients do not supply refresh
+continuations. A paused link rejects a new refresh.
+
+Once an observation is published, exact retries return its original receipt
+before another provider call, including after restart/outage or a later pull
+pause. Changed reuse conflicts. The existing refresh transaction/replay/outbox
+publisher uses a separate explicit-operation namespace; background observation
+producers keep their observation-based replay contract. Failed publication leaves
+no partial freshness or receipt, while committed page progress remains resumable.
+
+The Console reads retained metadata independently from manual editing and
+pipeline execution. Its configuration form discovers native identities only on
+request, preserves reviewed ownership on attachment, and reviews field authority
+separately from the pinned Project workflow. Status rules select stable workflow
+IDs and opaque advertised native states/labels. Push reuses the common Reporter
+effect editor and requires a separate enable switch. Generated OpenAPI bounds
+constrain rows and UTF-8 mapping size. Current server authorization and transition
+policy remain authoritative.
+
+Workflow/mapping/head or advertised-choice changes preserve the draft and block
+a new review until explicit reload. Confirmed commands use the shared in-memory
+frozen intent and replay key; transport retries never silently rebase a request.
+Canonical navigation appears only for a server-authorized link. Accepted time,
+pending confirmation, original expiry and typed status conditions do not claim
+an execution outcome. Refresh and incoming pause/resume are separately reviewed
+commands. Forms contain no credentials, endpoints or execution-state setters,
+and do not persist native previews or drafts in browser storage.
+
+The standard native runtime installs retained task Source reads and local pull
+control with an unavailable reader and no installed choices. Manual tasks need
+no adapters. Deployments may use `ServerRuntime::start_with_issue_sources` with
+`IssueSourceRuntimeInstallation` to supply the existing bounded reader and exact
+safe mapping choices independently of Factory targets. Installation starts no
+polling or provider I/O; `HostedWorkSourceObservations` is the shared verified
+process reader. Writer authorization uses the separate managed connection and
+TaskUpdate contract. This API adds no profile file or credential loader. Reporter
+dispatch/recovery remains tasks 5.1–5.3.
 
 ## Implementation scope
 
