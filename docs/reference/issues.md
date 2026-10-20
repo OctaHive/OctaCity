@@ -226,9 +226,32 @@ transaction retains an `IssuePushIntent` identifying the original Project,
 Issue revision, exact mapping and changed fields. It contains no credentials or
 provider request. A later mapping replacement cannot retarget this intent and
 replay cannot create another one. Unlinked manual tasks retain no push intent.
-Reporter delivery and originating execution/producer qualification remain in
-tasks 5.1–5.3. Mapping publication starts no Reporter, polling loop or execution
-journal. REST and Console expose the separate mapping review described below.
+Accepted push intents now retain their original `IssueSourceDesiredState` in the
+ordinary atomic mutation publication: primary link, exact writer, workflow/status,
+configured finite Reporter effects, scoped command key, actual actor and optional
+Work/Run/Flow/cycle/attempt/action provenance. The mapping pin and Issue revision
+remain on the enclosing intent. An unmapped status retains absent effects rather
+than inventing a native state. Unsupported remote metadata fields stay unavailable.
+Old intents without this material are not retrofitted from later attachment or
+mapping state. Comments, model prose, link existence, mapping publication and pull
+echoes create no new outbound status action.
+
+Configured Issue actions retain their push mapping review in the existing sealed
+command record, including an explicitly absent mapping for local-only actions.
+Legacy commands without a push review remain local, including pending replay after
+later attachment. The shared transition policy rejects a changed mapping before a
+fresh move; completed command replay still returns its original outcome. Direct Factory
+source effects retain their original Source admission/item and cannot derive a
+target from a later Issue link. Where that same original native item is known,
+a consecutive configured status-action chain rejects overlapping card/direct
+label or native-state producers. Inherited input effects use the same finite
+mapping; an opaque legacy effect scope requires a single producer when the card
+has managed effects. Separate managed fields remain allowed. Native resource
+aliases do not bypass the same-item check.
+
+Reporter delivery and durable recovery remain in tasks 5.2–5.3. Mapping
+publication starts no Reporter or polling loop. REST and Console expose the
+separate mapping review described below.
 
 ## Source HTTP and Console contracts
 

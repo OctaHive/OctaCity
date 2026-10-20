@@ -354,6 +354,9 @@ impl IssueContent {
 /// No provider request or credentials are embedded; delivery belongs to existing Reporter recovery.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct IssuePushIntent {
+  /// Original Reporter material; absent for legacy intents, which must not be retrofitted.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub desired: Option<crate::IssueSourceDesiredState>,
   /// Owning Project under which the mapping was authorized.
   pub project_id: ProjectId,
   /// Stable task identity.

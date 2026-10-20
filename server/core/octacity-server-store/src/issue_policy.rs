@@ -71,7 +71,12 @@ impl IssueRevision {
     {
       return Err(crate::issue::invalid_issue(StoreOperation::TransitionIssue));
     }
-    if request.pipeline_action().is_some_and(|a| !a.matches(intent)) {
+    if request.pipeline_action().is_some_and(|a| {
+      !a.matches(intent)
+        || a
+          .push_mapping_review()
+          .is_some_and(|review| review.mapping.as_ref() != policy.push.as_ref().map(|p| &p.mapping))
+    }) {
       return Err(conflict());
     }
     if request.source.is_some()
@@ -154,6 +159,7 @@ impl IssueFieldPolicy {
     }
     let fields: std::collections::BTreeSet<_> = changed.intersection(&push.fields).copied().collect();
     (!fields.is_empty()).then(|| IssuePushIntent {
+      desired: None,
       project_id: issue.project_id,
       issue_id: issue.id,
       version: issue.version,

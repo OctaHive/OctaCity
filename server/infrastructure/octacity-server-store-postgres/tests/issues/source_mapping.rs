@@ -403,3 +403,96 @@ async fn source_mapping_failed_publication_and_competing_reviews_keep_one_atomic
   assert_eq!(store.issue(project.id, issue.id, None).await.unwrap(), issue);
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn source_push_freezes_original_desired_effects_in_the_existing_mutation_outbox() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let project = project(&store).await;
+  let imported = import(project.id, "push-link");
+  let IssueSourceOutcome::Linked { link, .. } = store
+    .import_issue_source(management_mutation(imported.clone()))
+    .await
+    .unwrap()
+  else {
+    panic!("link");
+  };
+  let issue = store.issue(project.id, link.issue_id, None).await.unwrap();
+  let edge = store
+    .default_issue_workflow(project.id)
+    .await
+    .unwrap()
+    .workflow
+    .definition
+    .transitions[0]
+    .clone();
+  let effects = octacity_server_factory::WorkSourceStatusEffects {
+    status: edge.to.to_string(),
+    add: vec!["native-ready".into()],
+    remove: vec![],
+    state: Some("native-state".into()),
+  };
+  let mut publication = ownership(&issue, &imported, "push-mapping", 4);
+  publication.intent.definition.fields = [(IssueField::Status, IssueSourceFieldAuthority::OctacityOwnedPush)].into();
+  publication.intent.definition.reporter = Some(octacity_server_factory::WorkSourceBinding {
+    capability: exact("writer"),
+    ..imported.selection.source.clone()
+  });
+  publication.intent.definition.push_enabled = true;
+  publication.intent.definition.status = Some(IssueSourceStatusMapping {
+    workflow: IssueWorkflowPin {
+      id: issue.workflow_id,
+      version: issue.workflow_version,
+    },
+    pull: vec![],
+    push: Some(octacity_server_factory::WorkSourceStatusMapping {
+      statuses: vec![effects.clone()],
+    }),
+  });
+  publication.writable = Some(octacity_server_factory::WorkSourceReportingPolicy {
+    labels: vec!["native-ready".into()],
+    states: vec!["native-state".into()],
+  });
+  let mapping = store
+    .publish_issue_source_mapping(management_mutation(publication))
+    .await
+    .unwrap()
+    .mapping;
+  let command = TransitionIssue::manual(
+    TransitionIssueIntent {
+      project_id: project.id,
+      id: issue.id,
+      expected_version: issue.version,
+      workflow_id: issue.workflow_id,
+      workflow_version: issue.workflow_version,
+      expected_status_id: issue.status_id,
+      transition_id: edge.id,
+      reason: None,
+    },
+    key("push-transition"),
+    at(5),
+  );
+  let moved = store
+    .transition_issue(management_mutation(command.clone()))
+    .await
+    .unwrap();
+  let records = outbox(&database, issue.id, "issue.transitioned").await;
+  let push = &records[0]["push_intent"];
+  assert_eq!(push["mapping"], serde_json::json!(mapping.reference()));
+  assert_eq!(push["version"], serde_json::json!(moved.issue.version));
+  assert_eq!(push["desired"]["link"], serde_json::json!(link));
+  assert_eq!(push["desired"]["effects"], serde_json::json!(effects));
+  assert_eq!(push["desired"]["command"]["idempotency_key"], "push-transition");
+  let restarted = PostgresStore::new(database.pool.clone());
+  assert_eq!(
+    restarted
+      .transition_issue(management_mutation(command))
+      .await
+      .unwrap()
+      .issue,
+    moved.issue
+  );
+  assert_eq!(outbox(&database, issue.id, "issue.transitioned").await, records);
+  database.cleanup().await;
+}

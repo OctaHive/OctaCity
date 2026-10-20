@@ -902,3 +902,92 @@ fn issue_pipeline_action_legacy_artifact_association_has_no_invented_requirement
     assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
   });
 }
+
+#[test]
+fn issue_pipeline_push_review_rejects_a_mapping_installed_after_the_original_review() {
+  run_ready(async {
+    let (store, issue, association, _) = linked().await;
+    let edge = store
+      .default_issue_workflow(issue.project_id)
+      .await
+      .unwrap()
+      .workflow
+      .definition
+      .transitions[0]
+      .id;
+    let mut command = action(&issue, &association, &edge.to_string(), 91);
+    command.accepted = command.accepted.with_push_mapping_review(None);
+    store
+      .seed_issue_field_policy(
+        issue.project_id,
+        issue.id,
+        IssueFieldPolicy {
+          push: Some(IssuePushPolicy {
+            mapping: octacity_server_factory::ImmutableReference::new(
+              "later-mapping".parse().unwrap(),
+              "v1".parse().unwrap(),
+              FactoryDigest::from_bytes([1; 32]),
+            ),
+            fields: [IssueField::Status].into(),
+          }),
+          ..Default::default()
+        },
+      )
+      .unwrap();
+    let commands = AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(IssueHandlers::new(
+        store.clone(),
+        Arc::new(TrustedNetworkManagementPolicy),
+      )),
+    );
+    assert!(commands.handle_command(&context(), command).await.is_err());
+    assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
+    assert!(store.retained_issue_push_intents().unwrap().is_empty());
+  });
+}
+
+#[test]
+fn issue_legacy_pipeline_command_cannot_gain_push_from_a_later_source_mapping() {
+  run_ready(async {
+    for sealed in [false, true] {
+      let (store, issue, association, _) = linked().await;
+      let workflow = store.default_issue_workflow(issue.project_id).await.unwrap().workflow;
+      let edge = &workflow.definition.transitions[0];
+      let command = action(&issue, &association, &edge.id.to_string(), 9);
+      assert!(command.accepted.push_mapping_review().is_none());
+      let commands = AuthorizedCommandHandler::new(
+        Arc::new(TrustedNetworkManagementPolicy),
+        Arc::new(IssueHandlers::new(
+          store.clone(),
+          Arc::new(TrustedNetworkManagementPolicy),
+        )),
+      );
+      if sealed {
+        store
+          .fail_next_issue_mutation_at(testing::MutationFailurePoint::Commit)
+          .unwrap();
+        assert!(commands.handle_command(&context(), command.clone()).await.is_err());
+      }
+      crate::factory_flow_action_tests::issue_push::install_push_mapping(
+        &store,
+        &issue,
+        edge.to,
+        if sealed { 40 } else { 32 },
+        None,
+        true,
+      )
+      .await;
+      let moved = commands.handle_command(&context(), command.clone()).await.unwrap();
+      assert_eq!(moved.issue.status_id, edge.to);
+      assert!(
+        store.retained_issue_push_intents().unwrap().is_empty(),
+        "a legacy command cannot acquire a newly attached push producer"
+      );
+      assert_eq!(
+        commands.handle_command(&context(), command).await.unwrap().issue,
+        moved.issue
+      );
+    }
+  });
+}

@@ -172,7 +172,9 @@ pub use factory_verification::{
 };
 mod factory_flow_action;
 mod factory_stage_source_update;
-pub use factory_stage_source_update::{FactoryStageSourceAuthorizer, FactoryStageSourceUpdate};
+pub use factory_stage_source_update::{
+  FactoryStageSourceAuthorizer, FactoryStageSourceUpdate, validate_issue_push_producers,
+};
 mod factory_review_invocation;
 pub use factory_review_invocation::{
   FactoryReviewInvocation, FactoryReviewInvocationSource, FactoryStoredReviewInvocationSource,

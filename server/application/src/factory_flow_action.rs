@@ -276,6 +276,12 @@ pub(crate) struct StatusParameters {
   pub(crate) outbox: Option<FactoryReporterRetryPolicy>,
 }
 impl StatusParameters {
+  pub(crate) fn from_binding(binding: &FlowActionBinding) -> Result<Self, ApplicationError> {
+    let parameters: Self = serde_json::from_value(binding.parameters().clone())
+      .map_err(|_| crate::FactoryValidationDiagnostics::invalid("/action/parameters"))?;
+    parameters.validate(binding)?;
+    Ok(parameters)
+  }
   pub(crate) fn validate(&self, binding: &FlowActionBinding) -> Result<(), ApplicationError> {
     if let Some(policy) = self.outbox {
       policy.validate()?;

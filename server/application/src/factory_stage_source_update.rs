@@ -109,10 +109,59 @@ fn flow_source_updates(
     .filter_map(|node| node.action())
     .filter(|binding| binding.action().as_str() == "set_status" && binding.parameters().get("source_update").is_some())
     .map(|binding| {
-      let parameters: crate::factory_flow_action::StatusParameters =
-        serde_json::from_value(binding.parameters().clone())
-          .map_err(|_| crate::FactoryValidationDiagnostics::invalid("/action/parameters"))?;
-      parameters.validate(binding)?;
+      let parameters = crate::factory_flow_action::StatusParameters::from_binding(binding)?;
       parameters.source_update.ok_or_else(ApplicationError::invalid)
     })
+}
+
+/// Rejects two producers for the same native managed field; this grants no writer authority.
+/// Callers first bind both effects to the original native item and accepted outcome.
+/// A None entry is an opaque legacy producer; an empty list means no direct producer.
+pub fn validate_issue_push_producers(
+  mapping: &octacity_server_store::PublishedIssueSourceMapping,
+  status: octacity_server_domain::IssueStatusId,
+  updates: &[Option<FactoryStageSourceUpdate>],
+) -> Result<(), ApplicationError> {
+  use octacity_server_store::{IssueField, IssueSourceFieldAuthority};
+  if !mapping.definition.push_enabled
+    || mapping.definition.fields.get(&IssueField::Status) != Some(&IssueSourceFieldAuthority::OctacityOwnedPush)
+  {
+    return Ok(());
+  }
+  let Some(reporter) = &mapping.definition.reporter else {
+    return Err(ApplicationError::invalid());
+  };
+  let Some(effects) = mapping
+    .definition
+    .status
+    .as_ref()
+    .and_then(|s| s.push.as_ref())
+    .and_then(|m| m.effects(&status.to_string()))
+  else {
+    return Ok(());
+  };
+  if effects.add.is_empty() && effects.remove.is_empty() && effects.state.is_none() {
+    return Ok(());
+  }
+  for update in updates {
+    let Some(update) = update else {
+      return Err(crate::FactoryValidationDiagnostics::invalid(
+        "/action/source_update/producer",
+      ));
+    };
+    update.validate()?;
+    if update.reporter.installation.identity() == reporter.installation.identity()
+      && ((effects.state.is_some() && update.effects.state.is_some())
+        || effects
+          .add
+          .iter()
+          .chain(&effects.remove)
+          .any(|label| update.effects.add.contains(label) || update.effects.remove.contains(label)))
+    {
+      return Err(crate::FactoryValidationDiagnostics::invalid(
+        "/action/source_update/producer",
+      ));
+    }
+  }
+  Ok(())
 }

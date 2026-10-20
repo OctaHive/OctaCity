@@ -31,6 +31,31 @@ struct SourcePullReplay {
   outcome: IssueSourcePullOutcome,
 }
 impl IssueSourceMemoryState {
+  pub(super) fn desired_push(
+    &self,
+    push: &IssuePushIntent,
+    issue: &IssueRevision,
+    audit: &MutationAuditContext,
+    key: &IdempotencyKey,
+    history: Option<&IssueStatusHistoryEntry>,
+  ) -> Result<Option<IssueSourceDesiredState>, StoreError> {
+    let Some((_, link)) = self
+      .links
+      .get(&issue.id)
+      .filter(|(scope, _)| scope == audit.security_scope())
+    else {
+      return Ok(None);
+    };
+    let Some(mapping) = self
+      .mappings
+      .values()
+      .find(|m| m.issue_id == issue.id && m.reference() == push.mapping)
+    else {
+      return Ok(None);
+    };
+    push.desired_state(issue, link, mapping, audit, key, history).map(Some)
+  }
+
   fn update_read(
     &mut self,
     scope: &ManagementSecurityScope,

@@ -246,9 +246,13 @@ impl IssueStore for PostgresStore {
     let (mut request, audit) = request.into_parts();
     let command = request.retained_pipeline_command().map(|command| json!(command));
     let canonical = request.pipeline_action().map(|action| {
-      json!({
+      let mut value = json!({
         "intent":request.intent,"selection":action.selection(),"provenance":action.provenance()
-      })
+      });
+      if let Some(review) = action.push_mapping_review() {
+        value["push_review"] = json!(review);
+      }
+      value
     });
     let mut identity = if let Some(canonical) = canonical {
       MutationIdentity::new_management(
@@ -345,7 +349,9 @@ impl IssueStore for PostgresStore {
       &outcome.issue,
       Some(&outcome.transition),
       &outcome,
-      policy.push_intent(&current, &outcome.issue),
+      policy
+        .push_intent(&current, &outcome.issue)
+        .filter(|_| request.allows_push_intent()),
     )
     .await?;
     Ok(outcome)
@@ -475,7 +481,24 @@ pub(super) async fn publish<T: serde::Serialize>(
     .map_err(unavailable)?;
   let metadata = json!({"project_id": issue.project_id, "issue_id":issue.id, "version":issue.version});
   let mut payload = metadata.clone();
-  if let Some(intent) = push_intent {
+  if let Some(mut intent) = push_intent {
+    let link: Option<Json<IssueSourceLink>> = sqlx::query_scalar(
+      "SELECT document FROM issue_source_links WHERE project_id=$1 AND issue_id=$2 AND security_scope=$3",
+    )
+    .bind(issue.project_id.as_uuid())
+    .bind(issue.id.as_uuid())
+    .bind(audit.security_scope().as_str())
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    if let Some(Json(link)) = link
+      && let Some(mapping) = crate::issue_source_mapping::read(&mut tx, issue.project_id, issue.id, None)
+        .await?
+        .filter(|m| m.reference() == intent.mapping)
+    {
+      let key = IdempotencyKey::new(identity.key.clone()).map_err(|_| StoreError::Unavailable)?;
+      intent.desired = Some(intent.desired_state(issue, &link, &mapping, audit, &key, history)?);
+    }
     payload["push_intent"] = serde_json::to_value(intent).map_err(|_| StoreError::Unavailable)?;
   }
   crate::mutation::commit(

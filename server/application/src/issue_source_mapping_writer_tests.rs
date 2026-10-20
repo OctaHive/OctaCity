@@ -327,6 +327,28 @@ fn issue_source_mapping_push_requires_current_write_grant_and_does_not_pull_nati
     assert_eq!(pushes.len(), 1);
     assert_eq!(pushes[0].mapping, mapping.reference());
     assert_eq!(pushes[0].fields, [IssueField::Status].into());
+    let desired = serde_json::to_value(&pushes[0]).unwrap()["desired"].clone();
+    assert_eq!(desired["link"], serde_json::to_value(&link).unwrap());
+    assert_eq!(
+      desired["reporter"],
+      serde_json::to_value(&command.intent.definition.reporter).unwrap()
+    );
+    assert_eq!(
+      desired["workflow"],
+      serde_json::json!({"id":local.workflow_id,"version":local.workflow_version})
+    );
+    assert_eq!(desired["status_id"], serde_json::json!(edge.to));
+    assert_eq!(
+      desired["effects"],
+      serde_json::json!({"status":edge.to.to_string(),"add":["native-ready"],"remove":[],"state":"closed"})
+    );
+    assert_eq!(desired["command"]["idempotency_key"], "accepted-local-status");
+    assert_eq!(
+      desired["command"]["security_scope"],
+      serde_json::json!(context().security_scope().as_str())
+    );
+    assert!(desired["command"]["pipeline"].is_null());
+
     let reads = AuthorizedCommandHandler::new(
       policy.clone(),
       Arc::new(source_handlers(
@@ -388,4 +410,76 @@ fn issue_source_mapping_push_requires_current_write_grant_and_does_not_pull_nati
       "task read access cannot activate a writer"
     );
   });
+}
+
+#[test]
+fn issue_source_push_requires_one_producer_for_overlapping_native_fields() {
+  let source = selection(ProjectId::generate()).source;
+  let reporter = WorkSourceBinding {
+    capability: exact("reporter"),
+    ..source.clone()
+  };
+  let status_id = octacity_server_domain::IssueStatusId::generate();
+  let mapping = octacity_server_store::PublishedIssueSourceMapping {
+    project_id: ProjectId::generate(),
+    issue_id: octacity_server_domain::IssueId::generate(),
+    version: octacity_server_domain::IssueSourceMappingVersion::INITIAL,
+    published_at: at(1),
+    definition: IssueSourceMappingDefinition {
+      source: source.clone(),
+      reporter: Some(reporter.clone()),
+      push_enabled: true,
+      fields: [(IssueField::Status, IssueSourceFieldAuthority::OctacityOwnedPush)].into(),
+      status: Some(octacity_server_store::IssueSourceStatusMapping {
+        workflow: octacity_server_store::IssueWorkflowPin {
+          id: octacity_server_domain::IssueWorkflowId::generate(),
+          version: octacity_server_domain::IssueWorkflowVersion::INITIAL,
+        },
+        pull: vec![],
+        push: Some(octacity_server_factory::WorkSourceStatusMapping {
+          statuses: vec![octacity_server_factory::WorkSourceStatusEffects {
+            status: status_id.to_string(),
+            add: vec!["owned-label".into()],
+            remove: vec![],
+            state: Some("opaque-state".into()),
+          }],
+        }),
+      }),
+    },
+  };
+  let mut direct = FactoryStageSourceUpdate {
+    source,
+    reporter,
+    connection: None,
+    effects: octacity_server_factory::WorkSourceStatusEffects {
+      status: "configured-outcome".into(),
+      add: vec![],
+      remove: vec!["owned-label".into()],
+      state: None,
+    },
+  };
+  assert!(validate_issue_push_producers(&mapping, status_id, &[Some(direct.clone())]).is_err());
+  direct.effects.remove = vec!["unrelated-label".into()];
+  assert!(validate_issue_push_producers(&mapping, status_id, &[Some(direct.clone())]).is_ok());
+  direct.effects.state = Some("another-opaque-state".into());
+  assert!(validate_issue_push_producers(&mapping, status_id, &[Some(direct.clone())]).is_err());
+  // Different authorized resource aliases can still name this already-qualified native item.
+  direct.source.resource = exact("resource-alias");
+  direct.reporter.resource = direct.source.resource.clone();
+  assert!(validate_issue_push_producers(&mapping, status_id, &[Some(direct.clone())]).is_err());
+  // An opaque legacy Reporter cannot establish an independently managed field scope.
+  assert!(validate_issue_push_producers(&mapping, status_id, &[None]).is_err());
+  let mut no_effects = mapping.clone();
+  let effect = &mut no_effects
+    .definition
+    .status
+    .as_mut()
+    .unwrap()
+    .push
+    .as_mut()
+    .unwrap()
+    .statuses[0];
+  effect.add.clear();
+  effect.state = None;
+  assert!(validate_issue_push_producers(&no_effects, status_id, &[None]).is_ok());
 }

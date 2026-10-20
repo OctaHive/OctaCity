@@ -5,6 +5,8 @@ use octacity_server_store::testing as store_testing;
 use octacity_server_store::*;
 use std::sync::{Arc, Mutex};
 
+#[path = "factory_issue_source_push_tests.rs"]
+pub(crate) mod issue_push;
 #[path = "factory_stage_reporting_tests.rs"]
 mod stage_reporting;
 
@@ -138,9 +140,23 @@ fn harness_with_result(
   permissions: FactoryPermissionSet,
   schema: FlowDataSchema,
 ) -> Harness {
-  let fixture = store_testing::factory_node_journal_contract_fixture();
-  let work = fixture.admission.work;
-  let input_schema = FlowDataSchema::new(key("action.input"), key("v1"), FlowValueSchema::Boolean).unwrap();
+  harness_for_input(
+    binding,
+    permissions,
+    schema,
+    store_testing::factory_node_journal_contract_fixture().admission.work,
+    FlowDataSchema::new(key("action.input"), key("v1"), FlowValueSchema::Boolean).unwrap(),
+    serde_json::json!(true),
+  )
+}
+fn harness_for_input(
+  binding: FlowActionBinding,
+  permissions: FactoryPermissionSet,
+  schema: FlowDataSchema,
+  work: WorkEnvelope,
+  input_schema: FlowDataSchema,
+  input_value: serde_json::Value,
+) -> Harness {
   let outcome = FlowOutcomeDefinition::new(key("done"), FlowOutcomeKind::Success, schema.reference().clone());
   let budget = BudgetLimit::new(4, 1000, 100, 100, 10000).unwrap();
   let node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
@@ -192,7 +208,7 @@ fn harness_with_result(
     admitted.root_run(),
     admitted.initial_cycle(),
     key("any_action_name"),
-    FlowPayload::new(&input_schema, serde_json::json!(true)).unwrap(),
+    FlowPayload::new(&input_schema, input_value).unwrap(),
   )
   .unwrap();
   let target = FactoryNodeTarget {

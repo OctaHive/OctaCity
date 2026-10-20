@@ -543,7 +543,14 @@ fn commit_issue_revision(
     operation,
     issue.id,
     |transaction| {
-      let push = transaction
+      // Only the original sealed command may opt a pipeline action into projection.
+      let reviewed_producer = history.as_ref().is_none_or(|h| h.pipeline.is_none())
+        || transaction
+          .issues
+          .moves
+          .get(key)
+          .is_some_and(|r| r.request.allows_push_intent());
+      let mut push = transaction
         .issues
         .current
         .get(&(issue.project_id, issue.id))
@@ -553,7 +560,17 @@ fn commit_issue_revision(
             .policies
             .get(&issue.id)
             .and_then(|policy| policy.push_intent(previous, issue))
-        });
+        })
+        .filter(|_| reviewed_producer);
+      if operation != StoreOperation::AdoptIssueWorkflow
+        && let Some(push) = &mut push
+      {
+        push.desired =
+          transaction
+            .issues
+            .sources
+            .desired_push(push, issue, audit, key.caller_key(), history.as_ref())?;
+      }
       transaction
         .issues
         .current

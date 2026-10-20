@@ -6,6 +6,8 @@ use octacity_server_store::{
   RetainedIssueStatusCommand, TransitionIssueIntent,
 };
 use std::sync::Arc;
+#[path = "factory_issue_source_push.rs"]
+mod source_push;
 
 /// Installed provider-neutral action. The host supplies accepted attribution and current policy;
 /// neither the binding nor projected input can select a principal, permission or target Issue.
@@ -57,8 +59,10 @@ fn authorized_error(error: ManagementHandlerError<ApplicationError>) -> Applicat
 }
 
 #[async_trait::async_trait]
-impl<S: IssueStore + IssueExecutionStore, F: FactoryRunStore> FactoryFlowActionPlugin
-  for FactoryIssueStatusAction<S, F>
+impl<
+  S: octacity_server_store::IssueSourceMappingStore + IssueExecutionStore,
+  F: FactoryRunStore + octacity_server_store::FactorySourceStore,
+> FactoryFlowActionPlugin for FactoryIssueStatusAction<S, F>
 {
   fn identity(&self) -> ImmutableReference {
     self.identity.clone()
@@ -184,6 +188,11 @@ impl<S: IssueStore + IssueExecutionStore, F: FactoryRunStore> FactoryFlowActionP
         return Err(invalid());
       }
       RetainedIssueStatusCommand {
+        push_review: Some(
+          self
+            .review_source_push(&snapshot, &issue, &selection, request.input)
+            .await?,
+        ),
         selection: selection.clone(),
         provenance: IssuePipelineActionProvenance {
           issue_id: issue.id,

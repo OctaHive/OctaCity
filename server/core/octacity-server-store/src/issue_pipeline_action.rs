@@ -46,12 +46,20 @@ pub struct IssuePipelineStatusSelection {
   /// Declared accepted outcome, not arbitrary prose or a phase label.
   pub outcome: FactoryKey,
 }
+/// Exact push policy reviewed alongside a configured action; absence is a reviewed value too.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct IssuePushReview {
+  /// Original mapping, or an explicitly unlinked/local-only action.
+  pub mapping: Option<octacity_server_factory::ImmutableReference>,
+}
 /// Accepted internal producer input; intentionally not deserializable as a management body.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AcceptedIssueStatusAction {
   provenance: IssuePipelineActionProvenance,
   selection: IssuePipelineStatusSelection,
   evidence: Option<IssuePipelineEvidence>,
+  push_review: Option<IssuePushReview>,
 }
 impl AcceptedIssueStatusAction {
   /// Receives immutable facts from an already accepted trusted action, never model payloads.
@@ -69,7 +77,17 @@ impl AcceptedIssueStatusAction {
       provenance,
       selection,
       evidence: None,
+      push_review: None,
     })
+  }
+  /// Pins the policy qualified at action acceptance; this cannot itself authorize a writer.
+  pub fn with_push_mapping_review(mut self, mapping: Option<octacity_server_factory::ImmutableReference>) -> Self {
+    self.push_review = Some(IssuePushReview { mapping });
+    self
+  }
+  /// Original reporting review, retained by the same command/replay record.
+  pub fn push_mapping_review(&self) -> Option<&IssuePushReview> {
+    self.push_review.as_ref()
   }
   /// Borrows the exact immutable operator selection.
   pub fn selection(&self) -> &IssuePipelineStatusSelection {
@@ -86,6 +104,11 @@ impl AcceptedIssueStatusAction {
   }
 }
 impl TransitionIssue {
+  /// Legacy sealed pipeline commands remain local; later attachment cannot add a producer.
+  pub fn allows_push_intent(&self) -> bool {
+    self.source.is_none() && self.pipeline_action().is_none_or(|a| a.push_mapping_review().is_some())
+  }
+
   /// Constructs an ordinary manual command, with no caller-selectable pipeline authority.
   pub fn manual(
     intent: TransitionIssueIntent,
@@ -122,6 +145,7 @@ impl TransitionIssue {
   /// Stores original accepted metadata without serializing evidence authority flags.
   pub fn retained_pipeline_command(&self) -> Option<RetainedIssueStatusCommand> {
     self.pipeline_action().map(|action| RetainedIssueStatusCommand {
+      push_review: action.push_review.clone(),
       intent: self.intent.clone(),
       selection: action.selection.clone(),
       provenance: action.provenance.clone(),
@@ -140,6 +164,9 @@ pub fn issue_status_operation_key(operation_id: FactoryDigest) -> IdempotencyKey
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RetainedIssueStatusCommand {
+  /// Original push review; legacy sealed commands contain no such review.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub push_review: Option<IssuePushReview>,
   /// Original Issue/status/workflow preconditions; recovery cannot select a new head.
   pub intent: TransitionIssueIntent,
   /// Exact operator-published direct edge and outcome.
@@ -165,6 +192,7 @@ impl RetainedIssueStatusCommand {
     let mut provenance = self.provenance.clone();
     let selected = std::mem::take(&mut provenance.evidence);
     let mut accepted = AcceptedIssueStatusAction::for_selection(self.selection.clone(), provenance)?;
+    accepted.push_review = self.push_review.clone();
     if !selected.is_empty() {
       accepted = accepted.with_evidence(snapshot, &selected)?;
     }
