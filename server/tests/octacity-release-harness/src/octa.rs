@@ -283,7 +283,7 @@ impl CodexCompatibility {
         version: capabilities.octa_version.clone(),
         protocol: 2,
         manifest: "plugins/codex.plugin.yml".to_owned(),
-        capabilities: vec![CODEX_TOOL_AUTHORIZATION_CAPABILITY.to_owned()],
+        capabilities: self.plugin.capabilities.clone(),
       },
       executable: CodexExecutableCompatibility {
         product: "codex-cli".to_owned(),
@@ -297,7 +297,13 @@ impl CodexCompatibility {
         hook_event: "PreToolUse".to_owned(),
       },
     };
-    if self != &expected {
+    if self != &expected
+      || !self
+        .plugin
+        .capabilities
+        .iter()
+        .any(|capability| capability == CODEX_TOOL_AUTHORIZATION_CAPABILITY)
+    {
       return Err(invalid("unsupported Octa Codex compatibility identity"));
     }
     let plugin = plugins

@@ -54,6 +54,22 @@ class NativeStageError(RuntimeError):
     """A native input set or installation cannot be prepared safely."""
 
 
+def _run_native_command(
+    command: list[str], operation: str, *, env: dict[str, str] | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Keep checked native-tool diagnostics instead of hiding their captured stderr."""
+
+    try:
+        return subprocess.run(
+            command, check=True, capture_output=True, text=True, env=env
+        )
+    except subprocess.CalledProcessError as error:
+        raise NativeStageError(
+            f"{operation} failed (exit {error.returncode}): "
+            f"{(error.stderr or 'no diagnostic on stderr').strip()}"
+        ) from error
+
+
 def sha256(path: Path) -> str:
     """Return the lowercase SHA-256 digest of one regular file."""
 
@@ -470,19 +486,9 @@ def validate_native_installation(
             "ALL_PROXY": "http://127.0.0.1:9",
             "NO_PROXY": "",
         }
-        try:
-            result = subprocess.run(
-                [str(agent), "validate", str(config)],
-                check=True,
-                capture_output=True,
-                text=True,
-                env=environment,
-            )
-        except subprocess.CalledProcessError as error:
-            raise NativeStageError(
-                f"staged Agent validation failed (exit {error.returncode}): "
-                f"{(error.stderr or 'no diagnostic on stderr').strip()}"
-            ) from error
+        result = _run_native_command(
+            [str(agent), "validate", str(config)], "staged Agent validation", env=environment
+        )
         if "configuration is valid" not in result.stdout:
             raise NativeStageError("staged Agent did not validate the offline fixture")
 
@@ -494,7 +500,7 @@ def derive_job_spec_policy(
 ) -> dict[str, Any]:
     """Derive a bounded signing policy from the exact installed executor assets."""
 
-    result = subprocess.run(
+    result = _run_native_command(
         [
             str(policy_helper),
             "job-spec-policy",
@@ -509,9 +515,7 @@ def derive_job_spec_policy(
             "--validity-seconds",
             str(DEFAULT_JOB_SPEC_VALIDITY_SECONDS),
         ],
-        check=True,
-        capture_output=True,
-        text=True,
+        "JobSpec policy derivation",
     )
     if len(result.stdout.encode("utf-8")) > MAX_JOB_SPEC_POLICY_BYTES:
         raise NativeStageError("generated JobSpec policy exceeds its size limit")

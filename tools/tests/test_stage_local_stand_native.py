@@ -26,7 +26,6 @@ assert SPEC and SPEC.loader
 STAGER = importlib.util.module_from_spec(SPEC)
 sys.modules[SPEC.name] = STAGER
 SPEC.loader.exec_module(STAGER)
-REAL_DERIVE_JOB_SPEC_POLICY = STAGER.derive_job_spec_policy
 REVISION = "a" * 40
 
 
@@ -72,11 +71,6 @@ class NativeStandStagingTests(unittest.TestCase):
             "octa": {"version": self.document["native"]["octa"]["version"]},
             "validity": 900,
         }
-        policy = mock.patch.object(
-            STAGER, "derive_job_spec_policy", return_value=self.policy
-        )
-        policy.start()
-        self.addCleanup(policy.stop)
 
     def create_inputs(self, root: Path):
         document = deepcopy(self.document)
@@ -200,7 +194,7 @@ class NativeStandStagingTests(unittest.TestCase):
             directory.rmdir()
         return document
 
-    def native_processes(self, *, validation_succeeds: bool = True):
+    def native_processes(self, *, validation_succeeds: bool = True, policy_succeeds: bool = True):
         """Replace macOS binaries with their observable process contract."""
 
         def run(command, **kwargs):
@@ -232,6 +226,14 @@ class NativeStandStagingTests(unittest.TestCase):
                 return subprocess.CompletedProcess(
                     command, 0, stdout="configuration is valid\n"
                 )
+            if arguments[:1] == ["job-spec-policy"] and executable.startswith(
+                "octacity-release-harness-"
+            ):
+                if not policy_succeeds:
+                    raise subprocess.CalledProcessError(
+                        1, command, stderr="JobSpec policy fixture rejected\n"
+                    )
+                return subprocess.CompletedProcess(command, 0, stdout=json.dumps(self.policy))
             raise AssertionError(f"unexpected native process: {command!r}")
 
         return mock.patch.object(STAGER.subprocess, "run", side_effect=run)
@@ -478,26 +480,33 @@ class NativeStandStagingTests(unittest.TestCase):
             self.assertEqual(list((root / "install").iterdir()), [])
 
     def test_failed_validation_never_publishes_a_partial_installation(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary)
-            inputs_root = root / "inputs"
-            inputs_root.mkdir()
-            document = self.create_inputs(inputs_root)
-            destination = root / "install/root"
-            with (
-                self.native_processes(validation_succeeds=False),
-                self.assertRaisesRegex(STAGER.NativeStageError, "agent validation fixture rejected"),
-            ):
-                STAGER.install_native_bundle(
-                    inputs_root,
-                    destination,
-                    document,
-                    self.entries,
-                    REVISION,
-                    REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in",
-                )
-            self.assertFalse(destination.exists())
-            self.assertEqual(list(destination.parent.glob(".root.staging-*")), [])
+        for failure, diagnostic in (
+            ("agent", "agent validation fixture rejected"),
+            ("policy", "JobSpec policy fixture rejected"),
+        ):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as temporary:
+                root = Path(temporary)
+                inputs_root = root / "inputs"
+                inputs_root.mkdir()
+                document = self.create_inputs(inputs_root)
+                destination = root / "install/root"
+                with (
+                    self.native_processes(
+                        validation_succeeds=failure != "agent",
+                        policy_succeeds=failure != "policy",
+                    ),
+                    self.assertRaisesRegex(STAGER.NativeStageError, diagnostic),
+                ):
+                    STAGER.install_native_bundle(
+                        inputs_root,
+                        destination,
+                        document,
+                        self.entries,
+                        REVISION,
+                        REPOSITORY / "deployment/local-stand/fixtures/agent.toml.in",
+                    )
+                self.assertFalse(destination.exists())
+                self.assertEqual(list(destination.parent.glob(".root.staging-*")), [])
 
     def test_reuse_rejects_installed_file_tampering(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -535,7 +544,7 @@ class NativeStandStagingTests(unittest.TestCase):
         result = mock.Mock(stdout=encoded)
 
         with mock.patch.object(STAGER.subprocess, "run", return_value=result) as run:
-            policy = REAL_DERIVE_JOB_SPEC_POLICY(
+            policy = STAGER.derive_job_spec_policy(
                 installation,
                 self.document,
                 helper,

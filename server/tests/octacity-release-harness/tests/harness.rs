@@ -308,7 +308,7 @@ fn derives_and_verifies_server_policy_from_the_agent_assets() {
 }
 
 #[test]
-fn derives_policy_for_a_macos_agent_with_a_linux_arm64_octa_guest() {
+fn derives_policy_for_a_macos_agent_with_an_octa_060_linux_guest() {
   let temporary = tempfile::tempdir().unwrap();
   let bundles = fixture(temporary.path());
   let agent_manifest_path = bundles.agent.join("release-manifest.json");
@@ -325,12 +325,26 @@ fn derives_policy_for_a_macos_agent_with_a_linux_arm64_octa_guest() {
   let capabilities_path = bundles.octa.join("octa-runner-capabilities.json");
   let mut capabilities: Value = serde_json::from_slice(&fs::read(&capabilities_path).unwrap()).unwrap();
   capabilities["platform"] = json!("linux-aarch64");
+  capabilities["octa_version"] = json!("0.6.0");
   write_json(&capabilities_path, &capabilities);
   let lock_path = bundles.octa.join("Octa.lock");
   let lock = fs::read_to_string(&lock_path)
     .unwrap()
-    .replace("platforms: [linux-x86_64]", "platforms: [linux-aarch64]");
-  fs::write(lock_path, lock).unwrap();
+    .replace("platforms: [linux-x86_64]", "platforms: [linux-aarch64]")
+    .replace("0.5.1", "0.6.0")
+    .replace(
+      "capabilities: [codex.blocking-pre-tool-authorization.v1]",
+      "capabilities: [codex.blocking-pre-tool-authorization.v1, public-command-file-observations.v1]",
+    );
+  fs::write(&lock_path, &lock).unwrap();
+  let compatibility_path = bundles.octa.join("codex-compatibility.json");
+  let mut compatibility: Value = serde_json::from_slice(&fs::read(&compatibility_path).unwrap()).unwrap();
+  compatibility["plugin"]["version"] = json!("0.6.0");
+  compatibility["plugin"]["capabilities"] = json!([
+    "codex.blocking-pre-tool-authorization.v1",
+    "public-command-file-observations.v1"
+  ]);
+  write_json(&compatibility_path, &compatibility);
   write_checksums(&bundles.octa);
   let runtime = AgentRuntimeBundles {
     agent: bundles.agent,
@@ -344,7 +358,42 @@ fn derives_policy_for_a_macos_agent_with_a_linux_arm64_octa_guest() {
   )
   .unwrap();
 
-  assert_eq!(serde_json::to_value(policy).unwrap()["octa"]["version"], "0.5.1");
+  assert_eq!(serde_json::to_value(policy).unwrap()["octa"]["version"], "0.6.0");
+
+  // An independently checksummed declaration must still agree with the locked plugin.
+  compatibility["plugin"]["capabilities"] = json!(["codex.blocking-pre-tool-authorization.v1"]);
+  write_json(&compatibility_path, &compatibility);
+  write_checksums(&runtime.octa);
+  assert!(
+    derive_job_spec_policy(
+      &runtime,
+      &AgentRuntimePlatforms::new("macos-arm64", "linux-aarch64"),
+      900
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("differs from Octa.lock")
+  );
+
+  // Matching declarations of observations alone cannot replace blocking authorization.
+  compatibility["plugin"]["capabilities"] = json!(["public-command-file-observations.v1"]);
+  write_json(&compatibility_path, &compatibility);
+  fs::write(
+    &lock_path,
+    lock.replace("codex.blocking-pre-tool-authorization.v1, ", ""),
+  )
+  .unwrap();
+  write_checksums(&runtime.octa);
+  assert!(
+    derive_job_spec_policy(
+      &runtime,
+      &AgentRuntimePlatforms::new("macos-arm64", "linux-aarch64"),
+      900
+    )
+    .unwrap_err()
+    .to_string()
+    .contains("unsupported Octa Codex compatibility identity")
+  );
 }
 
 #[test]
