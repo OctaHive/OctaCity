@@ -51,6 +51,21 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     parameters.push(json!({"name":"collection","in":"path","required":true,"schema":{"type":"string","enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|kind| kind.as_str()).collect::<Vec<_>>()}}));
   }
   match operation.parameter_profile {
+    ParameterProfile::FactoryActionObservation => {
+      for name in ["project_id", "issue_id"] {
+        parameters.push(json!({
+          "name":name, "in":"query", "required":false,
+          "schema":{"type":"string","format":"uuid"},
+        }));
+      }
+    }
+    ParameterProfile::FactoryActions => parameters.extend([
+      cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_OBSERVATION_CURSOR_BYTES),
+      limit_parameter(
+        octacity_server_application::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
+        super::super::adapter::DEFAULT_PAGE_LIMIT,
+      ),
+    ]),
     ParameterProfile::IssueJournal | ParameterProfile::IssueJournalEvents | ParameterProfile::IssueJournalDetail => {
       if operation.parameter_profile != ParameterProfile::IssueJournalDetail {
         parameters.extend([cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_OBSERVATION_CURSOR_BYTES),

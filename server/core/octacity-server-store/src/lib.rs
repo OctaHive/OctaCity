@@ -102,6 +102,8 @@ pub use factory_build_acceptance::{
   FactoryBuildCancellationStore, MAX_FACTORY_BUILD_JOBS,
 };
 mod factory_action;
+mod factory_action_queue;
+pub use factory_action_queue::*;
 mod factory_action_projection;
 pub use factory_action_projection::*;
 #[cfg(any(test, feature = "test-support"))]

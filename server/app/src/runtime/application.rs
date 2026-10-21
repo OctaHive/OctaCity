@@ -229,6 +229,17 @@ pub(super) fn management_application(
     )),
   );
   let factory_queries = authorized_queries(&management_policy, factory);
+  let factory_actions = authorized_queries(
+    &management_policy,
+    Arc::new(
+      octacity_server_application::FactoryActionHandlers::new(
+        store.clone(),
+        management_policy.clone(),
+        Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      )
+      .with_issue_associations(store.clone()),
+    ),
+  );
   let issues = Arc::new(octacity_server_application::IssueHandlers::new(
     store.clone(),
     management_policy.clone(),
@@ -351,6 +362,10 @@ pub(super) fn management_application(
     ),
   )
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?
+  .with_factory_actions(
+    octacity_server_api_rest::v1::FactoryActionManagementApplication::new(factory_actions.clone())
+      .with_observations(factory_actions),
+  )
   .with_issue_workflows(octacity_server_api_rest::v1::IssueWorkflowManagementApplication::new(
     workflow_commands,
     workflow_queries,

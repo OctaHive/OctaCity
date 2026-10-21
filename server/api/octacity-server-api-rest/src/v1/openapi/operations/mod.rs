@@ -104,6 +104,8 @@ pub(crate) enum ParameterProfile {
   IssueJournalDetail,
   FactoryConfigurationChoices,
   FactoryDiagnostics,
+  FactoryActions,
+  FactoryActionObservation,
   WorkSourceInputChoices,
   WorkSourceConfigurations,
   WorkSourceDiagnostics,

@@ -36,6 +36,12 @@ const routesByTemplate = {
     path: CONSOLE_PATHS.factory,
     retainedText: 'Requested change',
   },
+  [CONSOLE_PATHS.factoryActions]: {
+    heading: 'Operator actions',
+    id: 'factory-actions',
+    path: CONSOLE_PATHS.factoryActions,
+    retainedText: 'Execution actions',
+  },
   [CONSOLE_PATHS.factoryRun]: {
     heading: 'Factory Run',
     id: 'factory-run',

@@ -33,6 +33,7 @@ mod definition_query;
 mod discovery;
 mod external_trigger;
 mod factory_action_projection;
+mod factory_action_queue;
 mod factory_admission;
 mod factory_configuration;
 mod factory_discovery;

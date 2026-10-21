@@ -410,6 +410,7 @@ const fn supports_collection(kind: ManagementResourceKind) -> bool {
     kind,
     ManagementResourceKind::ControlPlane
       | ManagementResourceKind::Project
+      | ManagementResourceKind::Issue
       | ManagementResourceKind::Trigger
       | ManagementResourceKind::AgentPool
       | ManagementResourceKind::Agent

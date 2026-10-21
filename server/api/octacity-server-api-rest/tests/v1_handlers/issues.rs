@@ -1001,3 +1001,6 @@ mod code_reviews;
 
 #[path = "issues/result_panels.rs"]
 mod result_panels;
+
+#[path = "issues/factory_actions.rs"]
+mod factory_actions;

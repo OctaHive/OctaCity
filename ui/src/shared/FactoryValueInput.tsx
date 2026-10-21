@@ -1,8 +1,8 @@
-import type { components } from '../../../.generated/api/schema';
-import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
-import { usePresentation } from '../../app/presentation/PresentationProvider';
-import { SelectMenu } from '../../shared/SelectMenu';
-import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
+import type { components } from '../../.generated/api/schema';
+import { FACTORY_AUTHORING_SCHEMAS } from '../../.generated/api/factory-authoring';
+import { usePresentation } from '../app/presentation/PresentationProvider';
+import { SelectMenu } from './SelectMenu';
+import { useDraftRowKeys } from './useDraftRowKeys';
 
 export type FactoryValueSchema = components['schemas']['FactoryFlowValueSchema'];
 const MAX_DEPTH = FACTORY_AUTHORING_SCHEMAS.FactoryFlowValueSchema['x-max-depth'];

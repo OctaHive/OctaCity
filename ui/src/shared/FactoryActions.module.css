@@ -1,0 +1,17 @@
+.queue {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+.item {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+  min-width: 0;
+}
+.queue p {
+  overflow-wrap: anywhere;
+}
+.queue fieldset {
+  min-width: 0;
+}

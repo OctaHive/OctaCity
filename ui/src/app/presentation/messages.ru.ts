@@ -1,6 +1,29 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'factoryActions.workspace': 'Действия оператора',
+  'factoryActions.allProjects': 'Все проекты',
+  'factoryActions.project': 'Действия в этом проекте',
+
+  'factoryActions.title': 'Действия выполнения',
+  'factoryActions.refresh': 'Обновить действия',
+  'factoryActions.count': 'Доступно в индексе: {count}',
+  'factoryActions.incomplete':
+    'Покрытие действий неполное. Часть выполнений ещё не проиндексирована.',
+  'factoryActions.empty': 'Действий без ответа нет.',
+  'factoryActions.task': 'Открыть задачу',
+  'factoryActions.review': 'Проверить действие',
+  'factoryActions.more': 'Ещё действия',
+  'factoryActions.first': 'Первая страница',
+  'factoryActions.selected': 'Выбранное действие выполнения',
+  'factoryActions.run': 'Открыть исходный Run',
+  'factoryActions.state.waiting': 'Ожидается проверенный ответ.',
+  'factoryActions.state.recorded': 'Ожидается обработка владельцем выполнения.',
+  'factoryActions.state.consumed':
+    'Обработано владельцем выполнения; это не означает принятие задачи.',
+  'factoryActions.state.historical': 'Историческое или недоступное для действия состояние.',
+  'factoryActions.recorded': 'Команда записана; ожидается обработка владельцем выполнения.',
+
   'factory.diag.candidates': 'Кандидаты',
   'issueResults.noExpiry': 'Без срока удаления',
   'issueResults.externalCI': 'Внешние CI',

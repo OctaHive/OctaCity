@@ -146,6 +146,16 @@ export async function installOperatorFixture(page: Page) {
     const configuration = configurationFixture();
     const run = runFixture();
     const owner = configuration.configuration.reference.project_id;
+    if (url.pathname === '/api/v1/factory-actions') {
+      await fulfill(route, {
+        total: 0,
+        coverage: 'complete',
+        items: [],
+        next_cursor: null,
+        observed_at: 12,
+      });
+      return;
+    }
     if (url.pathname === '/api/v1/factory-runs') {
       await fulfill(route, { items: [run], total: 1, next_cursor: null });
       return;

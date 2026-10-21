@@ -1,4 +1,27 @@
 export const enMessages = {
+  'factoryActions.workspace': 'Operator actions',
+  'factoryActions.allProjects': 'All Projects',
+  'factoryActions.project': 'Actions in this Project',
+
+  'factoryActions.title': 'Execution actions',
+  'factoryActions.refresh': 'Refresh actions',
+  'factoryActions.count': 'Indexed matching actions: {count}',
+  'factoryActions.incomplete':
+    'Action coverage is incomplete. Some executions have not been indexed.',
+  'factoryActions.empty': 'No unanswered actions.',
+  'factoryActions.task': 'Open task',
+  'factoryActions.review': 'Review action',
+  'factoryActions.more': 'More actions',
+  'factoryActions.first': 'First page',
+  'factoryActions.selected': 'Selected execution action',
+  'factoryActions.run': 'Open original Run',
+  'factoryActions.state.waiting': 'Waiting for a reviewed response.',
+  'factoryActions.state.recorded': 'Awaiting execution owner.',
+  'factoryActions.state.consumed':
+    'Processed by execution owner; this does not establish task acceptance.',
+  'factoryActions.state.historical': 'Historical or no longer actionable target.',
+  'factoryActions.recorded': 'Command recorded; awaiting execution owner.',
+
   'factory.diag.candidates': 'Candidates',
   'issueResults.noExpiry': 'No expiry',
   'issueResults.externalCI': 'External CI',

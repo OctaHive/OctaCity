@@ -1,3 +1,5 @@
+import { FactoryActions } from '../../shared/FactoryActions';
+import type { FactoryActionsApi } from '../../api/factoryActions';
 import type { IssueResultPanelsApi } from './resultPanelsApi';
 import { IssueCodeReviews } from './IssueCodeReviews';
 import type { IssueCodeReviewsApi, IssueReviewConnections } from './codeReviewApi';
@@ -36,6 +38,7 @@ import styles from './Issues.module.css';
 const sections = ['overview', 'activity', 'runs', 'results', 'actions'] as const;
 export function IssueView({
   factory,
+  actions,
   activity,
   panels,
   sources,
@@ -48,6 +51,7 @@ export function IssueView({
   executionSources,
 }: {
   factory: IssueRunReader;
+  actions?: FactoryActionsApi | undefined;
   activity: IssueActivityApi;
   panels: IssueResultPanelsApi;
   sources: IssueSourcesApi;
@@ -63,6 +67,7 @@ export function IssueView({
   return projectId && issueId ? (
     <Card
       factory={factory}
+      actions={actions}
       panels={panels}
       activity={activity}
       sources={sources}
@@ -81,6 +86,7 @@ export function IssueView({
 }
 function Card({
   factory,
+  actions,
   activity,
   panels,
   sources,
@@ -95,6 +101,7 @@ function Card({
   issueId,
 }: {
   factory: IssueRunReader;
+  actions?: FactoryActionsApi | undefined;
   activity: IssueActivityApi;
   panels: IssueResultPanelsApi;
   sources: IssueSourcesApi;
@@ -375,6 +382,7 @@ function Card({
                 </>
               ) : (
                 <>
+                  {actions ? <FactoryActions api={actions} scope={{ projectId, issueId }} /> : null}
                   {choices.isPending ? (
                     <QueryLoadingNotice label={t('issues.moves')} />
                   ) : !choices.data ? (

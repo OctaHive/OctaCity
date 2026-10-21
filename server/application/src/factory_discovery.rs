@@ -223,7 +223,7 @@ impl<S: FactoryDiscoveryStore + 'static> crate::ManagementQueryUseCase<GetFactor
 }
 
 impl<S: FactoryDiscoveryStore> FactoryDiscoveryHandlers<S> {
-  async fn visible_run_summary(
+  pub(crate) async fn visible_run_summary(
     &self,
     context: &crate::ManagementRequestContext,
     run_id: octacity_server_factory::FactoryRunId,

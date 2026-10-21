@@ -78,6 +78,8 @@ mod definition_discovery;
 mod error;
 mod execution;
 mod factory;
+mod factory_actions;
+pub use factory_actions::FactoryActionManagementApplication;
 pub mod integrations;
 mod internal_trigger;
 mod issue;
@@ -205,6 +207,7 @@ pub struct ManagementApplication {
   issue_activity: Option<IssueActivityManagementApplication>,
   issue_result_panels: Option<IssueResultPanelManagementApplication>,
   issue_discussion: Option<IssueDiscussionManagementApplication>,
+  factory_actions: Option<FactoryActionManagementApplication>,
   issue_sources: Option<IssueSourceManagementApplication>,
   issue_code_reviews: Option<IssueCodeReviewManagementApplication>,
   projects: ProjectManagementApplication,
@@ -289,6 +292,7 @@ impl ManagementApplication {
       issues: None,
       issue_executions: None,
       issue_discussion: None,
+      factory_actions: None,
       issue_activity: None,
       issue_result_panels: None,
       issue_sources: None,

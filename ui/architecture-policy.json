@@ -35,9 +35,9 @@
   "designTokenStylesheet": "src/styles/tokens.css",
   "bundleBudgets": {
     "entryJavaScriptBytes": 460800,
-    "totalJavaScriptBytes": 1157120,
+    "totalJavaScriptBytes": 1167360,
     "totalCssBytes": 87040,
-    "totalStaticBytes": 1245184,
-    "assetCount": 53
+    "totalStaticBytes": 1255424,
+    "assetCount": 57
   }
 }

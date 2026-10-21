@@ -1,3 +1,4 @@
+import { CONSOLE_PATHS } from '../../app/routes';
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -35,6 +36,7 @@ export function FactoryLandingView({
   return (
     <section className={styles.workspace}>
       <h1>{t('section.factory')}</h1>
+      <Link to={CONSOLE_PATHS.factoryActions}>{t('factoryActions.workspace')}</Link>
       <p>{t('factory.introduction')}</p>
       {projectId ? (
         <FactoryDefinitions

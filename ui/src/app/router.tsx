@@ -1,3 +1,4 @@
+import { createFactoryActionsApi, type FactoryActionsApi } from '../api/factoryActions';
 import {
   issueResultPanelsApi,
   type IssueResultPanelsApi,
@@ -91,6 +92,9 @@ const ProjectsLandingView = lazy(async () => {
 const IssuesView = lazy(async () => ({
   default: (await import('../features/issues/IssuesView')).IssuesView,
 }));
+const FactoryActionsView = lazy(async () => ({
+  default: (await import('../features/factory/FactoryActionsView')).FactoryActionsView,
+}));
 const IssueView = lazy(async () => ({
   default: (await import('../features/issues/IssueView')).IssueView,
 }));
@@ -130,6 +134,7 @@ function WorkspaceLandingView({
 export interface ConsoleRouteDependencies {
   readonly integrationsApi?: IntegrationsApi;
   readonly factoryApi: FactoryApi;
+  readonly factoryActionsApi: FactoryActionsApi;
   readonly attentionApi: OperatorAttentionApi;
   readonly auditApi: AuditApi;
   readonly buildApi: BuildDiagnosticsApi;
@@ -151,6 +156,7 @@ const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   issueActivityApi,
   issueResultPanelsApi,
   factoryApi,
+  factoryActionsApi: createFactoryActionsApi(),
   attentionApi: operatorAttentionApi,
   auditApi,
   buildApi: buildDiagnosticsApi,
@@ -230,6 +236,15 @@ export function createConsoleRoutes(
           ),
         },
         {
+          path: childPath(CONSOLE_PATHS.factoryActions),
+          element: defer(
+            <FactoryActionsView
+              api={dependencies.factoryActionsApi}
+              projects={dependencies.projectsApi}
+            />,
+          ),
+        },
+        {
           path: childPath(CONSOLE_PATHS.factoryRun),
           element: defer(<FactoryRunView api={dependencies.factoryApi} />),
         },
@@ -249,6 +264,7 @@ export function createConsoleRoutes(
           element: defer(
             <IssueView
               factory={dependencies.factoryApi}
+              actions={dependencies.factoryActionsApi}
               panels={dependencies.issueResultPanelsApi}
               activity={dependencies.issueActivityApi}
               sources={dependencies.issueSourcesApi}

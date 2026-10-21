@@ -1,3 +1,4 @@
+import { CONSOLE_PATHS } from '../../app/routes';
 import { ChevronDown, ChevronRight, Factory } from 'lucide-react';
 import { useQuery } from '@tanstack/react-query';
 import { Link, matchPath, useLocation } from 'react-router-dom';
@@ -103,6 +104,7 @@ export function FactoryExplorer(props: Props) {
         };
   return (
     <>
+      <Link to={CONSOLE_PATHS.factoryActions}>{t('factoryActions.workspace')}</Link>
       <FactoryFiltersPanel />
       <div className={styles.tree} role="tree" aria-label={t('factory.hierarchy')}>
         {[

@@ -44,16 +44,18 @@ export function sectionForPath(pathname: string): ConsoleSection {
   if (matchesPathSegment(pathname, CONSOLE_PATHS.integrations)) {
     return consoleSections.find(({ id }) => id === 'integrations')!;
   }
-  const sectionId: ConsoleSectionId = matchesPathSegment(pathname, CONSOLE_PATHS.factory)
-    ? 'factory'
-    : matchesPathSegment(pathname, CONSOLE_PATHS.builds)
-      ? 'builds'
-      : matchesPathSegment(pathname, CONSOLE_PATHS.agents) ||
-          matchesPathSegment(pathname, CONSOLE_PATHS.agentPools)
-        ? 'agents'
-        : matchesPathSegment(pathname, CONSOLE_PATHS.audit)
-          ? 'audit'
-          : 'projects';
+  const sectionId: ConsoleSectionId =
+    matchesPathSegment(pathname, CONSOLE_PATHS.factoryActions) ||
+    matchesPathSegment(pathname, CONSOLE_PATHS.factory)
+      ? 'factory'
+      : matchesPathSegment(pathname, CONSOLE_PATHS.builds)
+        ? 'builds'
+        : matchesPathSegment(pathname, CONSOLE_PATHS.agents) ||
+            matchesPathSegment(pathname, CONSOLE_PATHS.agentPools)
+          ? 'agents'
+          : matchesPathSegment(pathname, CONSOLE_PATHS.audit)
+            ? 'audit'
+            : 'projects';
   return consoleSections.find(({ id }) => id === sectionId) ?? projectsSection;
 }
 

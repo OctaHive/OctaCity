@@ -1,3 +1,7 @@
+import {
+  createFactoryNodeControls,
+  type FactoryNodeControlApi,
+} from '../../api/factoryNodeControls';
 import type { components, operations } from '../../../.generated/api/schema';
 import type { IdempotencyRequestHeaders } from '../../api/client';
 import type { VersionedMutationHeaders } from '../../shared/confirmedIntent';
@@ -14,26 +18,9 @@ export type FactoryFilters = Omit<
   NonNullable<operations['listFactoryRuns']['parameters']['query']>,
   'after' | 'limit'
 >;
-export interface FactoryApi {
+export interface FactoryApi extends FactoryNodeControlApi {
   cancelRun(
     runId: string,
-    headers: VersionedMutationHeaders,
-  ): Promise<components['schemas']['FactoryRunControlResponse']>;
-  retryNode(
-    runId: string,
-    nodeId: string,
-    headers: VersionedMutationHeaders,
-  ): Promise<components['schemas']['FactoryRunControlResponse']>;
-  respondNode(
-    runId: string,
-    nodeId: string,
-    request: components['schemas']['FactoryNodeResponseRequest'],
-    headers: VersionedMutationHeaders,
-  ): Promise<components['schemas']['FactoryRunControlResponse']>;
-  requestNodeOperation(
-    runId: string,
-    nodeId: string,
-    request: components['schemas']['FactoryNodeOperationRequest'],
     headers: VersionedMutationHeaders,
   ): Promise<components['schemas']['FactoryRunControlResponse']>;
   listDiagnostics(
@@ -124,36 +111,7 @@ export const factoryApi: FactoryApi = {
     );
     return requireManagementResponse(data);
   },
-  async retryNode(runId, nodeId, headers) {
-    const { data } = await managementApi.POST(
-      '/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/retries',
-      {
-        body: {},
-        params: { path: { factory_run_id: runId, node_attempt_id: nodeId }, header: headers },
-      },
-    );
-    return requireManagementResponse(data);
-  },
-  async respondNode(runId, nodeId, body, headers) {
-    const { data } = await managementApi.POST(
-      '/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/responses',
-      {
-        body,
-        params: { path: { factory_run_id: runId, node_attempt_id: nodeId }, header: headers },
-      },
-    );
-    return requireManagementResponse(data);
-  },
-  async requestNodeOperation(runId, nodeId, body, headers) {
-    const { data } = await managementApi.POST(
-      '/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/requests',
-      {
-        body,
-        params: { path: { factory_run_id: runId, node_attempt_id: nodeId }, header: headers },
-      },
-    );
-    return requireManagementResponse(data);
-  },
+  ...createFactoryNodeControls(),
   async listDiagnostics(runId, collection, cursor, signal) {
     const { data } = await managementApi.GET('/api/v1/factory-runs/{factory_run_id}/{collection}', {
       params: {

@@ -134,7 +134,11 @@ pub use factory_codex_observation::project_codex_node_output;
 pub use factory_codex_tool_risk::FactoryCodexToolRiskPolicy;
 pub use factory_codex_usage::FactoryCodexUsagePolicy;
 mod factory_action;
+mod factory_action_observation;
 mod factory_action_projection;
+mod factory_action_queue;
+pub use factory_action_observation::*;
+pub use factory_action_queue::*;
 #[cfg(test)]
 mod factory_codex_observation_tests;
 #[cfg(test)]

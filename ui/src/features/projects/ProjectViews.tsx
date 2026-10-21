@@ -89,6 +89,9 @@ function SelectedProject({ api, projectId }: ProjectsViewProps & { projectId: st
         onRetry={project.refetch}
       />
       <nav aria-label={t('issues.tasks')} className={styles.headingRow}>
+        <Link to={`${CONSOLE_PATHS.factoryActions}?project_id=${encodeURIComponent(projectId)}`}>
+          {t('factoryActions.workspace')}
+        </Link>
         <Link className={styles.primaryLink} to={issueWorkflowsPath(projectId)}>
           {t('workflow.title')}
         </Link>

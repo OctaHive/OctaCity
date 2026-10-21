@@ -159,3 +159,188 @@ fn action_projection_revalidates_expiry_and_rejects_forged_read_bounds() {
     assert_eq!(store.factory_run_snapshot(snapshot.run.id()).await.unwrap(), snapshot);
   });
 }
+
+#[test]
+fn action_response_projection_publishes_only_its_pinned_response_shapes() {
+  crate::factory_flow_tests::run_ready(async {
+    let (store, snapshot) = pending(human_fixture()).await;
+    let work = store.factory_action_projection_work(1).await.unwrap().items[0];
+    store.refresh_factory_action_projection(work, at(12)).await.unwrap();
+    let page = store
+      .read_factory_action_projection(FactoryActionProjectionQuery::new(snapshot.run.id(), at(12), None, 1).unwrap())
+      .await
+      .unwrap();
+    let description = serde_json::to_value(&page.items[0]).unwrap();
+    assert_eq!(description["kind"]["schemas"].as_array().map(Vec::len), Some(1));
+    assert_eq!(
+      description["kind"]["schemas"][0]["reference"]["identity"],
+      "operator.response"
+    );
+    assert_eq!(description["kind"]["schemas"][0]["shape"]["type"], "boolean");
+    assert!(
+      !description.to_string().contains("operator.confirmation"),
+      "input schemas/bodies are not response contracts"
+    );
+  });
+}
+
+#[test]
+fn exact_action_observation_separates_recorded_intent_from_owner_consumption_and_replay() {
+  crate::factory_flow_tests::run_ready(async {
+    let (store, snapshot) = pending(human_fixture()).await;
+    let attempt = snapshot.flow.attempts[0].id();
+    struct Clock(std::sync::atomic::AtomicI64);
+    impl crate::FactoryExecutionClock for Clock {
+      fn now(&self) -> Result<octacity_server_domain::Timestamp, crate::ApplicationError> {
+        Ok(at(self.0.load(std::sync::atomic::Ordering::SeqCst)))
+      }
+    }
+    let clock = Arc::new(Clock(std::sync::atomic::AtomicI64::new(12)));
+    let queries = crate::AuthorizedQueryHandler::new(
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(crate::FactoryActionHandlers::new(
+        store.clone(),
+        Arc::new(crate::TrustedNetworkManagementPolicy),
+        clock.clone(),
+      )),
+    );
+    let query = crate::GetFactoryNodeActionQuery {
+      run_id: snapshot.run.id(),
+      node_attempt_id: attempt,
+      project_id: None,
+      issue_id: None,
+    };
+    let waiting = queries.handle_query(&context(), query.clone()).await.unwrap();
+    assert_eq!(serde_json::to_value(waiting.state).unwrap(), "waiting");
+    assert_eq!(waiting.description.unwrap().node_attempt_id, attempt);
+    let controls = FactoryControlHandlers::new(store.clone());
+    let command = crate::SubmitFactoryNodeResponseCommand {
+      run_id: snapshot.run.id(),
+      node_attempt_id: attempt,
+      outcome: key("approved"),
+      value: serde_json::json!(true),
+      expected_version: snapshot.run.version(),
+      idempotency_key: "observed-answer".parse().unwrap(),
+      requested_at: at(12),
+    };
+    let accepted = controls
+      .execute_management_command(
+        &context(),
+        &ManagementAuthorizationGrant::new(ManagementVisibility::all()),
+        command.clone(),
+      )
+      .await
+      .unwrap();
+    let recorded = queries.handle_query(&context(), query.clone()).await.unwrap();
+    assert_eq!(serde_json::to_value(recorded.state).unwrap(), "recorded");
+    assert_eq!(recorded.recorded_version, Some(accepted.version));
+    assert!(recorded.description.is_none());
+    let source = store.factory_run_snapshot(snapshot.run.id()).await.unwrap();
+    assert!(source.flow.completions.is_empty());
+    let ownership = claim(store.as_ref(), &source, 13).await;
+    let owner = FactoryFlowRunner::new(
+      store.clone(),
+      Arc::new(NoExternalEffects),
+      Arc::new(Inputs),
+      crate::factory_node_test_support::clock(),
+    );
+    for time in 14..=16 {
+      owner
+        .reconcile_flow(snapshot.run.id(), ownership.id, at(time))
+        .await
+        .unwrap();
+    }
+    clock.0.store(17, std::sync::atomic::Ordering::SeqCst);
+    let consumed = queries.handle_query(&context(), query).await.unwrap();
+    assert_eq!(serde_json::to_value(consumed.state).unwrap(), "consumed");
+    assert_eq!(consumed.recorded_version, Some(accepted.version));
+    let replay = controls
+      .execute_management_command(
+        &context(),
+        &ManagementAuthorizationGrant::new(ManagementVisibility::all()),
+        command,
+      )
+      .await
+      .unwrap();
+    assert_eq!(replay.disposition, MutationDisposition::Replayed);
+    assert_eq!(replay.version, accepted.version);
+  });
+}
+
+#[test]
+fn issue_action_observation_checks_original_association_before_offering_a_response() {
+  crate::factory_flow_tests::run_ready(async {
+    let admission = human_fixture();
+    let (store, snapshot) = pending(admission.clone()).await;
+    let project = snapshot.work.subject().project_id();
+    let issues = crate::issue_test_support::manual_issue_store(project).await;
+    let mut cards = Vec::new();
+    for key in ["first-card", "other-card"] {
+      cards.push(
+        issues
+          .create_issue(testing::management_mutation(CreateIssue {
+            assignees: Default::default(),
+            id: octacity_server_domain::IssueId::generate(),
+            intent: CreateIssueIntent {
+              project_id: project,
+              planning: Default::default(),
+              content: IssueContent {
+                title: key.into(),
+                description: String::new(),
+                acceptance: None,
+                priority: None,
+              },
+            },
+            idempotency_key: key.parse().unwrap(),
+            created_at: at(2),
+          }))
+          .await
+          .unwrap()
+          .issue,
+      );
+    }
+    issues
+      .associate_issue_work(testing::management_mutation(AssociateIssueWork {
+        project_id: project,
+        issue_id: cards[0].id,
+        request_id: None,
+        admission,
+      }))
+      .await
+      .unwrap();
+    struct Clock;
+    impl crate::FactoryExecutionClock for Clock {
+      fn now(&self) -> Result<octacity_server_domain::Timestamp, crate::ApplicationError> {
+        Ok(at(12))
+      }
+    }
+    let handlers = crate::FactoryActionHandlers::new(
+      store.clone(),
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    )
+    .with_issue_associations(issues.clone());
+    let query = crate::GetFactoryNodeActionQuery {
+      run_id: snapshot.run.id(),
+      node_attempt_id: snapshot.flow.attempts[0].id(),
+      project_id: Some(project),
+      issue_id: Some(cards[0].id),
+    };
+    let queries =
+      crate::AuthorizedQueryHandler::new(Arc::new(crate::TrustedNetworkManagementPolicy), Arc::new(handlers));
+    let observed = queries.handle_query(&context(), query.clone()).await.unwrap();
+    assert_eq!(serde_json::to_value(observed.state).unwrap(), "waiting");
+    assert!(
+      !observed.accepted_candidate,
+      "a declared gate is not proof of candidate acceptance"
+    );
+    let mut foreign = query;
+    foreign.issue_id = Some(cards[1].id);
+    assert!(
+      queries.handle_query(&context(), foreign).await.is_err(),
+      "another visible card cannot offer this execution's response"
+    );
+    assert_eq!(store.factory_run_snapshot(snapshot.run.id()).await.unwrap(), snapshot);
+    assert_eq!(issues.issue(project, cards[0].id, None).await.unwrap(), cards[0]);
+  });
+}

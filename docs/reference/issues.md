@@ -1812,3 +1812,73 @@ and cannot cancel Factory execution or fail its readiness. Source controls still
 revalidate their own authority independently of this index.
 
 See [task 7.2 verification](../../openspec/changes/add-factory-work-card/verification-7.2.md).
+
+
+### Shared action REST and Console
+
+The read-only resources use the same persisted action projection and eligibility
+contract:
+
+- `GET /api/v1/factory-actions` spans visible Projects and Runs.
+- `GET /api/v1/projects/{project_id}/factory-actions` restricts the collection to
+  one Project.
+- `GET /api/v1/projects/{project_id}/issues/{issue_id}/actions` spans the original
+  Work associations of one visible Issue, including parallel executions.
+- `GET /api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/action` reads
+  the exact authoritative attempt. Optional `project_id` and `issue_id` selection
+  checks ownership and the original Issue/Work association independently; an Issue
+  selection requires its Project.
+
+Collection pages accept `limit` (default 25, maximum 100) and a bounded opaque
+`after` cursor. Current Run, Project and linked Issue visibility are applied before
+coverage, count, ordering and pagination. Hidden linked Issues never become
+unlinked Work. Count and rows share one repeatable-read database observation.
+Ordering is by Run ID and node-attempt ID. Cursors bind the selected Project/Issue,
+security partition and all current read scopes; a changed scope requires a new
+first page. These are current collections, not frozen historical snapshots.
+
+`total` counts matching indexed actions; `coverage: incomplete` explicitly warns
+that uncovered source versions may add actions. Complete empty coverage means no
+matching unanswered action at that observation. Expiry uses trusted server time,
+not a query-supplied timestamp. All four resources return `Cache-Control: no-store`
+and never repair an index, reserve execution or contact a provider.
+
+Response descriptions include only the frozen data schemas referenced by their
+permitted declared outcomes, plus the existing optional typed operation binding.
+They omit gate inputs, Context, response values and operator reasons. Migration
+0092 clears the older derived projection format so the existing worker rebuilds
+these shapes from authoritative admitted definitions; it changes no Run or Issue.
+
+The exact observation distinguishes `waiting`, `recorded`, `consumed` and
+`historical`. `recorded_version` and `recorded_at` retain original acceptance
+provenance without the command body. A recorded response becomes consumed when its
+owner records completion; a retry becomes consumed when its corresponding new
+attempt exists. Neither state means that an Issue was accepted. An independent
+`accepted_candidate` fact comes from the existing exact-current-candidate Decision
+summary and supplies the existing bound-operation form; it grants no merge or
+publication authority.
+
+Console exposes `/factory-actions`, an optional `project_id` selection, links from
+Factory/Project navigation, and the same workspace in the card's Actions section.
+Actions remain separate by exact Run and attempt. The observation cache also
+binds the selected Project/Issue; target-wide invalidation refreshes every scoped
+observation of that Run/attempt. Selection uses `action_run` and `action_attempt`;
+paging uses `action_after`. Reload can recover recorded or
+historical targets even after they leave the unanswered collection. Private form
+values and replay identities stay in memory and never enter these URLs or browser
+storage. Navigating between card/Project scopes discards drafts.
+
+The workspace shares schema-driven response/operation forms and the original
+response, request and retry clients with the Run page. It reads the selected
+attempt again before review and confirms its strong Run version using the existing
+`If-Match` and `Idempotency-Key` controls. Issue edits do not replace that version or
+retarget another execution. Transport retry preserves the confirmed intent;
+conflict/precondition failure requires refresh and a new review. Background reads
+retain visible data with an explicit notice and disable new commands while stale.
+Recorded targets refresh through the existing operator polling interval while the
+view is open. Coverage alone never establishes command authority: existing guarded
+Run commands always revalidate eligibility and concurrency.
+
+Manual creation/editing and existing Run controls remain usable without a provider
+or the optional action service. There is no separate close-action or approve-Issue
+setter. See [task 7.3 verification](../../openspec/changes/add-factory-work-card/verification-7.3.md).

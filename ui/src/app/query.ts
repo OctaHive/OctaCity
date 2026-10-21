@@ -1,6 +1,15 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factoryActionsRoot: ['factory-actions'] as const,
+  factoryActions: (project: string | null, issue: string | null, after: string | null) =>
+    ['factory-actions', project, issue, after] as const,
+  // Without scope this is the invalidation prefix for every observation of the exact target.
+  factoryAction: (
+    run: string | null,
+    attempt: string | null,
+    scope?: { projectId: string | null; issueId: string | null },
+  ) => ['factory-action', run, attempt, ...(scope ? [scope] : [])] as const,
   issueExternalChecks: (project: string, issue: string, review: string, after: string | null) =>
     ['issues', project, issue, 'external-checks', review, after] as const,
   issueArtifactContent: (

@@ -1,6 +1,7 @@
 use octacity_server_application::{
-  CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand, ListFactoryDiagnosticsQuery, RetryFactoryNodeCommand,
-  SubmitFactoryNodeResponseCommand, ValidateFactoryFlowDataSchemaQuery,
+  CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand, GetFactoryNodeActionQuery, ListFactoryActionsQuery,
+  ListFactoryDiagnosticsQuery, ListIssueFactoryActionsQuery, RetryFactoryNodeCommand, SubmitFactoryNodeResponseCommand,
+  ValidateFactoryFlowDataSchemaQuery,
 };
 use std::{any::TypeId, collections::BTreeSet, sync::Arc};
 
@@ -502,6 +503,10 @@ fn registered_routes() -> ManagementRoutes {
     .post::<SubmitFactoryNodeResponseCommand, _, _>("submitFactoryNodeResponse", submit_factory_node_response)
     .post::<RetryFactoryNodeCommand, _, _>("retryFactoryNode", retry_factory_node)
     .post::<ConfirmFactoryNodeOperationCommand, _, _>("confirmFactoryNodeOperation", confirm_factory_node_operation)
+    .get::<GetFactoryNodeActionQuery, _, _>("getFactoryNodeAction", super::factory_actions::observe)
+    .get::<ListFactoryActionsQuery, _, _>("listFactoryActions", super::factory_actions::global)
+    .get::<ListFactoryActionsQuery, _, _>("listProjectFactoryActions", super::factory_actions::project)
+    .get::<ListIssueFactoryActionsQuery, _, _>("listIssueFactoryActions", super::factory_actions::issue)
     .get::<ListFactoryRunsQuery, _, _>("listFactoryRuns", list_factory_runs)
     .get::<ListFactoryRunsQuery, _, _>("listProjectFactoryRuns", list_project_factory_runs)
     .post::<AdmitManualFactoryWorkCommand, _, _>("admitManualFactoryWork", admit_manual_factory_work)

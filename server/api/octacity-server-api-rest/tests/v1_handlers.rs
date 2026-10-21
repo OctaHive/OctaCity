@@ -209,6 +209,19 @@ macro_rules! unavailable_query {
   };
 }
 
+unavailable_query!(
+  octacity_server_application::ListFactoryActionsQuery,
+  "list_factory_actions"
+);
+unavailable_query!(
+  octacity_server_application::ListIssueFactoryActionsQuery,
+  "list_issue_factory_actions"
+);
+unavailable_query!(
+  octacity_server_application::GetFactoryNodeActionQuery,
+  "get_factory_node_action"
+);
+
 #[async_trait]
 impl ManagementQueryUseCase<GetOperationalMetadataQuery> for RecordingApplication {
   type Error = ApplicationError;
@@ -1555,6 +1568,10 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{job_id}/results/artifacts?work_id={build_id}&limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{job_id}/results/artifacts/{job_id}/content?work_id={build_id}&mode=preview"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{job_id}/code-reviews/{}/checks","ab".repeat(32)),None),
+    empty_request("GET", "/api/v1/factory-actions?limit=1", None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-actions?limit=1"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issues/{job_id}/actions?limit=1"), None),
+    empty_request("GET", &format!("/api/v1/factory-runs/{build_id}/nodes/{job_id}/action"), None),
   ]
 }
 
@@ -1732,6 +1749,10 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_issue_artifacts",
       "read_issue_artifact_content",
       "list_issue_external_checks",
+      "list_factory_actions",
+      "list_factory_actions",
+      "list_issue_factory_actions",
+      "get_factory_node_action",
     ]
   );
 }

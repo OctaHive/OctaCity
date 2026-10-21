@@ -1,6 +1,6 @@
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
-import { validFactoryValue } from './FactoryValueInput';
+import { validFactoryValue } from '../../shared/FactoryValueInput';
 
 export type DraftIssue = {
   field: string;

@@ -69,7 +69,7 @@ Every observable implementation, script, configuration, fixture and migration ch
 
 - [x] 7.1 Run existing eligibility/control behavior and characterize uncovered predicates first. Red/Green: specify exact Issue-associated action descriptions, then extract/reuse pure eligibility descriptors. Verify separate nested/parallel Run targets, candidate/contracts/deadlines, no Issue-state/phase-name dispatch and no retries beyond admitted policy.
 - [x] 7.2 Red/Green: specify derived action projection invalidation/backfill/restart before persistence/worker changes. Verify same-transaction invalidation, source-version fencing, expiry/cancellation/supersession, recorded-intent retirement, bounded coverage and stopped-worker isolation from Factory execution.
-- [ ] 7.3 Red/Green: specify Project/global/Issue action REST and Console journeys before adding them. Verify visibility before counts/order/cursors, exact Run `If-Match` plus scoped replay, at most one competing intent, winning replay after progress, no retargeting after Issue edits and recorded versus owner-consumed state without new approve/close setters.
+- [x] 7.3 Red/Green: specify Project/global/Issue action REST and Console journeys before adding them. Verify visibility before counts/order/cursors, exact Run `If-Match` plus scoped replay, at most one competing intent, winning replay after progress, no retargeting after Issue edits and recorded versus owner-consumed state without new approve/close setters.
 
 ## 8. Migrate Retain and Qualify the Complete Task Journey
 

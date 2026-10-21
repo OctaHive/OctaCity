@@ -269,3 +269,381 @@ async fn action_projection_recovers_publication_and_fences_source_versions_witho
   control_pool.close().await;
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn shared_action_queue_filters_visibility_before_counts_cursors_and_coverage() {
+  let database = TestDatabase::migrated().await;
+  let mut runs = Vec::new();
+  for _ in 0..3 {
+    let mut admission = human::human_fixture_with_contract(
+      FlowDataSchema::new(key("operator.response"), key("v1"), FlowValueSchema::Boolean).unwrap(),
+      None,
+      false,
+    );
+    let old = &admission.work;
+    admission.work = WorkEnvelope::new(
+      old.id(),
+      old.configuration().clone(),
+      ExternalWorkIdentity::new(old.id().to_string()).unwrap(),
+      old.subject().clone(),
+      old.artifacts().clone(),
+      WorkClassification::new(old.priority(), old.risk(), old.metadata().clone()),
+    )
+    .unwrap();
+    admission.run = FactoryRun::admitted(admission.run.id(), &admission.work);
+    let (store, _) = seed_projection_admission(&database, &admission).await;
+    let attempt = pending_gate(&store, &admission).await;
+    runs.push((admission, attempt));
+  }
+  runs.sort_by_key(|(a, _)| a.run.id());
+  let store = PostgresStore::new(database.pool.clone());
+  // The middle Run is hidden and deliberately unindexed. It must affect neither
+  // visible coverage nor a continuation spanning the two visible targets.
+  for i in [0, 2] {
+    let snapshot = store.factory_run_snapshot(runs[i].0.run.id()).await.unwrap();
+    store
+      .refresh_factory_action_projection(
+        FactoryActionProjectionWork {
+          run_id: snapshot.run.id(),
+          source_version: snapshot.run.version(),
+        },
+        time(12),
+      )
+      .await
+      .unwrap();
+  }
+  let mut query = ReadFactoryActionQueue {
+    project_id: None,
+    issue_id: None,
+    after: None,
+    limit: 1,
+    observed_at: time(12),
+    runs: FactoryRunListVisibility::restricted([runs[0].0.run.id(), runs[2].0.run.id()]).unwrap(),
+    issues: IssueListVisibility::all(),
+    projects: ProjectListVisibility::all(),
+  };
+  let first = store.read_factory_action_queue(query.clone()).await.unwrap();
+  assert_eq!(first.coverage, FactoryActionProjectionCoverage::Complete);
+  assert_eq!(first.total, 2);
+  assert_eq!(first.items.len(), 1);
+  assert_eq!(first.items[0].action.node_attempt_id, runs[0].1);
+  query.after = first.next;
+  let second = store.read_factory_action_queue(query.clone()).await.unwrap();
+  assert_eq!(second.total, 2);
+  assert_eq!(second.items.len(), 1);
+  assert_eq!(second.items[0].action.node_attempt_id, runs[2].1);
+  assert!(second.next.is_none());
+  query.after = None;
+  query.runs = FactoryRunListVisibility::all();
+  assert_eq!(
+    store.read_factory_action_queue(query.clone()).await.unwrap().coverage,
+    FactoryActionProjectionCoverage::Incomplete
+  );
+  query.projects = ProjectListVisibility::restricted([
+    runs[0].0.work.subject().project_id(),
+    runs[2].0.work.subject().project_id(),
+  ])
+  .unwrap();
+  assert_eq!(
+    store.read_factory_action_queue(query.clone()).await.unwrap().coverage,
+    FactoryActionProjectionCoverage::Complete
+  );
+  query.project_id = Some(runs[0].0.work.subject().project_id());
+  assert_eq!(store.read_factory_action_queue(query.clone()).await.unwrap().total, 1);
+  query.observed_at = time(101);
+  let expired = store.read_factory_action_queue(query).await.unwrap();
+  assert_eq!(expired.total, 0);
+  assert!(expired.items.is_empty());
+  assert!(expired.next.is_none());
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn action_response_shape_upgrade_invalidates_only_derived_rows_and_backfills_original_targets() {
+  let database = TestDatabase::empty().await;
+  octacity_server_store_postgres::MIGRATOR
+    .run_to(91, &database.pool)
+    .await
+    .unwrap();
+  let admission = human::human_fixture_with_contract(
+    FlowDataSchema::new(key("operator.response"), key("v1"), FlowValueSchema::Boolean).unwrap(),
+    None,
+    false,
+  );
+  let (store, _) = seed_projection_admission(&database, &admission).await;
+  let attempt = pending_gate(&store, &admission).await;
+  let before = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  let work = store.factory_action_projection_work(1).await.unwrap().items[0];
+  store.refresh_factory_action_projection(work, time(12)).await.unwrap();
+  // Exact old 7.2 index format: outcome references, without response shapes.
+  sqlx::query("UPDATE factory_action_items SET description=description #- '{kind,schemas}'")
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
+  let query = || FactoryActionProjectionQuery::new(admission.run.id(), time(12), None, 1).unwrap();
+  let uncovered = store.read_factory_action_projection(query()).await.unwrap();
+  assert_eq!(uncovered.coverage, FactoryActionProjectionCoverage::Incomplete);
+  assert!(uncovered.items.is_empty());
+  let resumed = store.factory_action_projection_work(1).await.unwrap().items[0];
+  assert_eq!(resumed, work);
+  store
+    .refresh_factory_action_projection(resumed, time(12))
+    .await
+    .unwrap();
+  let covered = store.read_factory_action_projection(query()).await.unwrap();
+  assert_eq!(covered.coverage, FactoryActionProjectionCoverage::Complete);
+  assert_eq!(covered.items[0].node_attempt_id, attempt);
+  assert_eq!(
+    serde_json::to_value(&covered.items[0]).unwrap()["kind"]["schemas"][0]["reference"]["identity"],
+    "operator.response"
+  );
+  assert_eq!(store.factory_run_snapshot(admission.run.id()).await.unwrap(), before);
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn issue_action_queue_keeps_parallel_targets_across_edits_and_competing_response_replay() {
+  let database = TestDatabase::migrated().await;
+  let admission = human::human_fixture_with_contract(
+    FlowDataSchema::new(key("operator.response"), key("v1"), FlowValueSchema::Boolean).unwrap(),
+    None,
+    false,
+  );
+  let (store, repository) = seed_projection_admission(&database, &admission).await;
+  let first = pending_gate(&store, &admission).await;
+  let old = &admission.work;
+  let work = WorkEnvelope::new(
+    WorkEnvelopeId::generate(),
+    old.configuration().clone(),
+    ExternalWorkIdentity::new("another-reviewed-execution").unwrap(),
+    old.subject().clone(),
+    old.artifacts().clone(),
+    WorkClassification::new(old.priority(), old.risk(), old.metadata().clone()),
+  )
+  .unwrap();
+  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+  let root = FlowRun::root(&run, admission.flow.closure().root()).unwrap();
+  let cycle = WorkflowCycle::initial(&root).unwrap();
+  let flow = AdmittedFlow::new(
+    admission.flow.closure().clone(),
+    admission.flow.limits().clone(),
+    root,
+    cycle,
+    admission.flow.wip_limits(),
+  )
+  .unwrap()
+  .with_data_schemas(admission.flow.data_schemas().to_vec())
+  .unwrap();
+  let another = PublishedFactoryAdmission {
+    work,
+    run,
+    flow,
+    admitted_at: time(1),
+  };
+  store
+    .admit_factory_work(testing::management_mutation(AdmitFactoryWork {
+      probe: FactoryAdmissionProbe {
+        source_scope: FactoryWorkSourceScope {
+          source: key("manual"),
+          security_scope: ManagementSecurityScope::trusted_network(),
+        },
+        external_identity: another.work.external_identity().clone(),
+        intent_digest: digest(3),
+        idempotency_key: idempotency("another-run"),
+      },
+      repository_version: repository.version,
+      work: another.work.clone(),
+      run: another.run.clone(),
+      flow: another.flow.clone(),
+      admitted_at: time(1),
+    }))
+    .await
+    .unwrap();
+  let second = pending_gate(&store, &another).await;
+  let project = admission.work.subject().project_id();
+  let issue = store
+    .create_issue(testing::management_mutation(CreateIssue {
+      assignees: Default::default(),
+      id: octacity_server_domain::IssueId::generate(),
+      intent: CreateIssueIntent {
+        project_id: project,
+        planning: Default::default(),
+        content: IssueContent {
+          title: "One persistent task".into(),
+          description: String::new(),
+          acceptance: None,
+          priority: None,
+        },
+      },
+      idempotency_key: idempotency("queue-card"),
+      created_at: time(2),
+    }))
+    .await
+    .unwrap()
+    .issue;
+  for admission in [admission.clone(), another.clone()] {
+    store
+      .associate_issue_work(testing::management_mutation(AssociateIssueWork {
+        project_id: project,
+        issue_id: issue.id,
+        request_id: None,
+        admission,
+      }))
+      .await
+      .unwrap();
+  }
+  for row in store.factory_action_projection_work(100).await.unwrap().items {
+    store.refresh_factory_action_projection(row, time(12)).await.unwrap();
+  }
+  let mut query = ReadFactoryActionQueue {
+    project_id: Some(project),
+    issue_id: Some(issue.id),
+    after: None,
+    limit: 100,
+    observed_at: time(12),
+    runs: FactoryRunListVisibility::all(),
+    projects: ProjectListVisibility::all(),
+    issues: IssueListVisibility::all(),
+  };
+  let before = store.read_factory_action_queue(query.clone()).await.unwrap();
+  assert_eq!(before.total, 2);
+  assert_eq!(
+    before
+      .items
+      .iter()
+      .map(|i| i.action.node_attempt_id)
+      .collect::<BTreeSet<_>>(),
+    [first, second].into_iter().collect()
+  );
+  assert!(
+    before
+      .items
+      .iter()
+      .all(|i| i.association.as_ref().unwrap().issue_id == issue.id)
+  );
+  let mut content = issue.content.clone();
+  content.title = "Edited without retargeting".into();
+  store
+    .edit_issue(testing::management_mutation(EditIssue {
+      intent: EditIssueIntent {
+        project_id: project,
+        id: issue.id,
+        expected_version: issue.version,
+        content,
+      },
+      idempotency_key: idempotency("queue-edit"),
+      edited_at: time(13),
+    }))
+    .await
+    .unwrap();
+  let after = store.read_factory_action_queue(query.clone()).await.unwrap();
+  assert_eq!(
+    after
+      .items
+      .iter()
+      .map(|i| (i.action.run_id, i.action.node_attempt_id, i.action.run_version))
+      .collect::<Vec<_>>(),
+    before
+      .items
+      .iter()
+      .map(|i| (i.action.run_id, i.action.node_attempt_id, i.action.run_version))
+      .collect::<Vec<_>>()
+  );
+  query.issue_id = None;
+  query.issues = IssueListVisibility::none();
+  let hidden = store.read_factory_action_queue(query.clone()).await.unwrap();
+  assert_eq!(hidden.total, 0);
+  assert!(hidden.items.is_empty());
+  assert!(hidden.next.is_none());
+  assert_eq!(hidden.coverage, FactoryActionProjectionCoverage::Complete);
+  let source = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  let response = |name: &str, value| {
+    testing::management_mutation(ApplyFactoryRunControl {
+      run_id: admission.run.id(),
+      expected_version: source.run.version(),
+      idempotency_key: idempotency(name),
+      intent: FactoryRunControlIntent::ResolveNode {
+        node_attempt_id: first,
+        outcome: key("approved"),
+        payload: FlowPayload::new(
+          admission
+            .flow
+            .data_schema(
+              admission
+                .flow
+                .closure()
+                .definition(admission.flow.closure().root())
+                .unwrap()
+                .nodes()[0]
+                .outcomes()[0]
+                .schema(),
+            )
+            .unwrap(),
+          serde_json::json!(value),
+        )
+        .unwrap(),
+      },
+      requested_at: time(14),
+    })
+  };
+  let one = response("competing-one", true);
+  let two = response("competing-two", false);
+  let (a, b) = tokio::join!(
+    store.apply_factory_run_control(one.clone()),
+    store.apply_factory_run_control(two.clone())
+  );
+  assert_ne!(a.is_ok(), b.is_ok(), "only one fresh response intent can win");
+  let (winning, receipt) = if let Ok(receipt) = a {
+    assert!(matches!(b, Err(StoreError::Conflict { .. })));
+    (one, receipt)
+  } else {
+    (two, b.unwrap())
+  };
+  let accepted = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  assert!(
+    accepted.flow.completions.is_empty(),
+    "command acceptance is not owner consumption"
+  );
+  let ownership = FactoryRunClaimRecord::new(
+    accepted.run.id(),
+    key("recovered.owner"),
+    FactoryClaim::new(FactoryClaimFence::new(digest(4)), time(15), time(1000)).unwrap(),
+  );
+  store
+    .claim_factory_run(ClaimFactoryRun {
+      run_id: accepted.run.id(),
+      expected_version: accepted.run.version(),
+      record: ownership.clone(),
+      audit: FactoryAuditFact::new(
+        accepted.run.id(),
+        AuditActorKind::Worker,
+        None,
+        key("factory.claimed"),
+        digest(4),
+        key("accepted"),
+        time(15),
+      ),
+    })
+    .await
+    .unwrap();
+  let claimed = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  store
+    .commit_factory_run_transition(testing::factory_flow_contract_transition(&claimed, &ownership, 16))
+    .await
+    .unwrap();
+  let replay = store.apply_factory_run_control(winning).await.unwrap();
+  assert_eq!(replay.disposition, MutationDisposition::Replayed);
+  assert_eq!(replay.version, receipt.version);
+  query.issues = IssueListVisibility::all();
+  query.issue_id = Some(issue.id);
+  query.observed_at = time(17);
+  let remaining = store.read_factory_action_queue(query).await.unwrap();
+  assert_eq!(remaining.total, 1);
+  assert_eq!(remaining.items[0].action.node_attempt_id, second);
+  assert_eq!(remaining.coverage, FactoryActionProjectionCoverage::Incomplete);
+  database.cleanup().await;
+}

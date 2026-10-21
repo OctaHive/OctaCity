@@ -6,6 +6,7 @@ mod core;
 mod definition_discovery;
 mod execution;
 mod factory;
+mod factory_actions;
 mod integrations;
 mod issue_activity;
 mod issue_code_reviews;

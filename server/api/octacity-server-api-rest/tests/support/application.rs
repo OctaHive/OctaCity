@@ -112,6 +112,7 @@ where
   let issue_commands = commands.clone();
   let issue_queries = queries.clone();
   let source_queries = queries.clone();
+  let action_queries = queries.clone();
   let source_commands = commands.clone();
   let workflow_commands = commands.clone();
   let workflow_queries = queries.clone();
@@ -161,6 +162,10 @@ where
     ),
   )
   .unwrap()
+  .with_factory_actions(
+    octacity_server_api_rest::v1::FactoryActionManagementApplication::new(action_queries.clone())
+      .with_observations(action_queries),
+  )
   .with_issue_workflows(octacity_server_api_rest::v1::IssueWorkflowManagementApplication::new(
     workflow_commands,
     workflow_queries,

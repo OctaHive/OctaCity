@@ -8,7 +8,7 @@ import {
   initialFactoryValue,
   validFactoryValue,
   type FactoryValueSchema,
-} from './FactoryValueInput';
+} from '../../shared/FactoryValueInput';
 afterEach(cleanup);
 
 it('edits one bounded object contract through typed fields, optional arrays and finite scalar choices', async () => {

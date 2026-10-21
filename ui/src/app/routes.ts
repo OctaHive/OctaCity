@@ -8,6 +8,7 @@ export const CONSOLE_PATHS = {
   build: '/builds/:buildId',
   builds: '/builds',
   factory: '/factory',
+  factoryActions: '/factory-actions',
   factoryRun: '/factory/:factoryRunId',
   integrations: '/integrations',
   integration: '/integrations/:integrationId',

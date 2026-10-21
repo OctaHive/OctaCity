@@ -12,6 +12,70 @@ use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::GetFactoryNodeActionQuery,
+    "GET",
+    "/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/action",
+    "getFactoryNodeAction",
+    "Factory",
+    "Read the exact original action without private response values or index repair",
+    None,
+    "FactoryNodeActionObservation",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::FactoryActionObservation)
+  .with_visibility::<octacity_server_application::GetFactoryNodeActionQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryActionsQuery,
+    "GET",
+    "/api/v1/factory-actions",
+    "listFactoryActions",
+    "Factory",
+    "Read current exact operator actions without reserving authority",
+    None,
+    "FactoryActionsPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListFactoryActionsQuery>()
+  .with_parameters(ParameterProfile::FactoryActions)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryActionsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-actions",
+    "listProjectFactoryActions",
+    "Factory",
+    "Read current exact operator actions without reserving authority",
+    None,
+    "FactoryActionsPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListFactoryActionsQuery>()
+  .with_parameters(ParameterProfile::FactoryActions)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListIssueFactoryActionsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/actions",
+    "listIssueFactoryActions",
+    "Factory",
+    "Read current exact operator actions without reserving authority",
+    None,
+    "FactoryActionsPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListIssueFactoryActionsQuery>()
+  .with_parameters(ParameterProfile::FactoryActions)
+  .with_no_store_response(),
+  operation!(
     ValidateFactoryFlowDataSchemaQuery,
     "POST",
     "/api/v1/flow-data-schemas/validate",
