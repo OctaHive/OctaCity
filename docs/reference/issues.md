@@ -1151,8 +1151,9 @@ Flow/cycle/node/input identities. Empty evidence or Decision pages do not mean
 success, and indeterminate outcomes stay indeterminate. Original Work references
 and separate completion/stop collections remain available without aggregating
 inputs, protected outputs or transcripts. The card pagination contracts below
-add a Run version fence over this existing reader; subject-bound detailed
-Checks/Artifacts expansion remains task 6.14.
+add a Run version fence over this existing reader. Subject-bound detailed
+[Checks/Artifacts inspection](#subject-bound-checks-and-artifacts-http-inspection)
+composes the same retained authorities.
 
 Optional `IssueExecutionJobHandlers` expands one Job only after verifying its
 exact retained Build-execution record under the selected Work and independently
@@ -1294,8 +1295,8 @@ unavailable returns `coverage: unavailable`, no records and no continuation.
 Readable bounded collections use `coverage: partial`, including an empty or final
 page. None of these observations establishes complete verification, successful
 checks or acceptance; original candidate/evidence/Decision subjects keep their
-own authority. The journal reader below reuses this coverage and paging;
-Checks/Artifacts expansion remains its separate task.
+own authority. The journal reader below and the typed Checks/Artifacts inspection
+reuse the same authorization, retained owners and Run-version fencing.
 
 Both routes use closed query grammar, no-store responses and the shared canonical
 opaque cursor codec (maximum 2,048 bytes). Cursors bind Project, Issue, current
@@ -1488,4 +1489,251 @@ Normalized observations contain only optional safe title/number/navigation/visib
 
 Migration `0090_issue_code_reviews.sql` adds independent scoped associations and append-only observations. PostgreSQL and memory use the ordinary Issue lock, scoped original receipts and shared atomic mutation publication. Association and observation continuations reuse the Issue history page ceiling and are bound to original membership, security partition and current metadata visibility; future positions/watermarks are invalid. Generic audit/outbox facts contain reference digests, without provider title/author/link bodies. Existing tasks, requirements, workflows, primary links and execution records are unaffected by migration or reads.
 
-These are the 6.9–6.10 application/storage seams. Installed provider adapter composition and review HTTP/Console surfaces are the subsequent 6.11–6.13 tasks; no review REST route or automatic provider poller is mounted by this slice.
+The 6.11 installed reader now implements this observation port through the existing verified Work adapter host and managed `RepositoryRead` grants. GitHub supplies bounded PR metadata and original-head check pages; a second fake MR vocabulary qualifies the same normalized contract. Current grants are rechecked after reads, without replacing original observation time. Native approval aggregation and complete check summaries remain unavailable. The [review reader protocol](protocols/work-source-reporter-v1.md#independently-installed-review-reader-v1) documents exact bounds, configuration and qualification limits. Review HTTP contracts are described below. Console review cards use the same retained contracts described below; no automatic review provider poller is installed.
+
+### Review attachment and retained HTTP observations
+
+The optional review surface uses the existing `IssueCodeReviewHandlers` and
+installed reader. It is separate from primary ticket Source/Reporter management
+and ordinary manual task creation.
+
+| Method | Path below `/api/v1/projects/{project_id}/issues/{issue_id}` | Behavior |
+| --- | --- | --- |
+| `POST` | `/code-reviews` | Explicit reviewed attachment; requires `Idempotency-Key`, strong Issue `If-Match` and a closed `{selection, binding?}` body. |
+| `GET` | `/code-reviews` | Bounded retained associations, last known facts and current protected-read availability. |
+| `POST` | `/code-reviews/{review_id}/observations` | Explicit refresh of that original association; requires `Idempotency-Key` and an empty `{}` body. |
+| `GET` | `/code-reviews/{review_id}/observations` | Bounded original per-head observation history. |
+
+`review_id` is the canonical association digest, not a provider URL or display
+number. `selection` contains the existing installed binding pins and exact native
+code repository/review identities. They must resolve under current independent
+read grants and metadata visibility. The existing integration/connection resource
+contracts supply installed references; callers supply no credential, transport
+endpoint, provider DTO, actor or provenance setter. Optional execution binding is
+verified through the existing exact execution/candidate reader and local repository
+mapping. Public attachment always records explicit operator provenance; it cannot
+submit or manufacture trusted Delivery provenance.
+
+Attachment requires Issue update permission. New attachment checks the current
+reviewed Issue version before spending a provider read, with the final atomic
+store precondition still protecting against an edit during that read. Stale new
+requests conflict (`409`); missing `If-Match` returns `428`. The first successful
+attachment returns `201`, and exact scoped replay returns `200` with the original
+association even after later Issue edits or protected-read revocation, provided
+current Issue/repository metadata remains visible. The existing accepted security
+partition scopes replay keys; reusing a key for another Issue or selection conflicts
+instead of retargeting the original receipt. Attachment does not increment the
+Issue revision, move status, create Work/Run or grant merge/forge write access.
+
+Refresh has no new mutable selection or Issue-version setter: its URI fixes the
+original association, while scoped idempotency returns the original observation
+receipt before another provider call. A new successful refresh appends facts for
+the observed head without replacing original execution lineage. Provider failure
+uses the existing safe dependency error (`503`), and a capability-unavailable outcome
+uses the existing response (`422`); metadata-hidden references remain `404`.
+Neither clears retained observations. Viewing metadata needs Issue view permission;
+a read does not reserve
+an execution, perform a refresh or call a provider.
+
+Successful responses use `Cache-Control: no-store`. Both GETs accept only `after`
+and `limit`, with the shared Issue history ceiling of 200 and common bounded
+opaque observation cursors. Metadata visibility is applied before membership,
+watermarks and paging. Continuation cannot cross Issues, associations, security
+partitions or changed metadata visibility. Hidden references do not become counts
+or protected metadata in a page.
+
+The generated schemas distinguish association provenance, optional exact lineage,
+retained observations and `available`/`blocked` protected-read availability.
+`available` states current read authority, not provider connectivity or fresh data.
+Use original `observed_at`, head and explicit refresh/error feedback when presenting
+staleness; GET makes no fresh-provider-result claim. Title, number, safe HTTPS link,
+visible author, external state/draft, head/base, counts and external review/check
+summaries preserve unsupported facts as `null`. A merged state or passing external
+check is informational and confers no Factory acceptance or Issue transition.
+
+Server composition accepts these independent ports through
+`ServerRuntime::start_with_issue_integrations` and `IssueRuntimeIntegrations`.
+Existing `start_with_issue_sources` delegates to the same composition. An absent
+review reader exposes no installed repository metadata and starts no provider
+operation; manual tasks and an empty review collection remain usable. An installed
+reader separately controls retained metadata visibility and current read grants,
+so revocation can report `blocked` without hiding already authorized history.
+Console review controls use these routes. Typed server-side Checks/Artifacts
+inspection and its Console panes are described below. These routes
+add no new credentials, schema migration or provider poller.
+
+
+### Console review cards and explicit attachment
+
+The card's compact **PR/MR summary** links to the same retained review collection
+in **Results**, preserving the selected execution. Review identity and bounded
+collection continuation are URL selections; opening a summary focuses that review
+card. Attachment is available in Results even when the task has no ticket Source,
+Factory target or Run.
+
+Cards render only supported retained title/number, provider installation/native
+repository, navigation link, visible author, state/draft, head/base, change counts,
+external review/check summary and original observation time. Unsupported values
+are **Not reported**, including unavailable counts rather than zero. Retained facts
+never claim fresh provider connectivity: current `available` read authority still
+shows the original observation time and an unconfirmed-freshness explanation;
+`blocked` disables a new refresh and preserves independently visible metadata.
+
+**Observation history** reads one bounded original-association page on demand.
+An observation for another head is historical. An association's original execution
+candidate remains visible and is explicitly historical when the current review
+head differs; newer external checks cannot relabel that candidate. Provenance
+Details distinguish trusted Delivery from explicit operator attachment and
+organizational links without verified execution lineage. External merged/check
+states imply neither a Factory Decision nor an Issue status move.
+
+**Attach PR/MR** uses the existing bounded connection list, Project grant and
+resource contracts. The form resolves the grant's exact retained connection
+version before composing installation/capability/configuration/resource pins;
+latest connection metadata cannot silently retarget an old grant. Only granted
+`repository_read` choices are selectable. A generic installed connection is not
+proof of an installed review reader; final capability/authority verification
+remains on the existing server. The operator enters a bounded native PR/MR ID,
+not an endpoint or credentials, then reviews the original task version and exact
+native repository/review selection. The shared confirmation freezes body,
+`If-Match` and idempotency key for transport replay. A changed Issue requires a
+new review. Connection setup links to Integrations and adds no token form.
+
+**Refresh PR/MR** is a separately confirmed observation command. Collection
+navigation and history expansion perform retained GETs only. Refresh failures
+keep last known facts with explicit stale feedback; failed retained GET refreshes
+use the common stale-data notice. Loading, empty, blocked, unavailable and failed
+sections remain independent of local task creation/editing and ticket Source
+synchronization. Drafts and keys remain in component memory; no review-specific
+browser persistence or automatic provider polling is added. English/Russian and
+390 px keyboard journeys qualify selection focus, confirmation cancellation and
+restoration, request preconditions and absence of horizontal page overflow.
+
+
+### Subject-bound Checks and Artifacts HTTP inspection
+
+All inspection is read-only. It reuses the original Issue/Work association,
+independent Factory visibility, retained Flow journal and `FactoryArtifactReader`;
+manual Issues require no Source, Reporter or installed execution capability.
+
+| GET below `/api/v1/projects/{project_id}/issues/{issue_id}` | Selection and result |
+| --- | --- |
+| `/results` | With `collection=candidates`, required `work_id` and optional `after`/`limit`, returns original Candidate and ChangeSet publications through the existing version-fenced result reader. `collection=changesets` retains its original ChangeSet-only semantics. |
+| `/results/checks` | Required `work_id` and `record`, where `record` is an exact retained candidate publication digest. Optional `after` and `limit` (1–100). Returns the original candidate, association, Run version and declared Factory checks. |
+| `/results/artifacts` | Required `work_id`; optional `after` and `limit` (1–100). Returns independently visible frozen inputs and retained produced outputs. Metadata expands only for the requested page; lists never fetch bytes. |
+| `/results/artifacts/{artifact_id}/content` | Required original `work_id` and explicit `mode=preview` or `mode=download`. Requires original inventory membership plus independent Artifact View and Download authority. |
+| `/code-reviews/{review_id}/checks` | Optional `after`. Returns at most one original-head observation per page from the existing review history; each contains at most 100 normalized CI items, narrowed by the installed profile. GET never contacts a provider. |
+
+All selectors are closed; no URL, provider endpoint, credential or status setter
+is accepted. Cursors are opaque and bound to the owning task/selection, security
+visibility and retained membership. Factory continuations additionally bind the
+Run version. A concurrent Run change discards the page as `stale`; execution
+state lost during a read is `unavailable`. Initial inaccessible selections return
+the ordinary authorization/not-found/dependency failure before protected snapshot
+reads. Coverage remains `partial` even at the last
+page: none of these projections establishes overall Factory acceptance.
+
+Factory Checks enumerate the frozen verification policy, including required
+checks with no observation (`missing`). A retained active Node Attempt is
+`running`; prepared input alone is `pending`. Confirmed technical stops retain
+failure/cancellation. Only a verified typed report matching the exact frozen
+input/plan can show pass/fail/indeterminate. An ordinary completed Build is
+insufficient. Producer and record references remain original, with independent
+Build/Job/Repository visibility; protected provenance becomes unavailable rather than a
+successful summary. Observation time is historical, not a freshness promise.
+
+External CI is explicitly `external_ci`, separate from Factory checks. An
+explicit attach/refresh may retain one bounded original-head page through the
+existing installed reader and its original total deadline. `has_more` means
+further provider facts were not retained; absent details mean unsupported or
+unavailable, and `required: null` means required-check policy was not established.
+Skipped, neutral, unknown or stale outcomes never become pass. Provider content
+URLs/cursors are omitted. New heads append observations without relabeling old
+heads or associated candidates. Review summaries and metadata history do not
+eagerly expand CI details; explicit refresh receipts may include them. Revoked
+protected reads retain independently visible history with `blocked` availability.
+
+Artifacts group frozen task/acceptance/specification references as
+`original_input`, and original verified outputs as `output`, `report` or raster
+`screenshot`. Project and Source inputs keep their actual publication origin,
+without fabricated Build provenance. Produced references retain their original
+record, candidate when known and Build/Attempt/Job producer. Safe metadata includes
+logical name, media type, publication and exclusive retention deadline; immutable
+references carry size/digest. Expired or unretained bytes remain expired/unavailable
+references. Opening an item cannot recreate them.
+
+Content is read only on explicit expansion through the existing bounded,
+Project/content/retention-verified reader. Downloads are attachments with the
+existing 64 MiB ceiling. Preview accepts valid UTF-8 plaintext/JSON/Markdown
+rendered as plaintext, or PNG/JPEG/WebP that is fully decoded and normalized to PNG.
+Preview has a 64 KiB encoded/output ceiling, 4096-pixel dimension ceiling and
+64 MiB decoder allocation budget. HTML, SVG, scripts, other media and disguised
+rasters are unsupported. Responses use `no-store`, `nosniff` and
+`Content-Security-Policy: default-src 'none'; sandbox`; preview/download does not
+return provider hotlinks or storage capabilities. Unsupported media types and
+references exceeding the selected read ceiling return the documented
+`422 capability_unavailable`; invalid or unavailable content returns the ordinary
+read failure without bytes. Retention is checked again
+before returning bytes. No upload or comment-attachment system is added.
+
+These REST contracts are generated into the existing Console client. The Results
+panes below use them without a provider client or a second result reader.
+
+### Console Checks and Artifacts
+
+Results keeps PR/MR cards and the existing Evidence and decisions view, with
+URL-addressed Checks and Artifacts panes. Properties links open those same panes;
+no compact summary fetches content. `result_pane` selects the pane. Factory reads
+require the explicitly selected `execution`; no latest Run is chosen implicitly.
+An admitted receipt preserves the executed requirements revision and warns when
+the Issue has changed. A manual task without execution can still inspect its
+independently linked external CI, edit requirements and create another task.
+
+Factory Checks selects a visible retained publication from the bounded common
+`candidates` collection, which includes both trusted `Candidate` capture/publication
+facts and `ChangeSet` publications in the existing ordered, visibility-filtered
+journal stream. The legacy `changesets` collection still returns only ChangeSets.
+`check_record` retains its original producing record;
+`candidate_after` and `check_after` page publication choices and checks separately.
+The page displays exact candidate, required/missing and all reported check states,
+original observation time and optional producer details. Build navigation retains
+both `attempt_id` and `job_id`, so a later retry cannot substitute the producing
+Attempt or Job.
+A partial or exhausted page cannot establish overall verification or acceptance.
+No provider title, model output or completed Build supplies a passing check.
+
+External CI uses the same retained review membership read as PR/MR cards and one
+independently pageable original-head observation per review. `ci_review_after`
+pages associations; `ci_review` and `ci_after` retain the selected review history.
+Older observed heads are explicitly historical relative to the review's latest
+retained head; even that latest observation has unconfirmed freshness. Unknown
+required policy, unsupported detail, truncated check lists and blocked read access
+remain explicit. Reading CI performs no provider refresh, merge or Issue move.
+
+Artifacts uses `artifact_after` for its own bounded metadata page. Original inputs,
+outputs, reports and screenshots show safe names, media type, size, origin and
+publication/retention times. A known `expires_at: null` means No expiry, distinct
+from unavailable metadata; it is not shown as an unknown deadline.
+Unavailable metadata receives a generic name; expired
+or unavailable references offer no content controls. Details expose only the
+original Artifact digest, candidate, producing record and actual Build/Attempt/Job
+when known. Project inputs do not acquire fabricated Build provenance.
+
+Preview and Download are explicit independent expansions through the existing
+same-origin content endpoint. Text remains plain text, including markup-like
+content; only server-normalized `image/png` becomes an image. HTML, SVG and other
+preview representations have no renderer. The server owns preview/download bounds,
+independent content rights, retention checks and raster validation. Downloads fetch
+an authorized binary Blob and expose an explicit Save file link. Object URLs and
+in-memory content are released on close/leave, and pending reads are cancelled;
+content does not refetch on focus/reconnect or enter browser persistence or URLs.
+No upload, comment attachment or provider hotlink was introduced.
+
+Each page owns loading, empty, partial, stale/unavailable and retry feedback.
+A failed refresh keeps the prior metadata visibly stale while disabling onward
+paging and closing Artifact content expansions. Another pane remains usable.
+Selecting another execution clears only its candidate/Artifact continuations,
+while navigating sections or reselecting the same execution preserves the original
+selection. English/Russian browser qualification covers keyboard activation,
+390/1280 px layouts, safe text/raster preview, explicit download and reload.
+See [task 6.15 verification](../../openspec/changes/add-factory-work-card/verification-6.15.md).

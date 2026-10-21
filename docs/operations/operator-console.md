@@ -282,14 +282,15 @@ Successful publication invalidates only the owning collections, version/current
 reads and audit projection. Existing Runs keep their pinned definitions.
 
 The Factory authoring schemas load with the Factory views. The initial bundle
-retains its 450 KiB limit. The complete console, including the optional workbench,
-has an 832 KiB JavaScript and 896 KiB static-output limit; runtime dependencies and
-product-asset allowances are unchanged. The complete 15.5–15.8 build measured
-about 803 KiB of JavaScript, including the safe Run journal, typed command editors
-and bilingual labels. The 832 KiB aggregate ceiling and 42-file cap bound that
-measured feature growth; the ordinary entry and static-output ceilings remain
-unchanged. Generated validation contracts omit documentation strings while the
-OpenAPI document retains them.
+retains its 450 KiB limit. The complete console, including the Issue journal and
+PR/MR cards and Checks/Artifacts panes, has a 1,130 KiB JavaScript and 1,216 KiB
+static-output ceiling. The measured result-panel build and qualification are
+recorded in [task 6.15 verification](../../openspec/changes/add-factory-work-card/verification-6.15.md).
+The 85 KiB CSS limit and 53-file cap remain unchanged. The result panels add
+20 KiB to each aggregate allowance over the review-card baseline; the architecture
+test rejects an additional unplanned 16 KiB chunk. Runtime dependencies, network
+and persistence boundaries and product-asset allowances remain unchanged. Generated
+validation contracts omit documentation strings while OpenAPI retains them.
 
 ### Manual Work and Run investigation
 

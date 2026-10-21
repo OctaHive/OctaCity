@@ -1,8 +1,9 @@
-# Work Source v1 and Reporter v1/v2 process contracts
+# Work Source v1, Reporter v1/v2 and review v1 process contracts
 
-`octacity-work-source-protocol` owns two independently versioned contracts.
+`octacity-work-source-protocol` owns independently versioned Source, Reporter and
+read-only review contracts.
 `octacity-server-work-source` hosts them through the existing verified adapter
-registry and process runner. These are server-side ticket integrations, separate
+registry and process runner. These are optional server-side integrations, separate
 from Agent source materialization and the Delivery protocol.
 
 Provider identities are open strings. Native ticket containers, item ids, display
@@ -319,3 +320,103 @@ neither private configuration JSON nor mapping paths. Factory freezes the typed
 logical mapping in its original input version and dispatches only accepted action
 effects through the same Reporter/outbox. No extra poller, write path or card command
 producer is introduced.
+
+
+## Independently installed review reader v1
+
+The optional `review` family shares the verified Work adapter host and JSONL
+server, not Source, Reporter or Delivery authority. Old manifests remain valid
+without it. To opt in, install these additional manifest sections (the digest is
+that of the private provider configuration, not a token):
+
+```toml
+[protocol.review]
+min = 1
+max = 1
+
+[capabilities.review]
+checks = true
+cancel = true
+credential_class = "vcs_read"
+configuration_digest = "<sha256-of-installed-provider-configuration>"
+```
+
+`observe`, `authorize`, optional `checks`, and same-read `cancel` are the closed
+operations. Merge, publication, projection, transition and execution commands do
+not exist. `authorize` checks private installed repository authority without
+provider calls; it returns no metadata. Version/profile/class/capability checks
+precede process dispatch. The existing `vcs_read` credential class is separately
+required; ticket read/update and Delivery classes cannot substitute it.
+
+The bounded intent pins a server-owned `read_id`, provider configuration digest,
+installed resource alias, native code repository, native repository-scoped review
+key, independent credential handle and permitted network hosts. Check pages also
+pin the original head, opaque continuation and caller-narrowed item/byte bounds.
+The wire accepts provider-neutral identities; GitHub uses a positive canonical PR
+number scoped to the verified native repository and a forty-hex-character commit
+SHA for checks. Display strings, ticket keys, branches and returned URLs never
+select an endpoint. Response subjects must echo the original read/profile/native
+repository/review; check heads must also match exactly.
+
+Frames retain the common 64 KiB request and 4 MiB response ceilings. Each check
+page is capped at 100 records and the caller's lower item/encoded byte limits.
+Missing facts and unknown provider states/conclusions remain unknown. A partial
+page, an empty list or a provider `success` conclusion cannot establish Factory
+acceptance, merge permission or an Issue transition. Check pages contain bounded
+IDs, names, visible producer, normalized lifecycle/conclusion and safe navigation;
+provider outputs, annotations, bodies and logs are excluded.
+
+The concrete GitHub reader extends the existing private `github-work.toml` with
+`capabilities.review_repositories = ["installed-code-alias"]`. The existing
+`repositories` table pins that alias to owner/name/native repository ID. Source
+and Reporter aliases remain independently configured. The same existing private
+credential directory and `GithubCredentialManager` repository-read class are used;
+there is no ambient-token fallback or new token form. Existing private file and
+network confinement checks apply.
+
+GitHub verifies the current repository ID, then reads one exact PR or one commit
+check-runs page through the shared bounded HTTPS transport. PR base-repository and
+number correspondence and check head correspondence are checked. Pagination
+reuses Source's logical cursor and Link validation. Its context includes original
+read/profile/repository/review/head and bounds; Link values are validated and
+never fetched as network authority. Each invocation makes one bounded attempt;
+rate-limit advice remains a closed failure with a bounded retry hint. The caller
+owns any subsequent explicit retry or continuation, under its original budget.
+The shared process host bounds deadlines, cooperative cancellation and process
+tree cleanup. GitHub review-approval aggregation and legacy commit-status
+aggregation are not implemented; review/check summary fields remain absent rather
+than inferring a complete result from one check page.
+
+`HostedIssueCodeReviewObservations` implements the existing application observation
+port. Its explicit profiles reuse `ManagedIntegrationAccess` with
+`IntegrationPurpose::RepositoryRead`, exact installation/configuration/native
+repository/executable pins and the accepted management security partition. Current
+managed grants are checked before and after the provider read under one original
+deadline. Observation time is captured before dispatch. Metadata visibility is
+local and separate from protected reads, so revocation can block refresh while
+retaining already visible history. Optional local Repository and exact frozen
+publication-policy mappings prove lineage correspondence without provider calls;
+missing mappings keep that provenance unavailable. No mapping grants forge writes.
+
+`ReadIssueCodeReviewChecks` exposes one original-head page to installed consumers.
+Explicit review attach/refresh can retain that bounded page as normalized external
+CI in the existing atomic review observation journal; it is not Factory evidence
+and does not synthesize acceptance or required-check policy. The [Issue review HTTP
+contracts](../issues.md#review-attachment-and-retained-http-observations) compose the
+existing retained observation port. [Console review cards](../issues.md#console-review-cards-and-explicit-attachment)
+use those retained reads and explicit commands. The [typed Checks inspection](../issues.md#subject-bound-checks-and-artifacts-http-inspection)
+reads retained original-head facts without provider dispatch; its
+[Console pane](../issues.md#console-checks-and-artifacts) uses the same bounded
+observations and preserves historical heads. Construction,
+server startup and retained-data queries do not create a poller, provider call,
+Factory target, Work or Run. Manual tasks require none of these optional profiles.
+
+Qualification covers the native GitHub adapter against a controlled HTTPS peer
+and its real JSONL process, plus a fake MR vocabulary through the same protocol,
+process host and managed-grant reader. It is not live GitHub qualification and
+makes no native GitLab/Jira support claim. See the
+[6.11 verification record](../../../openspec/changes/add-factory-work-card/verification-6.11.md).
+The provider endpoints follow GitHub's
+[PR read](https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request) and
+[commit check-runs read](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference)
+contracts.
