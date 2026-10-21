@@ -306,6 +306,8 @@ pub(crate) enum MutationKind {
   PublishProjectPolicy,
   CreateIssue,
   AppendIssueComment,
+  AttachIssueCodeReview,
+  ObserveIssueCodeReview,
   AttachIssueSource,
   PublishIssueSourceMapping,
   ResolveIssueSourceConflict,
@@ -459,6 +461,18 @@ impl MutationKind {
         "adopt-issue-workflow",
         "issue",
         "issue.workflow-adopted"
+      ),
+      Self::AttachIssueCodeReview => metadata!(
+        b"octacity.attach-issue-code-review.v1\0",
+        "attach-issue-code-review",
+        "issue",
+        "issue.code-review-attached"
+      ),
+      Self::ObserveIssueCodeReview => metadata!(
+        b"octacity.observe-issue-code-review.v1\0",
+        "observe-issue-code-review",
+        "issue",
+        "issue.code-review-observed"
       ),
       Self::AppendIssueComment => metadata!(
         b"octacity.append-issue-comment.v1\0",

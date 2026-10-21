@@ -1491,3 +1491,6 @@ mod discussion;
 
 #[path = "issues/activity.rs"]
 mod activity;
+
+#[path = "issues/code_review.rs"]
+mod code_review;
