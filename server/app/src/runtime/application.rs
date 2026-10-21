@@ -190,7 +190,7 @@ pub(super) fn management_application(
   let build_queries = authorized_queries(&management_policy, builds);
   let schedule_queries = authorized_queries(&management_policy, schedules);
   let internal_trigger_queries = authorized_queries(&management_policy, internal_triggers);
-  let job_event_queries = authorized_queries(&management_policy, job_events);
+  let job_event_queries = authorized_queries(&management_policy, job_events.clone());
   let artifact_queries = authorized_queries(&management_policy, artifacts);
   let cache_queries = authorized_queries(&management_policy, cache);
   let log_search_queries = authorized_queries(&management_policy, log_search);
@@ -347,6 +347,17 @@ pub(super) fn management_application(
       &management_policy,
       executions.clone(),
     ))
+    .with_journal(
+      authorized_queries(&management_policy, executions.clone()),
+      authorized_queries(
+        &management_policy,
+        Arc::new(octacity_server_application::IssueExecutionJournalHandlers::new(
+          executions.clone(),
+          store.clone(),
+          job_events,
+        )),
+      ),
+    )
     .with_publication(
       authorized_commands(&management_policy, executions),
       authorized_commands(&management_policy, execution_publication),

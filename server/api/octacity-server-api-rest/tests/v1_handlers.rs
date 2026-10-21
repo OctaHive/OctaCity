@@ -283,6 +283,18 @@ unavailable_query!(
 );
 unavailable_query!(octacity_server_application::ListIssueResultsQuery, "list_issue_results");
 unavailable_query!(
+  octacity_server_application::ListIssueExecutionJournalQuery,
+  "list_issue_execution_journal"
+);
+unavailable_query!(
+  octacity_server_application::ReadIssueExecutionJournalEventsQuery,
+  "read_issue_execution_journal_events"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueExecutionJournalEventQuery,
+  "get_issue_execution_journal_event"
+);
+unavailable_query!(
   octacity_server_application::ListIssueExecutionsQuery,
   "list_issue_executions"
 );
@@ -1116,6 +1128,9 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("{source_path}/results?work_id={repository_id}&collection=evidence&limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions?limit=1"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions/{repository_id}"),None),
+    empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal?collection=flow-runs&limit=1"),None),
+    empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal/events?build_execution={}&job_id={job_id}&limit=1","ab".repeat(32)),None),
+    empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal/events/1?build_execution={}&job_id={job_id}","ab".repeat(32)),None),
     json_request("POST",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions"),"execution",Some("\"1\""),&issue_execution_body()),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-choices"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-definitions"),None),
@@ -1552,6 +1567,9 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_issue_results",
       "list_issue_executions",
       "get_issue_execution",
+      "list_issue_execution_journal",
+      "get_issue_execution",
+      "get_issue_execution",
       "request_issue_execution",
       "get_issue_property_choices",
       "get_issue_properties",
@@ -1881,6 +1899,18 @@ async fn job_event_parameters_and_page_use_the_stable_rest_contract() {
     .await
     .unwrap();
   assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(
+    response
+      .headers()
+      .get("cache-control")
+      .and_then(|value| value.to_str().ok()),
+    Some("no-store")
+  );
+  assert_eq!(
+    openapi_document()["paths"]["/api/v1/jobs/{job_id}/events"]["get"]["responses"]["200"]["headers"]["Cache-Control"]
+      ["schema"]["const"],
+    "no-store"
+  );
   let body: serde_json::Value =
     serde_json::from_slice(&to_bytes(response.into_body(), usize::MAX).await.unwrap()).unwrap();
   assert_eq!(

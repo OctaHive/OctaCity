@@ -33,5 +33,9 @@ pub(super) async fn read_job_events(
     .handle_authorized_query(&context, query)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok((StatusCode::OK, Json(job_event_page(page))))
+  Ok((
+    StatusCode::OK,
+    [("cache-control", "no-store")],
+    Json(job_event_page(page)),
+  ))
 }

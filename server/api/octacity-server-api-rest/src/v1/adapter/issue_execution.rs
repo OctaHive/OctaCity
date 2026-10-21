@@ -4,6 +4,11 @@ use octacity_server_application::{
   ApplicationError, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler, GetIssueExecutionQuery,
   IssueExecutionRequest, ListIssueExecutionsQuery, PublishIssueExecutionCommand, RequestIssueExecutionCommand,
 };
+#[path = "issue_execution_journal.rs"]
+pub(super) mod journal;
+use octacity_server_application::{
+  GetIssueExecutionJournalEventQuery, ListIssueExecutionJournalQuery, ReadIssueExecutionJournalEventsQuery,
+};
 
 /// Optional execution composition; manual Issue management has no execution dependency.
 struct Publication {
@@ -13,6 +18,11 @@ struct Publication {
 }
 /// Optional execution services independent of manual Issue management.
 pub struct IssueExecutionManagementApplication {
+  journal: Option<Arc<dyn AuthorizedManagementQueryHandler<ListIssueExecutionJournalQuery, Error = ApplicationError>>>,
+  journal_events:
+    Option<Arc<dyn AuthorizedManagementQueryHandler<ReadIssueExecutionJournalEventsQuery, Error = ApplicationError>>>,
+  journal_detail:
+    Option<Arc<dyn AuthorizedManagementQueryHandler<GetIssueExecutionJournalEventQuery, Error = ApplicationError>>>,
   publication: Option<Publication>,
   list: Arc<dyn AuthorizedManagementQueryHandler<ListIssueExecutionsQuery, Error = ApplicationError>>,
   get: Arc<dyn AuthorizedManagementQueryHandler<GetIssueExecutionQuery, Error = ApplicationError>>,
@@ -26,6 +36,9 @@ impl IssueExecutionManagementApplication {
       + 'static,
   {
     Self {
+      journal: None,
+      journal_events: None,
+      journal_detail: None,
       get: queries.clone(),
       list: queries,
       publication: None,
@@ -33,6 +46,19 @@ impl IssueExecutionManagementApplication {
   }
 }
 impl IssueExecutionManagementApplication {
+  /// Installs optional journal reads without enabling publication or requiring them for manual tasks.
+  pub fn with_journal<Q, E>(mut self, queries: Arc<Q>, events: Arc<E>) -> Self
+  where
+    Q: AuthorizedManagementQueryHandler<ListIssueExecutionJournalQuery, Error = ApplicationError> + 'static,
+    E: AuthorizedManagementQueryHandler<ReadIssueExecutionJournalEventsQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<GetIssueExecutionJournalEventQuery, Error = ApplicationError>
+      + 'static,
+  {
+    self.journal = Some(queries);
+    self.journal_events = Some(events.clone());
+    self.journal_detail = Some(events);
+    self
+  }
   /// Installs reviewed reservation and the shared publisher with a bounded HTTP wait.
   pub fn with_publication<C, P>(mut self, requests: Arc<C>, publisher: Arc<P>, timeout: Duration) -> Self
   where

@@ -141,7 +141,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false
   )
   .with_parameters(ParameterProfile::JobEvents)
-  .with_visibility::<ReadJobEventsQuery>(),
+  .with_visibility::<ReadJobEventsQuery>()
+  .with_no_store_response(),
   operation!(
     SearchBuildLogsQuery,
     "GET",

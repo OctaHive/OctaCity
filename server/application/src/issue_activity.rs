@@ -157,10 +157,20 @@ pub(crate) fn observation_scope(
   let visibility = grant
     .visibility_for::<ListProjectIssuesQuery>()
     .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?;
-  let normalized = match visibility.view() {
+  Ok(observation_scope_for(context, visibility.view(), selection, contract))
+}
+
+/// Shared canonical observation binding for each reader's typed visibility identities.
+pub(crate) fn observation_scope_for<I: Serialize>(
+  context: &ManagementRequestContext,
+  visibility: ReadVisibilityView<'_, I>,
+  selection: serde_json::Value,
+  contract: &str,
+) -> FactoryDigest {
+  let normalized = match visibility {
     ReadVisibilityView::All => serde_json::json!("all"),
     ReadVisibilityView::None => serde_json::json!("none"),
     ReadVisibilityView::Restricted(ids) => serde_json::json!(ids),
   };
-  Ok(FactoryDigest::content_sha256(serde_json::json!({"selection":selection,"security":context.security_scope().as_str(),"visibility":normalized,"observation":contract}).to_string().as_bytes()))
+  FactoryDigest::content_sha256(serde_json::json!({"selection":selection,"security":context.security_scope().as_str(),"visibility":normalized,"observation":contract}).to_string().as_bytes())
 }

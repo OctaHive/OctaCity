@@ -164,11 +164,9 @@ where
     workflow_queries,
   ))
   .with_issue_executions(
-    octacity_server_api_rest::v1::IssueExecutionManagementApplication::new(execution_queries).with_publication(
-      execution_commands.clone(),
-      execution_commands,
-      Duration::from_millis(5),
-    ),
+    octacity_server_api_rest::v1::IssueExecutionManagementApplication::new(execution_queries.clone())
+      .with_journal(execution_queries.clone(), execution_queries)
+      .with_publication(execution_commands.clone(), execution_commands, Duration::from_millis(5)),
   )
   .with_issue_sources(
     octacity_server_api_rest::v1::IssueSourceManagementApplication::new(source_queries.clone())

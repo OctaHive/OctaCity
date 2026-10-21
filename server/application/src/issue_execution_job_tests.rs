@@ -1,7 +1,7 @@
 use super::*;
 use std::sync::Mutex;
 
-struct Jobs(Mutex<JobRecord>);
+pub(super) struct Jobs(pub(super) Mutex<JobRecord>);
 #[async_trait::async_trait]
 impl BuildQueryStore for Jobs {
   async fn job(&self, job: octacity_server_domain::JobId) -> Result<JobRecord, StoreError> {

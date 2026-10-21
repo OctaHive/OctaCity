@@ -9,7 +9,7 @@ mod diagnostics;
 mod flow;
 mod permissions;
 
-fn key() -> Value {
+pub(super) fn key() -> Value {
   json!({"type":"string","minLength":1,"maxLength":octacity_server_application::factory_configuration_document_bounds().key_bytes,"pattern":"^[a-z0-9][a-z0-9._-]*$"})
 }
 
@@ -17,7 +17,7 @@ fn bounded_integer(minimum: u64, maximum: u64) -> Value {
   json!({"type":"integer","minimum":minimum,"maximum":maximum})
 }
 
-fn bounded_array(items: Value, maximum: usize) -> Value {
+pub(super) fn bounded_array(items: Value, maximum: usize) -> Value {
   json!({"type":"array","items":items,"maxItems":maximum})
 }
 
@@ -25,7 +25,12 @@ fn bounded_map(value: Value, maximum: usize) -> Value {
   json!({"type":"object","additionalProperties":value,"maxProperties":maximum,"propertyNames":key()})
 }
 
-fn tagged<const N: usize>(tag: &str, variant: &str, properties: [(&str, Value); N], required: &[&str]) -> Value {
+pub(super) fn tagged<const N: usize>(
+  tag: &str,
+  variant: &str,
+  properties: [(&str, Value); N],
+  required: &[&str],
+) -> Value {
   let properties = properties
     .into_iter()
     .map(|(name, value)| (name.to_owned(), value))

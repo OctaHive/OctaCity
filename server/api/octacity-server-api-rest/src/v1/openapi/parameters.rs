@@ -10,6 +10,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "workflow_id",
     "issue_id",
     "request_id",
+    "sequence",
     "comment_id",
     "pipeline_id",
     "repository_id",
@@ -36,7 +37,8 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         "name": name,
         "in": "path",
         "required": true,
-        "schema": if name == "property_version" { non_negative_integer() }
+        "schema": if name == "sequence" { positive_integer() }
+          else if name == "property_version" { non_negative_integer() }
           else if name == "version" { positive_integer() }
           else if matches!(name, "workflow_id" | "issue_id" | "request_id" | "comment_id") { json!({"type":"string","format":"uuid"}) }
           else { non_empty_string() }
@@ -47,6 +49,19 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     parameters.push(json!({"name":"collection","in":"path","required":true,"schema":{"type":"string","enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|kind| kind.as_str()).collect::<Vec<_>>()}}));
   }
   match operation.parameter_profile {
+    ParameterProfile::IssueJournal | ParameterProfile::IssueJournalEvents | ParameterProfile::IssueJournalDetail => {
+      if operation.parameter_profile != ParameterProfile::IssueJournalDetail {
+        parameters.extend([cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_OBSERVATION_CURSOR_BYTES),
+          limit_parameter(octacity_server_application::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT)]);
+      }
+      if operation.parameter_profile == ParameterProfile::IssueJournal {
+        parameters.push(json!({"name":"collection","in":"query","required":false,"schema":{"type":"string","default":"flow-runs",
+          "enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|c|c.as_str()).collect::<Vec<_>>()}}));
+      } else {
+        parameters.extend([json!({"name":"build_execution","in":"query","required":true,"schema":schema_ref("FactoryDigest")}),
+          json!({"name":"job_id","in":"query","required":true,"schema":{"type":"string","format":"uuid"}})]);
+      }
+    },
     ParameterProfile::FactoryDiagnostics => parameters.extend([cursor_parameter_with_max(256),
       limit_parameter(octacity_server_application::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE, super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::WorkSourceInputChoices => parameters.extend([

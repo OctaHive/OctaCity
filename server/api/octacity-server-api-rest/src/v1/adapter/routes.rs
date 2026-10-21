@@ -304,6 +304,18 @@ fn registered_routes() -> ManagementRoutes {
       super::issue_execution::start,
     )
     .get::<octacity_server_application::GetIssueExecutionQuery, _, _>("getIssueExecution", super::issue_execution::get)
+    .get::<octacity_server_application::ListIssueExecutionJournalQuery, _, _>(
+      "listIssueExecutionJournal",
+      super::issue_execution::journal::list,
+    )
+    .get::<octacity_server_application::ReadIssueExecutionJournalEventsQuery, _, _>(
+      "readIssueExecutionJournalEvents",
+      super::issue_execution::journal::events,
+    )
+    .get::<octacity_server_application::GetIssueExecutionJournalEventQuery, _, _>(
+      "getIssueExecutionJournalEvent",
+      super::issue_execution::journal::detail,
+    )
     .get::<octacity_server_application::ListIssueChildrenQuery, _, _>(
       "listIssueChildren",
       super::issue::planning::children,

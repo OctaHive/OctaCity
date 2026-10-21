@@ -2,6 +2,54 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ListIssueExecutionJournalQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal",
+    "listIssueExecutionJournal",
+    "Issues",
+    "Read exact selected execution hierarchy through version-fenced common diagnostics",
+    None,
+    "IssueExecutionJournalPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::IssueJournal)
+  .with_visibility::<octacity_server_application::ListIssueExecutionJournalQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ReadIssueExecutionJournalEventsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal/events",
+    "readIssueExecutionJournalEvents",
+    "Issues",
+    "Read bounded safe original Job events with gaps and resumable sequence",
+    None,
+    "IssueExecutionJournalEvents",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::IssueJournalEvents)
+  .with_visibility::<octacity_server_application::ReadIssueExecutionJournalEventsQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssueExecutionJournalEventQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal/events/{sequence}",
+    "getIssueExecutionJournalEvent",
+    "Issues",
+    "Independently authorize and expand one exact retained event through the existing content reader",
+    None,
+    "IssueExecutionJournalEventDetail",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::IssueJournalDetail)
+  .with_visibility::<octacity_server_application::GetIssueExecutionJournalEventQuery>()
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ListIssueTimelineQuery,
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/timeline",

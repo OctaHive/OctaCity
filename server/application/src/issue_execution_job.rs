@@ -6,6 +6,10 @@ use octacity_server_store::{
   BuildQueryStore, FactoryBuildExecutionDiagnostic, FactoryCallProfileDiagnostic, FactoryRunStore,
 };
 
+#[path = "issue_execution_journal.rs"]
+mod journal;
+pub use journal::*;
+
 /// Expands one Job from a selected execution's retained Build record.
 #[derive(Clone, Debug)]
 pub struct GetIssueExecutionJobQuery {

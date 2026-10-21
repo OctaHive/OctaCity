@@ -1,4 +1,6 @@
 use super::*;
+#[path = "journal.rs"]
+mod journal;
 use octacity_server_api_rest::v1::IssueExecutionManagementApplication;
 use octacity_server_application::{
   GetIssueExecutionQuery, IssueExecutionHistoryPage, IssueExecutionOutcome, IssueExecutionRequest,

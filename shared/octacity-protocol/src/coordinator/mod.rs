@@ -16,7 +16,7 @@ pub use octa_cache_protocol::{
   TASK_RESULT_CACHE_HTTP_FEATURE_V1 as CACHE_HTTP_FEATURE_V1,
 };
 
-pub use octa_runner_protocol::OperationObservation;
+pub use octa_runner_protocol::{MAX_PUBLIC_OPERATION_PATH_BYTES, OperationObservation};
 
 use crate::{
   ArtifactTransferCapability, CachePolicy, ExecutionCapabilityV2, ExecutionContractRange, ExecutionEvidenceV2,

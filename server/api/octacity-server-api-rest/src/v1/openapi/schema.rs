@@ -10,6 +10,7 @@ mod integrations;
 mod issue_activity;
 mod issue_discussion;
 mod issue_executions;
+mod issue_journal;
 mod issue_planning;
 mod issue_sources;
 mod issue_workflows;

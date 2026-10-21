@@ -2,6 +2,8 @@ use super::*;
 
 #[path = "issue_execution_job_tests.rs"]
 mod jobs;
+#[path = "issue_execution_journal_tests.rs"]
+mod journal;
 
 #[test]
 fn issue_execution_result_collections_retain_original_candidate_evidence_and_decision_subjects() {

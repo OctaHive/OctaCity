@@ -208,6 +208,30 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["node", "profile"],
     ),
   );
+  schemas.insert(
+    "FactoryBuildExecutionDiagnostic".into(),
+    object(
+      [
+        ("id", non_empty_string()),
+        ("operation_id", non_empty_string()),
+        ("node_attempt_id", non_empty_string()),
+        ("build_id", non_empty_string()),
+        ("attempt_id", non_empty_string()),
+        (
+          "jobs",
+          json!({"type":"array","minItems":1,"maxItems":64,"uniqueItems":true,"items":non_empty_string()}),
+        ),
+      ],
+      &[
+        "id",
+        "operation_id",
+        "node_attempt_id",
+        "build_id",
+        "attempt_id",
+        "jobs",
+      ],
+    ),
+  );
   let candidate = || schema_ref("FactoryCandidateSubject");
   let exact = || schema_ref("FactoryExactSubject");
   let id = non_empty_string;
@@ -313,11 +337,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
               ("source_attempt_id",non_empty_string()),
             ], &["id","flow_run_id","number","predecessor"]))], &["record"]),
             tagged("kind", "node_attempt", [("record", schema_ref("FactoryNodeAttemptDiagnostic"))], &["record"]),
-            tagged("kind", "build", [("record", object([
-              ("id",non_empty_string()), ("operation_id",non_empty_string()), ("node_attempt_id",non_empty_string()),
-              ("build_id",non_empty_string()), ("attempt_id",non_empty_string()),
-              ("jobs",json!({"type":"array","minItems":1,"maxItems":64,"uniqueItems":true,"items":non_empty_string()})),
-            ], &["id","operation_id","node_attempt_id","build_id","attempt_id","jobs"]))], &["record"]),
+            tagged("kind", "build", [("record", schema_ref("FactoryBuildExecutionDiagnostic"))], &["record"]),
             tagged("kind", "budget", [("record", object([
               ("id",non_empty_string()), ("run_version",positive_integer()), ("usage",schema_ref("FactoryBudgetUsage")), ("recorded_at",integer()),
             ], &["id","run_version","usage","recorded_at"]))], &["record"]),
