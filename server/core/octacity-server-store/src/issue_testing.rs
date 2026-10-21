@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Default)]
 pub(super) struct IssueMemoryState {
+  code_reviews: code_reviews::IssueCodeReviewMemoryState,
   discussion: discussion::IssueDiscussionMemoryState,
   sources: source::IssueSourceMemoryState,
   executions: execution::IssueExecutionMemoryState,
@@ -32,7 +33,8 @@ struct IssueMoveReplay {
 }
 impl IssueMemoryState {
   pub(super) fn mutation_count(&self) -> usize {
-    self.discussion.mutation_count()
+    self.code_reviews.mutation_count()
+      + self.discussion.mutation_count()
       + self.executions.mutation_count()
       + self.sources.mutation_count()
       + self.creates.len()
@@ -656,3 +658,6 @@ mod discussion;
 
 #[path = "issue_activity_testing.rs"]
 mod activity;
+
+#[path = "issue_code_review_testing.rs"]
+mod code_reviews;

@@ -4,6 +4,10 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Attach one canonical external review without execution effects.
+  AttachIssueCodeReview,
+  /// Retain a safe read-only code-review observation.
+  ObserveIssueCodeReview,
   /// Append operator-only discussion without changing an Issue revision or execution.
   AppendIssueComment,
   /// Publish reviewed immutable native synchronization ownership and mapping.
@@ -345,6 +349,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Invalid bounded code-review selection/observation.
+  #[error("invalid Issue code-review input")]
+  InvalidIssueCodeReview,
   /// Discussion text, parent or configured bounds are invalid; excludes body/parent details.
   #[error("invalid Issue discussion input")]
   InvalidIssueDiscussion,

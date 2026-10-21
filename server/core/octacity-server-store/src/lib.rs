@@ -6,6 +6,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+mod issue_code_review;
+pub use issue_code_review::*;
 mod issue_planning;
 pub use issue_planning::*;
 mod issue;
@@ -462,8 +464,8 @@ pub use read_visibility::{
   BuildConfigurationListVisibility, BuildListVisibility, BuildLogSearchVisibility, CacheSessionListVisibility,
   FactoryChoiceListVisibility, FactoryConfigurationListVisibility, FactoryRunListVisibility,
   FlowDefinitionListVisibility, IntegrationConnectionListVisibility, InternalTriggerListVisibility,
-  JobEventReadVisibility, MAX_READ_VISIBILITY_IDENTITIES, PipelineListVisibility, ProjectListVisibility,
-  ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility,
+  IssueCodeReviewRepositoryVisibility, JobEventReadVisibility, MAX_READ_VISIBILITY_IDENTITIES, PipelineListVisibility,
+  ProjectListVisibility, ReadVisibilityError, ReadVisibilityKind, ReadVisibilityView, RepositoryListVisibility,
   TriggerDefinitionListVisibility,
 };
 pub use read_visibility::{IssueListVisibility, IssueWorkflowListVisibility};

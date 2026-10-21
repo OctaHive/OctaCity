@@ -1,5 +1,7 @@
 use super::*;
 
+#[path = "issue_code_review_lineage_tests.rs"]
+mod code_review_lineage;
 #[path = "issue_execution_job_tests.rs"]
 mod jobs;
 #[path = "issue_execution_journal_tests.rs"]

@@ -18,6 +18,9 @@ mod projections;
 #[path = "issue_discussion_tests.rs"]
 mod discussion;
 
+#[path = "issue_code_review_tests.rs"]
+mod code_review;
+
 #[path = "issue_source_tests.rs"]
 mod source;
 

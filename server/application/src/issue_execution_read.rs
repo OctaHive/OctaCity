@@ -2,6 +2,8 @@
 use super::*;
 use octacity_server_store::{FactoryDiscoveryStore, FactoryRunSummary, IssueStore};
 use serde::Serialize;
+#[path = "issue_code_review_execution.rs"]
+mod code_review;
 
 #[path = "issue_execution_records.rs"]
 mod records;

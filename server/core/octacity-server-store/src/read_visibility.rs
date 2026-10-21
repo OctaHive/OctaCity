@@ -282,3 +282,9 @@ query_visibility!(
   IssueId,
   "Visible internal task identities, independent of provider scope."
 );
+
+query_visibility!(
+  IssueCodeReviewRepositoryVisibility,
+  octacity_server_factory::FactoryDigest,
+  "Current metadata visibility for installed native code repositories, independent of protected read grants."
+);

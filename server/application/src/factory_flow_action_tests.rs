@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 
 #[path = "factory_issue_source_push_tests.rs"]
 pub(crate) mod issue_push;
+#[path = "issue_code_review_delivery_tests.rs"]
+mod review_delivery;
 #[path = "factory_stage_reporting_tests.rs"]
 mod stage_reporting;
 
@@ -221,12 +223,16 @@ fn harness_for_input(
     .audit()
     .clone();
   store
-    .seed_factory_run(
+    .seed_factory_admission(
       PublishedFactoryAdmission {
         work,
         run: run.clone(),
         flow: admitted,
         admitted_at: at(1),
+      },
+      FactoryWorkSourceScope {
+        source: "manual".parse().unwrap(),
+        security_scope: audit.security_scope().clone(),
       },
       FactoryDigest::from_bytes([1; 32]),
       &audit,

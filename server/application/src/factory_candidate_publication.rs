@@ -1,5 +1,6 @@
 //! Exact candidate publication as an installed trusted action, independent of Flow names.
 use crate::*;
+pub(crate) const PUBLISH_CANDIDATE_ACTION: &str = "publish_candidate";
 use async_trait::async_trait;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::*;
@@ -136,6 +137,12 @@ struct Parameters {
   #[serde(default)]
   valid_until: Option<FlowDataMapping>,
 }
+/// Resolves the same typed frozen policy used by publication, without dispatching the publisher.
+pub(crate) fn publication_target(binding: &FlowActionBinding) -> Result<ImmutableReference, ApplicationError> {
+  let parameters: Parameters =
+    serde_json::from_value(binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
+  Ok(parameters.target)
+}
 impl<P> FactoryCandidatePublicationAction<P> {
   /// Selects the trusted publisher and the configured successful receipt outcome.
   #[must_use]
@@ -220,7 +227,7 @@ impl<P: FactoryCandidatePublisher> FactoryFlowActionPlugin for FactoryCandidateP
   fn validate(&self, binding: &FlowActionBinding, outcomes: &[FlowOutcomeDefinition]) -> Result<(), ApplicationError> {
     let parameters: Parameters =
       serde_json::from_value(binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
-    if binding.action().as_str() != "publish_candidate"
+    if binding.action().as_str() != PUBLISH_CANDIDATE_ACTION
       || !outcomes.contains(&self.outcome)
       || parameters.bundle == parameters.manifest
     {
