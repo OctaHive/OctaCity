@@ -4,12 +4,88 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, expect, it, vi } from 'vitest';
 import { setup, issue } from '../../../tests/fixtures/issueTestSupport';
 import { fakeActivity, resultsFixture } from '../../../tests/fixtures/issueActivity';
+import { journalFixture, journalEventsFixture } from '../../../tests/fixtures/issueJournal';
 import { executionFixture } from '../../../tests/fixtures/issueExecutions';
 import { diagnosticFixture, runFixture } from '../../../tests/fixtures/factory';
 import { factoryApi } from '../factory/api';
 import type { IssueExecutionsApi } from './executionApi';
 import { ManagementApiError } from '../../api/client';
 afterEach(cleanup);
+it('keeps journal continuations scoped across browser history without losing selection focus', async () => {
+  const activity = fakeActivity(vi);
+  activity.journal.mockImplementation(async (_project, _issue, _request, collection, after) => {
+    if (collection === 'node-attempts' && after !== null) {
+      throw new ManagementApiError({
+        code: 'invalid_request',
+        status: 400,
+        message: 'Cursor belongs to another collection',
+        requestId: null,
+        retryAfterMilliseconds: null,
+      });
+    }
+    return {
+      ...journalFixture(),
+      records: {
+        ...resultsFixture(diagnosticFixture(collection)),
+        next_cursor: collection === 'flow-runs' && after === null ? 'flow-page-two' : null,
+      },
+    };
+  });
+  const { router } = setup(
+    `/projects/delivery/issues/${issue.id}?section=runs&execution=old-request`,
+    undefined,
+    {
+      issueActivityApi: activity,
+      issueExecutionsApi: {
+        get: vi.fn().mockResolvedValue(executionFixture('admitted', 'old-request')),
+        list: vi.fn().mockResolvedValue({
+          items: [],
+          next_cursor: null,
+          watermark: 0,
+          issue_version: 1,
+          observation: 'request-watermark-v1',
+        }),
+        start: vi.fn(),
+      },
+      factoryApi: { ...factoryApi, getRun: vi.fn().mockResolvedValue(runFixture()) },
+    },
+  );
+  let stages = await screen.findByRole('region', { name: 'Execution stages' });
+  await userEvent.click(
+    within(stages).getByRole('combobox', { name: 'Execution record collection' }),
+  );
+  await userEvent.click(await screen.findByRole('option', { name: 'Flow Runs' }));
+  stages = await screen.findByRole('region', { name: 'Execution stages' });
+  expect(document.activeElement).toBe(
+    within(stages).getByRole('combobox', { name: 'Execution record collection' }),
+  );
+  await userEvent.click(await within(stages).findByRole('button', { name: 'Next page' }));
+  await within(stages).findByRole('button', { name: 'First page' });
+  await router.navigate(-1);
+  await waitFor(() =>
+    expect(activity.journal).toHaveBeenLastCalledWith(
+      'delivery',
+      issue.id,
+      'old-request',
+      'node-attempts',
+      null,
+      expect.any(AbortSignal),
+    ),
+  );
+  expect(screen.queryByText('Cursor belongs to another collection')).toBeNull();
+  await router.navigate(1);
+  await waitFor(() =>
+    expect(activity.journal).toHaveBeenLastCalledWith(
+      'delivery',
+      issue.id,
+      'old-request',
+      'flow-runs',
+      'flow-page-two',
+      expect.any(AbortSignal),
+    ),
+  );
+  expect(new URLSearchParams(router.state.location.search).get('execution')).toBe('old-request');
+});
 it.each([
   ['calls', 'Execution profiles'],
   ['builds', 'Original execution Jobs'],
@@ -17,8 +93,8 @@ it.each([
   'recovers %s from an unreadable continuation without leaving Runs',
   async (collection, label) => {
     const activity = fakeActivity(vi);
-    activity.results.mockImplementation(async (_project, _issue, _work, selected, after) => {
-      if (selected !== collection) return resultsFixture();
+    activity.journal.mockImplementation(async (_project, _issue, _work, selected, after) => {
+      if (selected !== collection) return journalFixture();
       if (after !== null) {
         throw new ManagementApiError({
           code: 'invalid_request',
@@ -28,7 +104,10 @@ it.each([
           retryAfterMilliseconds: null,
         });
       }
-      return { ...resultsFixture(), next_cursor: 'expired-run-page' };
+      return {
+        ...journalFixture(),
+        records: { ...resultsFixture(), next_cursor: 'expired-run-page' },
+      };
     });
     const { router } = setup(
       `/projects/delivery/issues/${issue.id}?section=runs&execution=old-request`,
@@ -54,10 +133,10 @@ it.each([
     await within(section).findByText('Run observation expired');
     await userEvent.click(within(section).getByRole('button', { name: 'First page' }));
     await waitFor(() =>
-      expect(activity.results).toHaveBeenLastCalledWith(
+      expect(activity.journal).toHaveBeenLastCalledWith(
         'delivery',
         issue.id,
-        'retained-work',
+        'old-request',
         collection,
         null,
         expect.any(AbortSignal),
@@ -73,8 +152,8 @@ it('shows only reported execution profiles and links original Build Attempt Job 
   const node = diagnosticFixture('node-attempts')[0];
   if (node?.kind !== 'node_attempt') throw new Error('node fixture');
   const reference = { identity: 'reported-coder', version: 'v3', digest: 'c'.repeat(64) };
-  activity.results.mockImplementation(async (_p, _i, _w, collection) =>
-    resultsFixture(
+  activity.journal.mockImplementation(async (_p, _i, _w, collection) =>
+    journalFixture(
       collection === 'calls'
         ? [
             {
@@ -104,19 +183,21 @@ it('shows only reported execution profiles and links original Build Attempt Job 
               record: { node: { ...node.record, id: 'unprofiled-node' }, profile: null },
             },
           ]
-        : [
-            {
-              kind: 'build',
-              record: {
-                id: 'execution-one',
-                operation_id: 'operation-one',
-                node_attempt_id: 'node-a',
-                build_id: 'original-build',
-                attempt_id: 'original-attempt',
-                jobs: ['original-job'],
+        : collection === 'builds'
+          ? [
+              {
+                kind: 'build',
+                record: {
+                  id: 'execution-one',
+                  operation_id: 'operation-one',
+                  node_attempt_id: 'node-a',
+                  build_id: 'original-build',
+                  attempt_id: 'original-attempt',
+                  jobs: ['original-job'],
+                },
               },
-            },
-          ],
+            ]
+          : [],
     ),
   );
   const get = vi
@@ -155,4 +236,100 @@ it('shows only reported execution profiles and links original Build Attempt Job 
     screen.getByRole('link', { name: 'Open declared Run responses' }).getAttribute('href'),
   ).toBe('/factory/retained-run?diagnostic=node-attempts');
   expect(activity.append).not.toHaveBeenCalled();
+});
+
+it('opens stages then an exact original Job, expands one event independently and preserves historical selection', async () => {
+  const activity = fakeActivity(vi);
+  const build = journalEventsFixture().job.execution;
+  activity.journal.mockImplementation(async (_p, _i, _r, collection) =>
+    journalFixture(
+      collection === 'builds'
+        ? [{ kind: 'build', record: build }]
+        : collection === 'node-attempts'
+          ? [
+              {
+                kind: 'node_attempt',
+                record: { ...nodeRecord(), node_key: 'operator-selected-node' },
+              },
+            ]
+          : [],
+    ),
+  );
+  setup(`/projects/delivery/issues/${issue.id}?section=runs&execution=old-request`, undefined, {
+    issueActivityApi: activity,
+    issueExecutionsApi: {
+      get: vi.fn().mockResolvedValue(executionFixture('admitted', 'old-request')),
+      list: vi.fn().mockResolvedValue({
+        items: [],
+        next_cursor: null,
+        watermark: 0,
+        issue_version: 1,
+        observation: 'request-watermark-v1',
+      }),
+      start: vi.fn(),
+    },
+    factoryApi: {
+      ...factoryApi,
+      getRun: vi.fn().mockResolvedValue({
+        ...runFixture(),
+        id: 'retained-run',
+        work_id: 'retained-work',
+        project_id: 'delivery',
+      }),
+    },
+  });
+  const stages = await screen.findByRole('region', { name: 'Execution stages' });
+  expect(
+    await within(stages).findByRole('heading', { name: 'operator-selected-node' }),
+  ).toBeTruthy();
+  await userEvent.click(await screen.findByRole('button', { name: 'Inspect Job original-job' }));
+  const events = await screen.findByRole('region', { name: 'Job events' });
+  expect(await within(events).findByText('src/main.rs')).toBeTruthy();
+  expect(within(events).getByText('Exit code: 17')).toBeTruthy();
+  expect(within(events).getAllByText('Not reported').length).toBeGreaterThan(0);
+  expect(activity.journalEvent).not.toHaveBeenCalled();
+  await userEvent.click(within(events).getByRole('button', { name: 'Inspect event #1' }));
+  await waitFor(() =>
+    expect(activity.journalEvent).toHaveBeenCalledWith(
+      'delivery',
+      issue.id,
+      'old-request',
+      { build_execution: build.id, job_id: 'original-job' },
+      1,
+      expect.any(AbortSignal),
+    ),
+  );
+  expect(activity.results).not.toHaveBeenCalled();
+  expect(activity.append).not.toHaveBeenCalled();
+});
+
+function nodeRecord() {
+  const node = diagnosticFixture('node-attempts')[0];
+  if (node?.kind !== 'node_attempt') throw new Error('node fixture');
+  return node.record;
+}
+it('describes empty stage observations without claiming that original Jobs are missing', async () => {
+  const activity = fakeActivity(vi);
+  setup(`/projects/delivery/issues/${issue.id}?section=runs&execution=old-request`, undefined, {
+    issueActivityApi: activity,
+    issueExecutionsApi: {
+      get: vi.fn().mockResolvedValue(executionFixture('admitted', 'old-request')),
+      list: vi.fn().mockResolvedValue({
+        items: [],
+        next_cursor: null,
+        watermark: 0,
+        issue_version: 1,
+        observation: 'request-watermark-v1',
+      }),
+      start: vi.fn(),
+    },
+    factoryApi: { ...factoryApi, getRun: vi.fn().mockResolvedValue(runFixture()) },
+  });
+  const stages = await screen.findByRole('region', { name: 'Execution stages' });
+  expect(
+    await within(stages).findByText(
+      'No records in this observed collection. Required evidence may be missing.',
+    ),
+  ).toBeTruthy();
+  expect(within(stages).queryByText('No original Jobs reported in this observation.')).toBeNull();
 });

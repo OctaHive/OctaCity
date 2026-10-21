@@ -1,3 +1,9 @@
+import {
+  retainVisibleEvents,
+  EXECUTION_EVENT_VISIBLE_LIMIT,
+  EXECUTION_EVENT_RETRY_INITIAL_MILLISECONDS,
+  EXECUTION_EVENT_RETRY_MAX_MILLISECONDS,
+} from '../../shared/executionEvents';
 import { ManagementApiError } from '../../api/client';
 import type { JobEventPage, JobEventRequest, JobEventResource, JobResource } from './api';
 
@@ -6,12 +12,12 @@ export const JOB_EVENT_WAIT_MILLISECONDS = 30_000;
 /** Prevents an unexpectedly immediate empty response from creating a hot loop. */
 export const JOB_EVENT_EMPTY_PAGE_DELAY_MILLISECONDS = 250;
 /** Deterministic first retry delay for a transient transport or server failure. */
-export const JOB_EVENT_RETRY_INITIAL_MILLISECONDS = 500;
-const JOB_EVENT_RETRY_MAX_MILLISECONDS = 8_000;
+export const JOB_EVENT_RETRY_INITIAL_MILLISECONDS = EXECUTION_EVENT_RETRY_INITIAL_MILLISECONDS;
+const JOB_EVENT_RETRY_MAX_MILLISECONDS = EXECUTION_EVENT_RETRY_MAX_MILLISECONDS;
 /** Bounds recovery from a malformed page that skips the next durable sequence. */
 export const JOB_EVENT_SEQUENCE_GAP_RETRY_LIMIT = 3;
 /** Keeps long-running Jobs from growing browser memory and the event table without limit. */
-export const JOB_EVENT_VISIBLE_LIMIT = 512;
+export const JOB_EVENT_VISIBLE_LIMIT = EXECUTION_EVENT_VISIBLE_LIMIT;
 
 export type JobEventTarget = Pick<JobResource, 'event_cursor' | 'id' | 'state' | 'terminal'>;
 
@@ -163,15 +169,6 @@ export async function followJobEvents({
   function publish() {
     if (!signal.aborted) onSnapshot(snapshot);
   }
-}
-
-function retainVisibleEvents(
-  current: JobEventResource[],
-  appended: JobEventResource[],
-): { discarded: number; events: JobEventResource[] } {
-  const combined = [...current, ...appended];
-  const discarded = Math.max(0, combined.length - JOB_EVENT_VISIBLE_LIMIT);
-  return { discarded, events: discarded === 0 ? combined : combined.slice(discarded) };
 }
 
 function hasSequenceGap(items: JobEventResource[], cursor: number): boolean {

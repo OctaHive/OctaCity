@@ -252,20 +252,20 @@ test('retains a tight asset count for the complete console with Factory diagnost
   );
 });
 
-test('admits measured task activity and rejects unplanned aggregate growth', async (context) => {
+test('admits measured exact execution journal and rejects unplanned aggregate growth', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
-  await write(root, 'dist/assets/index.js', 'x'.repeat(288_640));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(811_652));
+  await write(root, 'dist/assets/index.js', 'x'.repeat(289_550));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(822_712));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(86_462));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
   assert.equal(policy.bundleBudgets.totalCssBytes, 87_040);
-  assert.equal(policy.bundleBudgets.assetCount, 52);
-  await write(root, 'dist/assets/unplanned.js', 'x'.repeat(8_000));
+  assert.equal(policy.bundleBudgets.assetCount, 53);
+  await write(root, 'dist/assets/unplanned.js', 'x'.repeat(16_384));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });
   assert.ok(rejected.some((message) => message.includes('total JavaScript')));
   assert.ok(rejected.some((message) => message.includes('total static output')));

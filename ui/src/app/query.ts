@@ -1,6 +1,29 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  issueJournal: (
+    project: string,
+    issue: string,
+    request: string,
+    collection: string,
+    after: string | null,
+  ) => ['issues', project, issue, 'journal', request, collection, after] as const,
+  issueJournalEvents: (
+    project: string,
+    issue: string,
+    request: string,
+    build: string,
+    job: string,
+    generation: number,
+  ) => ['issues', project, issue, 'journal-events', request, build, job, generation] as const,
+  issueJournalEvent: (
+    project: string,
+    issue: string,
+    request: string,
+    build: string,
+    job: string,
+    sequence: number,
+  ) => ['issues', project, issue, 'journal-event', request, build, job, sequence] as const,
   issueResults: (
     project: string,
     id: string,

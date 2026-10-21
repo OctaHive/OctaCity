@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
 import {
@@ -9,6 +9,10 @@ import {
   QueryBackgroundNotice,
   QueryEmptyNotice,
 } from '../../shared/QueryStateNotice';
+import { IssueJournalEvents } from './IssueJournalEvents';
+import { DIAGNOSTIC_LABELS, DiagnosticRecordDetails } from '../../shared/FactoryDiagnosticRecord';
+import { SelectMenu } from '../../shared/SelectMenu';
+import type { IssueResultCollection } from './activityApi';
 import type { IssueRunReader } from './activityApi';
 import { FactoryRunSummary } from '../../shared/FactoryRunSummary';
 import { IssueObservation } from './IssueActivity';
@@ -30,6 +34,9 @@ export function IssueRunDetails({
 }) {
   const { t } = usePresentation();
   const association = execution.association!;
+  const [params] = useSearchParams();
+  const build = params.get('journal_build');
+  const job = params.get('journal_job');
   const run = useQuery({
     queryKey: queryKeys.factoryRun(association.run_id),
     gcTime: 0,
@@ -67,17 +74,33 @@ export function IssueRunDetails({
         </Link>
       </section>
       <ExecutionCollection
-        key={association.work_id + ':calls'}
+        key={execution.id + ':stages'}
         api={activity}
         issue={issue}
-        work={association.work_id}
+        request={execution.id}
+        collection="node-attempts"
+      />
+      {build && job ? (
+        <IssueJournalEvents
+          key={execution.id + build + job}
+          api={activity}
+          issue={issue}
+          request={execution.id}
+          target={{ build_execution: build, job_id: job }}
+        />
+      ) : null}
+      <ExecutionCollection
+        key={execution.id + ':calls'}
+        api={activity}
+        issue={issue}
+        request={execution.id}
         collection="calls"
       />
       <ExecutionCollection
-        key={association.work_id + ':builds'}
+        key={execution.id + ':builds'}
         api={activity}
         issue={issue}
-        work={association.work_id}
+        request={execution.id}
         collection="builds"
       />
     </>
@@ -86,26 +109,56 @@ export function IssueRunDetails({
 function ExecutionCollection({
   api,
   issue,
-  work,
+  request,
   collection,
 }: {
   api: IssueActivityApi;
   issue: Issue;
-  work: string;
-  collection: 'calls' | 'builds';
+  request: string;
+  collection: 'calls' | 'builds' | 'node-attempts';
 }) {
   const { t } = usePresentation();
-  const [after, setAfter] = useState<string | null>(null);
-  const label = t(collection === 'calls' ? 'issues.executionProfiles' : 'issues.executionJobs');
+  const [params, setParams] = useSearchParams();
+  const stages = collection === 'node-attempts';
+  const selected: IssueResultCollection = stages
+    ? (stageCollections.find((c) => c === params.get('journal_collection')) ?? collection)
+    : collection;
+  const [continuation, setContinuation] = useState<{
+    collection: IssueResultCollection;
+    after: string | null;
+  }>({ collection: selected, after: null });
+  const after = continuation.collection === selected ? continuation.after : null;
+  const setAfter = (after: string | null) => setContinuation({ collection: selected, after });
+  const label = t(
+    stages
+      ? 'issues.executionStages'
+      : collection === 'calls'
+        ? 'issues.executionProfiles'
+        : 'issues.executionJobs',
+  );
   const query = useQuery({
-    queryKey: queryKeys.issueResults(issue.project_id, issue.id, work, collection, after),
+    queryKey: queryKeys.issueJournal(issue.project_id, issue.id, request, selected, after),
     gcTime: 0,
     queryFn: ({ signal }) =>
-      api.results(issue.project_id, issue.id, work, collection, after, signal),
+      api.journal(issue.project_id, issue.id, request, selected, after, signal),
   });
+  const page = query.data?.records;
   return (
     <section className={styles.panel} aria-label={label}>
       <h3>{label}</h3>
+      {stages ? (
+        <SelectMenu
+          ariaLabel={t('issues.journalCollection')}
+          value={selected}
+          options={stageCollections.map((value) => ({ value, label: t(DIAGNOSTIC_LABELS[value]) }))}
+          onValueChange={(value) => {
+            const next = new URLSearchParams(params);
+            next.set('journal_collection', value);
+            setAfter(null);
+            setParams(next);
+          }}
+        />
+      ) : null}
       {query.isPending ? (
         <QueryLoadingNotice label={label} />
       ) : !query.data ? (
@@ -118,11 +171,11 @@ function ExecutionCollection({
             fetching={query.isFetching}
             onRetry={query.refetch}
           />
-          <IssueObservation page={query.data} />
-          <p role="status">{t(`issues.resultCoverage.${query.data.coverage}`)}</p>
-          {query.data.items.length ? (
+          {page ? <IssueObservation page={page} /> : null}
+          <p role="status">{t(`issues.resultCoverage.${page?.coverage ?? 'unavailable'}`)}</p>
+          {page?.items.length ? (
             <ul className={styles.list}>
-              {query.data.items.map((item) =>
+              {page.items.map((item) =>
                 item.kind === 'call' ? (
                   <li key={item.record.node.id}>
                     <p>{item.record.node.node_key}</p>
@@ -134,28 +187,68 @@ function ExecutionCollection({
                   </li>
                 ) : item.kind === 'build' ? (
                   <li key={item.record.id}>
+                    <p>{t('issues.stageReference', { id: item.record.node_attempt_id })}</p>
                     {item.record.jobs.map((job) => (
-                      <p key={job}>
+                      <div key={job}>
+                        <button
+                          onClick={() => {
+                            const next = new URLSearchParams(params);
+                            next.set('journal_build', item.record.id);
+                            next.set('journal_job', job);
+                            next.delete('journal_event');
+                            setParams(next);
+                          }}
+                        >
+                          {t('issues.inspectJob', { id: job })}
+                        </button>
                         <Link
                           to={`/builds/${encodeURIComponent(item.record.build_id)}?${new URLSearchParams({ attempt_id: item.record.attempt_id, job_id: job, log_scope: 'job:' + job })}`}
                         >
                           {t('issues.originalJobLogs')}
                         </Link>
-                      </p>
+                      </div>
                     ))}
                   </li>
-                ) : null,
+                ) : (
+                  <li key={item.record.id}>
+                    {item.kind === 'node_attempt' ? (
+                      <>
+                        <h4>{item.record.node_key}</h4>
+                        <p>
+                          {t(item.record.active ? 'issues.stageActive' : 'issues.stageRetained', {
+                            number: item.record.number,
+                          })}
+                        </p>
+                        <Link
+                          to={`/factory/${encodeURIComponent(executionRun(page))}?diagnostic=node-attempts&node_attempt_id=${encodeURIComponent(item.record.id)}`}
+                        >
+                          {t('issues.exactRunControls')}
+                        </Link>
+                      </>
+                    ) : null}
+                    <details>
+                      <summary>{t('issues.inspectResult')}</summary>
+                      <DiagnosticRecordDetails item={item} />
+                    </details>
+                  </li>
+                ),
               )}
             </ul>
-          ) : query.data.coverage === 'partial' ? (
+          ) : page?.coverage === 'partial' ? (
             <QueryEmptyNotice>
-              {t(collection === 'calls' ? 'issues.profileNotReported' : 'issues.jobsNotReported')}
+              {t(
+                stages
+                  ? 'issues.noResults'
+                  : collection === 'calls'
+                    ? 'issues.profileNotReported'
+                    : 'issues.jobsNotReported',
+              )}
             </QueryEmptyNotice>
           ) : null}
-          {query.data.next_cursor ? (
+          {page?.next_cursor ? (
             <button
               disabled={query.isFetching || query.error !== null}
-              onClick={() => setAfter(query.data!.next_cursor)}
+              onClick={() => setAfter(page!.next_cursor)}
             >
               {t('issues.nextPage')}
             </button>
@@ -168,4 +261,16 @@ function ExecutionCollection({
       </button>
     </section>
   );
+}
+
+const stageCollections = [
+  'node-attempts',
+  'flow-runs',
+  'workflow-cycles',
+  'node-completions',
+  'node-stops',
+  'budgets',
+] as const;
+function executionRun(page: import('./activityApi').IssueResultPage) {
+  return page.association.run_id;
 }

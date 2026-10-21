@@ -9,6 +9,12 @@ export type IssueCommentRequest = components['schemas']['AppendIssueCommentReque
 export type IssueResultPage = components['schemas']['IssueResultPage'];
 export type IssueResultCollection =
   operations['listIssueResults']['parameters']['query']['collection'];
+export type IssueJournalPage = components['schemas']['IssueExecutionJournalPage'];
+export type IssueJournalEvents = components['schemas']['IssueExecutionJournalEvents'];
+export type IssueJournalTarget = Pick<
+  operations['readIssueExecutionJournalEvents']['parameters']['query'],
+  'build_execution' | 'job_id'
+>;
 /** Existing authorized Run summary port supplied by application composition. */
 export interface IssueRunReader {
   getRun(
@@ -19,6 +25,83 @@ export interface IssueRunReader {
 /** Bounded metadata and independently authorized discussion bodies; never a provider/control client. */
 export function createIssueActivityApi(client = managementApi) {
   return {
+    async journal(
+      project_id: string,
+      issue_id: string,
+      request_id: string,
+      collection: IssueResultCollection,
+      after: string | null,
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.GET(
+            '/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal',
+            {
+              params: {
+                path: { project_id, issue_id, request_id },
+                query: {
+                  collection,
+                  limit: bounds.defaultPageSize,
+                  ...(after === null ? {} : { after }),
+                },
+              },
+              cache: 'no-store',
+              signal: signal ?? null,
+            },
+          )
+        ).data,
+      );
+    },
+    async journalEvents(
+      project_id: string,
+      issue_id: string,
+      request_id: string,
+      target: IssueJournalTarget,
+      after: string | null,
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.GET(
+            '/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal/events',
+            {
+              params: {
+                path: { project_id, issue_id, request_id },
+                query: {
+                  ...target,
+                  limit: bounds.defaultPageSize,
+                  ...(after === null ? {} : { after }),
+                },
+              },
+              cache: 'no-store',
+              signal: signal ?? null,
+            },
+          )
+        ).data,
+      );
+    },
+    async journalEvent(
+      project_id: string,
+      issue_id: string,
+      request_id: string,
+      target: IssueJournalTarget,
+      sequence: number,
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.GET(
+            '/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal/events/{sequence}',
+            {
+              params: { path: { project_id, issue_id, request_id, sequence }, query: target },
+              cache: 'no-store',
+              signal: signal ?? null,
+            },
+          )
+        ).data,
+      );
+    },
     async timeline(
       project_id: string,
       issue_id: string,
