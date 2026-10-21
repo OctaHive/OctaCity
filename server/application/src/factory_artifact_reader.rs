@@ -203,6 +203,26 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
     Ok(self.retained_upload(&request).await?.artifact)
   }
 
+  // Metadata may retain expired records, while content requires a live upload.
+  // Their immutable reference and Project ownership checks share one authority.
+  async fn verify_record_reference(
+    &self,
+    request: &ReadFactoryArtifact,
+    record: &ArtifactRecord,
+  ) -> Result<(), ApplicationError> {
+    let identity = record.identity();
+    if identity.artifact_id != request.artifact.artifact_id()
+      || identity.size_bytes != request.artifact.encoded_size()
+      || identity.digest.as_bytes() != request.artifact.content_digest().as_bytes()
+    {
+      return Err(ApplicationError::invalid());
+    }
+    if self.builds.build(identity.build_id).await?.build.project_id != request.project_id {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
+
   async fn retained_upload(&self, request: &ReadFactoryArtifact) -> Result<ArtifactUploadRecord, ApplicationError> {
     if request.artifact.encoded_size() > request.maximum_bytes
       || request.maximum_bytes > MAX_ARTIFACT_READ_BYTES
@@ -216,10 +236,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
       .await?;
     let record = &upload.artifact;
     let identity = record.identity();
-    if identity.artifact_id != request.artifact.artifact_id()
-      || identity.size_bytes != request.artifact.encoded_size()
-      || identity.digest.as_bytes() != request.artifact.content_digest().as_bytes()
-      || !record.state().is_visible()
+    if !record.state().is_visible()
       || record
         .published_at()
         .is_none_or(|published| published > request.observed_at)
@@ -235,10 +252,7 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryA
     {
       return Err(ApplicationError::invalid());
     }
-    let build = self.builds.build(identity.build_id).await?;
-    if build.build.project_id != request.project_id {
-      return Err(ApplicationError::invalid());
-    }
+    self.verify_record_reference(request, record).await?;
     Ok(upload)
   }
 }
@@ -295,3 +309,6 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryN
     Ok(result)
   }
 }
+
+#[path = "issue_artifact_reader.rs"]
+mod issue_projection;

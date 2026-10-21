@@ -11,6 +11,12 @@ mod records;
 mod results;
 pub use records::*;
 pub use results::*;
+#[path = "issue_result_panels.rs"]
+mod panels;
+pub use panels::*;
+#[path = "issue_result_artifacts.rs"]
+mod artifacts;
+pub use artifacts::*;
 
 #[path = "issue_execution_job.rs"]
 mod job;
@@ -175,6 +181,19 @@ impl<S: IssueExecutionStore + IssueStore, F: FactoryDiscoveryStore + 'static> Is
       run,
     })
   }
+  // Shared version fence for existing result reads and typed inspection panels.
+  async fn result_coverage(
+    &self,
+    context: &ManagementRequestContext,
+    association: &octacity_server_store::IssueWorkAssociation,
+    version: octacity_server_factory::FactoryRunVersion,
+  ) -> IssueResultCoverage {
+    match self.visible_execution_run(context, association).await {
+      Ok(run) if run.version == version => IssueResultCoverage::Partial,
+      Ok(_) => IssueResultCoverage::Stale,
+      Err(_) => IssueResultCoverage::Unavailable,
+    }
+  }
   async fn visible_execution_run(
     &self,
     context: &ManagementRequestContext,
@@ -245,4 +264,27 @@ impl<S: IssueExecutionStore + IssueStore, F: FactoryDiscoveryStore + 'static>
   ) -> Result<IssueExecutionProjection, ApplicationError> {
     self.execution_projection(context, grant, query.execution).await
   }
+}
+
+async fn producer_visible(
+  policy: &dyn ManagementAuthorizationPolicy,
+  context: &ManagementRequestContext,
+  producer: &octacity_server_factory::EvidenceProducer,
+) -> bool {
+  crate::factory_configuration_choices::require_visible_reference(
+    policy,
+    context,
+    ManagementResourceKind::Build,
+    producer.build_id(),
+  )
+  .await
+  .is_ok()
+    && crate::factory_configuration_choices::require_visible_reference(
+      policy,
+      context,
+      ManagementResourceKind::Job,
+      producer.job_id(),
+    )
+    .await
+    .is_ok()
 }

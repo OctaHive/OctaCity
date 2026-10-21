@@ -464,11 +464,15 @@ fn diagnostic_records(
           }),
         }),
     ),
-    FactoryRunDiagnosticKind::DomainFact(kind) => {
+    FactoryRunDiagnosticKind::DomainFact(_) | FactoryRunDiagnosticKind::CandidatePublication => {
       let mut records = stored
         .node_records
         .values()
-        .filter(|row| row.discovery().is_some_and(|facts| facts.kind() == kind))
+        .filter(|row| {
+          row
+            .discovery()
+            .is_some_and(|facts| kind.discovery_kinds().contains(&facts.kind()))
+        })
         .map(|row| {
           FactoryRunDiagnosticRecord::DomainFact(Box::new(
             crate::FactoryDomainDiagnostic::try_from(row).expect("stored node records are verified before commit"),

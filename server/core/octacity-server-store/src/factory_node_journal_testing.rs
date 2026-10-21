@@ -12,6 +12,8 @@ use fixtures::*;
 pub struct FactoryNodeJournalContractFixture {
   /// Optional verified safe facts used to exercise discovery over the common journal.
   pub discovery: Option<FlowDiscoveryFacts>,
+  /// Optional typed check observation used by read-projection contracts.
+  pub observation: Option<serde_json::Value>,
   /// Actual ordinary execution identities provided by the Build boundary.
   pub execution: FlowBuildExecution,
   /// Immutable Work and initial generic Flow admission.
@@ -27,6 +29,125 @@ pub struct FactoryNodeJournalContractFixture {
 #[must_use]
 pub fn factory_node_journal_contract_fixture() -> FactoryNodeJournalContractFixture {
   factory_node_journal_contract_fixture_with_retries(0)
+}
+/// Constructs the existing typed verification contract for projection qualification.
+#[must_use]
+pub fn factory_verification_journal_contract_fixture() -> FactoryNodeJournalContractFixture {
+  journal_fixture(verification_execution_fixture(FlowNodeKind::BuildCommand))
+}
+/// Constructs a qualified typed verification report using the supplied common schema.
+#[must_use]
+pub fn factory_verified_check_journal_fixture(outcome: DeterministicGateOutcome) -> FactoryNodeJournalContractFixture {
+  let template = supplied_verification_flow_template();
+  let contract = template
+    .schemas
+    .values()
+    .find(|s| s.identity.as_str() == "verification.observation")
+    .unwrap();
+  let schema = FlowDataSchema::new(
+    contract.identity.clone(),
+    contract.version.clone(),
+    contract.shape.clone(),
+  )
+  .unwrap();
+  let mut fixture = journal_fixture(verification_execution_fixture_with_schema(
+    FlowNodeKind::BuildCommand,
+    FactoryPermissionSet::deny_all(),
+    Some(schema),
+  ));
+  let check = VerificationCheckInput::new(&fixture.admission.flow, &fixture.input).unwrap();
+  fixture.observation = Some(
+    serde_json::to_value(VerificationObservation {
+      plan_digest: check.plan().digest().unwrap(),
+      input_digest: fixture.input.digest().unwrap(),
+      check: fixture.input.node().clone(),
+      outcome,
+      measurements: vec![],
+    })
+    .unwrap(),
+  );
+  fixture
+}
+/// Two declared checks sharing one candidate, used to qualify missing/active/failed observations.
+#[must_use]
+pub fn factory_two_check_journal_fixture() -> FactoryNodeJournalContractFixture {
+  let (work, old, schema, previous, attempt) = verification_execution_fixture(FlowNodeKind::BuildCommand);
+  let original = old.closure().definition(old.closure().root()).unwrap();
+  let mut second = serde_json::to_value(&original.nodes()[0]).unwrap();
+  second["key"] = serde_json::json!("second_check");
+  second["input_binding"] = serde_json::json!({"sources":{"result":{"source":"predecessor","view":"payload","path":""}},"mapping":{"value":{"mapping":"pointer","path":"/result"}}});
+  let mut execution = serde_json::to_value(original.execution()).unwrap();
+  execution["verification"]["checks"]["second_check"] =
+    execution["verification"]["checks"]["accessibility_audit"].clone();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: original.reference().id(),
+    version: original.reference().version(),
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes: vec![original.nodes()[0].clone(), serde_json::from_value(second).unwrap()],
+    transitions: vec![
+      FlowTransition::new(
+        original.entry().clone(),
+        key("observed"),
+        FlowTransitionTarget::Node(key("second_check")),
+      ),
+      FlowTransition::new(
+        key("second_check"),
+        key("observed"),
+        FlowTransitionTarget::Terminal(key("done")),
+      ),
+    ],
+    terminals: original.terminals().to_vec(),
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: serde_json::from_value(execution).unwrap(),
+  })
+  .unwrap();
+  let run = FactoryRun::admitted(old.root_run().factory_run_id(), &work);
+  let flow = FlowRun::root(&run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    old.limits().clone(),
+    flow,
+    cycle,
+    old.wip_limits(),
+  )
+  .unwrap()
+  .with_data_schemas(old.data_schemas().to_vec())
+  .unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    previous.node().clone(),
+    previous.payload().clone(),
+  )
+  .unwrap()
+  .with_context(previous.context().unwrap().clone(), vec![])
+  .unwrap();
+  let definition = admitted.closure().definition(admitted.closure().root()).unwrap();
+  let node = definition.node(input.node()).unwrap();
+  let attempt = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    definition,
+    NodeAttemptInput {
+      id: NodeAttemptId::generate(),
+      node_key: input.node().clone(),
+      node_kind: node.kind(),
+      number: NodeAttemptNumber::INITIAL,
+      input_digest: input.digest().unwrap(),
+      budget: node.budget(),
+      started_at: attempt.started_at(),
+      deadline: attempt.deadline(),
+      execution: attempt.execution().clone(),
+      ownership: FactoryClaimOwnership::new(attempt.owner().clone(), attempt.claim()),
+    },
+  )
+  .unwrap();
+  journal_fixture((work, admitted, schema, input, attempt))
 }
 /// Constructs a generic node with an explicit operator-controlled retry allowance.
 #[must_use]
@@ -71,10 +192,15 @@ pub fn factory_node_journal_contract_fixture_with_large_signal() -> FactoryNodeJ
 fn journal_fixture(
   (work, admitted, schema, input, attempt): (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt),
 ) -> FactoryNodeJournalContractFixture {
-  let admitted = admitted.with_data_schemas(vec![schema.clone()]).unwrap();
+  let mut schemas = admitted.data_schemas().to_vec();
+  if !schemas.contains(&schema) {
+    schemas.push(schema.clone());
+  }
+  let admitted = admitted.with_data_schemas(schemas).unwrap();
   let run = FactoryRun::admitted(admitted.root_run().factory_run_id(), &work);
   FactoryNodeJournalContractFixture {
     discovery: None,
+    observation: None,
     execution: FlowBuildExecution::new(
       &FlowBuildIntent::new(
         input.clone(),
@@ -289,10 +415,15 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
   .unwrap()
   .profile()
   .clone();
+  let payload = fixture
+    .observation
+    .clone()
+    .unwrap_or_else(|| serde_json::json!({"count":9}));
+  let bytes = serde_json::to_vec(&payload).unwrap();
   let artifact = FactoryArtifactReference::new(
     octacity_server_domain::ArtifactId::generate(),
-    FactoryDigest::content_sha256(br#"{"count":9}"#),
-    11,
+    FactoryDigest::content_sha256(&bytes),
+    bytes.len() as u64,
   )
   .unwrap();
   let provenance = FlowBuildProvenance::new(
@@ -311,7 +442,10 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
       ),
       verified_at: time(20),
       fresh_until: time(1000),
-      data: None,
+      data: fixture
+        .observation
+        .as_ref()
+        .map(|value| FlowVerifiedBuildData::new(schema.clone(), value.clone()).unwrap()),
     }],
   )
   .unwrap();
@@ -321,7 +455,7 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
     definition,
     FlowRecordObservation {
       outcome: key("observed"),
-      payload: FlowPayload::new(schema, serde_json::json!({"count":9})).unwrap(),
+      payload: FlowPayload::new(schema, payload).unwrap(),
       producer: attempt.execution().clone(),
       observed_at: time(20),
     },

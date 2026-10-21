@@ -1,3 +1,5 @@
+#[path = "issue_result_panel_tests.rs"]
+mod result_panels;
 use super::*;
 
 #[path = "issue_code_review_lineage_tests.rs"]
@@ -263,7 +265,16 @@ async fn associated_journal() -> (
   IssueRevision,
   testing::FactoryNodeJournalContractFixture,
 ) {
-  let fixture = testing::factory_node_journal_contract_fixture();
+  associated_journal_for(testing::factory_node_journal_contract_fixture()).await
+}
+async fn associated_journal_for(
+  fixture: testing::FactoryNodeJournalContractFixture,
+) -> (
+  Arc<InMemoryProjectStore>,
+  Arc<testing::InMemoryFactoryConfigurationStore>,
+  IssueRevision,
+  testing::FactoryNodeJournalContractFixture,
+) {
   let project_id = fixture.admission.work.subject().project_id();
   let store = crate::issue_test_support::manual_issue_store(project_id).await;
   let policy = Arc::new(TrustedNetworkManagementPolicy);

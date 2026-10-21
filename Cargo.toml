@@ -74,6 +74,7 @@ license = "MIT"
 repository = "https://github.com/OctaHive/OctaCity"
 
 [workspace.dependencies]
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 async-trait = "0.1.92"
 aws-sdk-s3 = { version = "1.152.0", default-features = false, features = ["behavior-version-latest", "default-https-client", "http-1x", "rt-tokio"] }
 axum = "0.8.9"

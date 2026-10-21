@@ -812,6 +812,8 @@ pub enum FactoryRunDiagnosticKind {
   Work,
   /// Exact external node invocation and safe frozen task metadata.
   Call,
+  /// Original Candidate and ChangeSet publications in one ordered bounded stream.
+  CandidatePublication,
   /// Safe verified observations retained in the common node journal.
   DomainFact(octacity_server_factory::FlowDiscoveryKind),
   /// Exact ordinary execution links.
@@ -830,6 +832,19 @@ pub enum FactoryRunDiagnosticKind {
   NodeAttempt,
   /// Verified completions of arbitrary configured nodes.
   NodeAttemptCompletion,
+}
+
+impl FactoryRunDiagnosticKind {
+  /// Common discovery categories selected by this family; empty for non-domain collections.
+  #[must_use]
+  pub fn discovery_kinds(&self) -> &[octacity_server_factory::FlowDiscoveryKind] {
+    use octacity_server_factory::FlowDiscoveryKind;
+    match self {
+      Self::DomainFact(kind) => std::slice::from_ref(kind),
+      Self::CandidatePublication => &[FlowDiscoveryKind::Candidate, FlowDiscoveryKind::ChangeSet],
+      _ => &[],
+    }
+  }
 }
 
 /// Typed immutable row returned by a common execution diagnostic collection.
@@ -951,6 +966,7 @@ impl ListFactoryRunDiagnostics {
         | FactoryRunDiagnosticKind::Budget
         | FactoryRunDiagnosticKind::BuildExecution
         | FactoryRunDiagnosticKind::DomainFact(_)
+        | FactoryRunDiagnosticKind::CandidatePublication
         | FactoryRunDiagnosticKind::NodeAttemptCompletion
         | FactoryRunDiagnosticKind::NodeStop => FactoryDigest::from_lower_hex(key.as_str()).is_ok(),
       };

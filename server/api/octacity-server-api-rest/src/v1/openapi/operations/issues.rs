@@ -2,6 +2,135 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ListIssueExternalChecksQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/code-reviews/{review_id}/checks",
+    "listIssueExternalChecks",
+    "Issues",
+    "Read one retained original-head CI observation without polling or acceptance authority",
+    None,
+    "IssueExternalChecksPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListIssueExternalChecksQuery>()
+  .with_parameters(ParameterProfile::IssueExternalChecks)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListIssueChecksQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/results/checks",
+    "listIssueChecks",
+    "Issues",
+    "Read exact candidate Factory checks without inferring acceptance",
+    None,
+    "IssueChecksPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListIssueChecksQuery>()
+  .with_parameters(ParameterProfile::IssueChecks)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListIssueArtifactsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/results/artifacts",
+    "listIssueArtifacts",
+    "Issues",
+    "Read bounded original execution Artifact references without bytes",
+    None,
+    "IssueArtifactsPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListIssueArtifactsQuery>()
+  .with_parameters(ParameterProfile::IssueArtifacts)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ReadIssueArtifactContentQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/results/artifacts/{artifact_id}/content",
+    "readIssueArtifactContent",
+    "Issues",
+    "Explicit independently authorized retained preview or download",
+    None,
+    "IssueArtifactContent",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ReadIssueArtifactContentQuery>()
+  .with_parameters(ParameterProfile::IssueArtifactContent)
+  .with_no_store_response()
+  .with_binary_response()
+  .with_capability_unavailable_response(),
+  operation!(
+    octacity_server_application::RefreshIssueCodeReviewCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/code-reviews/{review_id}/observations",
+    "refreshIssueCodeReview",
+    "Issues",
+    "Explicitly retain an authorized observation without changing the original review or execution",
+    Some("RefreshIssueCodeReviewRequest"),
+    "IssueCodeReviewObservationOutcome",
+    "200",
+    true,
+    false
+  )
+  .with_no_store_response()
+  .with_capability_unavailable_response(),
+  operation!(
+    octacity_server_application::ListIssueCodeReviewObservationsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/code-reviews/{review_id}/observations",
+    "listIssueCodeReviewObservations",
+    "Issues",
+    "Read retained original-head observations without contacting a provider",
+    None,
+    "IssueCodeReviewObservationPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListIssueCodeReviewObservationsQuery>()
+  .with_parameters(ParameterProfile::IssueObservations)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListIssueCodeReviewsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/code-reviews",
+    "listIssueCodeReviews",
+    "Issues",
+    "Read retained review metadata and independent capability availability without provider dispatch",
+    None,
+    "IssueCodeReviewPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListIssueCodeReviewsQuery>()
+  .with_parameters(ParameterProfile::IssueObservations)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::AttachIssueCodeReviewCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/code-reviews",
+    "attachIssueCodeReview",
+    "Issues",
+    "Attach an independently authorized native code review to the reviewed task",
+    Some("AttachIssueCodeReviewRequest"),
+    "IssueCodeReviewOutcome",
+    "201",
+    true,
+    true
+  )
+  .with_no_store_response()
+  .with_replay_success_response()
+  .with_capability_unavailable_response(),
+  operation!(
     octacity_server_application::ListIssueExecutionJournalQuery,
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal",

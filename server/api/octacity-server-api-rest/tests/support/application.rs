@@ -105,6 +105,8 @@ where
   let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), application.clone()));
   let job_event_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), job_events));
   let retention_commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), retention.clone()));
+  let review_commands = commands.clone();
+  let review_queries = queries.clone();
   let execution_commands = commands.clone();
   let execution_queries = queries.clone();
   let issue_commands = commands.clone();
@@ -168,6 +170,10 @@ where
       .with_journal(execution_queries.clone(), execution_queries)
       .with_publication(execution_commands.clone(), execution_commands, Duration::from_millis(5)),
   )
+  .with_issue_code_reviews(
+    octacity_server_api_rest::v1::IssueCodeReviewManagementApplication::new(review_commands, review_queries.clone())
+      .with_checks(review_queries),
+  )
   .with_issue_sources(
     octacity_server_api_rest::v1::IssueSourceManagementApplication::new(source_queries.clone())
       .with_projection_queries(source_queries)
@@ -177,6 +183,12 @@ where
   .with_issue_activity(
     octacity_server_api_rest::v1::IssueActivityManagementApplication::new(issue_queries.clone())
       .with_results(issue_queries.clone()),
+  )
+  .with_issue_result_panels(
+    octacity_server_api_rest::v1::IssueResultPanelManagementApplication::new(
+      issue_queries.clone(),
+      issue_queries.clone(),
+    ),
   )
   .with_issue_discussion(octacity_server_api_rest::v1::IssueDiscussionManagementApplication::new(
     issue_commands.clone(),

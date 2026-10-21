@@ -110,7 +110,10 @@ PACKAGE_ALLOWED_EXTERNAL_DEPENDENCIES = {
     # redaction material in zeroing memory before any durable write.
     # serde_path_to_error tracks safe authoring-field locations without exposing
     # rejected input values or introducing transport/provider dependencies.
-    "octacity-server-application": frozenset({"base64", "serde_path_to_error", "url", "zeroize"}),
+    # Raster previews use a bounded in-memory decoder to validate and normalize
+    # PNG/JPEG/WebP; no image/library types cross application contracts and this
+    # grants no filesystem, network, provider or execution authority.
+    "octacity-server-application": frozenset({"base64", "image", "serde_path_to_error", "url", "zeroize"}),
     # Cache namespace syntax follows Octa's public protocol while HMAC protects
     # the server-private credential derivation boundary.
     "octacity-server-cache": frozenset({"blake3", "hmac", "octa-cache-protocol", "zstd"}),

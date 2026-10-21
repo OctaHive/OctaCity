@@ -12,6 +12,7 @@ description = "Transport-independent CQRS application layer for OctaCity"
 test-support = ["octacity-server-store/test-support"]
 
 [dependencies]
+image.workspace = true
 async-trait.workspace = true
 base64.workspace = true
 octacity-artifact-store = { path = "../core/octacity-artifact-store" }

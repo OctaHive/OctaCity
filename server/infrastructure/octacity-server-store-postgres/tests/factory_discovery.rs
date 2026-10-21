@@ -188,6 +188,46 @@ async fn assert_configured_node_discovery(kind: &str) {
   );
   assert_eq!(summary.diagnostics.budget.usage.attempts, 1);
   assert!(summary.diagnostics.current_nodes.is_empty());
+  if matches!(kind, "candidate" | "changeset") {
+    use octacity_server_store::{FactoryRunDiagnosticKind, FactoryRunStore as _, ListFactoryRunDiagnostics};
+    let first = restarted
+      .list_factory_run_diagnostics(
+        ListFactoryRunDiagnostics::new(
+          node_fixture.admission.run.id(),
+          FactoryRunDiagnosticKind::CandidatePublication,
+          None,
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      first.items.len(),
+      1,
+      "original candidate publication must survive restart"
+    );
+    let octacity_server_store::FactoryRunDiagnosticRecord::DomainFact(row) = &first.items[0] else {
+      panic!("candidate publication required")
+    };
+    assert_eq!(row.facts.published_candidate(), Some(&candidate));
+    assert_eq!(row.facts.kind().as_str(), kind);
+    assert!(first.next.is_none());
+    let tail = restarted
+      .list_factory_run_diagnostics(
+        ListFactoryRunDiagnostics::new(
+          node_fixture.admission.run.id(),
+          FactoryRunDiagnosticKind::CandidatePublication,
+          Some(first.items[0].cursor()),
+          1,
+        )
+        .unwrap(),
+      )
+      .await
+      .unwrap();
+    assert!(tail.items.is_empty());
+    assert!(tail.next.is_none());
+  }
   if kind == "decision" {
     assert_eq!(
       summary.diagnostics.latest_decision.as_ref().unwrap().outcome,

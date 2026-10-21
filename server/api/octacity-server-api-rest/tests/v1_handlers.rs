@@ -282,6 +282,20 @@ unavailable_query!(
   "list_issue_timeline"
 );
 unavailable_query!(octacity_server_application::ListIssueResultsQuery, "list_issue_results");
+unavailable_query!(octacity_server_application::ListIssueChecksQuery, "list_issue_checks");
+unavailable_query!(
+  octacity_server_application::ListIssueArtifactsQuery,
+  "list_issue_artifacts"
+);
+unavailable_query!(
+  octacity_server_application::ReadIssueArtifactContentQuery,
+  "read_issue_artifact_content"
+);
+unavailable_query!(
+  octacity_server_application::ListIssueExternalChecksQuery,
+  "list_issue_external_checks"
+);
+
 unavailable_query!(
   octacity_server_application::ListIssueExecutionJournalQuery,
   "list_issue_execution_journal"
@@ -293,6 +307,22 @@ unavailable_query!(
 unavailable_query!(
   octacity_server_application::GetIssueExecutionJournalEventQuery,
   "get_issue_execution_journal_event"
+);
+unavailable_command!(
+  octacity_server_application::AttachIssueCodeReviewCommand,
+  "attach_issue_code_review"
+);
+unavailable_command!(
+  octacity_server_application::RefreshIssueCodeReviewCommand,
+  "refresh_issue_code_review"
+);
+unavailable_query!(
+  octacity_server_application::ListIssueCodeReviewsQuery,
+  "list_issue_code_reviews"
+);
+unavailable_query!(
+  octacity_server_application::ListIssueCodeReviewObservationsQuery,
+  "list_issue_code_review_observations"
 );
 unavailable_query!(
   octacity_server_application::ListIssueExecutionsQuery,
@@ -1516,6 +1546,15 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/state"), None),
     empty_request("GET", &format!("/api/v1/integrations/{integration_id}/state"), None),
     empty_request("POST", &format!("/api/v1/integrations/{integration_id}/preparations/cleanup"), None),
+    json_request("POST", &format!("/api/v1/projects/{project_id}/issues/{job_id}/code-reviews"),"review-attach",Some("\"1\""),&serde_json::json!({"selection":{
+      "source":{ "installation":{"identity":"forge","version":"v1","digest":"11".repeat(32)},"capability":{"identity":"review","version":"v1","digest":"22".repeat(32)},"configuration":{"identity":"read","version":"v1","digest":"33".repeat(32)},"resource":{"identity":"code","version":"v1","digest":"44".repeat(32)}},"item":{"resource":"native-code","item":"native-review"}}}).to_string()),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issues/{job_id}/code-reviews?limit=1"), None),
+    json_request("POST", &format!("/api/v1/projects/{project_id}/issues/{job_id}/code-reviews/{}/observations","ab".repeat(32)),"refresh-review",None,"{}"),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issues/{job_id}/code-reviews/{}/observations?limit=1","ab".repeat(32)),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{job_id}/results/checks?work_id={build_id}&record={}&limit=1","ab".repeat(32)),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{job_id}/results/artifacts?work_id={build_id}&limit=1"),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{job_id}/results/artifacts/{job_id}/content?work_id={build_id}&mode=preview"),None),
+    empty_request("GET",&format!("/api/v1/projects/{project_id}/issues/{job_id}/code-reviews/{}/checks","ab".repeat(32)),None),
   ]
 }
 
@@ -1685,6 +1724,14 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_factory_runs",
       "list_factory_phase_ready",
       "list_factory_phase_ready",
+      "attach_issue_code_review",
+      "list_issue_code_reviews",
+      "refresh_issue_code_review",
+      "list_issue_code_review_observations",
+      "list_issue_checks",
+      "list_issue_artifacts",
+      "read_issue_artifact_content",
+      "list_issue_external_checks",
     ]
   );
 }

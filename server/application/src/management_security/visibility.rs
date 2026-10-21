@@ -389,6 +389,53 @@ impl ManagementVisibilityTarget for crate::ListIssueResultsQuery {
   }
 }
 
+impl ManagementVisibilityTarget for crate::ListIssueCodeReviewsQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+impl ManagementVisibilityTarget for crate::ListIssueCodeReviewObservationsQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+
+impl ManagementVisibilityTarget for crate::ListIssueChecksQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+
+impl ManagementVisibilityTarget for crate::ListIssueArtifactsQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+
+impl ManagementVisibilityTarget for crate::ReadIssueArtifactContentQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+
+impl ManagementVisibilityTarget for crate::ListIssueExternalChecksQuery {
+  type Visibility = octacity_server_store::IssueListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Issue];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <crate::ListProjectIssuesQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}
+
 #[cfg(test)]
 mod tests {
   use std::any::TypeId;

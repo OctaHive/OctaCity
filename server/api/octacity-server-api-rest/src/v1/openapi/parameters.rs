@@ -9,6 +9,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "property_version",
     "workflow_id",
     "issue_id",
+    "review_id",
     "request_id",
     "sequence",
     "comment_id",
@@ -37,7 +38,8 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         "name": name,
         "in": "path",
         "required": true,
-        "schema": if name == "sequence" { positive_integer() }
+        "schema": if name == "review_id" { schema_ref("FactoryDigest") }
+          else if name == "sequence" { positive_integer() }
           else if name == "property_version" { non_negative_integer() }
           else if name == "version" { positive_integer() }
           else if matches!(name, "workflow_id" | "issue_id" | "request_id" | "comment_id") { json!({"type":"string","format":"uuid"}) }
@@ -83,6 +85,17 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         parameters.extend([limit_parameter(octacity_server_application::MAX_ISSUE_HISTORY_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT),json!({"name":"kinds","in":"query","required":false,"schema":{"type":"array","minItems":1,"maxItems":octacity_server_application::IssueTimelineKind::ALL.len(),"uniqueItems":true,"items":{"type":"string","enum":octacity_server_application::IssueTimelineKind::ALL}},"style":"form","explode":false})]);
       } else {parameters.extend([limit_parameter(octacity_server_application::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT),json!({"name":"work_id","in":"query","required":true,"schema":{"type":"string","format":"uuid"}}),json!({"name":"collection","in":"query","required":true,"schema":{"type":"string","enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|c|c.as_str()).collect::<Vec<_>>()}})]);}
     },
+    ParameterProfile::IssueChecks | ParameterProfile::IssueArtifacts | ParameterProfile::IssueArtifactContent => {
+      parameters.push(json!({"name":"work_id","in":"query","required":true,"schema":{"type":"string","format":"uuid"}}));
+      if matches!(operation.parameter_profile,ParameterProfile::IssueArtifactContent) {
+        parameters.push(json!({"name":"mode","in":"query","required":true,"schema":{"type":"string","enum":["preview","download"]}}));
+      } else {
+        parameters.extend([cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_OBSERVATION_CURSOR_BYTES),limit_parameter(octacity_server_application::MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT)]);
+        if matches!(operation.parameter_profile,ParameterProfile::IssueChecks) {parameters.push(json!({"name":"record","in":"query","required":true,"schema":schema_ref("FactoryDigest")}));}
+      }
+    },
+    ParameterProfile::IssueExternalChecks=>parameters.push(cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_OBSERVATION_CURSOR_BYTES)),
+    ParameterProfile::IssueObservations => parameters.extend([cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_OBSERVATION_CURSOR_BYTES),limit_parameter(octacity_server_application::MAX_ISSUE_HISTORY_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT)]),
     ParameterProfile::IssueExecutions => parameters.extend([
       cursor_parameter_with_max(octacity_server_application::MAX_ISSUE_EXECUTION_CURSOR_BYTES),
       limit_parameter(octacity_server_application::MAX_ISSUE_HISTORY_PAGE_SIZE,super::super::adapter::DEFAULT_PAGE_LIMIT)

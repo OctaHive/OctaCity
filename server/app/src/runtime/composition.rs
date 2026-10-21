@@ -37,7 +37,7 @@ impl ServerRuntime {
   /// Binds the listener and starts supervised work from validated configuration.
   pub async fn start(config: ServerConfig) -> Result<Self, ServerRuntimeError> {
     let installer = configured_factory_installer(&config).await?;
-    Self::start_configured(config, installer, None).await
+    Self::start_configured(config, installer, Default::default()).await
   }
 
   /// Starts the optional common Flow owner using explicitly installed capability bindings.
@@ -45,7 +45,7 @@ impl ServerRuntime {
     config: ServerConfig,
     installer: Arc<dyn super::FactoryRuntimeInstaller>,
   ) -> Result<Self, ServerRuntimeError> {
-    Self::start_configured(config, Some(installer), None).await
+    Self::start_configured(config, Some(installer), Default::default()).await
   }
 
   /// Installs task Source reads and mapping choices independently from optional Factory admission.
@@ -53,14 +53,30 @@ impl ServerRuntime {
     config: ServerConfig,
     sources: super::IssueSourceRuntimeInstallation,
   ) -> Result<Self, ServerRuntimeError> {
+    Self::start_with_issue_integrations(
+      config,
+      super::IssueRuntimeIntegrations {
+        sources: Some(sources),
+        ..Default::default()
+      },
+    )
+    .await
+  }
+
+  /// Installs independent optional Source/review readers through the existing application composition.
+  /// Installing review capability schedules no provider read or additional poller.
+  pub async fn start_with_issue_integrations(
+    config: ServerConfig,
+    integrations: super::IssueRuntimeIntegrations,
+  ) -> Result<Self, ServerRuntimeError> {
     let installer = configured_factory_installer(&config).await?;
-    Self::start_configured(config, installer, Some(sources)).await
+    Self::start_configured(config, installer, integrations).await
   }
 
   async fn start_configured(
     config: ServerConfig,
     installer: Option<Arc<dyn super::FactoryRuntimeInstaller>>,
-    issue_sources: Option<super::IssueSourceRuntimeInstallation>,
+    issue_integrations: super::IssueRuntimeIntegrations,
   ) -> Result<Self, ServerRuntimeError> {
     if config.factory().is_some() && installer.is_none() {
       return Err(ServerRuntimeError::MissingFactoryInstallation);
@@ -176,7 +192,7 @@ impl ServerRuntime {
       webhook_verifier,
       webhook_provider,
     } = management_application(ApplicationAssembly {
-      issue_sources,
+      issue_integrations,
       store: registration_store.clone(),
       integrations: super::integration_management::install(
         &config,

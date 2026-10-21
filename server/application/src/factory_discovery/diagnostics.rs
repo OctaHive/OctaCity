@@ -35,7 +35,9 @@ pub enum FactoryDiagnosticCollection {
 
   /// Advisory receipts with separate deterministic consumption.
   DecisionSignals,
-  /// Verified candidate captures.
+  /// Original trusted Candidate and ChangeSet publications.
+  Candidates,
+  /// Original ChangeSet publications only.
   #[serde(rename = "changesets")]
   ChangeSets,
   /// Verified manifest identities.
@@ -71,6 +73,7 @@ impl FactoryDiagnosticCollection {
       Self::NodeStops => "node-stops",
 
       Self::DecisionSignals => "decision-signals",
+      Self::Candidates => "candidates",
       Self::ChangeSets => "changesets",
       Self::Evidence => "evidence",
       Self::ReviewPlans => "review-plans",
@@ -98,6 +101,7 @@ impl FactoryDiagnosticCollection {
       Self::DecisionSignals => {
         FactoryRunDiagnosticKind::DomainFact(octacity_server_factory::FlowDiscoveryKind::DecisionSignal)
       }
+      Self::Candidates => FactoryRunDiagnosticKind::CandidatePublication,
       Self::ChangeSets => FactoryRunDiagnosticKind::DomainFact(octacity_server_factory::FlowDiscoveryKind::ChangeSet),
       Self::Evidence => FactoryRunDiagnosticKind::DomainFact(octacity_server_factory::FlowDiscoveryKind::Evidence),
       Self::ReviewPlans => FactoryRunDiagnosticKind::DomainFact(octacity_server_factory::FlowDiscoveryKind::ReviewPlan),
@@ -110,7 +114,7 @@ impl FactoryDiagnosticCollection {
     }
   }
   /// Closed values published in OpenAPI.
-  pub const ALL: [Self; 20] = [
+  pub const ALL: [Self; 21] = [
     Self::FlowRuns,
     Self::WorkflowCycles,
     Self::NodeAttempts,
@@ -122,6 +126,7 @@ impl FactoryDiagnosticCollection {
     Self::NodeCompletions,
     Self::NodeStops,
     Self::DecisionSignals,
+    Self::Candidates,
     Self::ChangeSets,
     Self::Evidence,
     Self::ReviewPlans,

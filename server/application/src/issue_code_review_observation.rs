@@ -143,6 +143,20 @@ impl<S: IssueCodeReviewStore> ManagementQueryUseCase<ListIssueCodeReviewObservat
     grant: &ManagementAuthorizationGrant,
     query: ListIssueCodeReviewObservationsQuery,
   ) -> Result<IssueCodeReviewObservationPage, ApplicationError> {
+    let mut page = self.read_observation_page(context, grant, query).await?;
+    for item in &mut page.items {
+      item.observation.check_details = None;
+    }
+    Ok(page)
+  }
+}
+impl<S: IssueCodeReviewStore> IssueCodeReviewHandlers<S> {
+  pub(super) async fn read_observation_page(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    query: ListIssueCodeReviewObservationsQuery,
+  ) -> Result<IssueCodeReviewObservationPage, ApplicationError> {
     let selected = query.selection;
     crate::issue::visible_issue(grant, selected.issue_id)?;
     let (scope, visibility) = self

@@ -39,16 +39,16 @@ pub(crate) async fn list_diagnostics(
       &request, limit, |value| FactoryRunDiagnosticRecord::Work(Box::new(value)),
     ).await?,
     FactoryRunDiagnosticKind::Call => call_rows(pool, &request, limit).await?,
-    FactoryRunDiagnosticKind::DomainFact(kind) => {
+    FactoryRunDiagnosticKind::DomainFact(_) | FactoryRunDiagnosticKind::CandidatePublication => {
       let after = digest_cursor(&request)?;
       sqlx::query_scalar::<_, Json<octacity_server_store::FactoryDomainDiagnostic>>(
         "SELECT jsonb_build_object('id', encode(record.id,'hex'), 'node_attempt_id', record.node_attempt_id, \
           'flow_run_id', node.flow_run_id, 'cycle_id', node.workflow_cycle_id, 'input_digest', encode(record.input_digest,'hex'), \
           'observed_at', record.observed_at_millis, 'facts', record.discovery_facts) \
          FROM factory_flow_records record JOIN factory_node_attempts node ON node.id = record.node_attempt_id AND node.run_id = record.run_id \
-         WHERE record.run_id = $1 AND ($2::bytea IS NULL OR record.id > $2) AND record.discovery_facts ->> 'kind' = $4 \
+         WHERE record.run_id = $1 AND ($2::bytea IS NULL OR record.id > $2) AND record.discovery_facts ->> 'kind' = ANY($4) \
          ORDER BY record.id LIMIT $3"
-      ).bind(request.run_id.as_uuid()).bind(after).bind(limit).bind(kind.as_str()).fetch_all(pool).await.map_err(unavailable)?
+      ).bind(request.run_id.as_uuid()).bind(after).bind(limit).bind(request.kind.discovery_kinds().iter().map(|kind| kind.as_str()).collect::<Vec<_>>()).fetch_all(pool).await.map_err(unavailable)?
         .into_iter().map(|Json(row)| FactoryRunDiagnosticRecord::DomainFact(Box::new(row))).collect()
     }
 

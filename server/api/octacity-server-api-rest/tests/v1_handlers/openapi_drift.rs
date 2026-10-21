@@ -248,10 +248,19 @@ async fn openapi_document_cannot_drift_from_registered_routes_and_v1_dtos() {
         serde_json::json!([])
       }
     );
-    assert_eq!(
-      documented["responses"][operation.success_status]["content"]["application/json"]["schema"]["$ref"],
-      format!("#/components/schemas/{}", operation.response_schema)
-    );
+    let media_types: &[&str] = if operation.response_schema == "IssueArtifactContent" {
+      &["application/octet-stream", "text/plain", "image/png"]
+    } else {
+      &["application/json"]
+    };
+    let content = &documented["responses"][operation.success_status]["content"];
+    assert_eq!(content.as_object().unwrap().len(), media_types.len());
+    for media_type in media_types {
+      assert_eq!(
+        content[media_type]["schema"]["$ref"],
+        format!("#/components/schemas/{}", operation.response_schema)
+      );
+    }
     assert_component_exists(&document, operation.response_schema);
     if let Some(request_schema) = operation.request_schema {
       assert_eq!(

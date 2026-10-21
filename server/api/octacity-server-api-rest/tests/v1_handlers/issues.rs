@@ -996,3 +996,8 @@ mod discussion;
 
 #[path = "issues/activity.rs"]
 mod activity;
+#[path = "issues/code_reviews.rs"]
+mod code_reviews;
+
+#[path = "issues/result_panels.rs"]
+mod result_panels;

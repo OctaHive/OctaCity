@@ -58,5 +58,7 @@ pub(crate) fn component_schemas() -> Value {
   log_search::insert_log_search_schemas(&mut schemas);
   retention::insert_retention_schemas(&mut schemas);
   super::issue_journal::insert(&mut schemas);
+  super::issue_code_reviews::insert(&mut schemas);
+  super::issue_result_panels::insert(&mut schemas);
   Value::Object(schemas)
 }

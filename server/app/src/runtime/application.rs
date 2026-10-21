@@ -52,7 +52,7 @@ type WebhookHostConfiguration = (
 );
 
 pub(super) struct ApplicationAssembly {
-  pub(super) issue_sources: Option<super::IssueSourceRuntimeInstallation>,
+  pub(super) issue_integrations: super::IssueRuntimeIntegrations,
   pub(super) store: Arc<PostgresStore>,
   pub(super) authoritative_store: Arc<PostgresAuthoritativeStore>,
   pub(super) toolchain: JobSpecToolchainPolicy,
@@ -76,7 +76,7 @@ pub(super) fn management_application(
   assembly: ApplicationAssembly,
 ) -> Result<ApplicationComponents, ServerRuntimeError> {
   let ApplicationAssembly {
-    issue_sources,
+    issue_integrations,
     store,
     authoritative_store,
     toolchain,
@@ -112,7 +112,7 @@ pub(super) fn management_application(
     toolchain,
   ));
   let manual_triggers = Arc::new(ManualTriggerService::new(
-    authoritative_store,
+    authoritative_store.clone(),
     trigger_context,
     revision_resolver.clone(),
   ));
@@ -245,6 +245,20 @@ pub(super) fn management_application(
     store.clone(),
     management_policy.clone(),
   ));
+  let result_artifacts = Arc::new(octacity_server_application::IssueArtifactHandlers::new(
+    executions.clone(),
+    Arc::new(
+      octacity_server_application::FactoryArtifactReader::new(
+        store.clone(),
+        authoritative_store,
+        object_storage.clone(),
+      )
+      .with_project_inputs(store.clone())
+      .with_source_inputs(store.clone()),
+    ),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+    management_policy.clone(),
+  ));
   let execution_publication = Arc::new(octacity_server_application::IssueExecutionPublisher::new(
     store.clone(),
     store.clone(),
@@ -253,6 +267,19 @@ pub(super) fn management_application(
     management_policy.clone(),
     Arc::new(octacity_server_application::SystemFactoryExecutionClock),
   ));
+  let super::IssueRuntimeIntegrations {
+    sources: issue_sources,
+    code_reviews,
+  } = issue_integrations;
+  let reviews = Arc::new(
+    octacity_server_application::IssueCodeReviewHandlers::new(
+      store.clone(),
+      code_reviews.unwrap_or_else(|| Arc::new(UnavailableIssueCodeReviews)),
+      management_policy.clone(),
+      Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+    )
+    .with_execution_reader(executions.clone()),
+  );
   let (reader, mappings, refresh_policy) = match issue_sources {
     Some(super::IssueSourceRuntimeInstallation {
       reader,
@@ -328,6 +355,12 @@ pub(super) fn management_application(
     workflow_commands,
     workflow_queries,
   ))
+  .with_issue_result_panels(
+    octacity_server_api_rest::v1::IssueResultPanelManagementApplication::new(
+      authorized_queries(&management_policy, executions.clone()),
+      authorized_queries(&management_policy, result_artifacts),
+    ),
+  )
   .with_issue_activity(
     octacity_server_api_rest::v1::IssueActivityManagementApplication::new(authorized_queries(
       &management_policy,
@@ -363,6 +396,13 @@ pub(super) fn management_application(
       authorized_commands(&management_policy, execution_publication),
       ISSUE_EXECUTION_PUBLICATION_WAIT,
     ),
+  )
+  .with_issue_code_reviews(
+    octacity_server_api_rest::v1::IssueCodeReviewManagementApplication::new(
+      authorized_commands(&management_policy, reviews.clone()),
+      authorized_queries(&management_policy, reviews.clone()),
+    )
+    .with_checks(authorized_queries(&management_policy, reviews)),
   )
   .with_issue_sources(
     octacity_server_api_rest::v1::IssueSourceManagementApplication::new(authorized_queries(
@@ -420,6 +460,38 @@ impl octacity_server_application::WorkSourceObservations for UnavailableIssueSou
     _: &octacity_server_application::ManagementRequestContext,
     _: octacity_server_application::ReadWorkSourceObservations,
   ) -> Result<octacity_server_application::WorkSourceObservationPage, octacity_server_application::ApplicationError> {
+    Err(octacity_server_application::ApplicationError::capability_unavailable())
+  }
+}
+
+struct UnavailableIssueCodeReviews;
+#[async_trait::async_trait]
+impl octacity_server_application::IssueCodeReviewObservations for UnavailableIssueCodeReviews {
+  async fn visibility(
+    &self,
+    _: &octacity_server_application::ManagementRequestContext,
+    _: octacity_server_domain::ProjectId,
+  ) -> Result<
+    octacity_server_application::IssueCodeReviewRepositoryVisibility,
+    octacity_server_application::ApplicationError,
+  > {
+    Ok(octacity_server_application::IssueCodeReviewRepositoryVisibility::none())
+  }
+  async fn authorize(
+    &self,
+    _: &octacity_server_application::ManagementRequestContext,
+    _: octacity_server_domain::ProjectId,
+    _: &octacity_server_application::IssueCodeReviewSelection,
+  ) -> Result<(), octacity_server_application::ApplicationError> {
+    Err(octacity_server_application::ApplicationError::capability_unavailable())
+  }
+  async fn read(
+    &self,
+    _: &octacity_server_application::ManagementRequestContext,
+    _: octacity_server_domain::ProjectId,
+    _: &octacity_server_application::IssueCodeReviewSelection,
+  ) -> Result<octacity_server_application::IssueCodeReviewObservation, octacity_server_application::ApplicationError>
+  {
     Err(octacity_server_application::ApplicationError::capability_unavailable())
   }
 }

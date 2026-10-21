@@ -13,8 +13,11 @@ pub use octacity_server_store::{
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+#[path = "issue_external_checks.rs"]
+mod checks;
 #[path = "issue_code_review_observation.rs"]
 mod observation;
+pub use checks::*;
 pub use observation::*;
 /// Narrow normalized review read. Implementations use installed code-repository grants,
 /// independently from task read/update or Delivery; they must not dispatch arbitrary URLs.
@@ -338,7 +341,7 @@ impl<S: IssueCodeReviewStore> IssueCodeReviewHandlers<S> {
       intent.issue_id,
     )
     .await?;
-    self.store.issue(intent.project_id, intent.issue_id, None).await?;
+    let issue = self.store.issue(intent.project_id, intent.issue_id, None).await?;
     self
       .visible_repository(context, intent.project_id, &intent.selection)
       .await?;
@@ -356,6 +359,14 @@ impl<S: IssueCodeReviewStore> IssueCodeReviewHandlers<S> {
         return Err(ApplicationError::invalid());
       }
       return Ok(original);
+    }
+    if issue.version != intent.expected_version {
+      return Err(
+        octacity_server_store::StoreError::Conflict {
+          entity: octacity_server_domain::EntityKind::Issue,
+        }
+        .into(),
+      );
     }
     self
       .reader
@@ -466,7 +477,7 @@ impl<S: IssueCodeReviewStore> ManagementQueryUseCase<ListIssueCodeReviewsQuery> 
         .await;
       items.push(IssueCodeReviewProjection {
         association: row.association,
-        observation: row.observation,
+        observation: row.observation.map(metadata_only),
         availability,
       });
     }
@@ -482,4 +493,9 @@ impl<S: IssueCodeReviewStore> ManagementQueryUseCase<ListIssueCodeReviewsQuery> 
       observation: "issue-code-review-membership-v1",
     })
   }
+}
+
+fn metadata_only(mut observation: IssueCodeReviewObservation) -> IssueCodeReviewObservation {
+  observation.check_details = None;
+  observation
 }

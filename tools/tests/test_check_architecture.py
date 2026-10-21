@@ -125,6 +125,23 @@ class ArchitecturePolicyTests(unittest.TestCase):
             with self.subTest(name=name, kinds=kinds):
                 self.assertEqual(violations(name, kinds), ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"])
 
+    def test_artifact_raster_validation_is_application_specific_without_transport_authority(self):
+        from dataclasses import replace
+
+        for name, dependency, expected in (
+            ("octacity-server-application", "image", []),
+            ("another-application", "image", ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"]),
+            ("octacity-server-application", "reqwest", ["ARCH010_LAYER_IMPLEMENTATION_DEPENDENCY"]),
+        ):
+            with self.subTest(package=name, dependency=dependency):
+                package = replace(package_fixture(
+                    name, REPOSITORY / "server/application/Cargo.toml",
+                    external_dependencies=(dependency,),
+                ), role="application")
+                self.assertEqual([v.code for v in ARCHITECTURE.check(
+                    ARCHITECTURE.Graph(packages=(package,), edges=())
+                )], expected)
+
     def test_connection_endpoint_parser_is_store_specific_and_does_not_allow_transport(self):
         for name, dependency, expected in (
             ("octacity-server-store", "url", []),

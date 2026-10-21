@@ -1516,6 +1516,7 @@ fn factory_domain_fact_fixture(
   let id = "88888888-8888-4888-8888-888888888888";
   let reference = serde_json::json!({"identity":"installed","version":"v1","digest":"ab".repeat(32)});
   Some(match collection {
+    Candidates => serde_json::json!({"kind":"candidate","subject":candidate}),
     ChangeSets => {
       serde_json::json!({"kind":"changeset","subject":candidate,"id":id,"node_attempt_id":"44444444-4444-4444-8444-444444444444"})
     }

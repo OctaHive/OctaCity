@@ -32,8 +32,10 @@ mod retention;
 mod trigger;
 
 pub use adapter::IssueActivityManagementApplication;
+pub use adapter::IssueCodeReviewManagementApplication;
 pub use adapter::IssueDiscussionManagementApplication;
 pub use adapter::IssueExecutionManagementApplication;
+pub use adapter::IssueResultPanelManagementApplication;
 pub use adapter::IssueSourceManagementApplication;
 pub use adapter::{
   AgentManagementApplication, ArtifactManagementApplication, AuditManagementApplication,

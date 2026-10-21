@@ -856,3 +856,69 @@ fn project_text_intake_issue_publication_recovers_original_revision_and_associat
     assert_eq!(restarted.handle_command(&context(), command).await.unwrap(), linked);
   });
 }
+
+struct NoMetadataBytes;
+#[async_trait::async_trait]
+impl ArtifactByteReader for NoMetadataBytes {
+  async fn read_published(&self, _: &ArtifactObject, _: u64) -> Result<Vec<u8>, ArtifactStoreError> {
+    panic!("metadata must not read bytes")
+  }
+}
+#[test]
+fn issue_artifact_reader_describes_project_input_origin_and_expiry_without_byte_or_build_reads() {
+  run(async {
+    let (store, bytes, resolver, command) = fixture();
+    let admitted = ProjectTextIntake::new(
+      store.clone(),
+      bytes,
+      resolver,
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    )
+    .submit(&context(), command.clone())
+    .await
+    .unwrap();
+    let authority = testing::authoritative_store_contract_fixture();
+    let artifacts = Arc::new(testing::InMemoryArtifactRecordStore::new(
+      testing::ArtifactLeaseFixture {
+        access: LeaseAccess {
+          lease_id: octacity_server_domain::LeaseId::generate(),
+          fence: LeaseFence::from_bytes([7; 32]),
+          agent_id: authority.agent_id,
+          registration_epoch: authority.registration_epoch,
+        },
+        build_id: authority.request.build.id,
+        attempt_id: authority.request.attempt_id,
+        attempt: octacity_server_domain::AttemptNumber::new(1).unwrap(),
+        job_id: authority.request.jobs[0].id,
+        expires_at: time(1000),
+      },
+    ));
+    let reader = FactoryArtifactReader::new(artifacts, Arc::new(NoBuilds), Arc::new(NoMetadataBytes))
+      .with_project_inputs(store.clone());
+    let request = ReadFactoryArtifact {
+      project_id: command.intent.target.project_id,
+      artifact: admitted.admission.work.artifacts().task().clone(),
+      maximum_bytes: 1024,
+      observed_at: time(21),
+      required_until: time(22),
+    };
+    let metadata = reader.metadata(request.clone()).await.unwrap();
+    assert_eq!(metadata.origin, IssueArtifactOrigin::ProjectInput);
+    assert_eq!(metadata.media_type, "text/plain");
+    assert_eq!(metadata.availability, IssueArtifactAvailability::Available);
+    let expired = ReadFactoryArtifact {
+      observed_at: metadata.expires_at.unwrap(),
+      required_until: metadata.expires_at.unwrap(),
+      ..request
+    };
+    assert_eq!(
+      reader.metadata(expired.clone()).await.unwrap().availability,
+      IssueArtifactAvailability::Expired
+    );
+    assert!(
+      reader.content(expired).await.is_err(),
+      "expired bytes must not be read or reconstructed"
+    );
+  });
+}

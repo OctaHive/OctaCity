@@ -294,7 +294,39 @@ fn registered_routes() -> ManagementRoutes {
       "listIssueTimeline",
       super::issue_activity::timeline,
     )
+    .get::<octacity_server_application::ListIssueExternalChecksQuery, _, _>(
+      "listIssueExternalChecks",
+      super::issue_code_review::checks,
+    )
+    .get::<octacity_server_application::ListIssueChecksQuery, _, _>(
+      "listIssueChecks",
+      super::issue_result_panels::checks,
+    )
+    .get::<octacity_server_application::ListIssueArtifactsQuery, _, _>(
+      "listIssueArtifacts",
+      super::issue_result_panels::artifacts,
+    )
+    .get::<octacity_server_application::ReadIssueArtifactContentQuery, _, _>(
+      "readIssueArtifactContent",
+      super::issue_result_panels::content,
+    )
     .get::<octacity_server_application::ListIssueResultsQuery, _, _>("listIssueResults", super::issue_activity::results)
+    .post::<octacity_server_application::RefreshIssueCodeReviewCommand, _, _>(
+      "refreshIssueCodeReview",
+      super::issue_code_review::refresh,
+    )
+    .get::<octacity_server_application::ListIssueCodeReviewObservationsQuery, _, _>(
+      "listIssueCodeReviewObservations",
+      super::issue_code_review::observations,
+    )
+    .get::<octacity_server_application::ListIssueCodeReviewsQuery, _, _>(
+      "listIssueCodeReviews",
+      super::issue_code_review::list,
+    )
+    .post::<octacity_server_application::AttachIssueCodeReviewCommand, _, _>(
+      "attachIssueCodeReview",
+      super::issue_code_review::attach,
+    )
     .get::<octacity_server_application::ListIssueExecutionsQuery, _, _>(
       "listIssueExecutions",
       super::issue_execution::list,

@@ -356,3 +356,5 @@ async fn runtime_installs_issue_sources_independently_and_provider_outages_prese
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }
+#[path = "issue_code_review_http_tests.rs"]
+mod code_reviews;

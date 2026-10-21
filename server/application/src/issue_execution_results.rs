@@ -169,14 +169,10 @@ impl<S: IssueExecutionStore + IssueStore + IssueTimelineStore, F: FactoryDiscove
       }
       Err(error) => return Err(error),
     };
-    let Ok(after) = self.visible_execution_run(context, &association).await else {
-      return Ok(result);
-    };
-    if after.version != version {
-      result.coverage = IssueResultCoverage::Stale;
+    result.coverage = self.result_coverage(context, &association, version).await;
+    if result.coverage != IssueResultCoverage::Partial {
       return Ok(result);
     }
-    result.coverage = IssueResultCoverage::Partial;
     result.items = page.items;
     result.next_cursor = page.next_cursor.map(|after| {
       crate::opaque_cursor::encode(&Cursor {

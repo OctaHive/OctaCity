@@ -143,6 +143,13 @@ fn responses(operation: &ManagementOperation) -> Value {
       "ETag":{"description":"Strong exact Issue revision when this response describes one Issue","schema":{"type":"string"}}
     });
   }
+  if operation.binary_response {
+    success["content"] = json!({"application/octet-stream":{"schema":schema_ref(operation.response_schema)},"text/plain":{"schema":schema_ref(operation.response_schema)},"image/png":{"schema":schema_ref(operation.response_schema)}});
+    success["headers"]["Content-Disposition"] = json!({"schema":{"type":"string","enum":["inline","attachment"]}});
+    success["headers"]["X-Content-Type-Options"] = json!({"schema":{"type":"string","const":"nosniff"}});
+    success["headers"]["Content-Security-Policy"] =
+      json!({"schema":{"type":"string","const":"default-src 'none'; sandbox"}});
+  }
   if operation.pending_response {
     success["headers"]["Location"] = json!({
       "description":"Exact retained request status URL; repeat the original POST to resume",
