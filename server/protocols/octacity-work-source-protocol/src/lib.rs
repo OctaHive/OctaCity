@@ -1,4 +1,4 @@
-//! Independent provider-neutral Work Source and Reporter process contracts.
+//! Independent provider-neutral Work Source, Reporter and review read contracts.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -9,6 +9,7 @@ mod access;
 pub mod check;
 pub mod preview;
 pub mod reporter;
+pub mod review;
 pub mod source;
 pub use access::*;
 mod snapshot;
@@ -23,7 +24,7 @@ pub const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 /// Maximum length of one logical identifier or protected handle.
 pub const MAX_FIELD_BYTES: usize = 1024;
 
-/// Secret-free failure while checking a Work Source or Reporter frame.
+/// Secret-free failure while checking an independently scoped Work integration frame.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum ProtocolError {
   /// A closed field, operation or authority class is invalid.
@@ -83,6 +84,8 @@ pub enum Request {
   Source(source::Request),
   /// Independently versioned projection of accepted configured effects.
   Reporter(reporter::Request),
+  /// Independently authorized repository review reads.
+  Review(review::Request),
 }
 /// One bounded terminal observation, never a Factory command or execution outcome.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -92,6 +95,8 @@ pub enum Response {
   Source(source::Response),
   /// Reporter's correlated terminal response.
   Reporter(reporter::Response),
+  /// Correlated repository review facts.
+  Review(review::Response),
 }
 impl Request {
   /// Independent diagnostic ceiling; private discovery keeps its existing bound.
@@ -113,6 +118,7 @@ impl Request {
     match self {
       Self::Source(request) => request.validate(),
       Self::Reporter(request) => request.validate(),
+      Self::Review(request) => request.validate(),
     }
   }
 }
@@ -123,6 +129,7 @@ impl Response {
     match (self, request) {
       (Self::Source(response), Request::Source(request)) => response.validate_for(request),
       (Self::Reporter(response), Request::Reporter(request)) => response.validate_for(request),
+      (Self::Review(response), Request::Review(request)) => response.validate_for(request),
       _ => Err(ProtocolError::Invalid),
     }
   }
@@ -139,6 +146,13 @@ pub fn decode_response(bytes: &[u8], request: &Request) -> Result<Response, Prot
   common::require_message_size(bytes, request.max_response_bytes()).map_err(|_| ProtocolError::LimitExceeded)?;
   if let Request::Source(source::Request {
     command: source::Command::Scan(intent) | source::Command::Preview(intent),
+    ..
+  }) = request
+  {
+    common::require_message_size(bytes, intent.max_page_bytes as usize).map_err(|_| ProtocolError::LimitExceeded)?;
+  }
+  if let Request::Review(review::Request {
+    command: review::Command::Observe(intent) | review::Command::Checks(intent) | review::Command::Authorize(intent),
     ..
   }) = request
   {

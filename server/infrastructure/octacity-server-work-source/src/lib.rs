@@ -1,4 +1,4 @@
-//! Verified provider-neutral Work Source and Reporter process execution.
+//! Verified provider-neutral Work Source, Reporter and review process execution.
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
@@ -9,7 +9,7 @@ use octacity_server_adapter_host::{
 pub use octacity_server_adapter_host::{HostError, HostFailureClass, RegistryError};
 use octacity_work_source_protocol::{
   AdapterManifest, Capabilities, MAX_REQUEST_BYTES, ProtocolRange, ProtocolRanges, Request, Response, decode_response,
-  reporter, source,
+  reporter, review, source,
 };
 use std::{path::Path, time::Duration};
 use tokio_util::sync::CancellationToken;
@@ -69,6 +69,7 @@ impl InstalledWorkAdapter {
     let id = match &request {
       Request::Source(request) => &request.request_id,
       Request::Reporter(request) => &request.request_id,
+      Request::Review(request) => &request.request_id,
     };
     let process = ProcessRequest::new(
       &self.executable,
@@ -88,6 +89,47 @@ impl InstalledWorkAdapter {
   }
   fn validate_capability(&self, request: &Request) -> Result<Option<Request>, HostError> {
     match request {
+      Request::Review(request) => {
+        let capabilities = self
+          .manifest
+          .capabilities
+          .review
+          .as_ref()
+          .ok_or_else(|| self.unsupported("review"))?;
+        let protocol = self
+          .manifest
+          .protocol
+          .review
+          .ok_or_else(|| self.unsupported("review"))?;
+        ProtocolRange {
+          min: request.protocol_version,
+          max: request.protocol_version,
+        }
+        .negotiate(protocol)
+        .map_err(|_| self.unsupported("review"))?;
+        if matches!(request.command, review::Command::Checks(_)) && !capabilities.checks {
+          return Err(self.unsupported("review checks"));
+        }
+        let Some(intent) = request.command.intent() else {
+          return if capabilities.cancel {
+            Ok(None)
+          } else {
+            Err(self.unsupported("review cancellation"))
+          };
+        };
+        if intent.configuration_digest != capabilities.configuration_digest {
+          return Err(invalid());
+        }
+        Ok(capabilities.cancel.then(|| {
+          Request::Review(review::Request {
+            protocol_version: request.protocol_version,
+            request_id: cancel_request_id(&request.request_id),
+            command: review::Command::Cancel {
+              target_read_id: intent.read_id.clone(),
+            },
+          })
+        }))
+      }
       Request::Source(request) => {
         let capabilities = self
           .manifest

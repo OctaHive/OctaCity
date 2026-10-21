@@ -8,7 +8,6 @@ use crate::{
 };
 use octacity_work_source_protocol::{FailureClass, reporter};
 use serde::Deserialize;
-use serde_json::Value;
 mod ordered;
 
 #[derive(Deserialize)]
@@ -47,14 +46,7 @@ pub(crate) async fn report(
     credential,
   )
   .map_err(|_| FailureClass::Permanent)?;
-  let mut repository = settings.base.clone();
-  repository
-    .path_segments_mut()
-    .map_err(|_| FailureClass::Permanent)?
-    .pop_if_empty()
-    .push("repos")
-    .push(owner)
-    .push(name);
+  let repository = crate::work_api::repository(&client, settings, owner, name, &intent.resource.resource_id).await?;
   let url = |segments: &[&str]| -> Result<url::Url, FailureClass> {
     let mut url = repository.clone();
     url
@@ -63,15 +55,6 @@ pub(crate) async fn report(
       .extend(segments);
     Ok(url)
   };
-  let (metadata, _) = read(&client, &repository, &settings.version).await?;
-  let repository_id = metadata
-    .get("id")
-    .and_then(Value::as_u64)
-    .filter(|v| *v > 0)
-    .ok_or(FailureClass::ProtocolFault)?;
-  if repository_id.to_string() != intent.resource.resource_id {
-    return Err(FailureClass::Conflict.into());
-  }
   let ordered = request.protocol_version == reporter::ORDERED_PROTOCOL_VERSION;
   let labels = if ordered {
     ordered::scope_labels(mapping, effects)

@@ -129,23 +129,7 @@ async fn list(
     .transpose()?;
   let client =
     api::client(&api.base, &api.version, &api.root_certificates, credential).map_err(|_| FailureClass::Permanent)?;
-  let mut repository = api.base.clone();
-  repository
-    .path_segments_mut()
-    .map_err(|_| FailureClass::Permanent)?
-    .pop_if_empty()
-    .push("repos")
-    .push(owner)
-    .push(name);
-  let (metadata, _) = read(&client, &repository, &api.version).await?;
-  let native_id = metadata
-    .get("id")
-    .and_then(Value::as_u64)
-    .filter(|id| *id > 0)
-    .ok_or(FailureClass::ProtocolFault)?;
-  if native_id.to_string() != intent.resource.resource_id {
-    return Err(FailureClass::Conflict.into());
-  }
+  let repository = crate::work_api::repository(&client, api, owner, name, &intent.resource.resource_id).await?;
   let mut url = repository;
   url
     .path_segments_mut()

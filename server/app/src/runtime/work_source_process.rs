@@ -110,50 +110,10 @@ pub(super) async fn execute_source(
   grace: Duration,
   cancellation: CancellationToken,
 ) -> Result<octacity_work_source_protocol::source::Outcome, ApplicationError> {
-  use octacity_work_source_protocol::{Response, source};
-  let adapter = registry
-    .resolve(profile.plugin.identity().as_str(), &profile.plugin.digest().to_string())
-    .map_err(|_| ApplicationError::capability_unavailable())?;
-  let response = adapter
-    .execute(wire, timeout, grace, cancellation)
-    .await
-    .map_err(|error| {
-      use octacity_server_work_source::{HostError, HostFailureClass};
-      let class = match error {
-        HostError::TimedOut { .. } => WorkSourceFailure::Timeout,
-        _ => match error.class() {
-          HostFailureClass::Cancelled => WorkSourceFailure::Cancelled,
-          HostFailureClass::Unsupported => WorkSourceFailure::Unavailable,
-          HostFailureClass::ProtocolFault => WorkSourceFailure::ProtocolFault,
-          HostFailureClass::Permanent | HostFailureClass::InvalidRequest => WorkSourceFailure::InvalidConfiguration,
-          HostFailureClass::Transient => WorkSourceFailure::Transient,
-        },
-      };
-      ApplicationError::SourceDependency {
-        class,
-        retry_after_millis: None,
-      }
-    })?;
-  if let Response::Source(source::Response {
-    outcome: source::Outcome::Failure(failure),
-    ..
-  }) = &response
-  {
-    use octacity_work_source_protocol::FailureClass;
-    let class = match failure.class {
-      FailureClass::Transient if failure.retry_after_millis.is_some() => WorkSourceFailure::RateLimited,
-      FailureClass::Transient => WorkSourceFailure::Transient,
-      FailureClass::Unsupported => WorkSourceFailure::Unavailable,
-      FailureClass::Conflict => WorkSourceFailure::Conflict,
-      FailureClass::Cancelled => WorkSourceFailure::Cancelled,
-      FailureClass::ProtocolFault => WorkSourceFailure::ProtocolFault,
-      FailureClass::Permanent | FailureClass::InvalidRequest => WorkSourceFailure::InvalidConfiguration,
-    };
-    return Err(ApplicationError::SourceDependency {
-      class,
-      retry_after_millis: failure.retry_after_millis,
-    });
-  }
+  use octacity_work_source_protocol::Response;
+  let response =
+    super::super::work_integration_read::execute_read(registry, &profile.plugin, wire, timeout, grace, cancellation)
+      .await?;
   let Response::Source(response) = response else {
     return Err(ApplicationError::capability_unavailable());
   };

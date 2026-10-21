@@ -13,6 +13,29 @@ def event(kind, request_id):
         events.write(json.dumps({'event': kind, 'request_id': request_id}) + '\n')
 
 request = json.loads(sys.stdin.readline())
+if request['family'] == 'review':
+    message = request['message']
+    intent = message['command']['payload']
+    with open('review-requests.jsonl', 'a', encoding='utf-8') as calls:
+        calls.write(json.dumps(request) + '\n')
+    mode = json.load(open('review-mode.json', encoding='utf-8'))
+    if mode.get('pause'):
+        with open('review-reading', 'w', encoding='utf-8') as ready:
+            ready.write(intent['read_id'])
+        while not os.path.exists('release'):
+            time.sleep(0.005)
+    subject = {key: intent[key] for key in ('read_id', 'configuration_digest', 'item_id')}
+    subject['resource_id'] = intent['resource']['resource_id']
+    outcome = {'status': 'observed', 'payload': {'subject': subject, 'facts': mode.get('facts')}}
+    if 'failure' in mode:
+        outcome = {'status': 'failure', 'payload': mode['failure']}
+    elif message['command']['operation'] == 'checks':
+        outcome = {'status': 'checks', 'payload': {'subject': subject, 'head': intent['head'],
+            'items': mode.get('checks', []), 'next_cursor': mode.get('next_cursor')}}
+    json.dump({'family': 'review', 'message': {'protocol_version': 1,
+        'request_id': message['request_id'], 'outcome': outcome}}, sys.stdout)
+    sys.stdout.write('\n')
+    sys.exit(0)
 if request['family'] == 'reporter':
     with open('reporter-requests.jsonl', 'a', encoding='utf-8') as calls:
         fcntl.flock(calls, fcntl.LOCK_EX)

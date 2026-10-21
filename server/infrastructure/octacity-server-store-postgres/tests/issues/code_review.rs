@@ -26,6 +26,7 @@ fn attach(issue: &IssueRevision, replay: &str, review: &str) -> AttachIssueCodeR
       deletions: None,
       review: None,
       checks: None,
+      check_details: None,
     },
     provenance: IssueCodeReviewProvenance::Explicit {
       actor: management_mutation(()).audit().actor().clone(),

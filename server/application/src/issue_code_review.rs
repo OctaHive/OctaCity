@@ -1,5 +1,6 @@
 //! Optional provider-neutral read composition. Manual tasks install none of these dependencies.
 use crate::*;
+pub use octacity_server_domain::MAX_IMMUTABLE_REVISION_BYTES;
 use octacity_server_domain::{IssueId, ProjectId};
 use octacity_server_factory::FactoryDigest;
 use octacity_server_store::{
@@ -7,7 +8,8 @@ use octacity_server_store::{
 };
 pub use octacity_server_store::{
   AttachIssueCodeReviewIntent, IssueCodeReviewAssociation, IssueCodeReviewBinding, IssueCodeReviewObservation,
-  IssueCodeReviewOutcome, IssueCodeReviewSelection, IssueCodeReviewState,
+  IssueCodeReviewOutcome, IssueCodeReviewRepositoryVisibility, IssueCodeReviewSelection, IssueCodeReviewState,
+  IssueExternalCheck, IssueExternalCheckSource, IssueExternalChecks,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;

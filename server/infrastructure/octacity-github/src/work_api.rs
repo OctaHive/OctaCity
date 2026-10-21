@@ -1,4 +1,4 @@
-//! Shared bounded Issue API transport; Source and Reporter retain separate authorization.
+//! Shared bounded Work API transport; Source, Reporter and review retain separate authorization.
 use crate::api;
 use http_body_util::BodyExt as _;
 use octacity_work_source_protocol::{FailureClass, MAX_RESPONSE_BYTES};
@@ -129,4 +129,30 @@ pub(crate) async fn request(
   serde_json::from_slice(&bytes)
     .map(|value| (value, headers))
     .map_err(|_| invalid_body())
+}
+
+/// Builds only an installed repository path and verifies its current native identity.
+pub(crate) async fn repository(
+  client: &octocrab::Octocrab,
+  settings: &crate::config::ApiSettings,
+  owner: &str,
+  name: &str,
+  native_id: &str,
+) -> Result<url::Url, WorkApiFailure> {
+  let mut repository = settings.base.clone();
+  repository
+    .path_segments_mut()
+    .map_err(|_| FailureClass::Permanent)?
+    .pop_if_empty()
+    .extend(["repos", owner, name]);
+  let (metadata, _) = read(client, &repository, &settings.version).await?;
+  let id = metadata
+    .get("id")
+    .and_then(Value::as_u64)
+    .filter(|id| *id > 0)
+    .ok_or(FailureClass::ProtocolFault)?;
+  if id.to_string() != native_id {
+    return Err(FailureClass::Conflict.into());
+  }
+  Ok(repository)
 }

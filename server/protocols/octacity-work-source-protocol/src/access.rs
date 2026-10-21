@@ -1,7 +1,7 @@
 //! Capability-specific protected handles and immutable installed references.
 use crate::*;
 
-/// Closed Work integration credential classes; Delivery and repository credentials are absent.
+/// Independent installed credential classes; write roles never imply repository reads.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CredentialClass {
@@ -9,6 +9,9 @@ pub enum CredentialClass {
   WorkSourceRead,
   /// Separately authorized configured ticket effects.
   WorkReporterWrite,
+  /// Existing read-only code repository grant class.
+  #[serde(rename = "vcs_read")]
+  RepositoryRead,
 }
 /// Opaque installed grant selection, never a token, path or provider-supplied authority.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
@@ -26,7 +29,7 @@ impl std::fmt::Debug for CredentialHandle {
       .finish_non_exhaustive()
   }
 }
-/// Exact ticket container, independent of the code Repository selected for Factory.
+/// Exact independently scoped native container, selected by the requested role.
 #[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResourceAccess {

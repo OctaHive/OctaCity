@@ -25,8 +25,13 @@ pub(super) fn current(intent: &ScanIntent) -> Result<(u32, String), FailureClass
   if !intent.additional_selections.is_empty() {
     context.extend(serde_json::to_vec(&intent.additional_selections).map_err(|_| FailureClass::InvalidRequest)?);
   }
+  current_for(intent.cursor.as_deref(), &context)
+}
+
+/// Shared logical continuation validation; context contains only the original operation scope.
+pub(super) fn current_for(cursor: Option<&str>, context: &[u8]) -> Result<(u32, String), FailureClass> {
   let context = hex::encode(Sha256::digest(context));
-  let page = match &intent.cursor {
+  let page = match cursor {
     None => 1,
     Some(cursor) => {
       let cursor: Cursor = serde_json::from_str(cursor).map_err(|_| FailureClass::InvalidRequest)?;

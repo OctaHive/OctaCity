@@ -310,6 +310,7 @@ async fn wrong_classes_and_changed_executables_are_rejected_before_exposing_hand
         };
         intent.resource.credential.class = CredentialClass::WorkSourceRead;
       }
+      Request::Review(_) => unreachable!(),
     }
     let error = adapter
       .execute(
@@ -627,4 +628,53 @@ async fn preview_requires_independent_advertisement_before_exposing_any_read_han
       "previewed"
     );
   }
+}
+
+#[tokio::test]
+async fn review_role_requires_its_own_installation_and_preserves_a_second_vocabulary() {
+  let (root, digest) = installed("merge-request-forge");
+  let dir = root.path().join("merge-request-forge");
+  let request = decode_request(include_bytes!(
+    "../../../protocols/octacity-work-source-protocol/fixtures/review-v1.json"
+  ))
+  .unwrap();
+  let registry = WorkAdapterRegistry::discover(root.path()).unwrap();
+  let error = registry
+    .resolve("merge-request-forge", &digest)
+    .unwrap()
+    .execute(
+      request.clone(),
+      Duration::from_secs(10),
+      Duration::from_secs(1),
+      CancellationToken::new(),
+    )
+    .await
+    .unwrap_err();
+  assert_eq!(
+    error.class(),
+    octacity_server_work_source::HostFailureClass::Unsupported
+  );
+  assert!(!dir.join("captured-request.json").exists());
+  let manifest = dir.join("adapter.toml");
+  let mut content = fs::read_to_string(&manifest).unwrap();
+  content.push_str(&format!("\n[protocol.review]\nmin = 1\nmax = 1\n[capabilities.review]\nchecks = true\ncancel = true\ncredential_class = \"vcs_read\"\nconfiguration_digest = {:?}\n", "e".repeat(64)));
+  fs::write(&manifest, content).unwrap();
+  let response = json!({"family":"review","message":{"protocol_version":1,"request_id":"review-read","outcome":{"status":"observed","payload":{
+    "subject":{"read_id":"a".repeat(64),"configuration_digest":"e".repeat(64),"resource_id":"native-code-repository","item_id":"23"},
+    "facts":{"title":"Merge request from another forge","number":"MR-23","url":null,"author":null,"state":"open","draft":null,"head":"head-b","base":null,"changed_files":null,"additions":null,"deletions":null,"review":null,"checks":null}}}}});
+  fs::write(dir.join("response.json"), serde_json::to_vec(&response).unwrap()).unwrap();
+  let registry = WorkAdapterRegistry::discover(root.path()).expect("independent installed review capability");
+  let adapter = registry.resolve("merge-request-forge", &digest).unwrap();
+  let observed = adapter
+    .execute(
+      request.clone(),
+      Duration::from_secs(10),
+      Duration::from_secs(1),
+      CancellationToken::new(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(serde_json::to_value(observed).unwrap(), response);
+  let captured: Value = serde_json::from_slice(&fs::read(dir.join("captured-request.json")).unwrap()).unwrap();
+  assert_eq!(captured, serde_json::to_value(request).unwrap());
 }

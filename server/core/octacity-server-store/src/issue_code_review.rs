@@ -15,12 +15,16 @@ pub struct IssueCodeReviewSelection {
 impl IssueCodeReviewSelection {
   /// Stable installed/native code repository identity for current metadata visibility.
   pub fn repository_identity(&self) -> FactoryDigest {
+    Self::repository_identity_for(self.source.installation.identity(), &self.item.resource)
+  }
+  /// Computes the same metadata identity for an installed repository before selecting a review.
+  pub fn repository_identity_for(
+    installation: &octacity_server_factory::FactoryKey,
+    repository: &octacity_server_factory::ExternalWorkIdentity,
+  ) -> FactoryDigest {
     FactoryDigest::sha256(
       "octacity.issue-code-review-repository.v1",
-      &[
-        self.source.installation.identity().as_str().as_bytes(),
-        self.item.resource.as_str().as_bytes(),
-      ],
+      &[installation.as_str().as_bytes(), repository.as_str().as_bytes()],
     )
   }
   /// Canonical identity ignores display text, credentials and mutable reader configuration.
@@ -82,10 +86,19 @@ pub struct IssueCodeReviewObservation {
   pub review: Option<FactorySafeText>,
   /// Safe external CI summary; never a Factory Decision.
   pub checks: Option<FactorySafeText>,
+  /// Bounded typed external CI for this original head. Absent legacy/unsupported detail stays unknown.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub check_details: Option<IssueExternalChecks>,
 }
 impl IssueCodeReviewObservation {
   /// Rejects unusable navigation without following it or acquiring provider authority.
   pub fn validate(&self) -> Result<(), StoreError> {
+    if let Some(checks) = &self.check_details {
+      checks.validate()?;
+      if self.head.as_ref() != Some(&checks.head) || self.observed_at != checks.observed_at {
+        return Err(invalid_issue_code_review());
+      }
+    }
     if let Some(value) = &self.url {
       let url = url::Url::parse(value.as_str()).map_err(|_| invalid_issue_code_review())?;
       if url.scheme() != "https"

@@ -73,6 +73,7 @@ impl IssueCodeReviewObservations for Reader {
       deletions: None,
       review: None,
       checks: None,
+      check_details: None,
     })
   }
 }

@@ -47,6 +47,7 @@ mod issue_tests;
 #[cfg(test)]
 mod issue_workflow_tests;
 pub use integration_check::{HostedIntegrationConnectionChecker, IntegrationCheckProfile};
+mod issue_code_review_reader;
 mod lifecycle;
 mod listeners;
 #[cfg(unix)]
@@ -56,8 +57,12 @@ mod notifications;
 mod telemetry;
 mod vcs;
 mod webhook;
+mod work_integration_read;
 mod work_reporter;
 mod work_source;
+pub use issue_code_review_reader::{
+  HostedIssueCodeReviewObservations, IssueCodeReviewReadProfile, ReadIssueCodeReviewChecks,
+};
 pub use work_reporter::{FactoryReporterProfile, FactoryReporterProfileDraft, HostedFactoryWorkStatusProjector};
 #[cfg(test)]
 mod work_reporter_tests;
@@ -72,6 +77,15 @@ pub use maintenance::{
   LogSearchMaintenanceError, RestoreMaintenanceError, RestoredStateSummary, rebuild_log_search,
   reconcile_restored_state,
 };
+
+/// Independent optional Issue integrations. Empty installations preserve ordinary manual tasks.
+#[derive(Default)]
+pub struct IssueRuntimeIntegrations {
+  /// Existing ticket Source reads and mappings, without requiring a review provider.
+  pub sources: Option<IssueSourceRuntimeInstallation>,
+  /// Existing read-only review observation port, without requiring a ticket Source or Factory.
+  pub code_reviews: Option<Arc<dyn octacity_server_application::IssueCodeReviewObservations>>,
+}
 
 /// Explicit task Source installation, usable without a Factory target or worker.
 /// The reader owns current credential/grant checks; mappings expose only finite safe choices.

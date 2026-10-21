@@ -80,6 +80,7 @@ impl IssueCodeReviewObservations for Reader {
       deletions: None,
       review: None,
       checks: None,
+      check_details: None,
     })
   }
 }
@@ -453,4 +454,32 @@ fn issue_code_review_links_are_bounded_safe_navigation_facts_without_fetch_or_id
       assert!(observation.validate().is_err());
     }
   });
+}
+
+#[test]
+fn issue_external_checks_are_bounded_original_head_observations_and_never_factory_acceptance() {
+  let mut value = serde_json::json!({"selection":selection(),"observed_at":20,"title":null,"number":null,"url":null,"author":null,"state":null,"draft":null,"head":"original-head","base":null,"changed_files":null,"additions":null,"deletions":null,"review":null,"checks":null,"check_details":{"head":"original-head","observed_at":20,"source":"external_ci","has_more":true,"items":[{"id":"ci-1","name":"contract","producer":"pipeline","state":"skipped","required":null}]}});
+  let observation: IssueCodeReviewObservation =
+    serde_json::from_value(value.clone()).expect("retain typed external CI without a provider DTO");
+  observation.validate().unwrap();
+  assert_eq!(
+    serde_json::to_value(&observation).unwrap()["check_details"],
+    value["check_details"]
+  );
+  value["check_details"]["head"] = serde_json::json!("new-head");
+  assert!(
+    serde_json::from_value::<IssueCodeReviewObservation>(value.clone())
+      .unwrap()
+      .validate()
+      .is_err(),
+    "checks cannot be relabeled to a different head"
+  );
+  value["check_details"]["head"] = serde_json::json!("original-head");
+  value["check_details"]["items"] = serde_json::json!(vec![value["check_details"]["items"][0].clone(); 101]);
+  assert!(
+    serde_json::from_value::<IssueCodeReviewObservation>(value)
+      .unwrap()
+      .validate()
+      .is_err()
+  );
 }

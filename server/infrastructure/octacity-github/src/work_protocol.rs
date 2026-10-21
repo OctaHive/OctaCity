@@ -1,7 +1,7 @@
 //! Work protocol negotiation/terminal framing, independent of the existing Delivery capability.
 //! Issue reads and effect mappings use independently installed scopes.
 use crate::GithubWorkProvider;
-use octacity_work_source_protocol::{Failure, FailureClass, Request, Response, reporter, source};
+use octacity_work_source_protocol::{Failure, FailureClass, Request, Response, reporter, review, source};
 use std::path::Path;
 
 pub(super) fn same_cancellation(original: &Request, bytes: &[u8]) -> bool {
@@ -9,6 +9,16 @@ pub(super) fn same_cancellation(original: &Request, bytes: &[u8]) -> bool {
     return false;
   };
   match (original, cancel) {
+    (
+      Request::Review(original),
+      Request::Review(review::Request {
+        command: review::Command::Cancel { target_read_id },
+        ..
+      }),
+    ) => original
+      .command
+      .intent()
+      .is_some_and(|intent| intent.read_id == target_read_id),
     (
       Request::Source(source::Request {
         command: source::Command::Check(intent),
@@ -66,6 +76,9 @@ pub(super) async fn execute(
     Request::Source(source::Request {
       command: source::Command::Cancel { .. },
       ..
+    }) | Request::Review(review::Request {
+      command: review::Command::Cancel { .. },
+      ..
     }) | Request::Reporter(reporter::Request {
       command: reporter::Command::Cancel { .. },
       ..
@@ -90,6 +103,16 @@ pub(super) fn response(request: &Request, class: FailureClass) -> Response {
     retry_after_millis: None,
   };
   match request {
+    Request::Review(request) => Response::Review(review::Response {
+      protocol_version: request.protocol_version,
+      request_id: request.request_id.clone(),
+      outcome: match &request.command {
+        review::Command::Cancel { target_read_id } => review::Outcome::Acknowledged {
+          read_id: target_read_id.clone(),
+        },
+        _ => review::Outcome::Failure(unavailable()),
+      },
+    }),
     Request::Source(request) => Response::Source(source::Response {
       protocol_version: request.protocol_version,
       request_id: request.request_id.clone(),

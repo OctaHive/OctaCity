@@ -1765,3 +1765,5 @@ async fn managed_source_rechecks_project_grants_before_provider_reads_after_revo
 }
 #[path = "work_source_preview_tests.rs"]
 mod preview;
+#[path = "issue_code_review_reader_tests.rs"]
+mod review_reader;

@@ -1,11 +1,11 @@
-//! Independent installed Issue scopes; no Delivery material or Git executable is required.
+//! Independent installed Work/read scopes; no Delivery material or Git executable is required.
 #[path = "connection_check.rs"]
 mod checks;
 use crate::{
   GithubConfigError,
   config::{self, ApiSettings, Credential},
 };
-use octacity_work_source_protocol::{FailureClass, Request, reporter, source};
+use octacity_work_source_protocol::{FailureClass, Request, reporter, review, source};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 use std::{
@@ -27,6 +27,8 @@ struct Capabilities {
   source_repositories: Vec<String>,
   #[serde(default)]
   reporter_repositories: Vec<String>,
+  #[serde(default)]
+  review_repositories: Vec<String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -42,7 +44,7 @@ struct Wire {
   capabilities: Capabilities,
   repositories: BTreeMap<String, Repository>,
 }
-/// The Issue capabilities of the same GitHub provider binary, independently installed from Delivery.
+/// Optional Work and repository read capabilities, independently installed from Delivery.
 pub struct GithubWorkProvider {
   directory: PathBuf,
   digest: String,
@@ -53,14 +55,14 @@ pub struct GithubWorkProvider {
   repositories: BTreeMap<String, Repository>,
   capabilities: Capabilities,
 }
-/// Validated native Issue scope with a private, zeroing grant retained for provider use.
+/// Validated native Work integration scope with a private, zeroing grant retained for provider use.
 /// No public API exposes token bytes, caller paths or arbitrary provider destinations.
 pub struct AuthorizedIssueAccess {
   resource_id: String,
   credential: Credential,
 }
 impl AuthorizedIssueAccess {
-  /// Returns the exact native ticket-container identity, independent of the code Repository.
+  /// Returns the exact native resource identity selected by the independently authorized role.
   pub fn resource_id(&self) -> &str {
     &self.resource_id
   }
@@ -95,6 +97,7 @@ impl GithubWorkProvider {
     for aliases in [
       &wire.capabilities.source_repositories,
       &wire.capabilities.reporter_repositories,
+      &wire.capabilities.review_repositories,
     ] {
       let unique: BTreeSet<_> = aliases.iter().collect();
       if aliases.len() > 128
@@ -126,7 +129,7 @@ impl GithubWorkProvider {
   pub fn configuration_digest(&self) -> &str {
     &self.digest
   }
-  /// Executes one scoped Source read or pinned Reporter effect with independent role authority.
+  /// Executes one scoped Source/review read or pinned Reporter effect with independent role authority.
   /// Private provider content is returned only as checked normalized candidates or closed failures.
   pub async fn execute(
     &self,
@@ -156,6 +159,55 @@ impl GithubWorkProvider {
         request_id: request_id.clone(),
         outcome: reporter::Outcome::Checked(self.check_connection(request, intent, cancellation).await),
       });
+    }
+    if let Request::Review(intent) = request {
+      let operation = async {
+        let access = self.prepare(request)?;
+        if let review::Command::Authorize(intent) = &intent.command {
+          return Ok(review::Outcome::Authorized(intent.subject()));
+        }
+        let read = intent.command.intent().ok_or(FailureClass::Unsupported)?;
+        let repository = self
+          .repositories
+          .get(&read.resource.resource_locator)
+          .ok_or(FailureClass::InvalidRequest)?;
+        match &intent.command {
+          review::Command::Observe(_) => {
+            crate::review_reader::observe(&self.api, &repository.owner, &repository.name, &access.credential, read)
+              .await
+              .map(review::Outcome::Observed)
+          }
+          review::Command::Checks(_) => {
+            crate::review_reader::checks(&self.api, &repository.owner, &repository.name, &access.credential, read)
+              .await
+              .map(review::Outcome::Checks)
+          }
+          _ => Err(FailureClass::Unsupported.into()),
+        }
+      };
+      let result = tokio::select! {
+        biased;
+        _ = cancellation.cancelled() => Err(crate::work_api::WorkApiFailure::from(FailureClass::Cancelled)),
+        result = operation => result,
+      };
+      let response = octacity_work_source_protocol::Response::Review(review::Response {
+        protocol_version: intent.protocol_version,
+        request_id: intent.request_id.clone(),
+        outcome: match result {
+          Ok(outcome) => outcome,
+          Err(error) => review::Outcome::Failure(octacity_work_source_protocol::Failure {
+            class: error.class,
+            retry_after_millis: error.retry_after_millis,
+          }),
+        },
+      });
+      if serde_json::to_vec(&response)
+        .ok()
+        .is_none_or(|bytes| octacity_work_source_protocol::decode_response(&bytes, request).is_err())
+      {
+        return crate::work_protocol::response(request, FailureClass::ProtocolFault);
+      }
+      return response;
     }
     if let Request::Reporter(intent) = request {
       return self.report(request, intent, cancellation).await;
@@ -396,6 +448,16 @@ impl GithubWorkProvider {
           &intent.network_hosts,
           &self.capabilities.reporter_repositories,
           "work_reporter_write",
+        )
+      }
+      Request::Review(request) if request.command.intent().is_some() => {
+        let intent = request.command.intent().ok_or(FailureClass::Unsupported)?;
+        (
+          &intent.configuration_digest,
+          &intent.resource,
+          &intent.network_hosts,
+          &self.capabilities.review_repositories,
+          "vcs_read",
         )
       }
       _ => return Err(FailureClass::Unsupported),

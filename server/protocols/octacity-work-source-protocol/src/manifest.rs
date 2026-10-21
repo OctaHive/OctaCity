@@ -24,6 +24,9 @@ pub struct ProtocolRanges {
   pub source: Option<ProtocolRange>,
   /// Optional independent Reporter contract range.
   pub reporter: Option<ProtocolRange>,
+  /// Optional independently versioned repository review reader.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub review: Option<ProtocolRange>,
 }
 /// Read-only Source capability.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -75,6 +78,19 @@ pub struct ReporterCapabilities {
   /// Exact operator profile for reporting.
   pub configuration_digest: String,
 }
+/// Read-only code repository observations using existing repository credentials.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReviewCapabilities {
+  /// Explicit support for bounded head-specific check pages.
+  pub checks: bool,
+  /// Same-read cooperative cancellation.
+  pub cancel: bool,
+  /// Required independently scoped repository read class.
+  pub credential_class: CredentialClass,
+  /// Exact installed transport/repository profile.
+  pub configuration_digest: String,
+}
 /// Roles of one provider executable; no role is enabled implicitly.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -83,6 +99,9 @@ pub struct Capabilities {
   pub source: Option<SourceCapabilities>,
   /// Independent reporting, when installed explicitly.
   pub reporter: Option<ReporterCapabilities>,
+  /// Independently installed repository reader, never inherited from other roles.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub review: Option<ReviewCapabilities>,
 }
 /// Verified provider identity and independent Work integration contracts.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -104,7 +123,10 @@ impl AdapterManifest {
     digest(&self.executable_sha256)?;
     if self.protocol.source.is_some() != self.capabilities.source.is_some()
       || self.protocol.reporter.is_some() != self.capabilities.reporter.is_some()
-      || (self.capabilities.source.is_none() && self.capabilities.reporter.is_none())
+      || self.protocol.review.is_some() != self.capabilities.review.is_some()
+      || (self.capabilities.source.is_none()
+        && self.capabilities.reporter.is_none()
+        && self.capabilities.review.is_none())
     {
       return Err(ProtocolError::Invalid);
     }
@@ -113,6 +135,15 @@ impl AdapterManifest {
     }
     if let Some(range) = self.protocol.reporter {
       range.negotiate(range)?;
+    }
+    if let Some(range) = self.protocol.review {
+      range.negotiate(range)?;
+    }
+    if let Some(review) = &self.capabilities.review {
+      digest(&review.configuration_digest)?;
+      if review.credential_class != CredentialClass::RepositoryRead {
+        return Err(ProtocolError::Invalid);
+      }
     }
     if let Some(source) = &self.capabilities.source {
       digest(&source.configuration_digest)?;

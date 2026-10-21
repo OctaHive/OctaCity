@@ -17,6 +17,7 @@ mod issue_reporter;
 pub mod issue_selector;
 mod issue_source;
 mod protocol_io;
+mod review_reader;
 pub mod status_mapping;
 mod work_api;
 mod work_config;

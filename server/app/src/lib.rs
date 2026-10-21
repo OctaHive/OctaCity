@@ -35,7 +35,10 @@ pub use runtime::{
   FactoryReporterProfile, FactoryReporterProfileDraft, FactorySourceInstallation, FactorySourceProfile,
   FactorySourceRuntime, FactorySourceWorker, FactorySourceWorkerDependencies, FactorySourceWorkerOutcome,
   FactorySourceWorkerSettings, HostedFactoryWorkSourcePreview, HostedFactoryWorkStatusProjector,
-  HostedWorkSourceObservations, IssueSourceRuntimeInstallation, WorkSourceReadProfile,
+  HostedWorkSourceObservations, IssueRuntimeIntegrations, IssueSourceRuntimeInstallation, WorkSourceReadProfile,
 };
 
-pub use runtime::{HostedIntegrationConnectionChecker, IntegrationCheckProfile};
+pub use runtime::{
+  HostedIntegrationConnectionChecker, HostedIssueCodeReviewObservations, IntegrationCheckProfile,
+  IssueCodeReviewReadProfile, ReadIssueCodeReviewChecks,
+};
