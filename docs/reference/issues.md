@@ -1169,8 +1169,9 @@ body, transfer URL or content privilege is returned here.
 All these queries are read-only and require no provider call, input publication,
 admission, status change or new execution owner. Manual card reads install no
 Factory or ordinary Job dependency. Synchronization remains an independent read.
-The contracts are qualified through application tests; new REST/Console and
-qualified tool-event production remain their separately scheduled section 6 tasks.
+Application, REST and [Console journal](#console-execution-journal) qualification
+is described below. Qualified tool-event production is described in the
+execution-observation section.
 
 ## Operator-only discussion
 
@@ -1293,8 +1294,8 @@ unavailable returns `coverage: unavailable`, no records and no continuation.
 Readable bounded collections use `coverage: partial`, including an empty or final
 page. None of these observations establishes complete verification, successful
 checks or acceptance; original candidate/evidence/Decision subjects keep their
-own authority. Detailed journal and Checks/Artifacts expansion remain their
-separate tasks.
+own authority. The journal reader below reuses this coverage and paging;
+Checks/Artifacts expansion remains its separate task.
 
 Both routes use closed query grammar, no-store responses and the shared canonical
 opaque cursor codec (maximum 2,048 bytes). Cursors bind Project, Issue, current
@@ -1355,8 +1356,9 @@ Issues and Factory reuse them without an import-policy exception or another
 execution owner. Sections use explicit bounded reads and no new background poller.
 English/Russian component/browser checks cover confirmation focus, plain text,
 frozen lost-response replay, discarded drafts, historical selection and narrow
-layouts. Detailed qualified event journals, PR/MR/CI and artifact expansion remain
-their separately scheduled tasks. See [task 6.5 verification](../../openspec/changes/add-factory-work-card/verification-6.5.md).
+layouts. The [Console execution journal](#console-execution-journal) adds detailed
+qualified event reads; PR/MR/CI and artifact expansion remain their separately
+scheduled tasks. See [task 6.5 verification](../../openspec/changes/add-factory-work-card/verification-6.5.md).
 
 ## Qualified execution observations
 
@@ -1386,8 +1388,104 @@ Operation outcomes and model summaries grant no verification or acceptance
 power. Command arguments, environment, prompts, transcripts, file bodies/diffs
 and protected outputs are excluded from public operation metadata. The qualified
 fixture runs the real plugin and runner around a controlled Codex CLI process;
-it is not a live-provider qualification. Detailed Issue journal HTTP reads and
-Console rendering remain tasks 6.7 and 6.8.
+it is not a live-provider qualification. The HTTP journal reader and
+[Console rendering](#console-execution-journal) are described below.
 
 See [task 6.6 verification](../../openspec/changes/add-factory-work-card/verification-6.6.md)
 for the process fixtures, Red/Green outcomes and regression commands.
+
+
+## Exact execution journal reads
+
+Three read-only, no-store routes select an original execution request beneath
+`/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal`:
+
+| Suffix | Selection | Response |
+| --- | --- | --- |
+| none | `collection` (default `flow-runs`), `after`, `limit` | Original request/Run observation and one common Factory diagnostic page |
+| `/events` | Required `build_execution` digest and `job_id`; optional `after`, `limit` | Exact Job progress, safe typed events, sequence gaps and continuation |
+| `/events/{sequence}` | Required original `build_execution` and `job_id` | One independently authorized original event body |
+
+Collection and event pages default to 50 records and accept 1–100. Both use the
+shared canonical opaque cursor codec, bounded to 2,048 bytes. Query parameters
+are closed; detail accepts neither a bulk limit nor a continuation. OpenAPI
+publishes these schemas and operation contracts for generated Console clients.
+
+`ListIssueExecutionJournalQuery` composes the selected request projection with
+`ListIssueResultsQuery`. Preparing requests have no associated Work and return
+`records: null`; reads never publish or admit them. Associated requests retain
+the original Work/Run and frozen requirement revision. Existing Flow, cycle,
+Node Attempt, Build-execution, completion, stop and budget collections provide
+the hierarchy, retries, original timing, settled usage and outcome references.
+Each selected collection keeps the existing Run version fence and
+partial/stale/unavailable coverage. Independent Run and collection observations
+are not an atomic snapshot or an acceptance verdict.
+
+Event reads validate that the selected Build-execution and Job belong to that
+original Work, then reuse `IssueExecutionJobHandlers` and `JobEventLongPoll` with
+zero wait. Current Issue, Factory, Project, Build, Job and Job-event visibility
+are independently checked before event lookup or pagination. Progress includes
+actual Job state/version/times, terminal classification, worker assignment and
+optional frozen model/tool profile. Missing profiles and unassigned queued Jobs
+remain absent. Log navigation retains the original Build/Attempt/Job, including
+after retries, and grants no content authority.
+
+`issue-job-event-sequence-v1` cursors bind the association, exact Build-execution,
+Job, current security partition and normalized typed Job-event visibility.
+Changing selection or visibility requires a new traversal. Each event retains
+its original durable sequence and observation time. Returning the continuation
+on an empty tail allows reconnect without duplicate rows. Missing retained
+sequences are inclusive `gaps` ranges; expired content is never reconstructed.
+An unavailable event store preserves Job progress and the incoming cursor, with
+`coverage: unavailable` and no invented loss. If events advance beyond the Job
+snapshot, `job_stale: true` marks that observation; it does not rewrite the Job
+state. Future cursors beyond both the current Job acknowledgement and the retained
+event-stream cursor are rejected. An already issued live cursor remains usable
+while the earlier Job snapshot is stale.
+
+Safe event facts include only qualified typed command/file observations,
+Agent lifecycle changes and actual resource-usage samples. Operation rows keep
+original run/step/command references and adapter observation time; command exit
+status is not a verification result. Unsupported records remain sequence-bearing
+`not_reported` rows with authorized log navigation. Samples retain milliseconds
+and byte counters; nullable network counters distinguish missing accounting from
+measured zero. They are not model token usage. Existing completion/stop/budget
+records expose settled accounting separately from reserved limits; unreported
+model input/cache/output breakdowns and costs cannot be inferred from progress,
+prose, log text or an empty page.
+
+Metadata excludes raw event payloads, arguments, environment, prompts,
+transcripts, file bodies/diffs and protected outputs. Each event's `detail_url`
+selects exactly its original sequence. Expansion independently repeats current
+authorization and uses the existing event reader with limit one; a missing row
+returns not-found rather than a later retained event. The linked common
+`GET /api/v1/jobs/{job_id}/events` reader also returns no-store. Dedicated body
+reads retain their existing raw-content permission, bounds and redaction policy;
+they do not convert private content into generic journal metadata.
+
+These projections add no persistence, provider calls, executor, publication or
+status transitions. Manual Issue creation remains independent. See
+[task 6.7 verification](../../openspec/changes/add-factory-work-card/verification-6.7.md)
+for Red/Green evidence and restart qualification.
+
+### Console execution journal
+
+Runs retains the selected execution request across sections and reloads. Its staged collections use the exact execution journal reader, including nested Flow/cycle, Node Attempt, completion/stop and settled budget records. Original Jobs are selected by the retained Build-execution digest and Job identity; log navigation keeps the original Build and Attempt. Declared responses, retry and cancel continue through the existing exact Run controls and their current eligibility/preconditions.
+
+The selected Job view follows bounded safe event pages using the opaque server cursor. It deduplicates reconnects, retains at most 512 visible rows, labels unavailable sequence ranges and stops at the consumed terminal cursor. Empty/error reads back off; hidden browser tabs stop interval reads. Pause/resume and restart affect this observation only. Expanding an event pauses live reads; deep-linked content is read independently even outside the visible event window. Updates retain DOM row identity and do not force scrolling. Dedicated event content is fetched only on explicit expansion, with independent authorization, `no-store` and zero query-cache retention after leaving the view.
+
+Command/file facts, original event times, measured resource samples and terminal classifications are separate from model/tool profiles and worker assignment. Missing facts remain **Not reported**; resource samples do not manufacture model input/cache/output counters. The common Run budget view remains settled accounting, not a resource reservation or per-model measurement. Discussion still grants no execution or gate authority.
+
+### Optional code-review application and storage contracts
+
+Code reviews are separate from the optional primary ticket. An Issue may retain several PR/MR associations, identified by Project, Issue, installed namespace and stable native code-repository/review identities. Reader configuration pins remain original provenance; changing a display number, URL, title or task key cannot create authority or retarget the canonical association. Saving a manual Issue installs no review reader and performs no provider or Factory operation.
+
+`IssueCodeReviewHandlers` composes the existing management authorization, opaque observation cursors and a narrow installed read-observation port. Repository metadata visibility is independent of the current protected read grant. Hidden repositories are filtered before membership watermarks, ordering and continuation; changing that visibility invalidates an old cursor. Revoking protected reads can leave already authorized retained metadata visible with **Blocked** availability. **Available** describes current read authorization, not a fresh provider response. GET-style queries serve retained observations and never call the observation reader; refresh is an explicit bounded read. Provider errors do not erase the last known facts or affect manual tasks.
+
+Explicit attachment records the accepted management actor and exact reviewed Issue revision. Optional execution lineage requires the existing exact Issue/Work/Run association, retained producing record, independently visible code repository and matching candidate/head. Delivery provenance additionally requires the declared trusted `publish_candidate` action and its original retained publication receipt, native review identity and candidate facts. The installed reader must independently verify, without provider or credential I/O, that the producing action's frozen publication policy selects the same installation and native code repository. A candidate mapping or coincident review ID/head on another mirror is insufficient; missing policy mapping makes Delivery provenance unavailable. Receipt-shaped output from another action cannot establish Delivery provenance. These reads do not republish, merge, accept a candidate, transition Issue status or change execution state.
+
+Normalized observations contain only optional safe title/number/navigation/visible-author, external state/draft, immutable head/base, available change counts and external review/check summaries. Unsupported facts stay absent. A navigation URL is bounded credential-free HTTPS without query or fragment; it is never a fetch target or native identity. Observations retain original timestamps and sequence. Latest facts are selected by observation time and retained sequence; replaying an older observation cannot rewind the head. Later heads never rewrite an association's original candidate, producing record or check lineage.
+
+Migration `0090_issue_code_reviews.sql` adds independent scoped associations and append-only observations. PostgreSQL and memory use the ordinary Issue lock, scoped original receipts and shared atomic mutation publication. Association and observation continuations reuse the Issue history page ceiling and are bound to original membership, security partition and current metadata visibility; future positions/watermarks are invalid. Generic audit/outbox facts contain reference digests, without provider title/author/link bodies. Existing tasks, requirements, workflows, primary links and execution records are unaffected by migration or reads.
+
+These are the 6.9–6.10 application/storage seams. Installed provider adapter composition and review HTTP/Console surfaces are the subsequent 6.11–6.13 tasks; no review REST route or automatic provider poller is mounted by this slice.

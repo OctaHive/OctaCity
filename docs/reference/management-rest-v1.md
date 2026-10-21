@@ -990,3 +990,14 @@ coverage distinguishes partial, stale and unavailable without an acceptance
 verdict. See [activity and result observations](issues.md#bounded-activity-and-result-observations)
 for page bounds, Source freshness, Run version fencing and independent content
 permissions.
+
+
+Exact Issue execution journals use
+`GET .../issues/{issue_id}/executions/{request_id}/journal`, `/journal/events`
+and `/journal/events/{sequence}`. Hierarchy pages reuse existing diagnostic
+collections and Run version fencing; Job event pages reuse original durable
+sequences with scoped reconnect cursors, explicit gaps and separate safe facts.
+Event bodies require an independent exact-sequence read. All three routes and
+the common Job-event reader return no-store. See
+[execution journal reads](issues.md#exact-execution-journal-reads) for bounds,
+current visibility checks, measurement availability and generated contracts.
