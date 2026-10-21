@@ -1737,3 +1737,42 @@ while navigating sections or reselecting the same execution preserves the origin
 selection. English/Russian browser qualification covers keyboard activation,
 390/1280 px layouts, safe text/raster preview, explicit download and reload.
 See [task 6.15 verification](../../openspec/changes/add-factory-work-card/verification-6.15.md).
+
+### Pure descriptions of exact operator actions
+
+`FactoryNodeActionDescription::from_snapshot` describes an already authorized
+retained execution snapshot at a trusted observation time. It uses the same pure
+HumanGate eligibility contract and technical-retry validator as atomic Run
+controls. A description reserves nothing and supplies no mutation authority.
+Current visibility, time and Run version must be revalidated by consumers and
+again by the existing command boundary.
+
+Each description retains original Work/Run, observed Run version, root or nested
+Flow Run, cycle, Node Attempt, pinned definition, node key and frozen input digest.
+An optional candidate comes only from that input's typed frozen Context; a missing
+candidate stays absent rather than selecting a newer head. Human responses retain
+declared outcome/schema references and their inclusive deadline. Purpose-bound
+delivery/promotion/escalation gates expose their exact operation/disposition
+binding and only its mapped outcomes; they require the existing typed operation
+control, not a generic response bypass. Private input, Context and response bodies
+are not included.
+
+Retry descriptions address the original failed attempt and use its retained stop
+time. They exist only while the admitted retry allowance, remaining budget and
+current cycle permit the existing retry command. They have no HumanGate response
+deadline; the failed attempt's execution deadline does not invent a new retry
+policy. Recorded intent is no longer unanswered before owner consumption.
+Expired responses, cancellation, superseded cycles/attempts and terminal Runs do
+not produce actionable descriptions.
+
+`describe_issue_factory_actions` binds these descriptions to a supplied retained
+Issue/Work association, rejecting a different Project, Work or Run. It does not
+read Issue status, infer an action from a node name, select a latest execution or
+replace the Run precondition with an Issue version. Parallel executions and nested
+targets remain distinct; unlinked Work can still use the common description
+directly, and a manual Issue requires none of these execution capabilities.
+
+The descriptor lives in the backend-neutral store contract so direct application
+inspection and persisted projections share one eligibility implementation; the
+application re-exports the same public description types. See
+[task 7.1 verification](../../openspec/changes/add-factory-work-card/verification-7.1.md).

@@ -939,6 +939,7 @@ fn a_failed_retry_cannot_exceed_the_pinned_node_retry_allowance() {
       .iter()
       .find(|row| row.retry_of().is_some())
       .unwrap();
+    assert!(FactoryNodeActionDescription::from_snapshot(&exhausted, failed_retry.id(), at(18)).is_none());
     let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
     let grant = ManagementAuthorizationGrant::new(ManagementVisibility::all());
     assert!(

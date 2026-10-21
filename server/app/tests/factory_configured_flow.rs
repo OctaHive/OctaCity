@@ -23,6 +23,8 @@ mod factory_signal_lease_guard;
 #[allow(dead_code)]
 #[path = "../../application/src/factory_flow_control_tests.rs"]
 mod human_contract;
+#[path = "../../application/src/issue_test_support.rs"]
+mod issue_test_support;
 #[allow(dead_code)]
 #[path = "../../infrastructure/octacity-server-store-postgres/tests/support/mod.rs"]
 mod postgres_support;
@@ -431,6 +433,7 @@ mod cancellation_contract;
 #[allow(dead_code)]
 #[path = "../../application/src/factory_node_failure_tests.rs"]
 mod failure_contract;
+use failure_contract as factory_node_failure_tests;
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn configured_node_retry_restores_operator_intent_and_frozen_input_in_postgres() {

@@ -16,6 +16,9 @@ fn key(value: &str) -> FactoryKey {
 fn at(value: i64) -> octacity_server_domain::Timestamp {
   octacity_server_domain::Timestamp::from_unix_millis(value).unwrap()
 }
+fn context() -> ManagementRequestContext {
+  ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap())
+}
 struct Inputs;
 #[async_trait]
 impl FactoryFlowInputPreparer for Inputs {
@@ -60,6 +63,9 @@ pub(crate) fn human_fixture_with_binding(
 }
 use human_fixture_support::human_fixture_with_contract;
 
+#[path = "factory_action_tests.rs"]
+mod actions;
+
 #[test]
 fn superseded_cycles_conflict_for_new_intents_and_preserve_exact_replay() {
   crate::factory_flow_tests::run_ready(async {
@@ -85,7 +91,7 @@ fn superseded_cycles_conflict_for_new_intents_and_preserve_exact_replay() {
       .await
       .unwrap();
     let pending = store.factory_run_snapshot(admission.run.id()).await.unwrap();
-    let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+    let context = context();
     let grant = ManagementAuthorizationGrant::new(ManagementVisibility::all());
     let command = crate::SubmitFactoryNodeResponseCommand {
       run_id: admission.run.id(),
@@ -226,7 +232,7 @@ pub(crate) async fn verify_operator_confirmation<
     .await
     .unwrap();
   let pending = store.factory_run_snapshot(admission.run.id()).await.unwrap();
-  let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+  let context = context();
   let grant = ManagementAuthorizationGrant::new(ManagementVisibility::all());
   let command = crate::ConfirmFactoryNodeOperationCommand {
     run_id: admission.run.id(),
@@ -418,7 +424,7 @@ pub(crate) async fn verify_human_response<
     .unwrap()
     .schema();
   let payload = FlowPayload::new(admission.flow.data_schema(outcome_schema).unwrap(), value.clone()).unwrap();
-  let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+  let context = context();
   let grant = ManagementAuthorizationGrant::new(ManagementVisibility::all());
   let command = ResolveFactoryNodeCommand {
     run_id: admission.run.id(),
@@ -479,6 +485,7 @@ pub(crate) async fn verify_human_response<
   );
   let done = restarted.factory_run_snapshot(admission.run.id()).await.unwrap();
   assert_eq!(done.run.state(), FactoryRunState::Completed);
+  assert!(crate::FactoryNodeActionDescription::from_snapshot(&done, attempt.id(), at(200)).is_none());
   assert_eq!(done.flow.attempts, pending.flow.attempts);
   assert_eq!(done.flow.completions.len(), 1);
   assert_eq!(done.flow.completions[0].outcome(), &key("approved"));
@@ -551,7 +558,7 @@ pub(crate) async fn verify_human_cancellation<
     idempotency_key: IdempotencyKey::new("cancel-human-gate").unwrap(),
     requested_at: at(12),
   };
-  let context = ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
+  let context = context();
   let grant = ManagementAuthorizationGrant::new(ManagementVisibility::all());
   let accepted = FactoryControlHandlers::new(store.clone())
     .execute_management_command(&context, &grant, command.clone())

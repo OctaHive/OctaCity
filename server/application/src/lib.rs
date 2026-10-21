@@ -133,6 +133,7 @@ mod factory_codex_usage;
 pub use factory_codex_observation::project_codex_node_output;
 pub use factory_codex_tool_risk::FactoryCodexToolRiskPolicy;
 pub use factory_codex_usage::FactoryCodexUsagePolicy;
+mod factory_action;
 #[cfg(test)]
 mod factory_codex_observation_tests;
 #[cfg(test)]
@@ -142,6 +143,7 @@ mod factory_configuration_cqrs;
 #[cfg(test)]
 mod factory_configuration_cqrs_tests;
 mod factory_control;
+pub use factory_action::*;
 mod factory_operator;
 pub use factory_operator::FactoryOperatorHandlers;
 #[cfg(test)]

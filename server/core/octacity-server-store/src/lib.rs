@@ -101,6 +101,7 @@ pub use factory_build_acceptance::{
   AcceptFactoryBuild, AcceptedFactoryBuild, CancelFactoryBuildExecution, FactoryBuildAcceptanceStore,
   FactoryBuildCancellationStore, MAX_FACTORY_BUILD_JOBS,
 };
+mod factory_action;
 mod factory_configuration_model;
 mod factory_configuration_port;
 mod factory_discovery_model;
@@ -108,6 +109,7 @@ mod factory_discovery_port;
 mod factory_phase_pool;
 mod factory_retention_model;
 mod factory_retention_port;
+pub use factory_action::{FactoryNodeActionDescription, FactoryNodeActionKind};
 mod factory_run_control;
 mod factory_run_control_port;
 mod factory_run_model;
@@ -350,8 +352,8 @@ pub use factory_retention_model::{
 pub use factory_retention_port::FactoryRetentionStore;
 pub use factory_run_control::{
   ApplyFactoryRunControl, FactoryRunControlChange, FactoryRunControlIntent, FactoryRunControlOutcome,
-  FactoryRunControlRecord, prepare_factory_run_control, validate_factory_node_control_history,
-  validate_factory_node_response, validate_factory_node_retry,
+  FactoryRunControlRecord, factory_node_response_contract, prepare_factory_run_control,
+  validate_factory_node_control_history, validate_factory_node_response, validate_factory_node_retry,
 };
 pub use factory_run_control_port::FactoryRunControlStore;
 pub use factory_run_model::{

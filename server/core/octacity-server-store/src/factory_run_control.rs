@@ -149,16 +149,16 @@ pub struct FactoryRunControlOutcome {
   pub cancellation_requested: bool,
 }
 
-/// Revalidates a response against an exact active HumanGate and its admitted schema.
-/// Both backends use this seam under the aggregate lock before recording intent.
-pub fn validate_factory_node_response(
+fn node_contract(
   snapshot: &crate::FactoryRunSnapshot,
   attempt_id: octacity_server_factory::NodeAttemptId,
-  outcome: &octacity_server_factory::FactoryKey,
-  payload: &octacity_server_factory::FlowPayload,
-  at: Timestamp,
-) -> Result<(), crate::StoreError> {
-  use octacity_server_factory::{FlowNodeKind, FlowPayload};
+) -> Result<
+  (
+    &octacity_server_factory::NodeAttempt,
+    &octacity_server_factory::FlowNodeDefinition,
+  ),
+  crate::StoreError,
+> {
   let invalid = || {
     crate::StoreError::invalid(
       crate::StoreOperation::ControlFactoryRun,
@@ -179,11 +179,24 @@ pub fn validate_factory_node_response(
     .and_then(|run| snapshot.admitted_flow.closure().definition(run.definition()))
     .and_then(|definition| definition.node(attempt.node_key()))
     .ok_or_else(invalid)?;
-  let schema = node
-    .outcome(outcome)
-    .and_then(|outcome| snapshot.admitted_flow.data_schema(outcome.schema()))
-    .ok_or_else(invalid)?;
-  if node.kind() != FlowNodeKind::HumanGate || at < attempt.claim().claimed_at() {
+  Ok((attempt, node))
+}
+
+/// Pure current HumanGate eligibility shared by descriptions and atomic control validation.
+/// This exposes the pinned response contract, never a reservation or mutation authority.
+pub fn factory_node_response_contract(
+  snapshot: &crate::FactoryRunSnapshot,
+  attempt_id: octacity_server_factory::NodeAttemptId,
+  at: Timestamp,
+) -> Result<&octacity_server_factory::FlowNodeDefinition, crate::StoreError> {
+  let invalid = || {
+    crate::StoreError::invalid(
+      crate::StoreOperation::ControlFactoryRun,
+      crate::StoreInputError::InvalidFactoryRunControl,
+    )
+  };
+  let (attempt, node) = node_contract(snapshot, attempt_id)?;
+  if node.kind() != octacity_server_factory::FlowNodeKind::HumanGate || at < attempt.claim().claimed_at() {
     return Err(invalid());
   }
   if !snapshot.flow.runtime().is_current_cycle(attempt.workflow_cycle_id())
@@ -194,6 +207,31 @@ pub fn validate_factory_node_response(
     || snapshot.flow.attempts.iter().any(|row| row.flow_run_id() == attempt.flow_run_id() && row.workflow_cycle_id() == attempt.workflow_cycle_id() && row.node_key() == attempt.node_key() && row.number() > attempt.number())
     || snapshot.controls.iter().any(|row| matches!(row.intent, FactoryRunControlIntent::ResolveNode { node_attempt_id, .. } if node_attempt_id == attempt_id))
   { return Err(crate::StoreError::Conflict { entity: octacity_server_domain::EntityKind::FactoryRun }); }
+  Ok(node)
+}
+
+/// Revalidates a response against an exact active HumanGate and its admitted schema.
+/// Both backends use this seam under the aggregate lock before recording intent.
+pub fn validate_factory_node_response(
+  snapshot: &crate::FactoryRunSnapshot,
+  attempt_id: octacity_server_factory::NodeAttemptId,
+  outcome: &octacity_server_factory::FactoryKey,
+  payload: &octacity_server_factory::FlowPayload,
+  at: Timestamp,
+) -> Result<(), crate::StoreError> {
+  use octacity_server_factory::FlowPayload;
+  let invalid = || {
+    crate::StoreError::invalid(
+      crate::StoreOperation::ControlFactoryRun,
+      crate::StoreInputError::InvalidFactoryRunControl,
+    )
+  };
+  let (_, node) = node_contract(snapshot, attempt_id)?;
+  let schema = node
+    .outcome(outcome)
+    .and_then(|outcome| snapshot.admitted_flow.data_schema(outcome.schema()))
+    .ok_or_else(invalid)?;
+  factory_node_response_contract(snapshot, attempt_id, at)?;
   FlowPayload::restore(&serde_json::to_vec(payload).map_err(|_| invalid())?, schema).map_err(|_| invalid())?;
   Ok(())
 }
@@ -211,20 +249,7 @@ pub fn validate_factory_node_retry(
       crate::StoreInputError::InvalidFactoryRunControl,
     )
   };
-  let attempt = snapshot
-    .flow
-    .attempts
-    .iter()
-    .find(|row| row.id() == attempt_id)
-    .ok_or_else(invalid)?;
-  let node = snapshot
-    .flow
-    .runs
-    .iter()
-    .find(|row| row.id() == attempt.flow_run_id())
-    .and_then(|run| snapshot.admitted_flow.closure().definition(run.definition()))
-    .and_then(|definition| definition.node(attempt.node_key()))
-    .ok_or_else(invalid)?;
+  let (attempt, node) = node_contract(snapshot, attempt_id)?;
   if !snapshot.flow.runtime().is_current_cycle(attempt.workflow_cycle_id()) {
     return Err(crate::StoreError::Conflict {
       entity: octacity_server_domain::EntityKind::FactoryRun,
