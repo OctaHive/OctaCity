@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Maintain or inspect a derived, source-version-fenced Factory action index.
+  ProjectFactoryActions,
   /// Attach one canonical external review without execution effects.
   AttachIssueCodeReview,
   /// Retain a safe read-only code-review observation.
@@ -349,6 +351,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Action projection bounds or observation time are invalid.
+  #[error("a Factory action projection input is invalid")]
+  InvalidFactoryActionProjection,
   /// Invalid bounded code-review selection/observation.
   #[error("invalid Issue code-review input")]
   InvalidIssueCodeReview,

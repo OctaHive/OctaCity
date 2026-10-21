@@ -1,5 +1,7 @@
 //! Public control/description contracts over real retained owner snapshots.
 use super::*;
+#[path = "factory_action_projection_tests.rs"]
+mod projection;
 
 async fn pending(
   admission: PublishedFactoryAdmission,
@@ -494,6 +496,7 @@ fn action_descriptions_retire_recorded_cancelled_and_superseded_gate_targets() {
     let schema = FlowDataSchema::new(key("operator.response"), key("v1"), FlowValueSchema::Boolean).unwrap();
     let (store, snapshot) = pending(human_fixture_with_contract(schema, None, true)).await;
     let attempt = snapshot.flow.attempts[0].id();
+    projection::assert_materialized_actions(store.as_ref(), &snapshot, 12, &[attempt]).await;
     let context = context();
     let grant = ManagementAuthorizationGrant::new(ManagementVisibility::all());
     let controls = FactoryControlHandlers::new(store.clone());
@@ -515,6 +518,13 @@ fn action_descriptions_retire_recorded_cancelled_and_superseded_gate_targets() {
       .unwrap();
     let recorded = store.factory_run_snapshot(snapshot.run.id()).await.unwrap();
     assert!(crate::FactoryNodeActionDescription::from_snapshot(&recorded, attempt, at(12)).is_none());
+    let missing = store
+      .read_factory_action_projection(FactoryActionProjectionQuery::new(snapshot.run.id(), at(12), None, 1).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(missing.coverage, FactoryActionProjectionCoverage::Incomplete);
+    assert!(missing.items.is_empty());
+    projection::assert_materialized_actions(store.as_ref(), &recorded, 12, &[]).await;
     let ownership = claim(store.as_ref(), &recorded, 13).await;
     let owner = FactoryFlowRunner::new(
       store.clone(),
@@ -533,6 +543,7 @@ fn action_descriptions_retire_recorded_cancelled_and_superseded_gate_targets() {
     assert!(crate::FactoryNodeActionDescription::from_snapshot(&current, attempt, at(17)).is_none());
     let current_attempt = current.flow.attempts.iter().find(|row| row.id() != attempt).unwrap();
     assert!(crate::FactoryNodeActionDescription::from_snapshot(&current, current_attempt.id(), at(17)).is_some());
+    projection::assert_materialized_actions(store.as_ref(), &current, 17, &[current_attempt.id()]).await;
     assert!(
       crate::FactoryNodeActionDescription::from_snapshot(&current, current_attempt.id(), at(15)).is_none(),
       "a later snapshot cannot describe an earlier observation"
@@ -552,5 +563,12 @@ fn action_descriptions_retire_recorded_cancelled_and_superseded_gate_targets() {
       .unwrap();
     let cancelled = store.factory_run_snapshot(snapshot.run.id()).await.unwrap();
     assert!(crate::FactoryNodeActionDescription::from_snapshot(&cancelled, current_attempt.id(), at(18)).is_none());
+    let missing = store
+      .read_factory_action_projection(FactoryActionProjectionQuery::new(snapshot.run.id(), at(18), None, 1).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(missing.coverage, FactoryActionProjectionCoverage::Incomplete);
+    assert!(missing.items.is_empty());
+    projection::assert_materialized_actions(store.as_ref(), &cancelled, 18, &[]).await;
   });
 }

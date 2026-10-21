@@ -1776,3 +1776,39 @@ The descriptor lives in the backend-neutral store contract so direct application
 inspection and persisted projections share one eligibility implementation; the
 application re-exports the same public description types. See
 [task 7.1 verification](../../openspec/changes/add-factory-work-card/verification-7.1.md).
+
+### Durable action projection
+
+`FactoryActionProjectionStore` materializes exact Run actions independently of
+Issue creation, provider integration and execution ownership. Migration 0091 adds
+one per-Run source-version checkpoint and safe action rows. Existing executions
+start uncovered and remain available for ordinary execution and controls.
+
+The authoritative Run version is the transactional invalidation fence: every
+source-version change makes an older projection ineligible in the same source
+commit. Execution/admission/control transactions do not write or depend on the
+projection tables. Reads check current visibility and source version under the
+Run lock; missing, invalidated or newer-than-observation coverage is explicitly
+`Incomplete`, with no actions or continuation. An empty `Complete` page means
+that this Run version was materialized and has no matching unexpired actions.
+Expiry is inclusive and filtered before ordering, limits and continuation.
+
+`FactoryActionProjectionWorker` selects at most the common diagnostic page limit
+of missing or stale source versions, ordered by source update time and Run ID.
+Publication locks and rechecks the original source, derives actions through the
+common descriptor, and replaces the checkpoint and action rows in one transaction.
+A stale source or older observation cannot overwrite newer work. An interrupted
+transaction acknowledges nothing; a lost acknowledgement safely repeats. Committed
+checkpoints survive worker/server restart, so backfill resumes without a second
+outbox or an execution claim. Recorded responses/retries retire unanswered actions
+at intent acceptance, independently of later owner consumption.
+
+The server schedules this maintenance through its existing worker loop and
+retention-worker polling/batch policy, including when the Factory owner is disabled.
+Individual publication failures remain pending and do not stop other items in the
+batch. The read-model task is supervised separately from execution failure policy:
+a stopped/crashed index worker leaves uncovered versions readable as `Incomplete`
+and cannot cancel Factory execution or fail its readiness. Source controls still
+revalidate their own authority independently of this index.
+
+See [task 7.2 verification](../../openspec/changes/add-factory-work-card/verification-7.2.md).

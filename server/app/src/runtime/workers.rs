@@ -21,6 +21,7 @@ use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, rea
 
 pub(super) struct DurableWorkers {
   pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
+  pub(super) actions: octacity_server_application::FactoryActionProjectionWorker<PostgresStore>,
   pub(super) expiry: LeaseExpiryWorker<PostgresAuthoritativeStore>,
   pub(super) expiry_health: Arc<WorkerHealth>,
   pub(super) schedules: ScheduleWorker<PostgresStore>,
@@ -178,7 +179,9 @@ pub(super) fn spawn_durable_workers(
     }
     spawn_factory_worker(installed.owner, installed.health, policy, cancellation.child_token())
   });
+  let actions = spawn_action_projection_worker(workers.actions, retention_policy, cancellation.child_token());
   let mut tasks = vec![
+    ("factory-action-projection", actions),
     (EXPIRY_WORKER_NAME, expiry),
     (SCHEDULE_WORKER_NAME, schedules),
     (INTERNAL_TRIGGER_WORKER_NAME, internal_triggers),
@@ -204,6 +207,63 @@ pub(super) fn spawn_durable_workers(
     tasks.push((MANAGED_WEBHOOK_WORKER_NAME, task));
   }
   spawn_worker_supervisor(tasks, cancellation)
+}
+
+// Index maintenance is always scheduled, even when the execution owner is disabled.
+fn spawn_action_projection_worker(
+  worker: octacity_server_application::FactoryActionProjectionWorker<PostgresStore>,
+  policy: RetentionWorkerPolicy,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  let ordinary = policy.retrying().worker();
+  let name = "factory-action-projection";
+  let worker = Arc::new(worker);
+  let limit = ordinary
+    .batch_size()
+    .min(octacity_server_store::MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE);
+  let task = spawn_worker_loop(
+    WorkerIdentity::new(name, WorkerKind::Factory),
+    Arc::new(WorkerHealth::new(
+      name,
+      ordinary.poll_interval().saturating_add(ordinary.claim_lifetime()),
+    )),
+    ordinary.poll_interval(),
+    ordinary.claim_lifetime(),
+    cancellation.child_token(),
+    move |at, _| {
+      let worker = worker.clone();
+      async move {
+        let progress = worker.run_once(at, limit).await?;
+        if progress.failed > 0 {
+          return Err(octacity_server_application::ApplicationError::unavailable());
+        }
+        Ok(progress)
+      }
+    },
+    |progress| {
+      if progress.completed > 0 {
+        info!(completed = progress.completed, "Factory action projection advanced");
+      }
+    },
+  );
+  isolate_read_model_worker(task, cancellation)
+}
+
+// Keep optional read-side failure outside the fail-fast execution supervisor.
+// Shutdown still owns/drains the inner task; a stopped index never repairs on read.
+fn isolate_read_model_worker(mut task: JoinHandle<()>, cancellation: CancellationToken) -> JoinHandle<()> {
+  tokio::spawn(async move {
+    tokio::select! {
+      biased;
+      () = cancellation.cancelled() => { task.abort(); let _ = task.await; }
+      _ = &mut task => {
+        if !cancellation.is_cancelled() {
+          warn!(worker="factory-action-projection", "read-model worker stopped; coverage may be incomplete");
+          cancellation.cancelled().await;
+        }
+      }
+    }
+  })
 }
 
 fn spawn_input_retention_worker(
@@ -841,6 +901,33 @@ where
 #[cfg(test)]
 mod tests {
   use super::*;
+
+  #[tokio::test(start_paused = true)]
+  async fn stopped_action_read_model_does_not_cancel_execution_workers() {
+    for panic in [false, true] {
+      let cancellation = CancellationToken::new();
+      let stopped = tokio::spawn(async move {
+        assert!(!panic, "injected index worker crash");
+      });
+      let isolated = isolate_read_model_worker(stopped, cancellation.child_token());
+      let sibling_cancel = cancellation.child_token();
+      let sibling = tokio::spawn(async move {
+        sibling_cancel.cancelled().await;
+      });
+      let supervisor = spawn_worker_supervisor(
+        vec![("actions", isolated), ("execution", sibling)],
+        cancellation.clone(),
+      );
+      tokio::time::sleep(Duration::from_secs(1)).await;
+      assert!(
+        !cancellation.is_cancelled(),
+        "index failure must not stop Factory execution"
+      );
+      assert!(!supervisor.is_finished());
+      cancellation.cancel();
+      assert!(supervisor.await.unwrap().is_ok());
+    }
+  }
 
   #[tokio::test(start_paused = true)]
   async fn factory_outbox_failures_have_independent_cooldown_and_shutdown_is_immediate() {

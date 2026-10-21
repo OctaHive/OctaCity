@@ -1,5 +1,8 @@
 mod support;
 
+#[path = "factory_discovery/action_projection.rs"]
+mod action_projection;
+
 #[path = "factory_discovery/source_contract.rs"]
 mod sources;
 
@@ -53,10 +56,8 @@ async fn verified_promotion_facts_are_paged_after_restart() {
 }
 
 async fn assert_configured_node_discovery(kind: &str) {
-  use octacity_server_factory::FactoryFlowConfiguration;
   use octacity_server_store::testing::{factory_node_journal_contract_fixture, verify_factory_node_journal_contract};
   let database = TestDatabase::migrated().await;
-  let postgres = PostgresStore::new(database.pool.clone());
   let mut node_fixture = if kind == "large_signal" {
     octacity_server_store::testing::factory_node_journal_contract_fixture_with_large_signal()
   } else {
@@ -85,69 +86,7 @@ async fn assert_configured_node_discovery(kind: &str) {
     _ => unreachable!("closed fixture cases"),
   });
   let work = &node_fixture.admission.work;
-  let project = work.subject().project_id();
-  seed_projects(&database.pool, project, ProjectId::generate()).await;
-  let repository = repository(project, work.subject().repository_id());
-  seed_repository(&database.pool, &repository).await;
-  let mut configured = fixture(project);
-  configured.draft.wip_limits = node_fixture.admission.flow.wip_limits();
-  configured.draft.flow = Some(
-    FactoryFlowConfiguration::new(
-      node_fixture.admission.flow.closure().clone(),
-      node_fixture.admission.flow.limits().clone(),
-      vec![node_fixture.schema.clone()],
-      Default::default(),
-    )
-    .unwrap(),
-  );
-  let configuration = FactoryConfiguration::publish(
-    work.configuration().id(),
-    work.configuration().version(),
-    project,
-    work.configuration().definition_digest(),
-    configured.draft.clone(),
-    &configured.choices,
-  )
-  .unwrap();
-  postgres
-    .create_factory_configuration(management_mutation_with_request(
-      CreateFactoryConfiguration {
-        idempotency_key: idempotency("generic-node-configuration"),
-        published_at: time(0),
-        intent: FactoryConfigurationMutationIntent::Create {
-          id: configuration.reference().id(),
-          project_id: project,
-          definition_digest: configuration.reference().definition_digest(),
-          draft: configured.draft,
-        },
-        configuration,
-      },
-      "generic-node-configuration",
-    ))
-    .await
-    .unwrap();
-  postgres
-    .admit_factory_work(management_mutation_with_request(
-      AdmitFactoryWork {
-        probe: FactoryAdmissionProbe {
-          source_scope: FactoryWorkSourceScope {
-            source: key("manual"),
-            security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
-          },
-          external_identity: work.external_identity().clone(),
-          intent_digest: digest(1),
-          idempotency_key: idempotency("generic-node-intake"),
-        },
-        repository_version: repository.version,
-        work: work.clone(),
-        run: node_fixture.admission.run.clone(),
-        flow: node_fixture.admission.flow.clone(),
-        admitted_at: time(1),
-      },
-      "generic-node-intake",
-    ))
-    .await
-    .unwrap();
+  let (postgres, repository) = seed_projection_admission(&database, &node_fixture.admission).await;
   let definition = node_fixture
     .admission
     .flow
@@ -1039,8 +978,8 @@ fn repository(project_id: ProjectId, id: RepositoryId) -> PublishedRepository {
 async fn seed_projects(pool: &sqlx::PgPool, first: ProjectId, second: ProjectId) {
   sqlx::query(
     "INSERT INTO projects (id, parent_id, name, version, created_at, updated_at) \
-     VALUES ($1, NULL, 'factory-one', 1, to_timestamp(0), to_timestamp(0)), \
-            ($2, NULL, 'factory-two', 1, to_timestamp(0), to_timestamp(0))",
+     VALUES ($1, NULL, 'factory-one-' || $1::text, 1, to_timestamp(0), to_timestamp(0)), \
+            ($2, NULL, 'factory-two-' || $2::text, 1, to_timestamp(0), to_timestamp(0))",
   )
   .bind(first.as_uuid())
   .bind(second.as_uuid())
@@ -2244,4 +2183,77 @@ async fn empty_factory_visibility_does_not_resolve_a_missing_project() {
     assert!(configurations.next_cursor.is_none());
   }
   database.cleanup().await;
+}
+
+async fn seed_projection_admission(
+  database: &TestDatabase,
+  admission: &octacity_server_store::PublishedFactoryAdmission,
+) -> (PostgresStore, PublishedRepository) {
+  use octacity_server_factory::FactoryFlowConfiguration;
+  let postgres = PostgresStore::new(database.pool.clone());
+  let work = &admission.work;
+  let project = work.subject().project_id();
+  seed_projects(&database.pool, project, ProjectId::generate()).await;
+  let repository = repository(project, work.subject().repository_id());
+  seed_repository(&database.pool, &repository).await;
+  let mut configured = fixture(project);
+  configured.draft.wip_limits = admission.flow.wip_limits();
+  configured.draft.flow = Some(
+    FactoryFlowConfiguration::new(
+      admission.flow.closure().clone(),
+      admission.flow.limits().clone(),
+      admission.flow.data_schemas().to_vec(),
+      Default::default(),
+    )
+    .unwrap(),
+  );
+  let configuration = FactoryConfiguration::publish(
+    work.configuration().id(),
+    work.configuration().version(),
+    project,
+    work.configuration().definition_digest(),
+    configured.draft.clone(),
+    &configured.choices,
+  )
+  .unwrap();
+  postgres
+    .create_factory_configuration(management_mutation_with_request(
+      CreateFactoryConfiguration {
+        idempotency_key: idempotency(&format!("generic-node-configuration-{}", work.id())),
+        published_at: time(0),
+        intent: FactoryConfigurationMutationIntent::Create {
+          id: configuration.reference().id(),
+          project_id: project,
+          definition_digest: configuration.reference().definition_digest(),
+          draft: configured.draft,
+        },
+        configuration,
+      },
+      "generic-node-configuration",
+    ))
+    .await
+    .unwrap();
+  postgres
+    .admit_factory_work(management_mutation_with_request(
+      AdmitFactoryWork {
+        probe: FactoryAdmissionProbe {
+          source_scope: FactoryWorkSourceScope {
+            source: key("manual"),
+            security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
+          },
+          external_identity: work.external_identity().clone(),
+          intent_digest: digest(1),
+          idempotency_key: idempotency(&format!("generic-node-intake-{}", work.id())),
+        },
+        repository_version: repository.version,
+        work: work.clone(),
+        run: admission.run.clone(),
+        flow: admission.flow.clone(),
+        admitted_at: time(1),
+      },
+      "generic-node-intake",
+    ))
+    .await
+    .unwrap();
+  (postgres, repository)
 }

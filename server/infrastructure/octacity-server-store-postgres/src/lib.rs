@@ -32,6 +32,7 @@ mod definition_mutation;
 mod definition_query;
 mod discovery;
 mod external_trigger;
+mod factory_action_projection;
 mod factory_admission;
 mod factory_configuration;
 mod factory_discovery;

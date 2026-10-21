@@ -63,7 +63,9 @@ async fn completed_issue_publication_recovery_does_not_read_history_on_readiness
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 41] = [
+const FACTORY_TABLES: [&str; 43] = [
+  "factory_action_projections",
+  "factory_action_items",
   "factory_source_inputs",
   "factory_source_groups",
   "factory_source_scans",
