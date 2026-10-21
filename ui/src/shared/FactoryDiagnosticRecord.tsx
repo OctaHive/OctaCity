@@ -17,6 +17,7 @@ export const DIAGNOSTIC_LABELS = {
   'node-completions': 'factory.diag.completions',
   'node-stops': 'factory.diag.stops',
   'decision-signals': 'factory.diag.signals',
+  candidates: 'factory.diag.candidates',
   changesets: 'factory.diag.changesets',
   evidence: 'factory.diag.evidence',
   'review-plans': 'factory.diag.plans',

@@ -1,3 +1,4 @@
+import { reviewAccessFixture, reviewConnectionFixture } from './issueCodeReviews';
 import { render } from '@testing-library/react';
 import { createMemoryRouter } from 'react-router-dom';
 import { vi } from 'vitest';
@@ -22,6 +23,26 @@ export const workflow = {
 };
 
 export const issue = issueFixture();
+export function fakeIssueReviewConnections() {
+  return {
+    listConnections: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
+    listProjectResources: vi.fn().mockResolvedValue({ resources: [] }),
+    getProjectAccess: vi.fn().mockResolvedValue(reviewAccessFixture()),
+    getConnectionVersion: vi.fn().mockResolvedValue(reviewConnectionFixture()),
+  };
+}
+export function fakeIssueCodeReviewsApi() {
+  return {
+    list: vi.fn().mockResolvedValue({
+      items: [],
+      next_cursor: null,
+      observation: 'issue-code-review-membership-v1',
+    }),
+    attach: vi.fn(),
+    refresh: vi.fn(),
+    observations: vi.fn(),
+  };
+}
 export function fakeIssueSourcesApi() {
   return {
     projections: vi.fn().mockResolvedValue({
@@ -137,6 +158,8 @@ export function setup(
         timeline: vi.fn().mockResolvedValue(timelineFixture([])),
       },
       issueSourcesApi: fakeIssueSourcesApi(),
+      issueReviewConnections: fakeIssueReviewConnections(),
+      issueCodeReviewsApi: fakeIssueCodeReviewsApi(),
       issueWorkflowsApi: workflows,
       readinessProbe: async () => 'ready',
       ...overrides,

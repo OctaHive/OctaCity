@@ -126,6 +126,14 @@ export function createIntegrationsApi(client = managementApi) {
         }),
       );
     },
+    getConnectionVersion(id: string, version: number, signal?: AbortSignal) {
+      return safeResponse(
+        client.GET('/api/v1/integrations/{integration_id}/versions/{version}', {
+          params: { path: { integration_id: id, version } },
+          signal: signal ?? null,
+        }),
+      );
+    },
     getConnection(id: string, signal?: AbortSignal) {
       return safeResponse(
         client.GET('/api/v1/integrations/{integration_id}', {

@@ -1,3 +1,8 @@
+import { IssueExternalChecks } from './IssueExternalChecks';
+import type { IssueCodeReviewsApi } from './codeReviewApi';
+import { IssueArtifacts } from './IssueArtifacts';
+import { IssueChecks } from './IssueChecks';
+import type { IssueResultPanelsApi } from './resultPanelsApi';
 import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
@@ -29,9 +34,13 @@ const collections = [
 /** Exact execution selection is shared with Runs; a bounded page never establishes overall acceptance. */
 export function IssueResults({
   api,
+  panels,
+  reviews,
   executions,
   issue,
 }: {
+  panels: IssueResultPanelsApi;
+  reviews: IssueCodeReviewsApi;
   api: IssueActivityApi;
   executions: IssueExecutionsApi;
   issue: Issue;
@@ -39,12 +48,31 @@ export function IssueResults({
   const { t } = usePresentation();
   const [params] = useSearchParams();
   const requestId = params.get('execution');
+  const pane = params.get('result_pane') ?? 'records';
   const selected = useIssueExecution(executions, issue, requestId);
   const runs = new URLSearchParams(params);
   runs.set('section', 'runs');
   return (
     <section className={styles.panel} aria-label={t('issues.executionResults')}>
       <h2>{t('issues.executionResults')}</h2>
+      <nav className={styles.actions} aria-label={t('issueResults.panes')}>
+        {(['records', 'checks', 'artifacts'] as const).map((value) => {
+          const next = new URLSearchParams(params);
+          next.set('result_pane', value);
+          return (
+            <Link
+              key={value}
+              aria-current={pane === value ? 'page' : undefined}
+              to={{ search: next.toString() }}
+            >
+              {t(`issueResults.${value}`)}
+            </Link>
+          );
+        })}
+      </nav>
+      {pane === 'checks' ? (
+        <IssueExternalChecks api={panels} reviews={reviews} issue={issue} />
+      ) : null}
       {!requestId ? (
         <>
           <p>{t('issues.selectExecution')}</p>
@@ -67,7 +95,21 @@ export function IssueResults({
             onRetry={selected.refetch}
           />
           <ExecutionReceipt execution={selected.data} currentVersion={issue.version} />
-          {selected.data.association ? (
+          {selected.data.association && pane === 'checks' ? (
+            <IssueChecks
+              api={panels}
+              activity={api}
+              issue={issue}
+              work={selected.data.association.work_id}
+            />
+          ) : selected.data.association && pane === 'artifacts' ? (
+            <IssueArtifacts
+              key={selected.data.association.work_id}
+              api={panels}
+              issue={issue}
+              work={selected.data.association.work_id}
+            />
+          ) : selected.data.association ? (
             <ResultCollection
               key={selected.data.association.work_id}
               api={api}

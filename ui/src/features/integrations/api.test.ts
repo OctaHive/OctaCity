@@ -118,3 +118,17 @@ it('keeps Project access publication preconditions independent from connection s
   });
   expect(requests.slice(0, 3).every((r) => !r.headers.has('Idempotency-Key'))).toBe(true);
 });
+
+it('reads the exact retained connection version through the existing generated contract', async () => {
+  const requests: Request[] = [];
+  const original = integrationFixture('IntegrationConnection');
+  const api = createIntegrationsApi(
+    createManagementApiClient(async (request) => {
+      requests.push(request);
+      return Response.json(original);
+    }),
+  );
+  expect(await api.getConnectionVersion(original.id, 1)).toEqual(original);
+  expect(new URL(requests[0]!.url).pathname).toBe(`/api/v1/integrations/${original.id}/versions/1`);
+  expect(requests[0]!.credentials).toBe('omit');
+});

@@ -1,3 +1,6 @@
+import type { IssueResultPanelsApi } from './resultPanelsApi';
+import { IssueCodeReviews } from './IssueCodeReviews';
+import type { IssueCodeReviewsApi, IssueReviewConnections } from './codeReviewApi';
 import { useEffect, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
@@ -34,7 +37,10 @@ const sections = ['overview', 'activity', 'runs', 'results', 'actions'] as const
 export function IssueView({
   factory,
   activity,
+  panels,
   sources,
+  reviews,
+  reviewConnections,
   api,
   workflows,
   projects,
@@ -43,7 +49,10 @@ export function IssueView({
 }: {
   factory: IssueRunReader;
   activity: IssueActivityApi;
+  panels: IssueResultPanelsApi;
   sources: IssueSourcesApi;
+  reviews: IssueCodeReviewsApi;
+  reviewConnections: IssueReviewConnections;
   api: IssuesApi;
   workflows: IssueWorkflowsApi;
   projects: IssueProjectReader;
@@ -54,8 +63,11 @@ export function IssueView({
   return projectId && issueId ? (
     <Card
       factory={factory}
+      panels={panels}
       activity={activity}
       sources={sources}
+      reviews={reviews}
+      reviewConnections={reviewConnections}
       key={projectId + issueId}
       executions={executions}
       executionSources={executionSources}
@@ -70,7 +82,10 @@ export function IssueView({
 function Card({
   factory,
   activity,
+  panels,
   sources,
+  reviews,
+  reviewConnections,
   api,
   workflows,
   projects,
@@ -81,7 +96,10 @@ function Card({
 }: {
   factory: IssueRunReader;
   activity: IssueActivityApi;
+  panels: IssueResultPanelsApi;
   sources: IssueSourcesApi;
+  reviews: IssueCodeReviewsApi;
+  reviewConnections: IssueReviewConnections;
   api: IssuesApi;
   workflows: IssueWorkflowsApi;
   projects: IssueProjectReader;
@@ -103,7 +121,21 @@ function Card({
     if (value !== 'overview') next.set('section', value);
     if (params.get('execution')) next.set('execution', params.get('execution')!);
     if (hasRevision) next.set('revision', String(selectedRevision));
-    for (const key of ['result_collection', 'result_id', 'result_after']) {
+    for (const key of [
+      'result_pane',
+      'check_record',
+      'check_after',
+      'candidate_after',
+      'artifact_after',
+      'ci_review',
+      'ci_after',
+      'ci_review_after',
+      'result_collection',
+      'result_id',
+      'result_after',
+      'review',
+      'review_after',
+    ]) {
       const value = params.get(key);
       if (value) next.set(key, value);
     }
@@ -325,7 +357,22 @@ function Card({
                   activity={activity}
                 />
               ) : section === 'results' ? (
-                <IssueResults api={activity} executions={executions} issue={issue} />
+                <>
+                  <IssueCodeReviews
+                    issue={issue}
+                    api={reviews}
+                    connections={reviewConnections}
+                    ready={current.error === null && !current.isFetching}
+                    onReload={refresh}
+                  />
+                  <IssueResults
+                    reviews={reviews}
+                    panels={panels}
+                    api={activity}
+                    executions={executions}
+                    issue={issue}
+                  />
+                </>
               ) : (
                 <>
                   {choices.isPending ? (
@@ -405,7 +452,19 @@ function Card({
               <section className={styles.panel}>
                 <h2>{t('issues.execution')}</h2>
                 <Link to={{ search: sectionSearch('runs') }}>{t('issues.executionHistory')}</Link>
+                {(['checks', 'artifacts'] as const).map((pane) => {
+                  const next = new URLSearchParams(sectionSearch('results'));
+                  next.set('result_pane', pane);
+                  return (
+                    <Link key={pane} to={{ search: next.toString() }}>
+                      {t(`issueResults.${pane}`)}
+                    </Link>
+                  );
+                })}
               </section>
+              {section !== 'results' ? (
+                <IssueCodeReviews issue={issue} api={reviews} compact />
+              ) : null}
               <IssueSource issue={issue} api={sources} workflow={workflow.data} />
               <details className={styles.panel}>
                 <summary>{t('issues.details')}</summary>

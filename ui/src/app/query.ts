@@ -1,6 +1,38 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  issueExternalChecks: (project: string, issue: string, review: string, after: string | null) =>
+    ['issues', project, issue, 'external-checks', review, after] as const,
+  issueArtifactContent: (
+    project: string,
+    issue: string,
+    work: string,
+    artifact: string,
+    mode: string,
+  ) => ['issues', project, issue, 'artifact-content', work, artifact, mode] as const,
+  issueArtifacts: (project: string, issue: string, work: string, after: string | null) =>
+    ['issues', project, issue, 'artifacts', work, after] as const,
+  issueChecks: (
+    project: string,
+    issue: string,
+    work: string,
+    record: string | null,
+    after: string | null,
+  ) => ['issues', project, issue, 'checks', work, record, after] as const,
+  issueReviewResources: (
+    connection: string,
+    project: string,
+    version: number | undefined,
+    accessVersion: number | undefined,
+  ) => ['integrations', 'resources', connection, project, version, accessVersion] as const,
+  integrationVersion: (id: string, version: number) =>
+    ['integrations', id, 'version', version] as const,
+  issueCodeReviewsRoot: (project: string, issue: string) =>
+    ['issues', project, issue, 'code-reviews'] as const,
+  issueCodeReviewHistory: (project: string, issue: string, review: string, after: string | null) =>
+    ['issues', project, issue, 'code-reviews', 'history', review, after] as const,
+  issueCodeReviews: (project: string, issue: string, after: string | null) =>
+    ['issues', project, issue, 'code-reviews', after] as const,
   issueJournal: (
     project: string,
     issue: string,

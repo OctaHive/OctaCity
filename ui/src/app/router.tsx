@@ -1,3 +1,12 @@
+import {
+  issueResultPanelsApi,
+  type IssueResultPanelsApi,
+} from '../features/issues/resultPanelsApi';
+import {
+  issueCodeReviewsApi,
+  type IssueCodeReviewsApi,
+  type IssueReviewConnections,
+} from '../features/issues/codeReviewApi';
 import { lazy, Suspense, type ReactNode } from 'react';
 import { Navigate, createBrowserRouter, type RouteObject } from 'react-router-dom';
 
@@ -6,7 +15,7 @@ import { resourceSearchApi, type ResourceSearchApi } from '../api/resourceSearch
 import { operatorAttentionApi, type OperatorAttentionApi } from '../api/operatorAttention';
 import { auditApi, type AuditApi } from '../features/audit/api';
 import { factoryApi, type FactoryApi } from '../features/factory/api';
-import type { IntegrationsApi } from '../features/integrations/api';
+import { integrationsApi, type IntegrationsApi } from '../features/integrations/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
@@ -125,10 +134,13 @@ export interface ConsoleRouteDependencies {
   readonly auditApi: AuditApi;
   readonly buildApi: BuildDiagnosticsApi;
   readonly capacityApi: CapacityApi;
+  readonly issueResultPanelsApi: IssueResultPanelsApi;
   readonly issueActivityApi: IssueActivityApi;
   readonly issueExecutionsApi: IssueExecutionsApi;
   readonly issuesApi: IssuesApi;
   readonly issueSourcesApi: IssueSourcesApi;
+  readonly issueCodeReviewsApi: IssueCodeReviewsApi;
+  readonly issueReviewConnections: IssueReviewConnections;
   readonly issueWorkflowsApi: IssueWorkflowsApi;
   readonly projectsApi: ProjectsApi;
   readonly readinessProbe: ReadinessProbe;
@@ -137,6 +149,7 @@ export interface ConsoleRouteDependencies {
 
 const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   issueActivityApi,
+  issueResultPanelsApi,
   factoryApi,
   attentionApi: operatorAttentionApi,
   auditApi,
@@ -146,6 +159,8 @@ const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   issueWorkflowsApi,
   issuesApi,
   issueSourcesApi,
+  issueCodeReviewsApi,
+  issueReviewConnections: integrationsApi,
   issueExecutionsApi,
   readinessProbe: fetchReadiness,
   searchApi: resourceSearchApi,
@@ -234,8 +249,11 @@ export function createConsoleRoutes(
           element: defer(
             <IssueView
               factory={dependencies.factoryApi}
+              panels={dependencies.issueResultPanelsApi}
               activity={dependencies.issueActivityApi}
               sources={dependencies.issueSourcesApi}
+              reviews={dependencies.issueCodeReviewsApi}
+              reviewConnections={dependencies.issueReviewConnections}
               executions={dependencies.issueExecutionsApi}
               executionSources={{
                 listConfigurations: dependencies.factoryApi.listConfigurations,
