@@ -18,6 +18,27 @@ SPEC.loader.exec_module(SECURITY_MATRIX)
 
 
 class SecurityMatrixTests(unittest.TestCase):
+    def test_locked_tls_dependencies_exclude_distrusted_certificate_releases(self):
+        # RUSTSEC-2026-0381/0382/0383: retain patched stable TLS dependencies
+        # in every independently resolved graph audited by the security workflow.
+        minimum_versions = {
+            "rustls-webpki": (0, 103, 16),
+            "webpki-root-certs": (1, 0, 10),
+            "webpki-roots": (1, 0, 10),
+        }
+        for relative in ("Cargo.lock", "fuzz/Cargo.lock"):
+            packages = tomllib.loads((REPOSITORY / relative).read_text())["package"]
+            for package in packages:
+                if package["name"] not in minimum_versions:
+                    continue
+                with self.subTest(lockfile=relative, package=package["name"]):
+                    self.assertRegex(package["version"], r"^\d+\.\d+\.\d+$")
+                    self.assertGreaterEqual(
+                        tuple(map(int, package["version"].split("."))),
+                        minimum_versions[package["name"]],
+                        "locked TLS dependencies must exclude distrusted certificate paths",
+                    )
+
     def test_fuzz_lockfile_retains_the_pinned_octa_wire_contract(self):
         workspace = tomllib.loads((REPOSITORY / "Cargo.toml").read_text())
         lockfile = tomllib.loads((REPOSITORY / "fuzz/Cargo.lock").read_text())
