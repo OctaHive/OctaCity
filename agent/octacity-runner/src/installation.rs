@@ -618,7 +618,11 @@ fn load_external_executable_requirements(
     || document.plugin.protocol != installed.protocol
     || document.plugin.manifest != "plugins/codex.plugin.yml"
     || document.plugin.capabilities != installed.capabilities
-    || document.plugin.capabilities != [CODEX_TOOL_AUTHORIZATION_CAPABILITY]
+    || !document
+      .plugin
+      .capabilities
+      .iter()
+      .any(|capability| capability == CODEX_TOOL_AUTHORIZATION_CAPABILITY)
     || document.executable.product != "codex-cli"
     || document.executable.selection_environment != "OCTA_CODEX_EXECUTABLE"
     || document.tool_authorization.mode != "blocking_pre_tool_use"

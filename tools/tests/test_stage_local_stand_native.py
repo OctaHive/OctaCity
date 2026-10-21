@@ -223,7 +223,9 @@ class NativeStandStagingTests(unittest.TestCase):
                 )
             if arguments[:1] == ["validate"] and executable == "octacity-agent":
                 if not validation_succeeds:
-                    raise subprocess.CalledProcessError(1, command)
+                    raise subprocess.CalledProcessError(
+                        1, command, stderr="agent validation fixture rejected\n"
+                    )
                 environment = kwargs["env"]
                 self.assertEqual(environment["HTTP_PROXY"], "http://127.0.0.1:9")
                 self.assertEqual(environment["NO_PROXY"], "")
@@ -484,7 +486,7 @@ class NativeStandStagingTests(unittest.TestCase):
             destination = root / "install/root"
             with (
                 self.native_processes(validation_succeeds=False),
-                self.assertRaises(subprocess.CalledProcessError),
+                self.assertRaisesRegex(STAGER.NativeStageError, "agent validation fixture rejected"),
             ):
                 STAGER.install_native_bundle(
                     inputs_root,

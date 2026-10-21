@@ -470,13 +470,19 @@ def validate_native_installation(
             "ALL_PROXY": "http://127.0.0.1:9",
             "NO_PROXY": "",
         }
-        result = subprocess.run(
-            [str(agent), "validate", str(config)],
-            check=True,
-            capture_output=True,
-            text=True,
-            env=environment,
-        )
+        try:
+            result = subprocess.run(
+                [str(agent), "validate", str(config)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=environment,
+            )
+        except subprocess.CalledProcessError as error:
+            raise NativeStageError(
+                f"staged Agent validation failed (exit {error.returncode}): "
+                f"{(error.stderr or 'no diagnostic on stderr').strip()}"
+            ) from error
         if "configuration is valid" not in result.stdout:
             raise NativeStageError("staged Agent did not validate the offline fixture")
 

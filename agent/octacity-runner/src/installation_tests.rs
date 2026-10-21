@@ -219,6 +219,56 @@ fn permits_ordinary_jobs_without_an_external_executable_configuration() {
 }
 
 #[test]
+fn loads_octa_060_public_observations_without_requiring_external_tools() {
+  let (release, _, _) = codex_release();
+  let lock = release.path().join("Octa.lock");
+  fs::write(
+    &lock,
+    fs::read_to_string(&lock).unwrap().replace("0.5.1", "0.6.0").replace(
+      "capabilities: [codex.blocking-pre-tool-authorization.v1]",
+      "capabilities: [codex.blocking-pre-tool-authorization.v1, public-command-file-observations.v1]",
+    ),
+  )
+  .unwrap();
+  let capabilities = release.path().join(RUNNER_CAPABILITIES_FILE);
+  fs::write(
+    &capabilities,
+    fs::read_to_string(&capabilities).unwrap().replace("0.5.1", "0.6.0"),
+  )
+  .unwrap();
+  let path = release.path().join(CODEX_COMPATIBILITY_FILE);
+  let mut compatibility: serde_json::Value = serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
+  compatibility["plugin"]["version"] = serde_json::json!("0.6.0");
+  compatibility["plugin"]["capabilities"] = serde_json::json!([
+    "codex.blocking-pre-tool-authorization.v1",
+    "public-command-file-observations.v1"
+  ]);
+  fs::write(&path, serde_json::to_vec(&compatibility).unwrap()).unwrap();
+
+  let installation = RunnerInstallation::load(release.path()).unwrap();
+  assert_eq!(installation.capabilities.octa_version, "0.6.0");
+  assert!(installation.verify_external_executables(&[]).unwrap().is_empty());
+  assert!(installation.program().external_executables.is_empty());
+
+  // Additional capabilities must still match the installed, locked plugin.
+  compatibility["plugin"]["capabilities"] = serde_json::json!(["codex.blocking-pre-tool-authorization.v1"]);
+  fs::write(&path, serde_json::to_vec(&compatibility).unwrap()).unwrap();
+  assert!(RunnerInstallation::load(release.path()).is_err());
+
+  // Observation support never replaces required blocking authorization.
+  fs::write(
+    &lock,
+    fs::read_to_string(&lock)
+      .unwrap()
+      .replace("codex.blocking-pre-tool-authorization.v1, ", ""),
+  )
+  .unwrap();
+  compatibility["plugin"]["capabilities"] = serde_json::json!(["public-command-file-observations.v1"]);
+  fs::write(&path, serde_json::to_vec(&compatibility).unwrap()).unwrap();
+  assert!(RunnerInstallation::load(release.path()).is_err());
+}
+
+#[test]
 fn rejects_compatibility_metadata_drift_after_release_inventory() {
   let (release, installation, _executable) = codex_release();
   fs::write(
