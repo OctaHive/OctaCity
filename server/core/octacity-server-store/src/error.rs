@@ -56,6 +56,8 @@ pub enum StoreOperation {
   SelectDefaultIssueWorkflow,
   /// Publish one reviewed atomic set of automatic inputs and its optional group.
   PublishWorkSourceConfiguration,
+  /// Atomically publish Project AI-agent definitions and their replay receipt.
+  PublishFactoryRoleProfiles,
   /// Publish explicit resource/purpose access for one Project.
   PublishIntegrationProjectAccess,
   /// Publish immutable reusable integration connection metadata.
@@ -468,6 +470,9 @@ pub enum StoreInputError {
   /// A Factory Configuration mutation intent does not match its resolved version.
   #[error("an immutable Factory Configuration mutation is invalid")]
   InvalidFactoryConfiguration,
+  /// Invalid Project AI-agent definition publication.
+  #[error("invalid factory role/profile publication")]
+  InvalidFactoryRoleProfiles,
   /// A Work Envelope and initial Factory Run do not match their exact admission context.
   #[error("a Factory Work admission is invalid")]
   InvalidFactoryAdmission,

@@ -865,3 +865,10 @@ pub use issue_legacy::*;
 
 mod issue_retention;
 pub use issue_retention::*;
+
+#[cfg(any(test, feature = "test-support"))]
+mod factory_role_profile_contract_testing;
+mod factory_role_profiles;
+pub use factory_role_profiles::*;
+#[cfg(any(test, feature = "test-support"))]
+mod factory_role_profile_testing;

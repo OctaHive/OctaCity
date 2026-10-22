@@ -15,6 +15,10 @@ pub enum EntityKind {
   Configuration,
   /// Versioned Dark Factory configuration.
   FactoryConfiguration,
+  /// Project-owned AI-agent role definition.
+  FactoryRole,
+  /// Exact execution profile of one AI-agent role.
+  FactoryRoleProfile,
   /// Immutable Factory Flow Definition.
   FlowDefinition,
   /// Immutable normalized Work admitted to the Dark Factory.
@@ -76,6 +80,8 @@ impl std::fmt::Display for EntityKind {
       Self::Configuration => "configuration",
       Self::FlowDefinition => "flow_definition",
       Self::FactoryConfiguration => "factory_configuration",
+      Self::FactoryRole => "factory_role",
+      Self::FactoryRoleProfile => "factory_role_profile",
       Self::WorkEnvelope => "work_envelope",
       Self::FactoryRun => "factory_run",
       Self::Pipeline => "pipeline",
