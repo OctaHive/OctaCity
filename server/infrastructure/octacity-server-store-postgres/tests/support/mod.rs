@@ -92,3 +92,6 @@ fn database_name(kind: &str) -> String {
 pub mod factory_build;
 #[allow(dead_code)]
 pub mod factory_configuration;
+
+#[allow(dead_code)]
+pub mod evidence;

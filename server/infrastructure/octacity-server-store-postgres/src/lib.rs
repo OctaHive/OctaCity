@@ -40,6 +40,7 @@ mod factory_configuration;
 mod factory_discovery;
 mod factory_execution_input;
 mod factory_retention;
+mod factory_role_profiles;
 mod factory_run;
 mod factory_signal_receipt;
 mod factory_signal_request;

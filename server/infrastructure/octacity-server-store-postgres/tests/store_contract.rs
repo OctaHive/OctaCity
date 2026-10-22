@@ -4,7 +4,6 @@ mod support;
 
 use std::{fmt::Debug, str::FromStr, sync::Arc};
 
-use async_trait::async_trait;
 use authoritative_fixture::seed_authoritative_prerequisites;
 use octacity_server_domain::{
   AgentVersion, EntityKind, PipelineId, PoolId, ProjectId, ProjectName, Timestamp, TriggerId,
@@ -17,14 +16,14 @@ use octacity_server_store::{
   CredentialSecret, DurableJobEvent, EventSequence, FreshRegistrationCredential, IdempotencyKey, JobClaim,
   JobClaimOutcome, JobCompletion, JobCompletionKind, JobEventKind, JobEventReadStore as _, JobExecutionStore as _,
   LeaseAccess, LeaseFence, LeaseWindow, ListAgents, ManagementMutation, MutationAuditContext, MutationDisposition,
-  ProjectStore as _, ReadJobEvents, ReassignAgentPool, RegisterAgent, RegistrationValidity, StoreError, StoreOperation,
+  ProjectStore as _, ReadJobEvents, ReassignAgentPool, RegisterAgent, RegistrationValidity, StoreError,
   TriggerAcceptanceStore as _,
   testing::{
-    ManagementAuditProbe, MutationEvidenceCounts, MutationEvidenceProbe, RecordedManagementAuditFact,
-    agent_credential_store_contract_fixture, authoritative_store_contract_fixture, compatible_snapshot,
-    management_mutation, retry_request, verify_agent_credential_store_contract, verify_agent_pool_store_contract,
-    verify_authoritative_store_contract, verify_configuration_store_contract, verify_management_trigger_audit_contract,
-    verify_pipeline_store_contract, verify_project_store_contract, verify_security_scoped_project_replay,
+    MutationEvidenceCounts, MutationEvidenceProbe, agent_credential_store_contract_fixture,
+    authoritative_store_contract_fixture, compatible_snapshot, management_mutation, retry_request,
+    verify_agent_credential_store_contract, verify_agent_pool_store_contract, verify_authoritative_store_contract,
+    verify_configuration_store_contract, verify_management_trigger_audit_contract, verify_pipeline_store_contract,
+    verify_project_store_contract, verify_security_scoped_project_replay,
   },
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresStore};
@@ -110,98 +109,7 @@ async fn build_queries_restore_an_exact_factory_origin_without_a_trigger_after_r
   database.cleanup().await;
 }
 
-struct PostgresEvidenceProbe(PgPool);
-
-#[async_trait]
-impl MutationEvidenceProbe for PostgresEvidenceProbe {
-  async fn mutation_evidence_counts(&self) -> MutationEvidenceCounts {
-    let (idempotency, audit, outbox): (i64, i64, i64) = sqlx::query_as(
-      "SELECT (SELECT COUNT(*) FROM idempotency_records), \
-              (SELECT COUNT(*) FROM audit_facts), \
-              (SELECT COUNT(*) FROM outbox_entries)",
-    )
-    .fetch_one(&self.0)
-    .await
-    .expect("contract evidence must remain queryable");
-    MutationEvidenceCounts {
-      idempotency: usize::try_from(idempotency).unwrap(),
-      audit: usize::try_from(audit).unwrap(),
-      outbox: usize::try_from(outbox).unwrap(),
-    }
-  }
-}
-
-#[async_trait]
-impl ManagementAuditProbe for PostgresEvidenceProbe {
-  async fn management_audit_facts(&self) -> Vec<RecordedManagementAuditFact> {
-    let rows: Vec<(String, Option<String>, String, String, String, String)> = sqlx::query_as(
-      "SELECT actor_kind, actor_identity, operation, target_kind, target_identity, request_identity \
-       FROM audit_facts \
-       WHERE actor_kind IN ('unauthenticated_management', 'authenticated_management') \
-       ORDER BY actor_kind, actor_identity, operation, target_kind, target_identity, request_identity",
-    )
-    .fetch_all(&self.0)
-    .await
-    .expect("management audit evidence must remain queryable");
-    let mut facts = rows
-      .into_iter()
-      .map(
-        |(actor_kind, actor_identity, operation, target_kind, target_identity, request_identity)| {
-          RecordedManagementAuditFact {
-            actor_kind: AuditActorKind::from_str(&actor_kind).expect("stored actor kind is canonical"),
-            actor_identity,
-            operation: management_store_operation(&operation),
-            target_kind: management_entity_kind(&target_kind),
-            target_identity,
-            request_identity,
-          }
-        },
-      )
-      .collect::<Vec<_>>();
-    facts.sort_unstable();
-    facts
-  }
-}
-
-fn management_store_operation(operation: &str) -> StoreOperation {
-  match operation {
-    "create-project" => StoreOperation::CreateProject,
-    "rename-project" => StoreOperation::RenameProject,
-    "move-project" => StoreOperation::MoveProject,
-    "delete-project" => StoreOperation::DeleteProject,
-    "create-agent-pool" => StoreOperation::CreateAgentPool,
-    "publish-agent-pool-version" => StoreOperation::PublishAgentPoolVersion,
-    "delete-agent-pool" => StoreOperation::DeleteAgentPool,
-    "create-pipeline" => StoreOperation::CreatePipeline,
-    "publish-pipeline-version" => StoreOperation::PublishPipelineVersion,
-    "create-repository" => StoreOperation::CreateRepository,
-    "publish-repository-version" => StoreOperation::PublishRepositoryVersion,
-    "create-build-configuration" => StoreOperation::CreateBuildConfiguration,
-    "publish-build-configuration-version" => StoreOperation::PublishBuildConfigurationVersion,
-    "issue-agent-enrollment" => StoreOperation::IssueAgentEnrollment,
-    "revoke-agent-enrollment" | "revoke-agent-registration" => StoreOperation::RevokeAgentCredential,
-    "accept-trigger" => StoreOperation::AcceptTrigger,
-    "suppress-trigger" => StoreOperation::SuppressTrigger,
-    "cancel-build" => StoreOperation::CancelBuild,
-    "retry-build" => StoreOperation::RetryBuild,
-    _ => panic!("unexpected management audit operation: {operation}"),
-  }
-}
-
-fn management_entity_kind(target_kind: &str) -> EntityKind {
-  match target_kind {
-    "project" => EntityKind::Project,
-    "pool" => EntityKind::Pool,
-    "pipeline" => EntityKind::Pipeline,
-    "repository" => EntityKind::Repository,
-    "build_configuration" => EntityKind::Configuration,
-    "agent_enrollment_credential" => EntityKind::AgentEnrollmentCredential,
-    "agent_registration" => EntityKind::AgentRegistration,
-    "build" => EntityKind::Build,
-    "trigger" => EntityKind::Trigger,
-    _ => panic!("unexpected management audit target kind: {target_kind}"),
-  }
-}
+use support::evidence::PostgresEvidenceProbe;
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]

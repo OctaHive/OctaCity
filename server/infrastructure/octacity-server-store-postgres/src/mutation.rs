@@ -340,6 +340,7 @@ pub(crate) enum MutationKind {
   CreateBuildConfiguration,
   PublishBuildConfigurationVersion,
   PublishFactoryFlowDefinition,
+  PublishFactoryRoleProfiles,
   PublishIntegrationConnection,
   PublishIntegrationProjectAccess,
   PublishWorkSourceConfiguration,
@@ -645,6 +646,12 @@ impl MutationKind {
         "publish-factory-flow-definition",
         "flow_definition",
         "factory.flow-version-published"
+      ),
+      Self::PublishFactoryRoleProfiles => metadata!(
+        b"octacity.publish-factory-role-profiles.v1\0",
+        "publish-factory-role-profiles",
+        "project",
+        "factory.role-profiles-published"
       ),
       Self::PublishWorkSourceConfiguration => metadata!(
         b"octacity.publish-work-source-configuration.v1\0",
