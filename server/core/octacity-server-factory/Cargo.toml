@@ -14,6 +14,7 @@ test-support = []
 [dependencies]
 blake3.workspace = true
 octacity-server-domain = { path = "../octacity-server-domain" }
+octacity-server-secrets = { path = "../octacity-server-secrets" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

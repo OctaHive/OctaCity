@@ -18,6 +18,7 @@ fn exact(name: &str) -> ImmutableReference {
 
 fn profile(project: ProjectId, effort: &str) -> FactoryRoleProfileDefinition {
   FactoryRoleProfileDefinition {
+    execution: Default::default(),
     name: FactoryText::new("UI specialist").unwrap(),
     instructions: "# Local rules\nUse selected skills.\n".into(),
     toolchain: FactoryTaskToolchain {
@@ -45,6 +46,9 @@ fn role(project: ProjectId, instructions: &str) -> FactoryRole {
     FactoryRoleId::generate(),
     project,
     FactoryRoleDefinition {
+      icon: None,
+      description: String::new(),
+      concurrency_limit: None,
       name: FactoryText::new("Custom reviewer").unwrap(),
       instructions: instructions.into(),
     },
@@ -63,20 +67,23 @@ fn projects_publish_and_replace_arbitrary_roles_without_mutating_retained_versio
     .replace(
       FactoryRoleVersion::new(2).unwrap(),
       FactoryRoleDefinition {
+        icon: None,
+        description: String::new(),
+        concurrency_limit: None,
         name: FactoryText::new("Frontend specialist").unwrap(),
         instructions: "Inspect UI changes.".into(),
       },
     )
     .unwrap();
   assert_eq!(original.reference(), &retained);
-  assert_eq!(original.definition().instructions, "# Review\nRead-only.\n");
+  assert_eq!(original.definition().instructions.entries(), ["# Review\nRead-only.\n"]);
   assert_eq!(replacement.reference().id, retained.id);
   assert_eq!(replacement.reference().project_id, project_a);
   assert_eq!(replacement.reference().version.get(), 2);
   assert_ne!(replacement.reference().digest, retained.digest);
   assert_eq!(other.reference().project_id, project_b);
   assert_eq!(other.reference().version.get(), 1);
-  assert_eq!(other.definition().instructions, "Check documentation.");
+  assert_eq!(other.definition().instructions.entries(), ["Check documentation."]);
   assert!(
     original
       .replace(FactoryRoleVersion::new(3).unwrap(), original.definition().clone())
@@ -112,6 +119,9 @@ fn independent_profiles_pin_exact_owned_roles_and_replace_without_changing_sibli
     .replace(
       FactoryRoleVersion::new(2).unwrap(),
       FactoryRoleDefinition {
+        icon: None,
+        description: String::new(),
+        concurrency_limit: None,
         name: FactoryText::new("Renamed AI agent").unwrap(),
         instructions: "Updated shared instructions.".into(),
       },
@@ -208,7 +218,7 @@ fn publication_and_restore_enforce_utf8_instruction_collection_and_encoded_docum
   let project = ProjectId::generate();
   let valid = role(project, &"я".repeat(MAX_FACTORY_ROLE_INSTRUCTION_BYTES / 2));
   let mut excessive = valid.definition().clone();
-  excessive.instructions.push('я');
+  excessive.instructions = format!("{}я", valid.definition().instructions.entries()[0]).into();
   assert!(FactoryRole::publish(FactoryRoleId::generate(), project, excessive).is_err());
   let mut bad = valid.definition().clone();
   bad.instructions = "instructions\0hidden".into();
@@ -276,4 +286,271 @@ fn profiles_cannot_reparent_or_bind_a_foreign_build_configuration() {
   let mut restored = serde_json::to_value(profile).unwrap();
   restored["definition"] = serde_json::to_value(foreign).unwrap();
   assert!(serde_json::from_value::<FactoryRoleProfile>(restored).is_err());
+}
+
+#[test]
+fn ai_agent_metadata_and_concurrency_are_immutable_role_content() {
+  let project = ProjectId::generate();
+  let definition = serde_json::json!({
+    "name": "UI reviewer", "instructions": "Review changes.",
+    "icon": "bot", "description": "Checks UI\nand accessibility.", "concurrency_limit": 2
+  });
+  let original = FactoryRole::publish(
+    FactoryRoleId::generate(),
+    project,
+    serde_json::from_value(definition.clone()).unwrap(),
+  )
+  .unwrap();
+  assert_eq!(serde_json::to_value(original.definition()).unwrap(), definition);
+  let mut changed = definition.clone();
+  changed["description"] = serde_json::json!("Updated responsibility");
+  let replacement = original
+    .replace(
+      FactoryRoleVersion::new(2).unwrap(),
+      serde_json::from_value(changed.clone()).unwrap(),
+    )
+    .unwrap();
+  assert_eq!(serde_json::to_value(original.definition()).unwrap(), definition);
+  assert_eq!(serde_json::to_value(replacement.definition()).unwrap(), changed);
+  assert_ne!(replacement.reference().digest, original.reference().digest);
+  let mut invalid = definition;
+  invalid["concurrency_limit"] = serde_json::json!(0);
+  assert!(serde_json::from_value::<FactoryRoleDefinition>(invalid).is_err());
+}
+
+#[test]
+fn legacy_role_profile_snapshot_keeps_its_content_identity() {
+  let snapshot: serde_json::Value = serde_json::from_str(include_str!("fixtures/role_profile.v1.json")).unwrap();
+  let role: FactoryRole = serde_json::from_value(snapshot["role"].clone()).unwrap();
+  let profile: FactoryRoleProfile = serde_json::from_value(snapshot["profile"].clone()).unwrap();
+  assert_eq!(serde_json::to_value(&role).unwrap(), snapshot["role"]);
+  assert_eq!(serde_json::to_value(&profile).unwrap(), snapshot["profile"]);
+  assert_eq!(profile.role(), role.reference());
+}
+
+#[test]
+fn ordered_role_and_profile_instructions_preserve_layers_and_digest_order() {
+  let snapshot: serde_json::Value = serde_json::from_str(include_str!("fixtures/role_profile.v1.json")).unwrap();
+  let legacy: FactoryRole = serde_json::from_value(snapshot["role"].clone()).unwrap();
+  let project = legacy.reference().project_id;
+  let mut definition = snapshot["role"]["definition"].clone();
+  definition["instructions"] = serde_json::json!(["# Shared rules\nFollow Project rules.", "Review accessibility."]);
+  let original = FactoryRole::publish(
+    FactoryRoleId::generate(),
+    project,
+    serde_json::from_value(definition.clone()).unwrap(),
+  )
+  .unwrap();
+  assert_eq!(
+    original.definition().instructions.entries(),
+    ["# Shared rules\nFollow Project rules.", "Review accessibility."]
+  );
+  definition["instructions"].as_array_mut().unwrap().reverse();
+  let changed = original
+    .replace(
+      FactoryRoleVersion::new(2).unwrap(),
+      serde_json::from_value(definition).unwrap(),
+    )
+    .unwrap();
+  assert_ne!(original.reference().digest, changed.reference().digest);
+  let mut definition = snapshot["profile"]["definition"].clone();
+  definition["instructions"] = serde_json::json!(["Prefer public tests.", "Preserve formatting.\n"]);
+  let profile = FactoryRoleProfile::publish(
+    FactoryRoleProfileId::generate(),
+    project,
+    &original,
+    serde_json::from_value(definition).unwrap(),
+  )
+  .unwrap();
+  assert_eq!(
+    profile.definition().instructions.entries(),
+    ["Prefer public tests.", "Preserve formatting.\n"]
+  );
+  assert_eq!(legacy.definition().instructions.entries(), ["# Review\nRead-only.\n"]);
+  assert_eq!(
+    serde_json::from_value::<FactoryRoleProfile>(serde_json::to_value(&profile).unwrap()).unwrap(),
+    profile
+  );
+}
+
+#[test]
+fn instruction_sets_enforce_total_bytes_and_entry_bounds_before_publication() {
+  let project = ProjectId::generate();
+  let legacy = role(project, "Legacy instruction");
+  let base = serde_json::to_value(legacy.definition()).unwrap();
+  for entries in [
+    vec![String::new(); 65],
+    vec!["a".repeat(MAX_FACTORY_ROLE_INSTRUCTION_BYTES), "b".into()],
+  ] {
+    let mut definition = base.clone();
+    definition["instructions"] = serde_json::json!(entries);
+    let definition = serde_json::from_value(definition).unwrap();
+    assert!(FactoryRole::publish(FactoryRoleId::generate(), project, definition).is_err());
+  }
+  let mut valid = base.clone();
+  valid["instructions"] = serde_json::json!([
+    "я".repeat(MAX_FACTORY_ROLE_INSTRUCTION_BYTES / 4),
+    "я".repeat(MAX_FACTORY_ROLE_INSTRUCTION_BYTES / 4)
+  ]);
+  FactoryRole::publish(
+    FactoryRoleId::generate(),
+    project,
+    serde_json::from_value(valid).unwrap(),
+  )
+  .unwrap();
+  let mut excessive_description = base;
+  excessive_description["description"] =
+    serde_json::json!("x".repeat(octacity_server_factory::MAX_FACTORY_TEXT_BYTES + 1));
+  assert!(
+    FactoryRole::publish(
+      FactoryRoleId::generate(),
+      project,
+      serde_json::from_value(excessive_description).unwrap()
+    )
+    .is_err()
+  );
+}
+
+fn configured_profile_definition(project: ProjectId) -> serde_json::Value {
+  let mut definition = serde_json::to_value(profile(project, "medium")).unwrap();
+  let connection = octacity_server_domain::IntegrationId::generate();
+  definition["execution"] = serde_json::json!({
+    "environment": {
+      "LANGUAGE": {"kind":"public", "value":"ru\n"},
+      "MODEL_AUTH": {"kind":"secret", "reference":{"provider":"operator-secrets", "reference":"projects/ui/model"}}
+    },
+    "cli_arguments": ["--output", "structured", ""],
+    "mcp_servers": {"tools":{"configuration":exact("mcp.tools"),"integration":"tracker"}},
+    "integrations": {"tracker":{
+      "project_id":project, "connection_id":connection,"connection_version":1,"access_version":1,
+      "resource":exact("tracker.resource"),"capability":exact("tracker.read")
+    }}
+  });
+  definition
+}
+
+#[test]
+fn profile_execution_settings_pin_existing_runtime_and_logical_integrations() {
+  let project = ProjectId::generate();
+  let role = role(project, "Shared instructions.");
+  let definition = configured_profile_definition(project);
+  let original = FactoryRoleProfile::publish(
+    FactoryRoleProfileId::generate(),
+    project,
+    &role,
+    serde_json::from_value(definition.clone()).unwrap(),
+  )
+  .unwrap();
+  assert_eq!(serde_json::to_value(original.definition()).unwrap(), definition);
+  assert_eq!(
+    serde_json::from_value::<FactoryRoleProfile>(serde_json::to_value(&original).unwrap()).unwrap(),
+    original
+  );
+  for (pointer, value) in [
+    ("/model_parameters/reasoning_effort", serde_json::json!("thorough")),
+    (
+      "/toolchain/executable",
+      serde_json::to_value(exact("another.runtime")).unwrap(),
+    ),
+    (
+      "/toolchain/model",
+      serde_json::to_value(exact("another.model")).unwrap(),
+    ),
+    ("/execution/environment/LANGUAGE/value", serde_json::json!("en")),
+    (
+      "/execution/environment/MODEL_AUTH/reference/reference",
+      serde_json::json!("projects/ui/new-model"),
+    ),
+    ("/execution/cli_arguments/1", serde_json::json!("text")),
+    (
+      "/execution/mcp_servers/tools/configuration",
+      serde_json::to_value(exact("other.tools")).unwrap(),
+    ),
+    ("/execution/integrations/tracker/access_version", serde_json::json!(2)),
+  ] {
+    let mut replacement = definition.clone();
+    *replacement.pointer_mut(pointer).unwrap() = value;
+    let replacement = original
+      .replace(
+        FactoryRoleProfileVersion::new(2).unwrap(),
+        &role,
+        serde_json::from_value(replacement).unwrap(),
+      )
+      .unwrap();
+    assert_ne!(replacement.reference().digest, original.reference().digest, "{pointer}");
+  }
+  assert_eq!(serde_json::to_value(original.definition()).unwrap(), definition);
+}
+
+#[test]
+fn profile_execution_publication_rejects_invalid_shape_bounds_and_foreign_bindings() {
+  let project = ProjectId::generate();
+  let role = role(project, "Shared rules.");
+  let base = configured_profile_definition(project);
+  let mut cases = vec![];
+  for (pointer, value) in [
+    (
+      "/execution/environment",
+      serde_json::json!({"BAD=NAME":{"kind":"public","value":"value"}}),
+    ),
+    (
+      "/execution/environment/LANGUAGE/value",
+      serde_json::json!("sensitive-env-value\0"),
+    ),
+    (
+      "/execution/environment/MODEL_AUTH/reference/reference",
+      serde_json::json!(" untrimmed "),
+    ),
+    ("/execution/cli_arguments", serde_json::json!(["arg\0"])),
+    ("/execution/cli_arguments", serde_json::json!(vec!["x"; 65])),
+    (
+      "/execution/cli_arguments",
+      serde_json::json!(["x".repeat(octacity_server_factory::MAX_COMMAND_ARGUMENT_BYTES + 1)]),
+    ),
+    (
+      "/execution/mcp_servers/tools/integration",
+      serde_json::json!("not-selected"),
+    ),
+    (
+      "/execution/integrations/tracker/project_id",
+      serde_json::to_value(ProjectId::generate()).unwrap(),
+    ),
+  ] {
+    let mut definition = base.clone();
+    *definition.pointer_mut(pointer).unwrap() = value;
+    cases.push((pointer.to_owned(), definition));
+  }
+  for (collection, item) in [
+    ("environment", "LANGUAGE"),
+    ("mcp_servers", "tools"),
+    ("integrations", "tracker"),
+  ] {
+    let mut definition = base.clone();
+    definition["execution"][collection] = serde_json::Value::Object(
+      (0..65)
+        .map(|i| (format!("entry{i}"), base["execution"][collection][item].clone()))
+        .collect(),
+    );
+    cases.push((collection.to_owned(), definition));
+  }
+  for (label, definition) in cases {
+    let definition: FactoryRoleProfileDefinition = serde_json::from_value(definition).unwrap();
+    let error =
+      FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, definition).expect_err(&label);
+    assert!(!error.to_string().contains("sensitive-env-value"));
+  }
+  for (pointer, value) in [
+    (
+      "/execution/environment/MODEL_AUTH",
+      serde_json::json!({"kind":"secret","value":"literal-credential"}),
+    ),
+    (
+      "/execution/mcp_servers/tools",
+      serde_json::json!({"command":"unqualified-command","url":"https://unreviewed.invalid"}),
+    ),
+  ] {
+    let mut definition = base.clone();
+    *definition.pointer_mut(pointer).unwrap() = value;
+    assert!(serde_json::from_value::<FactoryRoleProfileDefinition>(definition).is_err());
+  }
 }

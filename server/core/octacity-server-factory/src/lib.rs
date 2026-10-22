@@ -88,6 +88,12 @@ mod candidate_deliverable_tests;
 mod protected_test_tests;
 mod review_plan;
 mod role_profile;
+mod role_profile_execution;
+mod role_profile_instructions;
+pub use role_profile_execution::{
+  FactoryRoleEnvironmentValue, FactoryRoleIntegrationBinding, FactoryRoleMcpBinding, FactoryRoleProfileExecution,
+};
+pub use role_profile_instructions::FactoryInstructions;
 mod verification_plan;
 pub use verification_plan::{
   VerificationCheck, VerificationCheckInput, VerificationMeasurement, VerificationObservation, VerificationPlan,

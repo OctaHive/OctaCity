@@ -10,11 +10,11 @@ use crate::{
 };
 use crate::{FactoryDigest, FactoryError, FactoryRoleId, FactoryRoleVersion, FactoryText};
 
-/// Maximum exact UTF-8 instruction bytes in one role or profile.
+/// Maximum combined exact UTF-8 bytes across instructions in one role or profile.
 pub const MAX_FACTORY_ROLE_INSTRUCTION_BYTES: usize = 64 * 1024;
 /// Maximum encoded JSON bytes in one complete role or profile definition.
 pub const MAX_FACTORY_ROLE_DEFINITION_BYTES: usize = 256 * 1024;
-/// Maximum skill bundles, model parameters, or context requirements in one profile.
+/// Maximum instruction entries or selections in each role/profile collection.
 pub const MAX_FACTORY_ROLE_PROFILE_ENTRIES: usize = 64;
 
 /// Editable role responsibility, independent of model and worker identity.
@@ -23,8 +23,17 @@ pub const MAX_FACTORY_ROLE_PROFILE_ENTRIES: usize = 64;
 pub struct FactoryRoleDefinition {
   /// Arbitrary human-readable agent name; spelling selects no behavior.
   pub name: FactoryText,
-  /// Exact shared Markdown instructions, including line breaks and trailing whitespace.
-  pub instructions: String,
+  /// Exact ordered shared Markdown entries; legacy text remains one entry.
+  pub instructions: crate::FactoryInstructions,
+  /// Console icon key; absent selects the neutral presentation default.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub icon: Option<FactoryKey>,
+  /// Bounded descriptive text, separate from execution instructions.
+  #[serde(default, skip_serializing_if = "String::is_empty")]
+  pub description: String,
+  /// Agent-wide positive execution ceiling; absent preserves inherited legacy capacity.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub concurrency_limit: Option<std::num::NonZeroU32>,
 }
 
 /// Project-scoped exact role version, retained by each profile independently.
@@ -113,16 +122,19 @@ impl FactoryRole {
 }
 
 /// Complete editable model-task configuration, independent of any enrolled worker.
-/// Installed capability compatibility and authority intersection are checked by application publication/dispatch.
+/// Publication checks bounded content; installed compatibility and authority qualification precede execution.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRoleProfileDefinition {
   /// Arbitrary display name; default/pro names carry no privilege or execution policy.
   pub name: FactoryText,
-  /// Additional exact Markdown instructions layered after the pinned shared role instructions.
-  pub instructions: String,
+  /// Ordered additional Markdown entries layered after the pinned shared role instructions.
+  pub instructions: crate::FactoryInstructions,
   /// Exact installed model, harness executable, and plugin references.
   pub toolchain: FactoryTaskToolchain,
+  /// Explicit environment/argv, installed MCP and managed integration selections.
+  #[serde(default, skip_serializing_if = "crate::FactoryRoleProfileExecution::is_empty")]
+  pub execution: crate::FactoryRoleProfileExecution,
   /// Bounded scalar parameters, including any reasoning setting; supported keys/values come from installed capabilities.
   pub model_parameters: BTreeMap<FactoryKey, serde_json::Value>,
   /// Named exact immutable skill bundles, including their retained supporting-file closure.
@@ -242,28 +254,40 @@ impl FactoryRoleProfile {
   }
 }
 
+impl FactoryRoleProfileDefinition {
+  /// Validates the common bounded definition contract for one owning Project.
+  /// Installed declarations and published profiles use these same shape rules.
+  pub fn validate(&self, project: ProjectId) -> Result<(), FactoryError> {
+    let definition = self;
+    if definition.build_configuration.project_id() != project {
+      return Err(invalid("profile Build project"));
+    }
+    definition.instructions.validate()?;
+    definition.execution.validate(project)?;
+    if definition.skills.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES
+      || definition.model_parameters.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES
+      || definition.context_requirements.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES
+    {
+      return Err(invalid("profile entries"));
+    }
+    if definition.model_parameters.values().any(|value| {
+      !matches!(
+        value,
+        serde_json::Value::String(_) | serde_json::Value::Bool(_) | serde_json::Value::Number(_)
+      )
+    }) {
+      return Err(invalid("profile model parameters"));
+    }
+    definition_digest("octacity.factory.role-profile-definition.v1", self)?;
+    Ok(())
+  }
+}
+
 fn profile_digest(
   role: &FactoryRoleRef,
   definition: &FactoryRoleProfileDefinition,
 ) -> Result<FactoryDigest, FactoryError> {
-  if definition.build_configuration.project_id() != role.project_id {
-    return Err(invalid("profile Build project"));
-  }
-  validate_instructions(&definition.instructions)?;
-  if definition.skills.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES
-    || definition.model_parameters.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES
-    || definition.context_requirements.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES
-  {
-    return Err(invalid("profile entries"));
-  }
-  if definition.model_parameters.values().any(|value| {
-    !matches!(
-      value,
-      serde_json::Value::String(_) | serde_json::Value::Bool(_) | serde_json::Value::Number(_)
-    )
-  }) {
-    return Err(invalid("profile model parameters"));
-  }
+  definition.validate(role.project_id)?;
   #[derive(Serialize)]
   struct Content<'a> {
     role: &'a FactoryRoleRef,
@@ -272,23 +296,31 @@ fn profile_digest(
   definition_digest("octacity.factory.role-profile.v1", &Content { role, definition })
 }
 
-fn role_digest(definition: &FactoryRoleDefinition) -> Result<FactoryDigest, FactoryError> {
-  validate_instructions(&definition.instructions)?;
+pub(super) fn role_digest(definition: &FactoryRoleDefinition) -> Result<FactoryDigest, FactoryError> {
+  validate_text(
+    &definition.description,
+    crate::MAX_FACTORY_TEXT_BYTES,
+    "role description",
+  )?;
+  definition.instructions.validate()?;
   definition_digest("octacity.factory.role-definition.v1", definition)
 }
 
-fn validate_instructions(value: &str) -> Result<(), FactoryError> {
-  if value.len() > MAX_FACTORY_ROLE_INSTRUCTION_BYTES
+pub(super) fn validate_instructions(value: &str) -> Result<(), FactoryError> {
+  validate_text(value, MAX_FACTORY_ROLE_INSTRUCTION_BYTES, "role instructions")
+}
+fn validate_text(value: &str, max_bytes: usize, field: &'static str) -> Result<(), FactoryError> {
+  if value.len() > max_bytes
     || value
       .chars()
       .any(|ch| ch.is_control() && !matches!(ch, '\n' | '\r' | '\t'))
   {
-    return Err(invalid("role instructions"));
+    return Err(invalid(field));
   }
   Ok(())
 }
 
-fn definition_digest(domain: &str, definition: &impl Serialize) -> Result<FactoryDigest, FactoryError> {
+pub(super) fn definition_digest(domain: &str, definition: &impl Serialize) -> Result<FactoryDigest, FactoryError> {
   let bytes = serde_json::to_vec(definition).map_err(|_| invalid("role definition serialization"))?;
   if bytes.len() > MAX_FACTORY_ROLE_DEFINITION_BYTES {
     return Err(invalid("role definition bytes"));
@@ -296,6 +328,6 @@ fn definition_digest(domain: &str, definition: &impl Serialize) -> Result<Factor
   Ok(FactoryDigest::sha256(domain, &[&bytes]))
 }
 
-fn invalid(field: &'static str) -> FactoryError {
+pub(super) fn invalid(field: &'static str) -> FactoryError {
   FactoryError::InvalidConfiguration { field }
 }

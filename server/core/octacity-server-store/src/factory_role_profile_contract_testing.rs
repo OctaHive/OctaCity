@@ -13,8 +13,48 @@ pub fn role_profile_contract_definition(project: ProjectId) -> FactoryRoleProfil
     )
   };
   FactoryRoleProfileDefinition {
+    execution: FactoryRoleProfileExecution {
+      environment: [
+        (
+          "LANGUAGE".into(),
+          FactoryRoleEnvironmentValue::Public { value: "ru".into() },
+        ),
+        (
+          "MODEL_AUTH".into(),
+          FactoryRoleEnvironmentValue::Secret {
+            reference: octacity_server_secrets::LogicalSecretReference::new(
+              octacity_server_secrets::SecretProviderId::new("operator-secrets").unwrap(),
+              "projects/model",
+            )
+            .unwrap(),
+          },
+        ),
+      ]
+      .into(),
+      cli_arguments: vec!["--output".into(), "structured".into()],
+      mcp_servers: [(
+        FactoryKey::new("tools").unwrap(),
+        FactoryRoleMcpBinding {
+          configuration: exact("mcp.tools"),
+          integration: Some(FactoryKey::new("tracker").unwrap()),
+        },
+      )]
+      .into(),
+      integrations: [(
+        FactoryKey::new("tracker").unwrap(),
+        FactoryRoleIntegrationBinding {
+          project_id: project,
+          connection_id: octacity_server_domain::IntegrationId::generate(),
+          connection_version: octacity_server_domain::IntegrationVersion::INITIAL,
+          access_version: octacity_server_domain::IntegrationVersion::INITIAL,
+          resource: exact("tracker.resource"),
+          capability: exact("tracker.read"),
+        },
+      )]
+      .into(),
+    },
     name: FactoryText::new("Custom specialist").unwrap(),
-    instructions: "Use selected skills.".into(),
+    instructions: FactoryInstructions::new(vec!["Use selected skills.".into(), "Keep Project rules.".into()]).unwrap(),
     toolchain: FactoryTaskToolchain {
       plugin: exact("model.plugin"),
       executable: exact("model.harness"),
@@ -45,6 +85,9 @@ pub fn role_profile_contract_intent(project: ProjectId) -> FactoryRoleProfilesIn
     FactoryRoleId::generate(),
     project,
     FactoryRoleDefinition {
+      icon: Some(FactoryKey::new("bot").unwrap()),
+      description: "Custom Project reviewer".into(),
+      concurrency_limit: std::num::NonZeroU32::new(2),
       name: FactoryText::new("Custom reviewer").unwrap(),
       instructions: "# Review\nFollow Project rules.\n".into(),
     },
@@ -77,14 +120,17 @@ fn publication(intent: FactoryRoleProfilesIntent, key: &str, time: i64) -> Publi
 
 /// Verifies original receipts, exact retained reads and scoped conflicting reuse.
 /// The supplied adapter must contain the Project and no role/profile history.
+/// The test-only evidence probe must observe that same adapter backend.
 pub async fn verify_factory_role_profile_publication<
-  S: FactoryRoleProfileStore + MutationEvidenceProbe + ManagementAuditProbe,
+  S: FactoryRoleProfileStore,
+  P: MutationEvidenceProbe + ManagementAuditProbe,
 >(
   store: &S,
+  evidence: &P,
   project: ProjectId,
 ) {
   let intent = role_profile_contract_intent(project);
-  let before = store.mutation_evidence_counts().await;
+  let before = evidence.mutation_evidence_counts().await;
   let original = store
     .publish_factory_role_profiles(management_mutation(publication(intent.clone(), "role-copy", 1)))
     .await
@@ -92,7 +138,10 @@ pub async fn verify_factory_role_profile_publication<
   assert_eq!(original.disposition, MutationDisposition::Applied);
   assert_eq!(original.published_at, Timestamp::from_unix_millis(1).unwrap());
   let role = original.role.as_ref().unwrap();
-  assert_eq!(role.definition().instructions, "# Review\nFollow Project rules.\n");
+  assert_eq!(
+    role.definition().instructions.entries(),
+    ["# Review\nFollow Project rules.\n"]
+  );
   assert_eq!(original.profiles.len(), 2);
   for profile in &original.profiles {
     assert_eq!(profile.role(), role.reference());
@@ -108,7 +157,7 @@ pub async fn verify_factory_role_profile_publication<
     store.factory_role(project, role.reference().id, None).await.unwrap(),
     *role
   );
-  let after = store.mutation_evidence_counts().await;
+  let after = evidence.mutation_evidence_counts().await;
   assert_eq!(after.idempotency, before.idempotency + 1);
   assert_eq!(after.audit, before.audit + 1);
   assert_eq!(after.outbox, before.outbox + 1);
@@ -132,6 +181,32 @@ pub async fn verify_factory_role_profile_publication<
     .unwrap()
     .unwrap();
   assert_eq!(probe, replay);
+  assert_eq!(role.definition().icon.as_ref().unwrap().as_str(), "bot");
+  assert_eq!(role.definition().description, "Custom Project reviewer");
+  assert_eq!(role.definition().concurrency_limit.unwrap().get(), 2);
+  assert_eq!(
+    original.profiles[0].definition().instructions.entries(),
+    ["Use selected skills.", "Keep Project rules."]
+  );
+  assert_eq!(
+    original.profiles[0].definition().execution.cli_arguments,
+    ["--output", "structured"]
+  );
+  let mut changed_capacity = intent.clone();
+  changed_capacity.role.as_mut().unwrap().definition.concurrency_limit = std::num::NonZeroU32::new(3);
+  let mut changed_environment = intent.clone();
+  changed_environment.profiles[0].definition.execution.environment.insert(
+    "LANGUAGE".into(),
+    FactoryRoleEnvironmentValue::Public { value: "en".into() },
+  );
+  for changed in [changed_capacity, changed_environment] {
+    assert!(matches!(
+      store
+        .publish_factory_role_profiles(management_mutation(publication(changed, "role-copy", 10)))
+        .await,
+      Err(FactoryRoleProfilePublicationError::Store(StoreError::Conflict { .. }))
+    ));
+  }
   let mut changed = intent;
   changed.role.as_mut().unwrap().definition.instructions = "Different instruction".into();
   assert!(matches!(
@@ -149,8 +224,8 @@ pub async fn verify_factory_role_profile_publication<
       .await,
     Err(StoreError::Conflict { .. })
   ));
-  assert_eq!(store.mutation_evidence_counts().await, after);
-  let audits = store.management_audit_facts().await;
+  assert_eq!(evidence.mutation_evidence_counts().await, after);
+  let audits = evidence.management_audit_facts().await;
   let publication_audits = audits
     .iter()
     .filter(|audit| {
@@ -188,15 +263,17 @@ pub async fn verify_factory_role_profile_publication<
   assert_eq!(scoped.disposition, MutationDisposition::Applied);
   assert_ne!(scoped.role.as_ref().unwrap().reference().id, role.reference().id);
   assert_eq!(
-    store.mutation_evidence_counts().await.idempotency,
+    evidence.mutation_evidence_counts().await.idempotency,
     after.idempotency + 1
   );
 }
 
 /// Verifies independent current heads, stale preconditions and replay after replacement.
 /// The supplied adapter must contain the Project and no role/profile history.
-pub async fn verify_factory_role_profile_replacement<S: FactoryRoleProfileStore + MutationEvidenceProbe>(
+/// The test-only evidence probe must observe that same adapter backend.
+pub async fn verify_factory_role_profile_replacement<S: FactoryRoleProfileStore, P: MutationEvidenceProbe>(
   store: &S,
+  evidence: &P,
   project: ProjectId,
 ) {
   let initial = role_profile_contract_intent(project);
@@ -218,7 +295,7 @@ pub async fn verify_factory_role_profile_replacement<S: FactoryRoleProfileStore 
     .unwrap();
   let role = updated.role.as_ref().unwrap();
   assert_eq!(role.reference().version.get(), 2);
-  assert_eq!(role.definition().instructions, "Revised shared rules");
+  assert_eq!(role.definition().instructions.entries(), ["Revised shared rules"]);
   assert_eq!(
     store
       .factory_role(project, role.reference().id, Some(FactoryRoleVersion::INITIAL))
@@ -235,14 +312,14 @@ pub async fn verify_factory_role_profile_replacement<S: FactoryRoleProfileStore 
       .role(),
     old_role.reference()
   );
-  let before = store.mutation_evidence_counts().await;
+  let before = evidence.mutation_evidence_counts().await;
   assert!(matches!(
     store
       .publish_factory_role_profiles(management_mutation(publication(change, "stale", 3)))
       .await,
     Err(FactoryRoleProfilePublicationError::PreconditionFailed)
   ));
-  assert_eq!(store.mutation_evidence_counts().await, before);
+  assert_eq!(evidence.mutation_evidence_counts().await, before);
   let mut adoption = FactoryRoleProfilesIntent {
     project_id: project,
     role: None,
@@ -302,12 +379,13 @@ pub async fn verify_factory_role_profile_replacement<S: FactoryRoleProfileStore 
 
 /// Verifies bounded all-or-nothing publication and unchanged evidence on rejection.
 /// The supplied adapter must contain both Projects and no role/profile history.
-pub async fn verify_factory_role_profile_atomicity<S: FactoryRoleProfileStore + MutationEvidenceProbe>(
+pub async fn verify_factory_role_profile_atomicity<S: FactoryRoleProfileStore, P: MutationEvidenceProbe>(
   store: &S,
+  evidence: &P,
   project: ProjectId,
   foreign: ProjectId,
 ) {
-  let before = store.mutation_evidence_counts().await;
+  let before = evidence.mutation_evidence_counts().await;
   let intent = role_profile_contract_intent(project);
   let role_id = intent.role.as_ref().unwrap().id;
   // A template copy must not retain even its role or first valid profile when a sibling fails.
@@ -329,13 +407,13 @@ pub async fn verify_factory_role_profile_atomicity<S: FactoryRoleProfileStore + 
       Err(StoreError::NotFound { .. })
     ));
   }
-  assert_eq!(store.mutation_evidence_counts().await, before);
+  assert_eq!(evidence.mutation_evidence_counts().await, before);
   // Failure reserves no idempotency key; correcting the same intent can commit.
   let original = store
     .publish_factory_role_profiles(management_mutation(publication(intent.clone(), "atomic-copy", 2)))
     .await
     .unwrap();
-  let before = store.mutation_evidence_counts().await;
+  let before = evidence.mutation_evidence_counts().await;
   let empty = FactoryRoleProfilesIntent {
     project_id: project,
     role: None,
@@ -439,7 +517,7 @@ pub async fn verify_factory_role_profile_atomicity<S: FactoryRoleProfileStore + 
       .await
       .is_err()
   );
-  assert_eq!(store.mutation_evidence_counts().await, before);
+  assert_eq!(evidence.mutation_evidence_counts().await, before);
 }
 
 #[cfg(test)]
@@ -452,7 +530,7 @@ mod tests {
     let foreign = ProjectId::generate();
     store.seed_project(project).unwrap();
     store.seed_project(foreign).unwrap();
-    let mut future = std::pin::pin!(verify_factory_role_profile_atomicity(&store, project, foreign));
+    let mut future = std::pin::pin!(verify_factory_role_profile_atomicity(&store, &store, project, foreign));
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     assert!(future.as_mut().poll(&mut context).is_ready());
   }
@@ -461,7 +539,7 @@ mod tests {
     let store = InMemoryFactoryConfigurationStore::new();
     let project = ProjectId::generate();
     store.seed_project(project).unwrap();
-    let mut future = std::pin::pin!(verify_factory_role_profile_replacement(&store, project));
+    let mut future = std::pin::pin!(verify_factory_role_profile_replacement(&store, &store, project));
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     assert!(future.as_mut().poll(&mut context).is_ready());
   }
@@ -470,7 +548,7 @@ mod tests {
     let store = InMemoryFactoryConfigurationStore::new();
     let project = ProjectId::generate();
     store.seed_project(project).unwrap();
-    let mut future = std::pin::pin!(verify_factory_role_profile_publication(&store, project));
+    let mut future = std::pin::pin!(verify_factory_role_profile_publication(&store, &store, project));
     let mut context = std::task::Context::from_waker(std::task::Waker::noop());
     assert!(future.as_mut().poll(&mut context).is_ready());
   }

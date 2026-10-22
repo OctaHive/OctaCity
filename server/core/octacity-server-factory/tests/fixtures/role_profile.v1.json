@@ -1,0 +1,101 @@
+{
+  "profile": {
+    "definition": {
+      "budget": {
+        "max_attempts": 1,
+        "max_cost_micro_units": 100,
+        "max_elapsed_millis": 1000,
+        "max_output_bytes": 1024,
+        "max_tokens": 200
+      },
+      "build_configuration": {
+        "definition_digest": "0808080808080808080808080808080808080808080808080808080808080808",
+        "id": "fbb56637-77d5-4454-9cfa-ff682bd79e99",
+        "project_id": "9999663c-696d-45f6-83af-28dd30d21b1b",
+        "version": 1
+      },
+      "context_requirements": [
+        "requirements"
+      ],
+      "credential_purpose": "model",
+      "instructions": "# Local rules\nUse selected skills.\n",
+      "model_parameters": {
+        "reasoning_effort": "medium"
+      },
+      "name": "UI specialist",
+      "permissions": {
+        "commands": [],
+        "executables": [],
+        "max_descendants": 0,
+        "mounts": [],
+        "network_hosts": [],
+        "outputs": {
+          "kinds": [],
+          "max_artifact_bytes": 0,
+          "max_artifact_count": 0,
+          "max_report_bytes": 0,
+          "max_report_count": 0
+        },
+        "plugins": [],
+        "resources": {
+          "cpu_millis": 0,
+          "disk_bytes": 0,
+          "elapsed_millis": 0,
+          "memory_bytes": 0,
+          "process_count": 0
+        },
+        "secret_profiles": [],
+        "tools": [],
+        "workload_identity_profiles": []
+      },
+      "skills": {
+        "testing": {
+          "digest": "0707070707070707070707070707070707070707070707070707070707070707",
+          "identity": "skills.testing",
+          "version": "v1"
+        }
+      },
+      "toolchain": {
+        "executable": {
+          "digest": "0707070707070707070707070707070707070707070707070707070707070707",
+          "identity": "model.harness",
+          "version": "v1"
+        },
+        "model": {
+          "digest": "0707070707070707070707070707070707070707070707070707070707070707",
+          "identity": "open.model",
+          "version": "v1"
+        },
+        "plugin": {
+          "digest": "0707070707070707070707070707070707070707070707070707070707070707",
+          "identity": "model.plugin",
+          "version": "v1"
+        }
+      }
+    },
+    "reference": {
+      "digest": "98a8444af2975f9ffeacd90c6d7012a6bfe4e409ffbc72f62228af5c121cb22d",
+      "id": "c5901559-a836-4f2e-a334-545d0b85076a",
+      "project_id": "9999663c-696d-45f6-83af-28dd30d21b1b",
+      "version": 1
+    },
+    "role": {
+      "digest": "78d0868c80ac1fd63d3bf1fef303441827cf80a0263782702a24340338388662",
+      "id": "cac52a04-b7db-4fef-84a3-aef90d3bb55e",
+      "project_id": "9999663c-696d-45f6-83af-28dd30d21b1b",
+      "version": 1
+    }
+  },
+  "role": {
+    "definition": {
+      "instructions": "# Review\nRead-only.\n",
+      "name": "Custom reviewer"
+    },
+    "reference": {
+      "digest": "78d0868c80ac1fd63d3bf1fef303441827cf80a0263782702a24340338388662",
+      "id": "cac52a04-b7db-4fef-84a3-aef90d3bb55e",
+      "project_id": "9999663c-696d-45f6-83af-28dd30d21b1b",
+      "version": 1
+    }
+  }
+}
