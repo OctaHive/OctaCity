@@ -53,7 +53,7 @@ there is no Work deletion or replacement as compensation.
 
 ## Quickstart reconciliation and qualification boundary
 
-[The quickstart handoff](../add-factory-bugfix-quickstart/shared-project-inputs.md)
+[The quickstart handoff](../../add-factory-bugfix-quickstart/shared-project-inputs.md)
 records the concrete API and remaining quickstart tasks. Quickstart must reuse
 this publication operation, owner fences and retained reader instead of creating
 another submission journal or publisher. Its preset/readiness and stricter closed

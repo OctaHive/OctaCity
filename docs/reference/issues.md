@@ -912,9 +912,9 @@ replay compares retained byte digests/metadata and returns its original receipt
 without restoring bodies or minting new read authority.
 
 PostgreSQL restart/process-termination, transaction rollback, migration and native
-S3 qualification are recorded in [task 3.3 verification](../../openspec/changes/add-factory-work-card/verification-3.3.md).
+S3 qualification are recorded in [task 3.3 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-3.3.md).
 Storage separation and indexed cleanup are covered by the
-[review corrections](../../openspec/changes/add-factory-work-card/verification-review-fixes.md).
+[review corrections](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-review-fixes.md).
 HTTP execution receipts and Console controls are specified below. See the
 [quickstart handoff](../../openspec/changes/add-factory-bugfix-quickstart/shared-project-inputs.md)
 for reuse and its remaining qualification.
@@ -960,7 +960,7 @@ resume publication. Existing Artifact admission bodies and Run/control URLs keep
 their contracts.
 
 HTTP Red/Green and native restart qualification are recorded in
-[task 3.4 verification](../../openspec/changes/add-factory-work-card/verification-3.4.md).
+[task 3.4 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-3.4.md).
 
 
 ## Console execution review and history
@@ -1005,7 +1005,7 @@ execution on a different page. No Console publication algorithm, provider adapte
 background admission worker or second Work journal is introduced.
 
 Console Red/Green, browser and bundle qualification is recorded in
-[task 3.5 verification](../../openspec/changes/add-factory-work-card/verification-3.5.md).
+[task 3.5 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-3.5.md).
 
 ## Explicit accepted pipeline status actions
 
@@ -1113,12 +1113,12 @@ no provider connection, credential or external mapping. These authoring checks
 perform no status movement, provider calls or input publication.
 
 Contract Red/Green and regression results are recorded in
-[task 3.6 verification](../../openspec/changes/add-factory-work-card/verification-3.6.md).
+[task 3.6 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-3.6.md).
 PostgreSQL migrations, interruption and native owner recovery are recorded in
-[task 3.7 verification](../../openspec/changes/add-factory-work-card/verification-3.7.md).
+[task 3.7 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-3.7.md).
 
 REST/Console authoring, target compatibility and publication review are recorded in
-[task 3.8 verification](../../openspec/changes/add-factory-work-card/verification-3.8.md).
+[task 3.8 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-3.8.md).
 
 ## Safe card and selected execution projections
 
@@ -1242,8 +1242,8 @@ lower the hard caps; request documents cannot configure them.
 
 Timeline metadata pagination uses the independent observation contract below.
 Console discussion uses the card contracts below; explicit retention and holds are documented under [collaboration content lifetime](#collaboration-content-lifetime). Evidence is recorded in
-[task 6.2 verification](../../openspec/changes/add-factory-work-card/verification-6.2.md)
-and [task 6.3 verification](../../openspec/changes/add-factory-work-card/verification-6.3.md).
+[task 6.2 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.2.md)
+and [task 6.3 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.3.md).
 
 
 ## Bounded activity and result observations
@@ -1305,7 +1305,7 @@ a hidden Issue returns not-found. Invalid, noncanonical, foreign-scope or future
 membership cursors are rejected. Each section is independently observed; these
 contracts claim no atomic snapshot across external systems and perform no writes.
 OpenAPI supplies the bounded schemas and generated Console reads. See
-[task 6.4 verification](../../openspec/changes/add-factory-work-card/verification-6.4.md).
+[task 6.4 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.4.md).
 
 
 ## Console Activity, Runs and Results
@@ -1358,7 +1358,7 @@ English/Russian component/browser checks cover confirmation focus, plain text,
 frozen lost-response replay, discarded drafts, historical selection and narrow
 layouts. The [Console execution journal](#console-execution-journal) adds detailed
 qualified event reads; PR/MR/CI and artifact expansion remain their separately
-scheduled tasks. See [task 6.5 verification](../../openspec/changes/add-factory-work-card/verification-6.5.md).
+scheduled tasks. See [task 6.5 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.5.md).
 
 ## Qualified execution observations
 
@@ -1391,7 +1391,7 @@ fixture runs the real plugin and runner around a controlled Codex CLI process;
 it is not a live-provider qualification. The HTTP journal reader and
 [Console rendering](#console-execution-journal) are described below.
 
-See [task 6.6 verification](../../openspec/changes/add-factory-work-card/verification-6.6.md)
+See [task 6.6 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.6.md)
 for the process fixtures, Red/Green outcomes and regression commands.
 
 
@@ -1465,7 +1465,7 @@ they do not convert private content into generic journal metadata.
 
 These projections add no persistence, provider calls, executor, publication or
 status transitions. Manual Issue creation remains independent. See
-[task 6.7 verification](../../openspec/changes/add-factory-work-card/verification-6.7.md)
+[task 6.7 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.7.md)
 for Red/Green evidence and restart qualification.
 
 ### Console execution journal
@@ -1735,7 +1735,7 @@ Selecting another execution clears only its candidate/Artifact continuations,
 while navigating sections or reselecting the same execution preserves the original
 selection. English/Russian browser qualification covers keyboard activation,
 390/1280 px layouts, safe text/raster preview, explicit download and reload.
-See [task 6.15 verification](../../openspec/changes/add-factory-work-card/verification-6.15.md).
+See [task 6.15 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.15.md).
 
 ### Pure descriptions of exact operator actions
 
@@ -1774,7 +1774,7 @@ directly, and a manual Issue requires none of these execution capabilities.
 The descriptor lives in the backend-neutral store contract so direct application
 inspection and persisted projections share one eligibility implementation; the
 application re-exports the same public description types. See
-[task 7.1 verification](../../openspec/changes/add-factory-work-card/verification-7.1.md).
+[task 7.1 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-7.1.md).
 
 ### Durable action projection
 
@@ -1810,7 +1810,7 @@ a stopped/crashed index worker leaves uncovered versions readable as `Incomplete
 and cannot cancel Factory execution or fail its readiness. Source controls still
 revalidate their own authority independently of this index.
 
-See [task 7.2 verification](../../openspec/changes/add-factory-work-card/verification-7.2.md).
+See [task 7.2 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-7.2.md).
 
 
 ### Shared action REST and Console
@@ -1880,7 +1880,7 @@ Run commands always revalidate eligibility and concurrency.
 
 Manual creation/editing and existing Run controls remain usable without a provider
 or the optional action service. There is no separate close-action or approve-Issue
-setter. See [task 7.3 verification](../../openspec/changes/add-factory-work-card/verification-7.3.md).
+setter. See [task 7.3 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-7.3.md).
 
 
 ## Legacy Work migration and navigation
@@ -1984,5 +1984,5 @@ administered through REST; no new retention editor is added to the task workspac
 
 Capture/restore the complete database and original object-store consistency unit;
 see [backup and restore](../operations/backup-restore.md#task-and-collaboration-recovery).
-The [section 8 verification](../../openspec/changes/add-factory-work-card/verification-8.md)
+The [section 8 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-8.md)
 records Red/Green, PostgreSQL/browser pilots and remaining live-adapter limits.

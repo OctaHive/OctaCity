@@ -145,5 +145,5 @@ Final free space: approximately 13 GiB. No dependencies, migration, OpenAPI,
 generated Console contract or UI behavior changed, so no unrelated database,
 provider or browser stand was built. Only task 2.5 is marked complete; tasks
 2.6 onward and the other active changes retain their prior state. See
-[Issue contracts](../../../docs/reference/issues.md) for the current interface
+[Issue contracts](../../../../docs/reference/issues.md) for the current interface
 and rollout boundary.

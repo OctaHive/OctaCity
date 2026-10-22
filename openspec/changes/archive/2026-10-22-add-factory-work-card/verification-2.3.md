@@ -16,7 +16,7 @@ initial workflow. Point/default reads use the same workflow identity visibility.
 Unsupported policy output fails closed rather than widening the grant.
 
 The eight operations are described in
-[Issue workflow REST contracts](../../../docs/reference/issue-workflows.md#management-rest-v1).
+[Issue workflow REST contracts](../../../../docs/reference/issue-workflows.md#management-rest-v1).
 The server composition installs them independently of optional Factory/integration
 services. Mutation grammar delegates to shared policy; transport schemas do not
 introduce a second validator, provider-specific vocabulary or scripting language.

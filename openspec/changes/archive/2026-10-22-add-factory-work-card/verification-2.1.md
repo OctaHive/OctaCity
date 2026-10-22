@@ -38,7 +38,7 @@ remain tasks 2.2–2.4. Issue creation and actual guarded movement remain 2.5.
   no partial replay/audit/outbox record. Exact receipt replay remains original
   after state changes; changed intent or stale preconditions conflict.
 
-See [Issue workflow contracts](../../../docs/reference/issue-workflows.md) for
+See [Issue workflow contracts](../../../../docs/reference/issue-workflows.md) for
 the public model and compatibility boundary.
 
 ## Original task 2.1 test-first cycles

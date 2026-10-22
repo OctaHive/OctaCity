@@ -415,7 +415,7 @@ Qualification covers the native GitHub adapter against a controlled HTTPS peer
 and its real JSONL process, plus a fake MR vocabulary through the same protocol,
 process host and managed-grant reader. It is not live GitHub qualification and
 makes no native GitLab/Jira support claim. See the
-[6.11 verification record](../../../openspec/changes/add-factory-work-card/verification-6.11.md).
+[6.11 verification record](../../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.11.md).
 The provider endpoints follow GitHub's
 [PR read](https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request) and
 [commit check-runs read](https://docs.github.com/en/rest/checks/runs#list-check-runs-for-a-git-reference)

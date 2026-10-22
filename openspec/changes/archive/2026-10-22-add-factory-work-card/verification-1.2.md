@@ -22,17 +22,17 @@ Status: task 1.2 complete; 2 of 42 work-card tasks complete.
 
 Relevant implementation evidence:
 
-- [Source preparation](../../../server/application/src/factory_source_preparation.rs),
-  [retained input reader](../../../server/application/src/factory_artifact_reader.rs),
-  [input selection](../../../server/application/src/factory_artifact_flow_inputs.rs),
-  [compiler publication](../../../server/application/src/factory_execution_input_publisher.rs).
-- [Runtime input composition](../../../server/app/src/runtime/factory_profiles.rs),
-  [Codex composition](../../../server/app/src/runtime/factory.rs),
-  [signed input metadata](../../../server/infrastructure/octacity-server-store-postgres/src/store/artifact_cache.rs).
-- [Integration grants](../../../server/application/src/integration_project_access.rs),
-  [typed actions](../../../server/application/src/factory_flow_action.rs),
-  [source effect authorization](../../../server/application/src/factory_source_actions.rs),
-  [technical profile matching](../../../server/application/src/factory_codex_materializer.rs).
+- [Source preparation](../../../../server/application/src/factory_source_preparation.rs),
+  [retained input reader](../../../../server/application/src/factory_artifact_reader.rs),
+  [input selection](../../../../server/application/src/factory_artifact_flow_inputs.rs),
+  [compiler publication](../../../../server/application/src/factory_execution_input_publisher.rs).
+- [Runtime input composition](../../../../server/app/src/runtime/factory_profiles.rs),
+  [Codex composition](../../../../server/app/src/runtime/factory.rs),
+  [signed input metadata](../../../../server/infrastructure/octacity-server-store-postgres/src/store/artifact_cache.rs).
+- [Integration grants](../../../../server/application/src/integration_project_access.rs),
+  [typed actions](../../../../server/application/src/factory_flow_action.rs),
+  [source effect authorization](../../../../server/application/src/factory_source_actions.rs),
+  [technical profile matching](../../../../server/application/src/factory_codex_materializer.rs).
 
 ## One shared Project-text publication and admission seam
 
@@ -69,7 +69,7 @@ The common boundary must:
    scheduler. No text/status edit implicitly starts another execution.
 
 The [design](design.md) now makes the source-freeze order explicit, matching
-[quickstart design decisions 2–3](../add-factory-bugfix-quickstart/design.md).
+[quickstart design decisions 2–3](../../add-factory-bugfix-quickstart/design.md).
 Before quickstart implementation, reconcile its tasks **3.1–3.3 and 4.1–4.4**
 with the delivered shared service, and retain its separate preset/readiness UX.
 Those tasks remain unchecked; this inspection does not deliver that service or
@@ -92,7 +92,7 @@ outbox instead of a second producer. Pure local moves need no Reporter.
 
 Existing native installation/resource/item identity, read/write grant checks and
 Reporter recovery from archived `add-github-work-source` remain the baseline.
-The [live gate](../archive/2026-10-18-add-github-work-source/verification-6.2.md)
+The [live gate](../2026-10-18-add-github-work-source/verification-6.2.md)
 remains unqualified; local connection setup is not live Source/Reporter execution
 qualification. No credential or live provider operation was used here. GitLab,
 Jira and custom names in fake conformance tests prove an open shared vocabulary,

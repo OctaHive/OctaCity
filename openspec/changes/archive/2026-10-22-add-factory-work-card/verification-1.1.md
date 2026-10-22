@@ -153,7 +153,7 @@ the related quickstart and role-profile changes are not marked complete here.
 
 Remaining release gates are explicit:
 
-- The archived Source change's [live qualification gate](../archive/2026-10-18-add-github-work-source/verification-6.2.md)
+- The archived Source change's [live qualification gate](../2026-10-18-add-github-work-source/verification-6.2.md)
   remains unqualified. No disposable live repository, selected live execution
   installation/profiles, independently scoped grants or owned remote fixtures
   were supplied for this run. The earlier local-stand selection of
@@ -161,12 +161,12 @@ Remaining release gates are explicit:
   No live credential, provider mutation or paid model was used.
 - Local-stand connection management and credential checks do not themselves
   install or activate Source polling, preview/admission or Reporter execution
-  profiles. Follow the existing [live runbook](../../../docs/reference/github-work-source-live-qualification.md)
+  profiles. Follow the existing [live runbook](../../../../docs/reference/github-work-source-live-qualification.md)
   for separate supported-adapter qualification.
 - Native GitLab/Jira adapters, the future Issue UI/workflows/associations and
   this change's manual/imported end-to-end pilots remain future work. Passing
   this baseline does not qualify those capabilities.
-- Existing [Factory release gates](../../../docs/operations/factory.md), including
+- Existing [Factory release gates](../../../../docs/operations/factory.md), including
   real signed Agent v3, backend-specific native/containerd/microsandbox,
   delivery/promotion and operational qualification, remain separate. They were
   not rerun or waived by this task.

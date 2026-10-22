@@ -32,7 +32,7 @@ create Issues, migrate their workflow pins, admit Work or call a provider.
   publication audit targets the workflow. Safe metadata contains IDs/versions,
   not the workflow's display text or credentials.
 
-See [workflow contracts](../../../docs/reference/issue-workflows.md).
+See [workflow contracts](../../../../docs/reference/issue-workflows.md).
 
 ## Test-first cycles
 

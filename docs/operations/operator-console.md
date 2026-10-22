@@ -285,7 +285,7 @@ The Factory authoring schemas load with the Factory views. The initial bundle
 retains its 450 KiB limit. The complete console, including the Issue journal and
 PR/MR cards and Checks/Artifacts panes, has a 1,130 KiB JavaScript and 1,216 KiB
 static-output ceiling. The measured result-panel build and qualification are
-recorded in [task 6.15 verification](../../openspec/changes/add-factory-work-card/verification-6.15.md).
+recorded in [task 6.15 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-6.15.md).
 The 85 KiB CSS limit and 53-file cap remain unchanged. The result panels add
 20 KiB to each aggregate allowance over the review-card baseline; the architecture
 test rejects an additional unplanned 16 KiB chunk. Runtime dependencies, network
@@ -440,4 +440,4 @@ separate from ordinary task editing; see [Issue lifetime](../reference/issues.md
 
 The PostgreSQL/browser pilots use the same generated clients with a real runtime,
 not fixture responses. Their disposable service requirements and exact commands
-are recorded in [section 8 verification](../../openspec/changes/add-factory-work-card/verification-8.md).
+are recorded in [section 8 verification](../../openspec/changes/archive/2026-10-22-add-factory-work-card/verification-8.md).
