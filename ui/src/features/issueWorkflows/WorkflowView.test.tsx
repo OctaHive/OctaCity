@@ -27,9 +27,11 @@ const resource = {
 };
 function setup({
   defaultError,
+  defaultWorkflow = resource,
   listedWorkflow = resource,
 }: {
   defaultError?: Error;
+  defaultWorkflow?: WorkflowResource;
   listedWorkflow?: WorkflowResource;
 } = {}) {
   const projects = fakeProjectsApi();
@@ -45,7 +47,7 @@ function setup({
     get: vi.fn<IssueWorkflowsApi['get']>().mockResolvedValue(listedWorkflow),
     getDefault: vi
       .fn<IssueWorkflowsApi['getDefault']>()
-      .mockResolvedValue({ version: 7, workflow: resource }),
+      .mockResolvedValue({ version: 7, workflow: defaultWorkflow }),
     validate: vi
       .fn<IssueWorkflowsApi['validate']>()
       .mockImplementation(async (_project: string, draft: Definition) => draft),
@@ -131,9 +133,6 @@ it('edits ordered ID/name-only statuses and workflow-level selections before rev
 it('authors finite transitions and reviews origins and evidence separately from status rows', async () => {
   const { api } = setup();
   await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
-  expect(
-    (screen.getByRole('button', { name: 'Remove status 1' }) as HTMLButtonElement).disabled,
-  ).toBe(true);
   await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Status name 4' }), 'In review');
   await userEvent.click(screen.getByRole('button', { name: 'Add transition' }));
@@ -277,12 +276,20 @@ it('lists immutable workflows, reads an exact historical version and selects it 
   expect(api.publish).not.toHaveBeenCalled();
 });
 
-it('creates an independent workflow from the editable default and keeps its choice separate', async () => {
+it('creates a workflow from empty fields with only operator-defined statuses', async () => {
   const { api } = setup();
   await userEvent.click(await screen.findByRole('button', { name: 'Create workflow' }));
   const name = screen.getByRole('textbox', { name: 'Workflow name' });
-  await userEvent.clear(name);
+  expect((name as HTMLInputElement).value).toBe('');
+  expect(screen.queryByRole('textbox', { name: 'Status name 1' })).toBeNull();
   await userEvent.type(name, 'Support');
+  await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 1' }), 'Received');
+  await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 2' }), 'Answered');
+  expect(screen.getByRole('combobox', { name: 'Initial status' }).textContent).toContain(
+    'Received',
+  );
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
   await userEvent.click(
@@ -291,13 +298,111 @@ it('creates an independent workflow from the editable default and keeps its choi
   await waitFor(() =>
     expect(api.create).toHaveBeenCalledWith(
       'delivery',
-      { id: expect.any(String), definition: { ...definition, name: 'Support' } },
+      {
+        id: expect.any(String),
+        definition: {
+          name: 'Support',
+          statuses: [
+            { id: expect.any(String), name: 'Received' },
+            { id: expect.any(String), name: 'Answered' },
+          ],
+          initial_status_id: expect.any(String),
+          terminal_status_ids: [],
+          transitions: [],
+        },
+      },
       { 'Idempotency-Key': expect.any(String) },
     ),
   );
+  const created = api.create.mock.calls[0]![1];
+  expect(created.id).not.toBe(resource.id);
+  expect(created.definition.initial_status_id).toBe(created.definition.statuses[0]!.id);
+  for (const status of created.definition.statuses) {
+    expect(definition.statuses.some((preset) => preset.id === status.id)).toBe(false);
+  }
   expect(api.publish).not.toHaveBeenCalled();
   expect(api.selectDefault).not.toHaveBeenCalled();
 });
+
+it('can clear every draft status and start over, but cannot validate an empty workflow', async () => {
+  const { api } = setup();
+  await userEvent.click(await screen.findByRole('button', { name: 'Create workflow' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Workflow name' }), 'Support');
+  await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 1' }), 'Temporary');
+  await userEvent.click(screen.getByRole('button', { name: 'Remove status 1' }));
+  expect(screen.queryByRole('textbox', { name: 'Status name 1' })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(
+    (screen.getByRole('button', { name: 'Review publication' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 1' }), 'Received');
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  expect(api.validate).toHaveBeenCalledWith('delivery', {
+    name: 'Support',
+    statuses: [{ id: expect.any(String), name: 'Received' }],
+    initial_status_id: expect.any(String),
+    terminal_status_ids: [],
+    transitions: [],
+  });
+  const sent = api.validate.mock.calls[0]![1];
+  expect(sent.initial_status_id).toBe(sent.statuses[0]!.id);
+});
+
+it.each(['default', 'catalog'])(
+  'removes referenced statuses from a %s workflow draft without changing published versions',
+  async (entry) => {
+    const configured: WorkflowResource = {
+      ...resource,
+      definition: {
+        ...definition,
+        transitions: [
+          {
+            id: '30000000-0000-4000-8000-000000000001',
+            name: 'Finish',
+            from: definition.statuses[0]!.id,
+            to: definition.statuses[1]!.id,
+            origins: ['manual'],
+            evidence: [],
+          },
+          {
+            id: '30000000-0000-4000-8000-000000000002',
+            name: 'Decline',
+            from: definition.statuses[1]!.id,
+            to: definition.statuses[2]!.id,
+            origins: ['manual'],
+            evidence: [],
+          },
+        ],
+      },
+    };
+    const { api } = setup({ defaultWorkflow: configured, listedWorkflow: configured });
+    if (entry === 'default') {
+      await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
+    } else {
+      await userEvent.click(await screen.findByRole('button', { name: 'Open Local workflow' }));
+      await userEvent.click(await screen.findByRole('button', { name: 'Edit this version' }));
+    }
+    await userEvent.click(screen.getByRole('button', { name: 'Remove status 1' }));
+    expect(screen.queryByDisplayValue('New')).toBeNull();
+    expect(screen.getByRole('combobox', { name: 'Initial status' }).textContent).toContain('Done');
+    expect(screen.queryByDisplayValue('Finish')).toBeNull();
+    expect(screen.getByDisplayValue('Decline')).toBeTruthy();
+    await userEvent.click(screen.getByRole('button', { name: 'Remove status 2' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+    expect(api.validate).toHaveBeenLastCalledWith('delivery', {
+      name: definition.name,
+      statuses: [definition.statuses[1]],
+      initial_status_id: definition.statuses[1]!.id,
+      terminal_status_ids: [definition.statuses[1]!.id],
+      transitions: [],
+    });
+    expect(api.publish).not.toHaveBeenCalled();
+    expect(api.selectDefault).not.toHaveBeenCalled();
+  },
+);
 
 it('requires fresh default-selection review after a conflict without publishing or moving a task', async () => {
   const { api } = setup();

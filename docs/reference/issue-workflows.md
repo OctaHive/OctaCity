@@ -145,12 +145,16 @@ and a cursor-bounded list of published workflows. Catalog reads and editing of
 visible policies remain available if the selected default is hidden or temporarily
 unavailable; default selection waits for a readable selection revision.
 
-- Edit the default, create an independent workflow from it, or open a published
-  workflow and load an exact historical version. Drafts live only in the mounted editor.
+- Edit the default, create an independent workflow from an empty draft, or open a
+  published workflow and load an exact historical version. Drafts live only in the
+  mounted editor. Creation copies no default statuses or transitions. The first
+  added status becomes initial; the operator can change that selection.
 - Rename/reorder ID/name-only status rows. Reordering keeps IDs and does not change
   the initial selection. Select the initial status and zero or more terminal statuses
-  at workflow level. Before deleting a status, change its initial selection and remove
-  any referencing edges; deletion also removes its terminal selection.
+  at workflow level. Deleting a status removes its incident transitions and terminal
+  selection. Deleting the initial status selects the first remaining status. All
+  statuses can be removed from a local draft, but validation and publication require
+  at least one. The supplied default and custom workflows use the same editor.
 - Add named transitions between status IDs. Choose only the generated supported
   origins and evidence requirements. Source-origin transitions do not configure native
   provider mappings or grant write access.

@@ -1,6 +1,6 @@
 use axum::http::HeaderValue;
 use octacity_server_api_rest::v1::{
-  AcceptManualTriggerRequest, AgentPoolAdmissionPolicy, AgentPoolResource, AgentResource, ArtifactDownload,
+  AcceptManualTriggerRequest, AgentPage, AgentPoolAdmissionPolicy, AgentPoolResource, ArtifactDownload,
   ArtifactOutputType, ArtifactResource, AttemptStateResource, BuildConfigurationSummaryPage, BuildLogSearchPage,
   BuildStateResource, BuildSummaryPage, BuildSummaryResource, CacheSessionResource, CacheSessionState,
   CapabilityStatus, ContractValueError, CreateAgentPoolRequest, CreateBuildConfigurationRequest,
@@ -177,7 +177,7 @@ fn v1_golden_documents_round_trip_without_application_types() {
   assert_golden::<ErrorResponse>(ERROR_RESPONSE);
   assert_golden::<CreateAgentPoolRequest>(CREATE_AGENT_POOL);
   assert_golden::<CursorPage<AgentPoolResource>>(AGENT_POOL_PAGE);
-  assert_golden::<CursorPage<AgentResource>>(AGENT_PAGE);
+  assert_golden::<AgentPage>(AGENT_PAGE);
   assert_golden::<IssueAgentEnrollmentRequest>(ISSUE_AGENT_ENROLLMENT);
   assert_golden::<IssueAgentEnrollmentResponse>(ISSUED_AGENT_ENROLLMENT);
   assert_golden::<BuildLogSearchPage>(BUILD_LOG_SEARCH_PAGE);
@@ -231,10 +231,11 @@ fn agent_current_execution_is_bounded_and_rejects_fencing_material() {
     "job_id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     "lease_state": "active"
   });
-  assert!(serde_json::from_value::<CursorPage<AgentResource>>(page.clone()).is_ok());
+  let decoded: AgentPage = serde_json::from_value(page.clone()).unwrap();
+  assert_eq!((decoded.active_count, decoded.total_count), (1, 1));
 
   page["items"][0]["current_execution"]["fencing_token"] = json!("must-never-leak");
-  assert!(serde_json::from_value::<CursorPage<AgentResource>>(page).is_err());
+  assert!(serde_json::from_value::<AgentPage>(page).is_err());
 }
 
 #[test]
@@ -390,8 +391,9 @@ fn every_v1_command_and_envelope_rejects_unknown_fields() {
   assert!(serde_json::from_value::<CursorPage<AgentPoolResource>>(pool_page).is_err());
 
   let mut agent_page: Value = serde_json::from_str(AGENT_PAGE).unwrap();
+  assert!(serde_json::from_value::<AgentPage>(agent_page.clone()).is_ok());
   agent_page["items"][0]["registration_credential"] = json!("must-never-leak");
-  assert!(serde_json::from_value::<CursorPage<AgentResource>>(agent_page).is_err());
+  assert!(serde_json::from_value::<AgentPage>(agent_page).is_err());
 
   assert!(serde_json::from_value::<DrainAgentRequest>(json!({"mode": "graceful", "command": "shell"})).is_err());
 

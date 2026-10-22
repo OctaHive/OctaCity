@@ -105,7 +105,7 @@ test('reviews admission actions in the header while preserving host facts and co
     await route.fulfill({ json: { disposition: 'applied', resource } });
   });
   await page.getByRole('button', { name: 'Refresh', exact: true }).click();
-  await expect(page.getByText('builder-1.example.test', { exact: true })).toBeVisible();
+  await expect(page.getByText('builder-1 (builder-1.example.test)', { exact: true })).toBeVisible();
   await expect(page.getByText('1.0 GiB free of 100.0 GiB')).toBeVisible();
   await expect(
     page.getByRole('link', { name: 'Accessible Pool', exact: true }).last(),

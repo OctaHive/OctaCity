@@ -15,6 +15,23 @@ import { AgentPoolView, AgentView } from './CapacityViews';
 afterEach(cleanup);
 
 describe('Capacity detail views', () => {
+  it.each(['agent', 'pool'])('omits the %s ID from the capacity heading', async (kind) => {
+    const api = fakeCapacityApi();
+    if (kind === 'agent') {
+      api.getAgent.mockResolvedValue(agent('agent-a', 'Builder A', 'pool-a'));
+      renderView('/agents/agent-a', <AgentView api={api} />);
+    } else {
+      api.getAgentPool.mockResolvedValue(pool('pool-a', 'Build Pool'));
+      renderView('/agent-pools/pool-a', <AgentPoolView api={api} />);
+    }
+    const heading = await screen.findByRole('heading', {
+      level: 1,
+      name: kind === 'agent' ? 'Builder A' : 'Build Pool',
+    });
+    const header = heading.closest('header');
+    expect(header).not.toBeNull();
+    expect(header?.textContent).not.toContain(kind === 'agent' ? 'agent-a' : 'pool-a');
+  });
   it('shows observed free disk space rather than substituting total filesystem capacity', async () => {
     const api = fakeCapacityApi();
     const resource = agent('agent-a', 'Builder A', 'pool-a');
@@ -41,12 +58,34 @@ describe('Capacity detail views', () => {
     };
     api.getAgent.mockResolvedValue(resource);
     renderView('/agents/agent-a', <AgentView api={api} />);
-    expect(await screen.findByText('builder-1.example.test')).toBeTruthy();
-    expect(screen.getByText('builder-1')).toBeTruthy();
+    expect(await screen.findByText('builder-1 (builder-1.example.test)')).toBeTruthy();
+    expect(screen.queryByText('DNS name (FQDN)')).toBeNull();
     expect(screen.getByText('10.60.20.111')).toBeTruthy();
     expect(screen.getByText('Linux 6.8.12')).toBeTruthy();
     expect(screen.getByText('Not used — outbound connection')).toBeTruthy();
   });
+  it.each([
+    { hostname: 'builder-1', fqdn: null, expected: 'builder-1' },
+    { hostname: null, fqdn: 'builder-1.example.test', expected: 'builder-1.example.test' },
+    {
+      hostname: 'builder-1.example.test',
+      fqdn: 'builder-1.example.test',
+      expected: 'builder-1.example.test',
+    },
+    { hostname: null, fqdn: null, expected: 'Not reported' },
+  ])(
+    'shows one host field for hostname=$hostname and fqdn=$fqdn',
+    async ({ hostname, fqdn, expected }) => {
+      const api = fakeCapacityApi();
+      const resource = agent('agent-a', 'Builder A', 'pool-a');
+      resource.inventory.host_details = { hostname, fqdn, os_version: null, ip_addresses: [] };
+      api.getAgent.mockResolvedValue(resource);
+      renderView('/agents/agent-a', <AgentView api={api} />);
+      const label = await screen.findByText('Hostname', { exact: true });
+      expect(label.nextElementSibling?.textContent).toBe(expected);
+      expect(screen.queryByText('DNS name (FQDN)')).toBeNull();
+    },
+  );
   it('disconnects new-Job admission through a confirmed versioned action without draining', async () => {
     const api = fakeCapacityApi();
     const resource = agent('agent-a', 'Builder A', 'pool-a');

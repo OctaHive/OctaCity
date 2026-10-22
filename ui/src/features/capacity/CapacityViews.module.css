@@ -66,17 +66,11 @@
   text-transform: uppercase;
 }
 
-.identity,
 .description,
 .empty {
   margin: 0;
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
-}
-
-.identity {
-  font-family: ui-monospace, 'SFMono-Regular', Consolas, monospace;
-  font-size: 0.72rem;
 }
 
 .description,

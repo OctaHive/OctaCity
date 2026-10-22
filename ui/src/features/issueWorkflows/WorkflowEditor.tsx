@@ -30,7 +30,9 @@ export function WorkflowEditor({
   const { t } = usePresentation();
   const queryClient = useQueryClient();
   const [draft, setDraft] = useState<WorkflowDefinition>(() =>
-    structuredClone(baseline.definition),
+    creating
+      ? { name: '', statuses: [], initial_status_id: '', terminal_status_ids: [], transitions: [] }
+      : structuredClone(baseline.definition),
   );
   const [version, setVersion] = useState<number | undefined>(
     creating ? undefined : baseline.version,
@@ -62,7 +64,9 @@ export function WorkflowEditor({
   );
   const localError = invalidNames
     ? t('workflow.nameBound', { bytes: bounds.nameMaximumBytes })
-    : null;
+    : draft.statuses.length < bounds.minimumStatuses
+      ? t('workflow.statusRequired')
+      : null;
   async function validate() {
     if (localError) return;
     if (!baselineReady) {

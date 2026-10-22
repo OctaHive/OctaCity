@@ -22,12 +22,29 @@ process draining remain distinct confirmed actions. **Change pool** opens the ex
 idle-only reassignment form instead of occupying the main card.
 
 Work/state disks show observed free bytes alongside total capacity and the observation
-time. Missing measurements or host details are explicitly not reported. Host facts
-come from the Agent; there is no inbound Agent listener/port and no CPU-rank metric.
+time. Missing measurements or host details are explicitly not reported. Hostname and
+DNS share one field: `hostname (fqdn)` when both differ, otherwise the single reported
+name. Agent and Pool headings omit their IDs; stable IDs remain in routes and APIs.
+Host facts come from the Agent; there is no inbound listener/port or CPU-rank metric.
 Runtime inventory uses current provider-neutral `executions`, falling back to legacy
 `runtimes` only when no current routes were published; the contracts are not added
 together. Older Agent binaries continue to work, but need updating/restarting to
 publish the new optional host details.
+
+## Task workflow authoring
+
+**Create workflow** opens an empty local draft: no name, statuses or transitions
+are copied from the Project default. The first added status becomes the initial
+status; operators can select another initial status and configure terminal statuses
+and permitted transitions. A draft may be cleared completely, but validation and
+publication require at least one status.
+
+The supplied default uses the same editor and version-publication commands as
+custom workflows. Removing a draft status also removes its incident transitions
+and terminal selection. If it was initial, the first remaining status becomes
+initial. These edits affect only the draft until reviewed publication. Published
+versions and existing tasks' workflow pins remain unchanged; selecting a default
+for new tasks is a separate action.
 
 ## Supported topology
 

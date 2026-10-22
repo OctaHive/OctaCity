@@ -37,9 +37,13 @@
         "virtualization_available": true
       },
       "status": "online",
+      "enabled": true,
+      "resources": null,
       "last_seen_at_unix_ms": 1789750800000,
       "current_execution": null
     }
   ],
-  "next_cursor": null
+  "next_cursor": null,
+  "active_count": 1,
+  "total_count": 1
 }

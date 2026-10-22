@@ -70,7 +70,6 @@ function SelectedAgent({ agentId, api }: { agentId: string; api: CapacityApi }) 
           />
         }
         fetching={agent.isFetching}
-        identity={agent.data.id}
         onRefresh={agent.refetch}
         state={agent.data.status}
         subtitle={t('capacity.agentCapacity')}
@@ -116,7 +115,6 @@ function SelectedAgentPool({ api, poolId }: { api: CapacityApi; poolId: string }
     <section aria-labelledby="page-title" className={styles.page}>
       <CapacityHeading
         fetching={pool.isFetching}
-        identity={pool.data.id}
         onRefresh={pool.refetch}
         state={pool.data.definition.drain_state}
         subtitle={t('capacity.poolCapacity')}
@@ -137,7 +135,6 @@ function CapacityHeading({
   enabled,
   actions,
   fetching,
-  identity,
   onRefresh,
   state,
   subtitle,
@@ -147,7 +144,6 @@ function CapacityHeading({
   enabled?: boolean;
   actions?: ReactNode;
   fetching: boolean;
-  identity: string;
   onRefresh: () => unknown;
   state: AgentResource['status'] | AgentPoolResource['definition']['drain_state'];
   subtitle: string;
@@ -177,7 +173,6 @@ function CapacityHeading({
           </button>
         </div>
       </div>
-      <p className={styles.identity}>{identity}</p>
       <div className={styles.statusLine}>
         <span className={styles.status} data-state={state}>
           {formatEnumLabel(state, t)}
@@ -194,6 +189,11 @@ function CapacityHeading({
 
 function AgentFacts({ agent, api }: { agent: AgentResource; api: CapacityApi }) {
   const { locale, t } = usePresentation();
+  const { hostname, fqdn } = agent.inventory.host_details ?? {};
+  const hostName =
+    hostname && fqdn && hostname !== fqdn
+      ? `${hostname} (${fqdn})`
+      : (hostname ?? fqdn ?? t('capacity.notReported'));
   const diskSpace = (free: number | undefined, total: number) =>
     free === undefined
       ? t('capacity.notReported')
@@ -239,14 +239,7 @@ function AgentFacts({ agent, api }: { agent: AgentResource; api: CapacityApi }) 
             label={t('capacity.host')}
             value={`${agent.inventory.host_platform.os}/${agent.inventory.host_platform.architecture}`}
           />
-          <Fact
-            label={t('capacity.hostname')}
-            value={agent.inventory.host_details?.hostname ?? t('capacity.notReported')}
-          />
-          <Fact
-            label={t('capacity.fqdn')}
-            value={agent.inventory.host_details?.fqdn ?? t('capacity.notReported')}
-          />
+          <Fact label={t('capacity.hostname')} value={hostName} />
           <Fact
             label={t('capacity.ipAddresses')}
             value={

@@ -544,6 +544,7 @@ export const enMessages = {
   'workflow.baseVersion': 'Based on version {version}',
   'workflow.name': 'Workflow name',
   'workflow.statuses': 'Statuses',
+  'workflow.statusRequired': 'Add at least one status before validating the workflow.',
   'workflow.statusName': 'Status name {number}',
   'workflow.moveUp': 'Move status {number} up',
   'workflow.moveDown': 'Move status {number} down',
@@ -562,7 +563,7 @@ export const enMessages = {
   'workflow.removeStatus': 'Remove status {number}',
   'workflow.addStatus': 'Add status',
   'workflow.statusHelp':
-    'Order is for display only. Select another initial status and remove referencing transitions before deleting a status.',
+    'Removing a status clears its transitions and terminal selection. If it was initial, the first remaining status becomes initial. Order otherwise affects display only.',
   'workflow.terminalHelp':
     'Select zero or more final business statuses. They do not imply execution acceptance.',
   'workflow.transitions': 'Permitted transitions',
@@ -1418,7 +1419,6 @@ export const enMessages = {
   'capacity.admissionFacts': 'Admission facts',
   'capacity.admittedPlatforms': 'Admitted platforms',
   'capacity.hostname': 'Hostname',
-  'capacity.fqdn': 'DNS name (FQDN)',
   'capacity.ipAddresses': 'IP addresses',
   'capacity.osVersion': 'Operating system version',
   'capacity.port': 'Port',

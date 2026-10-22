@@ -553,6 +553,7 @@ export const ruMessages = {
   'workflow.baseVersion': 'На основе версии {version}',
   'workflow.name': 'Название workflow',
   'workflow.statuses': 'Статусы',
+  'workflow.statusRequired': 'Добавьте хотя бы один статус перед проверкой workflow.',
   'workflow.statusName': 'Название статуса {number}',
   'workflow.moveUp': 'Поднять статус {number}',
   'workflow.moveDown': 'Опустить статус {number}',
@@ -571,7 +572,7 @@ export const ruMessages = {
   'workflow.removeStatus': 'Удалить статус {number}',
   'workflow.addStatus': 'Добавить статус',
   'workflow.statusHelp':
-    'Порядок влияет только на отображение. Перед удалением статуса выберите другой начальный статус и удалите ссылающиеся переходы.',
+    'Удаление статуса убирает его переходы и отметку завершающего. Если он был начальным, начальным станет первый оставшийся. В остальном порядок влияет только на отображение.',
   'workflow.terminalHelp':
     'Выберите ноль или несколько завершающих бизнес-статусов. Они не означают приёмку выполнения.',
   'workflow.transitions': 'Разрешённые переходы',
@@ -1427,7 +1428,6 @@ export const ruMessages = {
   'capacity.admissionFacts': 'Условия допуска',
   'capacity.admittedPlatforms': 'Допущенные платформы',
   'capacity.hostname': 'Имя хоста',
-  'capacity.fqdn': 'DNS-имя (FQDN)',
   'capacity.ipAddresses': 'IP-адреса',
   'capacity.osVersion': 'Версия операционной системы',
   'capacity.port': 'Порт',

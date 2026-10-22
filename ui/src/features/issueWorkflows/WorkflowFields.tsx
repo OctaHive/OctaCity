@@ -6,7 +6,7 @@ import styles from './WorkflowView.module.css';
 
 type Props = { draft: WorkflowDefinition; onChange: (draft: WorkflowDefinition) => void };
 
-/** References use stable IDs; removing a referenced status requires an explicit edit first. */
+/** Local draft edits retain stable IDs and remove references to deleted statuses. */
 export function WorkflowFields({ draft, onChange }: Props) {
   const { t } = usePresentation();
   function move(index: number, offset: number) {
@@ -66,22 +66,23 @@ export function WorkflowFields({ draft, onChange }: Props) {
                 </button>
                 <button
                   type="button"
-                  disabled={
-                    draft.statuses.length <= bounds.minimumStatuses ||
-                    status.id === draft.initial_status_id ||
-                    draft.transitions.some(
-                      (edge) => edge.from === status.id || edge.to === status.id,
-                    )
-                  }
-                  onClick={() =>
+                  onClick={() => {
+                    const statuses = draft.statuses.filter((item) => item.id !== status.id);
                     onChange({
                       ...draft,
-                      statuses: draft.statuses.filter((item) => item.id !== status.id),
+                      statuses,
+                      initial_status_id:
+                        status.id === draft.initial_status_id
+                          ? (statuses[0]?.id ?? '')
+                          : draft.initial_status_id,
                       terminal_status_ids: draft.terminal_status_ids.filter(
                         (id) => id !== status.id,
                       ),
-                    })
-                  }
+                      transitions: draft.transitions.filter(
+                        (edge) => edge.from !== status.id && edge.to !== status.id,
+                      ),
+                    });
+                  }}
                 >
                   {t('workflow.removeStatus', { number: index + 1 })}
                 </button>
@@ -92,12 +93,14 @@ export function WorkflowFields({ draft, onChange }: Props) {
         <button
           type="button"
           disabled={draft.statuses.length >= bounds.maximumStatuses}
-          onClick={() =>
+          onClick={() => {
+            const id = crypto.randomUUID();
             onChange({
               ...draft,
-              statuses: [...draft.statuses, { id: crypto.randomUUID(), name: '' }],
-            })
-          }
+              statuses: [...draft.statuses, { id, name: '' }],
+              initial_status_id: draft.statuses.length === 0 ? id : draft.initial_status_id,
+            });
+          }}
         >
           {t('workflow.addStatus')}
         </button>
@@ -106,6 +109,7 @@ export function WorkflowFields({ draft, onChange }: Props) {
         {t('workflow.initial')}
         <SelectMenu
           ariaLabel={t('workflow.initial')}
+          disabled={draft.statuses.length === 0}
           value={draft.initial_status_id}
           options={options}
           onValueChange={(initial_status_id) => onChange({ ...draft, initial_status_id })}
