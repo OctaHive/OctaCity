@@ -77,6 +77,16 @@ factory_id!(
   "Stable identity shared by immutable Factory Configuration versions."
 );
 factory_id!(
+  FactoryRoleId,
+  FactoryEntityKind::FactoryRole,
+  "Stable Project-owned AI-agent role identity."
+);
+factory_id!(
+  FactoryRoleProfileId,
+  FactoryEntityKind::FactoryRoleProfile,
+  "Stable profile identity owned by one AI-agent role."
+);
+factory_id!(
   WorkSourceGroupId,
   FactoryEntityKind::WorkSourceGroup,
   "Stable identity shared by immutable exclusive Work Source group versions."

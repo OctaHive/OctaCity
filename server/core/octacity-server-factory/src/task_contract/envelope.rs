@@ -114,7 +114,8 @@ pub struct FactoryTaskDefinition {
 }
 
 /// Exact released toolchain selected for one task.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryTaskToolchain {
   /// Exact Octa plugin identity.
   pub plugin: ImmutableReference,

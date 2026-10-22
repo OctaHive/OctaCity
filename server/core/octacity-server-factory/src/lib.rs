@@ -87,6 +87,7 @@ mod candidate_deliverable_tests;
 #[cfg(test)]
 mod protected_test_tests;
 mod review_plan;
+mod role_profile;
 mod verification_plan;
 pub use verification_plan::{
   VerificationCheck, VerificationCheckInput, VerificationMeasurement, VerificationObservation, VerificationPlan,
@@ -187,9 +188,9 @@ pub use flow::{
 pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{
   AssessmentId, ChangeSetId, ContextManifestId, DecisionId, DecisionSignalReceiptId, DecisionSignalRequestId,
-  DeliveryAttemptId, EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRunId,
-  FlowDefinitionId, FlowRunId, NodeAttemptId, ReportingAttemptId, RetrievalReceiptId, TaskEnvelopeId, WorkEnvelopeId,
-  WorkSourceGroupId, WorkSourceInputId, WorkflowCycleId,
+  DeliveryAttemptId, EscalationId, EvaluationPlanId, EvidenceManifestId, FactoryConfigurationId, FactoryRoleId,
+  FactoryRoleProfileId, FactoryRunId, FlowDefinitionId, FlowRunId, NodeAttemptId, ReportingAttemptId,
+  RetrievalReceiptId, TaskEnvelopeId, WorkEnvelopeId, WorkSourceGroupId, WorkSourceInputId, WorkflowCycleId,
 };
 pub use journey::FactoryFlowConfiguration;
 pub use lifecycle::{
@@ -217,6 +218,11 @@ pub use review_plan::{
   CriterionPack, EvaluationPlan, EvaluationPlanDefinition, MAX_CRITERION_PACKS, MAX_EVALUATORS, ReviewBranch,
   ReviewEvaluatorCapability, ReviewPlanEscalation, ReviewPlanPreparation, ReviewPurpose, prepare_evaluation_plan,
 };
+pub use role_profile::{
+  FactoryRole, FactoryRoleDefinition, FactoryRoleProfile, FactoryRoleProfileDefinition, FactoryRoleProfileRef,
+  FactoryRoleRef, MAX_FACTORY_ROLE_DEFINITION_BYTES, MAX_FACTORY_ROLE_INSTRUCTION_BYTES,
+  MAX_FACTORY_ROLE_PROFILE_ENTRIES,
+};
 pub use subject::{CandidateSubject, ExactSubject};
 pub use task_contract::{
   BoundedSummary, ContextManifest, ContextManifestEntry, ContextSourceKind, EvaluationResult, EvaluationResultFinding,
@@ -231,11 +237,12 @@ pub use task_contract::{
 };
 pub use value::{
   DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,
-  FactoryKey, FactoryMetadata, FactoryRunVersion, FactorySafeText, FactoryText, FlowDefinitionVersion,
-  MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES,
-  MAX_FACTORY_METADATA_KEY_BYTES, MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES,
-  MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY, NodeAttemptNumber, ReportingAttemptNumber, WorkPriority,
-  WorkSourceGroupVersion, WorkSourceInputVersion, WorkflowCycleNumber, contains_sensitive_material,
+  FactoryKey, FactoryMetadata, FactoryRoleProfileVersion, FactoryRoleVersion, FactoryRunVersion, FactorySafeText,
+  FactoryText, FlowDefinitionVersion, MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES,
+  MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES, MAX_FACTORY_METADATA_KEY_BYTES,
+  MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES, MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY,
+  NodeAttemptNumber, ReportingAttemptNumber, WorkPriority, WorkSourceGroupVersion, WorkSourceInputVersion,
+  WorkflowCycleNumber, contains_sensitive_material,
 };
 
 #[cfg(test)]
