@@ -315,6 +315,7 @@ async fn write_response(stream: &mut TcpStream, status: u16, body: &[u8]) {
 
 fn inventory() -> AgentInventory {
   AgentInventory {
+    host_details: None,
     agent_id: "agent-1".to_owned(),
     agent_version: "0.1.0".to_owned(),
     coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],

@@ -439,11 +439,10 @@ pub(super) fn agent_mutation(
   })
 }
 
-pub(super) fn agent_page(
-  page: AgentPageProjection,
-  request_id: &RequestId,
-) -> Result<CursorPage<AgentResource>, ApiError> {
-  Ok(CursorPage {
+pub(super) fn agent_page(page: AgentPageProjection, request_id: &RequestId) -> Result<AgentPage, ApiError> {
+  Ok(AgentPage {
+    active_count: page.active_count,
+    total_count: page.total_count,
     items: page
       .agents
       .into_iter()
@@ -460,6 +459,7 @@ pub(super) fn agent_page(
 pub(super) fn agent_resource(projection: AgentProjection, request_id: &RequestId) -> Result<AgentResource, ApiError> {
   let inventory = serde_json::to_value(projection.inventory).map_err(|_| internal_conversion(request_id))?;
   Ok(AgentResource {
+    resources: projection.resources,
     id: projection.id.to_string(),
     name: projection.name,
     version: projection.version.get(),
@@ -478,6 +478,7 @@ pub(super) fn agent_resource(projection: AgentProjection, request_id: &RequestId
       octacity_server_application::AgentStatusProjection::Offline => AgentStatus::Offline,
       octacity_server_application::AgentStatusProjection::Draining => AgentStatus::Draining,
     },
+    enabled: projection.enabled,
     last_seen_at_unix_ms: projection.last_seen_at.unix_millis(),
     current_execution: projection.current_execution.map(|execution| AgentCurrentExecution {
       lease_id: execution.lease_id.to_string(),

@@ -84,6 +84,18 @@ pub(crate) async fn execute(pool: &PgPool, request: RenewLease) -> Result<LeaseH
   if updated.rows_affected() != 1 {
     return Err(StoreError::Unavailable);
   }
+  if let Some(snapshot) = &request.resources {
+    crate::agent_resources::record(
+      &mut transaction,
+      octacity_server_store::AgentResourceObservation {
+        agent_id: request.lease.agent_id,
+        registration_epoch: request.lease.registration_epoch,
+        snapshot: snapshot.clone(),
+        observed_at: request.observed_at,
+      },
+    )
+    .await?;
+  }
   crate::mutation::commit(
     transaction,
     &identity,

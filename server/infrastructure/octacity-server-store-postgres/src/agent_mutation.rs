@@ -94,7 +94,7 @@ pub(crate) async fn drain(
   let row = sqlx::query_as::<_, AgentRow>(
     "UPDATE agents SET state = 'draining', version = version + 1, \
        updated_at = to_timestamp($1::double precision / 1000.0) WHERE id = $2 \
-     RETURNING id, name, version, pool_id, pool_version, inventory, state, \
+     RETURNING id, name, version, pool_id, pool_version, inventory, state, enabled, \
        FLOOR(EXTRACT(EPOCH FROM last_seen_at) * 1000)::BIGINT AS last_seen_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT AS updated_at_millis",
@@ -196,7 +196,7 @@ pub(crate) async fn reassign(
   let updated = sqlx::query_as::<_, AgentRow>(
     "UPDATE agents SET pool_id = $1, pool_version = $2, state = 'offline', version = version + 1, \
        updated_at = to_timestamp($3::double precision / 1000.0) WHERE id = $4 \
-     RETURNING id, name, version, pool_id, pool_version, inventory, state, \
+     RETURNING id, name, version, pool_id, pool_version, inventory, state, enabled, \
        FLOOR(EXTRACT(EPOCH FROM last_seen_at) * 1000)::BIGINT AS last_seen_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT AS updated_at_millis",
@@ -365,4 +365,63 @@ async fn ensure_compatible(
     });
   }
   Ok(())
+}
+
+/// Admission-only command: no registration or Lease mutation belongs here.
+pub(crate) async fn set_enabled(
+  pool: &sqlx::PgPool,
+  request: octacity_server_store::SetAgentEnabled,
+  audit: &MutationAuditContext,
+) -> Result<octacity_server_store::SetAgentEnabledOutcome, StoreError> {
+  let identity = MutationIdentity::new_management(
+    audit,
+    MutationKind::SetAgentEnabled,
+    request.idempotency_key.to_string(),
+    request.requested_at,
+    EntityKind::Agent,
+    &(request.agent_id, request.expected_version, request.enabled),
+  )?;
+  let mut transaction = match crate::mutation::begin(pool, &identity).await? {
+    MutationStart::Fresh(transaction) => transaction,
+    MutationStart::Replay(receipt) => {
+      let mut outcome: octacity_server_store::SetAgentEnabledOutcome = decode_outcome(receipt)?;
+      outcome.disposition = MutationDisposition::Replayed;
+      return Ok(outcome);
+    }
+  };
+  let current = lock_agent(&mut transaction, request.agent_id).await?;
+  if current.version
+    != number(
+      request.expected_version.get(),
+      octacity_server_store::StoreOperation::SetAgentEnabled,
+    )?
+    || (request.enabled && current.state == "draining")
+  {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Agent,
+    });
+  }
+  sqlx::query("UPDATE agents SET enabled = $1, version = version + 1, updated_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3")
+    .bind(request.enabled).bind(request.requested_at.unix_millis()).bind(request.agent_id.as_uuid())
+    .execute(&mut *transaction).await.map_err(unavailable)?;
+  let agent = crate::agent_query::read_from(&mut transaction, request.agent_id).await?;
+  let current_execution = crate::agent_query::read_current_execution(&mut transaction, request.agent_id).await?;
+  let outcome = octacity_server_store::SetAgentEnabledOutcome {
+    disposition: MutationDisposition::Applied,
+    agent,
+    current_execution,
+  };
+  crate::mutation::commit(
+    transaction,
+    &identity,
+    MutationFacts::management(
+      audit,
+      request.agent_id.to_string(),
+      json!({"enabled":request.enabled}),
+      json!({"agent_id":request.agent_id,"enabled":request.enabled}),
+    ),
+    encode_outcome(&outcome)?,
+  )
+  .await?;
+  Ok(outcome)
 }

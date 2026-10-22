@@ -11,6 +11,7 @@ export type AgentPoolPage = components['schemas']['AgentPoolPage'];
 export type AgentPoolResource = components['schemas']['AgentPoolResource'];
 export type AgentResource = components['schemas']['AgentResource'];
 export type AgentMutationResponse = components['schemas']['AgentMutationResponse'];
+export type SetAgentEnabledRequest = components['schemas']['SetAgentEnabledRequest'];
 export type DrainAgentRequest = components['schemas']['DrainAgentRequest'];
 export type ReassignAgentPoolRequest = components['schemas']['ReassignAgentPoolRequest'];
 
@@ -26,6 +27,11 @@ const CAPACITY_PAGE_SIZE = 25;
 
 /** Bounded capacity reads shared by the explorer and deep-linked details. */
 export interface CapacityApi {
+  setAgentEnabled(
+    agentId: string,
+    request: Readonly<SetAgentEnabledRequest>,
+    headers: VersionedMutationHeaders,
+  ): Promise<AgentCommandResult>;
   drainAgent(
     agentId: string,
     request: Readonly<DrainAgentRequest>,
@@ -44,6 +50,16 @@ export interface CapacityApi {
 
 /** Typed same-origin REST boundary for Agent capacity discovery. */
 export const capacityApi: CapacityApi = {
+  async setAgentEnabled(agentId, request, headers) {
+    const { data, response } = await managementApi.POST('/api/v1/agents/{agent_id}/availability', {
+      body: request,
+      params: { path: { agent_id: agentId }, header: headers },
+    });
+    return {
+      requestId: requestIdFromResponse(response),
+      response: requireManagementResponse(data),
+    };
+  },
   async drainAgent(agentId, request, headers) {
     const { data, response } = await managementApi.POST('/api/v1/agents/{agent_id}/drain', {
       body: request,

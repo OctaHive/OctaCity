@@ -9,6 +9,11 @@ use crate::{
 /// Backend-neutral management operations for enrolled Agents.
 #[async_trait]
 pub trait AgentStore: Send + Sync {
+  /// Changes new-Job admission without revoking registration or cancelling active work.
+  async fn set_agent_enabled(
+    &self,
+    request: ManagementMutation<crate::SetAgentEnabled>,
+  ) -> Result<crate::SetAgentEnabledOutcome, StoreError>;
   /// Reads one enrolled Agent and its optional current non-terminal execution.
   async fn agent_detail(&self, agent_id: AgentId) -> Result<AgentDetail, StoreError>;
 

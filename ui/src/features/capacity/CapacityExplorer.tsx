@@ -37,7 +37,6 @@ const emptySelection: SelectedCapacity = { agent: null, pool: null };
 
 /** Renders independently paginated Agent Pool -> Agent capacity navigation. */
 export function CapacityExplorer({ api }: { api: CapacityApi }) {
-  const { t } = usePresentation();
   const location = useLocation();
   const selectedAgentId = matchPath(CONSOLE_PATHS.agent, location.pathname)?.params.agentId ?? null;
   const selectedPoolId =
@@ -46,7 +45,6 @@ export function CapacityExplorer({ api }: { api: CapacityApi }) {
 
   return (
     <div className={styles.explorer}>
-      <p className={styles.notice}>{t('explorer.capacityAuthority')}</p>
       {selected.failure === null ? null : <ExplorerBranchFailure {...selected.failure} />}
       {selected.background === null ? null : (
         <ExplorerBranchBackground {...selected.background} fetching={false} />
@@ -183,7 +181,7 @@ function CapacityTree({ api, selection }: { api: CapacityApi; selection: Selecte
                       {pool.name}
                     </Link>
                   </span>
-                  <State value={pool.definition.drain_state} />
+                  <PoolAgentCounts api={api} pool={pool} />
                 </div>
                 {expanded ? <AgentBranch api={api} pool={pool} selected={selection.agent} /> : null}
               </li>
@@ -192,6 +190,21 @@ function CapacityTree({ api, selection }: { api: CapacityApi; selection: Selecte
         </ul>
       )}
     </PagedExplorerBranch>
+  );
+}
+
+function PoolAgentCounts({ api, pool }: { api: CapacityApi; pool: AgentPoolResource }) {
+  const { t } = usePresentation();
+  const agents = useCursorPage(
+    queryKeys.agentPoolAgents(pool.id),
+    (cursor, signal) => api.listAgents(pool.id, cursor, signal),
+    { refetchStaleOnMount: false },
+  );
+  const counts = agents.data?.pages[0];
+  return (
+    <span className={styles.status} title={t('capacity.agentCounts')}>
+      {counts?.active_count ?? '—'}/{counts?.total_count ?? '—'}
+    </span>
   );
 }
 

@@ -23,6 +23,9 @@ impl AgentInventory {
       identifier("label value", value)?;
     }
     self.host_capacity.validate()?;
+    if let Some(host) = &self.host_details {
+      host.validate()?;
+    }
     bounded_len("runtime capabilities", self.runtimes.len())?;
     let mut capabilities = BTreeSet::new();
     for capability in &self.runtimes {
@@ -70,6 +73,23 @@ impl AgentInventory {
       if !source_names.insert(&plugin.name) {
         return invalid("source plugin names must not contain duplicates");
       }
+    }
+    Ok(())
+  }
+}
+
+impl AgentHostDetails {
+  /// Validates diagnostic bounds without deriving availability or scheduling permission.
+  pub fn validate(&self) -> Result<(), CoordinatorProtocolError> {
+    for value in [&self.hostname, &self.fqdn, &self.os_version].into_iter().flatten() {
+      if value.trim().is_empty() || value.len() > MAX_AGENT_HOST_TEXT_BYTES || value.chars().any(char::is_control) {
+        return invalid("host diagnostic text is blank, oversized or contains controls");
+      }
+    }
+    if self.ip_addresses.len() > MAX_AGENT_IP_ADDRESSES
+      || self.ip_addresses.iter().collect::<BTreeSet<_>>().len() != self.ip_addresses.len()
+    {
+      return invalid("host diagnostic addresses exceed bounds or contain duplicates");
     }
     Ok(())
   }

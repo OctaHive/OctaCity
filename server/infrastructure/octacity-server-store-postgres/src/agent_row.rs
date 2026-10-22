@@ -14,6 +14,7 @@ pub(crate) struct AgentRow {
   pub(crate) pool_version: i64,
   pub(crate) inventory: Json<Value>,
   pub(crate) state: String,
+  pub(crate) enabled: bool,
   pub(crate) last_seen_at_millis: i64,
   pub(crate) created_at_millis: i64,
   pub(crate) updated_at_millis: i64,
@@ -32,6 +33,7 @@ impl TryFrom<AgentRow> for EnrolledAgent {
       pool_id: PoolId::from_uuid(row.pool_id).map_err(|_| StoreError::Unavailable)?,
       pool_version: version(row.pool_version, PoolVersion::new)?,
       inventory,
+      enabled: row.enabled,
       status: match row.state.as_str() {
         "online" => AgentStatus::Online,
         "offline" => AgentStatus::Offline,

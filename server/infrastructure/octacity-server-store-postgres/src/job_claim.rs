@@ -52,7 +52,7 @@ pub(crate) async fn execute(pool: &PgPool, request: JobClaim) -> Result<JobClaim
      JOIN agents AS agent ON agent.id = registration.agent_id \
      JOIN LATERAL (SELECT version, enabled, drain_state, admission_policy, concurrency_limit, fairness_policy FROM pools \
        WHERE id = agent.pool_id ORDER BY version DESC LIMIT 1) AS pool ON true \
-     WHERE agent.id = $1 AND registration.epoch = $2 AND agent.pool_id = $3 AND agent.state = 'online' \
+     WHERE agent.id = $1 AND registration.epoch = $2 AND agent.pool_id = $3 AND agent.state = 'online' AND agent.enabled \
        AND registration.revoked_at IS NULL \
        AND registration.expires_at > to_timestamp($4::double precision / 1000.0) \
        AND pool.enabled AND pool.drain_state = 'accepting' \

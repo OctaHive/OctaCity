@@ -1,7 +1,7 @@
 use octacity_server_application::{
   CreateAgentPoolCommand, DeleteAgentPoolCommand, DrainAgentCommand, GetAgentPoolQuery, GetAgentQuery,
   IssueAgentEnrollmentCommand, ListAgentPoolsQuery, ListAgentsQuery, PublishAgentPoolVersionCommand,
-  ReassignAgentPoolCommand,
+  ReassignAgentPoolCommand, SetAgentEnabledCommand,
 };
 
 use super::{ManagementOperation, ParameterProfile};
@@ -149,6 +149,19 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "Agents",
     "Drain an Agent and its current Lease",
     Some("DrainAgentRequest"),
+    "AgentMutationResponse",
+    "200",
+    true,
+    true
+  ),
+  operation!(
+    SetAgentEnabledCommand,
+    "POST",
+    "/api/v1/agents/{agent_id}/availability",
+    "setAgentEnabled",
+    "Agents",
+    "Allow or prevent new Jobs without disconnecting the Agent",
+    Some("SetAgentEnabledRequest"),
     "AgentMutationResponse",
     "200",
     true,

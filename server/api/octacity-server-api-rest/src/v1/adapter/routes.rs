@@ -31,7 +31,8 @@ use octacity_server_application::{
   PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
   ReassignAgentPoolCommand, ReleaseBuildResultHoldCommand, RenameProjectCommand, ReplaceFactoryConfigurationCommand,
   ReplaceFactoryFlowDefinitionCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
-  SearchBuildLogsQuery, SearchResourcesQuery, ValidateFactoryConfigurationQuery, ValidateFactoryFlowDefinitionQuery,
+  SearchBuildLogsQuery, SearchResourcesQuery, SetAgentEnabledCommand, ValidateFactoryConfigurationQuery,
+  ValidateFactoryFlowDefinitionQuery,
 };
 
 use super::{
@@ -54,8 +55,8 @@ use super::{
   publish_build_configuration, publish_internal_trigger, publish_pipeline, publish_project_policy, publish_repository,
   read_job_events, reassign_agent_pool, release_build_result_hold, rename_project, replace_factory_configuration,
   replace_factory_flow_definition, retry_build, retry_factory_node, rotate_managed_webhook, search_build_logs,
-  search_resources, submit_factory_node_response, validate_factory_configuration, validate_factory_flow_data_schema,
-  validate_factory_flow_definition,
+  search_resources, set_agent_enabled, submit_factory_node_response, validate_factory_configuration,
+  validate_factory_flow_data_schema, validate_factory_flow_definition,
 };
 use crate::v1::{API_PREFIX, MANAGEMENT_OPERATIONS, ManagementOperation};
 
@@ -515,6 +516,7 @@ fn registered_routes() -> ManagementRoutes {
     .get::<GetAgentQuery, _, _>("getAgent", get_agent)
     .post::<ReassignAgentPoolCommand, _, _>("reassignAgentPool", reassign_agent_pool)
     .post::<DrainAgentCommand, _, _>("drainAgent", drain_agent)
+    .post::<SetAgentEnabledCommand, _, _>("setAgentEnabled", set_agent_enabled)
     .get::<GetJobQuery, _, _>("getJob", get_job)
     .get::<ReadJobEventsQuery, _, _>("readJobEvents", read_job_events)
     .get::<SearchBuildLogsQuery, _, _>("searchBuildLogs", search_build_logs)

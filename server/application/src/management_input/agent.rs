@@ -116,6 +116,24 @@ impl ManagementInputFactory {
     })
   }
 
+  /// Creates a reviewed new-Job admission command without revoking registration.
+  pub fn set_agent_enabled(
+    &self,
+    agent_id: &str,
+    expected_version: u64,
+    enabled: bool,
+    idempotency_key: &str,
+    now_unix_ms: i64,
+  ) -> Result<SetAgentEnabledCommand, ManagementInputError> {
+    Ok(SetAgentEnabledCommand {
+      agent_id: parse(agent_id, "agent id")?,
+      expected_version: version(expected_version, "agent version")?,
+      enabled,
+      idempotency_key: parse(idempotency_key, "idempotency key")?,
+      requested_at: timestamp(now_unix_ms)?,
+    })
+  }
+
   /// Creates a typed guarded Agent-drain command.
   pub fn drain_agent(
     &self,

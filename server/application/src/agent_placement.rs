@@ -80,6 +80,7 @@ pub trait AgentLeaseUseCases: Send + Sync {
 
 /// Store-backed placement service that never holds store state while waiting.
 pub struct AgentLeaseService<S, W> {
+  resources: Option<Arc<dyn octacity_server_store::AgentResourceStore>>,
   registrations: Arc<dyn AgentRegistrationUseCases>,
   store: Arc<S>,
   waiter: Arc<W>,
@@ -98,11 +99,19 @@ impl<S, W> AgentLeaseService<S, W> {
       return Err(AgentLeaseError::InvalidRequest);
     }
     Ok(Self {
+      resources: None,
       registrations,
       store,
       waiter,
       lease_lifetime,
     })
+  }
+
+  /// Installs the current resource read projection for authenticated idle polls.
+  /// Running Jobs publish through their existing fenced renewal transaction.
+  pub fn with_resources(mut self, resources: Arc<dyn octacity_server_store::AgentResourceStore>) -> Self {
+    self.resources = Some(resources);
+    self
   }
 }
 
@@ -125,6 +134,23 @@ where
         let authorized = self.authorize(&input, input.observed_at_unix_ms).await?;
         if stable_agent_id(&input.route_agent_id).map_err(AgentLeaseError::from)? != authorized.agent_id() {
           return Err(AgentLeaseError::Fenced);
+        }
+        if let Some(resources) = &self.resources {
+          input
+            .request
+            .snapshot
+            .validate(authorized.host_capacity())
+            .map_err(|_| AgentLeaseError::InvalidRequest)?;
+          resources
+            .record_agent_resources(octacity_server_store::AgentResourceObservation {
+              agent_id: authorized.agent_id(),
+              registration_epoch: authorized.registration_epoch(),
+              snapshot: input.request.snapshot.clone(),
+              observed_at: Timestamp::from_unix_millis(input.observed_at_unix_ms)
+                .map_err(|_| AgentLeaseError::InvalidRequest)?,
+            })
+            .await
+            .map_err(AgentLeaseError::from)?;
         }
         if authorized.draining() {
           return Ok(AgentLeaseOutcome::Drain);
@@ -360,8 +386,45 @@ mod tests {
 
   #[derive(Default)]
   struct EmptyStore {
+    resources: Mutex<Vec<octacity_server_store::AgentResourceObservation>>,
     claims: Mutex<Vec<JobClaim>>,
     assignment_failures: Mutex<Vec<JobCompletion>>,
+  }
+
+  #[async_trait]
+  impl octacity_server_store::AgentResourceStore for EmptyStore {
+    async fn record_agent_resources(
+      &self,
+      value: octacity_server_store::AgentResourceObservation,
+    ) -> Result<(), StoreError> {
+      self.resources.lock().unwrap().push(value);
+      Ok(())
+    }
+  }
+
+  #[test]
+  fn local_admission_refusal_still_reports_current_host_resources() {
+    let registration = Arc::new(RegistrationStub {
+      authority: authority(),
+      calls: AtomicUsize::new(0),
+      drain_after_first_authorization: false,
+    });
+    let store = Arc::new(EmptyStore::default());
+    let service = AgentLeaseService::new(
+      registration,
+      store.clone(),
+      Arc::new(ImmediateWaiter::default()),
+      Duration::from_secs(60),
+    )
+    .unwrap()
+    .with_resources(store.clone());
+    assert_eq!(
+      run_ready(service.acquire(input(false))).unwrap(),
+      AgentLeaseOutcome::NoWork
+    );
+    assert_eq!(store.resources.lock().unwrap().len(), 1);
+    assert_eq!(store.resources.lock().unwrap()[0].snapshot.work_disk_free_bytes, 1);
+    assert!(store.claims.lock().unwrap().is_empty());
   }
 
   #[async_trait]

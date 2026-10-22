@@ -1,5 +1,5 @@
 import { useQueryClient } from '@tanstack/react-query';
-import { useState, type FormEvent, type RefObject } from 'react';
+import { useRef, useState, type FormEvent, type RefObject } from 'react';
 import { Link } from 'react-router-dom';
 
 import { queryInvalidations, queryKeys } from '../../app/query';
@@ -10,6 +10,7 @@ import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { formatEnumLabel } from '../../shared/display';
 import commandFormStyles from '../../shared/OperatorCommandForm.module.css';
 import { SelectMenu } from '../../shared/SelectMenu';
+import { useDismissibleLayer } from '../../shared/useDismissibleLayer';
 import { useCursorPage } from '../../shared/PagedExplorerBranch';
 import {
   QueryBackgroundNotice,
@@ -39,7 +40,14 @@ interface ReassignReview {
   target: AgentPoolResource;
 }
 
-type AgentCommandReview = DrainReview | ReassignReview;
+type AgentCommandReview =
+  | DrainReview
+  | ReassignReview
+  | {
+      kind: 'availability';
+      enabled: boolean;
+      returnFocus: HTMLElement;
+    };
 
 /** Presents versioned Agent commands without deriving server placement eligibility. */
 export function AgentCommands({
@@ -55,62 +63,128 @@ export function AgentCommands({
 }) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
-  const [drainMode, setDrainMode] = useState<DrainAgentRequest['mode']>('graceful');
+  const [open, setOpen] = useState(false);
+  const [reassigning, setReassigning] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const layerRef = useRef<HTMLDivElement>(null);
+  useDismissibleLayer({ active: open, layerRef, triggerRef, onDismiss: () => setOpen(false) });
   const [review, setReview] = useState<AgentCommandReview | null>(null);
 
   return (
-    <section className={styles.panel}>
-      <div className={styles.panelHeading}>
-        <div>
-          <h2>{t('agentCommands.title')}</h2>
-          <p className={styles.panelDescription}>{t('agentCommands.description')}</p>
+    <div className={styles.actions}>
+      <button
+        className={styles.textButton}
+        type="button"
+        ref={triggerRef}
+        aria-expanded={open}
+        onClick={() => {
+          setReassigning(false);
+          setOpen(!open);
+        }}
+      >
+        {t('agentCommands.actions')}
+      </button>
+      {open ? (
+        <div
+          className={styles.actionList}
+          ref={layerRef}
+          role="group"
+          aria-label={t('agentCommands.actions')}
+          onKeyDown={(event) => {
+            if (event.key === 'Escape') {
+              setOpen(false);
+              triggerRef.current?.focus();
+            }
+          }}
+        >
+          <button
+            type="button"
+            className={styles.textButton}
+            disabled={agent.status === 'draining' && agent.enabled === false}
+            onClick={(event) => {
+              setOpen(false);
+              setReview({
+                kind: 'availability',
+                enabled: agent.enabled === false,
+                returnFocus: triggerRef.current ?? event.currentTarget,
+              });
+            }}
+          >
+            {t(agent.enabled === false ? 'agentCommands.connect' : 'agentCommands.disconnect')}
+          </button>
+          {(['graceful', 'forced'] as const).map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              className={styles.textButton}
+              disabled={agent.status === 'draining'}
+              onClick={(event) => {
+                setOpen(false);
+                setReview({
+                  kind: 'drain',
+                  mode,
+                  returnFocus: triggerRef.current ?? event.currentTarget,
+                });
+              }}
+            >
+              {t(
+                mode === 'graceful' ? 'agentCommands.gracefulAction' : 'agentCommands.forcedAction',
+              )}
+            </button>
+          ))}
+          <button
+            className={styles.textButton}
+            type="button"
+            onClick={() => setReassigning(!reassigning)}
+          >
+            {t('agentCommands.changePool')}
+          </button>
+          {reassigning ? (
+            agent.current_execution === null ? (
+              <IdlePoolReassignment
+                agent={agent}
+                api={api}
+                onReview={(next) => {
+                  setOpen(false);
+                  setReview({ ...next, returnFocus: triggerRef.current ?? next.returnFocus });
+                }}
+              />
+            ) : (
+              <p className={styles.empty}>{t('agentCommands.reassignIdleOnly')}</p>
+            )
+          ) : null}
         </div>
-      </div>
-      <div className={styles.commandGrid}>
-        <div className={styles.commandCard}>
-          <h3>{t('agentCommands.drain')}</h3>
-          {agent.status === 'draining' ? (
-            <p className={styles.empty}>{t('agentCommands.alreadyDraining')}</p>
-          ) : (
-            <>
-              <div className={commandFormStyles.field}>
-                <span>{t('agentCommands.drainMode')}</span>
-                <SelectMenu
-                  ariaLabel={t('agentCommands.drainMode')}
-                  onValueChange={setDrainMode}
-                  options={[
-                    { label: t('agentCommands.graceful'), value: 'graceful' },
-                    { label: t('agentCommands.forced'), value: 'forced' },
-                  ]}
-                  value={drainMode}
-                />
-              </div>
-              <button
-                className={styles.commandButton}
-                onClick={(event) =>
-                  setReview({
-                    kind: 'drain',
-                    mode: drainMode,
-                    returnFocus: event.currentTarget,
-                  })
-                }
-                type="button"
-              >
-                {t('agentCommands.drainAgent')}
-              </button>
-            </>
+      ) : null}
+      {review?.kind === 'availability' ? (
+        <ConfirmedCommand
+          confirmLabel={t(review.enabled ? 'agentCommands.connect' : 'agentCommands.disconnect')}
+          consequence={t('agentCommands.availabilityConsequence')}
+          execute={({ headers, request }) =>
+            api.setAgentEnabled(
+              request.agentId,
+              { enabled: request.enabled },
+              requireVersionedMutationHeaders(headers),
+            )
+          }
+          fallbackFocusRef={fallbackFocusRef}
+          invalidations={[
+            { exact: true, queryKey: queryKeys.agent(agent.id) },
+            { queryKey: queryKeys.agentPoolAgents(agent.pool_id) },
+            queryInvalidations.audit,
+          ]}
+          onClose={() => setReview(null)}
+          onRefresh={onRefresh}
+          queryClient={queryClient}
+          renderSuccess={() => <span>{t('agentCommands.availabilityAccepted')}</span>}
+          request={{ agentId: agent.id, enabled: review.enabled }}
+          returnFocus={review.returnFocus}
+          title={t(
+            review.enabled ? 'agentCommands.connectTitle' : 'agentCommands.disconnectTitle',
+            { name: agent.name },
           )}
-        </div>
-        {agent.current_execution === null ? (
-          <IdlePoolReassignment agent={agent} api={api} onReview={setReview} />
-        ) : (
-          <div className={styles.commandCard}>
-            <h3>{t('agentCommands.poolAssignment')}</h3>
-            <p className={styles.empty}>{t('agentCommands.reassignIdleOnly')}</p>
-          </div>
-        )}
-      </div>
-      {review?.kind === 'drain' ? (
+          version={agent.version}
+        />
+      ) : review?.kind === 'drain' ? (
         <ConfirmedCommand
           confirmLabel={
             review.mode === 'graceful'
@@ -175,7 +249,7 @@ export function AgentCommands({
           version={agent.version}
         />
       ) : null}
-    </section>
+    </div>
   );
 }
 

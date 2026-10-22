@@ -14,6 +14,7 @@ mod agent_enrollment;
 mod agent_mutation;
 mod agent_query;
 mod agent_registration;
+mod agent_resources;
 mod agent_row;
 mod artifact;
 mod attempt_materialization;

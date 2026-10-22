@@ -32,6 +32,10 @@
   justify-content: space-between;
 }
 
+.statusLine {
+  flex-wrap: wrap;
+}
+
 .heading h1,
 .landing h1,
 .panel h2,
@@ -64,8 +68,7 @@
 
 .identity,
 .description,
-.empty,
-.panelDescription {
+.empty {
   margin: 0;
   color: var(--color-text-muted);
   overflow-wrap: anywhere;
@@ -77,14 +80,9 @@
 }
 
 .description,
-.empty,
-.panelDescription {
+.empty {
   font-size: 0.82rem;
   line-height: 1.55;
-}
-
-.panelDescription {
-  margin: 0.25rem 0 0;
 }
 
 .button {
@@ -196,11 +194,47 @@
   font-size: 0.78rem;
 }
 
-.commandGrid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+.headingActions {
+  display: flex;
+  align-items: center;
   gap: var(--space-md);
-  padding: var(--space-lg);
+}
+
+.textButton {
+  min-height: 2rem;
+  padding: 0.2rem 0.35rem;
+  border: 0;
+  background: transparent;
+  color: var(--color-brand-action);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 750;
+  text-align: left;
+  cursor: pointer;
+}
+
+.textButton:focus-visible {
+  outline: 0;
+  box-shadow: var(--focus-ring);
+}
+
+.actions {
+  position: relative;
+}
+
+.actionList {
+  position: absolute;
+  z-index: 10;
+  top: 100%;
+  right: 0;
+  display: grid;
+  gap: var(--space-md);
+  width: max-content;
+  max-width: min(26rem, 85vw);
+  padding: var(--space-md);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-small);
+  background: var(--color-surface);
 }
 
 .commandCard {
@@ -228,7 +262,8 @@
 }
 
 .button:disabled,
-.commandButton:disabled {
+.commandButton:disabled,
+.textButton:disabled {
   cursor: not-allowed;
   opacity: 0.55;
 }
@@ -262,7 +297,8 @@
     grid-template-columns: 1fr;
   }
 
-  .commandGrid {
-    grid-template-columns: 1fr;
+  .actionList {
+    right: auto;
+    left: 0;
   }
 }

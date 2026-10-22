@@ -37,7 +37,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use super::{
-  AcceptManualTriggerRequest, AgentCapacity, AgentCurrentExecution, AgentCurrentLeaseState, AgentDrainMode,
+  AcceptManualTriggerRequest, AgentCapacity, AgentCurrentExecution, AgentCurrentLeaseState, AgentDrainMode, AgentPage,
   AgentPlatform, AgentPoolAdmissionPolicy, AgentPoolDefinition, AgentPoolDrainState, AgentPoolFairnessPolicy,
   AgentPoolResource, AgentRequirements, AgentResource, AgentStatus, ArtifactPolicy, AttemptResource,
   AttemptStateResource, AttemptSummaryResource, BuildConfigurationDefinition, BuildConfigurationResource,
@@ -67,6 +67,7 @@ use super::{
 use crate::RequestId;
 
 mod agent;
+use agent::set_agent_enabled;
 mod agent_pool;
 mod application;
 mod artifact;

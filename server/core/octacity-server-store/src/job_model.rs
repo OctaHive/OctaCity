@@ -152,6 +152,8 @@ pub struct LeaseAccess {
 /// Complete atomic input for one fenced Lease heartbeat.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RenewLease {
+  /// Optional validated host snapshot projected by the same fenced renewal transaction.
+  pub resources: Option<octacity_protocol::HostSnapshot>,
   /// Stable identity used to replay an identical heartbeat.
   pub idempotency_key: crate::IdempotencyKey,
   /// Current fenced Lease authority.

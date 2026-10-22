@@ -45,6 +45,24 @@ different content.
 
 ## Static Agent Pool management
 
+Agent reads (`GET /api/v1/agents` and `GET /api/v1/agents/{agent_id}`)
+separate process `status` from the operator's `enabled` permission for new Jobs.
+`POST /api/v1/agents/{agent_id}/availability` accepts only `{"enabled": boolean}`
+with `Idempotency-Key` and Agent-version `If-Match`, under the Agent administer
+grant. It preserves enrollment, registration credentials and current work;
+enabling cannot undo a committed process-drain command. Existing `/drain` and
+`/pool` commands retain their separate semantics.
+
+Agent pages add `active_count` and `total_count` over all visible matching
+members before cursor/limit. Active means online, enabled, currently registered
+and permitted by the current Pool policy; a busy Agent can still be active.
+Detail reads add optional `resources`, with a server observation time and
+available CPU/memory/work-disk/state-disk values. Missing observations are not
+zero or total capacity. Idle polls and fenced Lease renewals retain only the
+latest bounded resource view; older or fenced samples cannot overwrite it.
+Optional `inventory.host_details` carries reported hostname, FQDN, OS version
+and at most sixteen IP addresses. These diagnostics grant no execution authority.
+
 Task 5.1 adds the following OpenAPI-verified operations:
 
 | Method and path | Purpose |

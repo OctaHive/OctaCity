@@ -395,3 +395,25 @@ impl BuildQueryStore for PostgresAuthoritativeStore {
     self.store.latest_attempt(build_id).await
   }
 }
+
+#[async_trait::async_trait]
+impl AgentResourceStore for PostgresStore {
+  async fn record_agent_resources(&self, input: AgentResourceObservation) -> Result<(), StoreError> {
+    let mut transaction = self.pool.begin().await.map_err(crate::database::unavailable)?;
+    // Registration changes hold this same row. Check its fence in the next
+    // statement after acquiring it, rather than using a pre-wait MVCC snapshot.
+    sqlx::query("SELECT id FROM agents WHERE id = $1 FOR UPDATE")
+      .bind(input.agent_id.as_uuid())
+      .execute(&mut *transaction)
+      .await
+      .map_err(crate::database::unavailable)?;
+    crate::agent_resources::record(&mut transaction, input).await?;
+    transaction.commit().await.map_err(crate::database::unavailable)
+  }
+}
+#[async_trait::async_trait]
+impl AgentResourceStore for PostgresAuthoritativeStore {
+  async fn record_agent_resources(&self, input: AgentResourceObservation) -> Result<(), StoreError> {
+    self.store.record_agent_resources(input).await
+  }
+}

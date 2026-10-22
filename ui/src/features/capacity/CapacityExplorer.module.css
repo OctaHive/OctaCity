@@ -3,14 +3,6 @@
   gap: var(--space-md);
 }
 
-.notice,
-.stateMeta {
-  margin: 0;
-  color: var(--color-text-muted);
-  font-size: 0.7rem;
-  line-height: 1.45;
-}
-
 .tree,
 .agentGroup {
   display: grid;
@@ -30,6 +22,7 @@
 }
 
 .row {
+  position: relative;
   display: grid;
   grid-template-columns: 1.75rem minmax(0, 1fr) auto;
   align-items: center;
@@ -45,6 +38,8 @@
 }
 
 .row button {
+  position: relative;
+  z-index: 1;
   display: grid;
   width: 1.6rem;
   height: 1.6rem;
@@ -63,6 +58,14 @@
   font-weight: 720;
   overflow-wrap: anywhere;
   text-decoration: none;
+}
+
+/* Keep native link behavior across the row, with expansion above its hit area. */
+.row a::after {
+  position: absolute;
+  inset: 0;
+  border-radius: var(--radius-small);
+  content: '';
 }
 
 .row a:focus-visible,
@@ -88,14 +91,12 @@
   text-transform: capitalize;
 }
 
-.status[data-state='online'],
-.status[data-state='accepting'] {
+.status[data-state='online'] {
   background: var(--color-brand-soft);
   color: var(--color-success-ink);
 }
 
-.status[data-state='offline'],
-.status[data-state='forced_drain'] {
+.status[data-state='offline'] {
   background: var(--color-danger-soft);
   color: var(--color-danger-ink);
 }

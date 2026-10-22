@@ -8,6 +8,9 @@
 #![warn(missing_docs)]
 
 mod agent_cqrs;
+pub use agent_cqrs::SetAgentEnabledCommand;
+pub use octacity_protocol::{MAX_AGENT_HOST_TEXT_BYTES, MAX_AGENT_IP_ADDRESSES};
+pub use octacity_server_store::AgentResources;
 mod agent_enrollment;
 mod agent_execution;
 mod agent_heartbeat;

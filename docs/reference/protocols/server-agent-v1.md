@@ -53,6 +53,8 @@ POST /api/v1/agents/register
 `RegisterAgentRequest` carries the complete startup-validated inventory:
 
 - agent release, identity, labels, host platform, and static capacity;
+- optional bounded `host_details`: OS-reported hostname/FQDN/version and distinct
+  interface IP addresses; absent values remain unknown and never control placement;
 - exact Native or OCI platform/isolation routes;
 - the negotiated execution-contract range and separately qualified v2
   host/isolation/virtualization routes;
@@ -155,6 +157,12 @@ and never replace cgroup, quota, container, or VM enforcement.
 While a job is active, `active_job.resource_usage` carries the latest
 cumulative sample for live scheduling and diagnostics. The same sample is an
 ordered durable agent event; heartbeat is not its storage channel.
+
+Separately, idle acquisition polls and valid Lease renewals maintain one latest
+safe host-availability observation for management reads. It contains no active-job
+payload, backend message or event history. Lease renewal and this projection share
+the existing fenced transaction; diagnostic telemetry is still independent.
+Deploy the updated server before restarting updated Agents that publish host details.
 
 ## Diagnostic telemetry
 

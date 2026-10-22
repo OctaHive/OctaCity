@@ -74,6 +74,7 @@ pub(crate) fn trigger_request(occurrence: u64, base: u64, pool: PoolId) -> Accep
 pub fn compatible_inventory(agent_id: AgentId) -> AgentInventory {
   const DIGEST: &str = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
   AgentInventory {
+    host_details: None,
     agent_id: agent_id.to_string(),
     agent_version: "0.1.0".to_owned(),
     coordinator_protocols: vec![octacity_protocol::COORDINATOR_PROTOCOL_VERSION],

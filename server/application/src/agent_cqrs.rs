@@ -140,10 +140,14 @@ pub struct AgentProjection {
   pub capacity: AgentCapacityProjection,
   /// Normalized lifecycle state.
   pub status: AgentStatusProjection,
+  /// Operator permission to receive new Jobs independently of process presence.
+  pub enabled: bool,
   /// Last authoritative Agent contact time.
   pub last_seen_at: Timestamp,
   /// Current non-terminal execution, or `None` when the Agent is idle.
   pub current_execution: Option<AgentCurrentExecutionProjection>,
+  /// Latest independently observed resource availability; absence is not zero.
+  pub resources: Option<octacity_server_store::AgentResources>,
 }
 
 /// Safe management projection of the execution currently owned by an Agent.
@@ -186,6 +190,8 @@ pub struct AgentInventoryProjection {
   pub labels: BTreeMap<String, String>,
   /// Host platform.
   pub host_platform: PlatformSpec,
+  /// Optional OS-reported diagnostics, independent of placement authority.
+  pub host_details: Option<octacity_protocol::AgentHostDetails>,
   /// Validated execution capabilities.
   pub runtimes: Vec<RuntimeCapability>,
   /// Provider-backed current execution routes used for provider-neutral placement.
@@ -234,6 +240,10 @@ pub struct AgentPageProjection {
   pub agents: Vec<AgentProjection>,
   /// Cursor for the next page.
   pub next_cursor: Option<AgentId>,
+  /// Visible online Agents accepting new work before pagination.
+  pub active_count: u64,
+  /// All visible matching Agents before pagination.
+  pub total_count: u64,
 }
 
 /// Result of an Agent management command.
@@ -331,6 +341,7 @@ where
       agent: octacity_server_store::AgentDetail {
         agent: outcome.agent,
         current_execution: outcome.current_execution,
+        resources: None,
       }
       .into(),
     })
@@ -391,6 +402,8 @@ impl<S: AgentStore + 'static> crate::ManagementQueryUseCase<ListAgentsQuery> for
     Ok(AgentPageProjection {
       agents: page.agents.into_iter().map(Into::into).collect(),
       next_cursor: page.next_cursor,
+      active_count: page.active_count,
+      total_count: page.total_count,
     })
   }
 }
@@ -404,6 +417,7 @@ impl From<octacity_server_store::EnrolledAgent> for AgentProjection {
       execution_contract: agent.inventory.execution_contract,
       labels: agent.inventory.labels,
       host_platform: agent.inventory.host_platform,
+      host_details: agent.inventory.host_details,
       runtimes: agent.inventory.runtimes,
       executions: agent.inventory.executions,
       factory_executions: agent.inventory.factory_executions,
@@ -419,6 +433,7 @@ impl From<octacity_server_store::EnrolledAgent> for AgentProjection {
       pool_version: agent.pool_version,
       inventory,
       capacity,
+      enabled: agent.enabled,
       status: match agent.status {
         AgentStatus::Online => AgentStatusProjection::Online,
         AgentStatus::Offline => AgentStatusProjection::Offline,
@@ -426,6 +441,7 @@ impl From<octacity_server_store::EnrolledAgent> for AgentProjection {
       },
       last_seen_at: agent.last_seen_at,
       current_execution: None,
+      resources: None,
     }
   }
 }
@@ -433,6 +449,7 @@ impl From<octacity_server_store::EnrolledAgent> for AgentProjection {
 impl From<octacity_server_store::AgentDetail> for AgentProjection {
   fn from(detail: octacity_server_store::AgentDetail) -> Self {
     let mut projection = Self::from(detail.agent);
+    projection.resources = detail.resources;
     projection.current_execution = detail
       .current_execution
       .map(|execution| AgentCurrentExecutionProjection {
@@ -457,5 +474,62 @@ fn capacity(value: HostCapacity) -> AgentCapacityProjection {
     work_disk_total_bytes: value.work_disk_total_bytes,
     state_disk_total_bytes: value.state_disk_total_bytes,
     virtualization_available: value.virtualization_available,
+  }
+}
+
+/// Changes new-Job admission while retaining the Agent's registration and current Lease.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetAgentEnabledCommand {
+  /// Stable enrolled Agent.
+  pub agent_id: AgentId,
+  /// Reviewed management version.
+  pub expected_version: AgentVersion,
+  /// New-Job admission permission.
+  pub enabled: bool,
+  /// Scoped replay identity.
+  pub idempotency_key: IdempotencyKey,
+  /// Trusted command time.
+  pub requested_at: Timestamp,
+}
+impl Command for SetAgentEnabledCommand {
+  type Outcome = AgentCommandOutcome;
+}
+impl ManagementAuthorizationTarget for SetAgentEnabledCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping = DrainAgentCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    instance_resource(ManagementResourceKind::Agent, self.agent_id)
+  }
+}
+#[async_trait]
+impl<S: AgentStore + 'static> crate::ManagementCommandUseCase<SetAgentEnabledCommand> for AgentHandlers<S> {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: SetAgentEnabledCommand,
+  ) -> Result<AgentCommandOutcome, Self::Error> {
+    let outcome = self
+      .store
+      .set_agent_enabled(audited_mutation(
+        context,
+        octacity_server_store::SetAgentEnabled {
+          agent_id: command.agent_id,
+          expected_version: command.expected_version,
+          enabled: command.enabled,
+          idempotency_key: command.idempotency_key,
+          requested_at: command.requested_at,
+        },
+      )?)
+      .await?;
+    Ok(AgentCommandOutcome {
+      disposition: outcome.disposition.into(),
+      agent: octacity_server_store::AgentDetail {
+        agent: outcome.agent,
+        current_execution: outcome.current_execution,
+        resources: None,
+      }
+      .into(),
+    })
   }
 }

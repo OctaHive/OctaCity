@@ -10,6 +10,29 @@ use crate::{
 use super::*;
 
 #[test]
+fn inventory_accepts_bounded_host_details_without_requiring_them_for_older_agents() {
+  let legacy = serde_json::to_value(inventory()).unwrap();
+  let mut value = legacy.clone();
+  value["host_details"] = serde_json::json!({
+    "hostname":"builder.example.test", "fqdn":"builder.example.test", "os_version":"Linux 6.8",
+    "ip_addresses":["10.0.0.2","2001:db8::2"]
+  });
+  let decoded: AgentInventory = serde_json::from_value(value.clone()).unwrap();
+  decoded.validate().unwrap();
+  serde_json::from_value::<AgentInventory>(legacy)
+    .unwrap()
+    .validate()
+    .unwrap();
+  value["host_details"]["hostname"] = serde_json::json!("x".repeat(254));
+  assert!(
+    serde_json::from_value::<AgentInventory>(value)
+      .unwrap()
+      .validate()
+      .is_err()
+  );
+}
+
+#[test]
 fn agent_credentials_round_trip_without_exposing_the_secret() {
   let token = AgentCredentialToken::parse(
     "enrollment.00000000-0000-0000-0000-000000000001.BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc",
@@ -56,6 +79,7 @@ fn capacity() -> HostCapacity {
 
 fn inventory() -> AgentInventory {
   AgentInventory {
+    host_details: None,
     agent_id: "agent-1".to_owned(),
     agent_version: "0.1.0".to_owned(),
     coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],

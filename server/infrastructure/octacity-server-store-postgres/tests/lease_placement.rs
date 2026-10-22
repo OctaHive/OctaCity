@@ -21,6 +21,271 @@ use support::TestDatabase;
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn a_waiting_resource_sample_cannot_cross_registration_revocation() {
+  use octacity_server_store::{AgentResourceObservation, AgentResourceStore as _};
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let mut registration = database.pool.begin().await.unwrap();
+  sqlx::query("SELECT id FROM agents WHERE id = $1 FOR UPDATE")
+    .bind(fixture.agent_id.as_uuid())
+    .execute(&mut *registration)
+    .await
+    .unwrap();
+  let store = PostgresStore::new(database.pool.clone());
+  let writer = store.clone();
+  let observation = AgentResourceObservation {
+    agent_id: fixture.agent_id,
+    registration_epoch: fixture.registration_epoch,
+    snapshot: octacity_server_store::testing::compatible_snapshot(),
+    observed_at: system_time().unwrap(),
+  };
+  let write = tokio::spawn(async move { writer.record_agent_resources(observation).await });
+  tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    loop {
+      let waiting: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE datname = current_database() AND cardinality(pg_blocking_pids(pid)) > 0)")
+        .fetch_one(&database.pool).await.unwrap();
+      if waiting { break; }
+      tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+  }).await.expect("observation must reach the held registration fence");
+  sqlx::query("UPDATE agent_registrations SET revoked_at = now() WHERE agent_id = $1")
+    .bind(fixture.agent_id.as_uuid())
+    .execute(&mut *registration)
+    .await
+    .unwrap();
+  sqlx::query("UPDATE agents SET version = version + 1 WHERE id = $1")
+    .bind(fixture.agent_id.as_uuid())
+    .execute(&mut *registration)
+    .await
+    .unwrap();
+  registration.commit().await.unwrap();
+  write.await.unwrap().unwrap();
+  assert!(store.agent_detail(fixture.agent_id).await.unwrap().resources.is_none());
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn current_agent_resources_survive_restart_and_reject_stale_or_fenced_samples() {
+  use octacity_server_store::{AgentResourceObservation, AgentResourceStore as _};
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let store = PostgresStore::new(database.pool.clone());
+  let mut snapshot = octacity_server_store::testing::compatible_snapshot();
+  snapshot.work_disk_free_bytes = 1234;
+  snapshot.state_disk_free_bytes = 567;
+  let observation = AgentResourceObservation {
+    agent_id: fixture.agent_id,
+    registration_epoch: fixture.registration_epoch,
+    snapshot,
+    observed_at: system_time().unwrap(),
+  };
+  store.record_agent_resources(observation.clone()).await.unwrap();
+  let resources = PostgresStore::new(database.pool.clone())
+    .agent_detail(fixture.agent_id)
+    .await
+    .unwrap()
+    .resources
+    .unwrap();
+  assert_eq!(resources.work_disk_free_bytes, 1234);
+  assert_eq!(resources.state_disk_free_bytes, 567);
+  let mut stale = observation.clone();
+  stale.observed_at = Timestamp::from_unix_millis(observation.observed_at.unix_millis() - 1).unwrap();
+  stale.snapshot.work_disk_free_bytes = 1;
+  store.record_agent_resources(stale).await.unwrap();
+  let mut fenced = observation;
+  fenced.registration_epoch = octacity_server_store::RegistrationEpoch::new(99).unwrap();
+  fenced.snapshot.work_disk_free_bytes = 2;
+  store.record_agent_resources(fenced).await.unwrap();
+  assert_eq!(
+    store
+      .agent_detail(fixture.agent_id)
+      .await
+      .unwrap()
+      .resources
+      .unwrap()
+      .work_disk_free_bytes,
+    1234
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn agent_availability_preserves_registration_and_current_work_across_restart() {
+  use octacity_server_domain::AgentVersion;
+  use octacity_server_store::{SetAgentEnabled, testing::management_mutation};
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let store = PostgresStore::new(database.pool.clone());
+  let execution = PostgresAuthoritativeStore::new(database.pool.clone(), support::test_signer());
+  execution.accept_trigger(fixture.request.clone()).await.unwrap();
+  let request = SetAgentEnabled {
+    agent_id: fixture.agent_id,
+    expected_version: AgentVersion::INITIAL,
+    enabled: false,
+    idempotency_key: IdempotencyKey::new("disable-agent").unwrap(),
+    requested_at: system_time().unwrap(),
+  };
+  let disabled = store
+    .set_agent_enabled(management_mutation(request.clone()))
+    .await
+    .unwrap();
+  assert!(!disabled.agent.enabled);
+  assert_eq!(disabled.agent.status, octacity_server_store::AgentStatus::Online);
+  assert!(matches!(
+    execution.claim_ready_job(placement_claim(&fixture)).await.unwrap(),
+    JobClaimOutcome::Empty
+  ));
+  assert!(
+    !PostgresStore::new(database.pool.clone())
+      .agent_detail(fixture.agent_id)
+      .await
+      .unwrap()
+      .agent
+      .enabled
+  );
+  assert_eq!(
+    store
+      .set_agent_enabled(management_mutation(request.clone()))
+      .await
+      .unwrap()
+      .disposition,
+    octacity_server_store::MutationDisposition::Replayed
+  );
+  let enabled = store
+    .set_agent_enabled(management_mutation(SetAgentEnabled {
+      expected_version: disabled.agent.version,
+      enabled: true,
+      idempotency_key: IdempotencyKey::new("enable-agent").unwrap(),
+      ..request.clone()
+    }))
+    .await
+    .unwrap();
+  assert!(enabled.agent.enabled);
+  let now = system_time().unwrap();
+  let current_claim = JobClaim::new(
+    id(957),
+    LeaseFence::from_bytes([0x57; 32]),
+    fixture.agent_id,
+    fixture.registration_epoch,
+    fixture.allowed_pool,
+    octacity_server_store::testing::compatible_snapshot(),
+    LeaseWindow::new(now, add_millis(now, 60_000).unwrap()).unwrap(),
+  )
+  .unwrap();
+  let grant = match execution.claim_ready_job(current_claim).await.unwrap() {
+    JobClaimOutcome::Claimed(grant) => *grant,
+    JobClaimOutcome::Empty => panic!("enabled Agent must receive the original ready Job"),
+  };
+  let disabled_again = store
+    .set_agent_enabled(management_mutation(SetAgentEnabled {
+      expected_version: enabled.agent.version,
+      idempotency_key: IdempotencyKey::new("disable-active-agent").unwrap(),
+      ..request.clone()
+    }))
+    .await
+    .unwrap();
+  assert!(!disabled_again.agent.enabled);
+  assert_eq!(disabled_again.current_execution.as_ref().unwrap().job_id, grant.job_id);
+  let access = LeaseAccess {
+    lease_id: grant.lease_id,
+    fence: grant.fence,
+    agent_id: grant.agent_id,
+    registration_epoch: grant.registration_epoch,
+  };
+  let now = system_time().unwrap();
+  let mut renewal = heartbeat(
+    "disabled-agent-heartbeat",
+    access,
+    &grant,
+    now,
+    add_millis(now, 60_000).unwrap(),
+  );
+  let mut snapshot = octacity_server_store::testing::compatible_snapshot();
+  snapshot.work_disk_free_bytes = 777;
+  renewal.resources = Some(snapshot);
+  assert!(matches!(
+    execution.renew_lease(renewal).await.unwrap(),
+    LeaseHeartbeatOutcome::Continue { .. }
+  ));
+  assert_eq!(
+    store
+      .agent_detail(fixture.agent_id)
+      .await
+      .unwrap()
+      .resources
+      .unwrap()
+      .work_disk_free_bytes,
+    777
+  );
+  assert!(
+    store
+      .set_agent_enabled(management_mutation(SetAgentEnabled {
+        enabled: true,
+        ..request
+      }))
+      .await
+      .is_err()
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn agent_counts_cover_visible_pool_members_before_pagination() {
+  let database = TestDatabase::migrated().await;
+  let fixture = authoritative_store_contract_fixture();
+  seed_authoritative_prerequisites(&database.pool, &fixture)
+    .await
+    .unwrap();
+  let store = PostgresStore::new(database.pool.clone());
+  let page = store
+    .list_agents(
+      octacity_server_store::ListAgents::new(None, 1, octacity_server_store::AgentListVisibility::all())
+        .unwrap()
+        .for_pool(Some(fixture.allowed_pool)),
+    )
+    .await
+    .unwrap();
+  assert_eq!(page.agents.len(), 1);
+  assert_eq!((page.active_count, page.total_count), (1, 3));
+  let restricted = store
+    .list_agents(
+      octacity_server_store::ListAgents::new(
+        None,
+        1,
+        octacity_server_store::AgentListVisibility::restricted([fixture.agent_id, fixture.expired_agent_id]).unwrap(),
+      )
+      .unwrap()
+      .for_pool(Some(fixture.allowed_pool)),
+    )
+    .await
+    .unwrap();
+  assert_eq!((restricted.active_count, restricted.total_count), (1, 2));
+  let drained = store
+    .list_agents(
+      octacity_server_store::ListAgents::new(None, 1, octacity_server_store::AgentListVisibility::all())
+        .unwrap()
+        .for_pool(Some(fixture.draining_pool)),
+    )
+    .await
+    .unwrap();
+  assert_eq!((drained.active_count, drained.total_count), (0, 1));
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn scheduling_does_not_depend_on_json_snapshot_shape() {
   let database = TestDatabase::migrated().await;
   let result = verify_scheduling_does_not_depend_on_json_snapshot_shape(&database.pool).await;
@@ -507,6 +772,7 @@ fn heartbeat(
   expires_at: Timestamp,
 ) -> RenewLease {
   RenewLease {
+    resources: None,
     idempotency_key: IdempotencyKey::new(key).unwrap(),
     lease,
     job_id: grant.job_id,

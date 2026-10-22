@@ -15,17 +15,85 @@ import { AgentPoolView, AgentView } from './CapacityViews';
 afterEach(cleanup);
 
 describe('Capacity detail views', () => {
+  it('shows observed free disk space rather than substituting total filesystem capacity', async () => {
+    const api = fakeCapacityApi();
+    const resource = agent('agent-a', 'Builder A', 'pool-a');
+    resource.resources = {
+      observed_at: 1_700_000_000_000,
+      available_cpu_millis: 1000,
+      available_memory_bytes: 1024,
+      work_disk_free_bytes: 1_073_741_824,
+      state_disk_free_bytes: 2_147_483_648,
+    };
+    api.getAgent.mockResolvedValue(resource);
+    renderView('/agents/agent-a', <AgentView api={api} />);
+    expect(await screen.findByText('1.0 GiB free of 100.0 GiB')).toBeTruthy();
+    expect(screen.getByText('2.0 GiB free of 50.0 GiB')).toBeTruthy();
+  });
+  it('shows reported host identity and OS release without inventing an inbound port', async () => {
+    const api = fakeCapacityApi();
+    const resource = agent('agent-a', 'Builder A', 'pool-a');
+    resource.inventory.host_details = {
+      hostname: 'builder-1',
+      fqdn: 'builder-1.example.test',
+      os_version: 'Linux 6.8.12',
+      ip_addresses: ['10.60.20.111'],
+    };
+    api.getAgent.mockResolvedValue(resource);
+    renderView('/agents/agent-a', <AgentView api={api} />);
+    expect(await screen.findByText('builder-1.example.test')).toBeTruthy();
+    expect(screen.getByText('builder-1')).toBeTruthy();
+    expect(screen.getByText('10.60.20.111')).toBeTruthy();
+    expect(screen.getByText('Linux 6.8.12')).toBeTruthy();
+    expect(screen.getByText('Not used — outbound connection')).toBeTruthy();
+  });
+  it('disconnects new-Job admission through a confirmed versioned action without draining', async () => {
+    const api = fakeCapacityApi();
+    const resource = agent('agent-a', 'Builder A', 'pool-a');
+    api.getAgent.mockResolvedValue(resource);
+    api.setAgentEnabled.mockResolvedValue({
+      requestId: 'availability-receipt',
+      response: { disposition: 'applied', resource: { ...resource, enabled: false, version: 4 } },
+    });
+    renderView('/agents/agent-a', <AgentView api={api} />);
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Disconnect Agent' }));
+    const dialog = screen.getByRole('dialog', { name: 'Disconnect Agent Builder A?' });
+    expect(api.setAgentEnabled).not.toHaveBeenCalled();
+    await userEvent.click(within(dialog).getByRole('button', { name: 'Disconnect Agent' }));
+    expect(api.setAgentEnabled).toHaveBeenCalledWith(
+      'agent-a',
+      { enabled: false },
+      expect.objectContaining({ 'If-Match': '"3"' }),
+    );
+    expect(api.drainAgent).not.toHaveBeenCalled();
+  });
+  it('offers compact header actions with separate graceful and forced drain review', async () => {
+    const api = fakeCapacityApi();
+    api.getAgent.mockResolvedValue(agent('agent-a', 'Builder A', 'pool-a'));
+    renderView('/agents/agent-a', <AgentView api={api} />);
+    const actions = await screen.findByRole('button', { name: 'Actions' });
+    expect(screen.queryByRole('button', { name: 'Graceful drain' })).toBeNull();
+    await userEvent.click(actions);
+    await userEvent.click(screen.getByRole('button', { name: 'Graceful drain' }));
+    const dialog = screen.getByRole('dialog', { name: 'Drain Agent Builder A?' });
+    expect(within(dialog).getByRole('button', { name: 'Start graceful drain' })).toBeTruthy();
+    expect(api.drainAgent).not.toHaveBeenCalled();
+  });
   it('renders idle Agent readiness, assignment, and inventory without compatibility inference', async () => {
     const api = fakeCapacityApi();
     api.getAgent.mockResolvedValue(agent('agent-a', 'Builder A', 'pool-a'));
+    api.getAgentPool.mockResolvedValue(pool('pool-a', 'Build Pool'));
     renderView('/agents/agent-a', <AgentView api={api} />);
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Builder A' })).toBeTruthy();
     expect(screen.getByText('Online')).toBeTruthy();
     expect(screen.getByText('Idle — no current execution is published.')).toBeTruthy();
-    expect(screen.getByRole('link', { name: 'pool-a' }).getAttribute('href')).toBe(
+    expect((await screen.findByRole('link', { name: 'Build Pool' })).getAttribute('href')).toBe(
       '/agent-pools/pool-a',
     );
+    expect(screen.queryByText('Pool version')).toBeNull();
+    expect(screen.getByText('Work disk').nextElementSibling?.textContent).toBe('Not reported');
     expect(screen.getByText('Available')).toBeTruthy();
     expect(screen.queryByText(/compatible/i)).toBeNull();
   });
@@ -49,6 +117,28 @@ describe('Capacity detail views', () => {
     expect(screen.getByText('Cancellation requested')).toBeTruthy();
     expect(screen.getByText('lease-a')).toBeTruthy();
     expect(screen.queryByText(/fence|credential|bearer/i)).toBeNull();
+  });
+
+  it('shows current provider-neutral execution routes when legacy runtimes are empty', async () => {
+    const api = fakeCapacityApi();
+    const resource = agent('agent-a', 'Builder A', 'pool-a');
+    resource.inventory.executions = [
+      {
+        provider: 'microsandbox',
+        mode: 'virtualization',
+        host_platform: { os: 'macos', architecture: 'arm64' },
+        target_platform: { os: 'linux', architecture: 'arm64' },
+        guarantees: ['hardware_virtualization'],
+        immutable_images: true,
+      },
+    ];
+    api.getAgent.mockResolvedValue(resource);
+    renderView('/agents/agent-a', <AgentView api={api} />);
+    const routes = await screen.findByRole('list', { name: 'Execution runtimes' });
+    expect(routes.textContent).toContain('microsandbox');
+    expect(routes.textContent).toContain('linux/arm64');
+    expect(screen.queryByText('No execution runtimes were published.')).toBeNull();
+    expect(screen.getByText('Runtime count').nextElementSibling?.textContent).toBe('1');
   });
 
   it('renders restrictive Pool admission facts without deciding workload compatibility', async () => {
@@ -111,7 +201,8 @@ describe('Capacity detail views', () => {
     const { queryClient } = renderView('/agents/agent-a', <AgentView api={api} />);
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
 
-    await userEvent.click(await screen.findByRole('button', { name: 'Drain Agent' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Graceful drain' }));
     const dialog = screen.getByRole('dialog', { name: 'Drain Agent Builder A?' });
     expect(within(dialog).getByText(/finish its current execution/)).toBeTruthy();
     const confirm = within(dialog).getByRole('button', { name: 'Start graceful drain' });
@@ -167,6 +258,8 @@ describe('Capacity detail views', () => {
     const { queryClient } = renderView('/agents/agent-a', <AgentView api={api} />);
     const invalidate = vi.spyOn(queryClient, 'invalidateQueries');
 
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Change pool' }));
     const target = await screen.findByRole('combobox', { name: 'Target Agent Pool' });
     expect(within(target).queryByRole('option', { name: 'Current Pool' })).toBeNull();
     await userEvent.click(target);
@@ -217,6 +310,8 @@ describe('Capacity detail views', () => {
     });
     renderView('/agents/agent-a', <AgentView api={api} />);
 
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Change pool' }));
     expect(
       await screen.findByText(/Pool reassignment is available only while the Agent is idle/),
     ).toBeTruthy();
@@ -244,6 +339,8 @@ describe('Capacity detail views', () => {
     );
     renderView('/agents/agent-a', <AgentView api={api} />);
 
+    await userEvent.click(await screen.findByRole('button', { name: 'Actions' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Change pool' }));
     await userEvent.click(await screen.findByRole('combobox', { name: 'Target Agent Pool' }));
     await userEvent.click(screen.getByRole('option', { name: 'Ineligible Pool' }));
     await userEvent.click(screen.getByRole('button', { name: 'Review pool reassignment' }));
@@ -286,8 +383,11 @@ function managementError(requestId: string) {
 
 function fakeCapacityApi() {
   return {
+    setAgentEnabled: vi.fn(),
     getAgent: vi.fn<CapacityApi['getAgent']>(),
-    getAgentPool: vi.fn<CapacityApi['getAgentPool']>(),
+    getAgentPool: vi
+      .fn<CapacityApi['getAgentPool']>()
+      .mockResolvedValue(pool('pool-a', 'Current Pool')),
     drainAgent: vi.fn<CapacityApi['drainAgent']>(),
     listAgentPools: vi
       .fn<CapacityApi['listAgentPools']>()

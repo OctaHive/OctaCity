@@ -17,7 +17,7 @@ use octacity_server_application::{
   PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand, PublishPipelineVersionCommand,
   PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery, ReassignAgentPoolCommand,
   ReleaseBuildResultHoldCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
-  SearchBuildLogsQuery, SearchResourcesQuery,
+  SearchBuildLogsQuery, SearchResourcesQuery, SetAgentEnabledCommand,
 };
 
 type ProjectCreate = dyn AuthorizedManagementCommandHandler<CreateProjectCommand, Error = ApplicationError>;
@@ -51,6 +51,7 @@ type AgentPoolList = dyn AuthorizedManagementQueryHandler<ListAgentPoolsQuery, E
 type AgentGet = dyn AuthorizedManagementQueryHandler<GetAgentQuery, Error = ApplicationError>;
 type AgentList = dyn AuthorizedManagementQueryHandler<ListAgentsQuery, Error = ApplicationError>;
 type AgentReassign = dyn AuthorizedManagementCommandHandler<ReassignAgentPoolCommand, Error = ApplicationError>;
+type AgentAvailability = dyn AuthorizedManagementCommandHandler<SetAgentEnabledCommand, Error = ApplicationError>;
 type AgentDrain = dyn AuthorizedManagementCommandHandler<DrainAgentCommand, Error = ApplicationError>;
 type AgentEnrollmentIssue =
   dyn AuthorizedManagementCommandHandler<IssueAgentEnrollmentCommand, Error = ApplicationError>;
@@ -267,6 +268,7 @@ pub(super) struct AgentEndpoints {
   pub(super) list: Arc<AgentList>,
   pub(super) reassign: Arc<AgentReassign>,
   pub(super) drain: Arc<AgentDrain>,
+  pub(super) availability: Arc<AgentAvailability>,
 }
 
 impl AgentManagementApplication {
@@ -288,6 +290,7 @@ impl AgentManagementApplication {
       + 'static,
     AC: AuthorizedManagementCommandHandler<ReassignAgentPoolCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<DrainAgentCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<SetAgentEnabledCommand, Error = ApplicationError>
       + 'static,
     AQ: AuthorizedManagementQueryHandler<GetAgentQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ListAgentsQuery, Error = ApplicationError>
@@ -307,6 +310,7 @@ impl AgentManagementApplication {
         get: agent_queries.clone(),
         list: agent_queries,
         reassign: agent_commands.clone(),
+        availability: agent_commands.clone(),
         drain: agent_commands,
       },
     }

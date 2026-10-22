@@ -332,6 +332,7 @@ pub(crate) enum MutationKind {
   DeleteAgentPool,
   ReassignAgentPool,
   DrainAgent,
+  SetAgentEnabled,
   CreatePipeline,
   PublishPipelineVersion,
   CreateRepository,
@@ -596,6 +597,12 @@ impl MutationKind {
         "drain-agent",
         "agent",
         "agent.drain-requested"
+      ),
+      Self::SetAgentEnabled => metadata!(
+        b"octacity.agent-availability.v1\0",
+        "set-agent-enabled",
+        "agent",
+        "agent.availability-changed"
       ),
       Self::CreatePipeline => metadata!(
         b"octacity.create-pipeline.v1\0",

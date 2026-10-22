@@ -13,7 +13,7 @@ octa-runner-protocol.workspace = true
 octacity-protocol = { path = "../../shared/octacity-protocol" }
 octacity-runner = { path = "../octacity-runner" }
 octacity-source = { path = "../octacity-source" }
-sysinfo.workspace = true
+sysinfo = { workspace = true, features = ["network"] }
 thiserror.workspace = true
 
 [target.'cfg(windows)'.dependencies]

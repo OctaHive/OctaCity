@@ -132,6 +132,8 @@ pub struct AgentCapacity {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct AgentResource {
+  /// Latest server-received resource observation; absent means not yet reported.
+  pub resources: Option<octacity_server_application::AgentResources>,
   /// Stable Agent identity.
   pub id: String,
   /// Operator-facing name.
@@ -148,8 +150,32 @@ pub struct AgentResource {
   pub capacity: AgentCapacity,
   /// Normalized lifecycle.
   pub status: AgentStatus,
+  /// Whether the operator permits new Jobs; presence and active work are independent.
+  pub enabled: bool,
   /// Last authoritative contact as Unix milliseconds.
   pub last_seen_at_unix_ms: i64,
   /// Current non-terminal execution, or `null` when the Agent is idle.
   pub current_execution: Option<AgentCurrentExecution>,
+}
+
+/// A bounded Agent page with visibility-filtered counts before pagination.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentPage {
+  /// Visible matching Agents on this page.
+  pub items: Vec<AgentResource>,
+  /// Exclusive next-page cursor.
+  pub next_cursor: Option<super::Cursor>,
+  /// Online Agents accepting work under their current Pool policy.
+  pub active_count: u64,
+  /// All visible matching Agents, including unavailable members.
+  pub total_count: u64,
+}
+
+/// Strict admission-only control for one enrolled Agent.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetAgentEnabledRequest {
+  /// Whether new Jobs may be assigned without changing registration or current work.
+  pub enabled: bool,
 }

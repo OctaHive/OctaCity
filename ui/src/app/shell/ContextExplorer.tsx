@@ -151,13 +151,17 @@ export function ContextExplorer({
                 section={section}
               />
             </section>
-            <section aria-labelledby={`${section.id}-browse`} className={styles.explorerSection}>
-              <h3 id={`${section.id}-browse`}>
-                <FolderOpen aria-hidden="true" size={15} />
-                {t('common.browse')}
-              </h3>
-              {children === undefined ? <ExplorerLinks section={section} /> : children}
-            </section>
+            {section.id === 'agents' ? (
+              children
+            ) : (
+              <section aria-labelledby={`${section.id}-browse`} className={styles.explorerSection}>
+                <h3 id={`${section.id}-browse`}>
+                  <FolderOpen aria-hidden="true" size={15} />
+                  {t('common.browse')}
+                </h3>
+                {children === undefined ? <ExplorerLinks section={section} /> : children}
+              </section>
+            )}
           </>
         )}
       </div>

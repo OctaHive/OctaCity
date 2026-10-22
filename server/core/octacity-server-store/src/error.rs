@@ -108,6 +108,8 @@ pub enum StoreOperation {
   ReassignAgentPool,
   /// Place one Agent into graceful or forced drain.
   DrainAgent,
+  /// Change whether an Agent accepts new Jobs.
+  SetAgentEnabled,
   /// Create one Pipeline identity and immutable initial version.
   CreatePipeline,
   /// Append exactly the next immutable Pipeline version.

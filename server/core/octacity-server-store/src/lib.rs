@@ -45,6 +45,9 @@ pub use issue_workflow::*;
 mod issue_workflow_testing;
 
 mod agent_model;
+mod agent_resources;
+pub use agent_model::{SetAgentEnabled, SetAgentEnabledOutcome};
+pub use agent_resources::{AgentResourceObservation, AgentResourceStore, AgentResources};
 mod agent_port;
 mod artifact_model;
 mod artifact_port;

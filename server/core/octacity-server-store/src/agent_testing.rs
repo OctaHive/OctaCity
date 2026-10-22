@@ -27,6 +27,13 @@ struct State {
   current_pools: BTreeMap<PoolId, PoolVersion>,
   current_executions: BTreeMap<AgentId, AgentCurrentExecution>,
   mutations: BTreeMap<ManagementIdempotencyKey, (Fingerprint, ReassignAgentPoolOutcome)>,
+  availability_mutations: BTreeMap<
+    ManagementIdempotencyKey,
+    (
+      (AgentId, octacity_server_domain::AgentVersion, bool),
+      crate::SetAgentEnabledOutcome,
+    ),
+  >,
   drain_mutations: BTreeMap<ManagementIdempotencyKey, (DrainFingerprint, DrainAgentOutcome)>,
   audit: BTreeSet<RecordedManagementAuditFact>,
 }
@@ -113,6 +120,51 @@ impl InMemoryAgentStore {
 
 #[async_trait]
 impl AgentStore for InMemoryAgentStore {
+  async fn set_agent_enabled(
+    &self,
+    mutation: ManagementMutation<crate::SetAgentEnabled>,
+  ) -> Result<crate::SetAgentEnabledOutcome, StoreError> {
+    let (request, audit) = mutation.into_parts();
+    let key = audit.scoped_idempotency_key(&request.idempotency_key);
+    let fingerprint = (request.agent_id, request.expected_version, request.enabled);
+    let mut state = self.lock()?;
+    if let Some((stored, receipt)) = state.availability_mutations.get(&key) {
+      if stored != &fingerprint {
+        return Err(StoreError::Conflict {
+          entity: EntityKind::Agent,
+        });
+      }
+      let mut receipt = receipt.clone();
+      receipt.disposition = MutationDisposition::Replayed;
+      return Ok(receipt);
+    }
+    let (agent, _) = state.agents.get_mut(&request.agent_id).ok_or(StoreError::NotFound {
+      entity: EntityKind::Agent,
+    })?;
+    if agent.version != request.expected_version || (request.enabled && agent.status == crate::AgentStatus::Draining) {
+      return Err(StoreError::Conflict {
+        entity: EntityKind::Agent,
+      });
+    }
+    agent.enabled = request.enabled;
+    agent.version = agent.version.next().map_err(|_| StoreError::Unavailable)?;
+    agent.updated_at = request.requested_at;
+    let agent = agent.clone();
+    let outcome = crate::SetAgentEnabledOutcome {
+      disposition: MutationDisposition::Applied,
+      agent,
+      current_execution: state.current_executions.get(&request.agent_id).cloned(),
+    };
+    state.availability_mutations.insert(key, (fingerprint, outcome.clone()));
+    state.audit.insert(recorded_management_audit(
+      &audit,
+      StoreOperation::SetAgentEnabled,
+      EntityKind::Agent,
+      request.agent_id,
+    ));
+    Ok(outcome)
+  }
+
   async fn agent_detail(&self, agent_id: AgentId) -> Result<AgentDetail, StoreError> {
     let state = self.lock()?;
     let agent = state
@@ -123,6 +175,7 @@ impl AgentStore for InMemoryAgentStore {
         entity: EntityKind::Agent,
       })?;
     Ok(AgentDetail {
+      resources: None,
       agent,
       current_execution: state.current_executions.get(&agent_id).cloned(),
     })
@@ -133,23 +186,49 @@ impl AgentStore for InMemoryAgentStore {
       return Ok(AgentPage {
         agents: Vec::new(),
         next_cursor: None,
+        active_count: 0,
+        total_count: 0,
       });
     }
     let state = self.lock()?;
     let limit = usize::from(request.limit().get());
-    let mut agents = state
+    let visible = state
       .agents
       .iter()
       .filter(|(id, _)| request.visibility().allows(id))
       .filter(|(_, record)| request.pool_id().is_none_or(|pool_id| record.0.pool_id == pool_id))
-      .filter(|(id, _)| request.after().is_none_or(|after| **id > after))
-      .map(|(_, record)| record.0.clone())
+      .map(|(_, record)| &record.0)
+      .collect::<Vec<_>>();
+    let total_count = visible.len() as u64;
+    let active_count = visible
+      .iter()
+      .filter(|agent| {
+        agent.enabled
+          && agent.status == crate::AgentStatus::Online
+          && state
+            .current_pools
+            .get(&agent.pool_id)
+            .and_then(|version| state.pools.get(&(agent.pool_id, *version)))
+            .is_some_and(|pool| {
+              pool.enabled && pool.drain_state == octacity_server_scheduler::PoolDrainState::Accepting
+            })
+      })
+      .count() as u64;
+    let mut agents = visible
+      .into_iter()
+      .filter(|agent| request.after().is_none_or(|after| agent.id > after))
       .take(limit + 1)
+      .cloned()
       .collect::<Vec<_>>();
     let has_more = agents.len() > limit;
     agents.truncate(limit);
     let next_cursor = has_more.then(|| agents.last().expect("non-zero full page has a last Agent").id);
-    Ok(AgentPage { agents, next_cursor })
+    Ok(AgentPage {
+      agents,
+      next_cursor,
+      active_count,
+      total_count,
+    })
   }
 
   async fn reassign_agent_pool(
@@ -348,6 +427,7 @@ mod tests {
           .await
           .unwrap();
         assert_eq!(listed.agents.len(), 1);
+        assert_eq!((listed.active_count, listed.total_count), (2, 2));
         assert_eq!(listed.next_cursor, Some(agent_id));
         let restricted = store
           .list_agents(
@@ -362,6 +442,7 @@ mod tests {
           .unwrap();
         assert_eq!(restricted.agents, vec![second_agent]);
         assert_eq!(restricted.next_cursor, None);
+        assert_eq!((restricted.active_count, restricted.total_count), (1, 1));
         let pool_filtered = store
           .list_agents(
             ListAgents::new(None, 10, crate::AgentListVisibility::all())
@@ -377,6 +458,7 @@ mod tests {
           .await
           .unwrap();
         assert!(none.agents.is_empty());
+        assert_eq!((none.active_count, none.total_count), (0, 0));
         assert_eq!(none.next_cursor, None);
         assert_eq!(store.agent_detail(agent_id).await.unwrap().agent.pool_id, source);
 
@@ -512,12 +594,14 @@ mod tests {
 
   fn enrolled_agent(pool_id: PoolId) -> EnrolledAgent {
     EnrolledAgent {
+      enabled: true,
       id: id(10),
       name: AgentName::new("builder-1").unwrap(),
       version: AgentVersion::INITIAL,
       pool_id,
       pool_version: PoolVersion::INITIAL,
       inventory: AgentInventory {
+        host_details: None,
         agent_id: "builder-1".to_owned(),
         agent_version: "0.1.0".to_owned(),
         coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],

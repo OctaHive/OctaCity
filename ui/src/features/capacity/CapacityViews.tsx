@@ -60,6 +60,15 @@ function SelectedAgent({ agentId, api }: { agentId: string; api: CapacityApi }) 
   return (
     <section aria-labelledby="page-title" className={styles.page}>
       <CapacityHeading
+        enabled={agent.data.enabled ?? true}
+        actions={
+          <AgentCommands
+            agent={agent.data}
+            api={api}
+            fallbackFocusRef={headingRef}
+            onRefresh={agent.refetch}
+          />
+        }
         fetching={agent.isFetching}
         identity={agent.data.id}
         onRefresh={agent.refetch}
@@ -74,13 +83,7 @@ function SelectedAgent({ agentId, api }: { agentId: string; api: CapacityApi }) 
         label={t('capacity.agent')}
         onRetry={agent.refetch}
       />
-      <AgentFacts agent={agent.data} />
-      <AgentCommands
-        agent={agent.data}
-        api={api}
-        fallbackFocusRef={headingRef}
-        onRefresh={agent.refetch}
-      />
+      <AgentFacts agent={agent.data} api={api} />
     </section>
   );
 }
@@ -131,6 +134,8 @@ function SelectedAgentPool({ api, poolId }: { api: CapacityApi; poolId: string }
 }
 
 function CapacityHeading({
+  enabled,
+  actions,
   fetching,
   identity,
   onRefresh,
@@ -139,6 +144,8 @@ function CapacityHeading({
   title,
   titleRef,
 }: {
+  enabled?: boolean;
+  actions?: ReactNode;
   fetching: boolean;
   identity: string;
   onRefresh: () => unknown;
@@ -157,26 +164,57 @@ function CapacityHeading({
             {title}
           </h1>
         </div>
-        <button
-          className={styles.button}
-          disabled={fetching}
-          onClick={() => void onRefresh()}
-          type="button"
-        >
-          <RefreshCw aria-hidden="true" size={15} />
-          {fetching ? t('common.refreshing') : t('common.refresh')}
-        </button>
+        <div className={styles.headingActions}>
+          {actions}
+          <button
+            className={styles.button}
+            disabled={fetching}
+            onClick={() => void onRefresh()}
+            type="button"
+          >
+            <RefreshCw aria-hidden="true" size={15} />
+            {fetching ? t('common.refreshing') : t('common.refresh')}
+          </button>
+        </div>
       </div>
       <p className={styles.identity}>{identity}</p>
-      <span className={styles.status} data-state={state}>
-        {formatEnumLabel(state, t)}
-      </span>
+      <div className={styles.statusLine}>
+        <span className={styles.status} data-state={state}>
+          {formatEnumLabel(state, t)}
+        </span>
+        {enabled === undefined ? null : (
+          <span className={styles.status} data-state={enabled ? 'online' : 'offline'}>
+            {t(enabled ? 'agentCommands.acceptingJobs' : 'agentCommands.notAcceptingJobs')}
+          </span>
+        )}
+      </div>
     </header>
   );
 }
 
-function AgentFacts({ agent }: { agent: AgentResource }) {
+function AgentFacts({ agent, api }: { agent: AgentResource; api: CapacityApi }) {
   const { locale, t } = usePresentation();
+  const diskSpace = (free: number | undefined, total: number) =>
+    free === undefined
+      ? t('capacity.notReported')
+      : t('capacity.diskSpace', {
+          free: formatBytes(free, locale),
+          total: formatBytes(total, locale),
+        });
+  // Current routes replace the legacy runtime inventory; do not count both contracts.
+  const runtimes =
+    agent.inventory.executions.length > 0
+      ? agent.inventory.executions.map((route) => ({
+          backend: route.provider,
+          mode: route.mode,
+          platform: route.target_platform,
+          isolation: null,
+        }))
+      : agent.inventory.runtimes;
+  const pool = useQuery({
+    queryKey: queryKeys.agentPool(agent.pool_id),
+    queryFn: ({ signal }) => api.getAgentPool(agent.pool_id, signal),
+  });
   const lastSeen = formatTimestamp(agent.last_seen_at_unix_ms, locale);
   return (
     <div className={styles.stack}>
@@ -187,9 +225,10 @@ function AgentFacts({ agent }: { agent: AgentResource }) {
         <dl className={styles.grid}>
           <Fact
             label={t('capacity.pool')}
-            value={<Link to={agentPoolPath(agent.pool_id)}>{agent.pool_id}</Link>}
+            value={
+              <Link to={agentPoolPath(agent.pool_id)}>{pool.data?.name ?? t('capacity.pool')}</Link>
+            }
           />
-          <Fact label={t('capacity.poolVersion')} value={agent.pool_version} />
           <Fact label={t('capacity.agentVersion')} value={agent.version} />
           <Fact
             label={t('capacity.lastSeen')}
@@ -200,6 +239,25 @@ function AgentFacts({ agent }: { agent: AgentResource }) {
             label={t('capacity.host')}
             value={`${agent.inventory.host_platform.os}/${agent.inventory.host_platform.architecture}`}
           />
+          <Fact
+            label={t('capacity.hostname')}
+            value={agent.inventory.host_details?.hostname ?? t('capacity.notReported')}
+          />
+          <Fact
+            label={t('capacity.fqdn')}
+            value={agent.inventory.host_details?.fqdn ?? t('capacity.notReported')}
+          />
+          <Fact
+            label={t('capacity.ipAddresses')}
+            value={
+              agent.inventory.host_details?.ip_addresses.join(', ') || t('capacity.notReported')
+            }
+          />
+          <Fact
+            label={t('capacity.osVersion')}
+            value={agent.inventory.host_details?.os_version ?? t('capacity.notReported')}
+          />
+          <Fact label={t('capacity.port')} value={t('capacity.outboundPort')} />
         </dl>
       </section>
       <section className={styles.panel}>
@@ -214,11 +272,17 @@ function AgentFacts({ agent }: { agent: AgentResource }) {
           />
           <Fact
             label={t('capacity.workDisk')}
-            value={formatBytes(agent.capacity.work_disk_total_bytes, locale)}
+            value={diskSpace(
+              agent.resources?.work_disk_free_bytes,
+              agent.capacity.work_disk_total_bytes,
+            )}
           />
           <Fact
             label={t('capacity.stateDisk')}
-            value={formatBytes(agent.capacity.state_disk_total_bytes, locale)}
+            value={diskSpace(
+              agent.resources?.state_disk_free_bytes,
+              agent.capacity.state_disk_total_bytes,
+            )}
           />
           <Fact
             label={t('capacity.virtualization')}
@@ -228,13 +292,21 @@ function AgentFacts({ agent }: { agent: AgentResource }) {
                 : t('capacity.unavailable')
             }
           />
-          <Fact label={t('capacity.runtimeCount')} value={agent.inventory.runtimes.length} />
+          <Fact label={t('capacity.runtimeCount')} value={runtimes.length} />
+          <Fact
+            label={t('capacity.resourcesObservedAt')}
+            value={
+              agent.resources == null
+                ? t('capacity.notReported')
+                : formatTimestamp(agent.resources.observed_at, locale).display
+            }
+          />
         </dl>
-        {agent.inventory.runtimes.length === 0 ? (
+        {runtimes.length === 0 ? (
           <p className={styles.empty}>{t('capacity.noRuntimes')}</p>
         ) : (
           <ul className={styles.list} aria-label={t('capacity.runtimes')}>
-            {agent.inventory.runtimes.map((runtime) => (
+            {runtimes.map((runtime) => (
               <li
                 key={`${runtime.backend}:${runtime.mode}:${runtime.platform.os}:${runtime.platform.architecture}`}
               >

@@ -92,18 +92,12 @@ export function PagedExplorerBranch<T extends { id: string }>({
   );
 }
 
-export function useCursorPage<T, TQueryKey extends QueryKey>(
+export function useCursorPage<TPage extends CursorPage<unknown>, TQueryKey extends QueryKey>(
   queryKey: TQueryKey,
-  read: (cursor: string | null, signal: AbortSignal) => Promise<CursorPage<T>>,
+  read: (cursor: string | null, signal: AbortSignal) => Promise<TPage>,
   { enabled = true, refetchStaleOnMount = true, initialCursor = null }: CursorPageOptions = {},
 ) {
-  return useInfiniteQuery<
-    CursorPage<T>,
-    Error,
-    InfiniteData<CursorPage<T>>,
-    TQueryKey,
-    string | null
-  >({
+  return useInfiniteQuery<TPage, Error, InfiniteData<TPage>, TQueryKey, string | null>({
     enabled,
     getNextPageParam: (page) => page.next_cursor ?? undefined,
     initialPageParam: initialCursor,

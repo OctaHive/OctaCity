@@ -107,6 +107,7 @@ where
         self
           .store
           .renew_lease(RenewLease {
+            resources: Some(input.request.snapshot),
             idempotency_key,
             lease: parsed.access,
             job_id: parsed.job_id,

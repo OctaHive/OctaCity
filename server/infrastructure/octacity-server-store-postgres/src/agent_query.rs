@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use crate::{agent_row::AgentRow, database::unavailable, read_visibility::sql_read_visibility};
 
-async fn read_from(connection: &mut PgConnection, agent_id: AgentId) -> Result<EnrolledAgent, StoreError> {
+pub(crate) async fn read_from(connection: &mut PgConnection, agent_id: AgentId) -> Result<EnrolledAgent, StoreError> {
   sqlx::query_as::<_, AgentRow>(
-    "SELECT id, name, version, pool_id, pool_version, inventory, state, \
+    "SELECT id, name, version, pool_id, pool_version, inventory, state, enabled, \
        FLOOR(EXTRACT(EPOCH FROM last_seen_at) * 1000)::BIGINT AS last_seen_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT AS updated_at_millis \
@@ -42,8 +42,15 @@ pub(crate) async fn read_detail(pool: &sqlx::PgPool, agent_id: AgentId) -> Resul
     .map_err(unavailable)?;
   let agent = read_from(&mut transaction, agent_id).await?;
   let current_execution = read_current_execution(&mut transaction, agent_id).await?;
+  let resources: Option<sqlx::types::Json<octacity_server_store::AgentResources>> =
+    sqlx::query_scalar("SELECT resources FROM agents WHERE id = $1")
+      .bind(agent_id.as_uuid())
+      .fetch_one(&mut *transaction)
+      .await
+      .map_err(unavailable)?;
   transaction.commit().await.map_err(unavailable)?;
   Ok(AgentDetail {
+    resources: resources.map(|value| value.0),
     agent,
     current_execution,
   })
@@ -93,11 +100,28 @@ pub(crate) async fn list(pool: &sqlx::PgPool, request: ListAgents) -> Result<Age
     return Ok(AgentPage {
       agents: Vec::new(),
       next_cursor: None,
+      active_count: 0,
+      total_count: 0,
     });
   }
   let visibility = sql_read_visibility(request.visibility().view(), |id| id.as_uuid());
+  let mut transaction = pool.begin().await.map_err(unavailable)?;
+  sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+    .execute(&mut *transaction)
+    .await
+    .map_err(unavailable)?;
+  let (active_count, total_count): (i64, i64) = sqlx::query_as(
+    "SELECT COUNT(*) FILTER (WHERE agent.state = 'online' AND agent.enabled AND policy.enabled AND policy.drain_state = 'accepting' \
+       AND EXISTS (SELECT 1 FROM agent_registrations registration WHERE registration.agent_id = agent.id \
+         AND registration.revoked_at IS NULL AND registration.expires_at > now())), COUNT(*) \
+     FROM agents agent JOIN LATERAL (SELECT enabled, drain_state FROM pools WHERE id = agent.pool_id \
+       ORDER BY version DESC LIMIT 1) policy ON true \
+     WHERE ($1 OR agent.id = ANY($2::uuid[])) AND ($3::uuid IS NULL OR agent.pool_id = $3)",
+  ).bind(visibility.all).bind(&visibility.identities).bind(request.pool_id().map(|id| id.as_uuid()))
+    .fetch_one(&mut *transaction).await.map_err(unavailable)?;
+
   let rows = sqlx::query_as::<_, AgentRow>(
-    "SELECT id, name, version, pool_id, pool_version, inventory, state, \
+    "SELECT id, name, version, pool_id, pool_version, inventory, state, enabled, \
        FLOOR(EXTRACT(EPOCH FROM last_seen_at) * 1000)::BIGINT AS last_seen_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM created_at) * 1000)::BIGINT AS created_at_millis, \
        FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT AS updated_at_millis \
@@ -112,7 +136,7 @@ pub(crate) async fn list(pool: &sqlx::PgPool, request: ListAgents) -> Result<Age
   .bind(request.pool_id().map(octacity_server_domain::PoolId::as_uuid))
   .bind(request.after().map(AgentId::as_uuid))
   .bind(i64::from(request.limit().get()) + 1)
-  .fetch_all(pool)
+  .fetch_all(&mut *transaction)
   .await
   .map_err(unavailable)?;
   let limit = usize::from(request.limit().get());
@@ -123,5 +147,11 @@ pub(crate) async fn list(pool: &sqlx::PgPool, request: ListAgents) -> Result<Age
   let has_more = agents.len() > limit;
   agents.truncate(limit);
   let next_cursor = has_more.then(|| agents.last().expect("non-zero full page has a last Agent").id);
-  Ok(AgentPage { agents, next_cursor })
+  transaction.commit().await.map_err(unavailable)?;
+  Ok(AgentPage {
+    agents,
+    next_cursor,
+    active_count: u64::try_from(active_count).map_err(|_| StoreError::Unavailable)?,
+    total_count: u64::try_from(total_count).map_err(|_| StoreError::Unavailable)?,
+  })
 }

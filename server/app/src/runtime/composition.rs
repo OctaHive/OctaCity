@@ -301,7 +301,8 @@ impl ServerRuntime {
       ready_jobs.clone(),
       config.agent_lease_lifetime(),
     )
-    .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?;
+    .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?
+    .with_resources(registration_store.clone());
     let execution_service = AgentExecutionService::with_log_archive(
       registration_service.clone(),
       placement_store.clone(),

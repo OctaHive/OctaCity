@@ -133,6 +133,12 @@ fn builds_registration_data_from_verified_component_inventories() {
   .unwrap();
 
   assert_eq!(inventory.agent_version, "agent-release");
+  let host = inventory
+    .host_details
+    .as_ref()
+    .expect("registration publishes host diagnostics");
+  assert!(host.hostname.as_ref().is_some_and(|name| !name.is_empty()));
+  assert!(host.os_version.as_ref().is_some_and(|version| !version.is_empty()));
   assert_eq!(inventory.octa.plugins[0].name, "shell");
   assert!(inventory.source_plugins.is_empty());
   assert!(inventory.cache.is_none());

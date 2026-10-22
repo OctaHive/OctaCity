@@ -30,7 +30,7 @@ use crate::{
   PublishAgentPoolVersionCommand, PublishBuildConfigurationVersionCommand, PublishInternalTriggerVersionCommand,
   PublishPipelineVersionCommand, PublishProjectPolicyCommand, PublishRepositoryVersionCommand, ReadJobEventsQuery,
   ReassignAgentPoolCommand, RenameProjectCommand, RetryBuildCommand, RotateManagedWebhookRegistrationCommand,
-  ScheduledBuildDefinition,
+  ScheduledBuildDefinition, SetAgentEnabledCommand,
 };
 
 mod agent;

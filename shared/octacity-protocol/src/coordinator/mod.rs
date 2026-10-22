@@ -61,6 +61,11 @@ pub const MAX_UPLOAD_HEADER_NAME_BYTES: usize = 256;
 pub const MAX_UPLOAD_HEADER_VALUE_BYTES: usize = 4096;
 /// Maximum bytes accepted for one short-lived cache bearer credential.
 pub const MAX_CACHE_CREDENTIAL_BYTES: usize = 16 * 1024;
+/// Maximum UTF-8 bytes in each optional host diagnostic string.
+pub const MAX_AGENT_HOST_TEXT_BYTES: usize = 253;
+/// Maximum distinct interface addresses retained in host diagnostics.
+pub const MAX_AGENT_IP_ADDRESSES: usize = 16;
+
 /// Complete scheduler-visible inventory sent during registration.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
@@ -78,6 +83,9 @@ pub struct AgentInventory {
   pub labels: BTreeMap<String, String>,
   /// Host operating system and architecture.
   pub host_platform: PlatformSpec,
+  /// Bounded host diagnostics; omitted by older Agents and never used as placement authority.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub host_details: Option<AgentHostDetails>,
   /// Static host capacity measured at registration.
   pub host_capacity: HostCapacity,
   /// Exact execution capabilities validated at startup; an empty list keeps
@@ -96,6 +104,20 @@ pub struct AgentInventory {
   /// Verified Octa task-result cache capability, when installed.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub cache: Option<CacheCapability>,
+}
+
+/// Agent-observed non-secret host facts, separate from execution capabilities.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentHostDetails {
+  /// OS-reported host name, when available.
+  pub hostname: Option<String>,
+  /// OS-reported fully qualified name, when available; never guessed from an IP.
+  pub fqdn: Option<String>,
+  /// OS release or kernel description, when reported by the host.
+  pub os_version: Option<String>,
+  /// At most sixteen distinct interface IP addresses, without ports or credentials.
+  pub ip_addresses: Vec<std::net::IpAddr>,
 }
 
 /// One execution route and the semantic Factory controls it can enforce.

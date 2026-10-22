@@ -50,12 +50,45 @@ pub struct EnrolledAgent {
   pub inventory: AgentInventory,
   /// Normalized lifecycle state.
   pub status: AgentStatus,
+  /// Operator permission to receive new Jobs; does not revoke registration or current work.
+  #[serde(default = "agent_enabled_by_default")]
+  pub enabled: bool,
   /// Last authoritative Agent contact time.
   pub last_seen_at: Timestamp,
   /// Initial enrollment time.
   pub created_at: Timestamp,
   /// Last management mutation or registration time.
   pub updated_at: Timestamp,
+}
+
+const fn agent_enabled_by_default() -> bool {
+  true
+}
+
+/// Versioned, replay-safe change of new-Job admission for one Agent.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SetAgentEnabled {
+  /// Stable enrolled Agent.
+  pub agent_id: AgentId,
+  /// Observed management version.
+  pub expected_version: AgentVersion,
+  /// Whether new Jobs may be placed without changing registration or active work.
+  pub enabled: bool,
+  /// Scoped logical command identity.
+  pub idempotency_key: IdempotencyKey,
+  /// Trusted command time.
+  pub requested_at: Timestamp,
+}
+
+/// Original committed availability receipt with safe current-execution facts.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SetAgentEnabledOutcome {
+  /// Applied or replayed logical command.
+  pub disposition: MutationDisposition,
+  /// Enrolled Agent including the committed admission flag.
+  pub agent: EnrolledAgent,
+  /// Current work retained independently of new-Job admission.
+  pub current_execution: Option<AgentCurrentExecution>,
 }
 
 /// Safe facts about the non-terminal execution currently owned by an Agent.
@@ -88,6 +121,8 @@ pub enum AgentCurrentLeaseState {
 /// One enrolled Agent together with its optional current execution.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AgentDetail {
+  /// Last retained safe host measurement, or absent before the first observation.
+  pub resources: Option<crate::AgentResources>,
   /// Authoritative enrolled Agent state.
   pub agent: EnrolledAgent,
   /// Current non-terminal execution, or `None` when the Agent is idle.
@@ -156,6 +191,10 @@ pub struct AgentPage {
   pub agents: Vec<EnrolledAgent>,
   /// Cursor for the next page, when more Agents exist.
   pub next_cursor: Option<AgentId>,
+  /// Visible matching Agents accepting work, independent of cursor and page size.
+  pub active_count: u64,
+  /// All visible matching Agents, including unavailable Agents.
+  pub total_count: u64,
 }
 
 /// Atomic request to move an idle Agent to the latest version of another Pool.

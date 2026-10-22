@@ -324,6 +324,14 @@ impl AgentPoolStore for PostgresStore {
 
 #[async_trait]
 impl AgentStore for PostgresStore {
+  async fn set_agent_enabled(
+    &self,
+    request: ManagementMutation<octacity_server_store::SetAgentEnabled>,
+  ) -> Result<octacity_server_store::SetAgentEnabledOutcome, StoreError> {
+    let (request, audit) = request.into_parts();
+    crate::agent_mutation::set_enabled(&self.pool, request, &audit).await
+  }
+
   async fn agent_detail(
     &self,
     agent_id: octacity_server_domain::AgentId,

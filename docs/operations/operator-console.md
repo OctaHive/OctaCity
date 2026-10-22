@@ -10,6 +10,25 @@ dashboard. The label `Operator` describes the local console role and is not an
 authenticated person. Do not deploy the console until network controls limit
 the origin to the intended operators.
 
+## Agent capacity and actions
+
+Pool rows show online, enabled Agents accepting new Jobs divided by all visible
+members. Clicking anywhere in a Pool or Agent row selects it; its disclosure arrow
+only expands/collapses the branch. The Agent card links the Pool by name, keeps
+presence separate from admission permission, and places **Actions** in the header.
+**Disconnect Agent / Connect Agent** disables/enables new-Job admission after review,
+preserving the connection, registration and current execution. Graceful and forced
+process draining remain distinct confirmed actions. **Change pool** opens the existing
+idle-only reassignment form instead of occupying the main card.
+
+Work/state disks show observed free bytes alongside total capacity and the observation
+time. Missing measurements or host details are explicitly not reported. Host facts
+come from the Agent; there is no inbound Agent listener/port and no CPU-rank metric.
+Runtime inventory uses current provider-neutral `executions`, falling back to legacy
+`runtimes` only when no current routes were published; the contracts are not added
+together. Older Agent binaries continue to work, but need updating/restarting to
+publish the new optional host details.
+
 ## Supported topology
 
 Terminate TLS and serve the static console at one reverse proxy. Route only

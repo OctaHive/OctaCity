@@ -2,6 +2,50 @@ use super::*;
 
 pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
   schemas.insert(
+    "AgentResources".to_owned(),
+    object(
+      [
+        ("observed_at", integer()),
+        ("available_cpu_millis", json!({"type":"integer","minimum":0})),
+        ("available_memory_bytes", json!({"type":"integer","minimum":0})),
+        ("work_disk_free_bytes", json!({"type":"integer","minimum":0})),
+        ("state_disk_free_bytes", json!({"type":"integer","minimum":0})),
+      ],
+      &[
+        "observed_at",
+        "available_cpu_millis",
+        "available_memory_bytes",
+        "work_disk_free_bytes",
+        "state_disk_free_bytes",
+      ],
+    ),
+  );
+  schemas.insert(
+    "AgentHostDetails".to_owned(),
+    object(
+      [
+        (
+          "hostname",
+          nullable(json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_AGENT_HOST_TEXT_BYTES})),
+        ),
+        ("fqdn", nullable(json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_AGENT_HOST_TEXT_BYTES}))),
+        (
+          "os_version",
+          nullable(json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_AGENT_HOST_TEXT_BYTES})),
+        ),
+        (
+          "ip_addresses",
+          json!({"type":"array","maxItems":octacity_server_application::MAX_AGENT_IP_ADDRESSES,"uniqueItems":true,"items":{"type":"string"}}),
+        ),
+      ],
+      &["hostname", "fqdn", "os_version", "ip_addresses"],
+    ),
+  );
+  schemas.insert(
+    "SetAgentEnabledRequest".to_owned(),
+    object([("enabled", boolean())], &["enabled"]),
+  );
+  schemas.insert(
     "IssueAgentEnrollmentRequest".to_owned(),
     object(
       [
@@ -63,6 +107,7 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
         ("execution_contract", schema_ref("AgentExecutionContractRange")),
         ("labels", string_map()),
         ("host_platform", schema_ref("ProtocolPlatform")),
+        ("host_details", nullable(schema_ref("AgentHostDetails"))),
         ("runtimes", array(schema_ref("AgentRuntimeCapability"))),
         ("executions", array(schema_ref("AgentExecutionCapability"))),
         (
@@ -117,6 +162,8 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
         ("inventory", schema_ref("AgentInventory")),
         ("capacity", schema_ref("AgentCapacity")),
         ("status", schema_ref("AgentStatus")),
+        ("resources", nullable(schema_ref("AgentResources"))),
+        ("enabled", boolean()),
         ("last_seen_at_unix_ms", integer()),
         ("current_execution", nullable(schema_ref("AgentCurrentExecution"))),
       ],
@@ -140,6 +187,8 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
     object(
       [
         ("items", array(schema_ref("AgentResource"))),
+        ("active_count", json!({"type":"integer","minimum":0})),
+        ("total_count", json!({"type":"integer","minimum":0})),
         ("next_cursor", nullable(non_empty_string())),
       ],
       &["items", "next_cursor"],

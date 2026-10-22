@@ -14,6 +14,18 @@ import { CapacityExplorer } from './CapacityExplorer';
 afterEach(cleanup);
 
 describe('Capacity explorer', () => {
+  it('shows active and total visible Pool membership instead of its drain status', async () => {
+    const api = fakeCapacityApi();
+    api.listAgentPools.mockResolvedValue(page([pool('pool-a', 'Linux')], null));
+    api.listAgents.mockResolvedValue({
+      ...page([agent('agent-a', 'Builder A', 'pool-a')], 'more'),
+      active_count: 2,
+      total_count: 7,
+    });
+    renderExplorer('/agents', api);
+    expect(await screen.findByText('2/7')).toBeTruthy();
+    expect(screen.queryByText('Accepting')).toBeNull();
+  });
   it('paginates Pool and each expanded Agent branch independently', async () => {
     const api = fakeCapacityApi();
     api.listAgentPools
@@ -182,6 +194,7 @@ describe('Capacity explorer', () => {
 
 export function fakeCapacityApi() {
   return {
+    setAgentEnabled: vi.fn<CapacityApi['setAgentEnabled']>(),
     drainAgent: vi.fn<CapacityApi['drainAgent']>(),
     getAgent: vi.fn<CapacityApi['getAgent']>(),
     getAgentPool: vi.fn<CapacityApi['getAgentPool']>(),

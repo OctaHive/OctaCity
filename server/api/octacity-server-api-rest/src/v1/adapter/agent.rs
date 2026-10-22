@@ -153,3 +153,32 @@ pub(super) async fn drain_agent(
     .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok((StatusCode::OK, Json(agent_mutation(outcome, &request_id)?)))
 }
+
+pub(super) async fn set_agent_enabled(
+  State(application): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(request_id, context)): Extension<crate::ManagementRequest>,
+  Path(agent_id): Path<String>,
+  headers: HeaderMap,
+  payload: Result<Json<crate::v1::SetAgentEnabledRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let body = body(payload, &request_id)?;
+  let key = idempotency_key(&headers, &request_id)?;
+  let expected = precondition(&headers, &request_id)?;
+  let command = application
+    .inputs
+    .set_agent_enabled(
+      &agent_id,
+      expected.version(),
+      body.enabled,
+      key.as_str(),
+      now_unix_ms(&request_id)?,
+    )
+    .map_err(|e| invalid_input(e, &request_id))?;
+  let receipt = application
+    .agents
+    .availability
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|e| authorized_handler_error(e, &request_id))?;
+  Ok((StatusCode::OK, Json(agent_mutation(receipt, &request_id)?)))
+}

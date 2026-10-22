@@ -15,6 +15,7 @@ use octacity_server_api_rest::{
   management_router_with_application,
   v1::{ErrorCode, MANAGEMENT_OPERATIONS, management_authorization_operations, openapi_document},
 };
+use octacity_server_application::SetAgentEnabledCommand;
 use octacity_server_application::{
   AcceptManualTriggerCommand, AgentPageProjection, AgentPoolProjection, AgentProjection, ApplicationError,
   AttemptState, AuditActorKind, AuditActorProjection, AuditFactPageProjection, AuditFactProjection, AuditOutcome,
@@ -441,6 +442,27 @@ unavailable_command!(PublishAgentPoolVersionCommand, "publish_agent_pool");
 unavailable_command!(DeleteAgentPoolCommand, "delete_agent_pool");
 unavailable_query!(ListAgentPoolsQuery, "list_agent_pools");
 unavailable_command!(ReassignAgentPoolCommand, "reassign_agent_pool");
+#[async_trait]
+impl ManagementCommandUseCase<SetAgentEnabledCommand> for RecordingApplication {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _context: &ManagementRequestContext,
+    _grant: &ManagementAuthorizationGrant,
+    command: SetAgentEnabledCommand,
+  ) -> Result<octacity_server_application::AgentCommandOutcome, Self::Error> {
+    self.record("set_agent_enabled");
+    if !self.successful_workflow {
+      return Err(ApplicationError::unavailable());
+    }
+    let mut agent = agent_projection(command.agent_id);
+    agent.enabled = command.enabled;
+    Ok(octacity_server_application::AgentCommandOutcome {
+      disposition: octacity_server_application::MutationDisposition::Applied,
+      agent,
+    })
+  }
+}
 unavailable_command!(DrainAgentCommand, "drain_agent");
 unavailable_command!(IssueAgentEnrollmentCommand, "issue_agent_enrollment");
 unavailable_query!(GetBuildQuery, "get_build");
@@ -492,6 +514,8 @@ impl ManagementQueryUseCase<ListAgentsQuery> for RecordingApplication {
       return Err(ApplicationError::unavailable());
     }
     Ok(AgentPageProjection {
+      active_count: 2,
+      total_count: 3,
       agents: vec![agent_projection(
         query
           .after
@@ -539,6 +563,7 @@ fn agent_projection(agent_id: impl serde::Serialize) -> AgentProjection {
   serde_json::from_value(serde_json::json!({
     "id": agent_id,
     "name": "linux-builder-1",
+    "enabled": true,
     "version": 3,
     "pool_id": "66666666-6666-4666-8666-666666666666",
     "pool_version": 2,
@@ -548,6 +573,7 @@ fn agent_projection(agent_id: impl serde::Serialize) -> AgentProjection {
       "execution_contract": {"min": 1, "max": 1},
       "labels": {"region": "local"},
       "host_platform": {"os": "linux", "architecture": "amd64"},
+      "host_details": {"hostname":"builder.example.test","fqdn":"builder.example.test","os_version":"Linux 6.8", "ip_addresses":["10.0.0.2"]},
       "runtimes": [],
       "executions": [],
       "factory_executions": [],
@@ -574,6 +600,7 @@ fn agent_projection(agent_id: impl serde::Serialize) -> AgentProjection {
     },
     "status": "online",
     "last_seen_at": 1_789_750_800_000_i64,
+    "resources": {"observed_at":1789750800000_i64,"available_cpu_millis":2000,"available_memory_bytes":1024,"work_disk_free_bytes":1234,"state_disk_free_bytes":567},
     "current_execution": {
       "lease_id": "88888888-8888-4888-8888-888888888888",
       "build_id": "99999999-9999-4999-8999-999999999999",
@@ -1510,6 +1537,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
       Some("\"1\""),
       r#"{"mode":"graceful"}"#,
     ),
+    json_request("POST", &format!("/api/v1/agents/{agent_id}/availability"), "agent-availability", Some("\"1\""), r#"{"enabled":false}"#),
     empty_request(
       "GET",
       &format!("/api/v1/projects/{project_id}/factory-configurations?limit=1"),
@@ -1740,6 +1768,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_agents",
       "reassign_agent_pool",
       "drain_agent",
+      "set_agent_enabled",
       "list_project_factory_configurations",
       "get_current_factory_configuration",
       "get_factory_configuration",

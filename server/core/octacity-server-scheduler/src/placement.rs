@@ -712,6 +712,7 @@ mod tests {
 
   fn inventory() -> AgentInventory {
     AgentInventory {
+      host_details: None,
       agent_id: "agent".to_owned(),
       agent_version: "1.0.0".to_owned(),
       coordinator_protocols: vec![1],

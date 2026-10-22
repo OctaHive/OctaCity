@@ -309,6 +309,7 @@ pub fn build_inventory(
           .any(|feature| feature == CACHE_HTTP_FEATURE_V1),
     });
   let inventory = AgentInventory {
+    host_details: Some(host_details()),
     agent_id: config.agent_id,
     agent_version: config.agent_version,
     coordinator_protocols: vec![COORDINATOR_PROTOCOL_VERSION],
@@ -338,6 +339,25 @@ pub fn build_inventory(
   };
   inventory.validate()?;
   Ok(inventory)
+}
+
+fn host_details() -> octacity_protocol::AgentHostDetails {
+  let hostname = System::host_name();
+  let fqdn = hostname.as_ref().filter(|name| name.contains('.')).cloned();
+  let ip_addresses = sysinfo::Networks::new_with_refreshed_list()
+    .values()
+    .flat_map(|network| network.ip_networks().iter().map(|ip| ip.addr))
+    .filter(|ip| !ip.is_loopback() && !ip.is_unspecified() && !ip.is_multicast())
+    .collect::<std::collections::BTreeSet<_>>()
+    .into_iter()
+    .take(octacity_protocol::MAX_AGENT_IP_ADDRESSES)
+    .collect();
+  octacity_protocol::AgentHostDetails {
+    hostname,
+    fqdn,
+    os_version: System::long_os_version(),
+    ip_addresses,
+  }
 }
 
 /// Converts the current Rust target into the coordinator platform vocabulary.
