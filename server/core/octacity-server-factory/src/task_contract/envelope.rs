@@ -440,19 +440,22 @@ fn validate_task_mode(
 ) -> Result<(), FactoryError> {
   let valid = matches!(
     (mode, result_schema, subject),
-    (
-      FactoryTaskMode::Implement,
-      FactoryTaskResultSchema::ImplementationV1,
-      FactoryTaskSubject::Exact(_)
-    ) | (
-      FactoryTaskMode::Rework,
-      FactoryTaskResultSchema::ImplementationV1,
-      FactoryTaskSubject::Candidate(_)
-    ) | (
-      FactoryTaskMode::Evaluate,
-      FactoryTaskResultSchema::EvaluationV1,
-      FactoryTaskSubject::Candidate(_)
-    )
+    (FactoryTaskMode::Observe, FactoryTaskResultSchema::FlowV1, _)
+      | (
+        FactoryTaskMode::Implement,
+        FactoryTaskResultSchema::ImplementationV1,
+        FactoryTaskSubject::Exact(_)
+      )
+      | (
+        FactoryTaskMode::Rework,
+        FactoryTaskResultSchema::ImplementationV1,
+        FactoryTaskSubject::Candidate(_)
+      )
+      | (
+        FactoryTaskMode::Evaluate,
+        FactoryTaskResultSchema::EvaluationV1,
+        FactoryTaskSubject::Candidate(_)
+      )
   );
   if valid {
     Ok(())
@@ -512,7 +515,7 @@ fn validate_deliverable_count(
   mode: FactoryTaskMode,
   deliverables: &[FactoryTaskDeliverable],
 ) -> Result<(), FactoryError> {
-  let minimum = usize::from(mode != FactoryTaskMode::Evaluate);
+  let minimum = usize::from(!matches!(mode, FactoryTaskMode::Evaluate | FactoryTaskMode::Observe));
   validate_count(deliverables, minimum, MAX_TASK_DELIVERABLES, "task deliverables")
 }
 

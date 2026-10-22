@@ -194,11 +194,23 @@ impl FactoryCodexBuildProfile {
   /// Selects the complete immutable installed profile for one frozen Build intent.
   /// Sharing an executable does not share model instructions or capture authority.
   pub fn matches_intent(&self, intent: &FlowBuildIntent) -> bool {
+    self.matches_role_intent(intent, None)
+  }
+  /// Matches the same installed adapter under an exact role/profile task identity.
+  pub fn matches_role_intent(
+    &self,
+    intent: &FlowBuildIntent,
+    role: Option<&octacity_server_factory::FactoryRoleProfile>,
+  ) -> bool {
     intent.profile().tool == self.toolchain.executable
       && intent.profile().plugin == self.toolchain.plugin
       && intent.profile().model_or_tool == self.toolchain.model
       && intent.profile().build_configuration == self.build_configuration
-      && intent.profile().task_digest == self.task_digest()
+      && intent.profile().task_digest
+        == role.map_or_else(
+          || self.task_digest(),
+          |role| crate::factory_role_task_digest(self.task_digest(), role),
+        )
   }
   /// Rejects unqualified package selections and authority before installing an executor.
   /// Actual immutable configuration and current owner checks still run per operation.
@@ -330,6 +342,7 @@ pub struct FactoryCodexBuildMaterializer<C, S, B> {
   context_bytes: Arc<dyn FactoryNodeContextSource>,
   candidate_context: Option<Arc<dyn FactoryNodeCandidateContextSource>>,
   review: Option<Arc<dyn crate::FactoryReviewInvocationSource>>,
+  role: Option<Arc<dyn crate::FactoryRoleInvocationSource>>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
 impl<C, S, B> FactoryCodexBuildMaterializer<C, S, B> {
@@ -360,8 +373,16 @@ impl<C, S, B> FactoryCodexBuildMaterializer<C, S, B> {
       context_bytes,
       candidate_context: None,
       review: None,
+      role: None,
       clock,
     })
+  }
+
+  /// Adds immutable Project role content without changing static executor registration.
+  #[must_use]
+  pub fn with_role_invocation_source(mut self, source: Arc<dyn crate::FactoryRoleInvocationSource>) -> Self {
+    self.role = Some(source);
+    self
   }
 
   /// Installs exact whole-plan/evidence qualification for independent readonly reviews.
@@ -399,11 +420,27 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
     if is_candidate && self.candidate_context.is_none() {
       return Err(Invalid);
     }
-    let profile = self
-      .profiles
-      .iter()
-      .find(|profile| profile.matches_intent(intent))
-      .ok_or(Invalid)?;
+    if at >= intent.node().deadline() || intent.node().verify_observer(&ownership, at).is_err() {
+      return Err(Invalid);
+    }
+    let (profile, role) = if let Some(profile) = self.profiles.iter().find(|profile| profile.matches_intent(intent)) {
+      (profile, None)
+    } else {
+      let role = self
+        .role
+        .as_ref()
+        .ok_or(Invalid)?
+        .invocation(intent, at, intent.node().deadline())
+        .await
+        .map_err(|_| Unavailable)?
+        .ok_or(Invalid)?;
+      let profile = self
+        .profiles
+        .iter()
+        .find(|profile| profile.matches_role_intent(intent, Some(&role.package().inputs().profile)))
+        .ok_or(Invalid)?;
+      (profile, Some(role))
+    };
     if let Some(capture) = &profile.capture {
       if profile.consumer != FactoryCredentialConsumer::CodingNode
         || profile.tool_risk.is_some()
@@ -423,9 +460,6 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
     {
       return Err(Invalid);
     }
-    if at >= intent.node().deadline() || intent.node().verify_observer(&ownership, at).is_err() {
-      return Err(Invalid);
-    }
     let effective = octacity_server_factory::resolve_factory_permissions(
       &profile.project_permissions,
       admitted.limits().permissions(),
@@ -433,7 +467,7 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
       &profile.local_permissions,
     )
     .map_err(|_| Invalid)?;
-    if &effective != intent.permissions() || profile.task_digest() != intent.profile().task_digest {
+    if &effective != intent.permissions() {
       return Err(Invalid);
     }
     let context = self
@@ -502,6 +536,7 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
+        role: role.as_ref(),
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),
         tool_risk: profile.tool_risk,
@@ -519,11 +554,13 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
           .map_err(|_| Invalid)
       })
       .collect::<Result<Vec<_>, _>>()?;
-    let manifest = self
+    let mut manifest = self
       .publisher
       .publish(intent, &ownership, documents)
       .await
       .map_err(|_| Unavailable)?;
+    manifest.inputs.extend_from_slice(compiled.additional_inputs());
+    manifest.inputs.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
     let program = compiled.managed_program(manifest).map_err(|_| Invalid)?;
     let now = self.clock.now().map_err(|_| Unavailable)?;
     if now >= intent.node().deadline() || intent.node().verify_observer(&ownership, now).is_err() {

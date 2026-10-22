@@ -26,6 +26,8 @@ pub const MAX_FACTORY_REPOSITORY_PATH_BYTES: usize = 1024;
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactoryTaskMode {
+  /// Observe explicit Flow inputs without claiming independent candidate evaluation.
+  Observe,
   /// Create a first candidate from the exact base revision.
   Implement,
   /// Evaluate one exact immutable candidate without mutation authority.
@@ -38,6 +40,8 @@ pub enum FactoryTaskMode {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactoryTaskResultSchema {
+  /// Exact result shape is supplied by the enclosing immutable Flow outcome.
+  FlowV1,
   /// Version-one implementation result.
   ImplementationV1,
   /// Version-one independent evaluation result.

@@ -247,6 +247,7 @@ async fn prepared_review_source() -> (
     profile.consumer,
     &profile.usage_policy,
     FactoryCodexFlowCompilationOptions {
+      role: None,
       candidate_context: Some(&candidate.context),
       reviewer: Some(FactoryCodexReviewCompilation {
         policy: profile.reviewer.as_ref().unwrap(),

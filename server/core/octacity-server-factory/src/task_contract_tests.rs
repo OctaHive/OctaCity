@@ -93,7 +93,7 @@ fn envelope_with_permissions(
   permissions: FactoryPermissionSet,
 ) -> Result<FactoryTaskEnvelope, FactoryError> {
   let deliverables = match mode {
-    FactoryTaskMode::Evaluate => Vec::new(),
+    FactoryTaskMode::Observe | FactoryTaskMode::Evaluate => Vec::new(),
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => vec![FactoryTaskDeliverable::new(
       key("result"),
       FactoryRepositoryPath::new("outputs/result.json").expect("fixture path"),
@@ -115,6 +115,7 @@ fn envelope_with_deliverables(
     vec![artifact_entry("task", subject.clone(), task.clone())],
   );
   let result_schema = match mode {
+    FactoryTaskMode::Observe => FactoryTaskResultSchema::FlowV1,
     FactoryTaskMode::Evaluate => FactoryTaskResultSchema::EvaluationV1,
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => FactoryTaskResultSchema::ImplementationV1,
   };

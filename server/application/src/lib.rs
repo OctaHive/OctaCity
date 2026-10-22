@@ -829,3 +829,9 @@ mod factory_skill_import_tests;
 
 mod factory_skill_import;
 pub use factory_skill_import::*;
+
+#[cfg(test)]
+mod factory_role_materialization_tests;
+
+mod factory_role_invocation;
+pub use factory_role_invocation::*;

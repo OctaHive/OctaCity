@@ -300,6 +300,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
+        role: None,
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),
         tool_risk: profile.tool_risk,

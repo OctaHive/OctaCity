@@ -720,6 +720,7 @@ pub(super) fn task_envelope(
   .unwrap();
   let result_schema = match mode {
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => FactoryTaskResultSchema::ImplementationV1,
+    FactoryTaskMode::Observe => FactoryTaskResultSchema::FlowV1,
     FactoryTaskMode::Evaluate => FactoryTaskResultSchema::EvaluationV1,
   };
   FactoryTaskEnvelope::new(
@@ -761,7 +762,7 @@ fn subject(mode: FactoryTaskMode) -> FactoryTaskSubject {
     ImmutableRevision::new("base-revision").unwrap(),
   );
   match mode {
-    FactoryTaskMode::Implement => FactoryTaskSubject::Exact(exact),
+    FactoryTaskMode::Observe | FactoryTaskMode::Implement => FactoryTaskSubject::Exact(exact),
     FactoryTaskMode::Evaluate | FactoryTaskMode::Rework => FactoryTaskSubject::Candidate(CandidateSubject::new(
       exact,
       ImmutableRevision::new("candidate-revision").unwrap(),
@@ -777,11 +778,11 @@ pub(super) fn permissions(
   include_secret_profile: bool,
 ) -> FactoryPermissionSet {
   let source_mode = match mode {
-    FactoryTaskMode::Evaluate => MountMode::ReadOnly,
+    FactoryTaskMode::Observe | FactoryTaskMode::Evaluate => MountMode::ReadOnly,
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => MountMode::ReadWrite,
   };
   let profile = match mode {
-    FactoryTaskMode::Evaluate => key("model-evaluation"),
+    FactoryTaskMode::Observe | FactoryTaskMode::Evaluate => key("model-evaluation"),
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => key("model-coding"),
   };
   permissions_with_scope(
@@ -1208,6 +1209,7 @@ fn codex_flow_tool_risk_compilation_pins_the_policy_and_reserves_independent_res
     FactoryCredentialConsumer::ToolReasoning,
     &crate::FactoryCodexUsagePolicy::ReportedCost,
     FactoryCodexFlowCompilationOptions {
+      role: None,
       tool_risk: Some(policy),
       tool_response_limits: Some(octacity_protocol::FactoryToolResponseLimitsV3 {
         per_call_bytes: 32,
@@ -1293,6 +1295,7 @@ fn codex_flow_tool_risk_compilation_pins_the_policy_and_reserves_independent_res
       FactoryCredentialConsumer::ToolReasoning,
       &crate::FactoryCodexUsagePolicy::ReportedCost,
       FactoryCodexFlowCompilationOptions {
+        role: None,
         tool_risk: Some(changed),
         tool_response_limits: Some(octacity_protocol::FactoryToolResponseLimitsV3 {
           per_call_bytes: 32,
@@ -1313,6 +1316,7 @@ fn codex_flow_tool_risk_compilation_pins_the_policy_and_reserves_independent_res
       FactoryCredentialConsumer::ToolReasoning,
       &crate::FactoryCodexUsagePolicy::ReportedCost,
       FactoryCodexFlowCompilationOptions {
+        role: None,
         tool_risk: Some(policy),
         tool_response_limits: Some(octacity_protocol::FactoryToolResponseLimitsV3 {
           per_call_bytes: 32,
@@ -1332,6 +1336,7 @@ fn codex_flow_tool_risk_compilation_pins_the_policy_and_reserves_independent_res
     FactoryCredentialConsumer::ToolReasoning,
     &crate::FactoryCodexUsagePolicy::ReportedCost,
     FactoryCodexFlowCompilationOptions {
+      role: None,
       tool_response_limits: Some(octacity_protocol::FactoryToolResponseLimitsV3 {
         per_call_bytes: 32,
         total_bytes: 64,
@@ -1593,6 +1598,7 @@ fn writable_coding_consumer_cannot_combine_capture_authority_with_protected_tool
       octacity_server_factory::FactoryCredentialConsumer::CodingNode,
       &crate::FactoryCodexUsagePolicy::ReportedCost,
       crate::FactoryCodexFlowCompilationOptions {
+        role: None,
         tool_response_limits: Some(octacity_protocol::FactoryToolResponseLimitsV3 {
           per_call_bytes: 32,
           total_bytes: 64,

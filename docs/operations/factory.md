@@ -117,8 +117,8 @@ unknown contract versions or substituted content.
 Assembly performs no catalog, filesystem, credential or provider lookup and grants
 no execution authority. Skill/task file bytes remain under their existing Artifact
 owner. Project skill-folder import and protected-input preparation are implemented
-below; ordinary compiler integration remains task 3.3 and profile/Run retention
-remains task 3.5. Callers still qualify
+below; the ordinary compiler integration is described next, while profile/Run
+retention remains task 3.5. Callers still qualify
 current installed capabilities and authorized inputs before executable admission.
 
 ### Project skill-folder imports
@@ -156,6 +156,57 @@ transfer and Agent materializer, with no provider URL or new file backend. Impor
 creates no Work, Build or executable grant. Installed capability qualification,
 REST transport (7.1) and Console folder selection/review (8.1) remain their
 respective boundaries.
+
+### Role packages in ordinary Build compilation
+
+An installed materializer can opt into `FactoryRoleInvocationSource` to obtain one
+selected immutable package. Exact installed static task matches bypass the source,
+so its storage availability cannot block static Builds. The source is consulted
+only when a static match is absent; a missing package cannot authorize a fallback.
+The source must use existing capability qualification, authorize dependencies and
+read exact retained content; it cannot choose current catalog defaults. `ProjectSkillImport.prepare_invocation` composes the existing
+skill reader with the common invocation contract, including every supporting file
+under `/octacity/protected/skills/<alias>/`. Missing, extra or substituted file
+identities are rejected. Credential mappings contain selected logical references
+and installed variable names, never secret values or a new credential resolver.
+
+`factory_role_task_digest` binds the installed task policy to exact role/profile
+references. Matching includes the ordinary Build configuration and full
+plugin/executable/model pins, so sharing a runtime/model cannot reuse another
+profile's invocation. This configuration identity avoids a digest cycle with the
+immutable Flow. The separate package digest covers exact per-node rules, task,
+Context and supporting content. Compilation verifies the Node Attempt, Context,
+ordinary binding and the exact effective task permissions/budget before producing
+an executable program. Selection must supply an intent with those effective limits.
+
+Package construction and restoration require the complete selected Context
+`Policy` inputs in the controlling rule layer, with exact text digests and sizes;
+omitting one or all selected policies is rejected. Other Context kinds remain data,
+and no ambient Project policy is discovered at compilation time.
+
+The existing Codex compiler preserves ordered controlling Project rules, shared
+role instructions, profile additions and installed stage instructions. It emits
+native model/reasoning settings, explicit public variables and qualified secret
+variable mappings. The pinned native task has a fixed CLI and no per-task
+MCP/integration override: nonempty overrides, unknown model settings, protected
+environment overrides and unresolved credential mappings fail before publication.
+These restrictions belong to the adapter, rather than a provider enum in core.
+
+The canonical package is another protected input at
+`/octacity/protected/role-execution-package.json`; its digest is retained in the
+internal Task Envelope. Imported files keep their existing Artifact identities and
+are merged into the ordinary protected-input manifest without copying their bytes.
+The compiler reserves room for generated documents under the shared transfer
+limit before publication. Existing fenced publication, ordinary Build assembly,
+permission intersection and JobSpec v3 validation remain authoritative. Static
+invocations bypass the role source and keep their previous documents and identities.
+
+Internal Task Envelopes additionally support `observe` with `flow_v1` for ordinary
+Flow observations; the immutable Flow outcome supplies the actual result schema.
+This does not claim an independent candidate evaluation or relax existing
+implementation/evaluation contracts. JobSpec v3 and Agent wire schemas are
+unchanged. Durable selection/package lifetime integration and released-process
+qualification remain their later tasks (3.5, 4–5 and 9.1).
 
 Agent registration must advertise the exact v3 semantic enforcement route
 needed by each Factory Job. Host, Apple VF and Windows WHP preview do not gain

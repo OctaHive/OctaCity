@@ -1,5 +1,7 @@
 #[path = "factory_codex_flow.rs"]
 mod flow;
+#[path = "factory_codex_role.rs"]
+mod role;
 pub use flow::{
   FactoryCodexFlowCompilationOptions, FactoryCodexReviewCompilation, codex_flow_task_digest, compile_codex_flow_task,
   compile_codex_flow_task_with_context, compile_codex_flow_task_with_options,
@@ -37,6 +39,8 @@ const CODEX_RUN_RECORDS: &str = ".octa/factory/codex-runs";
 /// Stable kind of server-owned input emitted by the trusted Codex compiler.
 #[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum FactoryProtectedDocumentKind {
+  /// Complete canonical AI-agent execution package.
+  RoleExecutionPackage,
   /// Minimal generated Octafile executed by the generic runner.
   Octafile,
   /// Exact rendered prompt also retained independently from the Octafile.
@@ -119,6 +123,7 @@ pub struct CompiledCodexTask {
   task_envelope_digest: FactoryDigest,
   tool_control: Option<octacity_protocol::FactoryToolControlV3>,
   documents: Vec<FactoryProtectedDocument>,
+  additional_inputs: Vec<octacity_protocol::ProtectedInputV3>,
 }
 
 impl CompiledCodexTask {
@@ -129,7 +134,12 @@ impl CompiledCodexTask {
     manifest: octacity_protocol::ProtectedInputManifestV3,
   ) -> Result<crate::FactoryManagedJobProgram, CodexCompilationError> {
     manifest.validate().map_err(|_| CodexCompilationError::NodeBindings)?;
-    if manifest.inputs.len() != self.documents.len() {
+    if manifest.inputs.len() != self.documents.len() + self.additional_inputs.len()
+      || self
+        .additional_inputs
+        .iter()
+        .any(|input| !manifest.inputs.contains(input))
+    {
       return Err(CodexCompilationError::NodeBindings);
     }
     for document in &self.documents {
@@ -198,13 +208,19 @@ impl CompiledCodexTask {
     self.task_envelope_digest
   }
 
+  /// Exact selected retained dependencies; publication does not copy their existing objects.
+  pub fn additional_inputs(&self) -> &[octacity_protocol::ProtectedInputV3] {
+    &self.additional_inputs
+  }
+
   /// Returns generated documents in stable kind order.
   #[must_use]
   pub fn documents(&self) -> &[FactoryProtectedDocument] {
     &self.documents
   }
 
-  /// Finds one compiler-owned document by its stable kind.
+  /// Finds one emitted document by its stable kind.
+  /// Panics if that kind was not emitted; static tasks omit RoleExecutionPackage.
   #[must_use]
   pub fn document(&self, kind: FactoryProtectedDocumentKind) -> &FactoryProtectedDocument {
     self
@@ -302,7 +318,7 @@ pub fn compile_codex_task(
     validated_tool_response_limits(envelope.permissions().tools().next().is_some(), response_limits)?;
 
   let task_name = task_name(envelope.mode());
-  let result_schema = result_schema(envelope.result_schema());
+  let result_schema = result_schema(envelope.result_schema())?;
   let public_environment = public_environment();
   let secret_environment = secret_environment();
   let task_envelope = envelope
@@ -320,6 +336,7 @@ pub fn compile_codex_task(
         cmds: vec![OctaCommand {
           id: CODEX_PLUGIN_IDENTITY,
           codex: CodexTask {
+            reasoning_effort: None,
             prompt: rendered_prompt,
             model: envelope.model().identity().as_str(),
             result_schema: &result_schema,
@@ -425,6 +442,7 @@ fn compiled_documents(input: CompiledDocumentsInput<'_>) -> Result<CompiledCodex
     credential_profile,
     task_envelope_digest,
     tool_control,
+    additional_inputs: Vec::new(),
     documents: vec![
       document(
         FactoryProtectedDocumentKind::Octafile,
@@ -518,7 +536,7 @@ fn validate_authority(
   }
   let consumer = match envelope.mode() {
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => FactoryCredentialConsumer::CodingNode,
-    FactoryTaskMode::Evaluate => FactoryCredentialConsumer::ReadOnlyReview,
+    FactoryTaskMode::Observe | FactoryTaskMode::Evaluate => FactoryCredentialConsumer::ReadOnlyReview,
   };
   credential_profiles
     .authorize(envelope.node_attempt_id(), consumer, selected_profile)
@@ -570,7 +588,7 @@ fn validate_authority(
 
 fn validate_source_mount(envelope: &FactoryTaskEnvelope) -> Result<(), CodexCompilationError> {
   let required_mode = match envelope.mode() {
-    FactoryTaskMode::Evaluate => MountMode::ReadOnly,
+    FactoryTaskMode::Observe | FactoryTaskMode::Evaluate => MountMode::ReadOnly,
     FactoryTaskMode::Implement | FactoryTaskMode::Rework => MountMode::ReadWrite,
   };
   let mounts = envelope.permissions().mounts().collect::<Vec<_>>();
@@ -645,6 +663,7 @@ fn task_name(mode: FactoryTaskMode) -> &'static str {
     FactoryTaskMode::Implement => "implement",
     FactoryTaskMode::Evaluate => "evaluate",
     FactoryTaskMode::Rework => "rework",
+    FactoryTaskMode::Observe => "observe",
   }
 }
 
@@ -710,7 +729,7 @@ fn codex_deliverables(envelope: &FactoryTaskEnvelope) -> Vec<CodexDeliverable<'_
     .collect()
 }
 
-fn result_schema(schema: FactoryTaskResultSchema) -> Value {
+fn result_schema(schema: FactoryTaskResultSchema) -> Result<Value, CodexCompilationError> {
   let bounded_text = || json!({ "type": "string", "minLength": 1, "maxLength": 2048 });
   let bounded_texts = || json!({ "type": "array", "maxItems": 128, "items": bounded_text() });
   let evidence_keys = || {
@@ -727,7 +746,8 @@ fn result_schema(schema: FactoryTaskResultSchema) -> Value {
       }
     })
   };
-  match schema {
+  Ok(match schema {
+    FactoryTaskResultSchema::FlowV1 => return Err(CodexCompilationError::NodeBindings),
     FactoryTaskResultSchema::ImplementationV1 => json!({
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -791,7 +811,7 @@ fn result_schema(schema: FactoryTaskResultSchema) -> Value {
       },
       "required": ["outcome", "summary", "findings"]
     }),
-  }
+  })
 }
 
 fn document(
@@ -838,6 +858,8 @@ struct OctaCommand<'a> {
 
 #[derive(Serialize)]
 struct CodexTask<'a> {
+  #[serde(skip_serializing_if = "Option::is_none")]
+  reasoning_effort: Option<&'a str>,
   prompt: &'a str,
   model: &'a str,
   result_schema: &'a Value,
