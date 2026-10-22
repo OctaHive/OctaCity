@@ -80,7 +80,8 @@
   padding: var(--space-md);
 }
 
-.explorerSection + .explorerSection {
+.explorerSection + .explorerSection,
+.explorerSection + .explorerTree {
   margin-top: var(--space-xl);
   padding-top: var(--space-lg);
   border-top: 1px solid var(--color-border);

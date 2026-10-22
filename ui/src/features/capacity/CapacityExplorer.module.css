@@ -16,7 +16,7 @@
 }
 
 .agentGroup {
-  margin: 0 0 0 1.45rem;
+  margin: var(--space-xs) 0 0 1.45rem;
   padding: 0 0 0 var(--space-sm);
   border-left: 1px solid var(--color-border);
 }
@@ -32,7 +32,10 @@
   border-radius: var(--radius-small);
 }
 
-.row:hover,
+.row:hover:not(.selected) {
+  background: var(--color-surface-subtle);
+}
+
 .selected {
   background: var(--color-brand-soft);
 }

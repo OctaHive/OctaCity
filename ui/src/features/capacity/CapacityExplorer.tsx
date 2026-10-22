@@ -152,13 +152,10 @@ function CapacityTree({ api, selection }: { api: CapacityApi; selection: Selecte
         <ul aria-label={t('explorer.agentCapacityHierarchy')} className={styles.tree} role="tree">
           {items.map((pool) => {
             const expanded = expansion.isExpanded(pool.id, selection.pool?.id === pool.id);
+            const selected = selection.agent === null && selection.pool?.id === pool.id;
             return (
               <li aria-expanded={expanded} key={pool.id} role="treeitem">
-                <div
-                  className={
-                    selection.pool?.id === pool.id ? `${styles.row} ${styles.selected}` : styles.row
-                  }
-                >
+                <div className={selected ? `${styles.row} ${styles.selected}` : styles.row}>
                   <button
                     aria-label={t(expanded ? 'explorer.collapse' : 'explorer.expand', {
                       name: pool.name,
@@ -174,10 +171,7 @@ function CapacityTree({ api, selection }: { api: CapacityApi; selection: Selecte
                   </button>
                   <span className={styles.iconLabel}>
                     <ServerCog aria-hidden="true" size={15} />
-                    <Link
-                      aria-current={selection.pool?.id === pool.id ? 'page' : undefined}
-                      to={agentPoolPath(pool.id)}
-                    >
+                    <Link aria-current={selected ? 'page' : undefined} to={agentPoolPath(pool.id)}>
                       {pool.name}
                     </Link>
                   </span>

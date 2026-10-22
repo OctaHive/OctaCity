@@ -11,6 +11,21 @@ test('shows the Agent tree without a redundant browse heading or capacity notice
   const explorer = page.getByRole('complementary', { name: 'Agents explorer' });
   await expect(explorer.getByRole('link', { name: 'Accessible Pool', exact: true })).toBeVisible();
   await expect(explorer.getByRole('heading', { name: 'Favorites', exact: true })).toBeVisible();
+  const separation = await explorer
+    .getByRole('region', { name: 'Favorites' })
+    .evaluate((element) => {
+      const next = element.nextElementSibling;
+      if (next === null) throw new Error('Agent tree must follow Favorites');
+      const style = getComputedStyle(next);
+      return {
+        border: parseFloat(style.borderTopWidth),
+        margin: parseFloat(style.marginTop),
+        padding: parseFloat(style.paddingTop),
+      };
+    });
+  expect(separation.border).toBeGreaterThan(0);
+  expect(separation.margin).toBeGreaterThan(0);
+  expect(separation.padding).toBeGreaterThan(0);
   await expect(explorer.getByRole('heading', { name: 'Browse', exact: true })).toHaveCount(0);
   await expect(
     explorer.getByText(
@@ -18,6 +33,31 @@ test('shows the Agent tree without a redundant browse heading or capacity notice
       { exact: true },
     ),
   ).toHaveCount(0);
+});
+
+test('separates tree rows and highlights only the selected Agent', async ({ page }) => {
+  await installOperatorFixture(page);
+  await page.goto(`/agents/${FIXTURE_IDS.agent}`);
+  const explorer = page.getByRole('complementary', { name: 'Agents explorer' });
+  const tree = explorer.getByRole('tree', { name: 'Agent capacity hierarchy' });
+  const agentLink = tree.getByRole('link', { name: 'Accessible Agent', exact: true });
+  const poolLink = tree.getByRole('link', { name: 'Accessible Pool', exact: true });
+  await expect(agentLink).toHaveAttribute('aria-current', 'page');
+  await expect(tree.locator('[aria-current="page"]')).toHaveCount(1);
+
+  const agentRow = agentLink.locator('..').locator('..');
+  const poolRow = poolLink.locator('..').locator('..');
+  await poolLink.hover();
+  const agentColor = await agentRow.evaluate(
+    (element) => getComputedStyle(element).backgroundColor,
+  );
+  await expect(poolRow).not.toHaveCSS('background-color', agentColor);
+  const poolBounds = await poolRow.boundingBox();
+  const agentBounds = await agentRow.boundingBox();
+  if (poolBounds === null || agentBounds === null) throw new Error('Tree rows must be visible');
+  expect(agentBounds.y - (poolBounds.y + poolBounds.height)).toBeGreaterThan(0);
+  await page.mouse.move(0, 0);
+  await explorer.screenshot({ path: test.info().outputPath('agent-selection.png') });
 });
 
 test('reviews admission actions in the header while preserving host facts and connection', async ({

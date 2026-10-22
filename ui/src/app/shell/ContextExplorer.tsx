@@ -152,7 +152,7 @@ export function ContextExplorer({
               />
             </section>
             {section.id === 'agents' ? (
-              children
+              <div className={styles.explorerTree}>{children}</div>
             ) : (
               <section aria-labelledby={`${section.id}-browse`} className={styles.explorerSection}>
                 <h3 id={`${section.id}-browse`}>
