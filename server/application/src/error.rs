@@ -124,3 +124,12 @@ impl From<ReplaceFactoryConfigurationError> for ApplicationError {
     }
   }
 }
+
+impl From<octacity_server_store::FactoryRoleProfilePublicationError> for ApplicationError {
+  fn from(error: octacity_server_store::FactoryRoleProfilePublicationError) -> Self {
+    match error {
+      octacity_server_store::FactoryRoleProfilePublicationError::PreconditionFailed => Self::PreconditionFailed,
+      octacity_server_store::FactoryRoleProfilePublicationError::Store(error) => Self::Store(error),
+    }
+  }
+}

@@ -812,3 +812,8 @@ pub use factory_issue_status_authoring::FactoryIssueStatusAuthorizer;
 
 mod issue_legacy;
 pub use issue_legacy::*;
+
+mod factory_role_profiles;
+#[cfg(test)]
+mod factory_role_profiles_tests;
+pub use factory_role_profiles::*;
