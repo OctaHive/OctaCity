@@ -246,6 +246,30 @@ class NativeAgentStartupTests(unittest.TestCase):
         self.assertNotIn("Authorization", transport.calls[0][2])
         self.assertFalse(any(key.endswith("_PROXY") for key in owner.launched[1]))
 
+    def test_registration_accepts_agent_page_with_admission_counts(self):
+        page = {**self.online_page, "active_count": 1, "total_count": 1}
+        owner = FakeLifecycle(self.root)
+
+        result, _, _ = self.start(owner, AgentTransport([page]))
+
+        self.assertEqual(result.state, "registered")
+        self.assertEqual(result.pid, 4242)
+        self.assertEqual(owner.shutdown_calls, 0)
+
+    def test_registration_still_rejects_malformed_or_paginated_agent_pages(self):
+        for page, message in (
+            ({"next_cursor": None}, "unexpected shape"),
+            ({"items": []}, "unexpected shape"),
+            ({"items": {}, "next_cursor": None}, "unexpected shape"),
+            ({"items": [], "next_cursor": "more-agents"}, "local stand bound"),
+        ):
+            with self.subTest(page=page):
+                owner = FakeLifecycle(self.root)
+                with self.assertRaisesRegex(starter.AgentStartupError, message):
+                    self.start(owner, AgentTransport([page]))
+                self.assertEqual(owner.shutdown_calls, 1)
+                self.assertFalse(owner.record.exists())
+
     def test_repeated_start_reuses_the_exact_running_agent(self):
         owner = FakeLifecycle(
             self.root,

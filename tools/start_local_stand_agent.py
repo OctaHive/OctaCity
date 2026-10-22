@@ -124,7 +124,8 @@ class RegistrationObserver:
             )
         except bootstrap.BootstrapError:
             return False
-        if set(page) != {"items", "next_cursor"} or not isinstance(page["items"], list):
+        # Management reads may add metadata without changing registration evidence.
+        if not {"items", "next_cursor"} <= page.keys() or not isinstance(page["items"], list):
             raise AgentStartupError("Agent registration response has an unexpected shape")
         if page["next_cursor"] is not None:
             raise AgentStartupError("Agent registration response exceeds the local stand bound")
