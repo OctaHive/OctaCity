@@ -1,22 +1,26 @@
 ## ADDED Requirements
 
-### Requirement: Project role and profile authoring
-The Console SHALL provide Project-scoped discovery, creation, validation, and immutable-version replacement of arbitrary Factory Roles and multiple Role Profiles per role. It SHALL offer copy-on-create coder/default/pro, reviewer/default, and architect/default starter templates and allow independent naming and configuration of their copies. Typed editors SHALL expose supported model/reasoning settings, skills/dependencies, instructions, tools, and limits from authorized server choices, with unresolved or incompatible settings clearly identified. Authoring SHALL preserve the existing in-memory-only draft, reviewed immutable intent, idempotency, current-version precondition, localization, accessibility, and safe error contracts.
+### Requirement: Project AI agent and profile authoring
+The Console SHALL provide Project-scoped discovery, creation, validation, and immutable-version replacement of arbitrary Factory Roles and multiple Role Profiles per role through an **AI agents** catalog (`AI-агенты` in Russian). One AI-agent card SHALL represent one Factory Role using its stable identity and SHALL contain its Role Profiles. Shared responsibility instructions SHALL be edited as role content; skills and supporting dependencies, additional instructions, supported model/reasoning settings, tools, and limits SHALL be edited as profile content through the existing role/profile REST contracts and authorized choices. For a selected exact profile, the card SHALL show its pinned shared and additional instruction layers and assigned skills from authorized role/profile details and normalized validation data. Unresolved or incompatible settings SHALL be clearly identified. The AI-agent catalog SHALL be separate from enrolled CI/CD Agent/Agent Pool management and SHALL NOT introduce another agent registry, storage model, or worker enrollment flow. It SHALL offer copy-on-create coder/default/pro, reviewer/default, and architect/default starter templates and allow independent naming and configuration of their copies. Authoring SHALL preserve the existing in-memory-only draft, reviewed immutable intent, idempotency, current-version precondition, localization, accessibility, and safe error contracts.
+
+#### Scenario: Operator distinguishes AI agents from CI/CD workers
+- **WHEN** a Project contains a Factory Role with two profiles and the deployment has enrolled worker Agents
+- **THEN** its AI-agent catalog shows one role-backed agent card with two profiles, while worker Agent/Pool capacity and enrollment remain in their existing Console area
 
 #### Scenario: Operator configures default and pro coding profiles
 - **WHEN** an operator copies the coder template into a Project
 - **THEN** the editor presents two independently configurable profiles and does not imply that pro grants extra permissions or that updating the template will update the copies
 
 #### Scenario: Operator creates a custom specialist
-- **WHEN** an operator creates a custom role with another profile name using visible installed choices
-- **THEN** the Console validates and publishes it through REST without requiring a fixed role category or hand-entered opaque reference
+- **WHEN** an operator creates a custom AI agent, enters shared instructions, and configures profile instructions and skills using visible installed choices
+- **THEN** the Console validates and publishes ordinary role/profile definitions through REST without a second AI-agent identity, fixed role category, or hand-entered opaque reference
 
 #### Scenario: Profile changes while being edited
 - **WHEN** another operator publishes a replacement before the current draft is confirmed
 - **THEN** the Console preserves the in-memory draft, reports the conflict, and requires explicit review against the new version instead of silently resubmitting
 
 ### Requirement: Stage selection and recovery policy editing
-The Factory stage editor SHALL support `manual`, criteria-based `rules`, and `decision_api` selection over the selected role's pinned compatible profiles. It SHALL expose ordered typed criteria for rules mode and semantic criteria, installed provider choice, qualification/rollout status, and applicable thresholds for Decision API mode. Every stage SHALL explicitly choose either an exact reserve profile or manual selection on failure. The editor SHALL show candidate compatibility and the total bounded selection/execution requirements from server validation and SHALL NOT infer authority, invent unsupported provider/model parameters, or evaluate business rules in the browser.
+The Factory stage editor SHALL support `manual`, criteria-based `rules`, and `decision_api` selection over the selected AI agent's role-bound pinned compatible profiles. Selectors SHALL identify the AI agent and profile using the same exact role/profile references. It SHALL expose ordered typed criteria for rules mode and semantic criteria, installed provider choice, qualification/rollout status, and applicable thresholds for Decision API mode. Every stage SHALL explicitly choose either an exact reserve profile or manual selection on failure. The editor SHALL show candidate compatibility and the total bounded selection/execution requirements from server validation and SHALL NOT infer authority, invent unsupported provider/model parameters, or evaluate business rules in the browser.
 
 #### Scenario: Stage uses rules and a reserve
 - **WHEN** an operator configures high complexity to select coder-pro and chooses coder as reserve

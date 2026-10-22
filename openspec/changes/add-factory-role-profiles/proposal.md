@@ -5,6 +5,7 @@ Factory stages currently bind low-level execution profiles without a Project-own
 ## What Changes
 
 - Add Project-owned, immutable versioned **Factory Roles** and **Role Profiles**. A role describes responsibilities; its profiles package exact model and reasoning settings, skills and supporting files, instructions, tools, resource limits, and compatible installed execution bindings. These are model-task definitions, distinct from enrolled worker Agents and Agent Pools.
+- Present these definitions in Console as a Project-scoped **AI agents** catalog (`AI-агенты` in Russian). One agent card represents one Factory Role, with shared instructions and its Role Profiles exposing skills and execution settings. Reuse the same identities and REST contracts; keep CI/CD worker Agent/Pool management separate.
 - Supply copy-on-create starter templates for `coder`, `reviewer`, and `architect`; the coder template contains `default` and `pro` profiles, displayed as `coder` and `coder-pro`. Projects can create, rename, and configure arbitrary roles and additional profiles. Template updates do not modify existing definitions, and `pro` grants no special authority.
 - Materialize a complete, reproducible execution package from pinned Project rules, role instructions, profile settings and skill bundles, stage task, and explicitly projected Context. Enforce Project rules and the existing permission intersection independently of instructional text.
 - Add per-stage selection policies: a configured/manual profile, deterministic evaluation of supplied typed criteria, or provider-neutral Decision API selection with JEV as the initial adapter. Support explicit operator overrides before dispatch, within the stage's pinned compatible candidates.
@@ -23,7 +24,7 @@ Factory stages currently bind low-level execution profiles without a Project-own
 
 - `server/dark-factory`: Pin allowed role/profile choices in immutable Flows, bind chosen profiles into ordinary Builds and Task Envelopes, and add the bounded `profile_selection` Decision Signal purpose without granting lifecycle authority.
 - `server/rest-control-plane`: Add authorized role/profile/template discovery and publication, stage selection validation, explicit selection commands, and safe selection diagnostics under existing concurrency and replay contracts.
-- `ui/operator-console`: Add Project role/profile management, stage selection and failure-policy editing, manual overrides, and pending selection/history views through REST.
+- `ui/operator-console`: Add Project AI-agent cards and profile management over Role/Profile contracts, stage selection and failure-policy editing, manual overrides, and pending selection/history views through REST.
 
 ## Impact
 
