@@ -375,6 +375,14 @@ export const ruMessages = {
     'Справочник пользователей недоступен. Задачи можно оставлять без ответственного.',
   'planning.assignee': 'Ответственный',
   'planning.labels': 'Метки',
+  'planning.createLabel': 'Создать метку',
+  'planning.labelName': 'Название метки',
+  'planning.reviewLabel': 'Проверить метку',
+  'planning.labelConsequence':
+    'Создать «{name}». Метка будет доступна всем задачам проекта; текущая задача не изменится.',
+  'planning.labelCreated': 'Метка создана. Выберите её в списке и сохраните свойства.',
+  'planning.labelCatalogChanged':
+    'Каталог меток изменился. Закройте подтверждение и проверьте метку заново.',
   'planning.dueDate': 'Срок',
   'planning.empty': 'В проекте нет настраиваемых свойств.',
   'planning.unavailableValue': 'Сохранённое значение недоступно',

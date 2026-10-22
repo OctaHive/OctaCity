@@ -2,6 +2,93 @@ import { expect, test } from '@playwright/test';
 import { installOperatorFixture, FIXTURE_IDS } from './operatorFixture';
 import { issueFixture, issuePropertyChoicesFixture } from '../fixtures/issues';
 
+test('creates a reusable label over HTTP, safely retries publication and assigns it to a task', async ({
+  page,
+}) => {
+  await installOperatorFixture(page);
+  const issue = issueFixture(FIXTURE_IDS.project);
+  const projectPath = `/api/v1/projects/${FIXTURE_IDS.project}`;
+  const choices = issuePropertyChoicesFixture(FIXTURE_IDS.project);
+  choices.definitions.definition.labels = [{ id: 'existing', name: 'Existing', retired: false }];
+  choices.assignees = { available: true, items: [{ id: 'person-1', name: 'Alice' }] };
+  const publications: { body: unknown; key: string | undefined; match: string | undefined }[] = [];
+  const planning: unknown[] = [];
+  await page.route(`**${projectPath}/issue-property-choices`, (route) =>
+    route.fulfill({ json: choices }),
+  );
+  await page.route(`**${projectPath}/issue-property-definitions`, async (route) => {
+    const request = route.request();
+    const body = request.postDataJSON();
+    publications.push({
+      body,
+      key: request.headers()['idempotency-key'],
+      match: request.headers()['if-match'],
+    });
+    if (publications.length === 1) return route.abort('connectionfailed');
+    choices.definitions.version = 8;
+    choices.definitions.definition = body.definition;
+    await route.fulfill({ json: { disposition: 'applied', resource: choices.definitions } });
+  });
+  await page.route(`**${projectPath}/issues/${issue.id}/planning`, async (route) => {
+    planning.push(route.request().postDataJSON());
+    await route.fulfill({ json: { disposition: 'applied', resource: issue } });
+  });
+  await page.goto(`/projects/${FIXTURE_IDS.project}/issues/${issue.id}`);
+  const properties = page.getByRole('complementary', { name: 'Properties' });
+  await properties.getByRole('button', { name: 'Edit properties', exact: true }).click();
+  await properties.getByRole('combobox', { name: 'Responsible party' }).click();
+  await properties.getByRole('option', { name: 'Alice', exact: true }).click();
+  await properties.getByRole('checkbox', { name: 'Existing', exact: true }).check();
+  await properties.getByLabel('Due date', { exact: true }).fill('2026-11-20');
+  await properties.getByLabel('Component', { exact: true }).fill('ui');
+  await properties.getByRole('button', { name: 'Create label', exact: true }).click();
+  await properties.getByRole('textbox', { name: 'Label name' }).fill('Срочно');
+  await properties.getByRole('textbox', { name: 'Label name' }).press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Review label' });
+  expect(publications).toHaveLength(0);
+  await dialog.getByRole('button', { name: 'Create label', exact: true }).click();
+  await dialog.getByRole('button', { name: 'Retry same command' }).click();
+  await expect(dialog.getByRole('status')).toContainText('Label created.');
+  expect(publications).toHaveLength(2);
+  expect(publications[1]).toEqual(publications[0]);
+  expect(publications[0]).toEqual({
+    body: {
+      expected_version: 7,
+      definition: {
+        labels: [
+          { id: 'existing', name: 'Existing', retired: false },
+          { id: expect.stringMatching(/^[a-z0-9_]{1,64}$/), name: 'Срочно', retired: false },
+        ],
+        properties: issuePropertyChoicesFixture(FIXTURE_IDS.project).definitions.definition
+          .properties,
+      },
+    },
+    key: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    match: undefined,
+  });
+  expect(planning).toHaveLength(0);
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(properties.getByRole('button', { name: 'Create label', exact: true })).toBeFocused();
+  await expect(properties.getByLabel('Component', { exact: true })).toHaveValue('ui');
+  await expect(properties.getByLabel('Due date', { exact: true })).toHaveValue('2026-11-20');
+  await expect(properties.getByRole('checkbox', { name: 'Existing', exact: true })).toBeChecked();
+  await properties.getByRole('checkbox', { name: 'Срочно' }).check();
+  await properties.getByRole('button', { name: 'Review properties' }).click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Save properties' }).click();
+  await expect
+    .poll(() => planning)
+    .toEqual([
+      {
+        definition_version: 8,
+        labels: ['existing', choices.definitions.definition.labels[1]!.id],
+        assignee: 'person-1',
+        due_date: '2026-11-20',
+        parent_id: null,
+        values: { component: { type: 'text', value: 'ui' } },
+      },
+    ]);
+});
+
 for (const language of ['en', 'ru'] as const) {
   test(`edits provider-independent Properties with keyboard and related tasks (${language})`, async ({
     page,

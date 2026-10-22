@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { ISSUE_CONSTRAINTS as bounds } from '../../../.generated/api/constraints';
 import { IssueParentPicker } from './IssueParentPicker';
 import { IssuePropertyInput } from './IssuePropertyInput';
+import { IssueLabelCreator } from './IssueLabelCreator';
 import { propertyValue, propertyValueLabel } from './issuePlanningPresentation';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -48,6 +49,8 @@ export function IssuePlanningEditor({
       ?.focus();
   }, []);
   const reviewButtonRef = useRef<HTMLButtonElement>(null);
+  const labelButtonRef = useRef<HTMLButtonElement>(null);
+  const [creatingLabel, setCreatingLabel] = useState(false);
   const initial = () =>
     structuredClone(
       issue.planning ?? {
@@ -124,7 +127,7 @@ export function IssuePlanningEditor({
         ref={formRef}
         onSubmit={(e) => {
           e.preventDefault();
-          if (!ready || stale) return;
+          if (!ready || stale || creatingLabel) return;
           for (const p of choices.definitions.definition.properties) {
             const value = propertyValue(draft.values, p.id);
             if (
@@ -199,7 +202,36 @@ export function IssuePlanningEditor({
               {l.name}
             </label>
           ))}
+          <button
+            type="button"
+            ref={labelButtonRef}
+            disabled={!ready || stale || creatingLabel}
+            onClick={() => setCreatingLabel(true)}
+          >
+            {t('planning.createLabel')}
+          </button>
         </fieldset>
+        {creatingLabel ? (
+          <IssueLabelCreator
+            api={api}
+            catalog={choices.definitions}
+            ready={ready && !owned.includes('labels')}
+            fallbackFocusRef={labelButtonRef}
+            onClose={() => {
+              setCreatingLabel(false);
+              labelButtonRef.current?.focus();
+            }}
+            onPublished={(catalog) => {
+              // Advance only our reviewed catalog addition; concurrent task/directory/policy changes stay stale.
+              const next = JSON.stringify([
+                issue.version,
+                { ...choices, definitions: catalog },
+                policy,
+              ]);
+              setBaseline((previous) => (previous === fingerprint ? next : previous));
+            }}
+          />
+        ) : null}
         <label>
           {t('planning.dueDate')}
           <input
@@ -252,7 +284,7 @@ export function IssuePlanningEditor({
             setSelectedParentLabel(label);
           }}
         />
-        <button ref={reviewButtonRef} disabled={!ready || stale}>
+        <button ref={reviewButtonRef} disabled={!ready || stale || creatingLabel}>
           {t('planning.review')}
         </button>
       </form>

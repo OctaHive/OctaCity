@@ -12,12 +12,27 @@ export type IssueContent = components['schemas']['IssueContent'];
 export type IssuePlanning = components['schemas']['IssuePlanning'];
 export type IssuePropertyChoices = components['schemas']['IssuePropertyChoices'];
 export type IssuePropertyCatalog = components['schemas']['PublishedIssueProperties'];
+export type IssuePropertiesPublication = components['schemas']['PublishIssuePropertiesRequest'];
 export type IssuePropertyDefinition = components['schemas']['IssuePropertyDefinition'];
 export type IssuePropertyValue = components['schemas']['IssuePropertyValue'];
 
 /** Project-owned task transport. Saving a task never invokes Factory or a provider. */
 export function createIssuesApi(client = managementApi) {
   return {
+    async publishProperties(
+      project_id: string,
+      body: IssuePropertiesPublication,
+      headers: IdempotencyRequestHeaders,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.POST('/api/v1/projects/{project_id}/issue-property-definitions', {
+            params: { path: { project_id }, header: headers },
+            body,
+          })
+        ).data,
+      );
+    },
     async editPlanning(
       project_id: string,
       issue_id: string,

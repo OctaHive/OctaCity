@@ -88,6 +88,181 @@ it('reviews optional assignment, labels and date then saves only planning with e
 });
 
 const catalog = issuePropertyChoicesFixture();
+it('creates a label inside planning without losing the task draft or requiring a reload', async () => {
+  const user = userEvent.setup();
+  const { api } = setup('/projects/delivery/issues/' + issue.id);
+  api.publishProperties.mockImplementation(async (_project, request) => {
+    const definitions = {
+      project_id: 'delivery',
+      version: 1,
+      published_at_unix_ms: 2,
+      definition: request.definition,
+    };
+    api.planningChoices.mockResolvedValue({
+      definitions,
+      assignees: { available: false, items: [] },
+    });
+    return { disposition: 'applied', resource: definitions };
+  });
+  await openProperties(user);
+  fireEvent.change(screen.getByLabelText('Due date'), { target: { value: '2026-11-20' } });
+  const labels = screen.getByRole('group', { name: 'Labels' });
+  const create = within(labels).getByRole('button', { name: 'Create label' });
+  await user.click(create);
+  await user.type(screen.getByRole('textbox', { name: 'Label name' }), 'Срочно');
+  await user.click(screen.getByRole('button', { name: 'Review label' }));
+  const review = screen.getByRole('dialog', { name: 'Review label' });
+  expect(review.textContent).toContain('Срочно');
+  expect(review.textContent).toContain('Available to all tasks in this project');
+  expect(api.publishProperties).not.toHaveBeenCalled();
+  await user.click(within(review).getByRole('button', { name: 'Create label' }));
+  await within(review).findByText('Label created. Select it in the list and save properties.');
+  expect(api.publishProperties.mock.calls[0]).toEqual([
+    'delivery',
+    {
+      expected_version: 0,
+      definition: {
+        labels: [
+          { id: expect.stringMatching(/^[a-z0-9_]{1,64}$/), name: 'Срочно', retired: false },
+        ],
+        properties: [],
+      },
+    },
+    { 'Idempotency-Key': expect.any(String) },
+  ]);
+  expect(api.editPlanning).not.toHaveBeenCalled();
+  await user.click(within(review).getByRole('button', { name: 'Close' }));
+  expect((screen.getByLabelText('Due date') as HTMLInputElement).value).toBe('2026-11-20');
+  expect(screen.queryByText(/Planning changed\. Reload/)).toBeNull();
+  await user.click(screen.getByRole('checkbox', { name: 'Срочно' }));
+  await user.click(screen.getByRole('button', { name: 'Review properties' }));
+  await user.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Save properties' }),
+  );
+  await waitFor(() => expect(api.editPlanning).toHaveBeenCalledTimes(1));
+  expect(api.editPlanning.mock.calls[0]).toEqual([
+    'delivery',
+    issue.id,
+    {
+      definition_version: 1,
+      labels: [api.publishProperties.mock.calls[0]![1].definition.labels[0].id],
+      assignee: null,
+      due_date: '2026-11-20',
+      parent_id: null,
+      values: {},
+    },
+    { 'If-Match': '"1"', 'Idempotency-Key': expect.any(String) },
+  ]);
+  expect(api.edit).not.toHaveBeenCalled();
+  expect(api.create).not.toHaveBeenCalled();
+  expect(localStorage.length).toBe(0);
+  expect(sessionStorage.length).toBe(0);
+});
+
+it('requires a new label review when the catalog changes and preserves existing and retired definitions', async () => {
+  const user = userEvent.setup();
+  const initial = structuredClone(catalog);
+  initial.definitions.definition.labels = [{ id: 'legacy', name: 'Legacy', retired: true }];
+  const { api, queryClient } = setup('/projects/delivery/issues/' + issue.id, (api) =>
+    api.planningChoices.mockResolvedValue(initial),
+  );
+  await openProperties(user);
+  const create = await screen.findByRole('button', { name: 'Create label' });
+  await waitFor(() => expect((create as HTMLButtonElement).disabled).toBe(false));
+  await user.click(create);
+  await user.type(screen.getByRole('textbox', { name: 'Label name' }), 'UI');
+  await user.click(screen.getByRole('button', { name: 'Review label' }));
+  const current = structuredClone(initial);
+  current.definitions.version = 8;
+  current.definitions.definition.labels.push({ id: 'external', name: 'External', retired: false });
+  await act(async () =>
+    queryClient.setQueryData(queryKeys.issuePropertyChoices('delivery'), current),
+  );
+  await waitFor(() =>
+    expect(
+      (
+        within(screen.getByRole('dialog')).getByRole('button', {
+          name: 'Create label',
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true),
+  );
+  expect(
+    screen
+      .getAllByRole('alert')
+      .map((alert) => alert.textContent)
+      .join(' '),
+  ).toContain('The label catalog changed. Close this confirmation and review again.');
+  await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Abandon' }));
+  await user.click(screen.getByRole('button', { name: 'Review label' }));
+  api.planningChoices.mockResolvedValue(current);
+  api.publishProperties.mockResolvedValue({
+    disposition: 'applied',
+    resource: current.definitions,
+  });
+  await user.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Create label' }),
+  );
+  await waitFor(() => expect(api.publishProperties).toHaveBeenCalledTimes(1));
+  expect(api.publishProperties.mock.calls[0]![1]).toEqual({
+    expected_version: 8,
+    definition: {
+      labels: [
+        { id: 'legacy', name: 'Legacy', retired: true },
+        { id: 'external', name: 'External', retired: false },
+        { id: expect.any(String), name: 'UI', retired: false },
+      ],
+      properties: initial.definitions.definition.properties,
+    },
+  });
+  expect(
+    screen
+      .getAllByRole('alert')
+      .map((alert) => alert.textContent)
+      .join(' '),
+  ).toContain('Planning changed. Reload properties and discard this draft before reviewing again.');
+});
+
+it('keeps a concurrent task change stale when label publication finishes without discarding the draft', async () => {
+  const user = userEvent.setup();
+  let finish!: () => void;
+  const pending = new Promise<void>((resolve) => {
+    finish = resolve;
+  });
+  const { api, queryClient } = setup('/projects/delivery/issues/' + issue.id, (api) => {
+    api.planningChoices.mockResolvedValue(catalog);
+    api.publishProperties.mockImplementation(async (_project, body) => {
+      await pending;
+      const published = {
+        ...catalog,
+        definitions: { ...catalog.definitions, version: 8, definition: body.definition },
+      };
+      api.planningChoices.mockResolvedValue(published);
+      return { disposition: 'applied', resource: published.definitions };
+    });
+  });
+  await openProperties(user);
+  fireEvent.change(screen.getByLabelText('Component'), { target: { value: 'draft' } });
+  await user.click(screen.getByRole('button', { name: 'Create label' }));
+  await user.type(screen.getByRole('textbox', { name: 'Label name' }), 'UI');
+  await user.click(screen.getByRole('button', { name: 'Review label' }));
+  const review = screen.getByRole('dialog');
+  await user.click(within(review).getByRole('button', { name: 'Create label' }));
+  await waitFor(() => expect(api.publishProperties).toHaveBeenCalledTimes(1));
+  await act(async () => {
+    queryClient.setQueryData(queryKeys.issue('delivery', issue.id), { ...issue, version: 2 });
+  });
+  await act(async () => finish());
+  await within(review).findByText('Label created. Select it in the list and save properties.');
+  await user.click(within(review).getByRole('button', { name: 'Close' }));
+  expect((screen.getByLabelText('Component') as HTMLInputElement).value).toBe('draft');
+  expect(screen.getByRole('alert').textContent).toContain('Planning changed.');
+  expect(
+    (screen.getByRole('button', { name: 'Review properties' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  expect(api.editPlanning).not.toHaveBeenCalled();
+});
+
 it('uses project-defined typed optional fields, preserves false, clears values and enforces UTF-8 bounds', async () => {
   const user = userEvent.setup();
   const { api } = setup('/projects/delivery/issues/' + issue.id, (api) =>

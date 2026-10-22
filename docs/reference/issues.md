@@ -782,9 +782,23 @@ shows an empty-definition explanation. Without a person directory, Unassigned
 remains usable; a retained unavailable assignment is identified honestly and can
 be cleared. Source-owned controls explain their ownership and remain disabled.
 
+Inside **Properties → Edit properties**, **Create label** beside the label list
+creates a reusable Project label. Enter its display name and review publication
+before confirming. This adds a stable generated key
+to the current catalog while retaining all existing labels (including retired
+ones) and custom property definitions. A changed catalog requires a fresh review;
+an uncertain transport outcome retries the original publication and idempotency
+key. After creation, select the label in the same editor and save properties.
+The editor retains its draft, including responsibility, selected labels, date,
+parent and custom values. Only its own successful catalog addition advances the
+review baseline; concurrent task, catalog, directory or ownership changes still
+require an explicit reload. Publication itself does not change any task.
+Source-owned labels remain read-only; catalog limits and publication permissions
+are enforced by the server.
+
 The editor keeps drafts in mounted memory only. Review shows the exact task and
 catalog versions and readable selected values before a dedicated planning PATCH.
-A changed task, catalog, directory or ownership requires explicit reload/discard
+A concurrent task, catalog, directory or ownership change requires explicit reload/discard
 and a new review; refresh never silently rebases the draft. A command whose
 response was lost retries only its frozen original body, ETag and idempotency key.
 Planning saves preserve requirements, business status and active execution inputs,

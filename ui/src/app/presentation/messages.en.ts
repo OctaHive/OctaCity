@@ -367,6 +367,14 @@ export const enMessages = {
   'planning.directoryMissing': 'No person directory is available. Tasks can remain unassigned.',
   'planning.assignee': 'Responsible party',
   'planning.labels': 'Labels',
+  'planning.createLabel': 'Create label',
+  'planning.labelName': 'Label name',
+  'planning.reviewLabel': 'Review label',
+  'planning.labelConsequence':
+    'Create “{name}”. Available to all tasks in this project; this does not change the current task.',
+  'planning.labelCreated': 'Label created. Select it in the list and save properties.',
+  'planning.labelCatalogChanged':
+    'The label catalog changed. Close this confirmation and review again.',
   'planning.dueDate': 'Due date',
   'planning.empty': 'No configurable properties in this project.',
   'planning.unavailableValue': 'Retained value unavailable',

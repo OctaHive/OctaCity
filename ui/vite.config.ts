@@ -8,6 +8,13 @@ export default defineConfig({
       output: {
         codeSplitting: {
           groups: [
+            // Reduce shared-control chunk overhead while preserving Factory's composed CSS order.
+            {
+              name: 'console-shared',
+              test: /src\/shared\/(?!Factory)/u,
+              minShareCount: 2,
+              includeDependenciesRecursively: false,
+            },
             {
               name: 'message-catalogs',
               test: /src\/app\/presentation\/messages\.(?:en|ru)\.ts$/u,
