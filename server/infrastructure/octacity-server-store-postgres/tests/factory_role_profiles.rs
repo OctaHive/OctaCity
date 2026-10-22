@@ -371,3 +371,19 @@ async fn upgrade_preserves_static_configuration_and_exact_flow_without_role_cata
   restarted_pool.close().await;
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn template_copy_matches_the_shared_memory_contract() {
+  let database = TestDatabase::migrated().await;
+  let project = seed_project(&database.pool).await;
+  let foreign = seed_project(&database.pool).await;
+  octacity_server_store::testing::verify_factory_role_template_copy(
+    &PostgresStore::new(database.pool.clone()),
+    &PostgresEvidenceProbe(database.pool.clone()),
+    project,
+    foreign,
+  )
+  .await;
+  database.cleanup().await;
+}

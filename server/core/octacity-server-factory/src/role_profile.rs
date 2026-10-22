@@ -21,6 +21,10 @@ pub const MAX_FACTORY_ROLE_PROFILE_ENTRIES: usize = 64;
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRoleDefinition {
+  /// Exact release template used for this copy; provenance only, never a live parent.
+  /// Absent on custom and retained legacy definitions.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub template: Option<ImmutableReference>,
   /// Arbitrary human-readable agent name; spelling selects no behavior.
   pub name: FactoryText,
   /// Exact ordered shared Markdown entries; legacy text remains one entry.
@@ -126,6 +130,10 @@ impl FactoryRole {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRoleProfileDefinition {
+  /// Exact release template used for this copy; provenance only, never a live parent.
+  /// Absent on custom and retained legacy definitions.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub template: Option<ImmutableReference>,
   /// Arbitrary display name; default/pro names carry no privilege or execution policy.
   pub name: FactoryText,
   /// Ordered additional Markdown entries layered after the pinned shared role instructions.

@@ -18,6 +18,7 @@ fn exact(name: &str) -> ImmutableReference {
 
 fn profile(project: ProjectId, effort: &str) -> FactoryRoleProfileDefinition {
   FactoryRoleProfileDefinition {
+    template: None,
     execution: Default::default(),
     name: FactoryText::new("UI specialist").unwrap(),
     instructions: "# Local rules\nUse selected skills.\n".into(),
@@ -46,6 +47,7 @@ fn role(project: ProjectId, instructions: &str) -> FactoryRole {
     FactoryRoleId::generate(),
     project,
     FactoryRoleDefinition {
+      template: None,
       icon: None,
       description: String::new(),
       concurrency_limit: None,
@@ -67,6 +69,7 @@ fn projects_publish_and_replace_arbitrary_roles_without_mutating_retained_versio
     .replace(
       FactoryRoleVersion::new(2).unwrap(),
       FactoryRoleDefinition {
+        template: None,
         icon: None,
         description: String::new(),
         concurrency_limit: None,
@@ -119,6 +122,7 @@ fn independent_profiles_pin_exact_owned_roles_and_replace_without_changing_sibli
     .replace(
       FactoryRoleVersion::new(2).unwrap(),
       FactoryRoleDefinition {
+        template: None,
         icon: None,
         description: String::new(),
         concurrency_limit: None,
@@ -553,4 +557,198 @@ fn profile_execution_publication_rejects_invalid_shape_bounds_and_foreign_bindin
     *definition.pointer_mut(pointer).unwrap() = value;
     assert!(serde_json::from_value::<FactoryRoleProfileDefinition>(definition).is_err());
   }
+}
+
+#[test]
+fn starter_role_templates_are_release_versioned_and_leave_execution_choices_unresolved() {
+  let templates = octacity_server_factory::factory_role_templates().unwrap();
+  assert_eq!(templates.len(), 3);
+  let expected = [
+    ("coder", vec![("default", "coder"), ("pro", "coder-pro")]),
+    ("reviewer", vec![("default", "reviewer")]),
+    ("architect", vec![("default", "architect")]),
+  ];
+  for (template, (identity, profiles)) in templates.iter().zip(expected) {
+    let reference = template.reference().unwrap();
+    assert_eq!(reference.identity().as_str(), identity);
+    assert_eq!(reference.version().as_str(), "v1");
+    assert_eq!(template.role.name.as_str(), identity);
+    assert_eq!(
+      template
+        .profiles
+        .iter()
+        .map(|(key, seed)| (key.as_str(), seed.name.as_str()))
+        .collect::<Vec<_>>(),
+      profiles
+    );
+    let wire = serde_json::to_value(template).unwrap();
+    // Starter content must not fabricate an executable binding or privilege tier.
+    for seed in wire["profiles"].as_object().unwrap().values() {
+      assert_eq!(
+        seed.as_object().unwrap().keys().map(String::as_str).collect::<Vec<_>>(),
+        ["instructions", "name"]
+      );
+    }
+  }
+}
+
+#[test]
+fn role_template_copies_keep_reviewed_choices_and_exact_provenance_without_live_inheritance() {
+  use octacity_server_factory::{FactoryRoleTemplateBinding, factory_role_templates};
+  let mut template = factory_role_templates().unwrap().remove(0);
+  let origin = template.reference().unwrap();
+  let project = ProjectId::generate();
+  let bindings = template
+    .profiles
+    .iter()
+    .map(|(key, seed)| {
+      let mut definition = profile(project, if key.as_str() == "pro" { "high" } else { "medium" });
+      definition.name = seed.name.clone();
+      definition.instructions = seed.instructions.clone();
+      (
+        key.clone(),
+        FactoryRoleTemplateBinding {
+          id: FactoryRoleProfileId::generate(),
+          definition,
+        },
+      )
+    })
+    .collect::<std::collections::BTreeMap<_, _>>();
+  let role_id = FactoryRoleId::generate();
+  let first = template
+    .instantiate(project, role_id, template.role.clone(), bindings.clone())
+    .unwrap();
+  assert_eq!(first.role.reference().project_id, project);
+  assert_eq!(first.role.definition().template.as_ref(), Some(&origin));
+  for (key, copy) in &first.profiles {
+    let mut expected = bindings[key].definition.clone();
+    expected.template = Some(origin.clone());
+    assert_eq!(
+      copy.definition(),
+      &expected,
+      "copying must preserve every reviewed setting"
+    );
+    assert_eq!(copy.role(), first.role.reference());
+  }
+  let default = &first.profiles[&FactoryKey::new("default").unwrap()];
+  let pro = &first.profiles[&FactoryKey::new("pro").unwrap()];
+  assert_eq!(default.definition().toolchain, pro.definition().toolchain);
+  assert_eq!(default.definition().permissions, pro.definition().permissions);
+  assert_eq!(default.definition().budget, pro.definition().budget);
+  assert_ne!(default.reference().digest, pro.reference().digest);
+  let mut renamed = template.role.clone();
+  renamed.name = FactoryText::new("Frontend specialist").unwrap();
+  renamed.instructions = "Project-specific shared rules".into();
+  let mut choices = bindings.clone();
+  for choice in choices.values_mut() {
+    choice.id = FactoryRoleProfileId::generate();
+  }
+  let mut additional = profile(project, "medium");
+  additional.name = FactoryText::new("Security specialist").unwrap();
+  choices.insert(
+    FactoryKey::new("security").unwrap(),
+    FactoryRoleTemplateBinding {
+      id: FactoryRoleProfileId::generate(),
+      definition: additional,
+    },
+  );
+  let changed = &mut choices.get_mut(&FactoryKey::new("pro").unwrap()).unwrap();
+  changed.id = FactoryRoleProfileId::generate();
+  changed.definition.name = FactoryText::new("Accessibility specialist").unwrap();
+  changed.definition.instructions = "Keep the reviewed UI contract".into();
+  let second = template
+    .instantiate(project, FactoryRoleId::generate(), renamed, choices)
+    .unwrap();
+  assert_ne!(first.role.reference().id, second.role.reference().id);
+  assert_eq!(second.profiles.len(), 3);
+  assert_eq!(
+    second.profiles[&FactoryKey::new("security").unwrap()]
+      .definition()
+      .name
+      .as_str(),
+    "Security specialist"
+  );
+  assert_eq!(second.role.definition().name.as_str(), "Frontend specialist");
+  assert_eq!(first.role.definition().name.as_str(), "coder");
+  assert_eq!(
+    second.profiles[&FactoryKey::new("pro").unwrap()]
+      .definition()
+      .name
+      .as_str(),
+    "Accessibility specialist"
+  );
+  template.version = FactoryKey::new("v2").unwrap();
+  template.role.instructions = "New release responsibility".into();
+  template
+    .profiles
+    .get_mut(&FactoryKey::new("pro").unwrap())
+    .unwrap()
+    .instructions = "New release instructions".into();
+  assert_ne!(template.reference().unwrap(), origin);
+  assert_eq!(first.role.definition().template.as_ref(), Some(&origin));
+  assert_eq!(pro.definition().template.as_ref(), Some(&origin));
+  assert_eq!(
+    pro.definition().instructions,
+    bindings[&FactoryKey::new("pro").unwrap()].definition.instructions
+  );
+  let restored: FactoryRoleProfile = serde_json::from_value(serde_json::to_value(pro).unwrap()).unwrap();
+  assert_eq!(&restored, pro);
+}
+
+#[test]
+fn role_template_copy_requires_complete_bounded_owned_profile_choices() {
+  use octacity_server_factory::{FactoryRoleTemplateBinding, factory_role_templates};
+  let template = factory_role_templates().unwrap().remove(0);
+  let project = ProjectId::generate();
+  let instantiate =
+    |bindings| template.instantiate(project, FactoryRoleId::generate(), template.role.clone(), bindings);
+  assert!(
+    instantiate(Default::default()).is_err(),
+    "unresolved templates cannot become complete definitions"
+  );
+  let mut bindings = template
+    .profiles
+    .keys()
+    .map(|key| {
+      (
+        key.clone(),
+        FactoryRoleTemplateBinding {
+          id: FactoryRoleProfileId::generate(),
+          definition: profile(project, "medium"),
+        },
+      )
+    })
+    .collect::<std::collections::BTreeMap<_, _>>();
+  let pro = bindings.remove(&FactoryKey::new("pro").unwrap()).unwrap();
+  assert!(
+    instantiate(bindings.clone()).is_err(),
+    "every starter profile requires explicit choices"
+  );
+  bindings.insert(FactoryKey::new("pro").unwrap(), pro.clone());
+  bindings.get_mut(&FactoryKey::new("pro").unwrap()).unwrap().id = bindings[&FactoryKey::new("default").unwrap()].id;
+  assert!(
+    instantiate(bindings.clone()).is_err(),
+    "independent profiles require independent identities"
+  );
+  bindings.insert(FactoryKey::new("pro").unwrap(), pro.clone());
+  let foreign = profile(ProjectId::generate(), "medium");
+  bindings.get_mut(&FactoryKey::new("pro").unwrap()).unwrap().definition = foreign;
+  assert!(
+    instantiate(bindings.clone()).is_err(),
+    "template provenance grants no cross-Project binding"
+  );
+  bindings.insert(FactoryKey::new("pro").unwrap(), pro);
+  for index in 0..63 {
+    bindings.insert(
+      FactoryKey::new(format!("additional-{index}")).unwrap(),
+      FactoryRoleTemplateBinding {
+        id: FactoryRoleProfileId::generate(),
+        definition: profile(project, "medium"),
+      },
+    );
+  }
+  assert!(
+    instantiate(bindings).is_err(),
+    "a copy uses the shared profile cardinality bound"
+  );
 }

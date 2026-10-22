@@ -13,6 +13,7 @@ pub fn role_profile_contract_definition(project: ProjectId) -> FactoryRoleProfil
     )
   };
   FactoryRoleProfileDefinition {
+    template: None,
     execution: FactoryRoleProfileExecution {
       environment: [
         (
@@ -85,6 +86,7 @@ pub fn role_profile_contract_intent(project: ProjectId) -> FactoryRoleProfilesIn
     FactoryRoleId::generate(),
     project,
     FactoryRoleDefinition {
+      template: None,
       icon: Some(FactoryKey::new("bot").unwrap()),
       description: "Custom Project reviewer".into(),
       concurrency_limit: std::num::NonZeroU32::new(2),
@@ -520,9 +522,192 @@ pub async fn verify_factory_role_profile_atomicity<S: FactoryRoleProfileStore, P
   assert_eq!(evidence.mutation_evidence_counts().await, before);
 }
 
+/// Verifies explicit template copying through the ordinary transaction. Both
+/// Projects must exist, and the probe must observe the same adapter backend.
+pub async fn verify_factory_role_template_copy<S: FactoryRoleProfileStore, P: MutationEvidenceProbe>(
+  store: &S,
+  evidence: &P,
+  project: ProjectId,
+  foreign: ProjectId,
+) {
+  let template = factory_role_templates().unwrap().remove(0);
+  let origin = template.reference().unwrap();
+  let copy = |project| {
+    let profiles = template
+      .profiles
+      .iter()
+      .map(|(key, seed)| {
+        let mut definition = role_profile_contract_definition(project);
+        definition.name = seed.name.clone();
+        definition.instructions = seed.instructions.clone();
+        (
+          key.clone(),
+          FactoryRoleTemplateBinding {
+            id: FactoryRoleProfileId::generate(),
+            definition,
+          },
+        )
+      })
+      .collect();
+    FactoryRoleProfilesIntent::from(
+      template
+        .instantiate(project, FactoryRoleId::generate(), template.role.clone(), profiles)
+        .unwrap(),
+    )
+  };
+  let before = evidence.mutation_evidence_counts().await;
+  let intent = copy(project);
+  let other_intent = copy(foreign);
+  assert_eq!(
+    evidence.mutation_evidence_counts().await,
+    before,
+    "catalog/copying must not persist definitions implicitly"
+  );
+  let original = store
+    .publish_factory_role_profiles(management_mutation(publication(intent.clone(), "template-copy", 1)))
+    .await
+    .unwrap();
+  let other = store
+    .publish_factory_role_profiles(management_mutation_with_request(
+      publication(other_intent, "template-other", 1),
+      "template-other",
+    ))
+    .await
+    .unwrap();
+  let role = original.role.as_ref().unwrap();
+  assert_eq!(role.definition().name.as_str(), "coder");
+  assert_eq!(role.definition().template.as_ref(), Some(&origin));
+  assert_eq!(
+    original
+      .profiles
+      .iter()
+      .map(|profile| profile.definition().name.as_str())
+      .collect::<Vec<_>>(),
+    ["coder", "coder-pro"]
+  );
+  let mut definition = role.definition().clone();
+  definition.name = FactoryText::new("Project specialist").unwrap();
+  definition.instructions = "Independent Project rules".into();
+  let next = role
+    .replace(FactoryRoleVersion::new(2).unwrap(), definition.clone())
+    .unwrap();
+  let mut profile = original.profiles[1].definition().clone();
+  profile.name = FactoryText::new("Advanced accessibility").unwrap();
+  profile.instructions = "Independent profile instructions".into();
+  let mut extra = role_profile_contract_definition(project);
+  extra.name = FactoryText::new("Security specialist").unwrap();
+  let changed = store
+    .publish_factory_role_profiles(management_mutation_with_request(
+      publication(
+        FactoryRoleProfilesIntent {
+          project_id: project,
+          role: Some(FactoryRoleIntent {
+            id: role.reference().id,
+            expected_current_version: Some(FactoryRoleVersion::INITIAL),
+            definition,
+          }),
+          profiles: vec![
+            FactoryRoleProfileIntent {
+              id: original.profiles[1].reference().id,
+              expected_current_version: Some(FactoryRoleProfileVersion::INITIAL),
+              role: next.reference().clone(),
+              definition: profile,
+            },
+            FactoryRoleProfileIntent {
+              id: FactoryRoleProfileId::generate(),
+              expected_current_version: None,
+              role: next.reference().clone(),
+              definition: extra,
+            },
+          ],
+        },
+        "template-edit",
+        2,
+      ),
+      "template-edit",
+    ))
+    .await
+    .unwrap();
+  assert_eq!(
+    changed.role.as_ref().unwrap().definition().name.as_str(),
+    "Project specialist"
+  );
+  assert_eq!(changed.profiles[0].definition().name.as_str(), "Advanced accessibility");
+  assert_eq!(changed.profiles[0].definition().template.as_ref(), Some(&origin));
+  assert_eq!(changed.profiles[1].definition().name.as_str(), "Security specialist");
+  assert_eq!(
+    changed.profiles[1].definition().template,
+    None,
+    "custom profiles need no template origin"
+  );
+  assert_eq!(
+    store
+      .factory_role_profile(project, original.profiles[0].reference().id, None)
+      .await
+      .unwrap(),
+    original.profiles[0]
+  );
+  assert_eq!(
+    store
+      .factory_role_profile(
+        project,
+        original.profiles[1].reference().id,
+        Some(FactoryRoleProfileVersion::INITIAL)
+      )
+      .await
+      .unwrap(),
+    original.profiles[1]
+  );
+  let other_role = other.role.as_ref().unwrap();
+  assert_eq!(
+    store
+      .factory_role(foreign, other_role.reference().id, None)
+      .await
+      .unwrap(),
+    *other_role
+  );
+  for profile in &other.profiles {
+    assert_eq!(
+      store
+        .factory_role_profile(foreign, profile.reference().id, None)
+        .await
+        .unwrap(),
+      *profile
+    );
+  }
+  let replay = store
+    .publish_factory_role_profiles(management_mutation(publication(intent, "template-copy", 9)))
+    .await
+    .unwrap();
+  assert_eq!(replay.disposition, MutationDisposition::Replayed);
+  assert_eq!(replay.role, original.role);
+  assert_eq!(replay.profiles, original.profiles);
+  assert_eq!(replay.published_at, original.published_at);
+  let after = evidence.mutation_evidence_counts().await;
+  assert_eq!(
+    (
+      after.idempotency - before.idempotency,
+      after.audit - before.audit,
+      after.outbox - before.outbox
+    ),
+    (3, 3, 3)
+  );
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[test]
+  fn memory_factory_role_template_copy_contract() {
+    let store = InMemoryFactoryConfigurationStore::new();
+    let project = ProjectId::generate();
+    let foreign = ProjectId::generate();
+    store.seed_project(project).unwrap();
+    store.seed_project(foreign).unwrap();
+    let mut future = std::pin::pin!(verify_factory_role_template_copy(&store, &store, project, foreign));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(future.as_mut().poll(&mut context).is_ready());
+  }
   #[test]
   fn memory_factory_role_profile_atomicity_contract() {
     let store = InMemoryFactoryConfigurationStore::new();

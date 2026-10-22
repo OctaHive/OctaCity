@@ -90,6 +90,7 @@ mod review_plan;
 mod role_profile;
 mod role_profile_execution;
 mod role_profile_instructions;
+mod role_template;
 pub use role_profile_execution::{
   FactoryRoleEnvironmentValue, FactoryRoleIntegrationBinding, FactoryRoleMcpBinding, FactoryRoleProfileExecution,
 };
@@ -269,3 +270,8 @@ mod promotion_plan_tests;
 
 mod promotion_plan;
 pub use promotion_plan::{PromotionObservation, PromotionPlan, PromotionPolicy};
+
+pub use role_template::{
+  FactoryRoleProfileTemplate, FactoryRoleTemplate, FactoryRoleTemplateBinding, FactoryRoleTemplateInstance,
+  factory_role_templates,
+};

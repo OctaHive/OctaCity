@@ -48,6 +48,8 @@ Roles have stable identities and append-only versions. Profiles have their own s
 
 The starter templates are `coder` with `default` and `pro`, `reviewer` with `default`, and `architect` with `default`. Their display labels may be `coder`/`coder-pro`, but names select no behavior. Model/reasoning choices come from installed capability catalogs. Normal and pro may share a model and differ in reasoning effort; they may also differ in skills, tool subsets, or resource limits within the same stage contract. Template copies record template identity/version/digest, are edited independently, and are not auto-created for all existing Projects.
 
+The bundled `v1` catalog supplies role presentation/instructions and profile name/instruction seeds only. Instantiation takes explicit new identities and complete operator-reviewed ordinary profile definitions, preserving edits and execution settings rather than inventing models, skills, permissions or budgets. It stamps the existing `ImmutableReference` as optional `template` provenance in role/profile content; omitted provenance preserves retained legacy digests. The resulting ordinary definitions convert into the same atomic publication intent, without another transaction or registry. Every starter profile needs explicit settings; additional custom profiles use the same bounds. Installed compatibility and executable authority are qualified in 2.5, not conferred by copying.
+
 Alternative considered: make normal/pro a global performance tier, a business-role enum, or a per-stage field override. Those cannot express arbitrary Project specialists cleanly and make effective configuration harder to audit. Select a whole published profile instead.
 
 ### 2. Keep editable definitions above installed technical authority

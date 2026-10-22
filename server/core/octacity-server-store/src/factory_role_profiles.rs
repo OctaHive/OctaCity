@@ -42,6 +42,28 @@ pub struct FactoryRoleProfilesIntent {
   /// Bounded profile publications; unrelated retained profiles are unchanged.
   pub profiles: Vec<FactoryRoleProfileIntent>,
 }
+impl From<FactoryRoleTemplateInstance> for FactoryRoleProfilesIntent {
+  fn from(instance: FactoryRoleTemplateInstance) -> Self {
+    Self {
+      project_id: instance.role.reference().project_id,
+      role: Some(FactoryRoleIntent {
+        id: instance.role.reference().id,
+        expected_current_version: None,
+        definition: instance.role.definition().clone(),
+      }),
+      profiles: instance
+        .profiles
+        .into_values()
+        .map(|profile| FactoryRoleProfileIntent {
+          id: profile.reference().id,
+          expected_current_version: None,
+          role: profile.role().clone(),
+          definition: profile.definition().clone(),
+        })
+        .collect(),
+    }
+  }
+}
 impl FactoryRoleProfilesIntent {
   /// Checks bounded nonempty operation shape before any transactional changes.
   pub fn validate(&self) -> Result<(), StoreError> {
