@@ -94,6 +94,32 @@ exact role and candidate digest without publishing a version, reserving a mutati
 key, or starting a Build. Executable admission and dispatch still require their
 ordinary installed compiler, Project and backend authority.
 
+### Reproducible AI-agent execution packages
+
+`FactoryRoleExecutionPackage` assembles an explicit core snapshot from the existing
+Task Envelope, Context Manifest, exact role/profile content, ordered Project rules
+and selected skill inventories. Project rules reference `policy` inputs in that
+same Context Manifest and must match their exact UTF-8 digest and size. Rule,
+shared-role and profile instruction layers remain separate, with Project rules
+controlling; this records precedence rather than proving that a model obeys text.
+All runtime/model parameters, environment/CLI, MCP/integration bindings, technical
+pins and stage task/output contracts participate in the versioned package digest.
+
+`FactoryRoleSkillBundle` pins a canonical relative-path inventory using existing
+Artifact references, including root `SKILL.md` and supporting files. It reuses
+Context file/byte bounds and rejects file/directory conflicts. The package requires
+exactly the profile's selected bundle references, the original role and Context
+pins, required Context entries and matching task toolchain. Task permissions and
+budget may only narrow the selected profile. Shared instruction bounds and the
+common 1 MiB document bound apply; restoration repeats validation and rejects
+unknown contract versions or substituted content.
+
+Assembly performs no catalog, filesystem, credential or provider lookup and grants
+no execution authority. Skill/task file bytes remain under their existing Artifact
+owner. Physical skill import/transfer and compiler integration remain tasks 3.2
+and 3.3; profile/Run retention remains task 3.5. Callers still qualify
+current installed capabilities and authorized inputs before executable admission.
+
 Agent registration must advertise the exact v3 semantic enforcement route
 needed by each Factory Job. Host, Apple VF and Windows WHP preview do not gain
 Factory qualification from their ordinary CI/CD support. Missing v3, a blocking

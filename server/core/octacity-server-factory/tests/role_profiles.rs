@@ -913,3 +913,700 @@ fn installed_profile_declarations_share_definition_bounds() {
     .collect();
   assert!(choices().with_role_profile_capability(alias, invalid).is_err());
 }
+
+fn execution_package_input() -> octacity_server_factory::FactoryRoleExecutionPackageInput {
+  use octacity_server_domain::{ArtifactId, ImmutableRevision, RepositoryId};
+  use octacity_server_factory::*;
+  let project = ProjectId::generate();
+  let subject = FactoryTaskSubject::Exact(ExactSubject::new(
+    project,
+    RepositoryId::generate(),
+    ImmutableRevision::new("base-revision").unwrap(),
+  ));
+  let artifact = |bytes: &[u8]| {
+    FactoryArtifactReference::new(
+      ArtifactId::generate(),
+      FactoryDigest::content_sha256(bytes),
+      bytes.len() as u64,
+    )
+    .unwrap()
+  };
+  let rules = "Project requires TDD.\n";
+  let rule_artifact = artifact(rules.as_bytes());
+  let task_artifact = artifact(b"Implement the supplied requirements.");
+  let entry = |kind, key, reference: &FactoryArtifactReference| {
+    ContextManifestEntry::new(
+      kind,
+      FactoryKey::new(key).unwrap(),
+      subject.clone(),
+      FactoryContextReference::Artifact(reference.clone()),
+      reference.content_digest(),
+      reference.encoded_size(),
+      FactorySafeText::new("Required declared input").unwrap(),
+      FactoryDigest::from_bytes([9; 32]),
+    )
+    .unwrap()
+  };
+  let context = ContextManifest::new(
+    ContextManifestId::generate(),
+    subject.clone(),
+    FactoryDigest::from_bytes([9; 32]),
+    vec![
+      entry(ContextSourceKind::Policy, "project-rules", &rule_artifact),
+      entry(ContextSourceKind::Task, "requirements", &task_artifact),
+    ],
+  )
+  .unwrap();
+  let bundle = FactoryRoleSkillBundle::new(
+    FactoryKey::new("skills.testing").unwrap(),
+    FactoryKey::new("v1").unwrap(),
+    [
+      (
+        FactoryRepositoryPath::new("SKILL.md").unwrap(),
+        artifact(b"Write a failing public test first."),
+      ),
+      (
+        FactoryRepositoryPath::new("examples/public.txt").unwrap(),
+        artifact(b"Supporting example"),
+      ),
+    ]
+    .into(),
+  )
+  .unwrap();
+  let role = role(project, "Keep changes focused.");
+  let mut definition: FactoryRoleProfileDefinition =
+    serde_json::from_value(configured_profile_definition(project)).unwrap();
+  definition.skills = [(FactoryKey::new("testing").unwrap(), bundle.reference().clone())].into();
+  let profile = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, definition).unwrap();
+  let task = FactoryTaskEnvelope::new(
+    FactoryTaskDeclaration {
+      id: TaskEnvelopeId::generate(),
+      node_attempt_id: NodeAttemptId::generate(),
+      subject,
+      mode: FactoryTaskMode::Implement,
+    },
+    FactoryTaskDefinition {
+      task: task_artifact,
+      specifications: vec![],
+      prior_findings: vec![],
+      permissions: profile.definition().permissions.clone(),
+      budget: profile.definition().budget,
+      result_schema: FactoryTaskResultSchema::ImplementationV1,
+      deliverables: vec![FactoryTaskDeliverable::new(
+        FactoryKey::new("result").unwrap(),
+        FactoryRepositoryPath::new("outputs/result.json").unwrap(),
+        true,
+      )],
+    },
+    &context,
+    profile.definition().toolchain.clone(),
+    FactoryTaskControlDigests {
+      policy: FactoryDigest::from_bytes([1; 32]),
+      prompt: FactoryDigest::from_bytes([2; 32]),
+      prompt_provenance: FactoryDigest::from_bytes([3; 32]),
+      provenance: FactoryDigest::from_bytes([4; 32]),
+    },
+  )
+  .unwrap();
+  FactoryRoleExecutionPackageInput {
+    project_rules: vec![FactoryRoleProjectRule {
+      source: FactoryKey::new("project-rules").unwrap(),
+      instructions: rules.into(),
+    }],
+    role,
+    profile,
+    skills: [(FactoryKey::new("testing").unwrap(), bundle)].into(),
+    task,
+    context,
+  }
+}
+
+#[test]
+fn execution_package_preserves_ordered_inputs_and_has_reproducible_versioned_identity() {
+  use octacity_server_factory::*;
+  let input = execution_package_input();
+  let package = FactoryRoleExecutionPackage::new(input.clone()).unwrap();
+  let repeated = FactoryRoleExecutionPackage::new(input.clone()).unwrap();
+  assert_eq!(package.canonical_bytes().unwrap(), repeated.canonical_bytes().unwrap());
+  assert_eq!(package.digest().unwrap(), repeated.digest().unwrap());
+  assert_eq!(package.inputs(), &input);
+  assert_eq!(
+    package.inputs().project_rules[0].instructions,
+    "Project requires TDD.\n"
+  );
+  assert_eq!(
+    package.inputs().role.definition().instructions.entries(),
+    ["Keep changes focused."]
+  );
+  assert_eq!(
+    package.inputs().profile.definition().instructions.entries(),
+    ["# Local rules\nUse selected skills.\n"]
+  );
+  assert_eq!(
+    package.inputs().profile.definition().execution.cli_arguments,
+    ["--output", "structured", ""]
+  );
+  assert_eq!(
+    package.inputs().skills[&FactoryKey::new("testing").unwrap()]
+      .files()
+      .len(),
+    2
+  );
+  let json = serde_json::to_value(&package).unwrap();
+  assert_eq!(json["schema_version"], 1);
+}
+
+#[test]
+fn execution_package_rejects_mismatched_pins_and_unselected_inputs_without_fallback() {
+  use octacity_server_factory::*;
+  let input = execution_package_input();
+  let mut cases = vec![];
+  let mut changed = input.clone();
+  changed.role = role(input.role.reference().project_id, "Different role version");
+  cases.push(("role pin", changed));
+  let mut changed = input.clone();
+  changed.context = ContextManifest::new(
+    input.context.id(),
+    input.context.subject().clone(),
+    FactoryDigest::from_bytes([99; 32]),
+    input.context.entries().to_vec(),
+  )
+  .unwrap();
+  cases.push(("context digest", changed));
+  for field in ["plugin", "executable", "model"] {
+    let mut changed = input.clone();
+    let mut definition = serde_json::to_value(changed.profile.definition()).unwrap();
+    definition["toolchain"][field] = serde_json::to_value(exact("different.installed-choice")).unwrap();
+    changed.profile = FactoryRoleProfile::publish(
+      changed.profile.reference().id,
+      changed.role.reference().project_id,
+      &changed.role,
+      serde_json::from_value(definition).unwrap(),
+    )
+    .unwrap();
+    cases.push((field, changed));
+  }
+  let mut changed = input.clone();
+  let mut definition = changed.profile.definition().clone();
+  definition
+    .context_requirements
+    .insert(FactoryKey::new("unselected-context").unwrap());
+  changed.profile = FactoryRoleProfile::publish(
+    changed.profile.reference().id,
+    changed.role.reference().project_id,
+    &changed.role,
+    definition,
+  )
+  .unwrap();
+  cases.push(("required Context", changed));
+  let mut changed = input.clone();
+  changed.skills.clear();
+  cases.push(("missing skill", changed));
+  let mut changed = input.clone();
+  changed.skills.insert(
+    FactoryKey::new("ambient-skill").unwrap(),
+    input.skills.values().next().unwrap().clone(),
+  );
+  cases.push(("unselected skill", changed));
+  let mut changed = input.clone();
+  let bundle = input.skills.values().next().unwrap();
+  changed.skills.insert(
+    FactoryKey::new("testing").unwrap(),
+    FactoryRoleSkillBundle::new(
+      FactoryKey::new("substituted.bundle").unwrap(),
+      FactoryKey::new("v2").unwrap(),
+      bundle.files().clone(),
+    )
+    .unwrap(),
+  );
+  cases.push(("skill pin", changed));
+  let mut changed = input.clone();
+  changed.project_rules[0].instructions = "Substituted rule text".into();
+  cases.push(("rule byte identity", changed));
+  let mut changed = input.clone();
+  changed.project_rules[0].source = FactoryKey::new("requirements").unwrap();
+  cases.push(("task data is not Project policy", changed));
+  let mut changed = input.clone();
+  changed.project_rules.push(changed.project_rules[0].clone());
+  cases.push(("duplicate rule source", changed));
+  let mut changed = input;
+  let mut definition = changed.profile.definition().clone();
+  definition.budget = BudgetLimit::new(1, 1, 1, 1, 1).unwrap();
+  changed.profile = FactoryRoleProfile::publish(
+    changed.profile.reference().id,
+    changed.role.reference().project_id,
+    &changed.role,
+    definition,
+  )
+  .unwrap();
+  cases.push(("profile budget", changed));
+  for (reason, input) in cases {
+    assert!(
+      FactoryRoleExecutionPackage::new(input).is_err(),
+      "{reason} must be rejected"
+    );
+  }
+}
+
+#[test]
+fn execution_package_restores_the_same_identity_and_rejects_substituted_content() {
+  use octacity_server_factory::*;
+  let package = FactoryRoleExecutionPackage::new(execution_package_input()).unwrap();
+  let bytes = package.canonical_bytes().unwrap();
+  let restored: FactoryRoleExecutionPackage = serde_json::from_slice(&bytes).unwrap();
+  assert_eq!(restored.canonical_bytes().unwrap(), bytes);
+  assert_eq!(restored.digest().unwrap(), package.digest().unwrap());
+  let original = serde_json::to_value(&package).unwrap();
+  for (pointer, replacement) in [
+    ("/schema_version", serde_json::json!(2)),
+    (
+      "/inputs/project_rules/0/instructions",
+      serde_json::json!("Changed after freezing"),
+    ),
+    (
+      "/inputs/profile/definition/execution/cli_arguments/1",
+      serde_json::json!("substituted-output"),
+    ),
+    (
+      "/inputs/skills/testing/files/SKILL.md/content_digest",
+      serde_json::to_value(FactoryDigest::from_bytes([44; 32])).unwrap(),
+    ),
+  ] {
+    let mut changed = original.clone();
+    *changed.pointer_mut(pointer).unwrap() = replacement;
+    assert!(
+      serde_json::from_value::<FactoryRoleExecutionPackage>(changed).is_err(),
+      "{pointer}"
+    );
+  }
+}
+
+fn refresh_package_task(input: &mut octacity_server_factory::FactoryRoleExecutionPackageInput) {
+  use octacity_server_factory::*;
+  let previous = &input.task;
+  let digests = previous.digests();
+  let task = input
+    .context
+    .entries()
+    .iter()
+    .find_map(|entry| match entry.source() {
+      FactoryContextReference::Artifact(reference) if entry.source_kind() == ContextSourceKind::Task => {
+        Some(reference.clone())
+      }
+      _ => None,
+    })
+    .unwrap();
+  input.task = FactoryTaskEnvelope::new(
+    FactoryTaskDeclaration {
+      id: previous.id(),
+      node_attempt_id: previous.node_attempt_id(),
+      subject: previous.subject().clone(),
+      mode: previous.mode(),
+    },
+    FactoryTaskDefinition {
+      task,
+      specifications: previous.specifications().to_vec(),
+      prior_findings: previous.prior_findings().to_vec(),
+      permissions: previous.permissions().clone(),
+      budget: previous.budget(),
+      result_schema: previous.result_schema(),
+      deliverables: previous.deliverables().to_vec(),
+    },
+    &input.context,
+    input.profile.definition().toolchain.clone(),
+    FactoryTaskControlDigests {
+      policy: digests.policy,
+      prompt: digests.prompt,
+      prompt_provenance: digests.prompt_provenance,
+      provenance: digests.provenance,
+    },
+  )
+  .unwrap();
+}
+
+fn replace_package_context_text(
+  input: &mut octacity_server_factory::FactoryRoleExecutionPackageInput,
+  key: &str,
+  text: &str,
+) {
+  use octacity_server_factory::*;
+  let entries = input
+    .context
+    .entries()
+    .iter()
+    .map(|entry| {
+      if entry.logical_identity().as_str() != key {
+        return entry.clone();
+      }
+      let FactoryContextReference::Artifact(previous) = entry.source() else {
+        panic!("fixture Artifact input")
+      };
+      let reference = FactoryArtifactReference::new(
+        previous.artifact_id(),
+        FactoryDigest::content_sha256(text.as_bytes()),
+        text.len() as u64,
+      )
+      .unwrap();
+      ContextManifestEntry::new(
+        entry.source_kind(),
+        entry.logical_identity().clone(),
+        entry.subject().clone(),
+        FactoryContextReference::Artifact(reference.clone()),
+        reference.content_digest(),
+        reference.encoded_size(),
+        entry.inclusion_reason().clone(),
+        entry.provenance_digest(),
+      )
+      .unwrap()
+    })
+    .collect();
+  input.context = ContextManifest::new(
+    input.context.id(),
+    input.context.subject().clone(),
+    input.context.construction_policy_digest(),
+    entries,
+  )
+  .unwrap();
+  refresh_package_task(input);
+}
+
+#[test]
+fn execution_package_identity_covers_settings_rules_skill_tree_and_stage_task() {
+  use octacity_server_factory::*;
+  let input = execution_package_input();
+  let original = FactoryRoleExecutionPackage::new(input.clone())
+    .unwrap()
+    .digest()
+    .unwrap();
+  for (pointer, value) in [
+    (
+      "/toolchain/plugin",
+      serde_json::to_value(exact("another.plugin")).unwrap(),
+    ),
+    (
+      "/toolchain/executable",
+      serde_json::to_value(exact("another.runtime")).unwrap(),
+    ),
+    (
+      "/toolchain/model",
+      serde_json::to_value(exact("another.model")).unwrap(),
+    ),
+    ("/model_parameters/reasoning_effort", serde_json::json!("high")),
+    ("/execution/environment/LANGUAGE/value", serde_json::json!("en")),
+    (
+      "/execution/environment/MODEL_AUTH/reference/reference",
+      serde_json::json!("projects/new-model"),
+    ),
+    ("/execution/cli_arguments/1", serde_json::json!("text")),
+    (
+      "/execution/mcp_servers/tools/configuration",
+      serde_json::to_value(exact("another.mcp")).unwrap(),
+    ),
+    ("/execution/integrations/tracker/access_version", serde_json::json!(2)),
+    (
+      "/instructions",
+      serde_json::json!(["First profile entry", "Second profile entry"]),
+    ),
+    (
+      "/budget",
+      serde_json::to_value(BudgetLimit::new(2, 2000, 400, 200, 2048).unwrap()).unwrap(),
+    ),
+  ] {
+    let mut changed = input.clone();
+    let mut definition = serde_json::to_value(changed.profile.definition()).unwrap();
+    *definition.pointer_mut(pointer).unwrap() = value;
+    changed.profile = FactoryRoleProfile::publish(
+      changed.profile.reference().id,
+      changed.role.reference().project_id,
+      &changed.role,
+      serde_json::from_value(definition).unwrap(),
+    )
+    .unwrap();
+    refresh_package_task(&mut changed);
+    assert_ne!(
+      FactoryRoleExecutionPackage::new(changed).unwrap().digest().unwrap(),
+      original,
+      "{pointer}"
+    );
+  }
+  let mut changed = input.clone();
+  let mut role_definition = changed.role.definition().clone();
+  role_definition.instructions = "Changed shared responsibility".into();
+  changed.role = FactoryRole::publish(
+    changed.role.reference().id,
+    changed.role.reference().project_id,
+    role_definition,
+  )
+  .unwrap();
+  changed.profile = FactoryRoleProfile::publish(
+    changed.profile.reference().id,
+    changed.role.reference().project_id,
+    &changed.role,
+    changed.profile.definition().clone(),
+  )
+  .unwrap();
+  assert_ne!(
+    FactoryRoleExecutionPackage::new(changed).unwrap().digest().unwrap(),
+    original
+  );
+  let mut changed = input.clone();
+  changed.project_rules[0].instructions = "Project requires tests and review.\n".into();
+  replace_package_context_text(&mut changed, "project-rules", "Project requires tests and review.\n");
+  assert_ne!(
+    FactoryRoleExecutionPackage::new(changed).unwrap().digest().unwrap(),
+    original
+  );
+  let mut changed = input.clone();
+  replace_package_context_text(&mut changed, "requirements", "Implement a different stage task.");
+  assert_ne!(
+    FactoryRoleExecutionPackage::new(changed).unwrap().digest().unwrap(),
+    original
+  );
+  let mut changed = input;
+  let alias = FactoryKey::new("testing").unwrap();
+  let bundle = &changed.skills[&alias];
+  let mut files = bundle.files().clone();
+  let example = files
+    .get_mut(&FactoryRepositoryPath::new("examples/public.txt").unwrap())
+    .unwrap();
+  *example = FactoryArtifactReference::new(
+    example.artifact_id(),
+    FactoryDigest::content_sha256(b"New supporting example"),
+    22,
+  )
+  .unwrap();
+  let bundle = FactoryRoleSkillBundle::new(
+    bundle.reference().identity().clone(),
+    bundle.reference().version().clone(),
+    files,
+  )
+  .unwrap();
+  let mut definition = changed.profile.definition().clone();
+  definition.skills.insert(alias.clone(), bundle.reference().clone());
+  changed.profile = FactoryRoleProfile::publish(
+    changed.profile.reference().id,
+    changed.role.reference().project_id,
+    &changed.role,
+    definition,
+  )
+  .unwrap();
+  changed.skills.insert(alias, bundle);
+  assert_ne!(
+    FactoryRoleExecutionPackage::new(changed).unwrap().digest().unwrap(),
+    original
+  );
+}
+
+#[test]
+fn execution_skill_bundles_require_a_bounded_complete_file_tree() {
+  use octacity_server_factory::*;
+  let input = execution_package_input();
+  let bundle = input.skills.values().next().unwrap();
+  let reference = bundle.files().values().next().unwrap().clone();
+  let mut cases = vec![std::collections::BTreeMap::new()];
+  let mut absent_root = bundle.files().clone();
+  absent_root.remove(&FactoryRepositoryPath::new("SKILL.md").unwrap());
+  cases.push(absent_root);
+  let mut excessive_files = bundle.files().clone();
+  for i in 0..MAX_CONTEXT_MANIFEST_ENTRIES {
+    excessive_files.insert(
+      FactoryRepositoryPath::new(format!("extra/{i}.txt")).unwrap(),
+      reference.clone(),
+    );
+  }
+  cases.push(excessive_files);
+  let huge = FactoryArtifactReference::new(
+    reference.artifact_id(),
+    reference.content_digest(),
+    MAX_CONTEXT_ENTRY_BYTES,
+  )
+  .unwrap();
+  let mut excessive_bytes = [(FactoryRepositoryPath::new("SKILL.md").unwrap(), huge.clone())]
+    .into_iter()
+    .collect::<std::collections::BTreeMap<_, _>>();
+  for i in 0..4 {
+    excessive_bytes.insert(FactoryRepositoryPath::new(format!("large/{i}")).unwrap(), huge.clone());
+  }
+  cases.push(excessive_bytes);
+  let mut conflicting_tree = bundle.files().clone();
+  conflicting_tree.insert(FactoryRepositoryPath::new("examples").unwrap(), reference);
+  cases.push(conflicting_tree);
+  for files in cases {
+    assert!(
+      FactoryRoleSkillBundle::new(
+        bundle.reference().identity().clone(),
+        bundle.reference().version().clone(),
+        files
+      )
+      .is_err()
+    );
+  }
+}
+
+#[test]
+fn execution_package_rejects_omitted_controlling_policy_inputs() {
+  use octacity_server_domain::ArtifactId;
+  use octacity_server_factory::*;
+  let mut input = execution_package_input();
+  let text = "Project requires independent review.\n";
+  let reference = FactoryArtifactReference::new(
+    ArtifactId::generate(),
+    FactoryDigest::content_sha256(text.as_bytes()),
+    text.len() as u64,
+  )
+  .unwrap();
+  let mut entries = input.context.entries().to_vec();
+  entries.push(
+    ContextManifestEntry::new(
+      ContextSourceKind::Policy,
+      FactoryKey::new("review-policy").unwrap(),
+      input.context.subject().clone(),
+      FactoryContextReference::Artifact(reference.clone()),
+      reference.content_digest(),
+      reference.encoded_size(),
+      FactorySafeText::new("Required Project review policy").unwrap(),
+      FactoryDigest::from_bytes([9; 32]),
+    )
+    .unwrap(),
+  );
+  input.context = ContextManifest::new(
+    input.context.id(),
+    input.context.subject().clone(),
+    input.context.construction_policy_digest(),
+    entries,
+  )
+  .unwrap();
+  refresh_package_task(&mut input);
+  input.project_rules.push(FactoryRoleProjectRule {
+    source: FactoryKey::new("review-policy").unwrap(),
+    instructions: text.into(),
+  });
+  let original = FactoryRoleExecutionPackage::new(input.clone()).unwrap();
+  for retained in [
+    vec![],
+    vec![input.project_rules[0].clone()],
+    vec![input.project_rules[1].clone()],
+  ] {
+    let mut incomplete = input.clone();
+    incomplete.project_rules = retained;
+    let mut wire = serde_json::to_value(&original).unwrap();
+    wire["inputs"]["project_rules"] = serde_json::to_value(&incomplete.project_rules).unwrap();
+    assert!(
+      FactoryRoleExecutionPackage::new(incomplete).is_err(),
+      "every selected policy must remain in the controlling instruction layer"
+    );
+    assert!(
+      serde_json::from_value::<FactoryRoleExecutionPackage>(wire).is_err(),
+      "restoring a package cannot omit selected policies either"
+    );
+  }
+}
+
+#[test]
+fn execution_package_uses_shared_instruction_and_document_bounds() {
+  use octacity_server_factory::*;
+  let input = execution_package_input();
+  let original_rule = input
+    .context
+    .entries()
+    .iter()
+    .find(|entry| entry.source_kind() == ContextSourceKind::Policy)
+    .unwrap();
+  let FactoryContextReference::Artifact(rule_artifact) = original_rule.source() else {
+    panic!("fixture policy Artifact")
+  };
+  for (count, text) in [
+    (1, "control\0text".to_owned()),
+    (65, "Project rule".to_owned()),
+    (2, "x".repeat(MAX_FACTORY_ROLE_INSTRUCTION_BYTES / 2 + 1)),
+  ] {
+    let mut changed = input.clone();
+    let artifact = FactoryArtifactReference::new(
+      rule_artifact.artifact_id(),
+      FactoryDigest::content_sha256(text.as_bytes()),
+      text.len() as u64,
+    )
+    .unwrap();
+    let mut entries = changed
+      .context
+      .entries()
+      .iter()
+      .filter(|entry| entry.source_kind() != ContextSourceKind::Policy)
+      .cloned()
+      .collect::<Vec<_>>();
+    changed.project_rules.clear();
+    for i in 0..count {
+      let key = FactoryKey::new(format!("rule-{i}")).unwrap();
+      changed.project_rules.push(FactoryRoleProjectRule {
+        source: key.clone(),
+        instructions: text.clone(),
+      });
+      entries.push(
+        ContextManifestEntry::new(
+          ContextSourceKind::Policy,
+          key,
+          changed.context.subject().clone(),
+          FactoryContextReference::Artifact(artifact.clone()),
+          artifact.content_digest(),
+          artifact.encoded_size(),
+          original_rule.inclusion_reason().clone(),
+          original_rule.provenance_digest(),
+        )
+        .unwrap(),
+      );
+    }
+    changed.context = ContextManifest::new(
+      changed.context.id(),
+      changed.context.subject().clone(),
+      changed.context.construction_policy_digest(),
+      entries,
+    )
+    .unwrap();
+    refresh_package_task(&mut changed);
+    assert!(
+      FactoryRoleExecutionPackage::new(changed).is_err(),
+      "rule count={count}, bytes={}",
+      text.len()
+    );
+  }
+  let mut changed = input;
+  let file = changed
+    .skills
+    .values()
+    .next()
+    .unwrap()
+    .files()
+    .values()
+    .next()
+    .unwrap()
+    .clone();
+  let mut files = [(FactoryRepositoryPath::new("SKILL.md").unwrap(), file.clone())]
+    .into_iter()
+    .collect::<std::collections::BTreeMap<_, _>>();
+  for i in 1..MAX_CONTEXT_MANIFEST_ENTRIES {
+    files.insert(
+      FactoryRepositoryPath::new(format!("files/{i}/{}", "x".repeat(900))).unwrap(),
+      file.clone(),
+    );
+  }
+  let mut definition = changed.profile.definition().clone();
+  definition.skills.clear();
+  changed.skills.clear();
+  for i in 0..5 {
+    let key = FactoryKey::new(format!("skill-{i}")).unwrap();
+    let bundle = FactoryRoleSkillBundle::new(key.clone(), FactoryKey::new("v1").unwrap(), files.clone()).unwrap();
+    definition.skills.insert(key.clone(), bundle.reference().clone());
+    changed.skills.insert(key, bundle);
+  }
+  changed.profile = FactoryRoleProfile::publish(
+    changed.profile.reference().id,
+    changed.role.reference().project_id,
+    &changed.role,
+    definition,
+  )
+  .unwrap();
+  assert!(
+    FactoryRoleExecutionPackage::new(changed).is_err(),
+    "complete canonical package must fit the shared document bound"
+  );
+}

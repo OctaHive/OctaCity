@@ -8,9 +8,11 @@ mod context;
 mod envelope;
 mod result;
 mod retrieval;
+mod role_package;
 
 pub use common::*;
 pub use context::*;
 pub use envelope::*;
 pub use result::*;
 pub use retrieval::*;
+pub use role_package::*;

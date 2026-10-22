@@ -235,7 +235,8 @@ pub use subject::{CandidateSubject, ExactSubject};
 pub use task_contract::{
   BoundedSummary, ContextManifest, ContextManifestEntry, ContextSourceKind, EvaluationResult, EvaluationResultFinding,
   FACTORY_TASK_CONTRACT_VERSION, FactoryArtifactReference, FactoryContextReference, FactoryProducedDeliverable,
-  FactoryRepositoryFragmentReference, FactoryRepositoryPath, FactoryRepositoryRange, FactoryTaskControlDigests,
+  FactoryRepositoryFragmentReference, FactoryRepositoryPath, FactoryRepositoryRange, FactoryRoleExecutionPackage,
+  FactoryRoleExecutionPackageInput, FactoryRoleProjectRule, FactoryRoleSkillBundle, FactoryTaskControlDigests,
   FactoryTaskDeclaration, FactoryTaskDefinition, FactoryTaskDeliverable, FactoryTaskDigests, FactoryTaskEnvelope,
   FactoryTaskMode, FactoryTaskResultSchema, FactoryTaskSubject, FactoryTaskToolchain, ImplementationOutcome,
   ImplementationResult, MAX_CONTEXT_ENTRY_BYTES, MAX_CONTEXT_MANIFEST_BYTES, MAX_CONTEXT_MANIFEST_ENTRIES,
