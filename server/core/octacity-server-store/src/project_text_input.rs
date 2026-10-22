@@ -7,7 +7,8 @@ use octacity_server_factory::{
 use serde::{Deserialize, Serialize};
 
 const PREPARATION_LEASE_MILLIS: i64 = 30_000;
-const PREPARATION_DEADLINE_MILLIS: i64 = 300_000;
+/// Hard deadline shared by recoverable Project input preparations.
+pub const PROJECT_INPUT_PREPARATION_DEADLINE_MILLIS: i64 = 300_000;
 const MAX_PREPARATION_ATTEMPTS: u16 = 16;
 /// Only explicitly mapped Work inputs are published; no implicit specification fetch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -393,7 +394,7 @@ impl ProjectTextPreparation {
       attempts: 1,
       claimed_at: now,
       lease_until: advance(now, PREPARATION_LEASE_MILLIS)?,
-      preparation_deadline: advance(now, PREPARATION_DEADLINE_MILLIS)?,
+      preparation_deadline: advance(now, PROJECT_INPUT_PREPARATION_DEADLINE_MILLIS)?,
       intent: s.intent,
       objects,
       reserved_at: now,

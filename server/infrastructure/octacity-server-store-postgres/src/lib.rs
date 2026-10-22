@@ -131,3 +131,5 @@ mod integration_project_access;
 mod issue_legacy;
 
 mod issue_retention;
+
+mod project_skill_import;

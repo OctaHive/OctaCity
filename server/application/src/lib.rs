@@ -823,3 +823,9 @@ pub use factory_role_profile_catalog::*;
 
 mod factory_role_catalog;
 pub use factory_role_catalog::*;
+
+#[cfg(test)]
+mod factory_skill_import_tests;
+
+mod factory_skill_import;
+pub use factory_skill_import::*;

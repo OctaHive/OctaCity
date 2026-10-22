@@ -3,6 +3,8 @@
 //! Production adapters enable the `test-support` feature from their test
 //! dependencies and run [`verify_authoritative_store_contract`] unchanged.
 
+pub use crate::project_skill_import_testing::{skill_import_contract_request, verify_project_skill_import_publication};
+
 use std::{
   collections::{BTreeMap, BTreeSet},
   sync::{Arc, Mutex, MutexGuard},

@@ -10,6 +10,8 @@ use octacity_server_store::{
 };
 use sqlx::{PgPool, Postgres};
 
+pub(crate) const PRIVATE_INPUT_CLEANUP_RECHECK_MILLIS: i64 = 3_600_000;
+
 fn conflict() -> StoreError {
   StoreError::Conflict {
     entity: EntityKind::Artifact,
@@ -164,12 +166,23 @@ impl FactoryExecutionInputRetentionStore for PostgresStore {
       )
       .await?,
     );
+    inputs.extend(
+      crate::project_skill_import::expired(
+        self.pool(),
+        observed_at,
+        limit - u16::try_from(inputs.len()).map_err(|_| conflict())?,
+      )
+      .await?,
+    );
     Ok(inputs)
   }
   async fn complete_factory_execution_input_deletion(
     &self,
     request: CompleteFactoryExecutionInputDeletion,
   ) -> Result<(), StoreError> {
+    if crate::project_skill_import::complete(self.pool(), &request).await? {
+      return Ok(());
+    }
     if crate::project_text_retention::complete(self.pool(), &request).await? {
       return Ok(());
     }

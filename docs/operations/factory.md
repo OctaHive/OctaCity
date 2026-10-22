@@ -116,9 +116,46 @@ unknown contract versions or substituted content.
 
 Assembly performs no catalog, filesystem, credential or provider lookup and grants
 no execution authority. Skill/task file bytes remain under their existing Artifact
-owner. Physical skill import/transfer and compiler integration remain tasks 3.2
-and 3.3; profile/Run retention remains task 3.5. Callers still qualify
+owner. Project skill-folder import and protected-input preparation are implemented
+below; ordinary compiler integration remains task 3.3 and profile/Run retention
+remains task 3.5. Callers still qualify
 current installed capabilities and authorized inputs before executable admission.
+
+### Project skill-folder imports
+
+`ProjectSkillImport` accepts an explicitly reviewed regular-file set and expected
+SHA-256 values under Project administration authority, without Factory execution
+permission. It requires root `SKILL.md`, retains every declared supporting file,
+and rejects links, duplicate/unsafe paths, file/directory conflicts and changed
+reviewed bytes before reserving objects. Existing Artifact/Context bounds apply:
+nonempty files up to 16 MiB each, at most 256 files and 64 MiB in total, with
+portable relative paths. No workstation directory or setup hook is opened.
+
+`ProjectSkillImportStore` retains metadata and receipts in memory contracts and
+PostgreSQL. Bytes use `ArtifactBytePublisher`/`ArtifactByteReader` and the configured
+object backend. Reservation records the complete cleanup inventory before I/O;
+only the complete verified tree becomes visible in the bounded Project catalog.
+Project and accepted management security scope partition replay. The same key and
+reviewed tree recover the original receipt; changed intent conflicts. Explicit
+reimport with a new key creates another immutable version and preserves earlier
+references. Pending retries resubmit the exact reviewed bytes.
+
+Staging uses the shared five-minute Project input preparation deadline. Expired
+imports cannot publish or renew their deadline. The existing private-input cleanup
+worker claims their objects with a durable fence before deletion and retries
+failed deletions. Its shared recheck interval also removes late writes from an
+interrupted publisher. Published bundles are excluded from abandoned staging
+cleanup; profile/Run/Build retention and holds are integrated in task 3.5.
+
+The trusted compiler can prepare selected complete bundles through `materialize`.
+It checks Project ownership, exact manifests, aggregate Context bounds and all
+protected destinations before reading files, then verifies every retained byte
+identity. Missing or substituted content fails without an ambient/global fallback.
+The resulting unchanged `ProtectedInputManifestV3` uses the existing Artifact input
+transfer and Agent materializer, with no provider URL or new file backend. Import
+creates no Work, Build or executable grant. Installed capability qualification,
+REST transport (7.1) and Console folder selection/review (8.1) remain their
+respective boundaries.
 
 Agent registration must advertise the exact v3 semantic enforcement route
 needed by each Factory Job. Host, Apple VF and Windows WHP preview do not gain

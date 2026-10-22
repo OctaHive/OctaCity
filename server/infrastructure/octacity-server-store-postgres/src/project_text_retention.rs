@@ -7,7 +7,7 @@ use octacity_server_domain::Timestamp;
 use octacity_server_store::*;
 use sqlx::{PgPool, types::Json};
 
-const CLEANUP_RECHECK_MILLIS: i64 = 3_600_000;
+use crate::factory_execution_input::PRIVATE_INPUT_CLEANUP_RECHECK_MILLIS;
 // Cleanup needs neither private bodies nor the original admission Flow.
 type CleanupRow = (Option<uuid::Uuid>, i64, Json<Vec<FactoryInputObject>>);
 
@@ -96,7 +96,7 @@ pub(crate) async fn complete(
   let recheck = request
     .deleted_at
     .unix_millis()
-    .checked_add(CLEANUP_RECHECK_MILLIS)
+    .checked_add(PRIVATE_INPUT_CLEANUP_RECHECK_MILLIS)
     .ok_or_else(conflict)?;
   let updated=sqlx::query("UPDATE project_text_input_objects SET deleted_at_millis=COALESCE(deleted_at_millis,$2),recheck_at_millis=GREATEST(COALESCE(recheck_at_millis,$3),$3) WHERE artifact_id=$1 AND deletion_started_at_millis IS NOT NULL")
     .bind(request.expected.artifact_id.as_uuid()).bind(request.deleted_at.unix_millis()).bind(recheck).execute(&mut *tx).await.map_err(unavailable)?;
