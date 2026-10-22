@@ -7,6 +7,8 @@ import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { issuePath } from '../../app/routes';
 import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
+import { SelectMenu } from '../../shared/SelectMenu';
+import { issuePriorityOptions, formatIssuePriority } from './issuePriority';
 import type { Issue, IssueContent, IssuePolicy, IssuesApi } from './api';
 import styles from './Issues.module.css';
 
@@ -80,7 +82,11 @@ export function IssueEditor({
                 .map((field) => (
                   <div key={field}>
                     <dt>{t(`issues.${field}`)}</dt>
-                    <dd className={styles.prose}>{issue.content[field] ?? t('issues.notSet')}</dd>
+                    <dd className={styles.prose}>
+                      {field === 'priority'
+                        ? formatIssuePriority(issue.content.priority, t)
+                        : (issue.content[field] ?? t('issues.notSet'))}
+                    </dd>
                   </div>
                 ))}
             </dl>
@@ -171,16 +177,15 @@ export function IssueEditor({
         </label>
         <label>
           {t('issues.priority')}
-          <input
-            type="number"
-            min={bounds.priorityMinimum}
-            max={bounds.priorityMaximum}
-            disabled={policy?.source_owned.includes('priority')}
-            value={draft.priority ?? ''}
-            onChange={(e) =>
+          <SelectMenu
+            ariaLabel={t('issues.priority')}
+            disabled={policy?.source_owned.includes('priority') === true}
+            value={draft.priority == null ? '' : String(draft.priority)}
+            options={issuePriorityOptions(draft.priority, t)}
+            onValueChange={(value) =>
               setDraft({
                 ...draft,
-                priority: e.target.value === '' ? null : e.target.valueAsNumber,
+                priority: value === '' ? null : Number(value),
               })
             }
           />
@@ -194,7 +199,7 @@ export function IssueEditor({
         <ConfirmedCommand
           title={t('issues.review')}
           confirmLabel={t(issue ? 'issues.save' : 'issues.create')}
-          consequence={`${review.version ? t('issues.editBaseline', { version: review.version }) + '. ' : ''}${t('issues.title')}: ${review.content.title}. ${t('issues.description')}: ${review.content.description || t('issues.noDescription')} ${t('issues.acceptance')}: ${review.content.acceptance || t('issues.noAcceptance')} ${t('issues.priority')}: ${review.content.priority ?? t('issues.notSet')}. ${t('issues.saveConsequence')}`}
+          consequence={`${review.version ? t('issues.editBaseline', { version: review.version }) + '. ' : ''}${t('issues.title')}: ${review.content.title}. ${t('issues.description')}: ${review.content.description || t('issues.noDescription')} ${t('issues.acceptance')}: ${review.content.acceptance || t('issues.noAcceptance')} ${t('issues.priority')}: ${formatIssuePriority(review.content.priority, t)}. ${t('issues.saveConsequence')}`}
           request={review.content}
           {...(review.version === undefined ? {} : { version: review.version })}
           {...(onRefresh ? { onRefresh } : {})}

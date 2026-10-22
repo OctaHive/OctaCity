@@ -506,6 +506,7 @@ export const ruMessages = {
   'issues.description': 'Описание',
   'issues.acceptance': 'Критерии приёмки',
   'issues.priority': 'Приоритет',
+  'issues.legacyPriority': 'Существующий приоритет ({value})',
   'issues.review': 'Проверить задачу',
   'issues.saveConsequence':
     'Сохранение требований задачи. Pipeline не запускается, внешняя система не изменяется.',

@@ -497,6 +497,7 @@ export const enMessages = {
   'issues.description': 'Description',
   'issues.acceptance': 'Acceptance criteria',
   'issues.priority': 'Priority',
+  'issues.legacyPriority': 'Existing priority ({value})',
   'issues.review': 'Review task',
   'issues.saveConsequence':
     'Save task requirements only. No pipeline starts and no external system changes.',

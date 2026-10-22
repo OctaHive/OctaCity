@@ -619,7 +619,8 @@ it('refreshes source-owned fields during explicit reconciliation while retaining
     screen.getByRole('textbox', { name: 'Acceptance criteria' }),
     'Keep my acceptance',
   );
-  await userEvent.type(screen.getByRole('spinbutton', { name: 'Priority' }), '8');
+  await userEvent.click(screen.getByRole('combobox', { name: 'Priority' }));
+  await userEvent.click(screen.getByRole('option', { name: 'High' }));
   const choices = await api.transitions.mock.results[0]!.value;
   api.get.mockResolvedValue({
     ...issue,
@@ -661,7 +662,7 @@ it('refreshes source-owned fields during explicit reconciliation while retaining
     title: 'Fresh source title',
     description: 'Fresh source description',
     acceptance: 'Keep my acceptance',
-    priority: 8,
+    priority: 2,
   });
 });
 

@@ -566,6 +566,14 @@ store dependency direction. Production builds do not expose the test fixture.
 ## Console manual task workspace
 
 Open a Project, choose **Tasks**, then **Create task**. Only a title is required.
+The Console's planning-priority list starts with Blocker (3), High (2), Medium (1)
+and Low (0), plus Not set (`null`). One shared presentation mapping supplies the
+create/edit selector, confirmation and card labels. The numeric REST range stays
+0–255; an existing non-preset value appears as `Existing priority (N)` and is
+preserved through unrelated edits until explicitly replaced or cleared. The four
+presets are not a closed server enum, so the shared list can be extended without
+migrating existing Issue values. Execution scheduling priority is separate.
+
 Description, acceptance criteria and priority can be completed later; no
 integration, repository, Factory setup or workflow-administration permission is
 required to create a manual task. Creation pins the Project default on the server.

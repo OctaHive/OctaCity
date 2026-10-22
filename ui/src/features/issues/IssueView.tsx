@@ -30,6 +30,7 @@ import type { IssuesApi } from './api';
 import type { IssueSourcesApi } from './sourceApi';
 import { IssueSource } from './IssueSource';
 import { IssueEditor } from './IssueEditor';
+import { formatIssuePriority } from './issuePriority';
 import { IssueRelationships } from './IssueRelationships';
 import { IssueProperties } from './IssueProperties';
 import { IssueProjectNav, type IssueProjectReader } from './IssueProjectNav';
@@ -455,7 +456,7 @@ function Card({
                 <h2>{t('issues.properties')}</h2>
                 <dl>
                   <dt>{t('issues.priority')}</dt>
-                  <dd>{issue.content.priority ?? t('issues.notSet')}</dd>
+                  <dd>{formatIssuePriority(issue.content.priority, t)}</dd>
                   <dt>{t('issues.workflow')}</dt>
                   <dd>
                     {workflow.data?.definition.name ?? t('issues.unknownStatus')} ·{' '}
