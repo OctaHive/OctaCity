@@ -30,6 +30,23 @@ impl TestDatabase {
     database
   }
 
+  /// Rehearses the last schema before the frozen legacy Work migration.
+  #[allow(dead_code)]
+  pub async fn before_issue_backfill() -> Self {
+    let database = Self::empty().await;
+    let migrator = sqlx::migrate::Migrator::with_migrations(
+      octacity_server_store_postgres::MIGRATOR
+        .iter()
+        .filter(|m| m.version < 93)
+        .cloned()
+        .collect(),
+    );
+    octacity_server_store_postgres::run_migrator(&database.pool, &migrator)
+      .await
+      .unwrap();
+    database
+  }
+
   pub async fn cleanup(mut self) {
     self.pool.close().await;
     let drop_database = sqlx::AssertSqlSafe(format!("DROP DATABASE \"{}\" WITH (FORCE)", self.name));

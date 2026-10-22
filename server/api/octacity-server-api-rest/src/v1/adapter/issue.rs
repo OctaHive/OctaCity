@@ -9,6 +9,7 @@ use octacity_server_application::{
 
 /// Task services can be installed without Factory, providers or execution configuration.
 pub struct IssueManagementApplication {
+  retention: Option<retention::Endpoints>,
   children: Arc<
     dyn AuthorizedManagementQueryHandler<octacity_server_application::ListIssueChildrenQuery, Error = ApplicationError>,
   >,
@@ -71,6 +72,7 @@ impl IssueManagementApplication {
       + 'static,
   {
     Self {
+      retention: None,
       children: queries.clone(),
       edit_planning: commands.clone(),
       definitions: queries.clone(),
@@ -104,7 +106,7 @@ fn endpoints<'a>(app: &'a ManagementApplication, id: &RequestId) -> Result<&'a I
 fn representation(issue: &IssueRevision, id: &RequestId) -> Result<Value, ApiError> {
   let mut value = json!({"id":issue.id.to_string(),"project_id":issue.project_id.to_string(),"number":issue.number,
     "display_key":issue.display_key(),"version":issue.version.get(),"applicability_version":issue.applicability_version.get(),
-    "content":encode(&issue.content,id)?,"workflow_id":issue.workflow_id.to_string(),"workflow_version":issue.workflow_version.get(),
+    "content_available":issue.content_available,"content":encode(&issue.content,id)?,"workflow_id":issue.workflow_id.to_string(),"workflow_version":issue.workflow_version.get(),
     "status_id":issue.status_id.to_string(),"created_at_unix_ms":issue.created_at.unix_millis(),"updated_at_unix_ms":issue.updated_at.unix_millis()});
   if !issue.planning.is_empty() {
     value["planning"] = encode(&issue.planning, id)?;
@@ -461,3 +463,6 @@ fn issue_page(
       .into_response(),
   )
 }
+
+#[path = "issue_retention.rs"]
+pub(super) mod retention;

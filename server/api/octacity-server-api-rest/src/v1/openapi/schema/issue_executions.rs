@@ -76,6 +76,21 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       ],
     ),
   );
+  schemas.insert("IssueLegacyWorkHistoryPage".into(),object([
+    ("items",json!({"type":"array","maxItems":octacity_server_application::MAX_ISSUE_HISTORY_PAGE_SIZE,"items":schema_ref("IssueWorkAssociation")})),
+    ("next_cursor",nullable(json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_EXECUTION_CURSOR_BYTES}))),
+    ("observation",schema_ref("FactoryDigest"))
+  ],&["items","next_cursor","observation"]));
+  schemas.insert(
+    "IssueWorkExecutionProjection".into(),
+    object(
+      [
+        ("association", schema_ref("IssueWorkAssociation")),
+        ("run", schema_ref("IssueRunObservation")),
+      ],
+      &["association", "run"],
+    ),
+  );
   schemas.insert("IssueExecutionHistoryPage".into(),object([
     ("items",json!({"type":"array","maxItems":octacity_server_application::MAX_ISSUE_HISTORY_PAGE_SIZE,"items":schema_ref("IssueExecutionResource")})),
     ("next_cursor",nullable(json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_EXECUTION_CURSOR_BYTES}))),

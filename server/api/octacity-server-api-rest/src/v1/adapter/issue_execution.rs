@@ -2,7 +2,8 @@
 use super::*;
 use octacity_server_application::{
   ApplicationError, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler, GetIssueExecutionQuery,
-  IssueExecutionRequest, ListIssueExecutionsQuery, PublishIssueExecutionCommand, RequestIssueExecutionCommand,
+  GetIssueWorkExecutionQuery, IssueExecutionRequest, ListIssueExecutionsQuery, ListIssueLegacyWorkQuery,
+  PublishIssueExecutionCommand, RequestIssueExecutionCommand,
 };
 #[path = "issue_execution_journal.rs"]
 pub(super) mod journal;
@@ -18,6 +19,8 @@ struct Publication {
 }
 /// Optional execution services independent of manual Issue management.
 pub struct IssueExecutionManagementApplication {
+  legacy: Option<Arc<dyn AuthorizedManagementQueryHandler<ListIssueLegacyWorkQuery, Error = ApplicationError>>>,
+  work: Option<Arc<dyn AuthorizedManagementQueryHandler<GetIssueWorkExecutionQuery, Error = ApplicationError>>>,
   journal: Option<Arc<dyn AuthorizedManagementQueryHandler<ListIssueExecutionJournalQuery, Error = ApplicationError>>>,
   journal_events:
     Option<Arc<dyn AuthorizedManagementQueryHandler<ReadIssueExecutionJournalEventsQuery, Error = ApplicationError>>>,
@@ -36,6 +39,8 @@ impl IssueExecutionManagementApplication {
       + 'static,
   {
     Self {
+      legacy: None,
+      work: None,
       journal: None,
       journal_events: None,
       journal_detail: None,
@@ -46,6 +51,17 @@ impl IssueExecutionManagementApplication {
   }
 }
 impl IssueExecutionManagementApplication {
+  /// Reuses the original Work reader and bounded association metadata without enabling admission.
+  pub fn with_legacy_work<Q>(mut self, queries: Arc<Q>) -> Self
+  where
+    Q: AuthorizedManagementQueryHandler<ListIssueLegacyWorkQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<GetIssueWorkExecutionQuery, Error = ApplicationError>
+      + 'static,
+  {
+    self.legacy = Some(queries.clone());
+    self.work = Some(queries);
+    self
+  }
   /// Installs optional journal reads without enabling publication or requiring them for manual tasks.
   pub fn with_journal<Q, E>(mut self, queries: Arc<Q>, events: Arc<E>) -> Self
   where
@@ -265,4 +281,49 @@ pub(super) async fn list(
     )
       .into_response(),
   )
+}
+
+pub(super) async fn legacy_list(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, issue)): Path<(String, String)>,
+  parameters: Result<Query<HistoryParameters>, QueryRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  let invalid = || application_error(ApplicationFailure::Invalid, &id);
+  let Query(parameters) = parameters.map_err(|_| invalid())?;
+  let query = ListIssueLegacyWorkQuery::try_new(
+    project.parse().map_err(|_| invalid())?,
+    issue.parse().map_err(|_| invalid())?,
+    parameters.after,
+    parameters.limit.unwrap_or(DEFAULT_PAGE_LIMIT),
+  )
+  .map_err(|e| application_error(e.classification(), &id))?;
+  let page = endpoints(&app, &id)?
+    .legacy
+    .as_ref()
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
+    .handle_authorized_query(&context, query)
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(([("cache-control", "no-store")], Json(encode(page, &id)?)).into_response())
+}
+pub(super) async fn work(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, issue, work)): Path<(String, String, String)>,
+) -> Result<axum::response::Response, ApiError> {
+  let invalid = || application_error(ApplicationFailure::Invalid, &id);
+  let query = GetIssueWorkExecutionQuery {
+    project_id: project.parse().map_err(|_| invalid())?,
+    issue_id: issue.parse().map_err(|_| invalid())?,
+    work_id: work.parse().map_err(|_| invalid())?,
+  };
+  let projection = endpoints(&app, &id)?
+    .work
+    .as_ref()
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
+    .handle_authorized_query(&context, query)
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(([("cache-control", "no-store")], Json(encode(projection, &id)?)).into_response())
 }

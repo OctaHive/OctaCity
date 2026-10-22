@@ -673,3 +673,51 @@ async fn rejected_restore_audit_rolls_back_claim_invalidation_and_outbox_retry()
     "all original authority and work remain available after the rejected transaction"
   );
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn completed_retention_removes_derived_action_bodies_and_checkpoint_in_bounded_passes() {
+  let database = TestDatabase::migrated().await;
+  seed_factory_runs(&database.pool).await;
+  sqlx::query("INSERT INTO factory_action_projections(run_id,source_version,observed_at_millis) VALUES($1,1,1)")
+    .bind(run_id(3).as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  // Opaque retained cache data must be purged even if its old schema is no longer readable.
+  sqlx::query("INSERT INTO factory_action_items(run_id,node_attempt_id,description) VALUES($1,$2,$3)")
+    .bind(run_id(3).as_uuid())
+    .bind(uuid(500))
+    .bind(Json(serde_json::json!({"retained":"legacy action shape"})))
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  let store = PostgresStore::new(database.pool.clone());
+  let owner = WorkerOwner::new("action-retention").unwrap();
+  let mut complete = false;
+  for now in 20..100 {
+    let claims = store
+      .claim_factory_retention_work(
+        ClaimFactoryRetentionWork::new(owner.clone(), time(now), time(now + 10), 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(claims.len(), 1);
+    let pass = store
+      .advance_factory_retention_work(AdvanceFactoryRetentionWork::new(run_id(3), owner.clone(), time(now), 1).unwrap())
+      .await
+      .unwrap();
+    assert!(pass.deleted_records <= 1);
+    if pass.completed {
+      complete = true;
+      break;
+    }
+  }
+  assert!(complete);
+  let retained: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM factory_action_items WHERE run_id=$1)+(SELECT count(*) FROM factory_action_projections WHERE run_id=$1)").bind(run_id(3).as_uuid()).fetch_one(&database.pool).await.unwrap();
+  assert_eq!(
+    retained, 0,
+    "completed cleanup cannot leave derived response shapes behind"
+  );
+  database.cleanup().await;
+}

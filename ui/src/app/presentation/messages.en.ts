@@ -459,7 +459,7 @@ export const enMessages = {
   'issues.resumeMemoryHelp':
     'Resume reuses the original confirmed inputs. Leaving this card discards the local continuation; the server retains its request.',
   'issues.executionHistory': 'Execution history',
-  'issues.noExecutions': 'No visible executions',
+  'issues.noExecutions': 'No visible execution requests',
   'issues.selectedExecution': 'Selected execution',
   'issues.refreshExecutions': 'Refresh executions',
   'issues.startHelp':
@@ -505,6 +505,15 @@ export const enMessages = {
   'issues.empty': 'No tasks yet. Create your first task here.',
   'issues.firstPage': 'First page',
   'issues.nextPage': 'Next page',
+  'issues.taskLinkUnavailable': 'Task link unavailable or association pending.',
+  'issues.legacyExecutions': 'Legacy Artifact executions',
+  'issues.legacyExecution': 'Original Artifact execution · {work}',
+  'issues.legacyProvenance':
+    'Original Artifact inputs are authoritative. No reviewed requirements revision was recorded.',
+  'issues.openOriginalRun': 'Open original Run',
+  'issues.contentUnavailableTitle': 'Task content unavailable',
+  'issues.contentUnavailable':
+    'Task content is unavailable. Its identity and execution history are retained.',
   'issues.noDescription': 'No description yet.',
   'issues.noAcceptance': 'Acceptance criteria can be added before execution.',
   'issues.activityPreview': 'Activity preview',

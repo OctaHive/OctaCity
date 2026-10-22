@@ -317,6 +317,8 @@ pub(crate) enum MutationKind {
   SetIssueSourcePull,
   RequestIssueExecution,
   AssociateIssueWork,
+  BackfillIssueWork,
+  SetIssueContentRetention,
   ReserveProjectTextInput,
   AdoptIssueWorkflow,
   EditIssue,
@@ -388,7 +390,7 @@ impl MutationKind {
       | Self::RotateManagedWebhook
       | Self::DeleteManagedWebhook => NonManagementMutationClass::Adapter,
       Self::AcceptTrigger | Self::SuppressTrigger => NonManagementMutationClass::Trigger,
-      Self::RecoverExpiredLease | Self::FailLeaseAssignment | Self::CancelFactoryBuild => {
+      Self::RecoverExpiredLease | Self::FailLeaseAssignment | Self::CancelFactoryBuild | Self::BackfillIssueWork => {
         NonManagementMutationClass::Worker
       }
       _ => panic!("management mutation kind cannot use a non-management namespace"),
@@ -528,6 +530,18 @@ impl MutationKind {
         "request-issue-execution",
         "issue",
         "issue.execution-requested"
+      ),
+      Self::SetIssueContentRetention => metadata!(
+        b"octacity.set-issue-content-retention.v1\0",
+        "set-issue-content-retention",
+        "issue",
+        "issue.content-retention-configured"
+      ),
+      Self::BackfillIssueWork => metadata!(
+        b"octacity.backfill-issue-work.v1\0",
+        "backfill-issue-work",
+        "issue",
+        "issue.work-backfilled"
       ),
       Self::AssociateIssueWork => metadata!(
         b"octacity.associate-issue-work.v1\0",

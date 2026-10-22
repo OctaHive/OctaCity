@@ -10,7 +10,7 @@ use octacity_server_application::{
   ManualTriggerRetryWorker, ScheduleWorker, WebhookDeliveryWorker,
 };
 use octacity_server_domain::Timestamp;
-use octacity_server_store::WorkerOwner;
+use octacity_server_store::{IssueContentRetentionStore, IssueLegacyStore, WorkerOwner};
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
@@ -21,6 +21,7 @@ use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, rea
 
 pub(super) struct DurableWorkers {
   pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
+  pub(super) legacy_issues: Arc<PostgresStore>,
   pub(super) actions: octacity_server_application::FactoryActionProjectionWorker<PostgresStore>,
   pub(super) expiry: LeaseExpiryWorker<PostgresAuthoritativeStore>,
   pub(super) expiry_health: Arc<WorkerHealth>,
@@ -179,9 +180,17 @@ pub(super) fn spawn_durable_workers(
     }
     spawn_factory_worker(installed.owner, installed.health, policy, cancellation.child_token())
   });
+  let issue_retention = spawn_issue_content_retention_worker(
+    workers.legacy_issues.clone(),
+    retention_policy,
+    cancellation.child_token(),
+  );
+  let legacy = spawn_legacy_issue_worker(workers.legacy_issues, retention_policy, cancellation.child_token());
   let actions = spawn_action_projection_worker(workers.actions, retention_policy, cancellation.child_token());
   let mut tasks = vec![
     ("factory-action-projection", actions),
+    ("issue-legacy-backfill", legacy),
+    ("issue-content-retention", issue_retention),
     (EXPIRY_WORKER_NAME, expiry),
     (SCHEDULE_WORKER_NAME, schedules),
     (INTERNAL_TRIGGER_WORKER_NAME, internal_triggers),
@@ -215,22 +224,12 @@ fn spawn_action_projection_worker(
   policy: RetentionWorkerPolicy,
   cancellation: CancellationToken,
 ) -> JoinHandle<()> {
-  let ordinary = policy.retrying().worker();
-  let name = "factory-action-projection";
   let worker = Arc::new(worker);
-  let limit = ordinary
-    .batch_size()
-    .min(octacity_server_store::MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE);
-  let task = spawn_worker_loop(
-    WorkerIdentity::new(name, WorkerKind::Factory),
-    Arc::new(WorkerHealth::new(
-      name,
-      ordinary.poll_interval().saturating_add(ordinary.claim_lifetime()),
-    )),
-    ordinary.poll_interval(),
-    ordinary.claim_lifetime(),
-    cancellation.child_token(),
-    move |at, _| {
+  spawn_read_model_worker(
+    "factory-action-projection",
+    policy,
+    cancellation,
+    move |at, limit| {
       let worker = worker.clone();
       async move {
         let progress = worker.run_once(at, limit).await?;
@@ -245,6 +244,86 @@ fn spawn_action_projection_worker(
         info!(completed = progress.completed, "Factory action projection advanced");
       }
     },
+  )
+}
+
+fn spawn_legacy_issue_worker(
+  store: Arc<PostgresStore>,
+  policy: RetentionWorkerPolicy,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  spawn_read_model_worker(
+    "issue-legacy-backfill",
+    policy,
+    cancellation,
+    move |at, limit| {
+      let store = store.clone();
+      async move {
+        store
+          .backfill_legacy_issue_work(limit, at)
+          .await
+          .map(|items| items.len())
+      }
+    },
+    |count| {
+      if *count > 0 {
+        info!(completed = count, "Legacy Issue associations advanced");
+      }
+    },
+  )
+}
+
+fn spawn_issue_content_retention_worker(
+  store: Arc<PostgresStore>,
+  policy: RetentionWorkerPolicy,
+  cancellation: CancellationToken,
+) -> JoinHandle<()> {
+  spawn_read_model_worker(
+    "issue-content-retention",
+    policy,
+    cancellation,
+    move |at, limit| {
+      let store = store.clone();
+      async move { store.expire_issue_content(at, limit).await }
+    },
+    |count| {
+      if *count > 0 {
+        info!(removed = count, "Issue content retention advanced");
+      }
+    },
+  )
+}
+
+// Optional maintenance shares bounded scheduling, retry, health and shutdown semantics.
+fn spawn_read_model_worker<Pass, PassFuture, Progress, Error, Observe>(
+  name: &'static str,
+  policy: RetentionWorkerPolicy,
+  cancellation: CancellationToken,
+  pass: Pass,
+  observe: Observe,
+) -> JoinHandle<()>
+where
+  Pass: Fn(Timestamp, u16) -> PassFuture + Send + Sync + 'static,
+  PassFuture: Future<Output = Result<Progress, Error>> + Send + 'static,
+  Progress: Send + 'static,
+  Error: std::fmt::Display + Send + 'static,
+  Observe: Fn(&Progress) + Send + Sync + 'static,
+{
+  let ordinary = policy.retrying().worker();
+  let limit = ordinary
+    .batch_size()
+    .min(octacity_server_store::MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE);
+  let task = spawn_worker_loop(
+    WorkerIdentity::new(name, WorkerKind::Factory),
+    Arc::new(WorkerHealth::new(
+      name,
+      ordinary.poll_interval().saturating_add(ordinary.claim_lifetime()),
+    )),
+    ordinary.poll_interval(),
+    ordinary.claim_lifetime(),
+    cancellation.child_token(),
+    move |at, _| pass(at, limit),
+    observe,
   );
   isolate_read_model_worker(task, cancellation)
 }

@@ -806,3 +806,6 @@ pub use factory_source_configuration::*;
 
 mod factory_issue_status_authoring;
 pub use factory_issue_status_authoring::FactoryIssueStatusAuthorizer;
+
+mod issue_legacy;
+pub use issue_legacy::*;

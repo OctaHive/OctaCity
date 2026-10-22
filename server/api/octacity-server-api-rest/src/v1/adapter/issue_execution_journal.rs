@@ -1,6 +1,8 @@
 //! Exact journal translation; bodies remain separate from bounded safe metadata pages.
 use super::*;
-use octacity_server_application::{FactoryDiagnosticCollection, GetIssueExecutionJobQuery, GetIssueWorkExecutionQuery};
+use octacity_server_application::{
+  FactoryDiagnosticCollection, GetIssueExecutionJobQuery, GetIssueWorkExecutionQuery, ManagementRequestContext,
+};
 
 fn selection(
   project: String,
@@ -93,18 +95,30 @@ pub(crate) async fn events(
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;
   let target = job_target(&receipt, p.build_execution, p.job_id, &id)?;
+  read_events(&app, &id, &context, target, p.after, p.limit, base).await
+}
+async fn read_events(
+  app: &ManagementApplication,
+  id: &RequestId,
+  context: &ManagementRequestContext,
+  target: GetIssueExecutionJobQuery,
+  after: Option<String>,
+  limit: Option<u16>,
+  base: String,
+) -> Result<axum::response::Response, ApiError> {
+  let endpoints = endpoints(app, id)?;
   let selector = format!("build_execution={}&job_id={}", target.build_execution, target.job_id);
-  let query = ReadIssueExecutionJournalEventsQuery::try_new(target, p.after, p.limit.unwrap_or(DEFAULT_PAGE_LIMIT))
-    .map_err(|e| application_error(e.classification(), &id))?;
+  let query = ReadIssueExecutionJournalEventsQuery::try_new(target, after, limit.unwrap_or(DEFAULT_PAGE_LIMIT))
+    .map_err(|e| application_error(e.classification(), id))?;
   let page = endpoints
     .journal_events
     .as_ref()
-    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
-    .handle_authorized_query(&context, query)
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, id))?
+    .handle_authorized_query(context, query)
     .await
-    .map_err(|e| authorized_handler_error(e, &id))?;
+    .map_err(|e| authorized_handler_error(e, id))?;
   let log_url = format!("/api/v1/jobs/{}/events", page.job.log.job_id);
-  let mut value = encode(page, &id)?;
+  let mut value = encode(page, id)?;
   value["job"]["log"]["events_url"] = json!(log_url);
   for event in value["events"].as_array_mut().expect("serialized event vector") {
     event["detail_url"] = json!(format!("{base}/{}?{selector}", event["sequence"]));
@@ -137,12 +151,71 @@ pub(crate) async fn detail(
   let query =
     GetIssueExecutionJournalEventQuery::try_new(job_target(&receipt, p.build_execution, p.job_id, &id)?, sequence)
       .map_err(|e| application_error(e.classification(), &id))?;
-  let page = endpoints
+  read_detail(&app, &id, &context, query).await
+}
+async fn read_detail(
+  app: &ManagementApplication,
+  id: &RequestId,
+  context: &ManagementRequestContext,
+  query: GetIssueExecutionJournalEventQuery,
+) -> Result<axum::response::Response, ApiError> {
+  let page = endpoints(app, id)?
     .journal_detail
     .as_ref()
-    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
-    .handle_authorized_query(&context, query)
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, id))?
+    .handle_authorized_query(context, query)
     .await
-    .map_err(|e| authorized_handler_error(e, &id))?;
+    .map_err(|e| authorized_handler_error(e, id))?;
   Ok(([("cache-control", "no-store")], Json(job_event_page(page))).into_response())
+}
+
+// Original Artifact Work uses the same exact Job/linkage/visibility reader.
+fn work_job(
+  project: String,
+  issue: String,
+  work: String,
+  build: String,
+  job: String,
+  id: &RequestId,
+) -> Result<GetIssueExecutionJobQuery, ApiError> {
+  let invalid = || application_error(ApplicationFailure::Invalid, id);
+  Ok(GetIssueExecutionJobQuery {
+    execution: GetIssueWorkExecutionQuery {
+      project_id: project.parse().map_err(|_| invalid())?,
+      issue_id: issue.parse().map_err(|_| invalid())?,
+      work_id: work.parse().map_err(|_| invalid())?,
+    },
+    build_execution: build.parse().map_err(|_| invalid())?,
+    job_id: job.parse().map_err(|_| invalid())?,
+  })
+}
+pub(crate) async fn work_events(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, issue, work)): Path<(String, String, String)>,
+  parameters: Result<Query<EventParameters>, QueryRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  let Query(p) = parameters.map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
+  let target = work_job(project, issue, work, p.build_execution, p.job_id, &id)?;
+  let selected = &target.execution;
+  let base = format!(
+    "/api/v1/projects/{}/issues/{}/work/{}/journal/events",
+    selected.project_id, selected.issue_id, selected.work_id
+  );
+  read_events(&app, &id, &context, target, p.after, p.limit, base).await
+}
+pub(crate) async fn work_detail(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, issue, work, sequence)): Path<(String, String, String, String)>,
+  parameters: Result<Query<DetailParameters>, QueryRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  let Query(p) = parameters.map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
+  let invalid = || application_error(ApplicationFailure::Invalid, &id);
+  let query = GetIssueExecutionJournalEventQuery::try_new(
+    work_job(project, issue, work, p.build_execution, p.job_id, &id)?,
+    sequence.parse().map_err(|_| invalid())?,
+  )
+  .map_err(|e| application_error(e.classification(), &id))?;
+  read_detail(&app, &id, &context, query).await
 }

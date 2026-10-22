@@ -593,3 +593,7 @@ impl<S: IssueStore> ManagementCommandUseCase<ApplyIssuePipelineStatusCommand> fo
     )
   }
 }
+
+#[path = "issue_retention.rs"]
+mod retention;
+pub use retention::*;

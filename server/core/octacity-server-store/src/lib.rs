@@ -856,3 +856,9 @@ mod factory_source_configuration;
 pub use factory_source_configuration::*;
 mod factory_source_diagnostics;
 pub use factory_source_diagnostics::*;
+
+mod issue_legacy;
+pub use issue_legacy::*;
+
+mod issue_retention;
+pub use issue_retention::*;

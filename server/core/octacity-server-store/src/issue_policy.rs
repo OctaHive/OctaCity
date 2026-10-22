@@ -38,6 +38,7 @@ impl IssueRevision {
       } else {
         self.applicability_version
       },
+      content_available: true,
       content: intent.content.clone(),
       updated_at: request.edited_at,
       ..self.clone()

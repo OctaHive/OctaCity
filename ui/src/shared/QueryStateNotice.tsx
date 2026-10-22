@@ -215,3 +215,39 @@ function noticeClassName(kind: string | undefined, className: string | undefined
     .filter((value): value is string => value !== undefined)
     .join(' ');
 }
+
+/** Shared initial/background read states keep independent sections consistent. */
+export function QueryContent<T>({
+  query,
+  label,
+  children,
+}: {
+  query: {
+    data: T | undefined;
+    error: Error | null;
+    isPending: boolean;
+    isFetching: boolean;
+    refetch: () => unknown;
+  };
+  label: string;
+  children: (data: T) => ReactNode;
+}) {
+  if (query.data === undefined) {
+    return query.isPending ? (
+      <QueryLoadingNotice label={label} />
+    ) : (
+      <QueryFailureNotice title={label} error={query.error} onRetry={query.refetch} />
+    );
+  }
+  return (
+    <>
+      <QueryBackgroundNotice
+        label={label}
+        error={query.error}
+        fetching={query.isFetching}
+        onRetry={query.refetch}
+      />
+      {children(query.data)}
+    </>
+  );
+}

@@ -840,7 +840,13 @@ pub(super) async fn get_factory_run(
     .map_err(|error| authorized_handler_error(error, &request_id))?;
   let etag = VersionPrecondition::new(item.version.get()).map_err(|_| internal_conversion(&request_id))?;
   Ok((
-    [(axum::http::header::ETAG, etag.to_header_value())],
+    [
+      (axum::http::header::ETAG, etag.to_header_value()),
+      (
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+      ),
+    ],
     Json(run_summary_resource(item, &request_id)?),
   ))
 }
@@ -849,6 +855,7 @@ fn run_summary_resource(
   request_id: &RequestId,
 ) -> Result<FactoryRunSummaryResource, ApiError> {
   Ok(FactoryRunSummaryResource {
+    issue_association: item.issue_association,
     diagnostics: encode(item.diagnostics, request_id)?,
     id: item.id.to_string(),
     project_id: item.project_id.to_string(),

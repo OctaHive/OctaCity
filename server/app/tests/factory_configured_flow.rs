@@ -294,6 +294,9 @@ async fn the_unreleased_factory_schema_accepts_only_technical_execution_states()
     .unwrap();
   let (admission, _) = flow_contract::configured_fixture();
   let store = admit(&database.pool, &admission).await;
+  // The state constraint originates in schema 51. Upgrade the seeded Run before
+  // using today's complete reader, which also reads later outbox provenance.
+  octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
   let original = store.factory_run_snapshot(admission.run.id()).await.unwrap();
   for state in ["admitted", "running", "waiting", "cancelled", "completed"] {
     let mut transaction = database.pool.begin().await.unwrap();
@@ -993,7 +996,6 @@ async fn factory_build_admission_rejects_an_existing_pool_outside_its_configurat
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn deleting_a_managed_upload_does_not_replenish_its_signed_output_budget() {
-  use sha2::Digest as _;
   let (database, artifacts, request) = prepared_factory_build(true).await;
   let execution = octacity_server_store_postgres::PostgresAuthoritativeStore::new(
     database.pool.clone(),
@@ -1006,32 +1008,7 @@ async fn deleting_a_managed_upload_does_not_replenish_its_signed_output_budget()
     .unwrap()
     .clone();
   let accepted = execution.accept_factory_build(request).await.unwrap();
-  let agent = AgentId::generate();
-  let registration = uuid::Uuid::new_v4();
-  let access = LeaseAccess {
-    lease_id: LeaseId::generate(),
-    fence: LeaseFence::from_bytes([81; 32]),
-    agent_id: agent,
-    registration_epoch: RegistrationEpoch::new(1).unwrap(),
-  };
-  // Retained assignment fixture: this test exercises upload authority and
-  // accounting, while placement has its own ordinary execution contracts.
-  sqlx::query("INSERT INTO agents (id,name,pool_id,pool_version,state,inventory,version,created_at,updated_at) VALUES ($1,'output-fixture',$2,1,'online',$3,1,to_timestamp(0),to_timestamp(0))")
-    .bind(agent.as_uuid()).bind(job.allowed_pools[0].as_uuid()).bind(sqlx::types::Json(octacity_server_store::testing::compatible_inventory(agent))).execute(&database.pool).await.unwrap();
-  sqlx::query("INSERT INTO agent_registrations (id,agent_id,epoch,credential_hash,inventory,registered_at,expires_at) VALUES ($1,$2,1,$3,$4,to_timestamp(0),to_timestamp(253402300799))")
-    .bind(registration).bind(agent.as_uuid()).bind(vec![81_u8;32]).bind(sqlx::types::Json(octacity_server_store::testing::compatible_inventory(agent))).execute(&database.pool).await.unwrap();
-  sqlx::query("INSERT INTO leases (id,job_id,pool_id,pool_version,registration_id,registration_epoch,fence_hash,state,version,leased_at,expires_at) VALUES ($1,$2,$3,1,$4,1,$5,'active',1,to_timestamp(0),to_timestamp(253402300799))")
-    .bind(access.lease_id.as_uuid()).bind(job.id.as_uuid()).bind(job.allowed_pools[0].as_uuid()).bind(registration).bind(sha2::Sha256::digest(access.fence.expose()).to_vec()).execute(&database.pool).await.unwrap();
-  sqlx::query("UPDATE jobs SET state='leased' WHERE id=$1")
-    .bind(job.id.as_uuid())
-    .execute(&database.pool)
-    .await
-    .unwrap();
-  sqlx::query("DELETE FROM ready_queue_entries WHERE job_id=$1")
-    .bind(job.id.as_uuid())
-    .execute(&database.pool)
-    .await
-    .unwrap();
+  let access = retained_job_assignment(&database.pool, job.id, job.allowed_pools[0]).await;
   let request = BeginArtifactUpload {
     artifact_id: ArtifactId::generate(),
     upload_id: ArtifactUploadId::generate(),
@@ -3162,3 +3139,38 @@ async fn rejected_factory_build_audit_rolls_back_the_complete_ordinary_materiali
     "global audit cannot survive a rejected Factory audit link"
   );
 }
+
+// Existing retained Agent assignment shared by upload and journal qualification.
+async fn retained_job_assignment(pool: &sqlx::PgPool, job_id: JobId, pool_id: PoolId) -> LeaseAccess {
+  use sha2::Digest as _;
+  let agent = AgentId::generate();
+  let registration = uuid::Uuid::new_v4();
+  let access = LeaseAccess {
+    lease_id: LeaseId::generate(),
+    fence: LeaseFence::from_bytes([81; 32]),
+    agent_id: agent,
+    registration_epoch: RegistrationEpoch::new(1).unwrap(),
+  };
+  // Retained assignment fixture: this test exercises upload authority and
+  // accounting, while placement has its own ordinary execution contracts.
+  sqlx::query("INSERT INTO agents (id,name,pool_id,pool_version,state,inventory,version,created_at,updated_at) VALUES ($1,'output-fixture',$2,1,'online',$3,1,to_timestamp(0),to_timestamp(0))")
+    .bind(agent.as_uuid()).bind(pool_id.as_uuid()).bind(sqlx::types::Json(octacity_server_store::testing::compatible_inventory(agent))).execute(pool).await.unwrap();
+  sqlx::query("INSERT INTO agent_registrations (id,agent_id,epoch,credential_hash,inventory,registered_at,expires_at) VALUES ($1,$2,1,$3,$4,to_timestamp(0),to_timestamp(253402300799))")
+    .bind(registration).bind(agent.as_uuid()).bind(vec![81_u8;32]).bind(sqlx::types::Json(octacity_server_store::testing::compatible_inventory(agent))).execute(pool).await.unwrap();
+  sqlx::query("INSERT INTO leases (id,job_id,pool_id,pool_version,registration_id,registration_epoch,fence_hash,state,version,leased_at,expires_at) VALUES ($1,$2,$3,1,$4,1,$5,'active',1,to_timestamp(0),to_timestamp(253402300799))")
+    .bind(access.lease_id.as_uuid()).bind(job_id.as_uuid()).bind(pool_id.as_uuid()).bind(registration).bind(sha2::Sha256::digest(access.fence.expose()).to_vec()).execute(pool).await.unwrap();
+  sqlx::query("UPDATE jobs SET state='leased' WHERE id=$1")
+    .bind(job_id.as_uuid())
+    .execute(pool)
+    .await
+    .unwrap();
+  sqlx::query("DELETE FROM ready_queue_entries WHERE job_id=$1")
+    .bind(job_id.as_uuid())
+    .execute(pool)
+    .await
+    .unwrap();
+  access
+}
+
+#[path = "factory_configured_flow/issue_journal.rs"]
+mod issue_journal;

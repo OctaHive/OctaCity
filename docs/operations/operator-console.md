@@ -415,3 +415,29 @@ Rollback by atomically switching `current` to the retained previous release
 directory and reloading the proxy. Removing the console static route does not
 remove or alter any REST workflow; headless clients continue to use the
 private management API.
+
+## Legacy tasks and unavailable requirements
+
+A migrated task keeps its human key and original execution identity. **Runs**
+separates reviewed execution requests from **Legacy Artifact executions**, which
+have no invented request or requirements revision. Selecting original Work is
+retained in the card URL while switching sections. The original Run link opens
+its existing diagnostics/log/control surface. A Run's **Open task** link is
+shown only with independently authorized association metadata; pending/hidden
+association is explicitly unavailable.
+
+The same stage/Job hierarchy, original event stream and Results/Checks/Artifacts
+views also accept selected Artifact Work without an execution request. Selecting
+a reviewed request clears the previous Work selection and its event/result detail.
+If legacy history changes between pages, **First page** remains available after
+the cursor conflict; retrying the stale cursor is not the only recovery option.
+
+Expired or never-retained requirements use localized unavailable text in both
+current and historical views. This does not remove original execution history,
+renew Artifact retention or make a new empty draft. A later explicit edit creates
+a new revision. Content retention/holds are administrative REST operations,
+separate from ordinary task editing; see [Issue lifetime](../reference/issues.md#collaboration-content-lifetime).
+
+The PostgreSQL/browser pilots use the same generated clients with a real runtime,
+not fixture responses. Their disposable service requirements and exact commands
+are recorded in [section 8 verification](../../openspec/changes/add-factory-work-card/verification-8.md).

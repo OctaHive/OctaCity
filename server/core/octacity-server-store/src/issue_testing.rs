@@ -462,6 +462,7 @@ fn prepare_issue_creation(
     });
   }
   let issue = IssueRevision {
+    content_available: true,
     id: request.id,
     project_id: project.id,
     number,

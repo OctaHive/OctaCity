@@ -411,6 +411,8 @@ impl FactoryRunSummaryDiagnostics {
 /// Safe current Factory Run and admitted Work facts used by discovery.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryRunSummary {
+  /// Optional independently authorized task navigation; absence is not proof of no association.
+  pub issue_association: Option<crate::IssueWorkAssociation>,
   /// Bounded safe current facts derived from the owner journal.
   pub diagnostics: FactoryRunSummaryDiagnostics,
   /// Stable Factory Run identity.

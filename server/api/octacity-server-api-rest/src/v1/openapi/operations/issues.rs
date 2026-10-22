@@ -2,6 +2,34 @@ use super::{ManagementOperation, ParameterProfile};
 use octacity_server_application::{CreateIssueCommand, EditIssueCommand, GetIssueQuery};
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::GetIssueContentRetentionQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/content-retention/{retention_kind}",
+    "getIssueContentRetention",
+    "Issues",
+    "Read the independently administered content lifetime without cleanup",
+    None,
+    "IssueContentRetentionObservation",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::SetIssueContentRetentionCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/content-retention/{retention_kind}",
+    "setIssueContentRetention",
+    "Issues",
+    "Review one content lifetime or hold through Issue administration",
+    Some("SetIssueContentRetentionRequest"),
+    "IssueContentRetentionState",
+    "200",
+    true,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ListIssueExternalChecksQuery,
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/code-reviews/{review_id}/checks",
@@ -167,6 +195,38 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "GET",
     "/api/v1/projects/{project_id}/issues/{issue_id}/executions/{request_id}/journal/events/{sequence}",
     "getIssueExecutionJournalEvent",
+    "Issues",
+    "Independently authorize and expand one exact retained event through the existing content reader",
+    None,
+    "IssueExecutionJournalEventDetail",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::IssueJournalDetail)
+  .with_visibility::<octacity_server_application::GetIssueExecutionJournalEventQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ReadIssueExecutionJournalEventsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/work/{work_id}/journal/events",
+    "readIssueWorkJournalEvents",
+    "Issues",
+    "Read bounded safe original Job events with gaps and resumable sequence",
+    None,
+    "IssueExecutionJournalEvents",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::IssueJournalEvents)
+  .with_visibility::<octacity_server_application::ReadIssueExecutionJournalEventsQuery>()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetIssueExecutionJournalEventQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/work/{work_id}/journal/events/{sequence}",
+    "getIssueWorkJournalEvent",
     "Issues",
     "Independently authorize and expand one exact retained event through the existing content reader",
     None,
@@ -393,6 +453,36 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "Read the optional primary source association",
     None,
     "IssueSourceLinkResponse",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListIssueLegacyWorkQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/legacy-work",
+    "listIssueLegacyWork",
+    "Issues",
+    "Read original legacy Work associations without inventing execution requests",
+    None,
+    "IssueLegacyWorkHistoryPage",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response()
+  .with_parameters(ParameterProfile::IssueExecutions)
+  .with_visibility::<octacity_server_application::ListIssueLegacyWorkQuery>(),
+  operation!(
+    octacity_server_application::GetIssueWorkExecutionQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issues/{issue_id}/work/{work_id}",
+    "getIssueWorkExecution",
+    "Issues",
+    "Read one original Work association through the existing independently authorized Run reader",
+    None,
+    "IssueWorkExecutionProjection",
     "200",
     false,
     false

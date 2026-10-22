@@ -423,6 +423,7 @@ impl ServerRuntime {
         webhook_router,
         workers: Some(DurableWorkers {
           factory,
+          legacy_issues: registration_store.clone(),
           actions: octacity_server_application::FactoryActionProjectionWorker::new(registration_store.clone()),
           expiry: expiry_worker,
           expiry_health: worker_health,

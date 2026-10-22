@@ -353,6 +353,22 @@ unavailable_command!(
   octacity_server_application::PublishIssueExecutionCommand,
   "publish_issue_execution"
 );
+unavailable_query!(
+  octacity_server_application::ListIssueLegacyWorkQuery,
+  "list_issue_legacy_work"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueWorkExecutionQuery,
+  "get_issue_work_execution"
+);
+unavailable_query!(
+  octacity_server_application::GetIssueContentRetentionQuery,
+  "get_issue_content_retention"
+);
+unavailable_command!(
+  octacity_server_application::SetIssueContentRetentionCommand,
+  "set_issue_content_retention"
+);
 unavailable_query!(octacity_server_application::ListProjectIssuesQuery, "list_issues");
 unavailable_query!(
   octacity_server_application::GetIssuePropertyChoicesQuery,
@@ -1174,6 +1190,8 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal?collection=flow-runs&limit=1"),None),
     empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal/events?build_execution={}&job_id={job_id}&limit=1","ab".repeat(32)),None),
     empty_request("GET",&format!("{source_path}/executions/{repository_id}/journal/events/1?build_execution={}&job_id={job_id}","ab".repeat(32)),None),
+    empty_request("GET",&format!("{source_path}/work/{repository_id}/journal/events?build_execution={}&job_id={job_id}&limit=1","ab".repeat(32)),None),
+    empty_request("GET",&format!("{source_path}/work/{repository_id}/journal/events/1?build_execution={}&job_id={job_id}","ab".repeat(32)),None),
     json_request("POST",&format!("/api/v1/projects/{project_id}/issues/{pipeline_id}/executions"),"execution",Some("\"1\""),&issue_execution_body()),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-choices"),None),
     empty_request("GET",&format!("/api/v1/projects/{project_id}/issue-property-definitions"),None),
@@ -1571,6 +1589,10 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET", "/api/v1/factory-actions?limit=1", None),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-actions?limit=1"), None),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/issues/{job_id}/actions?limit=1"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issues/{job_id}/legacy-work?limit=1"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issues/{job_id}/work/{build_id}"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issues/{job_id}/content-retention/requirements"), None),
+    json_request("POST", &format!("/api/v1/projects/{project_id}/issues/{job_id}/content-retention/discussion"), "retention", None, r#"{"expected_version":0,"plan":{"scope":{"kind":"discussion","through":1},"expires_at":100,"hold":null}}"#),
     empty_request("GET", &format!("/api/v1/factory-runs/{build_id}/nodes/{job_id}/action"), None),
   ]
 }
@@ -1626,6 +1648,8 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_issue_execution_journal",
       "get_issue_execution",
       "get_issue_execution",
+      "read_issue_execution_journal_events",
+      "get_issue_execution_journal_event",
       "request_issue_execution",
       "get_issue_property_choices",
       "get_issue_properties",
@@ -1752,6 +1776,10 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_factory_actions",
       "list_factory_actions",
       "list_issue_factory_actions",
+      "list_issue_legacy_work",
+      "get_issue_work_execution",
+      "get_issue_content_retention",
+      "set_issue_content_retention",
       "get_factory_node_action",
     ]
   );

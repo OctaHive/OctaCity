@@ -8,6 +8,7 @@ export function issueFixture(project_id = 'delivery'): components['schemas']['Is
     display_key: 'ISS-42',
     version: 1,
     applicability_version: 1,
+    content_available: true,
     content: { title: 'Investigate checkout', description: '', acceptance: null, priority: null },
     workflow_id: '20000000-0000-4000-8000-000000000001',
     workflow_version: 3,

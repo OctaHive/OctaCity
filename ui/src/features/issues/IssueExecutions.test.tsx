@@ -374,7 +374,7 @@ it('reviews pinned pipeline inputs and admits through the Issue HTTP command onl
 import { ManagementApiError } from '../../api/client';
 import { factoryApi } from '../factory/api';
 import { fakeProjectsApi, project } from '../projects/ProjectTestSupport';
-import { configurationFixture } from '../../../tests/fixtures/factory';
+import { configurationFixture, runFixture } from '../../../tests/fixtures/factory';
 import { executionFixture } from '../../../tests/fixtures/issueExecutions';
 import type { IssueExecutionsApi } from './executionApi';
 function setupExecution(path = card, version = 1) {
@@ -393,6 +393,32 @@ function setupExecution(path = card, version = 1) {
       observation: 'request-watermark-v1',
       watermark: 0,
       issue_version: 1,
+    }),
+  };
+  const run = runFixture();
+  const legacy = {
+    listLegacy: vi
+      .fn()
+      .mockResolvedValue({ items: [], next_cursor: null, observation: 'a'.repeat(64) }),
+    getWork: vi.fn().mockResolvedValue({
+      association: {
+        project_id: 'delivery',
+        issue_id: issue.id,
+        request_id: null,
+        requirements_version: null,
+        work_id: 'legacy-work',
+        run_id: 'retained-run',
+      },
+      run: {
+        availability: 'available',
+        resource: {
+          ...run,
+          id: 'retained-run',
+          work_id: 'legacy-work',
+          admitted_at: 1,
+          updated_at: 2,
+        },
+      },
     }),
   };
   const projects = fakeProjectsApi();
@@ -443,9 +469,88 @@ function setupExecution(path = card, version = 1) {
       }),
     {
       issueExecutionsApi: executions,
+      issueLegacyWorkApi: legacy,
       projectsApi: projects,
       factoryApi: { ...factoryApi, listConfigurations },
     },
   );
-  return { ...result, executions, configuration, projects, listConfigurations };
+  return { ...result, executions, legacy, configuration, projects, listConfigurations };
 }
+
+it('reads original Artifact execution lineage without inventing a reviewed request and preserves it across sections', async () => {
+  const { executions, legacy, router } = setupExecution(`${card}?section=runs&work=legacy-work`);
+  expect(
+    await screen.findByText(
+      'Original Artifact inputs are authoritative. No reviewed requirements revision was recorded.',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Open original Run' }).getAttribute('href')).toBe(
+    '/factory/retained-run',
+  );
+  expect(legacy.getWork).toHaveBeenCalledWith(
+    'delivery',
+    issue.id,
+    'legacy-work',
+    expect.any(AbortSignal),
+  );
+  expect(screen.queryByText('No visible executions')).toBeNull();
+  expect(screen.getByText('No visible execution requests')).toBeTruthy();
+  expect(executions.get).not.toHaveBeenCalled();
+  expect(executions.start).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('link', { name: 'Activity' }));
+  expect(new URLSearchParams(router.state.location.search).get('work')).toBe('legacy-work');
+  await userEvent.click(screen.getByRole('link', { name: 'Runs' }));
+  expect(await screen.findByRole('link', { name: 'Open original Run' })).toBeTruthy();
+});
+
+it('can restart legacy history after its continuation expires', async () => {
+  const { legacy } = setupExecution(`${card}?section=runs`);
+  const association = (await legacy.getWork()).association;
+  legacy.listLegacy.mockImplementation(async (_project, _issue, after) => {
+    if (after)
+      throw new ManagementApiError({
+        code: 'conflict',
+        status: 409,
+        message: 'History changed',
+        requestId: null,
+        retryAfterMilliseconds: null,
+      });
+    return { items: [association], next_cursor: 'old-observation', observation: 'initial' };
+  });
+  await userEvent.click(await screen.findByRole('button', { name: 'Next page' }));
+  await screen.findByText('History changed');
+  await userEvent.click(screen.getByRole('button', { name: 'First page' }));
+  await screen.findByRole('button', { name: 'Next page' });
+  expect(legacy.listLegacy.mock.calls.at(-1)?.[2]).toBeNull();
+});
+
+it('opens original legacy stages and results inside the same card without a request', async () => {
+  const { executions } = setupExecution(`${card}?section=runs&work=legacy-work`);
+  await screen.findByRole('link', { name: 'Open original Run' });
+  await screen.findByRole('region', { name: 'Execution stages' });
+  await userEvent.click(screen.getByRole('link', { name: 'Results' }));
+  await screen.findByRole('combobox', { name: 'Result collection' });
+  expect(
+    screen.queryByText('Choose an execution in Runs to inspect its original results.'),
+  ).toBeNull();
+  const results = screen.getByRole('region', { name: 'Execution results' });
+  await userEvent.click(within(results).getByRole('link', { name: 'Artifacts' }));
+  await screen.findByRole('heading', { name: 'Execution artifacts' });
+  await userEvent.click(within(results).getByRole('link', { name: 'Checks' }));
+  await screen.findByText('Select a retained candidate.');
+  expect(executions.get).not.toHaveBeenCalled();
+  expect(executions.start).not.toHaveBeenCalled();
+});
+
+it('does not open another task association returned for selected Work', async () => {
+  const { legacy, executions } = setupExecution(`${card}?section=runs&work=legacy-work`);
+  legacy.getWork.mockResolvedValue({
+    association: { project_id: 'delivery', issue_id: 'another-issue', work_id: 'legacy-work' },
+    run: { availability: 'unavailable' },
+  });
+  await screen.findByRole('alert');
+  expect(screen.queryByRole('link', { name: 'Open original Run' })).toBeNull();
+  expect(screen.queryByRole('region', { name: 'Execution stages' })).toBeNull();
+  expect(executions.get).not.toHaveBeenCalled();
+  expect(executions.start).not.toHaveBeenCalled();
+});

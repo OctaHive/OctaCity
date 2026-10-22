@@ -187,11 +187,7 @@ impl IssueExecutionStore for PostgresStore {
         association: previous,
       });
     }
-    sqlx::query("INSERT INTO issue_work_associations(work_id,run_id,project_id,issue_id,request_id,document,status_applicability_version) VALUES ($1,$2,$3,$4,$5,$6,(SELECT (document->>'applicability_version')::bigint FROM issue_revisions WHERE project_id=$3 AND issue_id=$4 AND version=$7))")
-      .bind(association.work_id.as_uuid()).bind(association.run_id.as_uuid()).bind(association.project_id.as_uuid()).bind(association.issue_id.as_uuid()).bind(association.request_id.map(|id|id.as_uuid())).bind(Json(&association))
-      .bind(association.requirements_version.map(|v|i64::try_from(v.get())).transpose().map_err(|_|conflict())?).execute(&mut *tx).await.map_err(|e| {
-        if e.as_database_error().is_some_and(|e| e.is_unique_violation()) { conflict() } else { unavailable(e) }
-      })?;
+    insert_association(&mut tx, &association).await?;
     if let Some(mut reviewed) = reviewed {
       reviewed.association = Some(association.clone());
       sqlx::query("UPDATE issue_execution_requests SET document=$2 WHERE id=$1")
@@ -220,14 +216,7 @@ impl IssueExecutionStore for PostgresStore {
     project: ProjectId,
     work: WorkEnvelopeId,
   ) -> Result<Option<IssueWorkAssociation>, StoreError> {
-    let document: Option<Json<IssueWorkAssociation>> =
-      sqlx::query_scalar("SELECT document FROM issue_work_associations WHERE project_id=$1 AND work_id=$2")
-        .bind(project.as_uuid())
-        .bind(work.as_uuid())
-        .fetch_optional(self.pool())
-        .await
-        .map_err(unavailable)?;
-    Ok(document.map(|v| v.0))
+    read_association(&mut *self.pool().acquire().await.map_err(unavailable)?, project, work).await
   }
 }
 async fn read(
@@ -247,4 +236,32 @@ fn conflict() -> StoreError {
   StoreError::Conflict {
     entity: EntityKind::Issue,
   }
+}
+
+// Both reviewed admission and legacy migration publish the same immutable association.
+pub(super) async fn insert_association(
+  connection: &mut sqlx::PgConnection,
+  association: &IssueWorkAssociation,
+) -> Result<(), StoreError> {
+  sqlx::query("INSERT INTO issue_work_associations(work_id,run_id,project_id,issue_id,request_id,document,status_applicability_version) VALUES ($1,$2,$3,$4,$5,$6,(SELECT (document->>'applicability_version')::bigint FROM issue_revisions WHERE project_id=$3 AND issue_id=$4 AND version=$7))")
+      .bind(association.work_id.as_uuid()).bind(association.run_id.as_uuid()).bind(association.project_id.as_uuid()).bind(association.issue_id.as_uuid()).bind(association.request_id.map(|id|id.as_uuid())).bind(Json(&association))
+      .bind(association.requirements_version.map(|v|i64::try_from(v.get())).transpose().map_err(|_|conflict())?).execute(&mut *connection).await.map_err(|e| {
+        if e.as_database_error().is_some_and(|e| e.is_unique_violation()) { conflict() } else { unavailable(e) }
+      })?;
+  Ok(())
+}
+
+pub(super) async fn read_association(
+  connection: &mut sqlx::PgConnection,
+  project: ProjectId,
+  work: WorkEnvelopeId,
+) -> Result<Option<IssueWorkAssociation>, StoreError> {
+  let document: Option<Json<IssueWorkAssociation>> =
+    sqlx::query_scalar("SELECT document FROM issue_work_associations WHERE project_id=$1 AND work_id=$2")
+      .bind(project.as_uuid())
+      .bind(work.as_uuid())
+      .fetch_optional(connection)
+      .await
+      .map_err(unavailable)?;
+  Ok(document.map(|v| v.0))
 }

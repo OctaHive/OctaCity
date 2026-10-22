@@ -18,6 +18,7 @@ use std::{
 };
 use tokio_util::sync::CancellationToken;
 const TEST_WAIT: Duration = Duration::from_secs(30);
+#[allow(dead_code)]
 mod admission_fixture {
   use super::*;
   include!("../../application/src/factory_admission_test_fixture.rs");
@@ -35,6 +36,10 @@ use reporter_support::*;
 #[path = "support/work_source_pilot.rs"]
 mod setup;
 use setup::*;
+#[path = "factory_work_source_pilot/issues.rs"]
+mod issues;
+#[path = "support/issue_review_reader.rs"]
+mod review_reader;
 
 #[tokio::test]
 async fn composed_pilot_projects_assessment_labels_then_admits_downstream_once() {
@@ -145,14 +150,19 @@ async fn composed_pilot_projects_assessment_labels_then_admits_downstream_once()
         fixture.input.definition().connection
       );
       let source_calls = std::fs::read(directory.join("requests.jsonl")).unwrap();
-      let reader = observation_reader(&fixture, &connection);
+      let reader = Arc::new(observation_reader(&fixture, &connection));
       assert_eq!(
         std::fs::read(directory.join("requests.jsonl")).unwrap(),
         source_calls,
         "installing optional observation support performs no read"
       );
+      let card = if with_consumer {
+        Some(issues::card(&fixture, reader.clone(), &runs).await)
+      } else {
+        None
+      };
       if with_consumer {
-        // A test-owned passive task consumer; no real card aggregate/store is required.
+        // Observe the same native task independently of either execution input.
         let mut task_consumer = reader
           .read(&fixture.profile.read.context, observation_request(&fixture))
           .await
@@ -305,6 +315,41 @@ async fn composed_pilot_projects_assessment_labels_then_admits_downstream_once()
           .unwrap()
           .is_none()
       );
+      if let Some((store, issue)) = card {
+        assert_eq!(
+          store.issue(issue.project_id, issue.id, None).await.unwrap(),
+          issue,
+          "outage, Reporter recovery and native edits preserve the reviewed card"
+        );
+        assert_eq!(
+          store
+            .issue_comments(issue.project_id, issue.id, None, 10)
+            .await
+            .unwrap()
+            .items
+            .len(),
+          1
+        );
+        store
+          .create_issue(octacity_server_store::testing::management_mutation(CreateIssue {
+            id: IssueId::generate(),
+            assignees: Default::default(),
+            intent: CreateIssueIntent {
+              project_id: issue.project_id,
+              planning: Default::default(),
+              content: IssueContent {
+                title: "Manual during outage".into(),
+                description: String::new(),
+                acceptance: None,
+                priority: None,
+              },
+            },
+            idempotency_key: "manual-outage".parse().unwrap(),
+            created_at: time(6101),
+          }))
+          .await
+          .unwrap();
+      }
       assert_eq!(fixture.runs().await.len(), 3);
       assert_eq!(std::fs::read(directory.join("requests.jsonl")).unwrap(), before_reads);
     }
@@ -389,35 +434,7 @@ async fn composed_pilot_rejects_excluded_tasks_and_retains_ambiguity_without_a_r
       )
       .await
       .unwrap();
-    let overlapping = WorkSourceInputId::generate();
-    let group_id = WorkSourceGroupId::generate();
-    let grouped = publish(
-      &fixture,
-      &profile,
-      &labels,
-      vec![WorkSourceInputIntent {
-        id: overlapping,
-        expected_version: None,
-        definition: downstream.definition().clone(),
-      }],
-      Some(WorkSourceGroupIntent {
-        id: group_id,
-        expected_version: None,
-        members: vec![
-          WorkSourceMemberRef {
-            id: downstream_id,
-            version: WorkSourceInputVersion::INITIAL,
-          },
-          WorkSourceMemberRef {
-            id: overlapping,
-            version: WorkSourceInputVersion::INITIAL,
-          },
-        ],
-      }),
-      "pilot-overlapping-group",
-    )
-    .await;
-    let group = grouped.publication.group.unwrap().group;
+    let (group, overlapping) = overlapping_group(&fixture, &profile, &labels, &downstream).await;
     let path = directory.join("mode.json");
     let mut native: serde_json::Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
     native["candidates"][0]["labels"] = serde_json::json!([labels[0], "operator-label"]);
@@ -460,3 +477,11 @@ async fn composed_pilot_rejects_excluded_tasks_and_retains_ambiguity_without_a_r
     assert_eq!(fixture.runs().await.len(), 1);
   }
 }
+
+#[path = "factory_work_source_pilot/postgres.rs"]
+mod postgres;
+
+#[path = "factory_work_source_pilot/conflict.rs"]
+mod conflict;
+#[path = "support/pilot_controls.rs"]
+mod controls;

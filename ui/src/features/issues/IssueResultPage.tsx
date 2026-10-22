@@ -1,11 +1,7 @@
 import type { ReactNode } from 'react';
 import type { UseQueryResult } from '@tanstack/react-query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import {
-  QueryLoadingNotice,
-  QueryFailureNotice,
-  QueryBackgroundNotice,
-} from '../../shared/QueryStateNotice';
+import { QueryContent } from '../../shared/QueryStateNotice';
 import type { components } from '../../../.generated/api/schema';
 /** Common bounded-page feedback; coverage never becomes a verification verdict. */
 export function IssueResultPage<
@@ -27,30 +23,22 @@ export function IssueResultPage<
   return (
     <section aria-label={title}>
       <h3>{title}</h3>
-      {query.isPending ? (
-        <QueryLoadingNotice label={title} />
-      ) : !query.data ? (
-        <QueryFailureNotice title={title} error={query.error} onRetry={query.refetch} />
-      ) : (
-        <>
-          <QueryBackgroundNotice
-            label={title}
-            error={query.error}
-            fetching={query.isFetching}
-            onRetry={query.refetch}
-          />
-          <p role="status">{t(`issues.resultCoverage.${query.data.coverage}`)}</p>
-          {children(query.data)}
-          {query.data.next_cursor ? (
-            <button
-              disabled={query.isFetching || !!query.error || query.data.coverage !== 'partial'}
-              onClick={() => onPage(query.data!.next_cursor)}
-            >
-              {t('issues.nextPage')}
-            </button>
-          ) : null}
-        </>
-      )}
+      <QueryContent query={query} label={title}>
+        {(data) => (
+          <>
+            <p role="status">{t(`issues.resultCoverage.${data.coverage}`)}</p>
+            {children(data)}
+            {data.next_cursor ? (
+              <button
+                disabled={query.isFetching || !!query.error || data.coverage !== 'partial'}
+                onClick={() => onPage(data.next_cursor)}
+              >
+                {t('issues.nextPage')}
+              </button>
+            ) : null}
+          </>
+        )}
+      </QueryContent>
       {after ? <button onClick={() => onPage(null)}>{t('issues.firstPage')}</button> : null}
       <button disabled={query.isFetching} onClick={() => void query.refetch()}>
         {t('issues.refreshResults')}

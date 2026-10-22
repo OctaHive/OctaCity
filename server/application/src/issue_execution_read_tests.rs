@@ -627,3 +627,40 @@ fn issue_results_keep_retained_references_unavailable_without_factory_rights_and
     }
   });
 }
+
+#[test]
+fn factory_run_task_navigation_rechecks_issue_visibility_without_hiding_the_original_run() {
+  run_ready(async {
+    struct Policy(std::sync::atomic::AtomicBool);
+    #[async_trait::async_trait]
+    impl ManagementAuthorizationPolicy for Policy {
+      async fn authorize(
+        &self,
+        _: &ManagementRequestContext,
+        _: ManagementAction,
+        resource: &ManagementResource,
+      ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+        if resource.kind() == ManagementResourceKind::Issue && !self.0.load(std::sync::atomic::Ordering::SeqCst) {
+          return Err(ManagementAuthorizationDenial::forbidden());
+        }
+        Ok(ManagementAuthorizationGrant::new(ManagementVisibility::all()))
+      }
+    }
+    let (store, factory, issue, fixture) = associated_journal().await;
+    let policy = Arc::new(Policy(std::sync::atomic::AtomicBool::new(true)));
+    let queries = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(FactoryDiscoveryHandlers::with_policy(factory, policy.clone()).with_issue_associations(store)),
+    );
+    let query = GetFactoryRunQuery {
+      run_id: fixture.admission.run.id(),
+    };
+    let visible = queries.handle_query(&context(), query.clone()).await.unwrap();
+    assert_eq!(visible.issue_association.unwrap().issue_id, issue.id);
+    policy.0.store(false, std::sync::atomic::Ordering::SeqCst);
+    let hidden = queries.handle_query(&context(), query).await.unwrap();
+    assert!(hidden.issue_association.is_none());
+    assert_eq!(hidden.id, fixture.admission.run.id());
+    assert_eq!(hidden.work_id, fixture.admission.work.id());
+  });
+}

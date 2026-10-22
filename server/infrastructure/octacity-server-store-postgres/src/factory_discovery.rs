@@ -242,6 +242,7 @@ fn decode_configuration(row: ConfigurationSummaryRow) -> Result<CurrentFactoryCo
 
 fn decode_run(row: RunSummaryRow) -> Result<FactoryRunSummary, StoreError> {
   Ok(FactoryRunSummary {
+    issue_association: None,
     diagnostics: row.diagnostics.0,
     id: FactoryRunId::from_uuid(row.id).map_err(|_| StoreError::Unavailable)?,
     project_id: ProjectId::from_uuid(row.project_id).map_err(|_| StoreError::Unavailable)?,

@@ -821,3 +821,66 @@ it('keeps planning ownership out of the requirements editor when the policy expo
     false,
   );
 });
+
+it('labels expired requirements as unavailable without presenting an empty draft or losing the task identity', async () => {
+  const unavailable = {
+    ...issue,
+    content_available: false,
+    content: { ...issue.content, description: '', acceptance: null },
+  };
+  const { api } = setup('/projects/delivery/issues/' + issue.id, (api) => {
+    api.get.mockResolvedValue(unavailable);
+  });
+  await screen.findByRole('heading', { name: 'ISS-42 · Task content unavailable', level: 1 });
+  expect(
+    await screen.findByText(
+      'Task content is unavailable. Its identity and execution history are retained.',
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByText('No description yet.')).toBeNull();
+  expect(screen.getByRole('link', { name: 'Runs' })).toBeTruthy();
+  expect(api.edit).not.toHaveBeenCalled();
+});
+
+it('keeps an expired historical revision unavailable instead of displaying it as a new draft', async () => {
+  setup('/projects/delivery/issues/' + issue.id + '?section=activity&revision=1', (api) => {
+    api.revision.mockResolvedValue({
+      ...issue,
+      content_available: false,
+      content: { ...issue.content, description: '', acceptance: null },
+    });
+  });
+  expect(
+    await screen.findByText(
+      'Task content is unavailable. Its identity and execution history are retained.',
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByText('Original requirements')).toBeNull();
+});
+
+it('localizes an unavailable legacy title and never reuses historical body text', async () => {
+  const { DEFAULT_PREFERENCES, PREFERENCES_KEY } =
+    await import('../../app/presentation/preferences');
+  localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ ...DEFAULT_PREFERENCES, language: 'ru' }));
+  setup('/projects/delivery/issues/' + issue.id + '?section=activity&revision=1', (api) => {
+    const unavailable = {
+      ...issue,
+      content_available: false,
+      content: {
+        ...issue.content,
+        title: 'Task content unavailable',
+        description: '',
+        acceptance: null,
+      },
+    };
+    api.get.mockResolvedValue(unavailable);
+    api.revision.mockResolvedValue(unavailable);
+  });
+  expect(
+    await screen.findByRole('heading', { name: 'ISS-42 · Текст задачи недоступен', level: 1 }),
+  ).toBeTruthy();
+  expect(
+    await screen.findByRole('heading', { name: 'Текст задачи недоступен', level: 4 }),
+  ).toBeTruthy();
+  expect(screen.queryByRole('heading', { name: 'Task content unavailable' })).toBeNull();
+});

@@ -468,7 +468,7 @@ export const ruMessages = {
   'issues.resumeMemoryHelp':
     'Возобновление использует исходные подтверждённые входы. При выходе из карточки локальное продолжение теряется; запрос остаётся на сервере.',
   'issues.executionHistory': 'История выполнения',
-  'issues.noExecutions': 'Нет доступных выполнений',
+  'issues.noExecutions': 'Нет доступных запросов выполнения',
   'issues.selectedExecution': 'Выбранное выполнение',
   'issues.refreshExecutions': 'Обновить выполнения',
   'issues.startHelp':
@@ -514,6 +514,15 @@ export const ruMessages = {
   'issues.empty': 'Задач пока нет. Создайте первую задачу здесь.',
   'issues.firstPage': 'Первая страница',
   'issues.nextPage': 'Следующая страница',
+  'issues.taskLinkUnavailable': 'Ссылка на задачу недоступна или привязка ещё не завершена.',
+  'issues.legacyExecutions': 'Выполнения из исходных артефактов',
+  'issues.legacyExecution': 'Исходное выполнение · {work}',
+  'issues.legacyProvenance':
+    'Источником входов остаются исходные артефакты. Проверенная ревизия требований не была записана.',
+  'issues.openOriginalRun': 'Открыть исходный Run',
+  'issues.contentUnavailableTitle': 'Текст задачи недоступен',
+  'issues.contentUnavailable':
+    'Содержимое задачи недоступно. Её идентичность и история выполнения сохранены.',
   'issues.noDescription': 'Описание пока не добавлено.',
   'issues.noAcceptance': 'Критерии приёмки можно добавить до запуска.',
   'issues.activityPreview': 'Последние события',

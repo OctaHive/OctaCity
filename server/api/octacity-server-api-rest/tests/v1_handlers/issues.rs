@@ -1004,3 +1004,50 @@ mod result_panels;
 
 #[path = "issues/factory_actions.rs"]
 mod factory_actions;
+
+#[test]
+fn issue_content_retention_contract_keeps_separate_admin_lifetimes_and_shared_utf8_bounds() {
+  let doc = openapi_document();
+  use octacity_server_application::{
+    GetIssueContentRetentionQuery, ManagementAuthorizationTarget, SetIssueContentRetentionCommand,
+  };
+  assert_eq!(
+    GetIssueContentRetentionQuery::AUTHORIZATION.action(),
+    ManagementAction::Administer
+  );
+  assert_eq!(
+    SetIssueContentRetentionCommand::AUTHORIZATION.action(),
+    ManagementAction::Administer
+  );
+  let schemas = &doc["components"]["schemas"];
+  assert_eq!(
+    schemas["IssueContentHold"]["properties"]["reason"]["x-max-utf8-bytes"],
+    128
+  );
+  assert_eq!(
+    schemas["IssueContentRetentionScope"]["oneOf"][1]["properties"]["through"]["maximum"],
+    1000
+  );
+  for method in ["get", "post"] {
+    let operation =
+      &doc["paths"]["/api/v1/projects/{project_id}/issues/{issue_id}/content-retention/{retention_kind}"][method];
+
+    assert_eq!(
+      operation["responses"]["200"]["headers"]["Cache-Control"]["schema"]["const"],
+      "no-store"
+    );
+  }
+}
+
+#[test]
+fn issue_work_http_contract_declares_the_original_work_path_identity() {
+  let doc = openapi_document();
+  let parameters = doc["paths"]["/api/v1/projects/{project_id}/issues/{issue_id}/work/{work_id}"]["get"]["parameters"]
+    .as_array()
+    .unwrap();
+  assert!(
+    parameters
+      .iter()
+      .any(|p| p["name"] == "work_id" && p["in"] == "path" && p["required"] == true && p["schema"]["format"] == "uuid")
+  );
+}

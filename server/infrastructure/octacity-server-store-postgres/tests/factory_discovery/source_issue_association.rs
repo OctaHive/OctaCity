@@ -8,7 +8,9 @@ use octacity_server_store::{
 };
 
 async fn setup() -> (TestDatabase, PostgresStore, FactoryConfiguration, PublishedRepository) {
-  let database = TestDatabase::migrated().await;
+  setup_on(TestDatabase::migrated().await).await
+}
+async fn setup_on(database: TestDatabase) -> (TestDatabase, PostgresStore, FactoryConfiguration, PublishedRepository) {
   let store = PostgresStore::new(database.pool.clone());
   let project = ProjectId::generate();
   seed_projects(&database.pool, project, ProjectId::generate()).await;
@@ -46,6 +48,25 @@ async fn prepare(
   input: &WorkSourceInput,
   configuration: &FactoryConfiguration,
   repository: &PublishedRepository,
+) -> (
+  octacity_server_store::WorkSourcePreparation,
+  octacity_server_store::PublishedFactoryAdmission,
+) {
+  prepare_scoped(
+    store,
+    input,
+    configuration,
+    repository,
+    ManagementSecurityScope::trusted_network(),
+  )
+  .await
+}
+async fn prepare_scoped(
+  store: &PostgresStore,
+  input: &WorkSourceInput,
+  configuration: &FactoryConfiguration,
+  repository: &PublishedRepository,
+  scope: ManagementSecurityScope,
 ) -> (
   octacity_server_store::WorkSourcePreparation,
   octacity_server_store::PublishedFactoryAdmission,
@@ -95,9 +116,7 @@ async fn prepare(
     configuration_version: configuration.reference().version(),
     repository_id: repository.id,
     repository_version: repository.version,
-    external_identity: pending
-      .admission_identity(ManagementSecurityScope::trusted_network())
-      .external_identity,
+    external_identity: pending.admission_identity(scope.clone()).external_identity,
     source: octacity_server_store::RepositorySourceSelection::DefaultReference,
     artifacts: example.work.artifacts().clone(),
     classification: WorkClassification::new(
@@ -124,7 +143,17 @@ async fn prepare(
         preparation_id: prepared.id,
         now: time(34),
       },
-      management_mutation(prepared_admission(&prepared, configuration)),
+      {
+        let mut command = prepared_admission(&prepared, configuration);
+        command.probe.source_scope.security_scope = scope.clone();
+        let audit = octacity_server_store::MutationAuditContext::try_new(
+          management_mutation(()).audit().actor().clone(),
+          scope,
+          "source-admission",
+        )
+        .unwrap();
+        octacity_server_store::ManagementMutation::new(command, audit)
+      },
     )
     .await
     .unwrap();
@@ -172,6 +201,48 @@ async fn imported(store: &PostgresStore, input: &WorkSourceInput, item: WorkSour
     panic!("native import")
   };
   link.issue_id
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn new_source_admissions_recover_one_card_without_manual_association() {
+  use octacity_server_store::IssueLegacyStore;
+  let (database, store, configuration, repository) = setup().await;
+  let first = input(&configuration, &repository, "installed-tracker");
+  let second = input(&configuration, &repository, "installed-tracker");
+  let (prepared, original) = prepare(&store, &first, &configuration, &repository).await;
+  // The admission may lose its acknowledgement before maintenance observes it.
+  let restarted = PostgresStore::new(database.pool.clone());
+  let linked = restarted.backfill_legacy_issue_work(1, time(50)).await.unwrap();
+  assert_eq!(
+    linked.len(),
+    1,
+    "settled new Source admissions must enter durable association recovery"
+  );
+  let issue = imported(&restarted, &first, prepared.item, "explicit-import").await;
+  assert_eq!(linked[0].issue_id, issue);
+  assert_eq!(linked[0].work_id, original.work.id());
+  assert_eq!(linked[0].run_id, original.run.id());
+  let (_, later) = prepare(&restarted, &second, &configuration, &repository).await;
+  let again = PostgresStore::new(database.pool.clone());
+  let next = again.backfill_legacy_issue_work(1, time(60)).await.unwrap();
+  assert_eq!(next.len(), 1);
+  assert_eq!(next[0].issue_id, issue);
+  assert_eq!(next[0].work_id, later.work.id());
+  assert_ne!(next[0].work_id, linked[0].work_id);
+  assert_eq!(next[0].request_id, None);
+  assert_eq!(next[0].requirements_version, None);
+  assert!(again.backfill_legacy_issue_work(1, time(70)).await.unwrap().is_empty());
+  assert_eq!(
+    again
+      .legacy_issue_work(first.project_id(), issue, None, None, 10)
+      .await
+      .unwrap()
+      .items
+      .len(),
+    2
+  );
+  database.cleanup().await;
 }
 
 #[tokio::test]
@@ -236,6 +307,8 @@ async fn source_work_cannot_attach_to_another_native_issue_and_correct_replay_ke
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn simultaneous_source_inputs_keep_one_issue_and_independently_recover_their_original_runs() {
+  // Current Source admissions enqueue recovery atomically. Upgrade-only Work
+  // membership is separately rehearsed against the old schema in legacy_issues.
   let (database, store, configuration, repository) = setup().await;
   let left = input(&configuration, &repository, "installed-tracker");
   let right = input(&configuration, &repository, "installed-tracker");
@@ -437,5 +510,179 @@ async fn source_association_recovers_backend_termination_failed_publication_and_
     restarted.associate_issue_work(other_scope).await,
     Err(StoreError::Conflict { .. })
   ));
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn source_recovery_groups_only_verified_native_work_and_later_import_reuses_the_card() {
+  use octacity_server_store::IssueLegacyStore;
+  // Current Source admissions enqueue recovery atomically. Upgrade-only Work
+  // membership is separately rehearsed against the old schema in legacy_issues.
+  let (database, store, configuration, repository) = setup().await;
+  let left = input(&configuration, &repository, "installed-tracker");
+  let right = input(&configuration, &repository, "installed-tracker");
+  let (a, b) = tokio::join!(
+    prepare(&store, &left, &configuration, &repository),
+    prepare(&store, &right, &configuration, &repository)
+  );
+  octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
+  let first = store.backfill_legacy_issue_work(1, time(50)).await.unwrap();
+  assert_eq!(first.len(), 1);
+  // Committed membership survives an interruption between bounded passes.
+  let restarted = PostgresStore::new(database.pool.clone());
+  let next = restarted.backfill_legacy_issue_work(1, time(60)).await.unwrap();
+  assert_eq!(next.len(), 1);
+  assert_eq!(first[0].issue_id, next[0].issue_id);
+  assert_ne!(first[0].work_id, next[0].work_id);
+  assert_ne!(first[0].run_id, next[0].run_id);
+  assert!(
+    restarted
+      .issue_source_link(
+        left.project_id(),
+        first[0].issue_id,
+        &ManagementSecurityScope::trusted_network()
+      )
+      .await
+      .unwrap()
+      .is_none()
+  );
+  assert!(
+    restarted
+      .backfill_legacy_issue_work(1, time(70))
+      .await
+      .unwrap()
+      .is_empty()
+  );
+  assert_eq!(
+    imported(&restarted, &left, a.0.item, "later-explicit-import").await,
+    first[0].issue_id
+  );
+  assert_eq!(
+    restarted
+      .issue_work_association(left.project_id(), a.1.work.id())
+      .await
+      .unwrap()
+      .unwrap()
+      .run_id,
+    a.1.run.id()
+  );
+  assert_eq!(
+    restarted
+      .issue_work_association(right.project_id(), b.1.work.id())
+      .await
+      .unwrap()
+      .unwrap()
+      .run_id,
+    b.1.run.id()
+  );
+  let page = restarted
+    .legacy_issue_work(left.project_id(), first[0].issue_id, None, None, 1)
+    .await
+    .unwrap();
+  let continuation = page.next.unwrap();
+  let tail = restarted
+    .legacy_issue_work(
+      left.project_id(),
+      first[0].issue_id,
+      Some(continuation),
+      Some(page.observation),
+      1,
+    )
+    .await
+    .unwrap();
+  assert_eq!(tail.items.len(), 1);
+  assert_ne!(page.items[0].work_id, tail.items[0].work_id);
+  assert!(tail.next.is_none());
+  assert!(
+    restarted
+      .legacy_issue_work(
+        left.project_id(),
+        first[0].issue_id,
+        Some(WorkEnvelopeId::generate()),
+        Some(page.observation),
+        1
+      )
+      .await
+      .is_err()
+  );
+  let issue = restarted
+    .issue(left.project_id(), first[0].issue_id, None)
+    .await
+    .unwrap();
+  restarted
+    .edit_issue(management_mutation(octacity_server_store::EditIssue {
+      intent: octacity_server_store::EditIssueIntent {
+        project_id: issue.project_id,
+        id: issue.id,
+        expected_version: issue.version,
+        content: IssueContent {
+          title: "Later explicit requirements".into(),
+          ..issue.content.clone()
+        },
+      },
+      idempotency_key: idempotency("edit-after-legacy-page"),
+      edited_at: time(80),
+    }))
+    .await
+    .unwrap();
+  assert!(
+    matches!(
+      restarted
+        .legacy_issue_work(
+          left.project_id(),
+          issue.id,
+          Some(continuation),
+          Some(page.observation),
+          1
+        )
+        .await,
+      Err(StoreError::Conflict { .. })
+    ),
+    "continuation cannot silently mix Issue revisions"
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn backfill_does_not_merge_other_installations_or_security_partitions() {
+  use octacity_server_store::{FactoryRunStore, IssueLegacyStore};
+  let (database, store, configuration, repository) = setup().await;
+  let first = input(&configuration, &repository, "tracker-a");
+  let other_installation = input(&configuration, &repository, "tracker-b");
+  let other_partition = input(&configuration, &repository, "tracker-a");
+  let a = prepare(&store, &first, &configuration, &repository).await;
+  let b = prepare(&store, &other_installation, &configuration, &repository).await;
+  let c = prepare_scoped(
+    &store,
+    &other_partition,
+    &configuration,
+    &repository,
+    "isolated-scope".parse().unwrap(),
+  )
+  .await;
+  octacity_server_store_postgres::migrate(&database.pool).await.unwrap();
+  let (left, right) = tokio::join!(
+    store.backfill_legacy_issue_work(2, time(50)),
+    store.backfill_legacy_issue_work(2, time(50))
+  );
+  left.unwrap();
+  right.unwrap();
+  store.backfill_legacy_issue_work(2, time(60)).await.unwrap();
+  let mut cards = std::collections::BTreeSet::new();
+  for admission in [a.1, b.1, c.1] {
+    let association = store
+      .issue_work_association(first.project_id(), admission.work.id())
+      .await
+      .unwrap()
+      .unwrap();
+    assert!(cards.insert(association.issue_id));
+    assert_eq!(
+      store.factory_run_snapshot(admission.run.id()).await.unwrap().work,
+      admission.work
+    );
+  }
+  assert_eq!(cards.len(), 3);
   database.cleanup().await;
 }

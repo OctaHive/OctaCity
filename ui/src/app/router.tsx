@@ -21,7 +21,11 @@ import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/build
 import type { BuildExplorerApi } from '../features/builds/BuildExplorer';
 import { capacityApi, type CapacityApi } from '../features/capacity/api';
 import { issueActivityApi, type IssueActivityApi } from '../features/issues/activityApi';
-import { issueExecutionsApi, type IssueExecutionsApi } from '../features/issues/executionApi';
+import {
+  issueExecutionsApi,
+  type IssueExecutionsApi,
+  type IssueLegacyWorkApi,
+} from '../features/issues/executionApi';
 import { issuesApi, type IssuesApi } from '../features/issues/api';
 import { issueSourcesApi, type IssueSourcesApi } from '../features/issues/sourceApi';
 import { issueWorkflowsApi, type IssueWorkflowsApi } from '../api/issueWorkflows';
@@ -142,6 +146,7 @@ export interface ConsoleRouteDependencies {
   readonly issueResultPanelsApi: IssueResultPanelsApi;
   readonly issueActivityApi: IssueActivityApi;
   readonly issueExecutionsApi: IssueExecutionsApi;
+  readonly issueLegacyWorkApi: IssueLegacyWorkApi;
   readonly issuesApi: IssuesApi;
   readonly issueSourcesApi: IssueSourcesApi;
   readonly issueCodeReviewsApi: IssueCodeReviewsApi;
@@ -168,6 +173,7 @@ const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   issueCodeReviewsApi,
   issueReviewConnections: integrationsApi,
   issueExecutionsApi,
+  issueLegacyWorkApi: issueExecutionsApi,
   readinessProbe: fetchReadiness,
   searchApi: resourceSearchApi,
 };
@@ -271,6 +277,7 @@ export function createConsoleRoutes(
               reviews={dependencies.issueCodeReviewsApi}
               reviewConnections={dependencies.issueReviewConnections}
               executions={dependencies.issueExecutionsApi}
+              legacy={dependencies.issueLegacyWorkApi}
               executionSources={{
                 listConfigurations: dependencies.factoryApi.listConfigurations,
                 listRepositories: dependencies.projectsApi.listRepositories,

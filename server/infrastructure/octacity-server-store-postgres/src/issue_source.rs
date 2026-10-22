@@ -96,27 +96,45 @@ impl IssueSourceStore for PostgresStore {
         visible(&request.visibility, link.issue_id)?;
         (link, MutationDisposition::Replayed)
       } else {
-        visible(&request.visibility, request.id)?;
-        let issue = crate::issue::create_initial_issue(
+        let legacy = native_issue(
           &mut tx,
-          &CreateIssue {
-            id: request.id,
-            assignees: Default::default(),
-            intent: CreateIssueIntent {
-              project_id: request.selection.project_id,
-              content: request.content,
-              planning: Default::default(),
-            },
-            idempotency_key: request.idempotency_key,
-            created_at: request.imported_at,
-          },
-          &audit,
-          IssueTransitionOrigin::Source,
+          request.selection.project_id,
+          source_native_issue(
+            request.selection.project_id,
+            request.selection.source.installation.identity(),
+            &request.selection.item,
+          ),
+          source_security_partition(audit.security_scope()),
         )
         .await?;
+        let issue_id = if let Some(id) = legacy {
+          visible(&request.visibility, id)?;
+          id
+        } else {
+          visible(&request.visibility, request.id)?;
+          let issue = crate::issue::create_initial_issue(
+            &mut tx,
+            &CreateIssue {
+              id: request.id,
+              assignees: Default::default(),
+              intent: CreateIssueIntent {
+                project_id: request.selection.project_id,
+                content: request.content,
+                planning: Default::default(),
+              },
+              idempotency_key: request.idempotency_key,
+              created_at: request.imported_at,
+            },
+            audit.actor(),
+            IssueTransitionOrigin::Source,
+            true,
+          )
+          .await?;
+          issue.id
+        };
         let link = IssueSourceLink {
           display_id: request.observation.display_id.clone(),
-          issue_id: issue.id,
+          issue_id,
           selection: request.selection,
           native_correlation: native,
           linked_at: request.imported_at,
@@ -549,4 +567,27 @@ impl IssueSourceRefreshStore for PostgresStore {
     }
     Ok(outcome)
   }
+}
+
+// The Project lock serializes this lookup with import and backfill. Only settled,
+// original Source admission provenance can group Work; external labels never participate.
+pub(super) async fn native_issue(
+  connection: &mut PgConnection,
+  project: ProjectId,
+  native: FactoryDigest,
+  partition: FactoryDigest,
+) -> Result<Option<IssueId>, StoreError> {
+  let correlation = source_native_correlation(native, partition);
+  let rows: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT issue_id FROM issue_source_links WHERE project_id=$1 AND native_correlation=$4 UNION SELECT a.issue_id FROM factory_source_preparations p JOIN factory_work_envelopes w ON w.project_id=p.project_id AND w.id=p.work_id JOIN issue_work_associations a ON a.project_id=p.project_id AND a.work_id=p.work_id AND a.run_id=p.run_id WHERE p.project_id=$1 AND p.issue=$2 AND p.settled AND w.security_scope_digest=$3 LIMIT 2")
+    .bind(project.as_uuid()).bind(native.as_bytes().as_slice()).bind(partition.as_bytes().as_slice()).bind(correlation.as_bytes().as_slice()).fetch_all(connection).await.map_err(unavailable)?;
+  if rows.len() > 1 {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Issue,
+    });
+  }
+  rows
+    .into_iter()
+    .next()
+    .map(|id| IssueId::from_uuid(id).map_err(|_| StoreError::Unavailable))
+    .transpose()
 }

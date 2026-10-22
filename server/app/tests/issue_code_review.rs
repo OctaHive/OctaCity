@@ -19,64 +19,9 @@ impl FactoryExecutionClock for Clock {
     Ok(at(50))
   }
 }
-struct Reader {
-  revoked: AtomicBool,
-  hidden: AtomicBool,
-  reads: AtomicUsize,
-}
-#[async_trait::async_trait]
-impl IssueCodeReviewObservations for Reader {
-  async fn visibility(
-    &self,
-    _: &ManagementRequestContext,
-    _: ProjectId,
-  ) -> Result<IssueCodeReviewRepositoryVisibility, ApplicationError> {
-    Ok(if self.hidden.load(Ordering::SeqCst) {
-      IssueCodeReviewRepositoryVisibility::none()
-    } else {
-      IssueCodeReviewRepositoryVisibility::all()
-    })
-  }
-  async fn authorize(
-    &self,
-    _: &ManagementRequestContext,
-    _: ProjectId,
-    _: &IssueCodeReviewSelection,
-  ) -> Result<(), ApplicationError> {
-    if self.revoked.load(Ordering::SeqCst) {
-      Err(ApplicationError::capability_unavailable())
-    } else {
-      Ok(())
-    }
-  }
-  async fn read(
-    &self,
-    context: &ManagementRequestContext,
-    project: ProjectId,
-    selection: &IssueCodeReviewSelection,
-  ) -> Result<IssueCodeReviewObservation, ApplicationError> {
-    self.authorize(context, project, selection).await?;
-    let read = self.reads.fetch_add(1, Ordering::SeqCst);
-    Ok(IssueCodeReviewObservation {
-      selection: selection.clone(),
-      observed_at: at(20 + read as i64),
-      title: Some("Retained review".parse().unwrap()),
-      number: None,
-      url: None,
-      author: None,
-      state: Some(IssueCodeReviewState::Open),
-      draft: None,
-      head: Some(if read == 0 { "old-head" } else { "new-head" }.parse().unwrap()),
-      base: None,
-      changed_files: None,
-      additions: None,
-      deletions: None,
-      review: None,
-      checks: None,
-      check_details: None,
-    })
-  }
-}
+#[path = "support/issue_review_reader.rs"]
+mod review_reader;
+use review_reader::Reader;
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn code_review_application_rechecks_current_reads_and_metadata_visibility_after_store_restart() {
@@ -123,6 +68,7 @@ async fn code_review_application_rechecks_current_reads_and_metadata_visibility_
     revoked: AtomicBool::new(false),
     hidden: AtomicBool::new(false),
     reads: AtomicUsize::new(0),
+    checks: false,
   });
   let handlers = Arc::new(IssueCodeReviewHandlers::new(
     store.clone(),

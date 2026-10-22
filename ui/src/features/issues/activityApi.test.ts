@@ -2,6 +2,25 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { createManagementApiClient, idempotencyHeaders } from '../../api/client';
 import { createIssueActivityApi } from './activityApi';
 afterEach(() => vi.unstubAllGlobals());
+it('reads requestless Work events without inventing an execution request', async () => {
+  vi.stubGlobal('location', { origin: 'https://console.example' });
+  const calls: Request[] = [];
+  const api = createIssueActivityApi(
+    createManagementApiClient(async (request) => {
+      calls.push(request);
+      return Response.json({});
+    }),
+  );
+  const target = { build_execution: 'a'.repeat(64), job_id: 'original-job' };
+  await api.journalEvents('project', 'issue', { work_id: 'original-work' }, target, 'retained');
+  await api.journalEvent('project', 'issue', { work_id: 'original-work' }, target, 7);
+  expect(calls.map((r) => new URL(r.url).pathname)).toEqual([
+    '/api/v1/projects/project/issues/issue/work/original-work/journal/events',
+    '/api/v1/projects/project/issues/issue/work/original-work/journal/events/7',
+  ]);
+  expect(new URL(calls[0]!.url).searchParams.get('after')).toBe('retained');
+  expect(calls.every((r) => r.cache === 'no-store' && r.body === null)).toBe(true);
+});
 it('reads only the selected journal, Job stream and expanded event through bounded no-store contracts', async () => {
   vi.stubGlobal('location', { origin: 'https://console.example' });
   const calls: Request[] = [];

@@ -3,6 +3,9 @@ mod support;
 #[path = "factory_discovery/action_projection.rs"]
 mod action_projection;
 
+#[path = "factory_discovery/legacy_issues.rs"]
+mod legacy_issues;
+
 #[path = "factory_discovery/source_contract.rs"]
 mod sources;
 

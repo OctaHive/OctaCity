@@ -272,6 +272,8 @@ pub struct FactoryAdmissionResponse {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRunSummaryResource {
+  /// Optional independently authorized task navigation; null also covers incomplete backfill/unavailability.
+  pub issue_association: Option<octacity_server_application::IssueWorkAssociation>,
   /// Safe exact subject, current attempts, budget and authoritative disposition facts.
   pub diagnostics: serde_json::Value,
   /// Stable Run identity.

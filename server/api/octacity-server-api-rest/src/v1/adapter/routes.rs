@@ -328,6 +328,14 @@ fn registered_routes() -> ManagementRoutes {
       "attachIssueCodeReview",
       super::issue_code_review::attach,
     )
+    .get::<octacity_server_application::ListIssueLegacyWorkQuery, _, _>(
+      "listIssueLegacyWork",
+      super::issue_execution::legacy_list,
+    )
+    .get::<octacity_server_application::GetIssueWorkExecutionQuery, _, _>(
+      "getIssueWorkExecution",
+      super::issue_execution::work,
+    )
     .get::<octacity_server_application::ListIssueExecutionsQuery, _, _>(
       "listIssueExecutions",
       super::issue_execution::list,
@@ -348,6 +356,22 @@ fn registered_routes() -> ManagementRoutes {
     .get::<octacity_server_application::GetIssueExecutionJournalEventQuery, _, _>(
       "getIssueExecutionJournalEvent",
       super::issue_execution::journal::detail,
+    )
+    .get::<octacity_server_application::ReadIssueExecutionJournalEventsQuery, _, _>(
+      "readIssueWorkJournalEvents",
+      super::issue_execution::journal::work_events,
+    )
+    .get::<octacity_server_application::GetIssueExecutionJournalEventQuery, _, _>(
+      "getIssueWorkJournalEvent",
+      super::issue_execution::journal::work_detail,
+    )
+    .get::<octacity_server_application::GetIssueContentRetentionQuery, _, _>(
+      "getIssueContentRetention",
+      super::issue::retention::get,
+    )
+    .post::<octacity_server_application::SetIssueContentRetentionCommand, _, _>(
+      "setIssueContentRetention",
+      super::issue::retention::set,
     )
     .get::<octacity_server_application::ListIssueChildrenQuery, _, _>(
       "listIssueChildren",

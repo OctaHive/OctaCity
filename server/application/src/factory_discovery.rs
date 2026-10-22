@@ -59,6 +59,7 @@ impl ManagementAuthorizationTarget for ListFactoryRunsQuery {
 }
 /// Authorization-aware discovery over the same authoritative store used by admission.
 pub struct FactoryDiscoveryHandlers<S> {
+  issue_associations: Option<Arc<dyn octacity_server_store::IssueExecutionStore>>,
   store: Arc<S>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
 }
@@ -70,7 +71,16 @@ impl<S> FactoryDiscoveryHandlers<S> {
   }
   /// Uses the same policy for the immutable owning Project before returning diagnostics.
   pub fn with_policy(store: Arc<S>, policy: Arc<dyn crate::ManagementAuthorizationPolicy>) -> Self {
-    Self { store, policy }
+    Self {
+      store,
+      policy,
+      issue_associations: None,
+    }
+  }
+  /// Adds optional task navigation without making Run discovery depend on Issue availability.
+  pub fn with_issue_associations(mut self, store: Arc<dyn octacity_server_store::IssueExecutionStore>) -> Self {
+    self.issue_associations = Some(store);
+    self
   }
 }
 #[async_trait]
@@ -229,7 +239,7 @@ impl<S: FactoryDiscoveryStore> FactoryDiscoveryHandlers<S> {
     run_id: octacity_server_factory::FactoryRunId,
     visibility: FactoryRunListVisibility,
   ) -> Result<octacity_server_store::FactoryRunSummary, ApplicationError> {
-    let summary = self.store.factory_run_summary(run_id, visibility).await?;
+    let mut summary = self.store.factory_run_summary(run_id, visibility).await?;
     let not_found = || {
       ApplicationError::Store(octacity_server_store::StoreError::NotFound {
         entity: octacity_server_domain::EntityKind::FactoryRun,
@@ -243,9 +253,25 @@ impl<S: FactoryDiscoveryStore> FactoryDiscoveryHandlers<S> {
       .await
       .map_err(|_| not_found())?;
     match grant.visibility().view() {
-      crate::ManagementVisibilityView::All => Ok(summary),
-      crate::ManagementVisibilityView::Restricted(resources) if resources.contains(&project) => Ok(summary),
-      _ => Err(not_found()),
+      crate::ManagementVisibilityView::All => {}
+      crate::ManagementVisibilityView::Restricted(resources) if resources.contains(&project) => {}
+      _ => return Err(not_found()),
     }
+    if let Some(reader) = &self.issue_associations
+      && let Ok(Some(association)) = reader.issue_work_association(summary.project_id, summary.work_id).await
+      && association.project_id == summary.project_id
+      && association.work_id == summary.work_id
+      && association.run_id == summary.id
+    {
+      let resource = crate::management_security::instance_resource(ManagementResourceKind::Issue, association.issue_id)
+        .map_err(|_| ApplicationError::invalid())?;
+      if let Ok(grant) = self.policy.authorize(context, ManagementAction::View, &resource).await
+        && (matches!(grant.visibility().view(), crate::ManagementVisibilityView::All)
+          || matches!(grant.visibility().view(),crate::ManagementVisibilityView::Restricted(resources) if resources.contains(&resource)))
+      {
+        summary.issue_association = Some(association);
+      }
+    }
+    Ok(summary)
   }
 }

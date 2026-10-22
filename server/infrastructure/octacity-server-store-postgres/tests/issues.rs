@@ -1,3 +1,5 @@
+#[path = "migrations/snapshot.rs"]
+mod snapshot;
 mod support;
 
 #[path = "issues/source.rs"]

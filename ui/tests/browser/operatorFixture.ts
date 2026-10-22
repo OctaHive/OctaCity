@@ -60,6 +60,11 @@ export async function installOperatorFixture(page: Page) {
     }
     const issue = issueFixture(FIXTURE_IDS.project);
     const issueBase = `/api/v1/projects/${FIXTURE_IDS.project}/issues`;
+    if (url.pathname.startsWith(issueBase + '/') && url.pathname.endsWith('/legacy-work')) {
+      await fulfill(route, { items: [], next_cursor: null, observation: 'a'.repeat(64) });
+      return;
+    }
+
     if (url.pathname === issueBase) {
       await fulfill(route, {
         items: [{ ...issue, title: issue.content.title }],

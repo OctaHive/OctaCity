@@ -94,9 +94,17 @@ fn flow(issue: &IssueRevision) -> FactoryFlowConfiguration {
   .unwrap()
 }
 async fn status_setup(store: &PostgresStore) -> (IssueRevision, ProjectTextSubmission) {
-  let (issue, mut submission) = setup(store).await;
+  let (issue, submission) = setup(store).await;
+  let submission = configure_status(store, &issue, submission).await;
+  (issue, submission)
+}
+pub(super) async fn configure_status(
+  store: &PostgresStore,
+  issue: &IssueRevision,
+  mut submission: ProjectTextSubmission,
+) -> ProjectTextSubmission {
   let mut f = postgres::factory_configuration::fixture(issue.project_id);
-  f.draft.flow = Some(flow(&issue));
+  f.draft.flow = Some(flow(issue));
   let target = &mut submission.intent.target;
   let digest = FactoryDigest::from_bytes([38; 32]);
   let version = FactoryConfigurationVersion::new(2).unwrap();
@@ -125,7 +133,7 @@ async fn status_setup(store: &PostgresStore) -> (IssueRevision, ProjectTextSubmi
     .await
     .unwrap();
   target.configuration_version = version;
-  (issue, submission)
+  submission
 }
 
 struct LostActionAcknowledgement {
@@ -517,4 +525,73 @@ async fn issue_status_flow_authoring_preserves_exact_pins_and_stale_publication_
   assert!(queries.handle_query(&context(), invalid).await.is_err());
   assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), issue);
   db.cleanup().await;
+}
+
+pub(super) async fn qualify_status(store: Arc<PostgresStore>, run: FactoryRunId, issue: &IssueRevision) {
+  let now = SystemFactoryExecutionClock.now().unwrap().unix_millis();
+  let clock = Arc::new(Clock(AtomicI64::new(now)));
+  let claim = pilot_controls::reclaim(&store, run, now).await;
+  let snapshot = store.factory_run_snapshot(run).await.unwrap();
+  let admitted = &snapshot.admitted_flow;
+  let definition = &admitted.closure().definitions()[0];
+  let node = definition.node(definition.entry()).unwrap();
+  let schema = admitted.data_schema(node.input_schema().unwrap()).unwrap();
+  let input = FlowNodeInput::new(
+    &snapshot.work,
+    admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    node.key().clone(),
+    FlowPayload::new(schema, serde_json::json!({})).unwrap(),
+  )
+  .unwrap();
+  let target = FactoryNodeTarget {
+    flow_run_id: input.flow_run_id(),
+    cycle_id: input.cycle_id(),
+    node: input.node().clone(),
+  };
+  let action = || {
+    Arc::new(FactoryIssueStatusAction::new(
+      plugin_identity(),
+      store.clone(),
+      store.clone(),
+      context(),
+      Arc::new(TrustedNetworkManagementPolicy),
+      clock.clone(),
+    ))
+  };
+  let runner = FactoryNodeRunner::new(
+    store.clone(),
+    Arc::new(LostActionAcknowledgement {
+      inner: FactoryFlowActionAdapter::new(action()),
+    }),
+    clock.clone(),
+  );
+  runner
+    .run_once(run, claim.id, target.clone(), Some(input), at(now))
+    .await
+    .unwrap();
+  assert!(
+    runner
+      .run_once(run, claim.id, target.clone(), None, at(now))
+      .await
+      .is_err()
+  );
+  let moved = store.issue(issue.project_id, issue.id, None).await.unwrap();
+  assert_eq!(moved.status_id.to_string(), "10000000-0000-4000-8000-000000000002");
+  let recovered = FactoryNodeRunner::new(store.clone(), Arc::new(FactoryFlowActionAdapter::new(action())), clock);
+  assert!(matches!(
+    recovered.run_once(run, claim.id, target, None, at(now)).await.unwrap(),
+    FactoryNodeStep::Completed(_)
+  ));
+  assert_eq!(
+    store
+      .issue_status_history(issue.project_id, issue.id, None, 20)
+      .await
+      .unwrap()
+      .items
+      .len(),
+    2
+  );
+  assert_eq!(store.issue(issue.project_id, issue.id, None).await.unwrap(), moved);
 }

@@ -30,7 +30,7 @@ Current constraints:
 
 ### 1. Issue owns editable intent; Work owns one frozen execution
 
-Use the following change-local vocabulary until implementation updates the shared glossary:
+Use the following domain vocabulary, also recorded in the [shared glossary](../../../CONTEXT.md):
 
 | Term | Meaning |
 | --- | --- |

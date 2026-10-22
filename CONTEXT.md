@@ -38,6 +38,44 @@ _Avoid_: Task, Pipeline node
 The immutable signed execution intent that authorizes an Agent to execute one Job.
 _Avoid_: Job, lease
 
+## Tasks and Factory execution
+
+**Issue (task)**:
+Persistent Project-owned intent with one stable internal identity and a Project-local human key. Manual creation needs no provider, repository or Factory configuration. An Issue can retain several independently admitted executions.
+_Avoid_: Work Envelope, Run, Job
+
+**Issue revision**:
+One immutable requirements/business-metadata version. A separate applicability version fences whether an accepted execution may still apply a configured business transition. Expired text leaves the version and provenance available.
+_Avoid_: Latest execution, mutable Work
+
+**Issue workflow**:
+A pinned Project-owned status vocabulary with finite permitted direct transitions and one initial status. Adoption of another version is explicit. Business status neither establishes Factory acceptance nor grants delivery authority.
+_Avoid_: Factory Flow, Pipeline DAG
+
+**Issue execution request**:
+An explicit durable review of one Issue revision, exact Factory target and frozen input digests. Publication uses the common Project-text intake. Recovery retains the original request, Work and Run identities.
+_Avoid_: Issue edit, automatic rerun
+
+**Work Envelope**:
+One immutable admitted Factory input, owning exactly one Factory Run. Distinct assessment and implementation inputs retain distinct Work identities even when associated with the same Issue.
+_Avoid_: Editable task, latest requirements
+
+**Factory Run**:
+The technical execution and control history of one admitted Work Envelope. Nested Flows, attempts, retries and clarification remain children of that original execution.
+_Avoid_: Business status, Build Attempt
+
+**External source link**:
+The optional primary verified native ticket association in its Project/security/installation/resource/item namespace. Field ownership and external-status mapping are separately reviewed; a link alone authorizes no synchronization.
+_Avoid_: URL-derived authority, PR/MR association
+
+**Issue discussion**:
+Append-only operator text with an Issue-local lifetime sequence. A comment cannot trigger execution, retry, clarification, status movement or acceptance.
+_Avoid_: Agent response, evidence
+
+**Content retention plan**:
+An explicitly administered cutoff, deadline and optional hold for either requirements or discussion bodies. Each kind has its own version. Execution inputs, Artifacts, source snapshots and reporting keep their original owners and lifetimes; body expiry does not remove identity, provenance or replay fences.
+_Avoid_: Run retention, quota reset
+
 ## Triggering and coordination
 
 **Trigger**:

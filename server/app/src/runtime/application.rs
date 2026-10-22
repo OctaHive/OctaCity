@@ -215,10 +215,10 @@ pub(super) fn management_application(
   );
   let factory_discovery = authorized_queries(
     &management_policy,
-    Arc::new(octacity_server_application::FactoryDiscoveryHandlers::with_policy(
-      store.clone(),
-      management_policy.clone(),
-    )),
+    Arc::new(
+      octacity_server_application::FactoryDiscoveryHandlers::with_policy(store.clone(), management_policy.clone())
+        .with_issue_associations(store.clone()),
+    ),
   );
   let factory_commands = authorized_commands(&management_policy, factory.clone());
   let factory_control = authorized_commands(
@@ -395,6 +395,7 @@ pub(super) fn management_application(
       &management_policy,
       executions.clone(),
     ))
+    .with_legacy_work(authorized_queries(&management_policy, executions.clone()))
     .with_journal(
       authorized_queries(&management_policy, executions.clone()),
       authorized_queries(
@@ -434,10 +435,10 @@ pub(super) fn management_application(
       )),
     )),
   )
-  .with_issues(octacity_server_api_rest::v1::IssueManagementApplication::new(
-    issue_commands,
-    issue_queries,
-  ));
+  .with_issues(
+    octacity_server_api_rest::v1::IssueManagementApplication::new(issue_commands.clone(), issue_queries.clone())
+      .with_retention(issue_commands, issue_queries),
+  );
   let application = match integrations {
     Some(integrations) => application.with_integrations(integrations),
     None => application,

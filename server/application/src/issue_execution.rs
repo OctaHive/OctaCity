@@ -174,3 +174,21 @@ impl<S: IssueExecutionStore, F: Send + Sync> ManagementQueryUseCase<GetIssueExec
 #[path = "issue_execution_history.rs"]
 mod history;
 pub use history::*;
+
+impl<S: octacity_server_store::IssueLegacyStore, F> IssueExecutionHandlers<S, F> {
+  pub(crate) async fn legacy_work(
+    &self,
+    project: ProjectId,
+    issue: IssueId,
+    after: Option<octacity_server_factory::WorkEnvelopeId>,
+    observation: Option<octacity_server_factory::FactoryDigest>,
+    limit: u16,
+  ) -> Result<octacity_server_store::IssueLegacyWorkPage, ApplicationError> {
+    Ok(
+      self
+        .store
+        .legacy_issue_work(project, issue, after, observation, limit)
+        .await?,
+    )
+  }
+}

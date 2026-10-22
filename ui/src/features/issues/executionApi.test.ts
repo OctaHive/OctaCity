@@ -38,3 +38,24 @@ it('uses generated reviewed execution HTTP contracts with frozen headers and bou
     calls.slice(1).every((r) => r.headers.get('Idempotency-Key') === null && r.body === null),
   ).toBe(true);
 });
+
+it('reads original legacy Work through generated no-store contracts without manufacturing a request', async () => {
+  vi.stubGlobal('location', { origin: 'https://console.example' });
+  const calls: Request[] = [];
+  const api = createIssueExecutionsApi(
+    createManagementApiClient(async (request) => {
+      calls.push(request);
+      return Response.json({ items: [], next_cursor: null, observation: 'a'.repeat(64) });
+    }),
+  );
+  await api.listLegacy('project', 'issue', 'opaque.cursor');
+  await api.getWork('project', 'issue', 'original-work');
+  expect(calls.map((r) => [r.method, new URL(r.url).pathname, r.cache])).toEqual([
+    ['GET', '/api/v1/projects/project/issues/issue/legacy-work', 'no-store'],
+    ['GET', '/api/v1/projects/project/issues/issue/work/original-work', 'no-store'],
+  ]);
+  expect(new URL(calls[0]!.url).search).toBe('?limit=50&after=opaque.cursor');
+  expect(calls.every((r) => r.body === null && r.headers.get('Idempotency-Key') === null)).toBe(
+    true,
+  );
+});

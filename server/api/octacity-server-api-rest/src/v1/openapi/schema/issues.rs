@@ -1,5 +1,57 @@
 use super::super::*;
 pub(super) fn insert(schemas: &mut Map<String, Value>) {
+  schemas.insert("IssueContentRetentionScope".into(),json!({"oneOf":[
+    object([("kind",string_enum(&["requirements"])),("through",positive_integer())],&["kind","through"]),
+    object([("kind",string_enum(&["discussion"])),("through",json!({"type":"integer","minimum":1,"maximum":octacity_server_application::MAX_ISSUE_DISCUSSION_COMMENTS}))],&["kind","through"])
+  ]}));
+  schemas.insert("IssueContentHold".into(),object([("reason",json!({"type":"string","minLength":1,"maxLength":octacity_server_application::MAX_ISSUE_TITLE_BYTES,"x-max-utf8-bytes":octacity_server_application::MAX_ISSUE_TITLE_BYTES})),("expires_at",nullable(non_negative_integer()))],&["reason","expires_at"]));
+  schemas.insert(
+    "IssueContentRetentionPlan".into(),
+    object(
+      [
+        ("scope", schema_ref("IssueContentRetentionScope")),
+        ("expires_at", non_negative_integer()),
+        ("hold", nullable(schema_ref("IssueContentHold"))),
+      ],
+      &["scope", "expires_at", "hold"],
+    ),
+  );
+  schemas.insert(
+    "SetIssueContentRetentionRequest".into(),
+    object(
+      [
+        ("expected_version", non_negative_integer()),
+        ("plan", schema_ref("IssueContentRetentionPlan")),
+      ],
+      &["expected_version", "plan"],
+    ),
+  );
+  for (name, version, plan) in [
+    (
+      "IssueContentRetentionState",
+      positive_integer(),
+      schema_ref("IssueContentRetentionPlan"),
+    ),
+    (
+      "IssueContentRetentionObservation",
+      non_negative_integer(),
+      nullable(schema_ref("IssueContentRetentionPlan")),
+    ),
+  ] {
+    schemas.insert(
+      name.into(),
+      object(
+        [
+          ("project_id", json!({"type":"string","format":"uuid"})),
+          ("issue_id", json!({"type":"string","format":"uuid"})),
+          ("version", version),
+          ("plan", plan),
+        ],
+        &["project_id", "issue_id", "version", "plan"],
+      ),
+    );
+  }
+
   schemas.insert(
     "IssueRevisionHeader".into(),
     object(
@@ -146,6 +198,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("display_key", json!({"type":"string","pattern":"^ISS-[1-9][0-9]*$"})),
         ("version", positive_integer()),
         ("applicability_version", positive_integer()),
+        ("content_available", json!({"type":"boolean","default":true,"description":"False when retained task text has expired; identity and execution provenance remain available."})),
         ("content", schema_ref("IssueContent")),
         ("workflow_id", identity()),
         ("workflow_version", positive_integer()),

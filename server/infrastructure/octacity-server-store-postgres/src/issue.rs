@@ -149,7 +149,7 @@ impl IssueStore for PostgresStore {
       }
       MutationStart::Fresh(tx) => tx,
     };
-    let issue = create_initial_issue(&mut tx, &request, &audit, IssueTransitionOrigin::Manual).await?;
+    let issue = create_initial_issue(&mut tx, &request, audit.actor(), IssueTransitionOrigin::Manual, true).await?;
     let outcome = IssueMutationOutcome {
       disposition: MutationDisposition::Applied,
       issue,
@@ -545,8 +545,9 @@ pub(super) fn page(rows: Vec<(Json<IssueRevision>,)>, limit: u16) -> IssuePage {
 pub(super) async fn create_initial_issue(
   connection: &mut PgConnection,
   request: &CreateIssue,
-  audit: &MutationAuditContext,
+  actor: &AuditActor,
   origin: IssueTransitionOrigin,
+  content_available: bool,
 ) -> Result<IssueRevision, StoreError> {
   let intent = &request.intent;
   intent.content.validate()?;
@@ -565,6 +566,7 @@ pub(super) async fn create_initial_issue(
   let allocated: i64 = sqlx::query_scalar("INSERT INTO issue_numbers (project_id,last_number) VALUES ($1,1) ON CONFLICT (project_id) DO UPDATE SET last_number=issue_numbers.last_number+1 RETURNING last_number")
       .bind(intent.project_id.as_uuid()).fetch_one(&mut *connection).await.map_err(unavailable)?;
   let issue = IssueRevision {
+    content_available,
     id: request.id,
     project_id: intent.project_id,
     number: u64::try_from(allocated).map_err(|_| StoreError::Unavailable)?,
@@ -606,7 +608,7 @@ pub(super) async fn create_initial_issue(
     origin,
     pipeline: None,
     reason: None,
-    actor: audit.actor().clone(),
+    actor: actor.clone(),
     occurred_at: issue.created_at,
   };
   insert_revision(connection, &issue, Some(&history)).await?;

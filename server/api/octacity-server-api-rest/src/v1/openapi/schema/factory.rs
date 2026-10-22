@@ -328,6 +328,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
     "FactoryRunSummaryResource".to_owned(),
     object(
       [
+        ("issue_association", nullable(schema_ref("IssueWorkAssociation"))),
         ("diagnostics", schema_ref("FactoryRunSummaryDiagnostics")),
         ("id", non_empty_string()),
         ("project_id", non_empty_string()),

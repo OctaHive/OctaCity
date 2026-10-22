@@ -125,3 +125,7 @@ mod factory_flow_definition;
 mod factory_source_configuration;
 mod factory_source_diagnostics;
 mod integration_project_access;
+
+mod issue_legacy;
+
+mod issue_retention;

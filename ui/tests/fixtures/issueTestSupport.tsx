@@ -149,10 +149,17 @@ export function setup(
       next_cursor: null,
     }),
   };
+  const legacy = {
+    listLegacy: vi
+      .fn()
+      .mockResolvedValue({ items: [], next_cursor: null, observation: 'a'.repeat(64) }),
+    getWork: vi.fn(),
+  };
   const router = createMemoryRouter(
     createConsoleRoutes({
       projectsApi: projects,
       issuesApi: api,
+      issueLegacyWorkApi: legacy,
       issueActivityApi: {
         ...fakeActivity(vi),
         timeline: vi.fn().mockResolvedValue(timelineFixture([])),

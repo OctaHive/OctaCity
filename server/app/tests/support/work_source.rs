@@ -241,3 +241,6 @@ impl<S: WorkSourceArtifactStore + FactoryDiscoveryStore + 'static> Fixture<S> {
       .items
   }
 }
+
+#[path = "work_source_postgres.rs"]
+mod postgres;

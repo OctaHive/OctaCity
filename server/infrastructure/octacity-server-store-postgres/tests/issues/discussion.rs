@@ -420,3 +420,409 @@ async fn discussion_metadata_continuations_beyond_lifetime_range_remain_empty_li
   assert_eq!(page.next_sequence, None);
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn explicit_content_expiry_keeps_identity_replay_quota_and_hold() {
+  use octacity_server_store::*;
+  let mut database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let project = project(&store).await;
+  let mut create = draft(project.id, "private-draft");
+  create.intent.content.description = "Private retained requirements".into();
+  create.intent.content.acceptance = Some("Private acceptance".into());
+  let issue = store
+    .create_issue(management_mutation(create.clone()))
+    .await
+    .unwrap()
+    .issue;
+  let mut append = comment(&issue, "Private discussion", "private-comment", None);
+  append.limits = IssueDiscussionLimits::try_new(100, 1).unwrap();
+  let receipt = store
+    .append_issue_comment(management_mutation(append.clone()))
+    .await
+    .unwrap();
+  let pending = store
+    .request_issue_execution(management_mutation(RequestIssueExecution {
+      id: octacity_server_domain::IssueExecutionRequestId::generate(),
+      intent: RequestIssueExecutionIntent {
+        project_id: project.id,
+        issue_id: issue.id,
+        expected_version: issue.version,
+        classification: None,
+        target: IssueExecutionTarget {
+          configuration_id: octacity_server_factory::FactoryConfigurationId::generate(),
+          configuration_version: octacity_server_factory::FactoryConfigurationVersion::INITIAL,
+          repository_id: octacity_server_domain::RepositoryId::generate(),
+          repository_version: octacity_server_domain::RepositoryVersion::INITIAL,
+          source: RepositorySourceSelection::DefaultReference,
+          mapping: IssueExecutionMapping::TitleDescriptionAcceptanceV1,
+        },
+      },
+      idempotency_key: key("pending-before-expiry"),
+      requested_at: at(4),
+    }))
+    .await
+    .unwrap()
+    .request;
+  let plan = IssueContentRetentionPlan {
+    scope: IssueContentRetentionScope::Requirements { through: issue.version },
+    expires_at: at(10),
+    hold: Some(IssueContentHold {
+      reason: "investigation".into(),
+      expires_at: None,
+    }),
+  };
+  let schedule = SetIssueContentRetention {
+    project_id: project.id,
+    issue_id: issue.id,
+    expected_version: 0,
+    plan: plan.clone(),
+    idempotency_key: key("retention"),
+    configured_at: at(5),
+  };
+  store
+    .set_issue_content_retention(management_mutation(schedule.clone()))
+    .await
+    .unwrap();
+  store
+    .set_issue_content_retention(management_mutation(SetIssueContentRetention {
+      plan: IssueContentRetentionPlan {
+        scope: IssueContentRetentionScope::Discussion {
+          through: receipt.comment.sequence,
+        },
+        ..plan.clone()
+      },
+      idempotency_key: key("discussion-retention"),
+      ..schedule.clone()
+    }))
+    .await
+    .unwrap();
+  assert_eq!(store.expire_issue_content(at(20), 1).await.unwrap(), 0);
+  assert_eq!(
+    store
+      .issue_comment_body(project.id, issue.id, receipt.comment.id)
+      .await
+      .unwrap()
+      .body,
+    append.intent.body
+  );
+  store
+    .set_issue_content_retention(management_mutation(SetIssueContentRetention {
+      project_id: project.id,
+      issue_id: issue.id,
+      expected_version: 1,
+      plan: IssueContentRetentionPlan { hold: None, ..plan },
+      idempotency_key: key("release-hold"),
+      configured_at: at(21),
+    }))
+    .await
+    .unwrap();
+  store
+    .set_issue_content_retention(management_mutation(SetIssueContentRetention {
+      plan: IssueContentRetentionPlan {
+        scope: IssueContentRetentionScope::Discussion {
+          through: receipt.comment.sequence,
+        },
+        hold: None,
+        ..schedule.plan.clone()
+      },
+      expected_version: 1,
+      idempotency_key: key("release-discussion-hold"),
+      ..schedule
+    }))
+    .await
+    .unwrap();
+  while store.expire_issue_content(at(22), 1).await.unwrap() > 0 {}
+  let restarted = PostgresStore::new(database.pool.clone());
+  let unavailable = restarted.issue(project.id, issue.id, None).await.unwrap();
+  assert!(!unavailable.content_available);
+  assert_eq!(unavailable.content.description, "");
+  assert_eq!(unavailable.id, issue.id);
+  assert_eq!(unavailable.workflow_id, issue.workflow_id);
+  assert_eq!(unavailable.status_id, issue.status_id);
+  assert_eq!(unavailable.applicability_version, issue.applicability_version);
+  let replay = restarted
+    .create_issue(management_mutation(create.clone()))
+    .await
+    .unwrap();
+  assert_eq!(replay.issue, unavailable);
+  assert!(matches!(
+    restarted
+      .issue_comment_body(project.id, issue.id, receipt.comment.id)
+      .await,
+    Err(StoreError::NotFound { .. })
+  ));
+  assert_eq!(
+    restarted
+      .append_issue_comment(management_mutation(append.clone()))
+      .await
+      .unwrap()
+      .comment,
+    receipt.comment
+  );
+  append.idempotency_key = key("another-comment");
+  assert!(
+    restarted
+      .append_issue_comment(management_mutation(append))
+      .await
+      .is_err()
+  );
+  assert_eq!(
+    restarted
+      .issue_comments(project.id, issue.id, None, 10)
+      .await
+      .unwrap()
+      .items,
+    vec![receipt.comment.clone()]
+  );
+  let snapshot = super::snapshot::DatabaseSnapshot::capture(&mut database).await;
+  let restored = snapshot.restore().await;
+  let restored_store = PostgresStore::new(restored.pool.clone());
+  assert_eq!(
+    restored_store
+      .issue_execution(project.id, issue.id, pending.id)
+      .await
+      .unwrap(),
+    pending,
+    "backup retains the original pending request and frozen digests after body expiry"
+  );
+  let recovered = restored_store
+    .create_issue(management_mutation(create))
+    .await
+    .unwrap()
+    .issue;
+  assert_eq!(recovered, unavailable);
+  assert_eq!(
+    restored_store
+      .default_issue_workflow(project.id)
+      .await
+      .unwrap()
+      .workflow
+      .id,
+    issue.workflow_id
+  );
+  assert_eq!(
+    restored_store
+      .issue_status_history(project.id, issue.id, None, 10)
+      .await
+      .unwrap()
+      .items
+      .len(),
+    1
+  );
+  assert_eq!(
+    restored_store
+      .issue_comments(project.id, issue.id, None, 10)
+      .await
+      .unwrap()
+      .items,
+    vec![receipt.comment.clone()]
+  );
+  assert!(
+    restored_store
+      .issue_comment_body(project.id, issue.id, receipt.comment.id)
+      .await
+      .is_err()
+  );
+  restored.cleanup().await;
+  snapshot.cleanup().await;
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn requirements_expiry_does_not_scan_unrelated_replay_history() {
+  use octacity_server_store::*;
+  let database = TestDatabase::migrated().await;
+  let reader = sqlx::postgres::PgPoolOptions::new()
+    .max_connections(1)
+    .connect_with((*database.pool.connect_options()).clone())
+    .await
+    .unwrap();
+  let store = PostgresStore::new(reader.clone());
+  let project = project(&store).await;
+  let create = draft(project.id, "indexed-expiry");
+  let issue = store
+    .create_issue(management_mutation(create.clone()))
+    .await
+    .unwrap()
+    .issue;
+  store
+    .set_issue_content_retention(management_mutation(SetIssueContentRetention {
+      project_id: project.id,
+      issue_id: issue.id,
+      expected_version: 0,
+      plan: IssueContentRetentionPlan {
+        scope: IssueContentRetentionScope::Requirements { through: issue.version },
+        expires_at: at(10),
+        hold: None,
+      },
+      idempotency_key: key("indexed-expiry-plan"),
+      configured_at: at(5),
+    }))
+    .await
+    .unwrap();
+  // Observe the public operation's I/O, without copying its query or requiring
+  // a particular index name. Small fixtures still require an indexed path.
+  sqlx::query("SET enable_seqscan=off").execute(&reader).await.unwrap();
+  async fn scans(pool: &sqlx::PgPool) -> i64 {
+    sqlx::query("SELECT pg_stat_force_next_flush()")
+      .execute(pool)
+      .await
+      .unwrap();
+    sqlx::query("SELECT pg_stat_clear_snapshot()")
+      .execute(pool)
+      .await
+      .unwrap();
+    sqlx::query_scalar("SELECT seq_scan FROM pg_stat_user_tables WHERE relname='idempotency_records'")
+      .fetch_one(pool)
+      .await
+      .unwrap()
+  }
+  let before = scans(&reader).await;
+  assert_eq!(store.expire_issue_content(at(11), 1).await.unwrap(), 1);
+  assert_eq!(
+    scans(&reader).await,
+    before,
+    "bounded task expiry must not scan the shared replay history"
+  );
+  let replay = store.create_issue(management_mutation(create)).await.unwrap();
+  assert!(!replay.issue.content_available);
+  reader.close().await;
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn later_requirements_are_available_while_original_expired_replay_stays_unavailable() {
+  use octacity_server_store::*;
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let project = project(&store).await;
+  let original = store
+    .create_issue(management_mutation(draft(project.id, "draft")))
+    .await
+    .unwrap()
+    .issue;
+  store
+    .set_issue_content_retention(management_mutation(SetIssueContentRetention {
+      project_id: project.id,
+      issue_id: original.id,
+      expected_version: 0,
+      plan: IssueContentRetentionPlan {
+        scope: IssueContentRetentionScope::Requirements {
+          through: original.version,
+        },
+        expires_at: at(10),
+        hold: None,
+      },
+      idempotency_key: key("expiry"),
+      configured_at: at(3),
+    }))
+    .await
+    .unwrap();
+  assert_eq!(store.expire_issue_content(at(10), 1).await.unwrap(), 1);
+  let edit = EditIssue {
+    intent: EditIssueIntent {
+      project_id: project.id,
+      id: original.id,
+      expected_version: original.version,
+      content: IssueContent {
+        title: "New requirements".into(),
+        description: "Reviewed again".into(),
+        acceptance: Some("New acceptance".into()),
+        priority: None,
+      },
+    },
+    idempotency_key: key("new-content"),
+    edited_at: at(11),
+  };
+  let next = store.edit_issue(management_mutation(edit.clone())).await.unwrap().issue;
+  assert!(next.content_available);
+  assert_eq!(next.content, edit.intent.content);
+  assert_eq!(next.version.get(), 2);
+  store.expire_issue_content(at(20), 10).await.unwrap();
+  assert_eq!(store.issue(project.id, original.id, None).await.unwrap(), next);
+  let historical = store
+    .issue(project.id, original.id, Some(original.version))
+    .await
+    .unwrap();
+  assert!(!historical.content_available);
+  assert_eq!(historical.content.description, "");
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn discussion_expiry_has_independent_deadline_hold_and_version_from_requirements() {
+  use octacity_server_store::*;
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let project = project(&store).await;
+  let issue = store
+    .create_issue(management_mutation(draft(project.id, "draft")))
+    .await
+    .unwrap()
+    .issue;
+  let receipt = store
+    .append_issue_comment(management_mutation(comment(
+      &issue,
+      "Independent discussion",
+      "comment",
+      None,
+    )))
+    .await
+    .unwrap();
+  for (scope, expires_at, hold, replay) in [
+    (
+      IssueContentRetentionScope::Requirements { through: issue.version },
+      at(10),
+      Some(IssueContentHold {
+        reason: "investigation".into(),
+        expires_at: None,
+      }),
+      "requirements",
+    ),
+    (
+      IssueContentRetentionScope::Discussion {
+        through: receipt.comment.sequence,
+      },
+      at(20),
+      None,
+      "discussion",
+    ),
+  ] {
+    let state = store
+      .set_issue_content_retention(management_mutation(SetIssueContentRetention {
+        project_id: project.id,
+        issue_id: issue.id,
+        expected_version: 0,
+        plan: IssueContentRetentionPlan {
+          scope,
+          expires_at,
+          hold,
+        },
+        idempotency_key: key(replay),
+        configured_at: at(5),
+      }))
+      .await
+      .unwrap();
+    assert_eq!(state.version, 1, "each lifetime has its own reviewed version");
+  }
+  assert_eq!(store.expire_issue_content(at(19), 1).await.unwrap(), 0);
+  assert_eq!(store.expire_issue_content(at(20), 1).await.unwrap(), 1);
+  assert!(
+    store
+      .issue_comment_body(project.id, issue.id, receipt.comment.id)
+      .await
+      .is_err()
+  );
+  assert_eq!(
+    store.issue(project.id, issue.id, None).await.unwrap(),
+    issue,
+    "discussion cleanup preserves requirements under an independent hold"
+  );
+  assert_eq!(store.expire_issue_content(at(30), 1).await.unwrap(), 0);
+  database.cleanup().await;
+}

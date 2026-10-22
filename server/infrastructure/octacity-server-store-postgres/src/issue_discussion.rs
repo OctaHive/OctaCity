@@ -89,17 +89,18 @@ impl IssueDiscussionStore for PostgresStore {
     comment: IssueCommentId,
   ) -> Result<IssueCommentContent, StoreError> {
     self.issue(project, issue, None).await?;
-    let (Json(comment), body): (Json<IssueCommentMetadata>, String) =
-      sqlx::query_as("SELECT metadata,body FROM issue_comments WHERE project_id=$1 AND issue_id=$2 AND id=$3")
-        .bind(project.as_uuid())
-        .bind(issue.as_uuid())
-        .bind(comment.as_uuid())
-        .fetch_optional(self.pool())
-        .await
-        .map_err(unavailable)?
-        .ok_or(StoreError::NotFound {
-          entity: EntityKind::Issue,
-        })?;
+    let (Json(comment), body): (Json<IssueCommentMetadata>, String) = sqlx::query_as(
+      "SELECT metadata,body FROM issue_comments WHERE project_id=$1 AND issue_id=$2 AND id=$3 AND body IS NOT NULL",
+    )
+    .bind(project.as_uuid())
+    .bind(issue.as_uuid())
+    .bind(comment.as_uuid())
+    .fetch_optional(self.pool())
+    .await
+    .map_err(unavailable)?
+    .ok_or(StoreError::NotFound {
+      entity: EntityKind::Issue,
+    })?;
     Ok(IssueCommentContent {
       comment,
       body: IssueCommentBody::try_new(body)?,

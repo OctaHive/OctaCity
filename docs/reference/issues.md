@@ -582,11 +582,12 @@ the current task, not the selected historical requirements.
 Desktop cards place basic Properties beside the content. Narrow layouts expose
 Properties through a keyboard-accessible disclosure. Technical IDs and timestamps
 are progressively disclosed under Details. English and Russian are supported.
-Expanded planning properties, execution requests/results and source association
-are separate delivery steps; the base card states their availability instead of
-inventing a worker, a Run or a verification outcome. The pipeline-start affordance
-is disabled with an explanation until the execution-request journey is delivered.
-Existing Factory views remain usable.
+Properties, reviewed execution requests, original Run details, source association,
+PR/MR, Checks, Artifacts and shared actions are independently loaded sections.
+**Start pipeline** reviews the current requirements and exact target; incomplete
+acceptance leads to requirements editing before execution review. Saving a task
+never starts execution. Unavailable optional capabilities do not prevent local
+editing, and existing Factory views retain their original controls.
 
 **Edit requirements** reviews the complete editable content and exact task version.
 Source-owned fields are read-only with an ownership explanation. **Actions** offers
@@ -1033,8 +1034,7 @@ the Issue revision, status history and existing audit/outbox publication. This
 allows successive configured edges in the same lineage. Manual status moves,
 status moves from another execution, requirements edits and workflow adoption
 invalidate old applicability even if values later return to their originals.
-The shared contract requires the same invalidation for committed source status
-moves; source-transition integration remains outside task 3.6. Current source
+Committed source status moves use the same applicability invalidation. Current source
 ownership is checked independently before a new move: source-owned Status blocks
 manual/pipeline replacement. A source-policy change alone does not advance the
 applicability marker. Reads, another execution request and unrelated priority
@@ -1197,8 +1197,7 @@ the body and validation errors contain no supplied text.
 
 Validated deployment limits may narrow the body ceiling and the lifetime limit
 of 1,000 comments per Issue. Roots and replies share that quota. Sequence/lifetime
-count is separate from retained body records, so future retention cleanup must
-not reset it. Only a retained root in the same Issue can be a parent; nested,
+count is separate from retained body records; content cleanup does not reset it. Only a retained root in the same Issue can be a parent; nested,
 absent and foreign parents reject without publishing state. Failed appends and
 exact replay consume no sequence or quota. A winning scoped replay retains its
 original identity, actor, time and metadata even after limits are narrowed;
@@ -1242,7 +1241,7 @@ client includes these operations. A stricter trusted application composition can
 lower the hard caps; request documents cannot configure them.
 
 Timeline metadata pagination uses the independent observation contract below.
-Console discussion uses the card contracts below; retention/holds remain task 8.2. Evidence is recorded in
+Console discussion uses the card contracts below; explicit retention and holds are documented under [collaboration content lifetime](#collaboration-content-lifetime). Evidence is recorded in
 [task 6.2 verification](../../openspec/changes/add-factory-work-card/verification-6.2.md)
 and [task 6.3 verification](../../openspec/changes/add-factory-work-card/verification-6.3.md).
 
@@ -1882,3 +1881,108 @@ Run commands always revalidate eligibility and concurrency.
 Manual creation/editing and existing Run controls remain usable without a provider
 or the optional action service. There is no separate close-action or approve-Issue
 setter. See [task 7.3 verification](../../openspec/changes/add-factory-work-card/verification-7.3.md).
+
+
+## Legacy Work migration and navigation
+
+Migration `0093_issue_legacy_backfill.sql` freezes a pending set of visible,
+unassociated Work at upgrade. It excludes already reserved Issue execution
+publication. Ordinary manual and reviewed-request admissions keep their own
+association path. Settled Source admissions atomically add their Work to the same
+durable pending set, including replay/recovery; they do not acquire Issue locks
+inside admission. The independent `issue-legacy-backfill` maintenance worker processes
+bounded passes through ordinary Issue creation and association transactions.
+It starts cards at the selected Project workflow's exact initial status. It does
+not derive business status from a Run outcome, contact a provider, publish inputs,
+start a Run, install synchronization or send Reporter effects.
+
+Only settled original Source admission provenance in the same Project and security
+partition can group legacy Work under one verified native task. Otherwise each
+Work gets a separate Issue. Different installations and security partitions stay
+separate. The original Work/Run/input identities and admission replay survive.
+Backfilled cards have `content_available: false`, with no invented requirements
+revision or execution request. A later explicit native import reuses a verified
+canonical card without overwriting its text or installing a mapping implicitly.
+
+`GET /api/v1/projects/{project_id}/issues/{issue_id}/legacy-work` returns bounded
+original association metadata. Its opaque continuation binds the security scope,
+Project/Issue, membership and current Issue revision; changed membership/revision
+requires a fresh page. `GET .../issues/{issue_id}/work/{work_id}` reuses the exact
+Work reader and independently authorized Run observation. Both are `no-store`
+reads with no migration or admission side effects. Pending backfill remains
+explicitly unavailable instead of causing a GET to create state.
+
+The Console exposes these Artifact-based executions separately from reviewed
+execution requests. URL selection `work` retains the original Work while changing
+card sections. Original Factory Run navigation preserves existing controls/logs.
+Selected Work reuses the card's stage/Job, event, result, Checks and Artifacts
+components without inventing an execution request. Hierarchy/results use the
+existing Work result contracts. Requestless event metadata and expansion use
+`GET .../issues/{issue_id}/work/{work_id}/journal/events` and
+`GET .../journal/events/{sequence}` with the same exact Build/Job selector,
+independent rights, bounded cursor, redaction and `no-store` behavior as reviewed
+requests. An expired history cursor retains an explicit first-page recovery action.
+A Factory Run's optional `issue_association` is independently checked against
+current Issue visibility; null means unavailable or pending, without proving that
+no hidden association exists. The **Open task** link selects the original reviewed
+`execution`, or legacy `work` when no request exists.
+
+## Collaboration content lifetime
+
+Requirements and discussion have separate explicit plans; no plan means no
+scheduled body deletion. These administrative contracts work without Factory or
+providers:
+
+| Method | Issue-relative route | Contract |
+| --- | --- | --- |
+| GET | `/content-retention/{retention_kind}` | Read one plan, or version `0` and `plan: null` |
+| POST | `/content-retention/{retention_kind}` | Review an exact current plan version, cutoff, deadline and hold |
+
+`retention_kind` is `requirements` or `discussion`. Both routes require current
+Issue **Administer** authority and use `Cache-Control: no-store`. POST requires
+`Idempotency-Key` and `{expected_version, plan}`; the plan version is independent
+of the requirements revision. A plan contains
+`scope: {kind, through}`, `expires_at` (Unix milliseconds), and nullable `hold`.
+The path and scope kind must match. Requirements cutoffs refer to existing Issue
+revisions; discussion cutoffs refer to positive allocated sequences up to the
+1,000 lifetime limit. Later edits/comments are excluded. Each kind has independent
+CAS, deadline and hold, so deleting discussion cannot release a requirements hold.
+
+A hold preserves bodies still present. Its bounded private operational `reason`
+uses the common 128 UTF-8 byte text ceiling; `expires_at: null` means indefinite.
+Replacing/releasing it is another explicit reviewed administrative command.
+Reasons are redacted in diagnostics and omitted from generic audit/outbox facts.
+The deployed management mode remains trusted-network; no authenticated person is
+invented by this policy.
+
+The independent `issue-content-retention` worker uses the existing bounded
+maintenance polling/batch policy, including with Factory disabled. It removes at
+most the configured revision/comment body batch from one due lifetime per pass.
+Issue locking and plan rechecking fence concurrent edits/hold changes. Cleanup
+makes the revision's `content_available` false, replaces its text with an
+unavailable representation and redacts matching original Issue mutation receipts
+in the same transaction. Comment body reads become unavailable while sequence,
+actor/time/reply metadata, original replay and allocated quota remain. Migration
+`0095_issue_receipt_retention_index.sql` gives each revision batch an indexed
+Project/Issue/version lookup instead of scanning unrelated replay history.
+A repeated
+comment cannot restore bytes or replenish its lifetime quota. Cleanup does not
+advance Issue/applicability versions or status history. Later explicit requirements
+edits create available new revisions; they do not refill expired historical ones.
+
+Issue/workflow/status/mapping versions, source-link/observation digests, execution
+requests and associations remain referenceable. Original source snapshots and
+published execution/Artifact bytes retain their existing cleanup/hold owners and
+deadlines. This plan neither extends nor deletes those bytes and cannot recreate
+an expired execution input. Derived shared-action rows are purged through the
+existing Factory retention pass, with child rows before their checkpoint.
+
+The Console renders unavailable current and historical text explicitly in English
+or Russian. It retains the human task key and original execution navigation;
+unavailable acceptance is never presented as a newly empty draft. These plans are
+administered through REST; no new retention editor is added to the task workspace.
+
+Capture/restore the complete database and original object-store consistency unit;
+see [backup and restore](../operations/backup-restore.md#task-and-collaboration-recovery).
+The [section 8 verification](../../openspec/changes/add-factory-work-card/verification-8.md)
+records Red/Green, PostgreSQL/browser pilots and remaining live-adapter limits.

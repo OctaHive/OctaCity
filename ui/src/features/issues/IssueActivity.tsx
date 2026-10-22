@@ -3,12 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import {
-  QueryLoadingNotice,
-  QueryFailureNotice,
-  QueryBackgroundNotice,
-  QueryEmptyNotice,
-} from '../../shared/QueryStateNotice';
+import { QueryContent, QueryEmptyNotice } from '../../shared/QueryStateNotice';
 import type { Issue } from './api';
 import type {
   IssueActivityApi,
@@ -44,61 +39,49 @@ export function IssueActivity({
     <section className={styles.panel} aria-label={t('issues.taskActivity')}>
       <h2>{t('issues.taskActivity')}</h2>
       {!preview ? <p>{t('issues.discussionHelp')}</p> : null}
-      {query.isPending ? (
-        <QueryLoadingNotice label={t('issues.taskActivity')} />
-      ) : !query.data ? (
-        <QueryFailureNotice
-          title={t('issues.taskActivity')}
-          error={query.error}
-          onRetry={query.refetch}
-        />
-      ) : (
-        <>
-          <QueryBackgroundNotice
-            label={t('issues.taskActivity')}
-            error={query.error}
-            fetching={query.isFetching}
-            onRetry={query.refetch}
-          />
-          <IssueObservation page={query.data} />
-          {query.data.items.length ? (
-            <ol className={styles.list}>
-              {query.data.items.map((entry) => (
-                <ActivityRow
-                  key={
-                    entry.kind === 'discussion'
-                      ? entry.comment.id
-                      : entry.kind === 'execution'
-                        ? entry.request_id
-                        : entry.kind === 'source'
-                          ? entry.id
-                          : entry.kind + entry.version
-                  }
-                  entry={entry}
-                  api={api}
-                  issue={issue}
-                  preview={preview}
-                  onReply={setParent}
-                />
-              ))}
-            </ol>
-          ) : (
-            <QueryEmptyNotice>{t('issues.noTimeline')}</QueryEmptyNotice>
-          )}
-          {!preview ? (
-            <div className={styles.actions}>
-              {query.data.next_cursor ? (
-                <button
-                  disabled={query.isFetching || query.error !== null}
-                  onClick={() => setAfter(query.data!.next_cursor)}
-                >
-                  {t('issues.nextPage')}
-                </button>
-              ) : null}
-            </div>
-          ) : null}
-        </>
-      )}
+      <QueryContent query={query} label={t('issues.taskActivity')}>
+        {(data) => (
+          <>
+            <IssueObservation page={data} />
+            {data.items.length ? (
+              <ol className={styles.list}>
+                {data.items.map((entry) => (
+                  <ActivityRow
+                    key={
+                      entry.kind === 'discussion'
+                        ? entry.comment.id
+                        : entry.kind === 'execution'
+                          ? entry.request_id
+                          : entry.kind === 'source'
+                            ? entry.id
+                            : entry.kind + entry.version
+                    }
+                    entry={entry}
+                    api={api}
+                    issue={issue}
+                    preview={preview}
+                    onReply={setParent}
+                  />
+                ))}
+              </ol>
+            ) : (
+              <QueryEmptyNotice>{t('issues.noTimeline')}</QueryEmptyNotice>
+            )}
+            {!preview ? (
+              <div className={styles.actions}>
+                {data.next_cursor ? (
+                  <button
+                    disabled={query.isFetching || query.error !== null}
+                    onClick={() => setAfter(data.next_cursor)}
+                  >
+                    {t('issues.nextPage')}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+          </>
+        )}
+      </QueryContent>
       {!preview && after ? (
         <button onClick={() => setAfter(null)}>{t('issues.firstPage')}</button>
       ) : null}
@@ -263,23 +246,9 @@ function CommentBody({
     gcTime: 0,
     queryFn: ({ signal }) => api.comment(issue.project_id, issue.id, comment.id, signal),
   });
-  return query.isPending ? (
-    <QueryLoadingNotice label={t('issues.commentContent')} />
-  ) : !query.data ? (
-    <QueryFailureNotice
-      title={t('issues.commentContent')}
-      error={query.error}
-      onRetry={query.refetch}
-    />
-  ) : (
-    <>
-      <QueryBackgroundNotice
-        label={t('issues.commentContent')}
-        error={query.error}
-        fetching={query.isFetching}
-        onRetry={query.refetch}
-      />
-      <p className={styles.prose}>{query.data.body}</p>
-    </>
+  return (
+    <QueryContent query={query} label={t('issues.commentContent')}>
+      {(data) => <p className={styles.prose}>{data.body}</p>}
+    </QueryContent>
   );
 }

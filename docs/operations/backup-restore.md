@@ -143,3 +143,41 @@ recovery interval. Evidence must show:
 The PostgreSQL and MinIO contracts referenced in
 [`backend-contracts.md`](../testing/backend-contracts.md) exercise the bounded
 inventory, byte-integrity, and projection-watermark pieces of this procedure.
+
+
+## Task and collaboration recovery
+
+The same consistency unit includes Issue revisions and availability tombstones,
+workflow definitions/defaults, status/applicability history, property definitions,
+source links/mapping versions/read provenance, code-review observations, discussion
+metadata and bodies, and independently versioned requirements/discussion retention
+plans and holds. Include original pending execution requests, Project-input
+preparations and objects, Work associations, migration queue, Reporter recovery
+and both outboxes. An accepted request or transition resumes its original frozen
+identities; restoring a card must not create a replacement Run or infer a move
+from the latest execution or current provider state.
+
+Capture all schema tables, including `issue_legacy_backfill` and
+`issue_content_retention`; table allowlists from an older binary are insufficient.
+The backfill queue is frozen at upgrade and resumes committed bounded work after
+restore. Derived action projections can be retained with their original source
+version or repopulated by their existing worker. They do not replace execution or
+control authority. Private source snapshots and input bytes keep their original
+retention policy; safe associations do not extend byte lifetimes.
+
+A backup taken after body cleanup must retain tombstones and redacted replay
+receipts, so retry cannot restore expired descriptions/comments. Discussion
+sequence allocation remains unchanged after cleanup and restore. An older backup
+may contain private bodies whose deadlines have since passed: keep ingress
+quiesced while the original content/source/input cleanup policies catch up, and
+apply the deployment's backup-expiry policy. A hold cannot recover data already
+deleted from the consistency unit. Do not reconstruct bodies from provider state,
+logs, admission replay or a newer revision.
+
+For rollback, stop writers and restore the **pre-upgrade matched database/object
+snapshot** together with its compatible binary/configuration. Do not remove
+migration rows, strip tombstones, reset discussion counters or run a previous
+binary against newly written revision documents. This is an additive forward
+migration with a snapshot rollback, not a reverse data-recreation migration.
+The PostgreSQL rehearsal includes post-expiry Issue/comment replay, retained
+workflow/status identity and an unchanged pending execution request.

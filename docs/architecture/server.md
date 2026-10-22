@@ -1502,3 +1502,30 @@ invariants:
 Each transition is a pure `state + event -> new state` decision. Persistence,
 audit, outbox publication, and wakeups are coordinated outside these modules so
 the same interface is used by production callers and table-driven tests.
+
+### Issue migration and content maintenance ownership
+
+Issue retains editable intent, business workflow/status/applicability and
+collaboration metadata. Work/Run admission, execution and controls retain their
+existing authority. Association recovery uses one bounded pending queue in
+PostgreSQL, seeded at upgrade and extended atomically by settled Source admissions;
+ordinary manual/reviewed admissions are not captured by it. GET handlers only
+observe associations. Recovery uses the ordinary initial-Issue and Work
+association transaction helpers. Verified settled Source provenance may group
+native identity inside its Project/security partition; text and latest Run state
+cannot do so.
+
+Requirements and discussion body lifetimes use independently versioned explicit
+plans under the existing Issue fence. Expiry tombstones/redacts original replay
+in one transaction, retaining referenced workflow/mapping/history/request metadata.
+Original input/source/Artifact retention and Reporter fencing stay with their
+owners. The runtime schedules migration, content cleanup and the derived action
+projection through the existing supervised maintenance loop. None becomes an
+execution/admission/provider prerequisite for a manual task.
+
+`ProjectTextIntake` remains the shared publication seam for Issue execution and
+quickstart. The quickstart handoff remains
+[shared-project-inputs.md](../../openspec/changes/add-factory-bugfix-quickstart/shared-project-inputs.md);
+this work does not complete that change's preset/readiness tasks or the future
+editable role-profile work. Source/Reporter and read-only review adapters remain
+separately installed capabilities, with their own live qualification requirements.

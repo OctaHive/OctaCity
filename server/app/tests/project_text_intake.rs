@@ -99,6 +99,12 @@ impl ArtifactByteReader for Bytes {
   }
 }
 async fn setup(store: &PostgresStore) -> (IssueRevision, ProjectTextSubmission) {
+  setup_with_flow(store, None).await
+}
+async fn setup_with_flow(
+  store: &PostgresStore,
+  flow: Option<FactoryFlowConfiguration>,
+) -> (IssueRevision, ProjectTextSubmission) {
   let project = ProjectId::generate();
   store
     .create_project(management_mutation(CreateProject {
@@ -150,7 +156,11 @@ async fn setup(store: &PostgresStore) -> (IssueRevision, ProjectTextSubmission) 
     }))
     .await
     .unwrap();
-  let f = postgres::factory_configuration::fixture(project);
+  let mut f = postgres::factory_configuration::fixture(project);
+  if let Some(flow) = flow {
+    f.draft.hard_budget = flow.limits.budget();
+    f.draft.flow = Some(flow);
+  }
   let id = FactoryConfigurationId::generate();
   let digest = FactoryDigest::from_bytes([7; 32]);
   let configuration = FactoryConfiguration::publish(
@@ -1239,6 +1249,8 @@ async fn admitted_pending_issue_association_recovers_after_private_body_cleanup(
   database.cleanup().await;
 }
 
+#[path = "support/console_pilot.rs"]
+mod console_pilot;
 #[path = "support/runtime.rs"]
 mod http_runtime;
 
@@ -1249,7 +1261,7 @@ async fn issue_execution_http_resumes_original_inputs_after_runtime_restart() {
   use serde_json::{Value, json};
   let database = postgres::TestDatabase::migrated().await;
   let store = PostgresStore::new(database.pool.clone());
-  let (issue, submission) = setup(&store).await;
+  let (issue, submission) = setup_with_flow(&store, Some(pilot_controls::flow())).await;
   let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
   url.set_path(&database.name);
   let root = tempfile::tempdir().unwrap();
@@ -1353,6 +1365,236 @@ async fn issue_execution_http_resumes_original_inputs_after_runtime_restart() {
     .await
     .unwrap();
   assert_eq!(count, 2);
+  let original_run = admitted["resource"]["association"]["run_id"]
+    .as_str()
+    .unwrap()
+    .parse()
+    .unwrap();
+  let active_store = Arc::new(PostgresStore::new(database.pool.clone()));
+  pilot_controls::begin(active_store.clone(), original_run).await;
+  let edited = client.patch(format!("{origin}/api/v1/projects/{}/issues/{}", issue.project_id, issue.id)).header("idempotency-key", "http-running-edit").header("if-match", "\"2\"").json(&json!({"title":issue.content.title,"description":"Requirements edited during Run","acceptance":issue.content.acceptance})).send().await.unwrap();
+  assert_eq!(edited.status(), reqwest::StatusCode::OK);
+  pilot_controls::qualify(active_store, &context(), original_run).await;
+  assert_eq!(
+    store.issue(issue.project_id, issue.id, None).await.unwrap().status_id,
+    issue.status_id
+  );
+  if std::env::var_os("OCTACITY_PILOT_BROWSER").is_some() {
+    let result = console_pilot::run(
+      &origin,
+      Some(&format!("/projects/{}/issues/{}", issue.project_id, issue.id)),
+    )
+    .await;
+    assert!(
+      result.status.success(),
+      "{}\n{}",
+      String::from_utf8_lossy(&result.stdout),
+      String::from_utf8_lossy(&result.stderr)
+    );
+  }
+  let current = store.issue(issue.project_id, issue.id, None).await.unwrap();
+  let status_submission = status_actions::configure_status(&store, &current, submission.clone()).await;
+  let mut explicit = body.clone();
+  explicit["target"]["configuration_version"] =
+    serde_json::json!(status_submission.intent.target.configuration_version.get());
+  let status = client
+    .post(format!("{origin}{path}"))
+    .header("idempotency-key", "explicit-status-pilot")
+    .header("if-match", format!("\"{}\"", current.version.get()))
+    .json(&explicit)
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(status.status(), reqwest::StatusCode::CREATED);
+  let status: Value = status.json().await.unwrap();
+  status_actions::qualify_status(
+    Arc::new(PostgresStore::new(database.pool.clone())),
+    status["resource"]["association"]["run_id"]
+      .as_str()
+      .unwrap()
+      .parse()
+      .unwrap(),
+    &current,
+  )
+  .await;
+  // The common cleanup owner removes the very inputs just previewed, retaining the original association.
+  let work: WorkEnvelopeId = admitted["resource"]["association"]["work_id"]
+    .as_str()
+    .unwrap()
+    .parse()
+    .unwrap();
+  let task = store
+    .factory_run_snapshot(
+      admitted["resource"]["association"]["run_id"]
+        .as_str()
+        .unwrap()
+        .parse()
+        .unwrap(),
+    )
+    .await
+    .unwrap()
+    .work
+    .artifacts()
+    .task()
+    .artifact_id();
+  let input = store.published_execution_input(task).await.unwrap();
+  let objects = Arc::new(
+    octacity_artifact_s3::S3ArtifactStore::new(octacity_artifact_s3::S3ArtifactStoreConfig {
+      endpoint,
+      region: "us-east-1".into(),
+      bucket: "octacity-artifacts".into(),
+      prefix: String::new(),
+      access_key: zeroize::Zeroizing::new("octacity".into()),
+      secret_key: zeroize::Zeroizing::new("octacity-secret".into()),
+      force_path_style: true,
+      operation_timeout: std::time::Duration::from_secs(5),
+      capability_recheck_interval: std::time::Duration::from_secs(1),
+    })
+    .unwrap(),
+  );
+  let cleanup = FactoryExecutionInputRetentionWorker::new(Arc::new(PostgresStore::new(database.pool.clone())), objects);
+  assert!(
+    cleanup
+      .run_once(at(input.expires_at.unwrap().unix_millis() + 1), 100)
+      .await
+      .unwrap()
+      >= 2
+  );
+  let artifact_path = format!(
+    "{origin}/api/v1/projects/{}/issues/{}/results/artifacts",
+    issue.project_id, issue.id
+  );
+  let expired: Value = client
+    .get(format!("{artifact_path}?work_id={work}"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert!(
+    expired["items"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .all(|item| item["availability"] != "available")
+  );
+  assert!(
+    !client
+      .get(format!("{artifact_path}/{task}/content?work_id={work}&mode=preview"))
+      .send()
+      .await
+      .unwrap()
+      .status()
+      .is_success()
+  );
+  if std::env::var_os("OCTACITY_PILOT_BROWSER").is_some() {
+    let result = console_pilot::run_named(
+      &origin,
+      Some(&format!("/projects/{}/issues/{}", issue.project_id, issue.id)),
+      "expired execution",
+    )
+    .await;
+    assert!(
+      result.status.success(),
+      "{}\n{}",
+      String::from_utf8_lossy(&result.stdout),
+      String::from_utf8_lossy(&result.stderr)
+    );
+  }
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn runtime_backfills_only_upgrade_work_without_factory_or_provider() {
+  let database = postgres::TestDatabase::before_issue_backfill().await;
+  let store = Arc::new(PostgresStore::new(database.pool.clone()));
+  let (draft, submission) = setup(&store).await;
+  let intake = ProjectTextIntake::new(
+    store.clone(),
+    Arc::new(Bytes::new()),
+    Arc::new(Resolver(AtomicUsize::new(0))),
+    Arc::new(TrustedNetworkManagementPolicy),
+    Arc::new(Clock(AtomicI64::new(20))),
+  );
+  let original = intake.submit(&context(), submission.clone()).await.unwrap().admission;
+  let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
+  url.set_path(&database.name);
+  let root = tempfile::tempdir().unwrap();
+  let runtime = octacity_server::ServerRuntime::start(http_runtime::runtime_config(
+    root.path(),
+    url.as_str(),
+    "http://127.0.0.1:9",
+  ))
+  .await
+  .unwrap();
+  let association = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    loop {
+      if let Some(link) = store
+        .issue_work_association(draft.project_id, original.work.id())
+        .await
+        .unwrap()
+      {
+        break link;
+      }
+      tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+  })
+  .await
+  .expect("legacy worker must run even when Factory is disabled");
+  let response = reqwest::get(format!(
+    "http://{}/api/v1/projects/{}/issues/{}",
+    runtime.management_addr(),
+    draft.project_id,
+    association.issue_id
+  ))
+  .await
+  .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::OK);
+  let path = format!(
+    "http://{}/api/v1/projects/{}/issues/{}",
+    runtime.management_addr(),
+    draft.project_id,
+    association.issue_id
+  );
+  let legacy = reqwest::get(format!("{path}/legacy-work")).await.unwrap();
+  assert_eq!(legacy.status(), reqwest::StatusCode::OK);
+  let legacy: serde_json::Value = legacy.json().await.unwrap();
+  assert_eq!(legacy["items"][0]["work_id"], original.work.id().to_string());
+  assert!(legacy["items"][0]["request_id"].is_null());
+  let exact = reqwest::get(format!("{path}/work/{}", original.work.id()))
+    .await
+    .unwrap();
+  assert_eq!(exact.status(), reqwest::StatusCode::OK);
+  assert_eq!(exact.headers()["cache-control"], "no-store");
+  let exact: serde_json::Value = exact.json().await.unwrap();
+  assert_eq!(exact["association"]["run_id"], original.run.id().to_string());
+  let run = reqwest::get(format!(
+    "http://{}/api/v1/factory-runs/{}",
+    runtime.management_addr(),
+    original.run.id()
+  ))
+  .await
+  .unwrap();
+  assert_eq!(
+    run.headers().get("cache-control").and_then(|v| v.to_str().ok()),
+    Some("no-store")
+  );
+  let run: serde_json::Value = run.json().await.unwrap();
+  assert_eq!(run["issue_association"]["issue_id"], association.issue_id.to_string());
+
+  assert_eq!(
+    store.factory_run_snapshot(original.run.id()).await.unwrap().work,
+    original.work
+  );
+  assert_eq!(association.run_id, original.run.id());
+  assert_eq!(association.requirements_version, None);
+  assert_eq!(intake.submit(&context(), submission).await.unwrap().admission, original);
+  runtime.shutdown().await.unwrap();
+  database.cleanup().await;
+}
+
+#[path = "support/pilot_controls.rs"]
+mod pilot_controls;

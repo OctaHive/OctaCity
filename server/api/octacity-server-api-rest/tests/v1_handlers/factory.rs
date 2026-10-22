@@ -1240,6 +1240,7 @@ fn factory_run_summary_fixture() -> octacity_server_application::FactoryRunSumma
   let candidate =
     serde_json::json!({"exact":exact,"candidate_revision":"exact-candidate","changeset_digest":"ab".repeat(32)});
   octacity_server_application::FactoryRunSummaryProjection {
+    issue_association: None,
           id:"22222222-2222-4222-8222-222222222222".parse().unwrap(),
           project_id:"11111111-1111-4111-8111-111111111111".parse().unwrap(),
           work_id:"44444444-4444-4444-8444-444444444444".parse().unwrap(),

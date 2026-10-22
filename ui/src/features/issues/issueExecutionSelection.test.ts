@@ -11,3 +11,12 @@ it('clears execution-bound journal and result selection only when choosing anoth
     ['journal_collection', 'node-stops'],
   ]);
 });
+it('replaces a requestless Work selection when choosing a reviewed execution', () => {
+  const next = selectIssueExecution(
+    new URLSearchParams('work=original-work&journal_event=7'),
+    'reviewed-request',
+  );
+  expect(next.get('execution')).toBe('reviewed-request');
+  expect(next.get('work')).toBeNull();
+  expect(next.get('journal_event')).toBeNull();
+});

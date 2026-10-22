@@ -693,6 +693,7 @@ fn factory_run_summary(
   };
   let run = stored.run();
   Ok(Some(FactoryRunSummary {
+    issue_association: None,
     diagnostics: crate::FactoryRunSummaryDiagnostics::from_snapshot(&stored.snapshot()?)?,
     id: run.id(),
     project_id: run.subject().project_id(),

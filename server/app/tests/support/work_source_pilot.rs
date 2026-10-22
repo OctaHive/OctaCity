@@ -3,6 +3,62 @@ use super::*;
 use octacity_server_secrets::{CredentialPublication, ProviderCredentialError, ProviderCredentialPublisher};
 use std::sync::{Mutex, atomic::AtomicBool};
 
+// Both pilots use identical public operations after installing their immutable target.
+#[async_trait::async_trait]
+pub(super) trait PilotStore:
+  WorkSourceArtifactStore
+  + FactorySourceConfigurationStore
+  + FactoryDiscoveryStore
+  + FactoryConfigurationStore
+  + FactoryRunStore
+  + IssueSourceProjectionStore
+  + IntegrationConnectionStore
+  + IntegrationAdministrationStore
+  + IntegrationProjectAccessStore
+  + 'static
+{
+  async fn install_target(&self, target: FactoryConfiguration);
+}
+#[async_trait::async_trait]
+impl PilotStore for InMemoryFactoryConfigurationStore {
+  async fn install_target(&self, target: FactoryConfiguration) {
+    self
+      .seed_factory_configuration_version(PublishedFactoryConfiguration {
+        configuration: target,
+        published_at: time(2),
+      })
+      .unwrap();
+  }
+}
+#[async_trait::async_trait]
+impl PilotStore for octacity_server_store_postgres::PostgresStore {
+  async fn install_target(&self, target: FactoryConfiguration) {
+    self
+      .create_factory_configuration(octacity_server_store::testing::management_mutation(
+        CreateFactoryConfiguration {
+          configuration: target.clone(),
+          idempotency_key: "pilot-downstream".parse().unwrap(),
+          published_at: time(2),
+          intent: FactoryConfigurationMutationIntent::Create {
+            id: target.reference().id(),
+            project_id: target.reference().project_id(),
+            definition_digest: target.reference().definition_digest(),
+            draft: FactoryConfigurationDraft {
+              flow: Some(target.flow().clone()),
+              admission_policy: key("admission"),
+              wip_limits: target.wip_limits(),
+              hard_budget: target.hard_budget(),
+              permission_ceiling: key("permissions"),
+              enabled: true,
+            },
+          },
+        },
+      ))
+      .await
+      .unwrap();
+  }
+}
+
 struct PilotPolicy;
 #[async_trait::async_trait]
 impl ManagementAuthorizationPolicy for PilotPolicy {
@@ -54,8 +110,8 @@ pub(super) fn administrator() -> ManagementRequestContext {
   .unwrap()
 }
 
-pub(super) async fn credential(
-  fixture: &Fixture,
+pub(super) async fn credential<S: PilotStore>(
+  fixture: &Fixture<S>,
   publisher: Arc<PrivatePublisher>,
   request: BeginIntegrationAdministration,
 ) -> Result<IntegrationAdministrationReceipt, ManagementHandlerError<ApplicationError>> {
@@ -80,10 +136,10 @@ pub(super) async fn credential(
   .await
 }
 
-pub(super) fn managed_projector(
-  fixture: &Fixture,
+pub(super) fn managed_projector<S: PilotStore>(
+  fixture: &Fixture<S>,
   profile: &FactoryReporterProfile,
-) -> Arc<HostedFactoryWorkStatusProjector<InMemoryFactoryConfigurationStore>> {
+) -> Arc<HostedFactoryWorkStatusProjector<S>> {
   Arc::new(
     Arc::try_unwrap(hosted(fixture, vec![profile.clone()]))
       .ok()
@@ -91,8 +147,8 @@ pub(super) fn managed_projector(
       .with_managed_connections(ManagedIntegrationConnections::new(fixture.store.clone())),
   )
 }
-pub(super) fn observation_reader(
-  fixture: &Fixture,
+pub(super) fn observation_reader<S: PilotStore>(
+  fixture: &Fixture<S>,
   connection: &WorkSourceConnectionRef,
 ) -> HostedWorkSourceObservations {
   let access = ManagedIntegrationConnections::new(fixture.store.clone())
@@ -108,7 +164,7 @@ pub(super) fn observation_reader(
   )
   .unwrap()
 }
-pub(super) fn observation_request(fixture: &Fixture) -> ReadWorkSourceObservations {
+pub(super) fn observation_request<S: PilotStore>(fixture: &Fixture<S>) -> ReadWorkSourceObservations {
   ReadWorkSourceObservations {
     project_id: fixture.input.project_id(),
     source: fixture.profile.read.binding.clone(),
@@ -119,8 +175,8 @@ pub(super) fn observation_request(fixture: &Fixture) -> ReadWorkSourceObservatio
   }
 }
 
-pub(super) async fn grant(
-  fixture: &Fixture,
+pub(super) async fn grant<S: PilotStore>(
+  fixture: &Fixture<S>,
   id: IntegrationId,
   expected: Option<IntegrationVersion>,
   purposes: Vec<IntegrationPurpose>,
@@ -161,8 +217,8 @@ pub(super) async fn grant(
   .access
 }
 
-pub(super) async fn connect(
-  fixture: &Fixture,
+pub(super) async fn connect<S: PilotStore>(
+  fixture: &Fixture<S>,
   profile: &FactoryReporterProfile,
   publisher: Arc<PrivatePublisher>,
 ) -> WorkSourceConnectionRef {
@@ -282,11 +338,11 @@ pub(super) async fn connect(
   }
 }
 
-pub(super) fn handlers(
-  fixture: &Fixture,
+pub(super) fn handlers<S: PilotStore>(
+  fixture: &Fixture<S>,
   profile: &FactoryReporterProfile,
   labels: &[&str],
-) -> FactorySourceConfigurationHandlers<InMemoryFactoryConfigurationStore> {
+) -> FactorySourceConfigurationHandlers<S> {
   let source = WorkSourceCapability {
     project_id: fixture.input.project_id(),
     role: WorkSourceCapabilityRole::Source,
@@ -333,8 +389,8 @@ pub(super) fn handlers(
   .unwrap()
 }
 
-pub(super) async fn publish(
-  fixture: &Fixture,
+pub(super) async fn publish<S: PilotStore>(
+  fixture: &Fixture<S>,
   profile: &FactoryReporterProfile,
   labels: &[&str],
   inputs: Vec<WorkSourceInputIntent>,
@@ -358,15 +414,15 @@ pub(super) async fn publish(
     .unwrap()
 }
 
-pub(super) struct Pilot {
-  pub(super) fixture: Fixture,
+pub(super) struct Pilot<S = InMemoryFactoryConfigurationStore> {
+  pub(super) fixture: Fixture<S>,
   pub(super) profile: FactoryReporterProfile,
   pub(super) connection: WorkSourceConnectionRef,
   pub(super) downstream_id: WorkSourceInputId,
   pub(super) publisher: Arc<PrivatePublisher>,
 }
 pub(super) async fn pipeline(provider: &str, labels: &[&str; 2]) -> Pilot {
-  let (mut fixture, profile) = fixture_with_reporting_policy(
+  let (fixture, profile) = fixture_with_reporting_policy(
     provider,
     None,
     Some(WorkSourceReportingPolicy {
@@ -375,6 +431,21 @@ pub(super) async fn pipeline(provider: &str, labels: &[&str; 2]) -> Pilot {
     }),
   )
   .await;
+  pipeline_in(fixture, profile, labels).await
+}
+pub(super) async fn pipeline_in<S: PilotStore>(
+  fixture: Fixture<S>,
+  profile: FactoryReporterProfile,
+  labels: &[&str; 2],
+) -> Pilot<S> {
+  pipeline_with_target(fixture, profile, labels, None).await
+}
+pub(super) async fn pipeline_with_target<S: PilotStore>(
+  mut fixture: Fixture<S>,
+  profile: FactoryReporterProfile,
+  labels: &[&str; 2],
+  flow: Option<FactoryFlowConfiguration>,
+) -> Pilot<S> {
   let publisher = Arc::new(PrivatePublisher::default());
   let connection = connect(&fixture, &profile, publisher.clone()).await;
   // The assessment is a deterministic accepted typed Factory action, with no model call.
@@ -397,14 +468,8 @@ pub(super) async fn pipeline(provider: &str, labels: &[&str; 2]) -> Pilot {
     any_of: vec![],
     none_of: vec![labels[0].into(), labels[1].into()],
   });
-  let target = configuration(fixture.input.project_id(), FactoryConfigurationId::generate());
-  fixture
-    .store
-    .seed_factory_configuration_version(PublishedFactoryConfiguration {
-      configuration: target.clone(),
-      published_at: time(2),
-    })
-    .unwrap();
+  let target = configuration_with_flow(fixture.input.project_id(), FactoryConfigurationId::generate(), flow);
+  fixture.store.install_target(target.clone()).await;
   let mut downstream = assessment.clone();
   downstream.target = target.reference().clone();
   downstream.predicate = Some(WorkSourcePredicate {
@@ -445,4 +510,42 @@ pub(super) async fn pipeline(provider: &str, labels: &[&str; 2]) -> Pilot {
     downstream_id,
     publisher,
   }
+}
+
+pub(super) async fn overlapping_group<S: PilotStore>(
+  fixture: &Fixture<S>,
+  profile: &FactoryReporterProfile,
+  labels: &[&str; 2],
+  downstream: &WorkSourceInput,
+) -> (WorkSourceGroup, WorkSourceInputId) {
+  let overlapping = WorkSourceInputId::generate();
+  let group_id = WorkSourceGroupId::generate();
+  let grouped = publish(
+    fixture,
+    profile,
+    labels,
+    vec![WorkSourceInputIntent {
+      id: overlapping,
+      expected_version: None,
+      definition: downstream.definition().clone(),
+    }],
+    Some(WorkSourceGroupIntent {
+      id: group_id,
+      expected_version: None,
+      members: vec![
+        WorkSourceMemberRef {
+          id: downstream.id(),
+          version: WorkSourceInputVersion::INITIAL,
+        },
+        WorkSourceMemberRef {
+          id: overlapping,
+          version: WorkSourceInputVersion::INITIAL,
+        },
+      ],
+    }),
+    "pilot-overlapping-group",
+  )
+  .await;
+  let group = grouped.publication.group.unwrap().group;
+  (group, overlapping)
 }

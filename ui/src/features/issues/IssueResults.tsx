@@ -7,19 +7,14 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import {
-  QueryLoadingNotice,
-  QueryFailureNotice,
-  QueryBackgroundNotice,
-  QueryEmptyNotice,
-} from '../../shared/QueryStateNotice';
+import { QueryContent, QueryEmptyNotice } from '../../shared/QueryStateNotice';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { DIAGNOSTIC_LABELS, DiagnosticRecordDetails } from '../../shared/FactoryDiagnosticRecord';
 import type { Issue } from './api';
 import type { IssueActivityApi, IssueResultCollection } from './activityApi';
-import type { IssueExecution, IssueExecutionsApi } from './executionApi';
+import type { IssueExecution, IssueExecutionsApi, IssueLegacyWorkApi } from './executionApi';
 import { ExecutionReceipt } from './IssueExecutionReceipt';
-import { useIssueExecution } from './useIssueExecution';
+import { useIssueExecution, useIssueWork } from './useIssueExecution';
 import { IssueObservation } from './IssueActivity';
 import styles from './Issues.module.css';
 const collections = [
@@ -37,12 +32,14 @@ export function IssueResults({
   panels,
   reviews,
   executions,
+  legacy,
   issue,
 }: {
   panels: IssueResultPanelsApi;
   reviews: IssueCodeReviewsApi;
   api: IssueActivityApi;
   executions: IssueExecutionsApi;
+  legacy: IssueLegacyWorkApi;
   issue: Issue;
 }) {
   const { t } = usePresentation();
@@ -50,6 +47,9 @@ export function IssueResults({
   const requestId = params.get('execution');
   const pane = params.get('result_pane') ?? 'records';
   const selected = useIssueExecution(executions, issue, requestId);
+  const workId = requestId ? null : params.get('work');
+  const original = useIssueWork(legacy, issue, workId);
+  const query = requestId ? selected : original;
   const runs = new URLSearchParams(params);
   runs.set('section', 'runs');
   return (
@@ -73,51 +73,48 @@ export function IssueResults({
       {pane === 'checks' ? (
         <IssueExternalChecks api={panels} reviews={reviews} issue={issue} />
       ) : null}
-      {!requestId ? (
+      {!requestId && !workId ? (
         <>
           <p>{t('issues.selectExecution')}</p>
           <Link to={{ search: runs.toString() }}>{t('issues.runs')}</Link>
         </>
-      ) : selected.isPending ? (
-        <QueryLoadingNotice label={t('issues.selectedExecution')} />
-      ) : !selected.data ? (
-        <QueryFailureNotice
-          title={t('issues.selectedExecution')}
-          error={selected.error}
-          onRetry={selected.refetch}
-        />
       ) : (
-        <>
-          <QueryBackgroundNotice
-            label={t('issues.selectedExecution')}
-            fetching={selected.isFetching}
-            error={selected.error}
-            onRetry={selected.refetch}
-          />
-          <ExecutionReceipt execution={selected.data} currentVersion={issue.version} />
-          {selected.data.association && pane === 'checks' ? (
-            <IssueChecks
-              api={panels}
-              activity={api}
-              issue={issue}
-              work={selected.data.association.work_id}
-            />
-          ) : selected.data.association && pane === 'artifacts' ? (
-            <IssueArtifacts
-              key={selected.data.association.work_id}
-              api={panels}
-              issue={issue}
-              work={selected.data.association.work_id}
-            />
-          ) : selected.data.association ? (
-            <ResultCollection
-              key={selected.data.association.work_id}
-              api={api}
-              issue={issue}
-              execution={selected.data}
-            />
-          ) : null}
-        </>
+        <QueryContent<IssueExecution | Awaited<ReturnType<IssueLegacyWorkApi['getWork']>>>
+          query={query}
+          label={t('issues.selectedExecution')}
+        >
+          {(data) => (
+            <>
+              {'intent' in data ? (
+                <ExecutionReceipt execution={data} currentVersion={issue.version} />
+              ) : (
+                <p>{t('issues.legacyProvenance')}</p>
+              )}
+              {data.association && pane === 'checks' ? (
+                <IssueChecks
+                  api={panels}
+                  activity={api}
+                  issue={issue}
+                  work={data.association.work_id}
+                />
+              ) : data.association && pane === 'artifacts' ? (
+                <IssueArtifacts
+                  key={data.association.work_id}
+                  api={panels}
+                  issue={issue}
+                  work={data.association.work_id}
+                />
+              ) : data.association ? (
+                <ResultCollection
+                  key={data.association.work_id}
+                  api={api}
+                  issue={issue}
+                  work={data.association.work_id}
+                />
+              ) : null}
+            </>
+          )}
+        </QueryContent>
       )}
     </section>
   );
@@ -125,17 +122,16 @@ export function IssueResults({
 function ResultCollection({
   api,
   issue,
-  execution,
+  work,
 }: {
   api: IssueActivityApi;
   issue: Issue;
-  execution: IssueExecution;
+  work: string;
 }) {
   const { t } = usePresentation();
   const [params, setParams] = useSearchParams();
   const collection = collections.find((c) => c === params.get('result_collection')) ?? 'evidence';
   const after = params.get('result_after');
-  const work = execution.association!.work_id;
   const query = useQuery({
     queryKey: queryKeys.issueResults(issue.project_id, issue.id, work, collection, after),
     gcTime: 0,
@@ -158,58 +154,46 @@ function ResultCollection({
         options={collections.map((value) => ({ value, label: t(DIAGNOSTIC_LABELS[value]) }))}
         onValueChange={(value) => change('result_collection', value)}
       />
-      {query.isPending ? (
-        <QueryLoadingNotice label={t('issues.executionResults')} />
-      ) : !query.data ? (
-        <QueryFailureNotice
-          title={t('issues.executionResults')}
-          error={query.error}
-          onRetry={query.refetch}
-        />
-      ) : (
-        <>
-          <QueryBackgroundNotice
-            label={t('issues.executionResults')}
-            fetching={query.isFetching}
-            error={query.error}
-            onRetry={query.refetch}
-          />
-          <IssueObservation page={query.data} />
-          <p role="status">{t(`issues.resultCoverage.${query.data.coverage}`)}</p>
-          {query.data.items.length ? (
-            <ol className={styles.list}>
-              {query.data.items.map((item) => {
-                const id = item.kind === 'call' ? item.record.node.id : item.record.id;
-                const open = params.get('result_id') === id;
-                return (
-                  <li key={id}>
-                    <h3>{t(DIAGNOSTIC_LABELS[collection])}</h3>
-                    <button
-                      aria-expanded={open}
-                      onClick={() => change('result_id', open ? null : id)}
-                    >
-                      {t('issues.inspectResult')}
-                    </button>
-                    {open ? <DiagnosticRecordDetails item={item} /> : null}
-                  </li>
-                );
-              })}
-            </ol>
-          ) : query.data.coverage === 'partial' ? (
-            <QueryEmptyNotice>{t('issues.noResults')}</QueryEmptyNotice>
-          ) : null}
-          <div className={styles.actions}>
-            {query.data.next_cursor ? (
-              <button
-                disabled={query.isFetching || query.error !== null}
-                onClick={() => change('result_after', query.data!.next_cursor)}
-              >
-                {t('issues.nextPage')}
-              </button>
+      <QueryContent query={query} label={t('issues.executionResults')}>
+        {(data) => (
+          <>
+            <IssueObservation page={data} />
+            <p role="status">{t(`issues.resultCoverage.${data.coverage}`)}</p>
+            {data.items.length ? (
+              <ol className={styles.list}>
+                {data.items.map((item) => {
+                  const id = item.kind === 'call' ? item.record.node.id : item.record.id;
+                  const open = params.get('result_id') === id;
+                  return (
+                    <li key={id}>
+                      <h3>{t(DIAGNOSTIC_LABELS[collection])}</h3>
+                      <button
+                        aria-expanded={open}
+                        onClick={() => change('result_id', open ? null : id)}
+                      >
+                        {t('issues.inspectResult')}
+                      </button>
+                      {open ? <DiagnosticRecordDetails item={item} /> : null}
+                    </li>
+                  );
+                })}
+              </ol>
+            ) : data.coverage === 'partial' ? (
+              <QueryEmptyNotice>{t('issues.noResults')}</QueryEmptyNotice>
             ) : null}
-          </div>
-        </>
-      )}
+            <div className={styles.actions}>
+              {data.next_cursor ? (
+                <button
+                  disabled={query.isFetching || query.error !== null}
+                  onClick={() => change('result_after', data.next_cursor)}
+                >
+                  {t('issues.nextPage')}
+                </button>
+              ) : null}
+            </div>
+          </>
+        )}
+      </QueryContent>
       {after ? (
         <button onClick={() => change('result_after', null)}>{t('issues.firstPage')}</button>
       ) : null}

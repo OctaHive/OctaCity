@@ -6,12 +6,7 @@ import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
 import { formatEnumLabel } from '../../shared/display';
-import {
-  QueryLoadingNotice,
-  QueryFailureNotice,
-  QueryBackgroundNotice,
-  QueryEmptyNotice,
-} from '../../shared/QueryStateNotice';
+import { QueryContent, QueryEmptyNotice } from '../../shared/QueryStateNotice';
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import type { Issue, IssuesApi } from './api';
 import styles from './Issues.module.css';
@@ -45,50 +40,40 @@ export function IssueHistory({
   return (
     <section className={styles.panel} aria-label={label}>
       <h2>{label}</h2>
-      {history.isPending ? (
-        <QueryLoadingNotice label={label} />
-      ) : history.data === undefined ? (
-        <QueryFailureNotice title={label} error={history.error} onRetry={history.refetch} />
-      ) : (
-        <>
-          <QueryBackgroundNotice
-            label={label}
-            fetching={history.isFetching}
-            error={history.error}
-            onRetry={history.refetch}
-          />
-          {history.data.items.length ? (
-            <ol className={styles.list}>
-              {(preview ? history.data.items.slice(-5) : history.data.items).map((entry) => (
-                <HistoryRow
-                  key={entry.version}
-                  entry={entry}
-                  workflows={workflows}
-                  projectId={issue.project_id}
-                />
-              ))}
-            </ol>
-          ) : (
-            <QueryEmptyNotice>
-              {t(preview && cursor !== null ? 'issues.noRecentActivity' : 'issues.noActivity')}
-            </QueryEmptyNotice>
-          )}
-          {preview ? (
-            <>
-              <p>{t('issues.previewCoverage', { count: bounds.defaultPageSize })}</p>
-              <Link to={{ search: fullHistory.toString() }}>{t('issues.fullHistory')}</Link>
-            </>
-          ) : null}
-          {!preview && after ? (
-            <button onClick={() => setAfter(null)}>{t('issues.firstPage')}</button>
-          ) : null}
-          {!preview && history.data.next_cursor ? (
-            <button onClick={() => setAfter(history.data!.next_cursor)}>
-              {t('issues.nextPage')}
-            </button>
-          ) : null}
-        </>
-      )}
+      <QueryContent query={history} label={label}>
+        {(data) => (
+          <>
+            {data.items.length ? (
+              <ol className={styles.list}>
+                {(preview ? data.items.slice(-5) : data.items).map((entry) => (
+                  <HistoryRow
+                    key={entry.version}
+                    entry={entry}
+                    workflows={workflows}
+                    projectId={issue.project_id}
+                  />
+                ))}
+              </ol>
+            ) : (
+              <QueryEmptyNotice>
+                {t(preview && cursor !== null ? 'issues.noRecentActivity' : 'issues.noActivity')}
+              </QueryEmptyNotice>
+            )}
+            {preview ? (
+              <>
+                <p>{t('issues.previewCoverage', { count: bounds.defaultPageSize })}</p>
+                <Link to={{ search: fullHistory.toString() }}>{t('issues.fullHistory')}</Link>
+              </>
+            ) : null}
+            {!preview && after ? (
+              <button onClick={() => setAfter(null)}>{t('issues.firstPage')}</button>
+            ) : null}
+            {!preview && data.next_cursor ? (
+              <button onClick={() => setAfter(data.next_cursor)}>{t('issues.nextPage')}</button>
+            ) : null}
+          </>
+        )}
+      </QueryContent>
     </section>
   );
 }

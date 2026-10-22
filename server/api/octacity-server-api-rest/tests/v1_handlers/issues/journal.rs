@@ -7,6 +7,35 @@ use octacity_server_application::{
   ManagementResourceKind, ManagementVisibility, ReadIssueExecutionJournalEventsQuery,
 };
 const JOB: &str = "60000000-0000-4000-8000-000000000009";
+
+#[tokio::test]
+async fn requestless_work_events_reuse_exact_authorized_journal_contracts() {
+  let work = admitted_execution().association.unwrap().work_id;
+  let base = format!("{}/{ISSUE}/work/{work}/journal/events", root());
+  let selector = format!("build_execution={}&job_id={JOB}", "ab".repeat(32));
+  let response = routes()
+    .oneshot(empty_request("GET", &format!("{base}?{selector}"), None))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(response.headers()["cache-control"], "no-store");
+  let page = document(response).await;
+  let detail = format!("{base}/1?{selector}");
+  assert_eq!(page["events"][0]["detail_url"], detail);
+  let response = routes().oneshot(empty_request("GET", &detail, None)).await.unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(
+    document(response).await["items"][0]["payload"]["text"],
+    "authorized detail"
+  );
+  for path in [format!("{base}?{selector}"), detail] {
+    let response = routes_with_policy(Arc::new(DenyJournalContent))
+      .oneshot(empty_request("GET", &path, None))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::FORBIDDEN);
+  }
+}
 struct JournalRead;
 #[async_trait]
 impl ManagementQueryUseCase<ListIssueExecutionJournalQuery> for JournalRead {

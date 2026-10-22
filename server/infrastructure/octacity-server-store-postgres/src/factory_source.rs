@@ -531,7 +531,15 @@ pub(crate) async fn correlate(
   receipt: &octacity_server_store::PublishedFactoryAdmission,
 ) -> Result<(), StoreError> {
   preparation.correlate(receipt);
-  save_preparation(tx, &preparation).await
+  save_preparation(tx, &preparation).await?;
+  // Share recoverable association with upgrade Work. Admission keeps its own
+  // authority/lock order; the Issue worker resolves verified native identity.
+  sqlx::query("INSERT INTO issue_legacy_backfill(work_id) SELECT $1 WHERE NOT EXISTS(SELECT 1 FROM issue_work_associations WHERE work_id=$1) ON CONFLICT DO NOTHING")
+    .bind(receipt.work.id().as_uuid())
+    .execute(&mut **tx)
+    .await
+    .map_err(unavailable)?;
+  Ok(())
 }
 pub(crate) async fn correlate_replay(
   pool: &sqlx::PgPool,

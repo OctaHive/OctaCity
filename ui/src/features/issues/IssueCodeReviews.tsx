@@ -7,12 +7,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import {
-  QueryLoadingNotice,
-  QueryFailureNotice,
-  QueryBackgroundNotice,
-  QueryEmptyNotice,
-} from '../../shared/QueryStateNotice';
+import { QueryContent, QueryEmptyNotice } from '../../shared/QueryStateNotice';
 import type { Issue } from './api';
 import type { IssueCodeReview, IssueCodeReviewsApi, IssueReviewConnections } from './codeReviewApi';
 import styles from './Issues.module.css';
@@ -76,43 +71,35 @@ export function IssueCodeReviews({
           ) : null}
         </>
       ) : null}
-      {query.isPending ? (
-        <QueryLoadingNotice label={title} />
-      ) : !query.data ? (
-        <QueryFailureNotice title={title} error={query.error} onRetry={query.refetch} />
-      ) : (
-        <>
-          <QueryBackgroundNotice
-            label={title}
-            error={query.error}
-            fetching={query.isFetching}
-            onRetry={query.refetch}
-          />
-          {query.data.items.length ? (
-            <ul className={styles.list}>
-              {query.data.items.map((review) => (
-                <li key={review.association.id}>
-                  {compact ? (
-                    <Link to={location(review.association.id)}>{reviewLabel(review)}</Link>
-                  ) : (
-                    <ReviewCard review={review} issue={issue} api={api} />
-                  )}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <QueryEmptyNotice>{t('issueReviews.empty')}</QueryEmptyNotice>
-          )}
-          {!compact && query.data.next_cursor ? (
-            <button
-              disabled={query.isFetching || !!query.error}
-              onClick={() => changePage(query.data!.next_cursor)}
-            >
-              {t('issues.nextPage')}
-            </button>
-          ) : null}
-        </>
-      )}
+      <QueryContent query={query} label={title}>
+        {(data) => (
+          <>
+            {data.items.length ? (
+              <ul className={styles.list}>
+                {data.items.map((review) => (
+                  <li key={review.association.id}>
+                    {compact ? (
+                      <Link to={location(review.association.id)}>{reviewLabel(review)}</Link>
+                    ) : (
+                      <ReviewCard review={review} issue={issue} api={api} />
+                    )}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <QueryEmptyNotice>{t('issueReviews.empty')}</QueryEmptyNotice>
+            )}
+            {!compact && data.next_cursor ? (
+              <button
+                disabled={query.isFetching || !!query.error}
+                onClick={() => changePage(data.next_cursor)}
+              >
+                {t('issues.nextPage')}
+              </button>
+            ) : null}
+          </>
+        )}
+      </QueryContent>
       {!compact && after ? (
         <button onClick={() => changePage(null)}>{t('issues.firstPage')}</button>
       ) : null}

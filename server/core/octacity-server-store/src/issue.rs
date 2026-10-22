@@ -63,6 +63,9 @@ pub struct IssueRevision {
   pub version: IssueVersion,
   /// Last requirements/status/workflow invalidation; unrelated planning edits preserve it.
   pub applicability_version: IssueVersion,
+  /// False after explicit content expiry; identity and workflow provenance remain available.
+  #[serde(default = "content_available")]
+  pub content_available: bool,
   /// Editable requirements snapshot.
   pub content: IssueContent,
   /// Optional organizational snapshot; absent in prior retained revisions.
@@ -573,4 +576,8 @@ pub enum IssueMoveBlockReason {
   OriginNotAllowed,
   /// Organizational input cannot assert trusted execution evidence.
   EvidenceRequired,
+}
+
+fn content_available() -> bool {
+  true
 }

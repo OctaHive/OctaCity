@@ -1,3 +1,6 @@
+import { IssueLegacyExecutions } from './IssueLegacyExecutions';
+import type { IssueLegacyWorkApi } from './executionApi';
+import { IssueRequirements } from './IssueRequirements';
 import { FactoryActions } from '../../shared/FactoryActions';
 import type { FactoryActionsApi } from '../../api/factoryActions';
 import type { IssueResultPanelsApi } from './resultPanelsApi';
@@ -48,6 +51,7 @@ export function IssueView({
   workflows,
   projects,
   executions,
+  legacy,
   executionSources,
 }: {
   factory: IssueRunReader;
@@ -61,6 +65,7 @@ export function IssueView({
   workflows: IssueWorkflowsApi;
   projects: IssueProjectReader;
   executions: IssueExecutionsApi;
+  legacy: IssueLegacyWorkApi;
   executionSources: PipelineTargetSources;
 }) {
   const { projectId, issueId } = useParams<'projectId' | 'issueId'>();
@@ -75,6 +80,7 @@ export function IssueView({
       reviewConnections={reviewConnections}
       key={projectId + issueId}
       executions={executions}
+      legacy={legacy}
       executionSources={executionSources}
       api={api}
       workflows={workflows}
@@ -96,6 +102,7 @@ function Card({
   workflows,
   projects,
   executions,
+  legacy,
   executionSources,
   projectId,
   issueId,
@@ -111,6 +118,7 @@ function Card({
   workflows: IssueWorkflowsApi;
   projects: IssueProjectReader;
   executions: IssueExecutionsApi;
+  legacy: IssueLegacyWorkApi;
   executionSources: PipelineTargetSources;
   projectId: string;
   issueId: string;
@@ -126,6 +134,7 @@ function Card({
   function sectionSearch(value: string) {
     const next = new URLSearchParams();
     if (value !== 'overview') next.set('section', value);
+    if (params.get('work')) next.set('work', params.get('work')!);
     if (params.get('execution')) next.set('execution', params.get('execution')!);
     if (hasRevision) next.set('revision', String(selectedRevision));
     for (const key of [
@@ -219,7 +228,10 @@ function Card({
           <header className={`${styles.panel} ${styles.header}`}>
             <div className={styles.headerTitle}>
               <h1>
-                {issue.display_key} · {issue.content.title}
+                {issue.display_key} ·{' '}
+                {issue.content_available === false
+                  ? t('issues.contentUnavailableTitle')
+                  : issue.content.title}
               </h1>
               <p>
                 {t('issues.businessStatus', {
@@ -337,14 +349,7 @@ function Card({
                         onRefresh={refresh}
                       />
                     ) : null}
-                    <h2>{t('issues.description')}</h2>
-                    <p className={styles.prose}>
-                      {issue.content.description || t('issues.noDescription')}
-                    </p>
-                    <h2>{t('issues.acceptance')}</h2>
-                    <p className={styles.prose}>
-                      {issue.content.acceptance || t('issues.noAcceptance')}
-                    </p>
+                    <IssueRequirements issue={issue} />
                     <p>{t('issues.revision', { version: issue.version })}</p>
                   </section>
                   <IssueActivity api={activity} issue={issue} preview />
@@ -357,12 +362,20 @@ function Card({
                   <IssueRevisions api={api} issue={issue} />
                 </>
               ) : section === 'runs' ? (
-                <IssueExecutions
-                  api={executions}
-                  issue={issue}
-                  factory={factory}
-                  activity={activity}
-                />
+                <>
+                  <IssueExecutions
+                    api={executions}
+                    issue={issue}
+                    factory={factory}
+                    activity={activity}
+                  />
+                  <IssueLegacyExecutions
+                    api={legacy}
+                    issue={issue}
+                    factory={factory}
+                    activity={activity}
+                  />
+                </>
               ) : section === 'results' ? (
                 <>
                   <IssueCodeReviews
@@ -373,6 +386,7 @@ function Card({
                     onReload={refresh}
                   />
                   <IssueResults
+                    legacy={legacy}
                     reviews={reviews}
                     panels={panels}
                     api={activity}

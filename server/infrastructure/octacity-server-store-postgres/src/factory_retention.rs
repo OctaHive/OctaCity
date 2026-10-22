@@ -245,6 +245,8 @@ async fn delete_metadata_page(
   limit: u16,
 ) -> Result<u16, StoreError> {
   const DELETE_STEPS: &[&str] = &[
+    "WITH selected AS (SELECT ctid FROM factory_action_items WHERE run_id=$1 ORDER BY ctid LIMIT $2) DELETE FROM factory_action_items WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_action_projections p WHERE run_id=$1 AND NOT EXISTS (SELECT 1 FROM factory_action_items i WHERE i.run_id=p.run_id) ORDER BY ctid LIMIT $2) DELETE FROM factory_action_projections WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_decision_signal_receipts WHERE run_id=$1 ORDER BY ctid LIMIT $2) DELETE FROM factory_decision_signal_receipts WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_decision_signal_requests WHERE run_id=$1 ORDER BY ctid LIMIT $2) DELETE FROM factory_decision_signal_requests WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT input.ctid FROM factory_execution_inputs input JOIN factory_execution_input_manifests manifest USING (operation_id) WHERE manifest.run_id=$1 AND input.deleted_at_millis IS NOT NULL ORDER BY input.ctid LIMIT $2) DELETE FROM factory_execution_inputs WHERE ctid IN (SELECT ctid FROM selected)",

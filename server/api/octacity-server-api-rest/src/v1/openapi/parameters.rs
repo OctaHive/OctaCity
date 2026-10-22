@@ -11,6 +11,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "issue_id",
     "review_id",
     "request_id",
+    "work_id",
     "sequence",
     "comment_id",
     "pipeline_id",
@@ -42,10 +43,15 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
           else if name == "sequence" { positive_integer() }
           else if name == "property_version" { non_negative_integer() }
           else if name == "version" { positive_integer() }
-          else if matches!(name, "workflow_id" | "issue_id" | "request_id" | "comment_id") { json!({"type":"string","format":"uuid"}) }
+          else if matches!(name, "workflow_id" | "issue_id" | "request_id" | "comment_id" | "work_id") { json!({"type":"string","format":"uuid"}) }
           else { non_empty_string() }
       }));
     }
+  }
+  if operation.path.contains("{retention_kind}") {
+    parameters.push(
+      json!({"name":"retention_kind","in":"path","required":true,"schema":string_enum(&["requirements","discussion"])}),
+    );
   }
   if operation.path.contains("{collection}") {
     parameters.push(json!({"name":"collection","in":"path","required":true,"schema":{"type":"string","enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|kind| kind.as_str()).collect::<Vec<_>>()}}));

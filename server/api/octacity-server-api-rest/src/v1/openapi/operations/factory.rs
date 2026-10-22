@@ -167,7 +167,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
-  ),
+  )
+  .with_no_store_response(),
   operation!(
     ListFactoryPhaseReadyQuery,
     "GET",

@@ -13,7 +13,7 @@ import { queryKeys } from '../../app/query';
 import {
   QueryFailureNotice,
   QueryLoadingNotice,
-  QueryBackgroundNotice,
+  QueryContent,
 } from '../../shared/QueryStateNotice';
 import { formatTimestamp, formatEnumLabel } from '../../shared/display';
 import type { Issue } from './api';
@@ -21,9 +21,16 @@ import type {
   IssueActivityApi,
   IssueJournalTarget,
   IssueJournalEvents as Events,
+  IssueJournalSelection,
 } from './activityApi';
+import { issueJournalKey } from './activityApi';
 import styles from './Issues.module.css';
-type Props = { api: IssueActivityApi; issue: Issue; request: string; target: IssueJournalTarget };
+type Props = {
+  api: IssueActivityApi;
+  issue: Issue;
+  request: IssueJournalSelection;
+  target: IssueJournalTarget;
+};
 /** Typed public facts only. Private event content has its own short-lived authorized query. */
 export function IssueJournalEvents({ api, issue, request, target }: Props) {
   const { t, locale } = usePresentation();
@@ -44,7 +51,7 @@ export function IssueJournalEvents({ api, issue, request, target }: Props) {
   const key = queryKeys.issueJournalEvents(
     issue.project_id,
     issue.id,
-    request,
+    issueJournalKey(request),
     target.build_execution,
     target.job_id,
     generation,
@@ -118,7 +125,6 @@ export function IssueJournalEvents({ api, issue, request, target }: Props) {
       };
     },
   });
-  const data = query.data;
   return (
     <section className={styles.panel} aria-label={t('events.title')}>
       <h3>{t('events.title')}</h3>
@@ -138,73 +144,67 @@ export function IssueJournalEvents({ api, issue, request, target }: Props) {
         </button>
         <button onClick={() => setGeneration(generation + 1)}>{t('issues.restartEvents')}</button>
       </div>
-      {query.isPending ? (
-        <QueryLoadingNotice label={t('events.title')} />
-      ) : !data ? (
-        <QueryFailureNotice title={t('events.title')} error={query.error} onRetry={query.refetch} />
-      ) : (
-        <>
-          <QueryBackgroundNotice
-            label={t('events.title')}
-            error={query.error}
-            fetching={query.isFetching}
-            onRetry={query.refetch}
-          />
-          <p>
-            {formatEnumLabel(data.job.job.state, t)} ·{' '}
-            {data.job.job.assignment?.assigned_agent_id ?? t('issues.notReported')}
-          </p>
-          {data.job.job.terminal?.failure ? (
-            <p>{formatEnumLabel(data.job.job.terminal.failure, t)}</p>
-          ) : null}
-          <p role="status">{t(`issues.resultCoverage.${data.coverage}`)}</p>
-          <p role="status">
-            {t(
-              finished(data)
-                ? 'events.complete'
-                : following
-                  ? 'events.following'
-                  : 'issues.eventsPaused',
-            )}
-          </p>
-          {data.discarded ? (
+      <QueryContent query={query} label={t('events.title')}>
+        {(data) => (
+          <>
             <p>
-              {t('events.discarded', { visible: data.events.length, discarded: data.discarded })}
+              {formatEnumLabel(data.job.job.state, t)} ·{' '}
+              {data.job.job.assignment?.assigned_agent_id ?? t('issues.notReported')}
             </p>
-          ) : null}
-          {data.job_stale ? <p role="status">{t('issues.jobStale')}</p> : null}
-          {data.gaps.map((gap) => (
-            <p key={gap.from_sequence}>
-              {t('issues.eventGap', { from: gap.from_sequence, through: gap.through_sequence })}
+            {data.job.job.terminal?.failure ? (
+              <p>{formatEnumLabel(data.job.job.terminal.failure, t)}</p>
+            ) : null}
+            <p role="status">{t(`issues.resultCoverage.${data.coverage}`)}</p>
+            <p role="status">
+              {t(
+                finished(data)
+                  ? 'events.complete'
+                  : following
+                    ? 'events.following'
+                    : 'issues.eventsPaused',
+              )}
             </p>
-          ))}
-          <ol className={styles.list} aria-label={t('events.ordered')}>
-            {data.events.map((event) => (
-              <li key={event.sequence}>
-                <time
-                  dateTime={formatTimestamp(event.occurred_at_unix_ms, locale).machine ?? undefined}
-                >
-                  {formatTimestamp(event.occurred_at_unix_ms, locale).display}
-                </time>
-                <EventFacts facts={event.facts} />
-                <button
-                  aria-expanded={selectedSequence === event.sequence}
-                  onClick={() => {
-                    void client.cancelQueries({ queryKey: key, exact: true });
-                    setFollowing(false);
-                    const next = new URLSearchParams(params);
-                    if (selectedSequence === event.sequence) next.delete('journal_event');
-                    else next.set('journal_event', String(event.sequence));
-                    setParams(next);
-                  }}
-                >
-                  {t('issues.inspectEvent', { sequence: event.sequence })}
-                </button>
-              </li>
+            {data.discarded ? (
+              <p>
+                {t('events.discarded', { visible: data.events.length, discarded: data.discarded })}
+              </p>
+            ) : null}
+            {data.job_stale ? <p role="status">{t('issues.jobStale')}</p> : null}
+            {data.gaps.map((gap) => (
+              <p key={gap.from_sequence}>
+                {t('issues.eventGap', { from: gap.from_sequence, through: gap.through_sequence })}
+              </p>
             ))}
-          </ol>
-        </>
-      )}
+            <ol className={styles.list} aria-label={t('events.ordered')}>
+              {data.events.map((event) => (
+                <li key={event.sequence}>
+                  <time
+                    dateTime={
+                      formatTimestamp(event.occurred_at_unix_ms, locale).machine ?? undefined
+                    }
+                  >
+                    {formatTimestamp(event.occurred_at_unix_ms, locale).display}
+                  </time>
+                  <EventFacts facts={event.facts} />
+                  <button
+                    aria-expanded={selectedSequence === event.sequence}
+                    onClick={() => {
+                      void client.cancelQueries({ queryKey: key, exact: true });
+                      setFollowing(false);
+                      const next = new URLSearchParams(params);
+                      if (selectedSequence === event.sequence) next.delete('journal_event');
+                      else next.set('journal_event', String(event.sequence));
+                      setParams(next);
+                    }}
+                  >
+                    {t('issues.inspectEvent', { sequence: event.sequence })}
+                  </button>
+                </li>
+              ))}
+            </ol>
+          </>
+        )}
+      </QueryContent>
       {selectedSequence !== null ? (
         <section aria-label={t('events.payload')}>
           <h4>{t('issues.inspectEvent', { sequence: selectedSequence })}</h4>
@@ -274,7 +274,7 @@ function EventDetail({ api, issue, request, target, sequence }: Props & { sequen
     queryKey: queryKeys.issueJournalEvent(
       issue.project_id,
       issue.id,
-      request,
+      issueJournalKey(request),
       target.build_execution,
       target.job_id,
       sequence,

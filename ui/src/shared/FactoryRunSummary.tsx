@@ -1,6 +1,10 @@
+import { Link } from 'react-router-dom';
 import { usePresentation } from '../app/presentation/PresentationProvider';
 import type { components } from '../../.generated/api/schema';
-type FactoryRun = components['schemas']['FactoryRunSummaryResource'];
+type FactoryRun = Pick<
+  components['schemas']['FactoryRunSummaryResource'],
+  'diagnostics' | 'state' | 'version'
+> & { issue_association?: components['schemas']['IssueWorkAssociation'] | null };
 import styles from './FactoryRead.module.css';
 
 const metrics = [
@@ -15,10 +19,28 @@ const metrics = [
 export function FactoryRunSummary({ run }: { run: FactoryRun }) {
   const { t } = usePresentation();
   const { diagnostics } = run;
+  const association = run.issue_association;
+  const selection = association
+    ? new URLSearchParams({
+        section: 'runs',
+        ...(association.request_id
+          ? { execution: association.request_id }
+          : { work: association.work_id }),
+      })
+    : null;
   return (
     <section className={styles.panel} aria-label={t('factory.runOverview')}>
       <h2>{t('factory.runOverview')}</h2>
       <p className={styles.supportingText}>{t('factory.authoritativeRun')}</p>
+      {association ? (
+        <Link
+          to={`/projects/${encodeURIComponent(association.project_id)}/issues/${encodeURIComponent(association.issue_id)}?${selection}`}
+        >
+          {t('factoryActions.task')}
+        </Link>
+      ) : run.issue_association === null ? (
+        <p>{t('issues.taskLinkUnavailable')}</p>
+      ) : null}
       <dl className={styles.runFacts}>
         <div>
           <dt>{t('factory.state')}</dt>
