@@ -872,3 +872,6 @@ mod factory_role_profiles;
 pub use factory_role_profiles::*;
 #[cfg(any(test, feature = "test-support"))]
 mod factory_role_profile_testing;
+
+mod factory_role_profile_catalog;
+pub use factory_role_profile_catalog::*;

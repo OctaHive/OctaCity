@@ -88,6 +88,7 @@ mod candidate_deliverable_tests;
 mod protected_test_tests;
 mod review_plan;
 mod role_profile;
+mod role_profile_capability;
 mod role_profile_execution;
 mod role_profile_instructions;
 mod role_template;
@@ -275,3 +276,5 @@ pub use role_template::{
   FactoryRoleProfileTemplate, FactoryRoleTemplate, FactoryRoleTemplateBinding, FactoryRoleTemplateInstance,
   factory_role_templates,
 };
+
+pub use role_profile_capability::{FactoryRoleProfileCapability, FactoryRoleProfileIncompatibility};

@@ -58,6 +58,10 @@ pub enum StoreOperation {
   PublishWorkSourceConfiguration,
   /// Atomically publish Project AI-agent definitions and their replay receipt.
   PublishFactoryRoleProfiles,
+  /// List safe current Project roles.
+  ListFactoryRoles,
+  /// List safe current profiles under one owned role.
+  ListFactoryRoleProfiles,
   /// Publish explicit resource/purpose access for one Project.
   PublishIntegrationProjectAccess,
   /// Publish immutable reusable integration connection metadata.

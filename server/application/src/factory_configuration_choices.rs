@@ -290,7 +290,8 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
     .visibility_for::<ListFactoryConfigurationChoicesQuery>()
     .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?;
   if visibility.kind() == octacity_server_store::ReadVisibilityKind::None {
-    return Err(ApplicationError::invalid());
+    return octacity_server_factory::FactoryConfigurationChoices::try_new(Default::default())
+      .map_err(|_| ApplicationError::invalid());
   }
   let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
     store.factory_configuration_availability(project).await?
@@ -303,7 +304,7 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
     kind,
     alias,
   };
-  octacity_server_factory::FactoryConfigurationChoices::try_new(
+  let mut visible = octacity_server_factory::FactoryConfigurationChoices::try_new(
     octacity_server_factory::FactoryConfigurationChoiceEntries {
       references: entries
         .references
@@ -323,7 +324,15 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
         .collect(),
     },
   )
-  .map_err(|_| ApplicationError::invalid())
+  .map_err(|_| ApplicationError::invalid())?;
+  for (alias, cap) in choices.role_profile_capabilities() {
+    if let Some(cap) = crate::factory_role_profile_catalog::visible_profile_capability(&visible, alias, cap) {
+      visible = visible
+        .with_role_profile_capability(alias.clone(), cap)
+        .map_err(|_| ApplicationError::invalid())?;
+    }
+  }
+  Ok(visible)
 }
 
 /// Exact capability and credential references selectable in a permission declaration.

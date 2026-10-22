@@ -47,6 +47,53 @@ does not create authority: the installed compiler, profile, local Agent policy
 and backend must all agree. Delivery and promotion credentials must not enter
 implementation, protected-test authoring or ordinary source reads.
 
+### Project AI-agent compatibility declarations
+
+An optional `role_profiles` map inside each `factory_profiles_file` Project entry
+attaches authoring compatibility to existing `node_capability` aliases. Each alias
+must already name the exact runtime executable, and its ordinary Build configuration
+must belong to that same Project. Existing files omit this map and keep their
+previous behavior. Programmatic installers use the same
+`FactoryConfigurationChoices::with_role_profile_capability` contract.
+
+Each declaration contains:
+
+| Field | Content |
+| --- | --- |
+| `ceiling` | An ordinary complete Role Profile definition declaring the exact toolchain, approved argv, skills, MCP/integration bindings, credential purpose, permission and budget ceilings |
+| `parameters` | An existing content-addressed `FlowDataSchema` declaring supported model parameters and thinking values |
+| `public_environment` | A bounded map from exact environment names to `FlowDataSchema` value contracts |
+| `enforcement` | The existing backend permission categories that this installation can enforce |
+
+Public environment values must match their declared contracts; they cannot replace
+approved secret entries. Secret entries select only exact installed logical
+references. The argv vector must match the installed approved vector, and requested
+permissions must survive the existing local permission intersection unchanged.
+These declarations install no executor and confer no execution or credential grant.
+Names and instructions remain editable Project content rather than installed
+compiler instructions.
+
+Application catalogs require visible runtime/model and Build dependencies before
+visible counts and cursors. Unavailable optional skills, MCP servers, integrations
+and permission selections are removed from the available ceiling, without hiding
+the runtime. An MCP selection tied to an unavailable integration is removed too.
+Catalogs and dedicated details share this filtered ceiling. Validation checks the
+unchanged candidate against it: omitting an unavailable option is valid, while
+explicitly requesting it is rejected rather than silently narrowed.
+Managed resources remain in the existing Integration
+Connection and Project-grant owner: active connection metadata, exact connection and
+access revisions, granted resource/purpose and configured credentials are rechecked
+without contacting the provider or resolving secret values. They need no duplicate
+resource entries in the Factory capability catalog. General collections expose safe
+metadata and tool identities; approved argv, command patterns, logical secret
+locators and instructions require dedicated authorized content reads.
+
+Role/profile and starter-template catalogs remain available without an enrolled
+worker or enabled Factory execution. A normalized compatibility preview retains the
+exact role and candidate digest without publishing a version, reserving a mutation
+key, or starting a Build. Executable admission and dispatch still require their
+ordinary installed compiler, Project and backend authority.
+
 Agent registration must advertise the exact v3 semantic enforcement route
 needed by each Factory Job. Host, Apple VF and Windows WHP preview do not gain
 Factory qualification from their ordinary CI/CD support. Missing v3, a blocking

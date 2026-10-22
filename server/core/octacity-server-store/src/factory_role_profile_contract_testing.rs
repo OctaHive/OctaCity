@@ -694,9 +694,90 @@ pub async fn verify_factory_role_template_copy<S: FactoryRoleProfileStore, P: Mu
   );
 }
 
+/// Safe current-definition pages shared by memory and PostgreSQL. Projects must exist.
+pub async fn verify_factory_role_profile_catalog<S: FactoryRoleProfileStore, P: MutationEvidenceProbe>(
+  store: &S,
+  evidence: &P,
+  project: ProjectId,
+  foreign: ProjectId,
+) {
+  let first = store
+    .publish_factory_role_profiles(management_mutation(publication(
+      role_profile_contract_intent(project),
+      "catalog-first",
+      1,
+    )))
+    .await
+    .unwrap();
+  let second = store
+    .publish_factory_role_profiles(management_mutation_with_request(
+      publication(role_profile_contract_intent(project), "catalog-second", 1),
+      "catalog-second",
+    ))
+    .await
+    .unwrap();
+  let before = evidence.mutation_evidence_counts().await;
+  let page = store.list_factory_roles(project, None, 1).await.unwrap();
+  assert_eq!(page.total, 2);
+  assert_eq!(page.items.len(), 1);
+  assert!(page.next_cursor.is_some());
+  let tail = store.list_factory_roles(project, page.next_cursor, 1).await.unwrap();
+  assert_eq!(tail.total, 2);
+  assert_eq!(tail.items.len(), 1);
+  assert_eq!(tail.next_cursor, None);
+  assert!(page.items[0].reference.id < tail.items[0].reference.id);
+  let mut ids = [
+    first.role.as_ref().unwrap().reference().id,
+    second.role.as_ref().unwrap().reference().id,
+  ];
+  ids.sort();
+  assert_eq!([page.items[0].reference.id, tail.items[0].reference.id], ids);
+  let role = first.role.as_ref().unwrap();
+  let profiles = store
+    .list_factory_role_profiles(project, role.reference().id, None, 1)
+    .await
+    .unwrap();
+  assert_eq!(profiles.total, 2);
+  assert_eq!(profiles.items.len(), 1);
+  let tail = store
+    .list_factory_role_profiles(project, role.reference().id, profiles.next_cursor, 1)
+    .await
+    .unwrap();
+  assert_eq!(tail.total, 2);
+  assert_eq!(tail.items.len(), 1);
+  assert_eq!(tail.next_cursor, None);
+  assert_eq!(profiles.items[0].role, *role.reference());
+  let safe = format!("{page:?}{profiles:?}");
+  for private in ["Follow Project rules", "projects/model", "--output"] {
+    assert!(!safe.contains(private));
+  }
+  assert_eq!(store.list_factory_roles(foreign, None, 1).await.unwrap().total, 0);
+  assert!(
+    store
+      .list_factory_role_profiles(foreign, role.reference().id, None, 1)
+      .await
+      .is_err()
+  );
+  for invalid in [0, MAX_CURRENT_DEFINITION_PAGE_SIZE + 1] {
+    assert!(store.list_factory_roles(project, None, invalid).await.is_err());
+  }
+  assert_eq!(evidence.mutation_evidence_counts().await, before);
+}
+
 #[cfg(test)]
 mod tests {
   use super::*;
+  #[test]
+  fn memory_factory_role_profile_catalog_contract() {
+    let store = InMemoryFactoryConfigurationStore::new();
+    let project = ProjectId::generate();
+    let foreign = ProjectId::generate();
+    store.seed_project(project).unwrap();
+    store.seed_project(foreign).unwrap();
+    let mut future = std::pin::pin!(verify_factory_role_profile_catalog(&store, &store, project, foreign));
+    let mut context = std::task::Context::from_waker(std::task::Waker::noop());
+    assert!(future.as_mut().poll(&mut context).is_ready());
+  }
   #[test]
   fn memory_factory_role_template_copy_contract() {
     let store = InMemoryFactoryConfigurationStore::new();

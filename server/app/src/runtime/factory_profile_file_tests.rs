@@ -320,3 +320,37 @@ async fn file_deployment_authority_recomputes_the_policy_pin_before_native_insta
     );
   }
 }
+
+#[test]
+fn file_role_profile_declarations_extend_existing_project_choices_without_installing_an_executor() {
+  use octacity_server_factory::*;
+  let project = octacity_server_domain::ProjectId::generate();
+  let definition = octacity_server_store::testing::role_profile_contract_definition(project);
+  let alias = FactoryKey::new("runtime-profile").unwrap();
+  let parameters = FlowDataSchema::new(
+    FactoryKey::new("parameters").unwrap(),
+    FactoryKey::new("v1").unwrap(),
+    FlowValueSchema::Object {
+      fields: Default::default(),
+    },
+  )
+  .unwrap();
+  let document = serde_json::json!({"version":1,"codex":[],"projects":[{
+    "project_id":project,
+    "references":[{"kind":"node_capability","alias":alias,"reference":definition.toolchain.executable}],
+    "build_configurations":[{"alias":"build","reference":definition.build_configuration}],
+    "role_profiles":{"runtime-profile":{"ceiling":definition,"parameters":parameters,"public_environment":{},"enforcement":PermissionCategory::ALL}}
+  }]});
+  let catalog = FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+  assert_eq!(catalog.projects[0].1.role_profile_capabilities().len(), 1);
+  assert_eq!(
+    catalog.projects[0].1.role_profile_capabilities()[&alias].ceiling,
+    definition
+  );
+  assert!(catalog.codex.is_empty());
+  assert!(catalog.executors.is_empty());
+  let mut foreign = document.clone();
+  foreign["projects"][0]["role_profiles"]["runtime-profile"]["ceiling"]["build_configuration"]["project_id"] =
+    serde_json::to_value(octacity_server_domain::ProjectId::generate()).unwrap();
+  assert!(FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&foreign).unwrap()).is_err());
+}

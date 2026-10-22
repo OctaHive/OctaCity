@@ -178,6 +178,7 @@ pub struct FactoryConfigurationChoices {
   references: BTreeMap<(FactoryChoiceKind, FactoryKey), ImmutableReference>,
   build_configurations: BTreeMap<FactoryKey, BuildConfigurationRef>,
   metadata: BTreeMap<(FactoryChoiceKind, FactoryKey), FactoryChoiceMetadata>,
+  role_profiles: BTreeMap<FactoryKey, crate::FactoryRoleProfileCapability>,
 }
 
 /// Safe deployment-declared capabilities. Absence means no declaration is available;
@@ -217,6 +218,7 @@ impl FactoryConfigurationChoices {
       references: reference_choice_map(entries.references)?,
       build_configurations: choice_map(entries.build_configurations, FactoryChoiceKind::BuildConfiguration)?,
       metadata: BTreeMap::new(),
+      role_profiles: BTreeMap::new(),
     })
   }
 
@@ -264,6 +266,37 @@ impl FactoryConfigurationChoices {
     metadata.compatible_choices.dedup();
     self.metadata.insert((kind, alias), metadata);
     Ok(self)
+  }
+
+  /// Attaches a trusted role-profile declaration to an already installed runtime alias.
+  /// This extends the same catalog; it cannot install an executable or grant credentials.
+  pub fn with_role_profile_capability(
+    mut self,
+    alias: FactoryKey,
+    capability: crate::FactoryRoleProfileCapability,
+  ) -> Result<Self, FactoryError> {
+    if self.references.get(&(FactoryChoiceKind::NodeCapability, alias.clone()))
+      != Some(&capability.ceiling.toolchain.executable)
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "role profile capability alias",
+      });
+    }
+    capability
+      .ceiling
+      .validate(capability.ceiling.build_configuration.project_id())?;
+    if capability.public_environment.len() > crate::MAX_FACTORY_ROLE_PROFILE_ENTRIES {
+      return Err(FactoryError::CollectionLimitExceeded {
+        collection: "profile environment schema",
+      });
+    }
+    self.role_profiles.insert(alias, capability);
+    Ok(self)
+  }
+  /// Borrows exact trusted declarations; authorization filters their dependencies before disclosure.
+  #[must_use]
+  pub fn role_profile_capabilities(&self) -> &BTreeMap<FactoryKey, crate::FactoryRoleProfileCapability> {
+    &self.role_profiles
   }
 
   /// Returns a safe declaration for an exact installed category/alias.

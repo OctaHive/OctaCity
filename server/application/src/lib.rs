@@ -817,3 +817,9 @@ mod factory_role_profiles;
 #[cfg(test)]
 mod factory_role_profiles_tests;
 pub use factory_role_profiles::*;
+
+mod factory_role_profile_catalog;
+pub use factory_role_profile_catalog::*;
+
+mod factory_role_catalog;
+pub use factory_role_catalog::*;

@@ -900,6 +900,9 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
   )
   .bind(
     [
+      "factory_roles_project_discovery_idx",
+      "factory_role_profiles_project_discovery_idx",
+      "factory_role_profile_versions_role_idx",
       "factory_configurations_discovery_idx",
       "factory_node_attempts_diagnostics_idx",
       "factory_outbox_due_idx",
@@ -918,7 +921,7 @@ async fn verify_factory_schema(pool: &sqlx::PgPool) -> Result<(), sqlx::Error> {
   .await?
   .into_iter()
   .collect();
-  assert_eq!(indexes.len(), 11);
+  assert_eq!(indexes.len(), 14);
   Ok(())
 }
 

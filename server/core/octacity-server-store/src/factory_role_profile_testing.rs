@@ -40,6 +40,76 @@ fn replay(
 }
 #[async_trait::async_trait]
 impl FactoryRoleProfileStore for InMemoryFactoryConfigurationStore {
+  async fn list_factory_roles(
+    &self,
+    project: ProjectId,
+    after: Option<FactoryRoleId>,
+    limit: u16,
+  ) -> Result<FactoryRoleCatalogPage<FactoryRoleId, FactoryRoleSummary>, StoreError> {
+    let limit = check_factory_role_catalog_limit(limit, StoreOperation::ListFactoryRoles)?;
+    let state = self.lock()?;
+    if !state.projects.contains(&project) {
+      return Err(missing(EntityKind::Project));
+    }
+    let mut items: Vec<_> = state
+      .role_profiles
+      .roles
+      .values()
+      .filter_map(|versions| versions.last_key_value())
+      .map(|(_, role)| role)
+      .filter(|role| role.reference().project_id == project)
+      .map(FactoryRoleSummary::from)
+      .collect();
+    let total = items.len() as u64;
+    items.retain(|item| after.is_none_or(|after| item.reference.id > after));
+    let more = items.len() > limit;
+    items.truncate(limit);
+    let next_cursor = more.then(|| items.last().unwrap().reference.id);
+    Ok(FactoryRoleCatalogPage {
+      total,
+      items,
+      next_cursor,
+    })
+  }
+  async fn list_factory_role_profiles(
+    &self,
+    project: ProjectId,
+    role: FactoryRoleId,
+    after: Option<FactoryRoleProfileId>,
+    limit: u16,
+  ) -> Result<FactoryRoleCatalogPage<FactoryRoleProfileId, FactoryRoleProfileSummary>, StoreError> {
+    let limit = check_factory_role_catalog_limit(limit, StoreOperation::ListFactoryRoleProfiles)?;
+    let state = self.lock()?;
+    if !state
+      .role_profiles
+      .roles
+      .get(&role)
+      .and_then(|versions| versions.last_key_value())
+      .is_some_and(|(_, role)| role.reference().project_id == project)
+    {
+      return Err(missing(EntityKind::FactoryRole));
+    }
+    let mut items: Vec<_> = state
+      .role_profiles
+      .profiles
+      .values()
+      .filter_map(|versions| versions.last_key_value())
+      .map(|(_, profile)| profile)
+      .filter(|profile| profile.reference().project_id == project && profile.role().id == role)
+      .map(FactoryRoleProfileSummary::from)
+      .collect();
+    let total = items.len() as u64;
+    items.retain(|item| after.is_none_or(|after| item.reference.id > after));
+    let more = items.len() > limit;
+    items.truncate(limit);
+    let next_cursor = more.then(|| items.last().unwrap().reference.id);
+    Ok(FactoryRoleCatalogPage {
+      total,
+      items,
+      next_cursor,
+    })
+  }
+
   async fn replay_factory_role_profiles(
     &self,
     request: ManagementMutation<ReplayFactoryRoleProfiles>,

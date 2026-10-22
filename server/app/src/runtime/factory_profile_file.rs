@@ -445,8 +445,19 @@ struct RoutingOutput {
 #[serde(deny_unknown_fields)]
 struct ProjectChoices {
   project_id: ProjectId,
+  #[serde(default)]
+  role_profiles: BTreeMap<FactoryKey, RoleProfileDeclaration>,
   references: Vec<ReferenceChoice>,
   build_configurations: Vec<BuildChoice>,
+}
+// Deployment-owned compatibility only; this does not install a runtime or executor.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RoleProfileDeclaration {
+  ceiling: FactoryRoleProfileDefinition,
+  parameters: FlowDataSchema,
+  public_environment: BTreeMap<String, FlowDataSchema>,
+  enforcement: Vec<PermissionCategory>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -589,7 +600,7 @@ impl FactoryRuntimeProfileCatalog {
       .projects
       .into_iter()
       .map(|project| {
-        let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
+        let mut choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
           references: project
             .references
             .into_iter()
@@ -606,6 +617,31 @@ impl FactoryRuntimeProfileCatalog {
             .collect(),
         })
         .map_err(|_| Invalid)?;
+        for (alias, declaration) in project.role_profiles {
+          if declaration.ceiling.build_configuration.project_id() != project.project_id
+            || !choices
+              .entries()
+              .build_configurations
+              .iter()
+              .any(|(_, reference)| reference == &declaration.ceiling.build_configuration)
+          {
+            return Err(Invalid);
+          }
+          let local_permissions =
+            LocalPermissionCeiling::try_new(declaration.ceiling.permissions.clone(), declaration.enforcement)
+              .map_err(|_| Invalid)?;
+          choices = choices
+            .with_role_profile_capability(
+              alias,
+              FactoryRoleProfileCapability {
+                ceiling: declaration.ceiling,
+                parameters: declaration.parameters,
+                public_environment: declaration.public_environment,
+                local_permissions,
+              },
+            )
+            .map_err(|_| Invalid)?;
+        }
         Ok((project.project_id, choices))
       })
       .collect::<Result<_, FactoryRuntimeInstallationError>>()?;

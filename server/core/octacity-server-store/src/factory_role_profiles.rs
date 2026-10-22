@@ -127,6 +127,21 @@ pub enum FactoryRoleProfilePublicationError {
 /// precedes current-version checks and returns the original receipt without new evidence.
 #[async_trait::async_trait]
 pub trait FactoryRoleProfileStore: Send + Sync {
+  /// Lists current safe role metadata in stable ID order under the common page bound.
+  async fn list_factory_roles(
+    &self,
+    project: ProjectId,
+    after: Option<FactoryRoleId>,
+    limit: u16,
+  ) -> Result<crate::FactoryRoleCatalogPage<FactoryRoleId, crate::FactoryRoleSummary>, StoreError>;
+  /// Lists current safe profiles for one owned role, independent of its current version.
+  async fn list_factory_role_profiles(
+    &self,
+    project: ProjectId,
+    role: FactoryRoleId,
+    after: Option<FactoryRoleProfileId>,
+    limit: u16,
+  ) -> Result<crate::FactoryRoleCatalogPage<FactoryRoleProfileId, crate::FactoryRoleProfileSummary>, StoreError>;
   /// Probes an exact historical intent without revalidating current heads.
   async fn replay_factory_role_profiles(
     &self,

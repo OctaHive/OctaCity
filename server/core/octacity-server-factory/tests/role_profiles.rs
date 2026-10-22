@@ -752,3 +752,164 @@ fn role_template_copy_requires_complete_bounded_owned_profile_choices() {
     "a copy uses the shared profile cardinality bound"
   );
 }
+
+fn role_parameter_schema() -> octacity_server_factory::FlowDataSchema {
+  use octacity_server_factory::{FlowDataSchema, FlowFieldSchema, FlowValueSchema};
+  FlowDataSchema::new(
+    FactoryKey::new("runtime.parameters").unwrap(),
+    FactoryKey::new("v1").unwrap(),
+    FlowValueSchema::Object {
+      fields: [(
+        FactoryKey::new("reasoning_effort").unwrap(),
+        FlowFieldSchema::required(FlowValueSchema::Enum {
+          values: vec![serde_json::json!("medium"), serde_json::json!("high")],
+        }),
+      )]
+      .into(),
+    },
+  )
+  .unwrap()
+}
+#[test]
+fn installed_role_profile_capabilities_use_existing_catalog_and_parameter_schemas() {
+  use octacity_server_factory::*;
+  let project = ProjectId::generate();
+  let definition = profile(project, "medium");
+  let capability = FactoryRoleProfileCapability {
+    ceiling: definition.clone(),
+    parameters: role_parameter_schema(),
+    public_environment: Default::default(),
+    local_permissions: LocalPermissionCeiling::fully_enforced(definition.permissions.clone()),
+  };
+  let alias = FactoryKey::new("runtime.profile").unwrap();
+  let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
+    references: vec![FactoryReferenceChoice {
+      kind: FactoryChoiceKind::NodeCapability,
+      alias: alias.clone(),
+      reference: definition.toolchain.executable.clone(),
+    }],
+    build_configurations: vec![],
+  })
+  .unwrap()
+  .with_role_profile_capability(alias.clone(), capability)
+  .unwrap();
+  assert_eq!(choices.role_profile_capabilities().len(), 1);
+  let role = role(project, "Project instructions");
+  let candidate = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, definition).unwrap();
+  choices.role_profile_capabilities()[&alias]
+    .validate(&candidate)
+    .unwrap();
+  let mut unsupported = candidate.definition().clone();
+  unsupported.model_parameters.insert(
+    FactoryKey::new("reasoning_effort").unwrap(),
+    serde_json::json!("unsupported"),
+  );
+  let unsupported = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, unsupported).unwrap();
+  assert_eq!(
+    choices.role_profile_capabilities()[&alias].validate(&unsupported),
+    Err(FactoryRoleProfileIncompatibility::ModelParameters)
+  );
+}
+
+#[test]
+fn installed_profile_validation_rejects_unsupported_execution_and_authority_without_silent_narrowing() {
+  use octacity_server_factory::*;
+  let project = ProjectId::generate();
+  let definition = profile(project, "medium");
+  let empty_environment = Default::default();
+  let capability = FactoryRoleProfileCapability {
+    ceiling: definition.clone(),
+    parameters: role_parameter_schema(),
+    public_environment: empty_environment,
+    local_permissions: LocalPermissionCeiling::fully_enforced(definition.permissions.clone()),
+  };
+  let role = role(project, "Project rules");
+  let mut cases = vec![];
+  let mut changed = definition.clone();
+  changed.toolchain.model = exact("other.model");
+  cases.push((changed, FactoryRoleProfileIncompatibility::Toolchain));
+  let mut changed = definition.clone();
+  changed.execution.cli_arguments = vec!["--disable-policy".into()];
+  cases.push((changed, FactoryRoleProfileIncompatibility::Arguments));
+  let mut changed = definition.clone();
+  changed.execution.environment.insert(
+    "HOME".into(),
+    FactoryRoleEnvironmentValue::Public {
+      value: "/private".into(),
+    },
+  );
+  cases.push((changed, FactoryRoleProfileIncompatibility::Environment));
+  let mut changed = definition.clone();
+  changed
+    .skills
+    .insert(FactoryKey::new("testing").unwrap(), exact("substituted.skill"));
+  cases.push((changed, FactoryRoleProfileIncompatibility::Dependencies));
+  let mut changed = definition.clone();
+  changed.execution.mcp_servers.insert(
+    FactoryKey::new("tools").unwrap(),
+    FactoryRoleMcpBinding {
+      configuration: exact("uninstalled.mcp"),
+      integration: None,
+    },
+  );
+  cases.push((changed, FactoryRoleProfileIncompatibility::Dependencies));
+  let mut changed = definition.clone();
+  changed
+    .context_requirements
+    .insert(FactoryKey::new("private-context").unwrap());
+  cases.push((changed, FactoryRoleProfileIncompatibility::Dependencies));
+  let mut changed = definition.clone();
+  changed.credential_purpose = FactoryCredentialPurpose::Delivery;
+  cases.push((changed, FactoryRoleProfileIncompatibility::CredentialPurpose));
+  let mut changed = definition.clone();
+  changed.budget = BudgetLimit::new(2, 1000, 200, 100, 1024).unwrap();
+  cases.push((changed, FactoryRoleProfileIncompatibility::Budget));
+  for (changed, expected) in cases {
+    let candidate = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, changed).unwrap();
+    assert_eq!(capability.validate(&candidate), Err(expected));
+  }
+  let mut unsupported_backend = capability.clone();
+  unsupported_backend.local_permissions =
+    LocalPermissionCeiling::try_new(definition.permissions.clone(), vec![]).unwrap();
+  let candidate = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, definition).unwrap();
+  assert_eq!(
+    unsupported_backend.validate(&candidate),
+    Err(FactoryRoleProfileIncompatibility::Permissions)
+  );
+}
+
+#[test]
+fn installed_profile_declarations_share_definition_bounds() {
+  use octacity_server_factory::*;
+  let project = ProjectId::generate();
+  let definition = profile(project, "medium");
+  let alias = FactoryKey::new("runtime").unwrap();
+  let capability = FactoryRoleProfileCapability {
+    ceiling: definition.clone(),
+    parameters: role_parameter_schema(),
+    public_environment: Default::default(),
+    local_permissions: LocalPermissionCeiling::fully_enforced(definition.permissions.clone()),
+  };
+  let choices = || {
+    FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
+      references: vec![FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: alias.clone(),
+        reference: definition.toolchain.executable.clone(),
+      }],
+      build_configurations: vec![],
+    })
+    .unwrap()
+  };
+  let mut invalid = capability.clone();
+  invalid.ceiling.instructions = "bad\0instructions".into();
+  assert!(
+    choices().with_role_profile_capability(alias.clone(), invalid).is_err(),
+    "installed declarations use the same content bounds"
+  );
+  let mut invalid = capability;
+  invalid.public_environment = (0..65)
+    .map(|i| (format!("VALUE_{i}"), role_parameter_schema()))
+    .collect();
+  assert!(choices().with_role_profile_capability(alias, invalid).is_err());
+}

@@ -19,6 +19,71 @@ use crate::{
 
 #[async_trait]
 impl FactoryRoleProfileStore for PostgresStore {
+  async fn list_factory_roles(
+    &self,
+    project: ProjectId,
+    after: Option<FactoryRoleId>,
+    limit: u16,
+  ) -> Result<FactoryRoleCatalogPage<FactoryRoleId, FactoryRoleSummary>, StoreError> {
+    check_factory_role_catalog_limit(limit, StoreOperation::ListFactoryRoles)?;
+    crate::discovery::require_project(self.pool(), project).await?;
+    let (total, Json(rows)): (i64, Json<Vec<(String, i64, FactoryRole)>>) = sqlx::query_as(
+      "WITH owned AS (SELECT id, current_version AS version FROM factory_roles WHERE project_id=$1), page AS (SELECT * FROM owned WHERE ($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3) SELECT (SELECT COUNT(*) FROM owned), COALESCE(jsonb_agg(jsonb_build_array(p.id,p.version,v.definition) ORDER BY p.id),'[]'::jsonb) FROM page p JOIN factory_role_versions v ON v.id=p.id AND v.version=p.version"
+    ).bind(project.as_uuid()).bind(after.map(FactoryRoleId::as_uuid)).bind(crate::discovery::requested_row_limit(limit)).fetch_one(self.pool()).await.map_err(unavailable)?;
+    let (items, next_cursor) = crate::discovery::decode_page(
+      rows,
+      limit,
+      |(id, version, role)| {
+        if role.reference().project_id != project
+          || role.reference().id.to_string() != id
+          || number(role.reference().version.get())? != version
+        {
+          return Err(StoreError::Unavailable);
+        }
+        Ok(FactoryRoleSummary::from(&role))
+      },
+      |summary| summary.reference.id,
+    )?;
+    Ok(FactoryRoleCatalogPage {
+      total: u64::try_from(total).map_err(|_| StoreError::Unavailable)?,
+      items,
+      next_cursor,
+    })
+  }
+  async fn list_factory_role_profiles(
+    &self,
+    project: ProjectId,
+    role: FactoryRoleId,
+    after: Option<FactoryRoleProfileId>,
+    limit: u16,
+  ) -> Result<FactoryRoleCatalogPage<FactoryRoleProfileId, FactoryRoleProfileSummary>, StoreError> {
+    check_factory_role_catalog_limit(limit, StoreOperation::ListFactoryRoleProfiles)?;
+    read_role(self.pool(), project, role, None).await?;
+    let (total, Json(rows)): (i64, Json<Vec<(String, i64, FactoryRoleProfile)>>) = sqlx::query_as(
+      "WITH owned AS (SELECT h.id, v.version FROM factory_role_profiles h JOIN factory_role_profile_versions v ON v.id=h.id AND v.version=h.current_version WHERE h.project_id=$1 AND v.role_id=$2), page AS (SELECT * FROM owned WHERE ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT $4) SELECT (SELECT COUNT(*) FROM owned), COALESCE(jsonb_agg(jsonb_build_array(p.id,p.version,v.definition) ORDER BY p.id),'[]'::jsonb) FROM page p JOIN factory_role_profile_versions v ON v.id=p.id AND v.version=p.version"
+    ).bind(project.as_uuid()).bind(role.as_uuid()).bind(after.map(FactoryRoleProfileId::as_uuid)).bind(crate::discovery::requested_row_limit(limit)).fetch_one(self.pool()).await.map_err(unavailable)?;
+    let (items, next_cursor) = crate::discovery::decode_page(
+      rows,
+      limit,
+      |(id, version, profile)| {
+        if profile.reference().project_id != project
+          || profile.reference().id.to_string() != id
+          || profile.role().id != role
+          || number(profile.reference().version.get())? != version
+        {
+          return Err(StoreError::Unavailable);
+        }
+        Ok(FactoryRoleProfileSummary::from(&profile))
+      },
+      |summary| summary.reference.id,
+    )?;
+    Ok(FactoryRoleCatalogPage {
+      total: u64::try_from(total).map_err(|_| StoreError::Unavailable)?,
+      items,
+      next_cursor,
+    })
+  }
+
   async fn replay_factory_role_profiles(
     &self,
     request: ManagementMutation<ReplayFactoryRoleProfiles>,

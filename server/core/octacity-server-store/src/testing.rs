@@ -88,7 +88,8 @@ pub use crate::factory_phase_pool_contract_testing::{
 };
 pub use crate::factory_role_profile_contract_testing::{
   role_profile_contract_definition, role_profile_contract_intent, verify_factory_role_profile_atomicity,
-  verify_factory_role_profile_publication, verify_factory_role_profile_replacement, verify_factory_role_template_copy,
+  verify_factory_role_profile_catalog, verify_factory_role_profile_publication,
+  verify_factory_role_profile_replacement, verify_factory_role_template_copy,
 };
 pub use crate::log_search_contract_testing::{
   verify_in_memory_log_search_index_contract, verify_log_search_index_contract,

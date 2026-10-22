@@ -72,12 +72,18 @@ impl ManagementAuthorizationTarget for GetFactoryRoleProfileQuery {
 }
 /// Uses the existing Project authorization/audit boundary without another agent registry.
 pub struct FactoryRoleProfileHandlers<S> {
-  store: Arc<S>,
+  pub(super) store: Arc<S>,
+  pub(super) policy: Arc<dyn ManagementAuthorizationPolicy>,
 }
 impl<S> FactoryRoleProfileHandlers<S> {
-  /// Composes one backend-neutral definition port.
+  /// Shares the accepted policy with dependency discovery and validation.
+  pub fn with_policy(store: Arc<S>, policy: Arc<dyn ManagementAuthorizationPolicy>) -> Self {
+    Self { store, policy }
+  }
+  /// Composes trusted-network handlers; scoped deployments use `with_policy`
+  /// so dependency discovery applies the same accepted management policy.
   pub fn new(store: Arc<S>) -> Self {
-    Self { store }
+    Self::with_policy(store, Arc::new(TrustedNetworkManagementPolicy))
   }
 }
 #[async_trait::async_trait]
@@ -144,7 +150,7 @@ impl<S: FactoryRoleProfileStore> ManagementQueryUseCase<GetFactoryRoleProfileQue
   }
 }
 
-fn require_project_visibility(
+pub(super) fn require_project_visibility(
   grant: &ManagementAuthorizationGrant,
   project: ProjectId,
 ) -> Result<(), ApplicationError> {
