@@ -22,7 +22,7 @@ Every completed or terminal request SHALL produce an immutable Decision Signal R
 - **THEN** its failed signal is retained and the stage applies its separately pinned reserve-profile or manual-selection policy without treating that recovery as provider approval
 
 ### Requirement: Immutable Factory Task Envelope and Codex execution
-Each reasoning or Build-backed node SHALL receive an immutable versioned Factory Task Envelope containing Flow Definition, Flow Run, node, attempt, and subject identities, exact revision, mode, task and specification artifact references, Context Manifest identity and digest, prior typed findings, permissions, budgets, expected result schema, deliverables, and policy, prompt, plugin, executable, model, and input digests. When a node uses a Role Profile, the retained invocation SHALL additionally bind its exact Project rules, role/profile versions, selection record, effective supported model/reasoning settings, complete skill bundle dependencies, and execution-package digest. The first reasoning implementation SHALL execute Codex through the official pinned Octa `codex` task and generic runner protocol; OctaCity server and Agent protocols SHALL NOT contain Codex-specific request, event, or result types.
+Each reasoning or Build-backed node SHALL receive an immutable versioned Factory Task Envelope containing Flow Definition, Flow Run, node, attempt, and subject identities, exact revision, mode, task and specification artifact references, Context Manifest identity and digest, prior typed findings, permissions, budgets, expected result schema, deliverables, and policy, prompt, plugin, executable, model, and input digests. When a node uses a Role Profile, the retained invocation SHALL additionally bind its exact Project rules, role/profile versions, selection record, effective supported runtime/model/thinking settings, ordered instruction layers, explicit environment/CLI settings, authorized MCP/integration bindings, complete retained skill bundle dependencies and execution-package digest. Secret values SHALL remain behind the existing credential boundary rather than enter this retained content identity. The first reasoning implementation SHALL execute Codex through the official pinned Octa `codex` task and generic runner protocol; OctaCity server and Agent protocols SHALL NOT contain Codex-specific request, event, or result types.
 
 #### Scenario: Codex implementation is dispatched
 - **WHEN** a valid Task Envelope selects the pinned Codex implementation capability
@@ -33,7 +33,7 @@ Each reasoning or Build-backed node SHALL receive an immutable versioned Factory
 - **THEN** the Job is not started and no prompt, secret, or workspace record is exposed to that executable
 
 #### Scenario: Profile package changes between selection and compilation
-- **WHEN** materialized role, skill, instruction, model, or reasoning-setting content differs from the retained invocation identity
+- **WHEN** materialized role, skill, instruction, runtime/model/thinking, environment/CLI or MCP/integration-binding content differs from the retained invocation identity
 - **THEN** the ordinary Build cannot execute under the substituted package and recovery retains the original binding
 
 ## ADDED Requirements

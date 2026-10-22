@@ -5,7 +5,7 @@ Defines Project-owned Factory roles and reproducible execution profiles, includi
 ## ADDED Requirements
 
 ### Requirement: Project-owned arbitrary roles and multiple profiles
-The server SHALL allow each Project to publish arbitrary Factory Roles and multiple Role Profiles per role without a fixed business-role enumeration. A role SHALL define responsibility and shared instructions; a profile SHALL bind one exact role version to its model configuration, skills, additional instructions, tools, limits, and installed execution capability. Both SHALL have stable identities, immutable positive versions, content digests, and editable display names. Replacement SHALL require the current-version precondition and SHALL preserve old versions. Console AI-agent cards SHALL use these same role identities and owned profiles without an additional AI-agent entity or duplicated instructions/skills. Profiles and roles SHALL NOT represent enrolled worker Agents, Agent Pools, or additional execution runtimes.
+The server SHALL allow each Project to publish arbitrary Factory Roles and multiple Role Profiles per role without a fixed business-role enumeration. A role SHALL define a display name, an icon avatar selected from the Console icon set, description, an ordered bounded set of shared instruction entries and an agent-wide positive concurrency limit. A profile SHALL bind one exact role version to its runtime, model, thinking level, skills, additional ordered instructions, environment variables, CLI arguments, MCP servers, external integrations, tools, resource limits and installed execution capability. Existing single-text instruction content SHALL remain readable as one instruction entry, and older definitions missing presentation metadata SHALL use neutral defaults without rewriting retained versions. Both SHALL have stable identities, immutable positive versions, content digests, and editable display names. Replacement SHALL require the current-version precondition and SHALL preserve old versions. Console AI-agent cards SHALL use these same role identities and owned profiles without an additional AI-agent entity or duplicated instructions/skills. Profiles and roles SHALL NOT represent enrolled worker Agents, Agent Pools, or additional execution runtimes.
 
 #### Scenario: Projects configure similarly named roles independently
 - **WHEN** two Projects publish a role named `coder` with different model and skill configurations
@@ -18,6 +18,10 @@ The server SHALL allow each Project to publish arbitrary Factory Roles and multi
 #### Scenario: Role is replaced or renamed
 - **WHEN** an operator publishes a new role version with changed instructions or display name
 - **THEN** existing profiles continue to reference their original exact role version until explicitly replaced, and retained Runs preserve their selected versions
+
+#### Scenario: Operator configures AI-agent identity
+- **WHEN** an operator publishes a custom name, icon, description and ordered shared instruction set
+- **THEN** these belong to the existing role identity, and its profiles retain their explicitly pinned role versions
 
 ### Requirement: Starter templates are independent copies
 The server SHALL provide release-versioned starter role templates for `coder`, `reviewer`, and `architect`. The coder template SHALL include `default` and `pro` profile templates, distinguishable as `coder` and `coder-pro`; the other starter roles SHALL include a default profile template. Creating definitions from templates SHALL copy their content and template provenance into new Project-owned versions. Operators SHALL be able to rename and modify the copies and create additional roles/profiles. Template replacement SHALL NOT update existing copies. Templates SHALL require resolution to compatible installed model, tool, and permission choices before publishing executable profiles; `pro` SHALL grant no implicit capability, credential, quality guarantee, or budget increase.
@@ -35,7 +39,7 @@ The server SHALL provide release-versioned starter role templates for `coder`, `
 - **THEN** validation reports the unresolved dependency and the profile cannot be published as executable
 
 ### Requirement: Profiles contain complete bounded execution settings
-A Role Profile SHALL bind exact installed provider/model, harness/plugin and executable references, supported reasoning settings, bounded model parameters, role/profile instruction content, immutable skill bundles and supporting-file dependencies, declared tools and context requirements, resource ceilings, and compatible ordinary Build configuration. Unsupported parameters, unresolved dependencies, duplicate or unsafe materialization paths, cross-Project references, unverified digests, and unenforceable capability requirements SHALL be rejected before execution. A model alias SHALL NOT be represented as an immutable provider snapshot unless the installed capability supports that claim.
+A Role Profile SHALL bind exact installed runtime/harness/plugin/executable and model references, supported thinking level and model parameters, ordered role/profile instruction content, immutable skill bundles and supporting-file dependencies, bounded explicit public environment values, logical secret-environment references, ordered CLI arguments, authorized MCP and external integration bindings, declared tools and context requirements, resource ceilings and compatible ordinary Build configuration. Runtime/model capabilities SHALL define supported settings; no provider-specific global thinking-level enum or parallel runtime/connection registry SHALL be introduced. Secret values, ambient environment inheritance, shell-interpreted arguments and overrides of protected runtime/security options SHALL NOT be accepted as profile content. External bindings SHALL reuse existing Project authorization, Integration Connection, credential-purpose and installed tool authority. Unsupported parameters, unresolved dependencies, duplicate or unsafe materialization paths, cross-Project references, unverified digests, and unenforceable capability requirements SHALL be rejected before execution. A model alias SHALL NOT be represented as an immutable provider snapshot unless the installed capability supports that claim.
 
 #### Scenario: Ordinary and pro use the same model
 - **WHEN** two coding profiles select the same compatible model with different supported reasoning efforts
@@ -48,6 +52,32 @@ A Role Profile SHALL bind exact installed provider/model, harness/plugin and exe
 #### Scenario: Skill declares an unsafe supporting file
 - **WHEN** a skill bundle includes traversal, a conflicting destination, a missing dependency, or content that does not match its retained digest
 - **THEN** profile validation or materialization rejects it before starting the model task
+
+#### Scenario: Profile includes runtime arguments and external tools
+- **WHEN** an operator selects a qualified runtime with public environment values, secret references, CLI arguments, MCP servers and external integration bindings
+- **THEN** normalized validation retains the supported exact settings and authorized bindings, and rejects unsupported or authority-widening options without exposing secrets
+
+### Requirement: Custom skill folders become retained immutable bundles
+An authorized operator SHALL be able to import one local skill folder through Console and its narrow Project-scoped REST/application operation. The import SHALL retain a root `SKILL.md` and reviewed supporting files under safe relative paths as one immutable versioned bundle with verified content digests. Imported and installed bundles SHALL use the same authorized profile-choice and retained-content mechanisms; no parallel file store or automatic dependency downloader SHALL be added. Imports SHALL use existing management audit, scoped idempotency and staged-content cleanup, and SHALL publish no partial bundle/catalog entry. Import SHALL enforce the shared path/file/byte limits, reject unsafe links or mismatched content, and SHALL NOT execute setup hooks, follow external URLs, inherit unrelated host files or retain absolute client paths. A successful import SHALL make the exact bundle selectable without granting execution authority.
+
+#### Scenario: Imported folder is later changed locally
+- **WHEN** an operator imports a folder with `SKILL.md` and supporting files, then edits or deletes the local folder
+- **THEN** the saved bundle remains available by its exact version/digest, and only an explicit reimport creates a new version without updating existing profile or Run pins
+
+#### Scenario: Import response is lost or a file fails verification
+- **WHEN** a client retries the same accepted import after response loss, or one declared file fails validation before publication
+- **THEN** an accepted operation replays its original bundle receipt, while a rejected operation exposes no partial bundle and staged bytes follow existing cleanup
+
+### Requirement: AI-agent concurrency is enforced across profiles
+The role concurrency limit SHALL bound active ordinary execution Builds for the same Project/role identity across profiles and definition versions. The server SHALL apply the current ceiling through existing Build capacity/reservation and fenced idempotent dispatch authority, extending that authority with a role scope rather than adding another scheduler. Reservations SHALL survive response loss/restart and SHALL be released once on authoritative terminal completion/cancellation. Reducing the ceiling SHALL block new starts without killing active Builds. Earlier definitions without this field SHALL retain inherited capacity behavior until explicitly replaced. Existing enclosing ceilings SHALL still apply; exhausted agent capacity SHALL wait with the retained profile rather than reselect, switch reserve or duplicate execution.
+
+#### Scenario: Two profiles compete for one remaining agent slot
+- **WHEN** concurrent starts for different profiles of the same AI agent compete for its last slot
+- **THEN** at most one execution starts and the other waits for capacity with its original selected profile, including after owner restart
+
+#### Scenario: Agent limit is reduced while executions are active
+- **WHEN** the published agent concurrency ceiling is reduced below current usage
+- **THEN** active executions continue, new starts wait, and terminal completion frees reservations exactly once
 
 ### Requirement: Execution packages preserve Project rules and explicit context
 Before dispatch, the server SHALL retain a reproducible package combining pinned Project rules, the exact role/profile, complete selected skill content and dependencies, the stage task, and explicitly projected Context. Project-required rules SHALL remain applicable across profiles; role/profile instructions SHALL NOT waive them. Context requirements SHALL be satisfied only through existing authorized projections. Profiles SHALL NOT expose protected tests, hidden transcripts, sibling state, or credentials through skill materialization, instructions, or additional mounts. Effective permissions and budgets SHALL remain the intersection with the stage, Factory, Project, and enforceable runtime ceilings.
