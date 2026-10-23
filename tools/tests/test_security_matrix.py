@@ -18,10 +18,11 @@ SPEC.loader.exec_module(SECURITY_MATRIX)
 
 
 class SecurityMatrixTests(unittest.TestCase):
-    def test_locked_tls_dependencies_exclude_distrusted_certificate_releases(self):
-        # RUSTSEC-2026-0381/0382/0383: retain patched stable TLS dependencies
+    def test_locked_dependencies_exclude_known_vulnerable_releases(self):
+        # RUSTSEC-2026-0381/0382/0383/0385: retain patched stable dependencies
         # in every independently resolved graph audited by the security workflow.
         minimum_versions = {
+            "ctutils": (0, 4, 4),
             "rustls-webpki": (0, 103, 16),
             "webpki-root-certs": (1, 0, 10),
             "webpki-roots": (1, 0, 10),
@@ -36,7 +37,7 @@ class SecurityMatrixTests(unittest.TestCase):
                     self.assertGreaterEqual(
                         tuple(map(int, package["version"].split("."))),
                         minimum_versions[package["name"]],
-                        "locked TLS dependencies must exclude distrusted certificate paths",
+                        "locked dependencies must retain patched stable releases",
                     )
 
     def test_fuzz_lockfile_retains_the_pinned_octa_wire_contract(self):
