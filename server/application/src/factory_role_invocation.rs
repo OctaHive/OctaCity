@@ -85,6 +85,37 @@ impl FactoryRoleInvocation {
   pub const fn secret_variables(&self) -> &BTreeMap<String, LogicalSecretReference> {
     &self.secret_variables
   }
+  /// Qualifies complete review authority through the existing purpose-bound credentials.
+  /// A narrower task cannot disguise a writable or credential-incompatible profile.
+  pub(crate) fn verify_consumer(
+    &self,
+    consumer: octacity_server_factory::FactoryCredentialConsumer,
+    credentials: &octacity_server_factory::FactoryCredentialProfiles,
+  ) -> Result<(), ApplicationError> {
+    if consumer != octacity_server_factory::FactoryCredentialConsumer::ReadOnlyReview {
+      return Ok(());
+    }
+    let inputs = self.package.inputs();
+    let permissions = &inputs.profile.definition().permissions;
+    for profile in permissions.secret_profiles() {
+      credentials
+        .authorize(inputs.task.node_attempt_id(), consumer, profile)
+        .map_err(|_| ApplicationError::invalid())?;
+    }
+    if permissions.tools().next().is_some()
+      || permissions.mounts().any(|mount| {
+        mount.mode() == octacity_server_factory::MountMode::ReadWrite
+          && !matches!(
+            mount.root().as_str(),
+            octacity_protocol::FACTORY_OUTPUT_ROOT | octacity_protocol::FACTORY_SCRATCH_ROOT
+          )
+      })
+    {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
+
   /// Rechecks immutable Node Attempt, Context, exact toolchain and ordinary authority.
   pub fn verify_intent(&self, intent: &FlowBuildIntent) -> Result<(), ApplicationError> {
     let inputs = self.package.inputs();

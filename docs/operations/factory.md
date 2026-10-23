@@ -208,6 +208,27 @@ implementation/evaluation contracts. JobSpec v3 and Agent wire schemas are
 unchanged. Durable selection/package lifetime integration and released-process
 qualification remain their later tasks (3.5, 4–5 and 9.1).
 
+### Review role isolation
+
+The common role invocation boundary qualifies the complete selected review profile,
+even when its current Task Envelope is narrower. Independent readonly review uses
+only the existing evaluator credential purpose, declares no tools, and permits
+writes only to the ordinary output/scratch roots. A profile carrying source-write,
+coding/delivery credential or additional tool authority is rejected during compilation,
+before compiler inputs are published. Runtime-specific setting checks remain in
+the installed adapter; role names confer no authority.
+
+Skill references do not grant access to arbitrary Artifacts. Project skill preparation
+resolves only complete imports from their existing Project publication owner; even
+same-Project private test inventory/source publications from other nodes cannot be
+relabelled as imported skill files. Missing Context requirements are rejected by the
+common package contract, and existing candidate/protected-test readers and signed
+input selections keep raw private test sources, hidden transcripts and unselected sibling
+outputs outside model access. This is explicit selection/ownership enforcement,
+not inspection of filenames or instruction prose. The retained prompt preserves
+Project rules before profile additions, including attempted waivers; deterministic
+validation gates remain responsible for observable compliance.
+
 Agent registration must advertise the exact v3 semantic enforcement route
 needed by each Factory Job. Host, Apple VF and Windows WHP preview do not gain
 Factory qualification from their ordinary CI/CD support. Missing v3, a blocking

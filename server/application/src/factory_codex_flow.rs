@@ -288,6 +288,9 @@ fn compile_flow_task(
     role
       .verify_intent(intent)
       .map_err(|_| CodexCompilationError::NodeBindings)?;
+    role
+      .verify_consumer(consumer, profiles)
+      .map_err(|_| CodexCompilationError::MissingAuthority)?;
     crate::factory_role_task_digest(selected_digest, &role.package().inputs().profile)
   } else {
     selected_digest
