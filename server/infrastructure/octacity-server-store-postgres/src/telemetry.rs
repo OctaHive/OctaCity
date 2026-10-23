@@ -35,6 +35,7 @@ fn classify(error: &StoreError) -> (Outcome, Option<ErrorClass>) {
     StoreError::Fenced { .. } => (Outcome::Rejected, Some(ErrorClass::Fenced)),
     StoreError::Expired { .. } => (Outcome::Rejected, Some(ErrorClass::Expired)),
     StoreError::EventGap { .. } | StoreError::EventsMissing { .. } => (Outcome::Rejected, Some(ErrorClass::Conflict)),
+    StoreError::CapacityUnavailable => (Outcome::Rejected, Some(ErrorClass::Unavailable)),
     StoreError::Unavailable => (Outcome::Failure, Some(ErrorClass::Unavailable)),
   }
 }

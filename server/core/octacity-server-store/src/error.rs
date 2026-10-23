@@ -646,6 +646,9 @@ pub enum StoreInputError {
 /// Backend-neutral failure from an authoritative atomic operation.
 #[derive(Clone, Debug, Eq, Error, PartialEq)]
 pub enum StoreError {
+  /// Ordinary dispatch waits for capacity without changing its immutable intent.
+  #[error("execution capacity is unavailable")]
+  CapacityUnavailable,
   /// The request is invalid independently of current stored state.
   #[error("invalid {operation:?} input: {source}")]
   InvalidInput {

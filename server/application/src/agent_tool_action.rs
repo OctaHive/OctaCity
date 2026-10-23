@@ -215,7 +215,8 @@ impl From<StoreError> for AgentToolActionError {
       | StoreError::EventGap { .. }
       | StoreError::EventsMissing { .. }
       | StoreError::CredentialRejected
-      | StoreError::Unavailable => Self::Unavailable,
+      | StoreError::Unavailable
+      | StoreError::CapacityUnavailable => Self::Unavailable,
     }
   }
 }

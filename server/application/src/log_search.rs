@@ -351,9 +351,8 @@ impl BuildLogSearchError {
         | StoreError::EventsMissing { .. }
         | StoreError::CredentialRejected,
       ) => ApplicationFailure::Conflict,
-      Self::AuthoritativeStore(StoreError::Unavailable) | Self::SearchIndex(LogSearchError::Unavailable) => {
-        ApplicationFailure::Unavailable
-      }
+      Self::AuthoritativeStore(StoreError::Unavailable | StoreError::CapacityUnavailable)
+      | Self::SearchIndex(LogSearchError::Unavailable) => ApplicationFailure::Unavailable,
       Self::SearchIndex(LogSearchError::WorkConflict { .. } | LogSearchError::DocumentConflict { .. }) => {
         ApplicationFailure::Internal
       }

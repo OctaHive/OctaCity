@@ -87,3 +87,36 @@ pub(crate) async fn retain(
   .await?;
   tx.commit().await.map_err(unavailable)
 }
+
+/// Serializes admission with current role publication using its existing Project lock.
+/// Active ordinary Build rows are the reservation; terminal state releases it once.
+pub(crate) async fn require_capacity(
+  tx: &mut sqlx::Transaction<'_, Postgres>,
+  request: &octacity_server_store::AcceptFactoryBuild,
+) -> Result<(), StoreError> {
+  let operation = request.intent.operation_id().map_err(|_| conflict())?;
+  let role: Option<uuid::Uuid> =
+    sqlx::query_scalar("SELECT role_id FROM factory_role_execution_packages WHERE operation_id=$1")
+      .bind(operation.as_bytes().as_slice())
+      .fetch_optional(&mut **tx)
+      .await
+      .map_err(unavailable)?;
+  let Some(role) = role else {
+    return Ok(());
+  };
+  sqlx::query("SELECT id FROM projects WHERE id=$1 FOR UPDATE")
+    .bind(request.build.project_id.as_uuid())
+    .fetch_one(&mut **tx)
+    .await
+    .map_err(unavailable)?;
+  let role_id = octacity_server_factory::FactoryRoleId::from_uuid(role).map_err(|_| StoreError::Unavailable)?;
+  let current = crate::factory_role_profiles::read_role(&mut **tx, request.build.project_id, role_id, None).await?;
+  if let Some(limit) = current.definition().concurrency_limit {
+    let active: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM builds b JOIN factory_role_execution_packages p ON b.factory_origin->>'operation_id'=encode(p.operation_id,'hex') WHERE p.role_id=$1 AND b.project_id=$2 AND b.state IN ('queued','running')")
+      .bind(role).bind(request.build.project_id.as_uuid()).fetch_one(&mut **tx).await.map_err(unavailable)?;
+    if active >= i64::from(limit.get()) {
+      return Err(StoreError::CapacityUnavailable);
+    }
+  }
+  Ok(())
+}

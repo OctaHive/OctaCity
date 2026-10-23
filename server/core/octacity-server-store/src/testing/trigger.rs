@@ -115,33 +115,15 @@ pub(super) async fn accept(
   ensure_evidence_available(&state, &evidence_identity)?;
   ensure_enqueue_capacity(&state, ready_jobs.iter().copied())?;
 
-  state.builds.insert(request.build.id, BuildState::Running);
-  state.attempts.insert(
-    request.attempt_id,
-    MemoryAttempt {
-      build_id: request.build.id,
-      number: request.attempt_number,
-      state: AttemptState::Running,
-    },
-  );
-  for job in &request.jobs {
-    state.jobs.insert(
-      job.id,
-      MemoryJob {
-        attempt_id: request.attempt_id,
-        materialized: job.clone(),
-        state: if job.dependencies.is_empty() {
-          JobState::Ready
-        } else {
-          JobState::Blocked
-        },
-      },
-    );
-  }
-  for job_id in ready_jobs {
-    sign_ready_job(&mut state, &store.job_spec_signer, job_id, request.accepted_at)?;
-    enqueue(&mut state, job_id);
-  }
+  insert_ordinary_build(
+    &mut state,
+    &store.job_spec_signer,
+    request.build.id,
+    (request.attempt_id, request.attempt_number),
+    &request.jobs,
+    request.accepted_at,
+    ready_jobs,
+  )?;
   let occurrence_id = request.trigger.id;
   if let Some(audit) = audit {
     state.management_audit_facts.insert(recorded_management_audit(

@@ -372,7 +372,8 @@ impl From<StoreError> for AgentExecutionError {
       StoreError::NotFound { .. }
       | StoreError::Conflict { .. }
       | StoreError::Duplicate { .. }
-      | StoreError::Unavailable => Self::Unavailable,
+      | StoreError::Unavailable
+      | StoreError::CapacityUnavailable => Self::Unavailable,
     }
   }
 }

@@ -8,6 +8,8 @@ use crate::{ManagementIdempotencyKey, TriggerReplayNamespace};
 
 #[derive(Clone, Default)]
 pub(crate) struct MemoryState {
+  pub(super) factory_builds:
+    BTreeMap<octacity_server_factory::FactoryDigest, (crate::AcceptFactoryBuild, crate::AcceptedFactoryBuild)>,
   pub(crate) credentials: crate::credential_testing::CredentialMemoryState,
   pub(super) trigger_prerequisites: BTreeSet<TriggerPrerequisites>,
   pub(super) accepted: BTreeMap<TriggerOccurrenceId, AcceptedRecord>,

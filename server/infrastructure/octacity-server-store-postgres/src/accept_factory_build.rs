@@ -72,6 +72,7 @@ pub(crate) async fn accept(
   }
   request.validate_fresh()?;
   require_references(&mut transaction, &request).await?;
+  crate::factory_role_package::require_capacity(&mut transaction, &request).await?;
   let configuration = number(
     request.build.configuration_version.get(),
     StoreOperation::AcceptFactoryBuild,

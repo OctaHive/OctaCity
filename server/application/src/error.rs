@@ -94,7 +94,7 @@ impl ApplicationError {
       Self::Store(StoreError::InvalidInput { .. }) => ApplicationFailure::Invalid,
       Self::Store(StoreError::NotFound { .. }) => ApplicationFailure::NotFound,
       Self::Store(StoreError::Conflict { .. } | StoreError::Duplicate { .. }) => ApplicationFailure::Conflict,
-      Self::Store(StoreError::Unavailable) => ApplicationFailure::Unavailable,
+      Self::Store(StoreError::Unavailable | StoreError::CapacityUnavailable) => ApplicationFailure::Unavailable,
       Self::Store(
         StoreError::Fenced { .. }
         | StoreError::Expired { .. }

@@ -105,6 +105,8 @@ A role's positive concurrency limit bounds active executions of that AI agent ac
 
 Current Project/Factory/worker ceilings still apply. A full agent quota is ordinary capacity waiting with the retained selected profile; it must not re-run selection, switch to a reserve or create another Build merely to obtain capacity. The current operational ceiling can constrain new starts without changing an already committed invocation's retained content.
 
+Task 3.6 uses ordinary accepted Build rows in queued/running state as the role reservation, keyed by the retained package operation. The current role head is read under the same Project lock as definition publication, within the existing fenced Build acceptance transaction. There is no independent quota counter, scheduler or release protocol. Terminal ordinary Build state releases the slot; accepted-operation replay bypasses new capacity checks. A full quota returns a safe transient capacity outcome through the ordinary application retry path and preserves the frozen package. Shared memory/PostgreSQL contracts exercise two profiles competing for one remaining slot, restart replay, a reduced current ceiling and exact terminal release.
+
 ### 5. Separate the three profile selection mechanisms
 
 | Mode | Inputs and behavior | Selection provenance |

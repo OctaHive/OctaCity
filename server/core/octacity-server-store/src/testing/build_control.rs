@@ -146,6 +146,16 @@ pub(super) async fn retry(
       entity: EntityKind::Build,
     });
   }
+  // Management Retry carries no Factory claim or Node budget authority.
+  if state
+    .factory_builds
+    .values()
+    .any(|(_, accepted)| accepted.build_id == build_id)
+  {
+    return Err(StoreError::Conflict {
+      entity: EntityKind::Build,
+    });
+  }
   let current_build_state = *state.builds.get(&request.build_id).ok_or(StoreError::NotFound {
     entity: EntityKind::Build,
   })?;

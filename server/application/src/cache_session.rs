@@ -480,7 +480,8 @@ impl From<StoreError> for AgentCacheSessionError {
       | StoreError::NotFound { .. }
       | StoreError::EventGap { .. }
       | StoreError::EventsMissing { .. }
-      | StoreError::Unavailable => Self::Unavailable,
+      | StoreError::Unavailable
+      | StoreError::CapacityUnavailable => Self::Unavailable,
     }
   }
 }

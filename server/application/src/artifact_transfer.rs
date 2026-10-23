@@ -720,7 +720,8 @@ impl From<StoreError> for AgentArtifactError {
       | StoreError::Duplicate { .. }
       | StoreError::EventGap { .. }
       | StoreError::EventsMissing { .. }
-      | StoreError::Unavailable => Self::Unavailable,
+      | StoreError::Unavailable
+      | StoreError::CapacityUnavailable => Self::Unavailable,
     }
   }
 }

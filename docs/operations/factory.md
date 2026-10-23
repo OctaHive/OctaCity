@@ -231,6 +231,23 @@ unpublished object writes still use the original node cleanup deadline. Storage
 retention never extends the signed input download deadline. Generic package Debug
 output is redacted, and audit records contain safe operation/content identities only.
 
+### AI-agent execution capacity
+
+A role-backed ordinary Build admission checks the current Project role concurrency
+limit in its existing fenced acceptance transaction. PostgreSQL uses the same Project
+lock as role publication. Active queued/running Build rows are the reservation across
+all profiles and role versions; there is no additional counter or release worker.
+Authoritative completion/cancellation releases capacity through ordinary Build state.
+Lowering the current ceiling blocks new admissions without changing active Builds or
+their retained packages. Definitions without a limit keep inherited capacity behavior.
+
+An exhausted role returns the ordinary transient capacity wait, preserving the selected
+package and operation. Retry does not select another profile. Accepted-operation replay
+precedes current capacity checks, including after response loss or owner restart.
+Management Build Retry rejects Factory-owned Builds in both memory and PostgreSQL;
+Factory retries require the owning Run's RetryNode control and current node authority.
+Existing Factory/Project/worker ceilings and manual CI/CD creation remain authoritative.
+
 ### Review role isolation
 
 The common role invocation boundary qualifies the complete selected review profile,

@@ -45,6 +45,7 @@ use crate::{
 };
 
 mod build_control;
+mod factory_build;
 mod fixtures;
 mod lease_events;
 mod schedule;
@@ -242,6 +243,7 @@ pub fn management_mutation_with_request<T>(mutation: T, request_identity: impl I
 /// no timing, random identity, external process, filesystem, or network state
 /// participates in its behavior.
 pub struct InMemoryStore {
+  factory_authority: Option<Arc<InMemoryFactoryConfigurationStore>>,
   state: Mutex<MemoryState>,
   job_spec_signer: Arc<JobSpecSigner>,
 }
@@ -266,10 +268,17 @@ impl InMemoryStore {
   pub fn with_signer(job_spec_signer: Arc<JobSpecSigner>) -> Self {
     Self {
       state: Mutex::new(MemoryState::default()),
+      factory_authority: None,
       job_spec_signer,
     }
   }
 
+  /// Shares the ordinary Factory journal/catalog lock for fenced Build admission tests.
+  #[must_use]
+  pub fn with_factory_authority(mut self, authority: Arc<InMemoryFactoryConfigurationStore>) -> Self {
+    self.factory_authority = Some(authority);
+    self
+  }
   /// Seeds only the Pool and registration prerequisites used by the shared contract.
   pub fn seed_authoritative_contract_prerequisites(&self, fixture: &StoreContractFixture) -> Result<(), StoreError> {
     let mut state = self.lock()?;
@@ -633,6 +642,47 @@ pub use crate::integration_administration_tests::{
 pub use crate::integration_connection_testing::{integration_connection_fixture, verify_connection_publication};
 
 pub use crate::integration_project_access_tests::{verify_project_grant_replay, verify_project_grant_subset};
+
+// Shared authoritative memory insertion for Trigger and Factory admission.
+fn insert_ordinary_build(
+  state: &mut MemoryState,
+  signer: &JobSpecSigner,
+  build: BuildId,
+  initial_attempt: (AttemptId, AttemptNumber),
+  jobs: &[MaterializedJob],
+  accepted_at: Timestamp,
+  ready_jobs: Vec<JobId>,
+) -> Result<(), StoreError> {
+  let (attempt, number) = initial_attempt;
+  state.builds.insert(build, BuildState::Running);
+  state.attempts.insert(
+    attempt,
+    MemoryAttempt {
+      build_id: build,
+      number,
+      state: AttemptState::Running,
+    },
+  );
+  for job in jobs {
+    state.jobs.insert(
+      job.id,
+      MemoryJob {
+        attempt_id: attempt,
+        materialized: job.clone(),
+        state: if job.dependencies.is_empty() {
+          JobState::Ready
+        } else {
+          JobState::Blocked
+        },
+      },
+    );
+  }
+  for job_id in ready_jobs {
+    sign_ready_job(state, signer, job_id, accepted_at)?;
+    enqueue(state, job_id);
+  }
+  Ok(())
+}
 
 #[cfg(test)]
 mod evidence_identity_tests {
