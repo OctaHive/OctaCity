@@ -196,8 +196,8 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       profile_catalog: None,
     }
   }
-  /// Uses the existing Project capability catalog for new reserve choices.
-  /// Static execution needs no catalog; without one, reserve recovery waits manually.
+  /// Qualifies reserve choices and revalidates retained profiles before execution.
+  /// Static execution and unselected manual waits need no catalog; selected profiles fail closed without one.
   pub fn with_profile_catalog(mut self, catalog: Arc<dyn FactoryConfigurationStore>) -> Self {
     self.profile_catalog = Some(catalog);
     self

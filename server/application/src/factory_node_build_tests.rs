@@ -1702,3 +1702,41 @@ fn codex_result_projection_accepts_the_released_binary_report_type_without_chang
     &serde_json::json!({"count":9})
   );
 }
+
+#[test]
+fn queued_build_waits_for_agents_and_resumes_with_the_same_frozen_profile() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, admitted, schema, input, node) = execution_fixture(FlowNodeKind::Reasoning);
+    let intent = FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap();
+    let builds = Arc::new(Builds::new());
+    let adapter = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    let first = adapter
+      .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(31))
+      .await
+      .unwrap();
+    let FactoryNodeBuildStep::Waiting(first) = first else {
+      panic!("ordinary queued execution waits for an agent");
+    };
+    // Owner restart and a later physical worker assignment observe the same Build.
+    let resumed = FactoryNodeBuildAdapter::new(builds.clone(), Arc::new(Outputs(None)));
+    for (state, at) in [
+      (octacity_server_orchestrator::BuildState::Queued, 32),
+      (octacity_server_orchestrator::BuildState::Running, 33),
+    ] {
+      *builds.state.lock().unwrap() = state;
+      let step = resumed
+        .observe_or_dispatch(&intent, &admitted, &schema, ownership(&intent), time(at))
+        .await
+        .unwrap();
+      let FactoryNodeBuildStep::Waiting(execution) = step else {
+        panic!("capacity does not invalidate the selected profile");
+      };
+      assert_eq!(execution, first);
+    }
+    let requests = builds.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1, "waiting cannot create another execution");
+    assert_eq!(requests[0].operation_id, intent.operation_id().unwrap());
+    assert_eq!(requests[0].causality.profile, *intent.profile());
+    assert_eq!(requests[0].causality.input_digest, intent.input().digest().unwrap());
+  });
+}

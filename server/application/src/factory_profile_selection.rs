@@ -1,4 +1,4 @@
-//! Freeze pre-dispatch selection through the ordinary fenced node journal.
+//! Freeze selection in the fenced node journal and revalidate its current pre-dispatch capability.
 use crate::{ApplicationError, FactoryNodeTarget, prepare_factory_flow_input};
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::{FlowNodeInput, FlowProfileSelectionRecord};
@@ -35,13 +35,25 @@ pub(crate) async fn prepare(
     .and_then(|node| node.profile_selection())
     .ok_or_else(ApplicationError::invalid)?;
   let digest = input.digest().map_err(|_| ApplicationError::invalid())?;
-  if snapshot
+  if let Some(selection) = snapshot
     .flow
     .data
     .profile_selections
     .iter()
-    .any(|selection| selection.input_digest() == digest)
+    .find(|selection| selection.input_digest() == digest)
   {
+    if let Some(candidate) = selection.candidate() {
+      let choices = current_choices(snapshot, catalog)
+        .await?
+        .ok_or_else(ApplicationError::capability_unavailable)?;
+      let candidate = binding
+        .candidates
+        .get(candidate)
+        .ok_or_else(ApplicationError::invalid)?;
+      candidate
+        .validate_capabilities(&choices)
+        .map_err(|_| ApplicationError::capability_unavailable())?;
+    }
     return Ok(None);
   }
   let selection =

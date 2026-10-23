@@ -140,8 +140,9 @@ fn configured_manual_choice_retains_the_exact_candidate_before_any_execution() {
       runner
         .run_once(run, claim.id, target, Some(input), at(12))
         .await
-        .unwrap(),
-      FactoryNodeStep::Waiting
+        .unwrap_err()
+        .classification(),
+      ApplicationFailure::CapabilityUnavailable
     );
     assert_eq!(snapshot, store.factory_run_snapshot(run).await.unwrap());
   });
@@ -308,8 +309,9 @@ fn ordered_rules_retain_the_first_matching_profile_without_execution() {
       runner
         .run_once(run, claim.id, target, Some(input), at(12))
         .await
-        .unwrap(),
-      FactoryNodeStep::Waiting
+        .unwrap_err()
+        .classification(),
+      ApplicationFailure::CapabilityUnavailable
     );
     assert_eq!(before, store.factory_run_snapshot(run).await.unwrap());
   });
@@ -384,15 +386,87 @@ fn the_flow_owner_retains_one_reserve_or_manual_disposition_without_execution() 
       assert!(before.flow.data.build_intents.is_empty());
       assert_eq!(before.budgets.last().unwrap().usage, BudgetUsage::default());
       store.disable_project(project).unwrap();
-      assert_eq!(
-        owner.reconcile_flow(run, claim.id, at(12)).await.unwrap(),
-        FactoryFlowStep::Waiting
-      );
+      let next = owner.reconcile_flow(run, claim.id, at(12)).await;
+      if expected.is_some() {
+        assert_eq!(
+          next.unwrap_err().classification(),
+          ApplicationFailure::CapabilityUnavailable
+        );
+      } else {
+        assert_eq!(next.unwrap(), FactoryFlowStep::Waiting);
+      }
       assert_eq!(
         store.factory_run_snapshot(run).await.unwrap(),
         before,
-        "recovery cannot repeat selection or replenish limits"
+        "eligibility checks cannot reselect or replenish limits"
       );
     }
+  });
+}
+
+#[test]
+fn revoked_profile_capability_blocks_the_owner_without_reselecting_or_relaxing_enforcement() {
+  crate::factory_admission_tests::run_ready(async {
+    let policy=serde_json::from_value(serde_json::json!({"mode":"rules","rules":[{"when":{"operation":"exists","operand":{"source":"path","path":"/count"}},"candidate":"advanced"}],"otherwise":"baseline"})).unwrap();
+    let (admission, input, ownership) = testing::factory_profile_selection_failure_contract_fixture(
+      policy,
+      FlowProfileSelectionFailure::ReserveProfile {
+        candidate: key("specialized"),
+      },
+    );
+    let run = admission.run.id();
+    let project = admission.work.subject().project_id();
+    let choices = testing::factory_profile_selection_capabilities(&admission.flow);
+    let (store, claim) = start(admission, ownership).await;
+    store.seed_project(project).unwrap();
+    store.enable_project(project, choices.clone()).unwrap();
+    let inputs = Arc::new(FrozenInput {
+      input,
+      calls: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let owner = FactoryFlowRunner::new(
+      store.clone(),
+      Arc::new(NoExecution),
+      inputs.clone(),
+      crate::factory_node_test_support::clock(),
+    )
+    .with_profile_catalog(store.clone());
+    assert_eq!(
+      owner.reconcile_flow(run, claim.id, at(11)).await.unwrap(),
+      FactoryFlowStep::Advanced
+    );
+    let before = store.factory_run_snapshot(run).await.unwrap();
+    assert_eq!(
+      before.flow.data.profile_selections[0].candidate(),
+      Some(&key("advanced"))
+    );
+    for enforcement_missing in [false, true] {
+      let mut revoked = FactoryConfigurationChoices::try_new(choices.entries()).unwrap();
+      if enforcement_missing {
+        for (alias, cap) in choices.role_profile_capabilities() {
+          let mut cap = cap.clone();
+          cap.local_permissions = LocalPermissionCeiling::try_new(FactoryPermissionSet::deny_all(), vec![]).unwrap();
+          revoked = revoked.with_role_profile_capability(alias.clone(), cap).unwrap();
+        }
+      }
+      store.enable_project(project, revoked).unwrap();
+      let error = owner
+        .reconcile_flow(run, claim.id, at(12))
+        .await
+        .expect_err("a frozen selection is not a current capability grant");
+      assert_eq!(error.classification(), ApplicationFailure::CapabilityUnavailable);
+      assert_eq!(
+        store.factory_run_snapshot(run).await.unwrap(),
+        before,
+        "revocation cannot choose the reserve or relax permissions"
+      );
+    }
+    store.enable_project(project, choices).unwrap();
+    assert_eq!(
+      owner.reconcile_flow(run, claim.id, at(13)).await.unwrap(),
+      FactoryFlowStep::Waiting
+    );
+    assert_eq!(store.factory_run_snapshot(run).await.unwrap(), before);
+    assert_eq!(inputs.calls.load(std::sync::atomic::Ordering::SeqCst), 1);
   });
 }

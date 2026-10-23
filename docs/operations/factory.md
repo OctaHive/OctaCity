@@ -272,7 +272,8 @@ rule position), `catch_all`, `no_match`, and `failed` (with its safe typed reaso
 digest and admitted definition bind the exact projected observations, schema,
 ordered criteria and complete candidate profiles. Restoration recomputes the
 same outcome from that frozen input and original time. Polling reuses the saved
-choice without evaluating rules over a new input.
+choice without evaluating rules over a new input; its current capability
+eligibility is checked separately against the live catalog as described below.
 
 Automatic failures apply exactly one pinned failure policy before the initial
 selection fact is committed. `manual_selection` keeps the candidate empty;
@@ -288,19 +289,30 @@ journal atomically retains the input and final disposition without execution
 attempts or budget replenishment. Polling/restoration reuse that fact even if the
 catalog later changes. Earlier records without `recovery` remain readable.
 
-Profile qualification uses the same dependency filter as the authoring catalog.
-Unavailable optional entries are pruned from the installed ceiling, while the
-profile stays unchanged; an unused option does not block a profile.
+A retained choice is not a current capability grant. While the selected stage
+waits before dispatch, the owner checks its exact Build configuration, runtime,
+model, verifier, evidence dependencies, selected skills, MCP configurations, tools
+and profile enforcement against the current Project catalog. Unavailable optional
+entries are pruned from the installed ceiling, while the retained profile stays
+unchanged; an unused option does not block a profile. Publication and current
+eligibility checks use the same dependency filter as the authoring catalog.
+Revocation, disabled Factory mode or missing enforcement returns
+`CapabilityUnavailable`; it never relaxes permissions, selects the reserve or
+changes the retained input, choice, deadline or budgets. Restoring the capability
+allows the same choice to proceed. Journal restoration itself needs no live
+catalog. Ordinary queued/running Builds wait for worker capacity through the
+existing Build/Placement mechanism and retain their profile and operation;
+an absence of idle agents is not capability incompatibility.
 
 The common Flow/node owner accepts the existing `FactoryConfigurationStore`
 catalog through `with_profile_catalog`; server assembly supplies it. Static
-execution and manual policy need no catalog dependency. No additional registry,
+execution and unselected manual waits need no catalog dependency. No additional registry,
 scheduler, table or provider fallback is introduced.
 
-Fixed-choice retention, pending state, deterministic rules and their failure
-recovery are implemented. Current pre-dispatch capability checks, live selection
+Fixed-choice retention, pending state, deterministic rules, their failure
+recovery and current capability validation are implemented. Live selection
 commands, provider consumption and selected Build dispatch remain subsequent
-tasks (4.5–6); a recorded reserve is not dispatched execution or stage completion.
+tasks (5–6); a recorded reserve is not dispatched execution or stage completion.
 Manual task creation and static Build execution keep their existing mechanisms.
 
 ### Role package recovery and lifetime
