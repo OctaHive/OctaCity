@@ -434,8 +434,18 @@ pub(super) fn validate_flow_choices(
           "/gate/policy",
         ));
       }
-      if let Some(build) = node.build()
-        && ([&build.tool, build.result_tool(), &build.plugin]
+      if node
+        .profile_selection()
+        .is_some_and(|selection| selection.validate_capabilities(choices).is_err())
+      {
+        return Err(crate::FactoryValidationDiagnostics::unavailable_binding(
+          definition.reference(),
+          Some(node.key()),
+          "/profile_selection",
+        ));
+      }
+      if node.build_bindings().any(|build| {
+        [&build.tool, build.result_tool(), &build.plugin]
           .into_iter()
           .any(|reference| !selectable(FactoryChoiceKind::NodeCapability, reference))
           || !(selectable(FactoryChoiceKind::NodeCapability, &build.model_or_tool)
@@ -447,8 +457,8 @@ pub(super) fn validate_flow_choices(
           || build.evidence.iter().any(|evidence| {
             !selectable(FactoryChoiceKind::NodeCapability, evidence.tool())
               || !selectable(FactoryChoiceKind::NodeCapability, evidence.plugin())
-          }))
-      {
+          })
+      }) {
         return Err(crate::FactoryValidationDiagnostics::unavailable_binding(
           definition.reference(),
           Some(node.key()),

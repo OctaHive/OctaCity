@@ -288,13 +288,7 @@ impl FlowGateProgram {
     Ok(program)
   }
   fn validate_bytes(&self) -> Result<(), FactoryError> {
-    let mut count = 0;
-    if let Some(precondition) = &self.precondition {
-      precondition.validate(0, &mut count, false)?;
-    }
-    for rule in &self.rules {
-      rule.when.validate(0, &mut count, false)?;
-    }
+    validate_predicates(self.precondition.iter().chain(self.rules.iter().map(|rule| &rule.when)))?;
     if serde_json::to_vec(self).map_err(|_| invalid())?.len() > MAX_FLOW_GATE_PARAMETER_BYTES {
       return Err(invalid());
     }
@@ -387,6 +381,16 @@ pub(super) fn validate_pointer(path: &str) -> Result<(), FactoryError> {
     if byte == b'~' && !matches!(bytes.next(), Some(b'0' | b'1')) {
       return Err(invalid());
     }
+  }
+  Ok(())
+}
+// Shared structural bounds; consumers retain their own result and missing-data semantics.
+pub(super) fn validate_predicates<'a>(
+  predicates: impl IntoIterator<Item = &'a FlowPredicate>,
+) -> Result<(), FactoryError> {
+  let mut count = 0;
+  for predicate in predicates {
+    predicate.validate(0, &mut count, false)?;
   }
   Ok(())
 }

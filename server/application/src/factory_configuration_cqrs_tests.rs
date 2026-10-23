@@ -1511,3 +1511,5 @@ fn issue_status_publication_uses_visible_retained_workflows_and_rejects_model_se
     assert!(store.management_audit_facts().await.is_empty());
   });
 }
+
+mod profile_selection;

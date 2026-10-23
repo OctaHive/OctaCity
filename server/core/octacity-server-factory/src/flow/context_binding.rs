@@ -72,6 +72,12 @@ impl FlowContextBinding {
     binding.validate()?;
     Ok(binding)
   }
+  pub(super) fn guarantees(&self, name: &FactoryKey) -> bool {
+    self
+      .entries
+      .get(name)
+      .is_some_and(|selection| selection.when_present.is_none())
+  }
   fn validate(&self) -> Result<(), FactoryError> {
     if self.candidate_when_present.is_some() && self.candidate_revision.is_none() {
       return Err(invalid());

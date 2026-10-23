@@ -292,7 +292,7 @@ impl FactoryValidationDiagnostics {
         if let Some(action) = node.action() {
           nodes.insert(action.plugin().clone());
         }
-        if let Some(build) = node.build() {
+        for build in node.build_bindings() {
           agents.extend([build.tool.clone(), build.plugin.clone(), build.model_or_tool.clone()]);
           agents.insert(build.result_tool().clone());
           for evidence in &build.evidence {

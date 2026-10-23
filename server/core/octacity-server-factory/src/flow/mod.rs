@@ -9,6 +9,11 @@ pub use template::{
   FlowDefinitionTemplate, FlowTemplateDeliverableBinding, FlowTemplateDeliverablePolicy, FlowTemplateNode,
   FlowTemplateOutcome, FlowTemplateSchema, PublishedFlowTemplate,
 };
+mod profile_selection;
+pub use profile_selection::{
+  FlowProfileCandidate, FlowProfileSelectionBinding, FlowProfileSelectionFailure, FlowProfileSelectionPolicy,
+  FlowProfileSelectionRule,
+};
 mod build;
 mod build_execution;
 mod build_intent;

@@ -1,0 +1,328 @@
+use super::*;
+use octacity_server_factory::*;
+use std::collections::BTreeMap;
+
+fn selected_fixture(project: ProjectId) -> Fixture {
+  let mut fixture = fixture(project);
+  let prior = fixture.draft.flow.as_ref().unwrap();
+  let root = prior.closure.definition(prior.closure.root()).unwrap();
+  let original = root.node(root.entry()).unwrap();
+  let base_build = FlowBuildBinding {
+    tool: original.action().unwrap().plugin().clone(),
+    result_tool: None,
+    plugin: original.action().unwrap().plugin().clone(),
+    model_or_tool: original.action().unwrap().plugin().clone(),
+    task_digest: digest(9),
+    build_configuration: fixture.choices.entries().build_configurations[0].1.clone(),
+    capture_write_paths: None,
+    capture_deliverables: None,
+    result_output: key("observations"),
+    result_output_kind: EvidenceOutputKind::Report,
+    result_outcome: key("succeeded"),
+    evidence: vec![],
+  };
+  let role = FactoryRole::publish(
+    FactoryRoleId::generate(),
+    project,
+    FactoryRoleDefinition {
+      name: FactoryText::new("Stage owner").unwrap(),
+      instructions: "Private stage instructions".into(),
+      template: None,
+      icon: None,
+      description: String::new(),
+      concurrency_limit: None,
+    },
+  )
+  .unwrap();
+  let verifier = exact("selection.verifier", "v1", 72);
+  let mut entries = fixture.choices.entries();
+  entries.references.push(FactoryReferenceChoice {
+    kind: FactoryChoiceKind::NodeCapability,
+    alias: key("selection.verifier"),
+    reference: verifier.clone(),
+  });
+  let mut candidates = BTreeMap::new();
+  let mut caps = Vec::new();
+  for (name, byte) in [("default", 73), ("pro", 74), ("specialized", 75)] {
+    let mut build = base_build.clone();
+    build.result_tool = Some(verifier.clone());
+    build.model_or_tool = exact(name, "v1", byte);
+    let definition = FactoryRoleProfileDefinition {
+      name: FactoryText::new(name).unwrap(),
+      instructions: "Private profile instructions".into(),
+      template: None,
+      toolchain: FactoryTaskToolchain {
+        plugin: build.plugin.clone(),
+        executable: build.tool.clone(),
+        model: build.model_or_tool.clone(),
+      },
+      execution: Default::default(),
+      model_parameters: BTreeMap::new(),
+      skills: BTreeMap::new(),
+      context_requirements: Default::default(),
+      build_configuration: build.build_configuration.clone(),
+      credential_purpose: FactoryCredentialPurpose::Model,
+      permissions: FactoryPermissionSet::deny_all(),
+      budget: original.budget(),
+    };
+    entries.references.extend([
+      FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: key(name),
+        reference: build.tool.clone(),
+      },
+      FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: key(&format!("model.{name}")),
+        reference: build.model_or_tool.clone(),
+      },
+    ]);
+    caps.push((
+      key(name),
+      FactoryRoleProfileCapability {
+        ceiling: definition.clone(),
+        parameters: FlowDataSchema::new(
+          key("parameters"),
+          key("v1"),
+          FlowValueSchema::Object {
+            fields: BTreeMap::new(),
+          },
+        )
+        .unwrap(),
+        public_environment: BTreeMap::new(),
+        local_permissions: LocalPermissionCeiling::fully_enforced(FactoryPermissionSet::deny_all()),
+      },
+    ));
+    candidates.insert(
+      key(name),
+      FlowProfileCandidate {
+        profile: FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, definition).unwrap(),
+        build,
+      },
+    );
+  }
+  let mut choices = FactoryConfigurationChoices::try_new(entries).unwrap();
+  for (alias, cap) in caps {
+    choices = choices.with_role_profile_capability(alias, cap).unwrap();
+  }
+  let mut wire = serde_json::to_value(original).unwrap();
+  wire.as_object_mut().unwrap().remove("action");
+  wire["kind"] = serde_json::json!("reasoning");
+  let selected = serde_json::from_value::<FlowNodeDefinition>(wire)
+    .unwrap()
+    .with_profile_selection(FlowProfileSelectionBinding {
+      role: role.reference().clone(),
+      candidates,
+      policy: FlowProfileSelectionPolicy::Manual { candidate: None },
+      failure: FlowProfileSelectionFailure::ManualSelection,
+      selection_budget: BudgetUsage::default(),
+    })
+    .unwrap();
+  let nodes = root
+    .nodes()
+    .iter()
+    .map(|node| {
+      if node.key() == selected.key() {
+        selected.clone()
+      } else {
+        node.clone()
+      }
+    })
+    .collect();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: root.reference().id(),
+    version: root.reference().version(),
+    input_schema: root.input_schema().cloned(),
+    entry: root.entry().clone(),
+    nodes,
+    transitions: root.transitions().to_vec(),
+    terminals: root.terminals().to_vec(),
+    context_projections: root.context_projections().to_vec(),
+    data_projections: root.data_projections().to_vec(),
+    execution: root.execution().clone(),
+  })
+  .unwrap();
+  fixture.draft.flow = Some(
+    FactoryFlowConfiguration::new(
+      PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+      prior.limits.clone(),
+      prior.data_schemas.clone(),
+      prior.pools.clone(),
+    )
+    .unwrap(),
+  );
+  fixture.choices = choices;
+  fixture
+}
+
+#[test]
+fn selection_validation_and_diagnostics_include_every_candidate_build_contract() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture(project);
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    store.enable_project(project, fixture.choices.clone()).unwrap();
+    let handlers = FactoryConfigurationHandlers::new(store.clone());
+    let query_input = ValidateFactoryConfigurationQuery {
+      id: FactoryConfigurationId::generate(),
+      project_id: project,
+      definition_digest: digest(20),
+      draft: fixture.draft,
+    };
+    let validation = query(&handlers, query_input.clone()).await.unwrap();
+    let models: Vec<_> = validation
+      .diagnostics
+      .required_agent_capabilities
+      .iter()
+      .map(|reference| reference.identity().as_str())
+      .collect();
+    assert!(
+      models.contains(&"default") && models.contains(&"pro") && models.contains(&"specialized"),
+      "candidate models absent from diagnostics: {models:?}"
+    );
+    let mut entries = fixture.choices.entries();
+    entries
+      .references
+      .retain(|entry| entry.alias != key("selection.verifier"));
+    let mut choices = FactoryConfigurationChoices::try_new(entries).unwrap();
+    for (alias, cap) in fixture.choices.role_profile_capabilities() {
+      choices = choices
+        .with_role_profile_capability(alias.clone(), cap.clone())
+        .unwrap();
+    }
+    store.enable_project(project, choices).unwrap();
+    let error = query(&handlers, query_input)
+      .await
+      .expect_err("candidate verifiers must be installed and visible");
+    assert_eq!(error.classification(), ApplicationFailure::Invalid);
+  });
+}
+
+#[test]
+fn standalone_flow_publication_uses_the_same_profile_compatibility_validation() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture(project);
+    let flow = fixture.draft.flow.unwrap();
+    let root = flow.closure.definition(flow.closure.root()).unwrap();
+    let draft = crate::FactoryFlowDefinitionDraft {
+      root: crate::FactoryFlowRootDraft {
+        input_schema: root.input_schema().cloned(),
+        entry: root.entry().clone(),
+        nodes: root.nodes().to_vec(),
+        transitions: root.transitions().to_vec(),
+        terminals: root.terminals().to_vec(),
+        context_projections: root.context_projections().to_vec(),
+        data_projections: root.data_projections().to_vec(),
+        execution: root.execution().clone(),
+      },
+      limits: flow.limits.clone(),
+      data_schemas: flow.data_schemas.clone(),
+      pools: flow.pools.clone(),
+    };
+    let mut choices = FactoryConfigurationChoices::try_new(fixture.choices.entries()).unwrap();
+    for (alias, cap) in fixture.choices.role_profile_capabilities() {
+      if alias != &key("specialized") {
+        choices = choices
+          .with_role_profile_capability(alias.clone(), cap.clone())
+          .unwrap();
+      }
+    }
+    let store = Arc::new(PublicationChoices(std::sync::Mutex::new(choices)));
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let handlers = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryFlowDefinitionHandlers::new(store.clone(), policy)),
+    );
+    let input = crate::ValidateFactoryFlowDefinitionQuery {
+      id: FlowDefinitionId::generate(),
+      project_id: project,
+      draft,
+    };
+    assert!(
+      handlers.handle_query(&context(), input.clone()).await.is_err(),
+      "standalone Flow publication must reject an unavailable candidate too"
+    );
+    *store.0.lock().unwrap() = fixture.choices;
+    assert!(handlers.handle_query(&context(), input).await.is_ok());
+  });
+}
+
+// Root validation may read installed choices, but cannot read a subflow or write a publication.
+// Fail immediately if the public handler crosses either boundary in these contracts.
+struct PublicationChoices(std::sync::Mutex<FactoryConfigurationChoices>);
+use octacity_server_store::*;
+#[async_trait]
+impl FactoryConfigurationStore for PublicationChoices {
+  async fn factory_configuration_availability(
+    &self,
+    _: ProjectId,
+  ) -> Result<FactoryConfigurationAvailability, StoreError> {
+    Ok(FactoryConfigurationAvailability::Available(
+      self.0.lock().unwrap().clone(),
+    ))
+  }
+  async fn replay_factory_configuration_mutation(
+    &self,
+    _: ManagementMutation<ReplayFactoryConfigurationMutation>,
+  ) -> Result<Option<FactoryConfigurationMutationOutcome>, StoreError> {
+    unreachable!("validation cannot replay a mutation")
+  }
+  async fn create_factory_configuration(
+    &self,
+    _: ManagementMutation<CreateFactoryConfiguration>,
+  ) -> Result<FactoryConfigurationMutationOutcome, StoreError> {
+    unreachable!("validation cannot create a configuration")
+  }
+  async fn replace_factory_configuration(
+    &self,
+    _: ManagementMutation<ReplaceFactoryConfiguration>,
+  ) -> Result<FactoryConfigurationMutationOutcome, ReplaceFactoryConfigurationError> {
+    unreachable!("validation cannot replace a configuration")
+  }
+  async fn factory_configuration_version(
+    &self,
+    _: FactoryConfigurationId,
+    _: FactoryConfigurationVersion,
+  ) -> Result<PublishedFactoryConfiguration, StoreError> {
+    unreachable!("root validation needs no configuration read")
+  }
+  async fn current_factory_configuration(
+    &self,
+    _: FactoryConfigurationId,
+  ) -> Result<PublishedFactoryConfiguration, StoreError> {
+    unreachable!("root validation needs no configuration read")
+  }
+}
+#[async_trait]
+impl FactoryFlowDefinitionStore for PublicationChoices {
+  async fn replay_factory_flow_definition(
+    &self,
+    _: ManagementMutation<ReplayFactoryFlowDefinition>,
+  ) -> Result<Option<FactoryFlowDefinitionMutationOutcome>, StoreError> {
+    unreachable!("validation cannot replay a mutation")
+  }
+  async fn publish_factory_flow_definition(
+    &self,
+    _: ManagementMutation<PublishFactoryFlowDefinition>,
+  ) -> Result<FactoryFlowDefinitionMutationOutcome, ReplaceFactoryConfigurationError> {
+    unreachable!("validation cannot publish")
+  }
+  async fn factory_flow_definition(
+    &self,
+    _: FlowDefinitionId,
+    _: Option<FlowDefinitionVersion>,
+  ) -> Result<PublishedFactoryFlowDefinition, StoreError> {
+    unreachable!("a standalone root has no subflow")
+  }
+  async fn list_factory_flow_definitions(
+    &self,
+    _: ProjectId,
+    _: Option<FlowDefinitionPagePosition>,
+    _: u16,
+    _: FlowDefinitionListVisibility,
+  ) -> Result<FactoryFlowDefinitionPage, StoreError> {
+    unreachable!("validation cannot list definitions")
+  }
+}

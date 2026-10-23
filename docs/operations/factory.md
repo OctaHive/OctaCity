@@ -208,6 +208,34 @@ implementation/evaluation contracts. JobSpec v3 and Agent wire schemas are
 unchanged. Stage selection/dispatch integration and released-process qualification
 remain their later tasks (4–5 and 9.1).
 
+### Stage profile selection contracts
+
+A model-backed `reasoning` node may publish `profile_selection` instead of its
+static `build` binding. The two bindings are mutually exclusive. Selection pins
+one exact role version and 1–64 distinct complete profile snapshots, each with
+its ordinary Build binding. Candidate names are arbitrary; there are no built-in
+tiers or provider-specific fields. Profiles, execution references, policy inputs,
+criteria, candidate mappings, selection allowance and failure behavior are covered
+by the existing immutable Flow definition digest and retained admission closure.
+
+All candidates use the node's task and outcome schemas. They must preserve the
+same result output, category, outcome, verifier, evidence and capture/deliverable
+contract. Their toolchain and Build configuration must match their complete
+profile; required context must have unconditional explicit source selections.
+Credential purpose must agree across candidates, and each profile's permissions
+must fit the stage ceiling. Flow and Factory Configuration publication reuse the
+installed role-profile capability validator and the common authorized Build
+reference checks. Admission also checks Project ownership. Existing static Flows
+require no role/profile catalog and keep their original serialized content.
+
+The declaration supports `manual`, ordered `rules` with an explicit `otherwise`,
+and `decision_api` with an exact policy and bounded input projection. Rules reuse
+the common typed Flow predicates and their structural/parameter bounds. Failure
+is either `manual_selection` or one declared `reserve_profile` candidate. For
+every candidate, selection allowance plus its full execution ceiling must fit all
+five stage budget dimensions, including the reserve. Candidates are alternatives,
+so their execution budgets are not summed together.
+
 ### Role package recovery and lifetime
 
 Before writing compiler objects, the existing input publisher retains the complete

@@ -645,6 +645,13 @@ impl FactoryConfiguration {
       draft.hard_budget,
       draft.wip_limits,
     )?;
+    for definition in flow.closure.definitions() {
+      for node in definition.nodes() {
+        if let Some(selection) = node.profile_selection() {
+          selection.validate_capabilities(choices)?;
+        }
+      }
+    }
     Ok(Self {
       reference: FactoryConfigurationRef::new(id, version, project_id, definition_digest),
       admission_policy,

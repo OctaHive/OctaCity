@@ -1630,3 +1630,6 @@ fn execution_package_diagnostics_do_not_expose_private_content() {
     serde_json::from_slice(&package.canonical_bytes().unwrap()).unwrap();
   assert_eq!(restored.inputs().project_rules[0].instructions, rule.instructions);
 }
+
+#[path = "role_profiles/stage_selection.rs"]
+mod stage_selection;

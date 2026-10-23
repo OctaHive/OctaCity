@@ -96,6 +96,8 @@ pub struct FlowNodeDefinition {
   context_binding: Option<crate::FlowContextBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   build: Option<crate::FlowBuildBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  profile_selection: Option<crate::FlowProfileSelectionBinding>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   accepted_work_outcomes: Vec<FactoryKey>,
   #[serde(default)]
@@ -127,6 +129,8 @@ struct FlowNodeDefinitionWire {
   context_binding: Option<crate::FlowContextBinding>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   build: Option<crate::FlowBuildBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  profile_selection: Option<crate::FlowProfileSelectionBinding>,
   #[serde(default, skip_serializing_if = "Vec::is_empty")]
   accepted_work_outcomes: Vec<FactoryKey>,
   #[serde(default)]
@@ -144,6 +148,9 @@ impl<'de> Deserialize<'de> for FlowNodeDefinition {
 
 impl FlowNodeDefinition {
   fn validate_declaration(&self) -> Result<(), FactoryError> {
+    if let Some(binding) = &self.profile_selection {
+      binding.validate_node(self)?;
+    }
     if let Some(binding) = &self.operator_requests {
       binding.validate_node(self)?;
     }
@@ -178,6 +185,7 @@ impl FlowNodeDefinition {
       input_binding: None,
       context_binding: None,
       build: None,
+      profile_selection: None,
       accepted_work_outcomes: vec![],
       max_execution_retries: 0,
     };
@@ -250,12 +258,36 @@ impl FlowNodeDefinition {
   pub fn with_build(mut self, binding: crate::FlowBuildBinding) -> Result<Self, FactoryError> {
     binding.validate_node(&self)?;
     self.build = Some(binding);
+    self.validate_declaration()?;
     Ok(self)
   }
   /// Returns the exact profile independent of logical stage naming.
   #[must_use]
   pub const fn build(&self) -> Option<&crate::FlowBuildBinding> {
     self.build.as_ref()
+  }
+
+  /// Enumerates ordinary execution contracts for common publication checks and diagnostics.
+  /// Enumeration does not select a candidate or authorize dispatch.
+  pub fn build_bindings(&self) -> impl Iterator<Item = &crate::FlowBuildBinding> {
+    self.build.iter().chain(
+      self
+        .profile_selection
+        .iter()
+        .flat_map(|selection| selection.candidates.values().map(|candidate| &candidate.build)),
+    )
+  }
+
+  /// Freezes complete candidate profiles instead of one static execution binding.
+  pub fn with_profile_selection(mut self, binding: crate::FlowProfileSelectionBinding) -> Result<Self, FactoryError> {
+    self.profile_selection = Some(binding);
+    self.validate_declaration()?;
+    Ok(self)
+  }
+  /// Returns the exact candidate closure without selecting or dispatching an execution.
+  #[must_use]
+  pub const fn profile_selection(&self) -> Option<&crate::FlowProfileSelectionBinding> {
+    self.profile_selection.as_ref()
   }
 
   /// Freezes explicit source selections and mapping into this node's declared input contract.
@@ -282,6 +314,7 @@ impl FlowNodeDefinition {
       });
     }
     self.context_binding = Some(binding);
+    self.validate_declaration()?;
     Ok(self)
   }
   /// Returns explicitly permitted context sources; no control edge supplies them.

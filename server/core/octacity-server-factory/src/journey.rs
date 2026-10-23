@@ -44,7 +44,7 @@ impl FactoryFlowConfiguration {
   /// Revalidates a publication against its enclosing Factory ceilings.
   pub fn validate(
     &self,
-    _configuration: &crate::FactoryConfigurationRef,
+    configuration: &crate::FactoryConfigurationRef,
     budget: BudgetLimit,
     wip: FactoryWipLimits,
   ) -> Result<(), FactoryError> {
@@ -52,6 +52,19 @@ impl FactoryFlowConfiguration {
       return Err(FactoryError::InvalidConfiguration {
         field: "configured Flow bounds",
       });
+    }
+    if self
+      .closure
+      .definitions()
+      .iter()
+      .flat_map(|definition| definition.nodes())
+      .any(|node| {
+        node
+          .profile_selection()
+          .is_some_and(|selection| selection.role.project_id != configuration.project_id())
+      })
+    {
+      return Err(FactoryError::InconsistentSubject);
     }
     self.validate_generic()
   }
