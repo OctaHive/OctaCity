@@ -428,6 +428,13 @@ fn validate_node_journal(
     return Err(invalid());
   }
   let data = octacity_server_factory::FlowDataHistory {
+    profile_selections: baseline
+      .data
+      .profile_selections
+      .iter()
+      .chain(&request.append.flow.data.profile_selections)
+      .cloned()
+      .collect(),
     stops: baseline
       .data
       .stops
@@ -533,6 +540,16 @@ fn validate_node_journal(
     {
       return Err(invalid());
     }
+  }
+  if request
+    .append
+    .flow
+    .data
+    .profile_selections
+    .iter()
+    .any(|selection| selection.started_at() != request.committed_at)
+  {
+    return Err(invalid());
   }
   for intent in &request.append.flow.data.build_intents {
     intent

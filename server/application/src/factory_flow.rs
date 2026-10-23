@@ -137,7 +137,17 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
       });
     let mut input = None;
     if !pending {
-      if let Some(pool) = node.phase_pool() {
+      if node.profile_selection().is_some() {
+        input = Some(
+          match crate::factory_profile_selection::frozen_input(&snapshot, &target)? {
+            Some(frozen) => frozen.clone(),
+            None => match retry_input {
+              Some(input) => input,
+              None => self.inputs.prepare(&snapshot, &target).await?,
+            },
+          },
+        );
+      } else if let Some(pool) = node.phase_pool() {
         let generation = u32::try_from(
           snapshot
             .flow

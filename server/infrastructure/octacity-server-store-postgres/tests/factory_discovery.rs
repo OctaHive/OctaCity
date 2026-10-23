@@ -2210,13 +2210,55 @@ async fn seed_projection_admission(
     )
     .unwrap(),
   );
+  let mut entries = configured.choices.entries();
+  let mut capabilities = Vec::new();
+  for candidate in admission
+    .flow
+    .closure()
+    .definitions()
+    .iter()
+    .flat_map(|definition| definition.nodes())
+    .filter_map(|node| node.profile_selection())
+    .flat_map(|selection| selection.candidates.values())
+  {
+    let alias = key(&format!("profile.{}", capabilities.len()));
+    entries
+      .references
+      .push(octacity_server_factory::FactoryReferenceChoice {
+        kind: octacity_server_factory::FactoryChoiceKind::NodeCapability,
+        alias: alias.clone(),
+        reference: candidate.build.tool.clone(),
+      });
+    capabilities.push((
+      alias,
+      octacity_server_factory::FactoryRoleProfileCapability {
+        ceiling: candidate.profile.definition().clone(),
+        parameters: octacity_server_factory::FlowDataSchema::new(
+          key("parameters"),
+          key("v1"),
+          octacity_server_factory::FlowValueSchema::Object {
+            fields: Default::default(),
+          },
+        )
+        .unwrap(),
+        public_environment: Default::default(),
+        local_permissions: octacity_server_factory::LocalPermissionCeiling::fully_enforced(
+          candidate.profile.definition().permissions.clone(),
+        ),
+      },
+    ));
+  }
+  let mut choices = octacity_server_factory::FactoryConfigurationChoices::try_new(entries).unwrap();
+  for (alias, capability) in capabilities {
+    choices = choices.with_role_profile_capability(alias, capability).unwrap();
+  }
   let configuration = FactoryConfiguration::publish(
     work.configuration().id(),
     work.configuration().version(),
     project,
     work.configuration().definition_digest(),
     configured.draft.clone(),
-    &configured.choices,
+    &choices,
   )
   .unwrap();
   postgres
@@ -2259,4 +2301,53 @@ async fn seed_projection_admission(
     .await
     .unwrap();
   (postgres, repository)
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn manual_profile_selections_survive_restart_without_execution() {
+  use octacity_server_factory::*;
+  use octacity_server_store::testing::{factory_flow_contract_transition, factory_profile_selection_contract_fixture};
+  use octacity_server_store::*;
+  for candidate in [None, Some("specialized")] {
+    let database = TestDatabase::migrated().await;
+    let (admission, input, ownership) = factory_profile_selection_contract_fixture(candidate);
+    let (store, _) = seed_projection_admission(&database, &admission).await;
+    let run = admission.run.id();
+    let claim = FactoryRunClaimRecord::new(run, ownership.owner().clone(), ownership.claim());
+    store
+      .claim_factory_run(ClaimFactoryRun {
+        run_id: run,
+        expected_version: admission.run.version(),
+        record: claim.clone(),
+        audit: FactoryAuditFact::new(
+          run,
+          AuditActorKind::Worker,
+          None,
+          key("factory.claimed"),
+          digest(1),
+          key("accepted"),
+          claim.claim.claimed_at(),
+        ),
+      })
+      .await
+      .unwrap();
+    let snapshot = store.factory_run_snapshot(run).await.unwrap();
+    let selection = FlowProfileSelectionRecord::manual(&input, &admission.flow, time(11)).unwrap();
+    assert_eq!(selection.candidate().map(FactoryKey::as_str), candidate);
+    let mut transition = factory_flow_contract_transition(&snapshot, &claim, 11);
+    transition.append.flow.data.inputs.push(input.clone());
+    transition.append.flow.data.profile_selections.push(selection.clone());
+    store.commit_factory_run_transition(transition).await.unwrap();
+    let restored = PostgresStore::new(database.pool.clone())
+      .factory_run_snapshot(run)
+      .await
+      .unwrap();
+    assert_eq!(restored.flow.data.profile_selections, vec![selection]);
+    assert_eq!(restored.flow.data.inputs, vec![input]);
+    assert!(restored.flow.attempts.is_empty());
+    assert!(restored.flow.data.build_intents.is_empty());
+    assert_eq!(restored.budgets.last().unwrap().usage, BudgetUsage::default());
+    database.cleanup().await;
+  }
 }

@@ -265,6 +265,15 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       Some(attempt) if ready_again(&snapshot, &target, attempt)? => None,
       other => other,
     };
+    if attempt.is_none() && node.profile_selection().is_some() {
+      return match crate::factory_profile_selection::prepare(&snapshot, &target, input, at)? {
+        Some(append) => {
+          self.commit(&snapshot, append, at).await?;
+          Ok(FactoryNodeStep::Advanced)
+        }
+        None => Ok(FactoryNodeStep::Waiting),
+      };
+    }
     if let Some(attempt) = attempt {
       let frozen = snapshot
         .flow

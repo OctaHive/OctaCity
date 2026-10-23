@@ -236,6 +236,27 @@ every candidate, selection allowance plus its full execution ceiling must fit al
 five stage budget dimensions, including the reserve. Candidates are alternatives,
 so their execution budgets are not summed together.
 
+Manual policy accepts an optional fixed `candidate`, for example
+`{"mode":"manual","candidate":"specialized"}`. Omitting it records a pending
+manual choice; an undeclared key is rejected at publication. The owner atomically
+retains the prepared input and `FlowProfileSelectionRecord` in the common fenced
+node journal before allocating an execution attempt. The input digest binds the
+exact Run, nested Flow, cycle, node and input generation to the pinned candidate
+closure. Repeated polling and owner takeover read this record and the original
+Context without another preparation, execution attempt, budget charge, Build or
+provider call. The original start time and bounded stage deadline are retained.
+
+PostgreSQL migration 0102 stores these facts in `factory_flow_profile_selections`
+with an exact frozen-input foreign key. The existing bounded metadata cleanup
+removes selection rows before their inputs, without cascading history deletion. No separate worker, scheduler or byte store is introduced.
+The same journal validates restored selections against the original policy.
+
+Fixed-choice retention and pending state are implemented. Live selection commands,
+rule evaluation, provider consumption, failure-policy recovery and selected Build
+dispatch remain the subsequent tasks (4.3–6.3); a recorded choice is not dispatched
+execution or stage completion. Manual task creation and static Build execution
+continue to use their existing mechanisms.
+
 ### Role package recovery and lifetime
 
 Before writing compiler objects, the existing input publisher retains the complete

@@ -37,6 +37,7 @@ pub(super) struct StoredFactoryRun {
   node_attempts: BTreeMap<NodeAttemptId, NodeAttempt>,
   node_attempt_completions: BTreeMap<NodeAttemptId, NodeAttemptCompletion>,
   node_inputs: BTreeMap<FactoryDigest, octacity_server_factory::FlowNodeInput>,
+  profile_selections: BTreeMap<FactoryDigest, octacity_server_factory::FlowProfileSelectionRecord>,
   node_stops: BTreeMap<NodeAttemptId, octacity_server_factory::FlowNodeStop>,
   node_build_intents: BTreeMap<NodeAttemptId, octacity_server_factory::FlowBuildIntent>,
   node_build_executions: BTreeMap<FactoryDigest, octacity_server_factory::FlowBuildExecution>,
@@ -203,6 +204,7 @@ impl StoredFactoryRun {
       node_attempts: BTreeMap::new(),
       node_attempt_completions: BTreeMap::new(),
       node_inputs: BTreeMap::new(),
+      profile_selections: BTreeMap::new(),
       node_stops: BTreeMap::new(),
       node_build_intents: BTreeMap::new(),
       node_build_executions: BTreeMap::new(),
@@ -398,6 +400,7 @@ impl StoredFactoryRun {
       + self.node_attempts.len()
       + self.node_attempt_completions.len()
       + self.node_inputs.len()
+      + self.profile_selections.len()
       + self.node_stops.len()
       + self.node_build_intents.len()
       + self.node_build_executions.len()
@@ -410,6 +413,7 @@ impl StoredFactoryRun {
     octacity_server_factory::FlowDataHistory {
       incoming: values(&self.incoming_data),
       inputs: values(&self.node_inputs),
+      profile_selections: values(&self.profile_selections),
       stops: values(&self.node_stops),
       build_intents: values(&self.node_build_intents),
       build_executions: values(&self.node_build_executions),
@@ -1140,6 +1144,13 @@ fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppen
       &mut stored.node_inputs,
       input.digest().map_err(|_| StoreError::Unavailable)?,
       input.clone(),
+    )?;
+  }
+  for selection in &append.flow.data.profile_selections {
+    append_unique(
+      &mut stored.profile_selections,
+      selection.input_digest(),
+      selection.clone(),
     )?;
   }
   for record in &append.flow.data.records {

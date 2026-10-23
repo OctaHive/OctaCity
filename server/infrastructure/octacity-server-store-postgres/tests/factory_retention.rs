@@ -721,3 +721,43 @@ async fn completed_retention_removes_derived_action_bodies_and_checkpoint_in_bou
   );
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn completed_retention_removes_profile_selection_before_its_frozen_input() {
+  let database = TestDatabase::migrated().await;
+  seed_factory_runs(&database.pool).await;
+  sqlx::query("INSERT INTO factory_flow_inputs (run_id,id,flow_run_id,cycle_id,generation,schema_reference,document) VALUES ($1,decode(repeat('32',32),'hex'),$1,$1,0,'{}',decode('7b7d','hex'))")
+    .bind(run_id(3).as_uuid()).execute(&database.pool).await.unwrap();
+  sqlx::query("INSERT INTO factory_flow_profile_selections (run_id,id,input_digest,document) VALUES ($1,decode(repeat('33',32),'hex'),decode(repeat('32',32),'hex'),decode('7b7d','hex'))")
+    .bind(run_id(3).as_uuid()).execute(&database.pool).await.unwrap();
+  let store = PostgresStore::new(database.pool.clone());
+  let owner = WorkerOwner::new("profile-selection-retention").unwrap();
+  let mut completed = false;
+  for now in 20..100 {
+    let claims = store
+      .claim_factory_retention_work(
+        ClaimFactoryRetentionWork::new(owner.clone(), time(now), time(now + 10), 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    assert_eq!(claims.len(), 1);
+    let pass = store
+      .advance_factory_retention_work(AdvanceFactoryRetentionWork::new(run_id(3), owner.clone(), time(now), 1).unwrap())
+      .await
+      .unwrap();
+    assert!(
+      pass.deleted_records <= 1,
+      "selection metadata obeys the common cleanup page bound"
+    );
+    if pass.completed {
+      completed = true;
+      break;
+    }
+  }
+  assert!(
+    completed,
+    "a pending selection cannot pin metadata after ordinary Run expiry"
+  );
+  database.cleanup().await;
+}

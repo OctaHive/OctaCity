@@ -838,3 +838,6 @@ pub fn factory_flow_contract_transition(
     outbox: vec![],
   }
 }
+
+mod profile_selection;
+pub use profile_selection::factory_profile_selection_contract_fixture;

@@ -293,3 +293,5 @@ fn an_async_executor_cannot_publish_or_acknowledge_progress_after_its_observer_c
     assert_eq!(store.factory_run_snapshot(run.id()).await.unwrap(), frozen);
   });
 }
+
+mod profile_selection;

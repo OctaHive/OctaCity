@@ -282,6 +282,7 @@ mod factory_node;
 mod factory_node_build;
 mod factory_node_registry;
 mod factory_observability;
+mod factory_profile_selection;
 pub use factory_node::{
   FactoryExecutionClock, FactoryFlowCoordinator, FactoryFlowStep, FactoryNodeCancellationStep,
   FactoryNodeExecutionRequest, FactoryNodeExecutionStep, FactoryNodeExecutor, FactoryNodeOutboxEffect,

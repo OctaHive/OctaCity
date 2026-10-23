@@ -335,6 +335,7 @@ pub(super) async fn snapshot_record_counts(
        (SELECT COUNT(*) FROM factory_flow_build_intents WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_incoming WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_inputs WHERE run_id = $1) + \
+       (SELECT COUNT(*) FROM factory_flow_profile_selections WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_flow_records WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_node_attempt_completions WHERE run_id = $1) + \
        (SELECT COUNT(*) FROM factory_outbox_records WHERE run_id = $1) + \

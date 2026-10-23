@@ -63,7 +63,7 @@ async fn completed_issue_publication_recovery_does_not_read_history_on_readiness
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 48] = [
+const FACTORY_TABLES: [&str; 49] = [
   "factory_roles",
   "factory_role_versions",
   "factory_role_profiles",
@@ -89,6 +89,7 @@ const FACTORY_TABLES: [&str; 48] = [
   "factory_flow_runs",
   "factory_flow_incoming",
   "factory_flow_inputs",
+  "factory_flow_profile_selections",
   "factory_flow_records",
   "factory_flow_build_intents",
   "factory_flow_build_executions",

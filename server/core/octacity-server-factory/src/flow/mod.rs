@@ -10,10 +10,12 @@ pub use template::{
   FlowTemplateOutcome, FlowTemplateSchema, PublishedFlowTemplate,
 };
 mod profile_selection;
+mod profile_selection_record;
 pub use profile_selection::{
   FlowProfileCandidate, FlowProfileSelectionBinding, FlowProfileSelectionFailure, FlowProfileSelectionPolicy,
   FlowProfileSelectionRule,
 };
+pub use profile_selection_record::FlowProfileSelectionRecord;
 mod build;
 mod build_execution;
 mod build_intent;

@@ -49,6 +49,16 @@ pub(super) async fn append(
       }
     }
   }
+  for selection in &data.profile_selections {
+    sqlx::query("INSERT INTO factory_flow_profile_selections (run_id,id,input_digest,document) VALUES ($1,$2,$3,$4)")
+      .bind(run.as_uuid())
+      .bind(selection.digest().map_err(invalid)?.as_bytes().as_slice())
+      .bind(selection.input_digest().as_bytes().as_slice())
+      .bind(bytes(selection)?)
+      .execute(&mut **tx)
+      .await
+      .map_err(unavailable)?;
+  }
   for intent in &data.build_intents {
     sqlx::query("INSERT INTO factory_flow_build_intents (run_id,node_attempt_id,operation_id,input_digest,document) VALUES ($1,$2,$3,$4,$5)")
       .bind(run.as_uuid()).bind(intent.node().id().as_uuid()).bind(intent.operation_id().map_err(invalid)?.as_bytes().as_slice())
@@ -153,6 +163,24 @@ pub(super) async fn read(
       return Err(StoreError::Unavailable);
     }
     data.inputs.push(input);
+  }
+  let selections = sqlx::query_as::<_, (Vec<u8>, Vec<u8>, Vec<u8>)>(
+    "SELECT id,input_digest,document FROM factory_flow_profile_selections WHERE run_id=$1 ORDER BY id",
+  )
+  .bind(run.as_uuid())
+  .fetch_all(&mut **tx)
+  .await
+  .map_err(unavailable)?;
+  for (id, input_digest, document) in selections {
+    let digest = super::digest(&input_digest)?;
+    let input = data
+      .inputs
+      .iter()
+      .find(|input| input.digest().ok() == Some(digest))
+      .ok_or(StoreError::Unavailable)?;
+    data
+      .profile_selections
+      .push(FlowProfileSelectionRecord::restore(&document, input, admitted, super::digest(&id)?).map_err(invalid)?);
   }
   let intents = sqlx::query_as::<_, (uuid::Uuid, Vec<u8>, Vec<u8>, Vec<u8>)>("SELECT node_attempt_id,operation_id,input_digest,document FROM factory_flow_build_intents WHERE run_id=$1 ORDER BY node_attempt_id")
     .bind(run.as_uuid()).fetch_all(&mut **tx).await.map_err(unavailable)?;

@@ -17,6 +17,8 @@ pub struct FlowDataHistory {
   pub incoming: Vec<FlowIncomingData>,
   /// Frozen projected inputs, deduplicated by their full content identity.
   pub inputs: Vec<FlowNodeInput>,
+  /// Pre-dispatch choices or durable manual waits, bound to frozen node occurrences.
+  pub profile_selections: Vec<crate::FlowProfileSelectionRecord>,
   /// Verified results, one per completed Node Attempt.
   pub records: Vec<FlowNodeRecord>,
   /// Frozen ordinary Build requests, retained before any external dispatch.
@@ -184,6 +186,20 @@ impl FlowDataHistory {
             .iter()
             .find(|incoming| incoming.digest().ok() == input.incoming_digest()),
         })?;
+      }
+    }
+    let mut selections = BTreeMap::new();
+    for selection in &self.profile_selections {
+      let input = inputs.get(&selection.input_digest()).ok_or_else(invalid)?;
+      if selections.insert(selection.input_digest(), selection).is_some()
+        || crate::FlowProfileSelectionRecord::restore(
+          &serde_json::to_vec(selection).map_err(|_| invalid())?,
+          input,
+          admitted,
+          selection.digest()?,
+        )? != *selection
+      {
+        return Err(invalid());
       }
     }
     let mut intents = BTreeMap::new();
@@ -396,7 +412,8 @@ impl FlowDataHistory {
   /// Counts immutable rows for transition and snapshot ceilings.
   #[must_use]
   pub fn record_count(&self) -> usize {
-    self.stops.len()
+    self.profile_selections.len()
+      + self.stops.len()
       + self.incoming.len()
       + self.inputs.len()
       + self.records.len()
