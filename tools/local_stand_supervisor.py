@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Private process-group supervisor used by the local-stand launcher.
 
-The long-lived supervisor remains the process-group leader until every child
-has exited.  A later launcher invocation therefore asks the still-live owner
-to stop its own group instead of signalling a numeric PGID after a racy PID
-identity check.
+The long-lived supervisor owns the process group. A later launcher invocation
+asks that live owner to stop its own group instead of signalling a numeric
+PGID after a racy PID identity check. Group SIGKILL can terminate the owner
+before its descendants; the launcher waits for those live group members too.
 """
 
 from __future__ import annotations

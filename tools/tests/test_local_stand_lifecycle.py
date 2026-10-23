@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import stat
+import subprocess
 import sys
 import tempfile
 import time
@@ -199,6 +200,7 @@ class LocalStandLifecycleTests(unittest.TestCase):
                     "request",
                     side_effect=("invalid-commit", "graceful"),
                 ),
+                mock.patch.object(LIFECYCLE.supervisor, "_group_members", return_value=[]),
                 mock.patch.object(
                     LIFECYCLE,
                     "_process_identity",
@@ -222,6 +224,7 @@ class LocalStandLifecycleTests(unittest.TestCase):
                 mock.patch.object(
                     LIFECYCLE.supervisor, "request", return_value="graceful"
                 ) as request,
+                mock.patch.object(LIFECYCLE.supervisor, "_group_members", return_value=[]),
             ):
                 self.assertEqual(
                     state.shutdown(
@@ -251,6 +254,7 @@ class LocalStandLifecycleTests(unittest.TestCase):
                 mock.patch.object(
                     LIFECYCLE.supervisor, "request", return_value="forced"
                 ) as request,
+                mock.patch.object(LIFECYCLE.supervisor, "_group_members", return_value=[]),
             ):
                 result = state.shutdown(
                     "agent",
@@ -259,6 +263,43 @@ class LocalStandLifecycleTests(unittest.TestCase):
                 )
         self.assertEqual(result, LIFECYCLE.ShutdownDisposition.FORCED)
         request.assert_called_once()
+
+    def test_shutdown_preserves_ownership_until_the_last_descendant_exits(self):
+        descendant = LIFECYCLE.ProcessIdentity(
+            4243, self.identity.process_group_id, os.getuid(), "descendant-start"
+        )
+        supervisor_running = True
+
+        def identity(pid):
+            if pid == self.identity.pid:
+                return self.identity if supervisor_running else None
+            return descendant if pid == descendant.pid else None
+
+        def shutdown_request(*_args, **_kwargs):
+            nonlocal supervisor_running
+            supervisor_running = False
+            return "forced"
+
+        with LIFECYCLE.LifecycleState(self.root) as state:
+            self.write_record(state)
+            with (
+                mock.patch.object(LIFECYCLE, "_process_identity", side_effect=identity),
+                mock.patch.object(
+                    LIFECYCLE.supervisor, "request", side_effect=shutdown_request
+                ),
+                mock.patch.object(
+                    LIFECYCLE.supervisor.subprocess,
+                    "run",
+                    return_value=subprocess.CompletedProcess(
+                        [], 0, f"{descendant.pid} {descendant.process_group_id} {descendant.uid}\n"
+                    ),
+                ),
+                self.assertRaisesRegex(LIFECYCLE.LifecycleError, "did not exit"),
+            ):
+                state.shutdown(
+                    "agent", graceful_timeout_seconds=0, forced_timeout_seconds=0
+                )
+        self.assertTrue((self.root / "lifecycle/agent.json").exists())
 
     def test_pid_reuse_during_shutdown_never_signals_the_replacement(self):
         replacement = LIFECYCLE.ProcessIdentity(
@@ -338,7 +379,9 @@ class LocalStandLifecycleTests(unittest.TestCase):
             "signal.signal(signal.SIGTERM, signal.SIG_IGN); "
             "child=subprocess.Popen([sys.executable, '-c', "
             "'import signal,time; signal.signal(signal.SIGTERM, signal.SIG_IGN); time.sleep(30)']); "
-            f"pathlib.Path({str(marker)!r}).write_text(str(child.pid)); "
+            f"marker=pathlib.Path({str(marker)!r}); "
+            "pending=marker.with_suffix('.tmp'); "
+            "pending.write_text(str(child.pid)); pending.replace(marker); "
             "time.sleep(30)"
         )
         with LIFECYCLE.LifecycleState(self.root) as state:

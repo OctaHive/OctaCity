@@ -563,13 +563,30 @@ class LifecycleState:
         timeout_seconds: float,
         poll_interval_seconds: float,
     ) -> bool:
+        """Wait for the owner and its live descendants, including after group SIGKILL."""
+
         deadline = time.monotonic() + timeout_seconds
-        while LifecycleState._is_exact_process(record):
+        while True:
+            if not LifecycleState._is_exact_process(record):
+                # Group SIGKILL can terminate the supervisor before its descendants.
+                # Only observe here: never signal a potentially reused numeric PGID.
+                try:
+                    members = supervisor._group_members(
+                        record.identity.process_group_id, record.identity.pid
+                    )
+                except supervisor.SupervisorError as error:
+                    raise LifecycleError(f"cannot verify {record.name} shutdown: {error}") from error
+                if not any(
+                    (identity := _process_identity(pid)) is not None
+                    and identity.process_group_id == record.identity.process_group_id
+                    and identity.uid == record.identity.uid
+                    for pid in members
+                ):
+                    return True
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 return False
             time.sleep(min(poll_interval_seconds, remaining))
-        return True
 
     def wait_until_ready(
         self,
