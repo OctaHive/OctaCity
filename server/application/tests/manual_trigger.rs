@@ -1012,6 +1012,8 @@ fn installed_codex_materializer_publishes_selected_context_and_prepares_an_ordin
   #[derive(Default)]
   struct Inputs(Mutex<Vec<PublishFactoryExecutionInputs>>);
   #[async_trait]
+  impl octacity_server_store::FactoryRoleInvocationStore for Inputs {}
+  #[async_trait]
   impl FactoryExecutionInputStore for Inputs {
     async fn reserve_factory_execution_inputs(
       &self,
@@ -1903,6 +1905,8 @@ fn installed_readonly_codex_materializer_uses_verified_candidate_source_without_
   }
   #[derive(Default)]
   struct Inputs(Mutex<Vec<PublishFactoryExecutionInputs>>);
+  #[async_trait]
+  impl octacity_server_store::FactoryRoleInvocationStore for Inputs {}
   #[async_trait]
   impl FactoryExecutionInputStore for Inputs {
     async fn reserve_factory_execution_inputs(

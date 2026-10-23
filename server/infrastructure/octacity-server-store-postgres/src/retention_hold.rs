@@ -108,7 +108,9 @@ pub(crate) async fn place(
   };
   request.validate()?;
   let build = lock_build(&mut transaction, request.build_id).await?;
-  if crate::project_text_retention::started_for_build(&mut transaction, request.build_id).await? {
+  if crate::project_text_retention::started_for_build(&mut transaction, request.build_id).await?
+    || crate::factory_retention::started_for_build(&mut transaction, request.build_id).await?
+  {
     return Err(StoreError::Conflict {
       entity: EntityKind::RetentionHold,
     });

@@ -91,6 +91,30 @@ pub enum FactoryExecutionInputDisposition {
   Published,
 }
 
+/// Private package metadata owned by the existing fenced input publication operation.
+/// Static adapters may omit this capability; role dispatch then fails closed.
+#[async_trait]
+pub trait FactoryRoleInvocationStore: Send + Sync {
+  /// Exact private package snapshot, including an interrupted publication. No catalog lookup.
+  async fn factory_role_invocation(
+    &self,
+    _operation: octacity_server_factory::FactoryDigest,
+  ) -> Result<Option<RetainedFactoryRoleInvocation>, StoreError> {
+    Ok(None)
+  }
+  /// Freezes the package under the same node fence before compiler object writes.
+  /// Identical replay preserves the original content and never selects newer definitions.
+  async fn retain_factory_role_invocation(
+    &self,
+    _intent: &FlowBuildIntent,
+    _ownership: &FactoryClaimOwnership,
+    _invocation: RetainedFactoryRoleInvocation,
+    _observed_at: Timestamp,
+  ) -> Result<(), StoreError> {
+    Err(StoreError::Unavailable)
+  }
+}
+
 /// Durable pre-write reservation and independently verified publication.
 #[async_trait]
 pub trait FactoryExecutionInputStore: Send + Sync {
@@ -128,4 +152,36 @@ pub trait FactoryExecutionInputRetentionStore: Send + Sync {
     &self,
     request: CompleteFactoryExecutionInputDeletion,
   ) -> Result<(), StoreError>;
+}
+
+/// Private immutable compilation input. Dedicated recovery only; never generic diagnostics.
+#[derive(Clone, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RetainedFactoryRoleInvocation {
+  /// Canonical exact rules, instructions, profile, task and skill inventories.
+  pub package: octacity_server_factory::FactoryRoleExecutionPackage,
+  /// Exact read-only imported skill destinations, without download grants.
+  pub skills: Option<ProtectedInputManifestV3>,
+  /// Qualified existing logical credentials, never secret values.
+  pub secret_variables: std::collections::BTreeMap<String, octacity_server_secrets::LogicalSecretReference>,
+}
+impl RetainedFactoryRoleInvocation {
+  /// Revalidates the exact ordinary operation before retaining or recovering content.
+  pub fn verify_intent(&self, intent: &FlowBuildIntent) -> Result<(), StoreError> {
+    let invalid = || {
+      StoreError::invalid(
+        StoreOperation::PublishFactoryExecutionInputs,
+        StoreInputError::InvalidFactoryBuild,
+      )
+    };
+    let inputs = self.package.inputs();
+    inputs.task.verify_build_intent(intent).map_err(|_| invalid())?;
+    if inputs.profile.definition().build_configuration != intent.profile().build_configuration
+      || inputs.task.permissions() != intent.permissions()
+      || inputs.task.budget() != intent.budget()
+    {
+      return Err(invalid());
+    }
+    Ok(())
+  }
 }

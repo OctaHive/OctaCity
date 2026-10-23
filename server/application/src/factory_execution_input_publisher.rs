@@ -48,6 +48,41 @@ impl<S: FactoryExecutionInputStore, B: ArtifactBytePublisher> FactoryExecutionIn
   pub fn new(store: Arc<S>, bytes: Arc<B>, clock: Arc<dyn FactoryExecutionClock>) -> Self {
     Self { store, bytes, clock }
   }
+  /// Recovers the original package before consulting a mutable source.
+  pub(crate) async fn role_invocation(
+    &self,
+    intent: &FlowBuildIntent,
+  ) -> Result<Option<crate::FactoryRoleInvocation>, ApplicationError>
+  where
+    S: octacity_server_store::FactoryRoleInvocationStore,
+  {
+    self
+      .store
+      .factory_role_invocation(intent.operation_id().map_err(|_| ApplicationError::invalid())?)
+      .await?
+      .map(|retained| {
+        retained.verify_intent(intent)?;
+        crate::FactoryRoleInvocation::restore(retained)
+      })
+      .transpose()
+  }
+  /// Shares the current ordinary publication fence; this is metadata, not another byte store.
+  pub(crate) async fn retain_role_invocation(
+    &self,
+    intent: &FlowBuildIntent,
+    ownership: &FactoryClaimOwnership,
+    invocation: &crate::FactoryRoleInvocation,
+  ) -> Result<(), ApplicationError>
+  where
+    S: octacity_server_store::FactoryRoleInvocationStore,
+  {
+    invocation.verify_intent(intent)?;
+    self
+      .store
+      .retain_factory_role_invocation(intent, ownership, invocation.retained().clone(), self.clock.now()?)
+      .await?;
+    Ok(())
+  }
   /// Publishes only explicit generated documents; repository files are never inferred.
   /// Identities are stable for this exact operation and document content. An
   /// interrupted write remains durably discoverable for expiration cleanup.

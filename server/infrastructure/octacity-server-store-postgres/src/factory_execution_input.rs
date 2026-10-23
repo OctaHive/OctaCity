@@ -35,6 +35,24 @@ fn identical(retained: Vec<u8>, expected: FactoryDigest) -> Result<(), StoreErro
   }
 }
 #[async_trait]
+impl octacity_server_store::FactoryRoleInvocationStore for PostgresStore {
+  async fn factory_role_invocation(
+    &self,
+    operation: FactoryDigest,
+  ) -> Result<Option<octacity_server_store::RetainedFactoryRoleInvocation>, StoreError> {
+    crate::factory_role_package::recover(self, operation).await
+  }
+  async fn retain_factory_role_invocation(
+    &self,
+    intent: &octacity_server_factory::FlowBuildIntent,
+    ownership: &octacity_server_factory::FactoryClaimOwnership,
+    invocation: octacity_server_store::RetainedFactoryRoleInvocation,
+    observed_at: Timestamp,
+  ) -> Result<(), StoreError> {
+    crate::factory_role_package::retain(self, intent, ownership, invocation, observed_at).await
+  }
+}
+#[async_trait]
 impl FactoryExecutionInputStore for PostgresStore {
   async fn reserve_factory_execution_inputs(
     &self,
@@ -155,7 +173,7 @@ impl FactoryExecutionInputRetentionStore for PostgresStore {
         source: StoreInputError::InvalidFactoryBuild,
       });
     }
-    let rows: Vec<CleanupRow> = sqlx::query_as("SELECT input.artifact_id,input.upload_id,input.size_bytes,input.content_digest,input.media_type,manifest.expires_at_millis,manifest.run_id,input.deleted_at_millis FROM factory_execution_inputs input JOIN factory_execution_input_manifests manifest USING (operation_id) WHERE manifest.expires_at_millis <= $1 AND input.deleted_at_millis IS NULL ORDER BY manifest.expires_at_millis,input.artifact_id LIMIT $2")
+    let rows: Vec<CleanupRow> = sqlx::query_as("SELECT input.artifact_id,input.upload_id,input.size_bytes,input.content_digest,input.media_type,manifest.expires_at_millis,manifest.run_id,input.deleted_at_millis FROM factory_execution_inputs input JOIN factory_execution_input_manifests manifest USING (operation_id) WHERE manifest.expires_at_millis <= $1 AND input.deleted_at_millis IS NULL AND (manifest.published_at_millis IS NULL OR NOT EXISTS(SELECT 1 FROM factory_role_execution_packages p WHERE p.operation_id=manifest.operation_id) OR EXISTS(SELECT 1 FROM factory_runs r WHERE r.id=manifest.run_id AND NOT r.visible)) ORDER BY manifest.expires_at_millis,input.artifact_id LIMIT $2")
       .bind(observed_at.unix_millis()).bind(i64::from(limit)).fetch_all(self.pool()).await.map_err(unavailable)?;
     let mut inputs = rows.iter().map(CleanupRow::input).collect::<Result<Vec<_>, _>>()?;
     inputs.extend(
@@ -190,6 +208,10 @@ impl FactoryExecutionInputRetentionStore for PostgresStore {
     let row: Option<CleanupRow> = sqlx::query_as("SELECT input.artifact_id,input.upload_id,input.size_bytes,input.content_digest,input.media_type,manifest.expires_at_millis,manifest.run_id,input.deleted_at_millis FROM factory_execution_inputs input JOIN factory_execution_input_manifests manifest USING (operation_id) WHERE input.artifact_id=$1 FOR UPDATE OF input")
       .bind(request.expected.artifact_id.as_uuid()).fetch_optional(&mut *tx).await.map_err(unavailable)?;
     let row = row.ok_or_else(conflict)?;
+    let retained_role: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM factory_role_execution_packages p JOIN factory_runs r ON r.id=p.run_id JOIN factory_execution_input_manifests m ON m.operation_id=p.operation_id JOIN factory_execution_inputs i ON i.operation_id=m.operation_id WHERE i.artifact_id=$1 AND m.published_at_millis IS NOT NULL AND r.visible)").bind(request.expected.artifact_id.as_uuid()).fetch_one(&mut *tx).await.map_err(unavailable)?;
+    if retained_role {
+      return Err(conflict());
+    }
     if row.input()? != request.expected || request.deleted_at.unix_millis() < row.expires_at_millis {
       return Err(conflict());
     }

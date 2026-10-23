@@ -18,11 +18,8 @@ pub fn factory_role_task_digest(base: FactoryDigest, profile: &FactoryRoleProfil
 /// Selected immutable content and qualified ordinary credential-variable bindings.
 /// Private content intentionally has no Debug representation; no secret values are accepted.
 #[derive(Clone)]
-pub struct FactoryRoleInvocation {
-  package: FactoryRoleExecutionPackage,
-  skills: Option<ProtectedInputManifestV3>,
-  secret_variables: BTreeMap<String, LogicalSecretReference>,
-}
+pub struct FactoryRoleInvocation(octacity_server_store::RetainedFactoryRoleInvocation);
+
 impl FactoryRoleInvocation {
   /// Accepts exact retained skill transfer metadata and installed credential mappings.
   /// Byte ownership/retention is checked by the source through the existing retained reader.
@@ -67,23 +64,32 @@ impl FactoryRoleInvocation {
       }
       _ => return Err(ApplicationError::invalid()),
     }
-    Ok(Self {
+    Ok(Self(octacity_server_store::RetainedFactoryRoleInvocation {
       package,
       skills,
       secret_variables,
-    })
+    }))
+  }
+  /// Private snapshot retained through the ordinary input publication owner.
+  pub(crate) const fn retained(&self) -> &octacity_server_store::RetainedFactoryRoleInvocation {
+    &self.0
+  }
+  pub(crate) fn restore(
+    snapshot: octacity_server_store::RetainedFactoryRoleInvocation,
+  ) -> Result<Self, ApplicationError> {
+    Self::new(snapshot.package, snapshot.skills, snapshot.secret_variables)
   }
   /// Complete immutable execution content, independent of runtime/provider representation.
   pub const fn package(&self) -> &FactoryRoleExecutionPackage {
-    &self.package
+    &self.0.package
   }
   /// Complete selected skill transfer, already verified by its retained owner.
   pub const fn skills(&self) -> Option<&ProtectedInputManifestV3> {
-    self.skills.as_ref()
+    self.0.skills.as_ref()
   }
   /// Qualified Octa variable names to existing logical credential locators.
   pub const fn secret_variables(&self) -> &BTreeMap<String, LogicalSecretReference> {
-    &self.secret_variables
+    &self.0.secret_variables
   }
   /// Qualifies complete review authority through the existing purpose-bound credentials.
   /// A narrower task cannot disguise a writable or credential-incompatible profile.
@@ -95,7 +101,7 @@ impl FactoryRoleInvocation {
     if consumer != octacity_server_factory::FactoryCredentialConsumer::ReadOnlyReview {
       return Ok(());
     }
-    let inputs = self.package.inputs();
+    let inputs = self.0.package.inputs();
     let permissions = &inputs.profile.definition().permissions;
     for profile in permissions.secret_profiles() {
       credentials
@@ -118,18 +124,10 @@ impl FactoryRoleInvocation {
 
   /// Rechecks immutable Node Attempt, Context, exact toolchain and ordinary authority.
   pub fn verify_intent(&self, intent: &FlowBuildIntent) -> Result<(), ApplicationError> {
-    let inputs = self.package.inputs();
-    inputs
-      .task
-      .verify_build_intent(intent)
-      .map_err(|_| ApplicationError::invalid())?;
-    if inputs.profile.definition().build_configuration != intent.profile().build_configuration
-      || inputs.task.permissions() != intent.permissions()
-      || inputs.task.budget() != intent.budget()
-    {
-      return Err(ApplicationError::invalid());
-    }
-    Ok(())
+    self
+      .retained()
+      .verify_intent(intent)
+      .map_err(|_| ApplicationError::invalid())
   }
 }
 

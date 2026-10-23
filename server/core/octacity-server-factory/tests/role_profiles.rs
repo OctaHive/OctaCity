@@ -1610,3 +1610,23 @@ fn execution_package_uses_shared_instruction_and_document_bounds() {
     "complete canonical package must fit the shared document bound"
   );
 }
+
+#[test]
+fn execution_package_diagnostics_do_not_expose_private_content() {
+  let inputs = execution_package_input();
+  let rule = inputs.project_rules[0].clone();
+  let private = [
+    rule.instructions.clone(),
+    inputs.role.definition().instructions.entries()[0].clone(),
+    inputs.profile.definition().instructions.entries()[0].clone(),
+  ];
+  let package = octacity_server_factory::FactoryRoleExecutionPackage::new(inputs.clone()).unwrap();
+  for diagnostic in [format!("{package:?}"), format!("{inputs:?}"), format!("{rule:?}")] {
+    for text in &private {
+      assert!(!diagnostic.contains(text), "private instructions leaked through Debug");
+    }
+  }
+  let restored: octacity_server_factory::FactoryRoleExecutionPackage =
+    serde_json::from_slice(&package.canonical_bytes().unwrap()).unwrap();
+  assert_eq!(restored.inputs().project_rules[0].instructions, rule.instructions);
+}

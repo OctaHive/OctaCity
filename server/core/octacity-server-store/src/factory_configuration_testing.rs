@@ -175,6 +175,7 @@ impl InMemoryFactoryConfigurationStore {
 
 #[derive(Default)]
 pub(super) struct FactoryConfigurationMemoryState {
+  pub(super) role_invocations: BTreeMap<FactoryDigest, crate::RetainedFactoryRoleInvocation>,
   pub(super) skill_imports: BTreeMap<(ProjectId, ManagementIdempotencyKey), crate::ProjectSkillImportRecord>,
   pub(super) role_profiles: crate::factory_role_profile_testing::RoleProfileMemoryState,
   pub(super) project_text: crate::project_text_input_testing::ProjectTextMemoryState,

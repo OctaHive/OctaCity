@@ -823,8 +823,8 @@ pub use factory_phase_discovery::{ListPhaseReadyEntries, PhaseReadyPage, PhaseRe
 
 pub use factory_execution_input::{
   CompleteFactoryExecutionInputDeletion, FactoryExecutionInputDisposition, FactoryExecutionInputPublication,
-  FactoryExecutionInputRetentionStore, FactoryExecutionInputStore, PublishFactoryExecutionInputs,
-  PublishedExecutionInput,
+  FactoryExecutionInputRetentionStore, FactoryExecutionInputStore, FactoryRoleInvocationStore,
+  PublishFactoryExecutionInputs, PublishedExecutionInput, RetainedFactoryRoleInvocation,
 };
 
 pub use factory_signal_receipt::{
@@ -880,3 +880,6 @@ mod project_skill_import;
 pub use project_skill_import::*;
 #[cfg(any(test, feature = "test-support"))]
 mod project_skill_import_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod factory_role_package_testing;

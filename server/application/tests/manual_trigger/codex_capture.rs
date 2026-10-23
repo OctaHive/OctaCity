@@ -33,6 +33,8 @@ impl BuildExecutionContextSource for Context {
 #[derive(Default)]
 pub(super) struct Inputs(pub(super) Mutex<Vec<PublishFactoryExecutionInputs>>);
 #[async_trait]
+impl octacity_server_store::FactoryRoleInvocationStore for Inputs {}
+#[async_trait]
 impl FactoryExecutionInputStore for Inputs {
   async fn reserve_factory_execution_inputs(
     &self,

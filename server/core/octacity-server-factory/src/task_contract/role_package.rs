@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// One ordered Project rule, bound to a selected input in the task's Context Manifest.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRoleProjectRule {
   /// Exact logical input identity; provenance and byte identity live in the common manifest.
@@ -84,7 +84,7 @@ impl FactoryRoleSkillBundle {
 }
 
 /// Explicit frozen inputs to one reproducible role invocation; no current catalog or ambient lookup.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRoleExecutionPackageInput {
   /// Complete selected Policy input texts in their controlling Project rule order.
@@ -102,7 +102,7 @@ pub struct FactoryRoleExecutionPackageInput {
 }
 
 /// Versioned immutable package for compilation and retention, not an execution grant.
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(try_from = "PackageWire")]
 pub struct FactoryRoleExecutionPackage {
   schema_version: u16,
@@ -203,5 +203,27 @@ impl FactoryRoleExecutionPackage {
   /// Binds the complete package to its versioned invocation identity.
   pub fn digest(&self) -> Result<FactoryDigest, FactoryError> {
     record_digest("octacity.factory.role-execution-package.v1", self)
+  }
+}
+
+// Generic diagnostics expose neither instruction content nor runtime settings.
+impl std::fmt::Debug for FactoryRoleProjectRule {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("FactoryRoleProjectRule").finish_non_exhaustive()
+  }
+}
+
+// Generic diagnostics expose neither instruction content nor runtime settings.
+impl std::fmt::Debug for FactoryRoleExecutionPackageInput {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("FactoryRoleExecutionPackageInput")
+      .finish_non_exhaustive()
+  }
+}
+
+// Generic diagnostics expose neither instruction content nor runtime settings.
+impl std::fmt::Debug for FactoryRoleExecutionPackage {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("FactoryRoleExecutionPackage").finish_non_exhaustive()
   }
 }

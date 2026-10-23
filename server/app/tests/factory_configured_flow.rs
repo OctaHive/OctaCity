@@ -1374,20 +1374,26 @@ async fn prepared_factory_build_with_tool_control(
   .unwrap();
   let snapshot = store.factory_run_snapshot(admissions[0].run.id()).await.unwrap();
   let intent = snapshot.flow.data.build_intents[0].clone();
+  let request = factory_build_contract_request(
+    &intent,
+    FactoryClaimOwnership::new(claims[0].owner.clone(), claims[0].claim),
+    managed,
+    capture_paths,
+    control,
+  );
+  seed_factory_build_prerequisites(&database.pool, &request).await;
+  (database, store, request)
+}
+
+async fn seed_factory_build_prerequisites(pool: &sqlx::PgPool, request: &AcceptFactoryBuild) {
+  let build = &request.build;
   let fixture = octacity_server_store::testing::authoritative_store_contract_fixture();
-  let mut build = fixture.request.build.clone();
-  build.project_id = intent.input().subject().project_id();
-  build.repository_id = intent.input().subject().repository_id();
-  build.configuration_id = intent.profile().build_configuration.id();
-  build.configuration_version = intent.profile().build_configuration.version();
-  build.immutable_revision = intent.input().subject().base_revision().clone();
-  build.priority = intent.priority();
   sqlx::query("INSERT INTO pools (id,version,name,enabled,drain_state,admission_policy,concurrency_limit,created_at) VALUES ($1,1,'factory-build',true,'accepting','{\"mode\":\"any\"}',4,to_timestamp(0))")
-    .bind(fixture.allowed_pool.as_uuid()).execute(&database.pool).await.unwrap();
+    .bind(fixture.allowed_pool.as_uuid()).execute(pool).await.unwrap();
   sqlx::query("INSERT INTO pipelines (id,project_id,name,created_at) VALUES ($1,$2,'factory-build',to_timestamp(0))")
     .bind(build.pipeline_id.as_uuid())
     .bind(build.project_id.as_uuid())
-    .execute(&database.pool)
+    .execute(pool)
     .await
     .unwrap();
   sqlx::query(
@@ -1395,7 +1401,7 @@ async fn prepared_factory_build_with_tool_control(
   )
   .bind(build.pipeline_id.as_uuid())
   .bind(build.pipeline_version.get() as i64)
-  .execute(&database.pool)
+  .execute(pool)
   .await
   .unwrap();
   sqlx::query(
@@ -1403,21 +1409,47 @@ async fn prepared_factory_build_with_tool_control(
   )
   .bind(build.configuration_id.as_uuid())
   .bind(build.project_id.as_uuid())
-  .execute(&database.pool)
+  .execute(pool)
   .await
   .unwrap();
   sqlx::query("INSERT INTO build_configuration_versions (build_configuration_id,version,enabled,repository_id,repository_version,pipeline_id,pipeline_version,configuration_snapshot,job_concurrency_limit,allowed_pool_ids,retry_max_attempts,retries_infrastructure,published_at) VALUES ($1,$2,true,$3,$4,$5,$6,'{}',4,ARRAY[$7::uuid],1,false,to_timestamp(0))")
     .bind(build.configuration_id.as_uuid()).bind(build.configuration_version.get() as i64)
     .bind(build.repository_id.as_uuid()).bind(build.repository_version.get() as i64)
     .bind(build.pipeline_id.as_uuid()).bind(build.pipeline_version.get() as i64)
-    .bind(fixture.allowed_pool.as_uuid()).execute(&database.pool).await.unwrap();
+    .bind(fixture.allowed_pool.as_uuid()).execute(pool).await.unwrap();
+}
+
+fn factory_build_contract_request(
+  intent: &FlowBuildIntent,
+  ownership: FactoryClaimOwnership,
+  managed: bool,
+  capture_paths: Option<&[&str]>,
+  control: Option<octacity_protocol::FactoryToolControlModeV3>,
+) -> AcceptFactoryBuild {
+  let fixture = octacity_server_store::testing::authoritative_store_contract_fixture();
+  let mut build = fixture.request.build.clone();
+  build.id = BuildId::generate();
+  let ids: std::collections::BTreeMap<_, _> = fixture
+    .request
+    .jobs
+    .iter()
+    .map(|job| (job.id, JobId::generate()))
+    .collect();
+  build.project_id = intent.input().subject().project_id();
+  build.repository_id = intent.input().subject().repository_id();
+  build.configuration_id = intent.profile().build_configuration.id();
+  build.configuration_version = intent.profile().build_configuration.version();
+  build.immutable_revision = intent.input().subject().base_revision().clone();
+  build.priority = intent.priority();
   let accepted_at = at(12);
-  let jobs = fixture
+  let mut jobs: Vec<_> = fixture
     .request
     .jobs
     .iter()
     .cloned()
     .map(|mut job| {
+      job.id = ids[&job.id];
+      job.dependencies = job.dependencies.iter().map(|id| ids[id]).collect();
       job.allowed_pools = vec![fixture.allowed_pool];
       if managed {
         let canonical = factory_job_test_support::canonical_v3_spec();
@@ -1500,15 +1532,15 @@ async fn prepared_factory_build_with_tool_control(
       job
     })
     .collect();
-  let request = AcceptFactoryBuild {
+  jobs.sort_by_key(|job| job.id);
+  AcceptFactoryBuild {
     intent: intent.clone(),
-    ownership: FactoryClaimOwnership::new(claims[0].owner.clone(), claims[0].claim),
+    ownership,
     build,
-    attempt_id: fixture.request.attempt_id,
+    attempt_id: AttemptId::generate(),
     jobs,
     accepted_at,
-  };
-  (database, store, request)
+  }
 }
 
 #[tokio::test]
@@ -3174,3 +3206,6 @@ async fn retained_job_assignment(pool: &sqlx::PgPool, job_id: JobId, pool_id: Po
 
 #[path = "factory_configured_flow/issue_journal.rs"]
 mod issue_journal;
+
+#[path = "support/factory_role_packages.rs"]
+mod role_packages;

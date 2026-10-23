@@ -258,7 +258,7 @@ impl FactoryRoleProfileStore for PostgresStore {
   }
 }
 
-async fn read_role<'e>(
+pub(crate) async fn read_role<'e>(
   executor: impl sqlx::PgExecutor<'e>,
   project: ProjectId,
   id: FactoryRoleId,
@@ -275,7 +275,7 @@ async fn read_role<'e>(
   }
   Ok(role)
 }
-async fn read_profile<'e>(
+pub(crate) async fn read_profile<'e>(
   executor: impl sqlx::PgExecutor<'e>,
   project: ProjectId,
   id: FactoryRoleProfileId,

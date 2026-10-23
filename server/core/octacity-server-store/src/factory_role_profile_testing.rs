@@ -8,9 +8,30 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Default)]
 pub(super) struct RoleProfileMemoryState {
-  roles: BTreeMap<FactoryRoleId, BTreeMap<FactoryRoleVersion, FactoryRole>>,
+  pub(crate) roles: BTreeMap<FactoryRoleId, BTreeMap<FactoryRoleVersion, FactoryRole>>,
   profiles: BTreeMap<FactoryRoleProfileId, BTreeMap<FactoryRoleProfileVersion, FactoryRoleProfile>>,
   mutations: BTreeMap<ManagementIdempotencyKey, (FactoryRoleProfilesIntent, FactoryRoleProfilesOutcome)>,
+}
+impl RoleProfileMemoryState {
+  pub(crate) fn verify_package(&self, package: &FactoryRoleExecutionPackage) -> Result<(), StoreError> {
+    let inputs = package.inputs();
+    if self
+      .roles
+      .get(&inputs.role.reference().id)
+      .and_then(|versions| versions.get(&inputs.role.reference().version))
+      != Some(&inputs.role)
+      || self
+        .profiles
+        .get(&inputs.profile.reference().id)
+        .and_then(|versions| versions.get(&inputs.profile.reference().version))
+        != Some(&inputs.profile)
+    {
+      return Err(StoreError::Conflict {
+        entity: EntityKind::FactoryRole,
+      });
+    }
+    Ok(())
+  }
 }
 fn missing(entity: EntityKind) -> StoreError {
   StoreError::NotFound { entity }

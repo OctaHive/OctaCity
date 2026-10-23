@@ -402,8 +402,11 @@ impl<C, S, B> FactoryCodexBuildMaterializer<C, S, B> {
   }
 }
 #[async_trait]
-impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactBytePublisher> FactoryBuildMaterializer
-  for FactoryCodexBuildMaterializer<C, S, B>
+impl<
+  C: BuildExecutionContextSource,
+  S: FactoryExecutionInputStore + octacity_server_store::FactoryRoleInvocationStore,
+  B: ArtifactBytePublisher,
+> FactoryBuildMaterializer for FactoryCodexBuildMaterializer<C, S, B>
 {
   async fn materialize(
     &self,
@@ -426,14 +429,18 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
     let (profile, role) = if let Some(profile) = self.profiles.iter().find(|profile| profile.matches_intent(intent)) {
       (profile, None)
     } else {
-      let role = self
-        .role
-        .as_ref()
-        .ok_or(Invalid)?
-        .invocation(intent, at, intent.node().deadline())
-        .await
-        .map_err(|_| Unavailable)?
-        .ok_or(Invalid)?;
+      let role = if let Some(role) = self.publisher.role_invocation(intent).await.map_err(|_| Unavailable)? {
+        role
+      } else {
+        self
+          .role
+          .as_ref()
+          .ok_or(Invalid)?
+          .invocation(intent, at, intent.node().deadline())
+          .await
+          .map_err(|_| Unavailable)?
+          .ok_or(Invalid)?
+      };
       let profile = self
         .profiles
         .iter()
@@ -546,6 +553,13 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
       },
     )
     .map_err(|_| Invalid)?;
+    if let Some(role) = &role {
+      self
+        .publisher
+        .retain_role_invocation(intent, &ownership, role)
+        .await
+        .map_err(|_| Unavailable)?;
+    }
     let documents = compiled
       .documents()
       .iter()

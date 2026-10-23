@@ -35,7 +35,35 @@ impl BuildExecutionContextSource for Context {
   }
 }
 #[derive(Default)]
-pub(crate) struct Inputs(pub(crate) Mutex<Vec<PublishFactoryExecutionInputs>>);
+pub(crate) struct Inputs(
+  pub(crate) Mutex<Vec<PublishFactoryExecutionInputs>>,
+  Mutex<BTreeMap<FactoryDigest, RetainedFactoryRoleInvocation>>,
+);
+#[async_trait]
+impl octacity_server_store::FactoryRoleInvocationStore for Inputs {
+  async fn factory_role_invocation(
+    &self,
+    operation: FactoryDigest,
+  ) -> Result<Option<RetainedFactoryRoleInvocation>, StoreError> {
+    Ok(self.1.lock().unwrap().get(&operation).cloned())
+  }
+  async fn retain_factory_role_invocation(
+    &self,
+    intent: &FlowBuildIntent,
+    _: &FactoryClaimOwnership,
+    invocation: RetainedFactoryRoleInvocation,
+    _: Timestamp,
+  ) -> Result<(), StoreError> {
+    invocation.verify_intent(intent)?;
+    let operation = intent.operation_id().unwrap();
+    let mut retained = self.1.lock().unwrap();
+    if retained.get(&operation).is_some_and(|previous| previous != &invocation) {
+      return Err(StoreError::Unavailable);
+    }
+    retained.insert(operation, invocation);
+    Ok(())
+  }
+}
 #[async_trait]
 impl FactoryExecutionInputStore for Inputs {
   async fn reserve_factory_execution_inputs(

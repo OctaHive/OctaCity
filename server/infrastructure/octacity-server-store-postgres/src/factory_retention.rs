@@ -250,6 +250,7 @@ async fn delete_metadata_page(
     "WITH selected AS (SELECT ctid FROM factory_decision_signal_receipts WHERE run_id=$1 ORDER BY ctid LIMIT $2) DELETE FROM factory_decision_signal_receipts WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_decision_signal_requests WHERE run_id=$1 ORDER BY ctid LIMIT $2) DELETE FROM factory_decision_signal_requests WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT input.ctid FROM factory_execution_inputs input JOIN factory_execution_input_manifests manifest USING (operation_id) WHERE manifest.run_id=$1 AND input.deleted_at_millis IS NOT NULL ORDER BY input.ctid LIMIT $2) DELETE FROM factory_execution_inputs WHERE ctid IN (SELECT ctid FROM selected)",
+    "WITH selected AS (SELECT ctid FROM factory_role_execution_packages WHERE run_id=$1 ORDER BY ctid LIMIT $2) DELETE FROM factory_role_execution_packages WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_execution_input_manifests manifest WHERE run_id=$1 AND NOT EXISTS (SELECT 1 FROM factory_execution_inputs input WHERE input.operation_id=manifest.operation_id) ORDER BY ctid LIMIT $2) DELETE FROM factory_execution_input_manifests WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_node_stops WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_node_stops WHERE ctid IN (SELECT ctid FROM selected)",
     "WITH selected AS (SELECT ctid FROM factory_flow_build_executions WHERE run_id = $1 ORDER BY ctid LIMIT $2) DELETE FROM factory_flow_build_executions WHERE ctid IN (SELECT ctid FROM selected)",
@@ -420,4 +421,13 @@ const fn conflict() -> StoreError {
   StoreError::Conflict {
     entity: EntityKind::FactoryRun,
   }
+}
+
+/// Hold placement already owns the same Build lock as Run hiding. This barrier
+/// survives package metadata deletion and final removal of the owning Run.
+pub(crate) async fn started_for_build(
+  connection: &mut sqlx::PgConnection,
+  build: octacity_server_domain::BuildId,
+) -> Result<bool, StoreError> {
+  sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM builds b LEFT JOIN factory_runs r ON r.id=(b.factory_origin->>'run_id')::uuid WHERE b.id=$1 AND b.factory_origin IS NOT NULL AND NOT COALESCE(r.visible,false))").bind(build.as_uuid()).fetch_one(connection).await.map_err(unavailable)
 }

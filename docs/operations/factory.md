@@ -205,8 +205,31 @@ Internal Task Envelopes additionally support `observe` with `flow_v1` for ordina
 Flow observations; the immutable Flow outcome supplies the actual result schema.
 This does not claim an independent candidate evaluation or relax existing
 implementation/evaluation contracts. JobSpec v3 and Agent wire schemas are
-unchanged. Durable selection/package lifetime integration and released-process
-qualification remain their later tasks (3.5, 4–5 and 9.1).
+unchanged. Stage selection/dispatch integration and released-process qualification
+remain their later tasks (4–5 and 9.1).
+
+### Role package recovery and lifetime
+
+Before writing compiler objects, the existing input publisher retains the complete
+private invocation under the persisted node operation and current owner fence.
+The snapshot includes canonical package content, exact skill transfer metadata and
+qualified logical credential mappings. It must match the existing owned role/profile
+versions and immutable task intent. An identical replay recovers the original snapshot;
+a different package cannot replace it. A restarted materializer reads this snapshot
+before consulting the optional source, so catalog replacement or local folder removal
+cannot change the invocation. Foreign keys retain the exact definition versions.
+
+Imported skills remain immutable Project catalog content, like retained role/profile
+versions; reimport does not overwrite an earlier bundle. Their bytes keep the existing
+Artifact object owner, and abandoned staging uses the existing private-input cleanup.
+Published role compiler inputs follow Run retention, which is already scheduled after
+the linked ordinary Build retention deadlines and respects Build Result holds.
+The shared cleanup worker deletes their objects after the Run becomes hidden, then
+bounded Run metadata cleanup releases the snapshot. A hold accepted before hiding
+preserves the package; a late hold cannot revive released package bytes. Failed,
+unpublished object writes still use the original node cleanup deadline. Storage
+retention never extends the signed input download deadline. Generic package Debug
+output is redacted, and audit records contain safe operation/content identities only.
 
 ### Review role isolation
 

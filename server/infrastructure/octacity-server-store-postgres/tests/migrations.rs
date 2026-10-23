@@ -63,10 +63,11 @@ async fn completed_issue_publication_recovery_does_not_read_history_on_readiness
 const SNAPSHOT_PROJECT_ID: &str = "0199a6f4-d56c-7440-9aa2-6a320f862795";
 const LEGACY_IDEMPOTENCY_SCOPE: &str = "schema-rehearsal";
 const LEGACY_IDEMPOTENCY_KEY: &str = "legacy-writer";
-const FACTORY_TABLES: [&str; 47] = [
+const FACTORY_TABLES: [&str; 48] = [
   "factory_roles",
   "factory_role_versions",
   "factory_role_profiles",
+  "factory_role_execution_packages",
   "factory_role_profile_versions",
   "factory_action_projections",
   "factory_action_items",
@@ -121,7 +122,7 @@ const INTEGRATION_TABLES: [&str; 7] = [
   "integration_project_access",
   "integration_project_access_versions",
 ];
-const COLLABORATION_TABLES: [&str; 21] = [
+const COLLABORATION_TABLES: [&str; 23] = [
   "issue_code_review_associations",
   "issue_code_review_observations",
   "issue_comments",
@@ -143,6 +144,8 @@ const COLLABORATION_TABLES: [&str; 21] = [
   "project_text_preparations",
   "project_text_input_objects",
   "project_text_documents",
+  "project_skill_imports",
+  "project_skill_input_objects",
 ];
 const ISSUE_WORKFLOW_TABLES: [&str; 3] = ["issue_workflows", "issue_workflow_versions", "issue_workflow_defaults"];
 const FACTORY_RETENTION_TABLES: [&str; 2] = ["factory_artifact_references", "factory_retention_work"];

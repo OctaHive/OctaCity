@@ -320,6 +320,18 @@ fn materializer_fixture(
   installed: &FactoryCodexBuildProfile,
   bytes: BTreeMap<ArtifactId, Vec<u8>>,
 ) -> (TestMaterializer, Arc<Inputs>) {
+  let inputs = Arc::new(Inputs::default());
+  (
+    materializer_with_inputs(intent, installed, bytes, inputs.clone()),
+    inputs,
+  )
+}
+fn materializer_with_inputs(
+  intent: &FlowBuildIntent,
+  installed: &FactoryCodexBuildProfile,
+  bytes: BTreeMap<ArtifactId, Vec<u8>>,
+  inputs: Arc<Inputs>,
+) -> TestMaterializer {
   let mut context = managed_context(
     &installed.build_configuration,
     &installed.pipeline_node,
@@ -343,8 +355,7 @@ fn materializer_fixture(
     .policy
     .secret_profiles
     .insert(SecretProfileName::new("model-evaluation").unwrap());
-  let inputs = Arc::new(Inputs::default());
-  let materializer = FactoryCodexBuildMaterializer::new(
+  FactoryCodexBuildMaterializer::new(
     Arc::new(Context(context)),
     Arc::new(FactoryExecutionInputPublisher::new(
       inputs.clone(),
@@ -355,8 +366,7 @@ fn materializer_fixture(
     Arc::new(ContextBytes(bytes)),
     Arc::new(Clock),
   )
-  .unwrap();
-  (materializer, inputs)
+  .unwrap()
 }
 #[test]
 fn role_package_materializer_uses_the_existing_publisher_and_ordinary_job_contract() {
@@ -921,5 +931,34 @@ fn role_package_rejects_a_skill_set_that_leaves_no_room_for_compiler_inputs_befo
       published.0.lock().unwrap().is_empty(),
       "the full transfer must be representable before compiler documents are published"
     );
+  });
+}
+
+#[test]
+fn role_package_materializer_recovers_original_content_without_the_catalog() {
+  crate::factory_admission_tests::run_ready(async {
+    let (intent, admitted, installed, package, bytes) = fixture();
+    let (materializer, inputs) = materializer_fixture(&intent, &installed, bytes.clone());
+    let ownership = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    let materializer = materializer.with_role_invocation_source(Arc::new(RoleSource(
+      FactoryRoleInvocation::new(package.clone(), None, BTreeMap::new()).unwrap(),
+    )));
+    let original = materializer
+      .materialize(
+        &intent,
+        &admitted,
+        ownership.clone(),
+        Timestamp::from_unix_millis(41).unwrap(),
+      )
+      .await
+      .unwrap();
+    drop(materializer);
+    // Neither the original source nor a mutable catalog is installed after restart.
+    let restarted = materializer_with_inputs(&intent, &installed, bytes, inputs.clone());
+    let recovered = restarted
+      .materialize(&intent, &admitted, ownership, Timestamp::from_unix_millis(41).unwrap())
+      .await
+      .expect("recover exact retained role content");
+    assert_eq!(recovered, original);
   });
 }

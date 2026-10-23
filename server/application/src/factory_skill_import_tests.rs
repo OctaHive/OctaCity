@@ -371,3 +371,71 @@ fn skill_import_materialization_bounds_the_complete_selected_set_before_reading_
     assert_eq!(bytes.2.load(Ordering::SeqCst), reads);
   });
 }
+
+#[test]
+fn skill_import_recovery_keeps_original_bytes_after_local_folder_removal_and_reimport() {
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(Bytes::default());
+    let folder = std::env::temp_dir().join(format!("octacity-role-skill-{}", ProjectId::generate()));
+    std::fs::create_dir(&folder).unwrap();
+    let file = folder.join("SKILL.md");
+    std::fs::write(&file, b"# Original local skill\n").unwrap();
+    let reviewed = std::fs::read(&file).unwrap();
+    let mut original = command(project);
+    original.idempotency_key = "original-local-folder".parse().unwrap();
+    original.entries = vec![ReviewedSkillEntry::File {
+      path: "SKILL.md".into(),
+      sha256: FactoryDigest::content_sha256(&reviewed),
+      bytes: reviewed,
+    }];
+    let import = ProjectSkillImport::new(
+      store.clone(),
+      bytes.clone(),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    );
+    let retained = import
+      .import(&crate::factory_admission_tests::context(), original)
+      .await
+      .unwrap();
+    std::fs::remove_dir_all(folder).unwrap();
+    drop(import);
+    let restarted = ProjectSkillImport::new(
+      store,
+      bytes.clone(),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    );
+    let replacement = restarted
+      .import(&crate::factory_admission_tests::context(), command(project))
+      .await
+      .unwrap();
+    assert_ne!(
+      retained.intent.bundle.reference(),
+      replacement.intent.bundle.reference()
+    );
+    let materialized = restarted
+      .materialize(
+        project,
+        BTreeMap::from([(
+          octacity_server_factory::FactoryRepositoryPath::new("skills/original").unwrap(),
+          retained.intent.bundle,
+        )]),
+      )
+      .await
+      .unwrap();
+    assert_eq!(materialized.inputs.len(), 1);
+    let input = &materialized.inputs[0];
+    assert_eq!(
+      input.sha256,
+      FactoryDigest::content_sha256(b"# Original local skill\n").to_string()
+    );
+    assert_eq!(
+      bytes.0.lock().unwrap()[&input.artifact_id.parse::<ArtifactId>().unwrap()],
+      b"# Original local skill\n"
+    );
+  });
+}
