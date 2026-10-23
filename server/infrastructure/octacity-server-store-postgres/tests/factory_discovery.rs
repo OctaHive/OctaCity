@@ -2210,47 +2210,18 @@ async fn seed_projection_admission(
     )
     .unwrap(),
   );
+  let selection_choices = octacity_server_store::testing::factory_profile_selection_capabilities(&admission.flow);
   let mut entries = configured.choices.entries();
-  let mut capabilities = Vec::new();
-  for candidate in admission
-    .flow
-    .closure()
-    .definitions()
-    .iter()
-    .flat_map(|definition| definition.nodes())
-    .filter_map(|node| node.profile_selection())
-    .flat_map(|selection| selection.candidates.values())
-  {
-    let alias = key(&format!("profile.{}", capabilities.len()));
-    entries
-      .references
-      .push(octacity_server_factory::FactoryReferenceChoice {
-        kind: octacity_server_factory::FactoryChoiceKind::NodeCapability,
-        alias: alias.clone(),
-        reference: candidate.build.tool.clone(),
-      });
-    capabilities.push((
-      alias,
-      octacity_server_factory::FactoryRoleProfileCapability {
-        ceiling: candidate.profile.definition().clone(),
-        parameters: octacity_server_factory::FlowDataSchema::new(
-          key("parameters"),
-          key("v1"),
-          octacity_server_factory::FlowValueSchema::Object {
-            fields: Default::default(),
-          },
-        )
-        .unwrap(),
-        public_environment: Default::default(),
-        local_permissions: octacity_server_factory::LocalPermissionCeiling::fully_enforced(
-          candidate.profile.definition().permissions.clone(),
-        ),
-      },
-    ));
-  }
+  let selection_entries = selection_choices.entries();
+  entries.references.extend(selection_entries.references);
+  entries
+    .build_configurations
+    .extend(selection_entries.build_configurations);
   let mut choices = octacity_server_factory::FactoryConfigurationChoices::try_new(entries).unwrap();
-  for (alias, capability) in capabilities {
-    choices = choices.with_role_profile_capability(alias, capability).unwrap();
+  for (alias, capability) in selection_choices.role_profile_capabilities() {
+    choices = choices
+      .with_role_profile_capability(alias.clone(), capability.clone())
+      .unwrap();
   }
   let configuration = FactoryConfiguration::publish(
     work.configuration().id(),
@@ -2308,7 +2279,8 @@ async fn seed_projection_admission(
 async fn profile_selections_survive_restart_without_execution() {
   use octacity_server_factory::*;
   use octacity_server_store::testing::{
-    factory_flow_contract_transition, factory_profile_selection_policy_contract_fixture,
+    factory_flow_contract_transition, factory_profile_selection_capabilities,
+    factory_profile_selection_failure_contract_fixture,
   };
   use octacity_server_store::*;
   let rule = |path: &str| {
@@ -2317,19 +2289,35 @@ async fn profile_selections_survive_restart_without_execution() {
   }],"otherwise":"baseline"}))
     .unwrap()
   };
-  for (policy, candidate) in [
-    (FlowProfileSelectionPolicy::Manual { candidate: None }, None),
+  let manual = FlowProfileSelectionFailure::ManualSelection;
+  let reserve = FlowProfileSelectionFailure::ReserveProfile {
+    candidate: key("specialized"),
+  };
+  for (policy, failure, recover, available, candidate) in [
+    (
+      FlowProfileSelectionPolicy::Manual { candidate: None },
+      manual.clone(),
+      false,
+      false,
+      None,
+    ),
     (
       FlowProfileSelectionPolicy::Manual {
         candidate: Some(key("specialized")),
       },
+      manual.clone(),
+      false,
+      false,
       Some("specialized"),
     ),
-    (rule("/count"), Some("advanced")),
-    (rule("/complexity"), None),
+    (rule("/count"), manual.clone(), false, false, Some("advanced")),
+    (rule("/complexity"), manual.clone(), false, false, None),
+    (rule("/complexity"), manual, true, false, None),
+    (rule("/complexity"), reserve.clone(), true, true, Some("specialized")),
+    (rule("/complexity"), reserve, true, false, None),
   ] {
     let database = TestDatabase::migrated().await;
-    let (admission, input, ownership) = factory_profile_selection_policy_contract_fixture(policy);
+    let (admission, input, ownership) = factory_profile_selection_failure_contract_fixture(policy, failure);
     let (store, _) = seed_projection_admission(&database, &admission).await;
     let run = admission.run.id();
     let claim = FactoryRunClaimRecord::new(run, ownership.owner().clone(), ownership.claim());
@@ -2352,6 +2340,13 @@ async fn profile_selections_survive_restart_without_execution() {
       .unwrap();
     let snapshot = store.factory_run_snapshot(run).await.unwrap();
     let selection = FlowProfileSelectionRecord::select(&input, &admission.flow, time(11)).unwrap();
+    let choices = available.then(|| factory_profile_selection_capabilities(&admission.flow));
+    let selection = if recover {
+      selection.recover(&input, &admission.flow, choices.as_ref()).unwrap()
+    } else {
+      selection
+    };
+    assert_eq!(selection.recovery().is_some(), recover);
     assert_eq!(selection.candidate().map(FactoryKey::as_str), candidate);
     let mut transition = factory_flow_contract_transition(&snapshot, &claim, 11);
     transition.append.flow.data.inputs.push(input.clone());

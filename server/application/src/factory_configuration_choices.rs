@@ -326,7 +326,7 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
   )
   .map_err(|_| ApplicationError::invalid())?;
   for (alias, cap) in choices.role_profile_capabilities() {
-    if let Some(cap) = crate::factory_role_profile_catalog::visible_profile_capability(&visible, alias, cap) {
+    if let Some(cap) = visible.available_role_profile_capability(alias, cap) {
       visible = visible
         .with_role_profile_capability(alias.clone(), cap)
         .map_err(|_| ApplicationError::invalid())?;
@@ -444,21 +444,10 @@ pub(super) fn validate_flow_choices(
           "/profile_selection",
         ));
       }
-      if node.build_bindings().any(|build| {
-        [&build.tool, build.result_tool(), &build.plugin]
-          .into_iter()
-          .any(|reference| !selectable(FactoryChoiceKind::NodeCapability, reference))
-          || !(selectable(FactoryChoiceKind::NodeCapability, &build.model_or_tool)
-            || selectable(FactoryChoiceKind::DecisionSignalModel, &build.model_or_tool))
-          || !entries
-            .build_configurations
-            .iter()
-            .any(|(_, reference)| reference == &build.build_configuration)
-          || build.evidence.iter().any(|evidence| {
-            !selectable(FactoryChoiceKind::NodeCapability, evidence.tool())
-              || !selectable(FactoryChoiceKind::NodeCapability, evidence.plugin())
-          })
-      }) {
+      if node
+        .build_bindings()
+        .any(|build| !choices.supports_build_binding(build))
+      {
         return Err(crate::FactoryValidationDiagnostics::unavailable_binding(
           definition.reference(),
           Some(node.key()),

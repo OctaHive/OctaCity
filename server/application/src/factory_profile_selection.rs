@@ -4,11 +4,12 @@ use octacity_server_domain::Timestamp;
 use octacity_server_factory::{FlowNodeInput, FlowProfileSelectionRecord};
 use octacity_server_store::{FactoryRunHistoryAppend, FactoryRunSnapshot};
 
-pub(crate) fn prepare(
+pub(crate) async fn prepare(
   snapshot: &FactoryRunSnapshot,
   target: &FactoryNodeTarget,
   supplied: Option<FlowNodeInput>,
   at: Timestamp,
+  catalog: Option<&dyn octacity_server_store::FactoryConfigurationStore>,
 ) -> Result<Option<FactoryRunHistoryAppend>, ApplicationError> {
   let generation = next_generation(snapshot, target)?;
   let frozen = frozen_input(snapshot, target)?;
@@ -26,6 +27,13 @@ pub(crate) fn prepare(
   {
     return Err(ApplicationError::invalid());
   }
+  let binding = snapshot
+    .admitted_flow
+    .closure()
+    .definition(input.definition())
+    .and_then(|definition| definition.node(input.node()))
+    .and_then(|node| node.profile_selection())
+    .ok_or_else(ApplicationError::invalid)?;
   let digest = input.digest().map_err(|_| ApplicationError::invalid())?;
   if snapshot
     .flow
@@ -38,12 +46,43 @@ pub(crate) fn prepare(
   }
   let selection =
     FlowProfileSelectionRecord::select(&input, &snapshot.admitted_flow, at).map_err(|_| ApplicationError::invalid())?;
+  let needs_catalog = selection.needs_recovery()
+    && matches!(
+      binding.failure,
+      octacity_server_factory::FlowProfileSelectionFailure::ReserveProfile { .. }
+    );
+  let choices = if needs_catalog {
+    current_choices(snapshot, catalog).await?
+  } else {
+    None
+  };
+  let selection = selection
+    .recover(&input, &snapshot.admitted_flow, choices.as_ref())
+    .map_err(|_| ApplicationError::invalid())?;
   let mut append = FactoryRunHistoryAppend::default();
   if frozen.is_none() {
     append.flow.data.inputs.push(input);
   }
   append.flow.data.profile_selections.push(selection);
   Ok(Some(append))
+}
+
+async fn current_choices(
+  snapshot: &FactoryRunSnapshot,
+  catalog: Option<&dyn octacity_server_store::FactoryConfigurationStore>,
+) -> Result<Option<octacity_server_factory::FactoryConfigurationChoices>, ApplicationError> {
+  let Some(catalog) = catalog else {
+    return Ok(None);
+  };
+  Ok(
+    match catalog
+      .factory_configuration_availability(snapshot.work.subject().project_id())
+      .await?
+    {
+      octacity_server_store::FactoryConfigurationAvailability::Available(choices) => Some(choices),
+      octacity_server_store::FactoryConfigurationAvailability::Disabled => None,
+    },
+  )
 }
 
 fn next_generation(snapshot: &FactoryRunSnapshot, target: &FactoryNodeTarget) -> Result<u32, ApplicationError> {

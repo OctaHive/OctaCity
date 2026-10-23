@@ -314,3 +314,85 @@ fn ordered_rules_retain_the_first_matching_profile_without_execution() {
     assert_eq!(before, store.factory_run_snapshot(run).await.unwrap());
   });
 }
+
+#[test]
+fn the_flow_owner_retains_one_reserve_or_manual_disposition_without_execution() {
+  crate::factory_admission_tests::run_ready(async {
+    for (catalog, installed, reserve, expected) in [
+      (true, true, true, Some("specialized")),
+      (true, false, true, None),
+      (false, false, true, None),
+      (false, false, false, None),
+    ] {
+      let policy = serde_json::from_value(serde_json::json!({"mode":"rules","rules":[{
+        "when":{"operation":"exists","operand":{"source":"path","path":"/complexity"}},"candidate":"advanced"
+      }]}))
+      .unwrap();
+      let failure = if reserve {
+        FlowProfileSelectionFailure::ReserveProfile {
+          candidate: key("specialized"),
+        }
+      } else {
+        FlowProfileSelectionFailure::ManualSelection
+      };
+      let (admission, input, ownership) = testing::factory_profile_selection_failure_contract_fixture(policy, failure);
+      let run = admission.run.id();
+      let project = admission.work.subject().project_id();
+      let choices = testing::factory_profile_selection_capabilities(&admission.flow);
+      let (store, claim) = start(admission, ownership).await;
+      store.seed_project(project).unwrap();
+      if installed {
+        store.enable_project(project, choices).unwrap();
+      }
+      let mut owner = FactoryFlowRunner::new(
+        store.clone(),
+        Arc::new(NoExecution),
+        Arc::new(FrozenInput {
+          input,
+          calls: std::sync::atomic::AtomicUsize::new(0),
+        }),
+        crate::factory_node_test_support::clock(),
+      );
+      if catalog {
+        owner = owner.with_profile_catalog(store.clone());
+      }
+      assert_eq!(
+        owner.reconcile_flow(run, claim.id, at(11)).await.unwrap(),
+        FactoryFlowStep::Advanced
+      );
+      let before = store.factory_run_snapshot(run).await.unwrap();
+      assert_eq!(before.flow.data.profile_selections.len(), 1);
+      let choice = &before.flow.data.profile_selections[0];
+      assert_eq!(choice.candidate().map(FactoryKey::as_str), expected);
+      assert_eq!(
+        choice.recovery(),
+        Some(if expected.is_some() {
+          FlowProfileSelectionRecovery::ReserveProfile
+        } else if reserve {
+          FlowProfileSelectionRecovery::ReserveUnavailable
+        } else {
+          FlowProfileSelectionRecovery::ManualSelection
+        })
+      );
+      assert_eq!(
+        choice.rules(),
+        Some(&FlowProfileRuleOutcome::Failed {
+          reason: FlowPredicateFailure::MissingInput
+        })
+      );
+      assert!(before.flow.attempts.is_empty());
+      assert!(before.flow.data.build_intents.is_empty());
+      assert_eq!(before.budgets.last().unwrap().usage, BudgetUsage::default());
+      store.disable_project(project).unwrap();
+      assert_eq!(
+        owner.reconcile_flow(run, claim.id, at(12)).await.unwrap(),
+        FactoryFlowStep::Waiting
+      );
+      assert_eq!(
+        store.factory_run_snapshot(run).await.unwrap(),
+        before,
+        "recovery cannot repeat selection or replenish limits"
+      );
+    }
+  });
+}

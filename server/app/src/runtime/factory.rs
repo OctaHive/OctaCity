@@ -671,12 +671,15 @@ pub(super) async fn assemble(
         octacity_server_application::FactoryNodeExecutorRegistry::new(installed.executors)
           .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
       );
-      let flow = Arc::new(octacity_server_application::FactoryFlowRunner::new(
-        registration_store.clone(),
-        executors,
-        installed.inputs,
-        Arc::new(octacity_server_application::SystemFactoryExecutionClock),
-      ));
+      let flow = Arc::new(
+        octacity_server_application::FactoryFlowRunner::new(
+          registration_store.clone(),
+          executors,
+          installed.inputs,
+          Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+        )
+        .with_profile_catalog(registration_store.clone()),
+      );
       let worker = octacity_server_application::FactoryReconciler::new(
         registration_store.clone(),
         octacity_server_factory::FactoryKey::new(format!("factory-owner.{}", uuid::Uuid::new_v4()))

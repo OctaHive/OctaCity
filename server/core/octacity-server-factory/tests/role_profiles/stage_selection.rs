@@ -346,6 +346,24 @@ fn choices(flow: &FactoryFlowConfiguration, omit: Option<&str>) -> FactoryConfig
       alias: name.clone(),
       reference: candidate.build.tool.clone(),
     });
+    for (dependency, reference) in [
+      ("verifier", candidate.build.result_tool()),
+      ("plugin", &candidate.build.plugin),
+      ("model", &candidate.build.model_or_tool),
+    ] {
+      entries.references.push(FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: key(&format!("{name}.{dependency}")),
+        reference: reference.clone(),
+      });
+    }
+    for (index, reference) in candidate.profile.definition().skills.values().enumerate() {
+      entries.references.push(FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: key(&format!("{name}.skill.{index}")),
+        reference: reference.clone(),
+      });
+    }
     entries
       .build_configurations
       .push((name.clone(), candidate.build.build_configuration.clone()));

@@ -228,8 +228,8 @@ installed role-profile capability validator and the common authorized Build
 reference checks. Admission also checks Project ownership. Existing static Flows
 require no role/profile catalog and keep their original serialized content.
 
-The declaration supports `manual`, ordered `rules` with an explicit `otherwise`,
-and `decision_api` with an exact policy and bounded input projection. Rules reuse
+The declaration supports `manual`, ordered `rules` with an optional explicit
+`otherwise`, and `decision_api` with an exact policy and bounded input projection. Rules reuse
 the common typed Flow predicates and their structural/parameter bounds. Failure
 is either `manual_selection` or one declared `reserve_profile` candidate. For
 every candidate, selection allowance plus its full execution ceiling must fit all
@@ -258,26 +258,50 @@ Flow evaluator, with one shared 16,384-step allowance across the ordered rules
 and their nested collection scans. Known false conditions advance to the next
 rule; the first true condition selects its declared candidate. Only when every
 condition is known false does the explicit `otherwise` candidate apply. A missing
-operand, incompatible value type or exhausted allowance retains a typed
-`missing_input`, `invalid_type` or `evaluation_bound_exceeded` failure with no
-selected candidate; it never silently takes the catch-all. Schema-invalid input
+operand, incompatible value type or exhausted allowance produces a typed
+`missing_input`, `invalid_type` or `evaluation_bound_exceeded` failure. All-false
+rules without `otherwise` produce `no_match`. These failures invoke the configured
+stage failure policy; they never silently take a catch-all. Schema-invalid input
 is rejected by the existing payload contract before selection, without coercion.
 An earlier explicit `absent` rule can handle an optional missing field before a
 later comparison requires it. Temporal predicates use the retained original
 selection start time, including during restoration.
 
 The optional record field `rules` distinguishes `matched` (with the zero-based
-rule position), `catch_all`, and `failed` (with its safe typed reason). The input
+rule position), `catch_all`, `no_match`, and `failed` (with its safe typed reason). The input
 digest and admitted definition bind the exact projected observations, schema,
 ordered criteria and complete candidate profiles. Restoration recomputes the
-same outcome from that frozen input and original time; polling reuses the saved
-fact without evaluating a new input or consulting live metadata.
+same outcome from that frozen input and original time. Polling reuses the saved
+choice without evaluating rules over a new input.
 
-Fixed-choice retention, pending state and deterministic rule evaluation are
-implemented. Live selection commands, provider consumption, failure-policy
-recovery and selected Build dispatch remain the subsequent tasks (4.4–6.3); a
-recorded choice is not dispatched execution or stage completion. Manual task creation and static Build execution
-continue to use their existing mechanisms.
+Automatic failures apply exactly one pinned failure policy before the initial
+selection fact is committed. `manual_selection` keeps the candidate empty;
+`reserve_profile` selects only the configured exact candidate if the current
+Project capability catalog qualifies that complete profile. The same capability
+validator is used during publication. A missing catalog, disabled Factory mode
+or incompatible reserve leads directly to manual waiting, without trying another
+candidate or provider. Store read failures use the ordinary error/retry path and
+never authorize a reserve. The optional `recovery` field records `reserve_profile`,
+`manual_selection`, or `reserve_unavailable`, alongside the original rule failure.
+Recovery keeps the original input, start/deadline and admitted budgets; the
+journal atomically retains the input and final disposition without execution
+attempts or budget replenishment. Polling/restoration reuse that fact even if the
+catalog later changes. Earlier records without `recovery` remain readable.
+
+Profile qualification uses the same dependency filter as the authoring catalog.
+Unavailable optional entries are pruned from the installed ceiling, while the
+profile stays unchanged; an unused option does not block a profile.
+
+The common Flow/node owner accepts the existing `FactoryConfigurationStore`
+catalog through `with_profile_catalog`; server assembly supplies it. Static
+execution and manual policy need no catalog dependency. No additional registry,
+scheduler, table or provider fallback is introduced.
+
+Fixed-choice retention, pending state, deterministic rules and their failure
+recovery are implemented. Current pre-dispatch capability checks, live selection
+commands, provider consumption and selected Build dispatch remain subsequent
+tasks (4.5–6); a recorded reserve is not dispatched execution or stage completion.
+Manual task creation and static Build execution keep their existing mechanisms.
 
 ### Role package recovery and lifetime
 

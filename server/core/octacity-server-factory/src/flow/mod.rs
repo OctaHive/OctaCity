@@ -15,7 +15,7 @@ pub use profile_selection::{
   FlowProfileCandidate, FlowProfileSelectionBinding, FlowProfileSelectionFailure, FlowProfileSelectionPolicy,
   FlowProfileSelectionRule,
 };
-pub use profile_selection_record::{FlowProfileRuleOutcome, FlowProfileSelectionRecord};
+pub use profile_selection_record::{FlowProfileRuleOutcome, FlowProfileSelectionRecord, FlowProfileSelectionRecovery};
 mod build;
 mod build_execution;
 mod build_intent;

@@ -184,11 +184,23 @@ pub struct FactoryNodeRunner<S, E> {
   store: Arc<S>,
   executor: Arc<E>,
   clock: Arc<dyn FactoryExecutionClock>,
+  profile_catalog: Option<Arc<dyn FactoryConfigurationStore>>,
 }
 impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
   /// Connects persistence and installed execution adapters.
   pub fn new(store: Arc<S>, executor: Arc<E>, clock: Arc<dyn FactoryExecutionClock>) -> Self {
-    Self { store, executor, clock }
+    Self {
+      store,
+      executor,
+      clock,
+      profile_catalog: None,
+    }
+  }
+  /// Uses the existing Project capability catalog for new reserve choices.
+  /// Static execution needs no catalog; without one, reserve recovery waits manually.
+  pub fn with_profile_catalog(mut self, catalog: Arc<dyn FactoryConfigurationStore>) -> Self {
+    self.profile_catalog = Some(catalog);
+    self
   }
   fn current_time(&self, at: Timestamp) -> Result<Timestamp, ApplicationError> {
     Ok(at.max(self.clock.now()?))
@@ -266,7 +278,15 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       other => other,
     };
     if attempt.is_none() && node.profile_selection().is_some() {
-      return match crate::factory_profile_selection::prepare(&snapshot, &target, input, at)? {
+      return match crate::factory_profile_selection::prepare(
+        &snapshot,
+        &target,
+        input,
+        at,
+        self.profile_catalog.as_deref(),
+      )
+      .await?
+      {
         Some(append) => {
           self.commit(&snapshot, append, at).await?;
           Ok(FactoryNodeStep::Advanced)

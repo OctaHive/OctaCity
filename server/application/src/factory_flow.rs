@@ -35,6 +35,11 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
       inputs,
     }
   }
+  /// Supplies the existing Project catalog without adding dependencies to static stages.
+  pub fn with_profile_catalog(mut self, catalog: Arc<dyn FactoryConfigurationStore>) -> Self {
+    self.nodes = self.nodes.with_profile_catalog(catalog);
+    self
+  }
 }
 #[async_trait]
 impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: FactoryFlowInputPreparer + ?Sized>

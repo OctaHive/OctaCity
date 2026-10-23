@@ -42,12 +42,13 @@ pub enum FlowProfileSelectionPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     candidate: Option<FactoryKey>,
   },
-  /// Ordered typed conditions and an explicit catch-all candidate.
+  /// Ordered typed conditions with an optional explicit catch-all candidate.
   Rules {
     /// Finite first-match rule list; no executable expressions or provider names.
     rules: Vec<FlowProfileSelectionRule>,
-    /// Candidate used when all conditions are known false.
-    otherwise: FactoryKey,
+    /// Explicit catch-all when every condition is false; absence produces a no-match failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    otherwise: Option<FactoryKey>,
   },
   /// Exact purpose-bound selector contract and explicit input projection.
   /// This declaration does not call a provider or authorize a Build.
@@ -89,18 +90,29 @@ pub struct FlowProfileSelectionBinding {
   pub selection_budget: BudgetUsage,
 }
 
+impl FlowProfileCandidate {
+  /// Qualifies this exact profile using the shared installed-capability contract.
+  pub fn validate_capabilities(&self, choices: &crate::FactoryConfigurationChoices) -> Result<(), crate::FactoryError> {
+    if choices.supports_build_binding(&self.build)
+      && choices.role_profile_capabilities().iter().any(|(alias, capability)| {
+        choices
+          .available_role_profile_capability(alias, capability)
+          .is_some_and(|capability| capability.validate(&self.profile).is_ok())
+      })
+    {
+      Ok(())
+    } else {
+      Err(invalid())
+    }
+  }
+}
+
 impl FlowProfileSelectionBinding {
   /// Qualifies every complete profile against the shared installed, authorized catalog.
   /// Static stages need no role catalog; retained admission does not resolve new versions.
   pub fn validate_capabilities(&self, choices: &crate::FactoryConfigurationChoices) -> Result<(), crate::FactoryError> {
     for candidate in self.candidates.values() {
-      if !choices
-        .role_profile_capabilities()
-        .values()
-        .any(|capability| capability.validate(&candidate.profile).is_ok())
-      {
-        return Err(invalid());
-      }
+      candidate.validate_capabilities(choices)?;
     }
     Ok(())
   }
@@ -131,7 +143,9 @@ impl FlowProfileSelectionBinding {
     if let FlowProfileSelectionPolicy::Rules { rules, otherwise } = &self.policy {
       if rules.len() > crate::MAX_FACTORY_ROLE_PROFILE_ENTRIES
         || serde_json::to_vec(&self.policy).map_err(|_| invalid())?.len() > crate::MAX_FLOW_GATE_PARAMETER_BYTES
-        || !self.candidates.contains_key(otherwise)
+        || otherwise
+          .as_ref()
+          .is_some_and(|candidate| !self.candidates.contains_key(candidate))
         || rules.iter().any(|rule| !self.candidates.contains_key(&rule.candidate))
       {
         return Err(invalid());

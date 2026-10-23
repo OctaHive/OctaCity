@@ -299,6 +299,94 @@ impl FactoryConfigurationChoices {
     &self.role_profiles
   }
 
+  /// Restricts an installed declaration to dependencies selectable in this catalog.
+  /// Optional unavailable entries are removed from the ceiling, never from a submitted profile.
+  /// Callers supply the authorized catalog when filtering operator-visible choices.
+  #[must_use]
+  pub fn available_role_profile_capability(
+    &self,
+    alias: &FactoryKey,
+    capability: &crate::FactoryRoleProfileCapability,
+  ) -> Option<crate::FactoryRoleProfileCapability> {
+    let installed = |reference: &ImmutableReference| {
+      self
+        .references
+        .iter()
+        .any(|((kind, _), entry)| *kind == FactoryChoiceKind::NodeCapability && entry == reference)
+    };
+    let definition = &capability.ceiling;
+    if !self
+      .references
+      .contains_key(&(FactoryChoiceKind::NodeCapability, alias.clone()))
+      || !self
+        .build_configurations
+        .values()
+        .any(|reference| reference == &definition.build_configuration)
+      || ![
+        &definition.toolchain.plugin,
+        &definition.toolchain.executable,
+        &definition.toolchain.model,
+      ]
+      .into_iter()
+      .all(installed)
+    {
+      return None;
+    }
+    let named = |kind, name: &FactoryKey| {
+      self
+        .references
+        .iter()
+        .any(|((entry_kind, alias), reference)| *entry_kind == kind && (alias == name || reference.identity() == name))
+    };
+    let permissions = &definition.permissions;
+    let mut available = capability.clone();
+    available.ceiling.permissions = crate::FactoryPermissionSet::try_new(crate::FactoryPermissionDraft {
+      plugins: permissions
+        .plugins()
+        .filter(|reference| installed(reference))
+        .cloned()
+        .collect(),
+      executables: permissions
+        .executables()
+        .filter(|reference| installed(reference))
+        .cloned()
+        .collect(),
+      tools: permissions
+        .tools()
+        .filter(|reference| installed(reference))
+        .cloned()
+        .collect(),
+      commands: permissions
+        .commands()
+        .filter(|command| installed(command.executable()))
+        .cloned()
+        .collect(),
+      secret_profiles: permissions
+        .secret_profiles()
+        .filter(|name| named(FactoryChoiceKind::SecretProfile, name))
+        .cloned()
+        .collect(),
+      workload_identity_profiles: permissions
+        .workload_identity_profiles()
+        .filter(|name| named(FactoryChoiceKind::WorkloadIdentityProfile, name))
+        .cloned()
+        .collect(),
+      max_descendants: permissions.max_descendants(),
+      mounts: permissions.mounts().cloned().collect(),
+      network_hosts: permissions.network_hosts().cloned().collect(),
+      resources: permissions.resources(),
+      outputs: permissions.outputs().clone(),
+    })
+    .ok()?;
+    available.ceiling.skills.retain(|_, reference| installed(reference));
+    available
+      .ceiling
+      .execution
+      .mcp_servers
+      .retain(|_, binding| installed(&binding.configuration));
+    Some(available)
+  }
+
   /// Returns a safe declaration for an exact installed category/alias.
   #[must_use]
   pub fn choice_metadata(&self, kind: FactoryChoiceKind, alias: &FactoryKey) -> Option<&FactoryChoiceMetadata> {
@@ -324,6 +412,31 @@ impl FactoryConfigurationChoices {
         .map(|(alias, reference)| (alias.clone(), reference.clone()))
         .collect(),
     }
+  }
+
+  /// Checks every exact runtime, verifier, model and Build reference without consulting worker capacity.
+  /// Role/profile settings and effective enforcement remain the profile capability validator's responsibility.
+  #[must_use]
+  pub fn supports_build_binding(&self, build: &crate::FlowBuildBinding) -> bool {
+    let selectable = |kind, reference: &ImmutableReference| {
+      self
+        .references
+        .iter()
+        .any(|((entry_kind, _), entry)| *entry_kind == kind && entry == reference)
+    };
+    [&build.tool, build.result_tool(), &build.plugin]
+      .into_iter()
+      .all(|reference| selectable(FactoryChoiceKind::NodeCapability, reference))
+      && (selectable(FactoryChoiceKind::NodeCapability, &build.model_or_tool)
+        || selectable(FactoryChoiceKind::DecisionSignalModel, &build.model_or_tool))
+      && self
+        .build_configurations
+        .values()
+        .any(|reference| reference == &build.build_configuration)
+      && build.evidence.iter().all(|evidence| {
+        selectable(FactoryChoiceKind::NodeCapability, evidence.tool())
+          && selectable(FactoryChoiceKind::NodeCapability, evidence.plugin())
+      })
   }
 
   /// Resolves one explicitly selected immutable Build configuration alias.
