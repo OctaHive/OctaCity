@@ -250,11 +250,33 @@ PostgreSQL migration 0102 stores these facts in `factory_flow_profile_selections
 with an exact frozen-input foreign key. The existing bounded metadata cleanup
 removes selection rows before their inputs, without cascading history deletion. No separate worker, scheduler or byte store is introduced.
 The same journal validates restored selections against the original policy.
+Manual records omit the optional rule provenance field, preserving their existing
+serialized identities.
 
-Fixed-choice retention and pending state are implemented. Live selection commands,
-rule evaluation, provider consumption, failure-policy recovery and selected Build
-dispatch remain the subsequent tasks (4.3–6.3); a recorded choice is not dispatched
-execution or stage completion. Manual task creation and static Build execution
+Rules evaluate the frozen, schema-validated node payload through the common typed
+Flow evaluator, with one shared 16,384-step allowance across the ordered rules
+and their nested collection scans. Known false conditions advance to the next
+rule; the first true condition selects its declared candidate. Only when every
+condition is known false does the explicit `otherwise` candidate apply. A missing
+operand, incompatible value type or exhausted allowance retains a typed
+`missing_input`, `invalid_type` or `evaluation_bound_exceeded` failure with no
+selected candidate; it never silently takes the catch-all. Schema-invalid input
+is rejected by the existing payload contract before selection, without coercion.
+An earlier explicit `absent` rule can handle an optional missing field before a
+later comparison requires it. Temporal predicates use the retained original
+selection start time, including during restoration.
+
+The optional record field `rules` distinguishes `matched` (with the zero-based
+rule position), `catch_all`, and `failed` (with its safe typed reason). The input
+digest and admitted definition bind the exact projected observations, schema,
+ordered criteria and complete candidate profiles. Restoration recomputes the
+same outcome from that frozen input and original time; polling reuses the saved
+fact without evaluating a new input or consulting live metadata.
+
+Fixed-choice retention, pending state and deterministic rule evaluation are
+implemented. Live selection commands, provider consumption, failure-policy
+recovery and selected Build dispatch remain the subsequent tasks (4.4–6.3); a
+recorded choice is not dispatched execution or stage completion. Manual task creation and static Build execution
 continue to use their existing mechanisms.
 
 ### Role package recovery and lifetime

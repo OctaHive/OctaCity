@@ -13,8 +13,20 @@ const MAX_DEPTH: usize = 16;
 const MAX_PREDICATES: usize = 128;
 const MAX_POINTER_BYTES: usize = 256;
 // Hard CPU ceiling across every rule, including nested rescans of root arrays.
-const MAX_EVALUATION_STEPS: usize = 16_384;
+pub(super) const MAX_EVALUATION_STEPS: usize = 16_384;
 const POLICY: &str = "factory.declarative-gate";
+
+/// Safe failure of a bounded typed predicate, without retaining criterion values.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowPredicateFailure {
+  /// A referenced observation or enclosing item is absent.
+  MissingInput,
+  /// Observed values do not support the declared operation; no coercion is applied.
+  InvalidType,
+  /// The shared finite computation allowance has been consumed.
+  EvaluationBoundExceeded,
+}
 
 /// Bounded array or boolean collection aggregation; missing facts stay unknown.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -26,7 +38,10 @@ pub enum FlowQuantifier {
   Every,
 }
 impl FlowQuantifier {
-  fn aggregate(self, values: impl Iterator<Item = Option<bool>>) -> Option<bool> {
+  fn aggregate(
+    self,
+    values: impl Iterator<Item = Result<bool, FlowPredicateFailure>>,
+  ) -> Result<bool, FlowPredicateFailure> {
     let mut seen = false;
     let mut result = self == Self::Every;
     for value in values {
@@ -37,7 +52,7 @@ impl FlowQuantifier {
         Self::Every => result &= value,
       }
     }
-    seen.then_some(result)
+    seen.then_some(result).ok_or(FlowPredicateFailure::InvalidType)
   }
 }
 
@@ -305,7 +320,9 @@ impl FlowGateProgram {
   fn select_with_time(&self, input: &FlowPayload, at: Option<Value>) -> Result<FactoryKey, FactoryError> {
     let mut remaining = MAX_EVALUATION_STEPS;
     if let Some(precondition) = &self.precondition {
-      let matched = precondition.evaluate(input.value(), None, at.as_ref(), &mut remaining);
+      let matched = precondition
+        .evaluate(input.value(), None, at.as_ref(), &mut remaining)
+        .ok();
       if remaining == 0 {
         return Err(invalid());
       }
@@ -314,7 +331,10 @@ impl FlowGateProgram {
       }
     }
     for rule in &self.rules {
-      let matched = rule.when.evaluate(input.value(), None, at.as_ref(), &mut remaining);
+      let matched = rule
+        .when
+        .evaluate(input.value(), None, at.as_ref(), &mut remaining)
+        .ok();
       if remaining == 0 {
         return Err(invalid());
       }
@@ -363,13 +383,19 @@ impl FlowOperand {
     }
     Ok(())
   }
-  fn resolve<'a>(&'a self, root: &'a Value, item: Option<&'a Value>, at: Option<&'a Value>) -> Option<&'a Value> {
+  fn resolve<'a>(
+    &'a self,
+    root: &'a Value,
+    item: Option<&'a Value>,
+    at: Option<&'a Value>,
+  ) -> Result<&'a Value, FlowPredicateFailure> {
     match self {
       Self::ObservationTime => at,
       Self::Path { path } => root.pointer(path),
-      Self::Item { path } => item?.pointer(path),
+      Self::Item { path } => item.and_then(|item| item.pointer(path)),
       Self::Literal { value } => Some(value),
     }
+    .ok_or(FlowPredicateFailure::MissingInput)
   }
 }
 pub(super) fn validate_pointer(path: &str) -> Result<(), FactoryError> {
@@ -425,8 +451,16 @@ impl FlowPredicate {
     }
     Ok(())
   }
-  fn evaluate(&self, root: &Value, item: Option<&Value>, at: Option<&Value>, remaining: &mut usize) -> Option<bool> {
-    *remaining = remaining.checked_sub(1)?;
+  pub(super) fn evaluate(
+    &self,
+    root: &Value,
+    item: Option<&Value>,
+    at: Option<&Value>,
+    remaining: &mut usize,
+  ) -> Result<bool, FlowPredicateFailure> {
+    *remaining = remaining
+      .checked_sub(1)
+      .ok_or(FlowPredicateFailure::EvaluationBoundExceeded)?;
     match self {
       Self::All { predicates } => FlowQuantifier::Every.aggregate(
         predicates
@@ -443,7 +477,10 @@ impl FlowPredicate {
         quantifier,
         predicate,
       } => {
-        let values = collection.resolve(root, item, at)?.as_array()?;
+        let values = collection
+          .resolve(root, item, at)?
+          .as_array()
+          .ok_or(FlowPredicateFailure::InvalidType)?;
         quantifier.aggregate(
           values
             .iter()
@@ -452,7 +489,7 @@ impl FlowPredicate {
       }
       Self::Not { predicate } => predicate.evaluate(root, item, at, remaining).map(|known| !known),
       Self::Exists { operand } => operand.resolve(root, item, at).map(|_| true),
-      Self::Absent { path } => Some(root.pointer(path).is_none()),
+      Self::Absent { path } => Ok(root.pointer(path).is_none()),
       Self::Compare {
         left,
         comparison,
@@ -460,32 +497,43 @@ impl FlowPredicate {
       } => {
         let (left, right) = (left.resolve(root, item, at)?, right.resolve(root, item, at)?);
         match comparison {
-          FlowComparison::ExactValue => Some(left == right),
+          FlowComparison::ExactValue => Ok(left == right),
           FlowComparison::Equal => {
             let same_type = matches!(
               (left, right),
               (Value::Null, Value::Null) | (Value::Bool(_), Value::Bool(_)) | (Value::String(_), Value::String(_))
             ) || (left.as_i64().is_some() && right.as_i64().is_some());
-            same_type.then_some(left == right)
+            same_type
+              .then_some(left == right)
+              .ok_or(FlowPredicateFailure::InvalidType)
           }
           FlowComparison::RepositoryPathWithin => {
-            let path = crate::FactoryRepositoryPath::new(left.as_str()?).ok()?;
-            let prefix = crate::FactoryRepositoryPath::new(right.as_str()?).ok()?;
-            Some(path.is_within(&prefix))
+            let path = crate::FactoryRepositoryPath::new(left.as_str().ok_or(FlowPredicateFailure::InvalidType)?)
+              .map_err(|_| FlowPredicateFailure::InvalidType)?;
+            let prefix = crate::FactoryRepositoryPath::new(right.as_str().ok_or(FlowPredicateFailure::InvalidType)?)
+              .map_err(|_| FlowPredicateFailure::InvalidType)?;
+            Ok(path.is_within(&prefix))
           }
           FlowComparison::RepositoryPathWithinAny => {
-            let path = crate::FactoryRepositoryPath::new(left.as_str()?).ok()?;
+            let path = crate::FactoryRepositoryPath::new(left.as_str().ok_or(FlowPredicateFailure::InvalidType)?)
+              .map_err(|_| FlowPredicateFailure::InvalidType)?;
             let mut matched = false;
-            for prefix in right.as_array()? {
-              *remaining = remaining.checked_sub(1)?;
-              let prefix = crate::FactoryRepositoryPath::new(prefix.as_str()?).ok()?;
+            for prefix in right.as_array().ok_or(FlowPredicateFailure::InvalidType)? {
+              *remaining = remaining
+                .checked_sub(1)
+                .ok_or(FlowPredicateFailure::EvaluationBoundExceeded)?;
+              let prefix = crate::FactoryRepositoryPath::new(prefix.as_str().ok_or(FlowPredicateFailure::InvalidType)?)
+                .map_err(|_| FlowPredicateFailure::InvalidType)?;
               matched |= path.is_within(&prefix);
             }
-            Some(matched)
+            Ok(matched)
           }
           FlowComparison::Greater | FlowComparison::LessOrEqual => {
-            let (left, right) = (left.as_i64()?, right.as_i64()?);
-            Some(match comparison {
+            let (left, right) = (
+              left.as_i64().ok_or(FlowPredicateFailure::InvalidType)?,
+              right.as_i64().ok_or(FlowPredicateFailure::InvalidType)?,
+            );
+            Ok(match comparison {
               FlowComparison::Greater => left > right,
               _ => left <= right,
             })

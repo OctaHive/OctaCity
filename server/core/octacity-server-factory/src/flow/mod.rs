@@ -15,7 +15,7 @@ pub use profile_selection::{
   FlowProfileCandidate, FlowProfileSelectionBinding, FlowProfileSelectionFailure, FlowProfileSelectionPolicy,
   FlowProfileSelectionRule,
 };
-pub use profile_selection_record::FlowProfileSelectionRecord;
+pub use profile_selection_record::{FlowProfileRuleOutcome, FlowProfileSelectionRecord};
 mod build;
 mod build_execution;
 mod build_intent;
@@ -28,7 +28,9 @@ mod gate;
 mod human;
 pub use human::{FlowHumanDisposition, FlowHumanGateBinding, FlowHumanOperation};
 mod predicate;
-pub use predicate::{FlowComparison, FlowGateProgram, FlowGateRule, FlowOperand, FlowPredicate, FlowQuantifier};
+pub use predicate::{
+  FlowComparison, FlowGateProgram, FlowGateRule, FlowOperand, FlowPredicate, FlowPredicateFailure, FlowQuantifier,
+};
 mod incoming;
 mod input;
 pub use incoming::FlowIncomingData;

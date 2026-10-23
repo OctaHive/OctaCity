@@ -37,7 +37,7 @@ pub(crate) fn prepare(
     return Ok(None);
   }
   let selection =
-    FlowProfileSelectionRecord::manual(&input, &snapshot.admitted_flow, at).map_err(|_| ApplicationError::invalid())?;
+    FlowProfileSelectionRecord::select(&input, &snapshot.admitted_flow, at).map_err(|_| ApplicationError::invalid())?;
   let mut append = FactoryRunHistoryAppend::default();
   if frozen.is_none() {
     append.flow.data.inputs.push(input);

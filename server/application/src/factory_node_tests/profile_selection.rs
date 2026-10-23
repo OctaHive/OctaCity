@@ -255,3 +255,62 @@ fn the_selection_journal_cannot_shift_the_original_stage_deadline() {
     assert_eq!(before, store.factory_run_snapshot(run).await.unwrap());
   });
 }
+
+#[test]
+fn ordered_rules_retain_the_first_matching_profile_without_execution() {
+  crate::factory_admission_tests::run_ready(async {
+    let policy = serde_json::from_value(serde_json::json!({
+      "mode":"rules", "rules":[
+        {"when":{"operation":"compare","left":{"source":"path","path":"/count"},"comparison":"greater","right":{"source":"literal","value":2}},"candidate":"advanced"},
+        {"when":{"operation":"exists","operand":{"source":"path","path":"/count"}},"candidate":"specialized"}
+      ],"otherwise":"baseline"
+    })).unwrap();
+    let (admission, input, ownership) = testing::factory_profile_selection_policy_contract_fixture(policy);
+    assert_eq!(input.payload().value(), &serde_json::json!({"count":3}));
+    let run = admission.run.id();
+    let (store, claim) = start(admission.clone(), ownership).await;
+    let target = FactoryNodeTarget {
+      flow_run_id: input.flow_run_id(),
+      cycle_id: input.cycle_id(),
+      node: input.node().clone(),
+    };
+    let runner = FactoryNodeRunner::new(
+      store.clone(),
+      Arc::new(NoExecution),
+      crate::factory_node_test_support::clock(),
+    );
+    assert_eq!(
+      runner
+        .run_once(run, claim.id, target.clone(), Some(input.clone()), at(11))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Advanced
+    );
+    let before = store.factory_run_snapshot(run).await.unwrap();
+    let choice = &before.flow.data.profile_selections[0];
+    assert_eq!(choice.candidate(), Some(&key("advanced")));
+    assert_eq!(choice.input_digest(), input.digest().unwrap());
+    let bytes = serde_json::to_value(choice).unwrap();
+    assert_eq!(bytes["rules"], serde_json::json!({"kind":"matched","rule":0}));
+    assert_eq!(
+      FlowProfileSelectionRecord::restore(
+        &serde_json::to_vec(choice).unwrap(),
+        &input,
+        &admission.flow,
+        choice.digest().unwrap()
+      )
+      .unwrap(),
+      *choice
+    );
+    assert!(before.flow.attempts.is_empty());
+    assert!(before.flow.data.build_intents.is_empty());
+    assert_eq!(
+      runner
+        .run_once(run, claim.id, target, Some(input), at(12))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Waiting
+    );
+    assert_eq!(before, store.factory_run_snapshot(run).await.unwrap());
+  });
+}

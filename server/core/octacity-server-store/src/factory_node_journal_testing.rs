@@ -840,4 +840,6 @@ pub fn factory_flow_contract_transition(
 }
 
 mod profile_selection;
-pub use profile_selection::factory_profile_selection_contract_fixture;
+pub use profile_selection::{
+  factory_profile_selection_contract_fixture, factory_profile_selection_policy_contract_fixture,
+};

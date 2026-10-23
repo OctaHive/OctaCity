@@ -2305,13 +2305,31 @@ async fn seed_projection_admission(
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
-async fn manual_profile_selections_survive_restart_without_execution() {
+async fn profile_selections_survive_restart_without_execution() {
   use octacity_server_factory::*;
-  use octacity_server_store::testing::{factory_flow_contract_transition, factory_profile_selection_contract_fixture};
+  use octacity_server_store::testing::{
+    factory_flow_contract_transition, factory_profile_selection_policy_contract_fixture,
+  };
   use octacity_server_store::*;
-  for candidate in [None, Some("specialized")] {
+  let rule = |path: &str| {
+    serde_json::from_value(serde_json::json!({"mode":"rules","rules":[{
+    "when":{"operation":"exists","operand":{"source":"path","path":path}},"candidate":"advanced"
+  }],"otherwise":"baseline"}))
+    .unwrap()
+  };
+  for (policy, candidate) in [
+    (FlowProfileSelectionPolicy::Manual { candidate: None }, None),
+    (
+      FlowProfileSelectionPolicy::Manual {
+        candidate: Some(key("specialized")),
+      },
+      Some("specialized"),
+    ),
+    (rule("/count"), Some("advanced")),
+    (rule("/complexity"), None),
+  ] {
     let database = TestDatabase::migrated().await;
-    let (admission, input, ownership) = factory_profile_selection_contract_fixture(candidate);
+    let (admission, input, ownership) = factory_profile_selection_policy_contract_fixture(policy);
     let (store, _) = seed_projection_admission(&database, &admission).await;
     let run = admission.run.id();
     let claim = FactoryRunClaimRecord::new(run, ownership.owner().clone(), ownership.claim());
@@ -2333,7 +2351,7 @@ async fn manual_profile_selections_survive_restart_without_execution() {
       .await
       .unwrap();
     let snapshot = store.factory_run_snapshot(run).await.unwrap();
-    let selection = FlowProfileSelectionRecord::manual(&input, &admission.flow, time(11)).unwrap();
+    let selection = FlowProfileSelectionRecord::select(&input, &admission.flow, time(11)).unwrap();
     assert_eq!(selection.candidate().map(FactoryKey::as_str), candidate);
     let mut transition = factory_flow_contract_transition(&snapshot, &claim, 11);
     transition.append.flow.data.inputs.push(input.clone());

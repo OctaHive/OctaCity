@@ -631,9 +631,9 @@ impl ManagementEvidenceIdentity<'_> {
 pub use crate::factory_node_journal_testing::{
   FactoryNodeJournalContractFixture, factory_flow_contract_transition, factory_node_journal_contract_fixture,
   factory_node_journal_contract_fixture_with_large_signal, factory_node_journal_contract_fixture_with_retries,
-  factory_profile_selection_contract_fixture, factory_two_check_journal_fixture,
-  factory_verification_journal_contract_fixture, factory_verified_check_journal_fixture,
-  verify_factory_node_journal_contract,
+  factory_profile_selection_contract_fixture, factory_profile_selection_policy_contract_fixture,
+  factory_two_check_journal_fixture, factory_verification_journal_contract_fixture,
+  factory_verified_check_journal_fixture, verify_factory_node_journal_contract,
 };
 
 pub use crate::integration_administration_tests::{
