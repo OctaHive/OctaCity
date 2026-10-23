@@ -34,25 +34,34 @@ pub(crate) async fn prepare(
     .and_then(|definition| definition.node(input.node()))
     .and_then(|node| node.profile_selection())
     .ok_or_else(ApplicationError::invalid)?;
+  if !octacity_server_store::factory_profile_wait_is_open(snapshot, &input, at) {
+    return Err(ApplicationError::invalid());
+  }
   let digest = input.digest().map_err(|_| ApplicationError::invalid())?;
-  if let Some(selection) = snapshot
-    .flow
-    .data
-    .profile_selections
-    .iter()
-    .find(|selection| selection.input_digest() == digest)
-  {
+  if let Some(selection) = snapshot.flow.data.current_profile_selection(digest) {
+    if let Some(control) = octacity_server_store::latest_factory_profile_control(&snapshot.controls, digest)
+      && selection.manual_control() != Some(control.id)
+      && let octacity_server_store::FactoryRunControlIntent::SelectProfile { profile, .. } = &control.intent
+    {
+      let candidate = binding
+        .candidates
+        .values()
+        .find(|c| c.profile.reference() == profile)
+        .ok_or_else(ApplicationError::invalid)?;
+      validate_candidate(snapshot, catalog, candidate).await?;
+      let chosen = selection
+        .choose(&input, &snapshot.admitted_flow, profile, control.id, at)
+        .map_err(|_| ApplicationError::invalid())?;
+      let mut append = FactoryRunHistoryAppend::default();
+      append.flow.data.profile_selections.push(chosen);
+      return Ok(Some(append));
+    }
     if let Some(candidate) = selection.candidate() {
-      let choices = current_choices(snapshot, catalog)
-        .await?
-        .ok_or_else(ApplicationError::capability_unavailable)?;
       let candidate = binding
         .candidates
         .get(candidate)
         .ok_or_else(ApplicationError::invalid)?;
-      candidate
-        .validate_capabilities(&choices)
-        .map_err(|_| ApplicationError::capability_unavailable())?;
+      validate_candidate(snapshot, catalog, candidate).await?;
     }
     return Ok(None);
   }
@@ -77,6 +86,20 @@ pub(crate) async fn prepare(
   }
   append.flow.data.profile_selections.push(selection);
   Ok(Some(append))
+}
+
+/// Current capability qualification never changes the pinned choice or invokes a selector.
+pub(crate) async fn validate_candidate(
+  snapshot: &FactoryRunSnapshot,
+  catalog: Option<&dyn octacity_server_store::FactoryConfigurationStore>,
+  candidate: &octacity_server_factory::FlowProfileCandidate,
+) -> Result<(), ApplicationError> {
+  let choices = current_choices(snapshot, catalog)
+    .await?
+    .ok_or_else(ApplicationError::capability_unavailable)?;
+  candidate
+    .validate_capabilities(&choices)
+    .map_err(|_| ApplicationError::capability_unavailable())
 }
 
 async fn current_choices(

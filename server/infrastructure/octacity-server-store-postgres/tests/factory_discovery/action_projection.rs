@@ -91,11 +91,11 @@ async fn pending_gate(store: &PostgresStore, admission: &PublishedFactoryAdmissi
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn action_projection_recovers_publication_and_fences_source_versions_without_blocking_controls() {
-  let database = TestDatabase::empty().await;
-  octacity_server_store_postgres::MIGRATOR
-    .run_to(90, &database.pool)
-    .await
-    .unwrap();
+  let database = TestDatabase::migrated().await;
+  // Keep the current execution journal schema while qualifying only the original
+  // read-side upgrade. Current readers cannot run against the pre-0102 authority.
+  sqlx::raw_sql("DROP TABLE factory_action_items; DROP TABLE factory_action_projections; DROP INDEX factory_runs_action_backfill_idx; DELETE FROM _sqlx_migrations WHERE version IN (91, 92)")
+    .execute(&database.pool).await.unwrap();
   let admission = human::human_fixture_with_contract(
     FlowDataSchema::new(key("operator.response"), key("v1"), FlowValueSchema::Boolean).unwrap(),
     None,
@@ -362,9 +362,11 @@ async fn shared_action_queue_filters_visibility_before_counts_cursors_and_covera
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn action_response_shape_upgrade_invalidates_only_derived_rows_and_backfills_original_targets() {
-  let database = TestDatabase::empty().await;
-  octacity_server_store_postgres::MIGRATOR
-    .run_to(91, &database.pool)
+  let database = TestDatabase::migrated().await;
+  // Replay the response-shape migration over its old derived rows, retaining
+  // unrelated current execution tables required by the reader.
+  sqlx::query("DELETE FROM _sqlx_migrations WHERE version = 92")
+    .execute(&database.pool)
     .await
     .unwrap();
   let admission = human::human_fixture_with_contract(

@@ -238,6 +238,7 @@ impl ProjectTextPreparation {
     let s = &self.intent;
     let t = s.target;
     Ok(FactoryWorkAdmissionIntent {
+      profile_overrides: Default::default(),
       project_id: t.project_id,
       configuration_id: t.configuration_id,
       configuration_version: t.configuration_version,

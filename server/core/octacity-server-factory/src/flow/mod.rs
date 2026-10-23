@@ -9,8 +9,10 @@ pub use template::{
   FlowDefinitionTemplate, FlowTemplateDeliverableBinding, FlowTemplateDeliverablePolicy, FlowTemplateNode,
   FlowTemplateOutcome, FlowTemplateSchema, PublishedFlowTemplate,
 };
+mod profile_override;
 mod profile_selection;
 mod profile_selection_record;
+pub use profile_override::{FlowProfileAdmissionOverride, FlowProfileAdmissionOverrides, FlowStageAddress};
 pub use profile_selection::{
   FlowProfileCandidate, FlowProfileSelectionBinding, FlowProfileSelectionFailure, FlowProfileSelectionPolicy,
   FlowProfileSelectionRule,

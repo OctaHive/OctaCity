@@ -184,6 +184,62 @@ impl<S: FactoryRunControlStore + octacity_server_store::FactoryRunStore + 'stati
   }
 }
 
+/// Records an exact profile choice for one pending, undispatched node occurrence.
+/// Acceptance is durable intent; the fenced Flow owner consumes it separately.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SelectFactoryProfileCommand {
+  /// Owning Factory Run.
+  pub run_id: FactoryRunId,
+  /// Exact frozen input shown to the operator, including cycle and generation.
+  pub input_digest: octacity_server_factory::FactoryDigest,
+  /// Exact profile version from the stage's admitted candidate set.
+  pub profile: octacity_server_factory::FactoryRoleProfileRef,
+  /// Current aggregate precondition shown to the operator.
+  pub expected_version: FactoryRunVersion,
+  /// Scoped transport replay identity.
+  pub idempotency_key: IdempotencyKey,
+  /// Authoritative acceptance time, within the original stage deadline.
+  pub requested_at: Timestamp,
+}
+impl Command for SelectFactoryProfileCommand {
+  type Outcome = FactoryRunControlCommandOutcome;
+}
+impl ManagementAuthorizationTarget for SelectFactoryProfileCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Execute, ManagementResourceKind::FactoryRun);
+  fn management_resource(&self) -> ManagementResourceResult {
+    instance_resource(ManagementResourceKind::FactoryRun, self.run_id)
+  }
+}
+#[async_trait]
+impl<S: FactoryRunControlStore + 'static> crate::ManagementCommandUseCase<SelectFactoryProfileCommand>
+  for FactoryControlHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &crate::ManagementRequestContext,
+    _grant: &crate::ManagementAuthorizationGrant,
+    command: SelectFactoryProfileCommand,
+  ) -> Result<FactoryRunControlCommandOutcome, Self::Error> {
+    self
+      .apply(
+        context,
+        ApplyFactoryRunControl {
+          run_id: command.run_id,
+          expected_version: command.expected_version,
+          idempotency_key: command.idempotency_key,
+          requested_at: command.requested_at,
+          intent: FactoryRunControlIntent::SelectProfile {
+            input_digest: command.input_digest,
+            profile: command.profile,
+          },
+        },
+      )
+      .await
+  }
+}
+
 /// Requests durable cancellation of one non-terminal Factory Run.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CancelFactoryRunCommand {

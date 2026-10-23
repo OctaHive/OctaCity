@@ -714,6 +714,12 @@ impl FactoryPermissionSet {
     }
   }
 
+  /// Narrows the execution watchdog to an enclosing immutable budget.
+  pub(crate) fn with_elapsed_limit(mut self, maximum: u64) -> Self {
+    self.resources.elapsed_millis = self.resources.elapsed_millis.min(maximum);
+    self
+  }
+
   /// Reports whether this set grants no authority beyond an enclosing set.
   #[must_use]
   pub fn is_no_broader_than(&self, enclosing: &Self) -> bool {

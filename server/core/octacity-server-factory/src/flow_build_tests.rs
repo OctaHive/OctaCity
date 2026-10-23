@@ -1232,3 +1232,125 @@ fn build_reservation_keeps_the_owning_flow_attempt_ceiling_even_with_spare_aggre
     "a local attempt limit is enforced independently of aggregate capacity"
   );
 }
+
+#[test]
+fn build_provenance_cannot_borrow_a_compatible_sibling_node_profile() {
+  let time = |value| octacity_server_domain::Timestamp::from_unix_millis(value).unwrap();
+  let (work, previous, schema, original_input, old) = execution_fixture(FlowNodeKind::Reasoning);
+  let original = previous.closure().definition(original_input.definition()).unwrap();
+  let mut sibling = serde_json::to_value(&original.nodes()[0]).unwrap();
+  sibling["key"] = serde_json::json!("another_stage");
+  sibling["input_binding"] = serde_json::json!({"sources":{"result":{"source":"predecessor","view":"payload","path":""}},"mapping":{"value":{"mapping":"pointer","path":"/result"}}});
+  sibling["build"]["task_digest"] = serde_json::to_value(FactoryDigest::from_bytes([91; 32])).unwrap();
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: FlowDefinitionId::generate(),
+    version: FlowDefinitionVersion::INITIAL,
+    input_schema: original.input_schema().cloned(),
+    entry: original.entry().clone(),
+    nodes: vec![original.nodes()[0].clone(), serde_json::from_value(sibling).unwrap()],
+    transitions: vec![
+      FlowTransition::new(
+        original.entry().clone(),
+        key("observed"),
+        FlowTransitionTarget::Node(key("another_stage")),
+      ),
+      FlowTransition::new(
+        key("another_stage"),
+        key("observed"),
+        original.transitions()[0].target().clone(),
+      ),
+    ],
+    terminals: original.terminals().to_vec(),
+    context_projections: vec![],
+    data_projections: vec![],
+    execution: original.execution().clone(),
+  })
+  .unwrap();
+  let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
+  let flow = FlowRun::root(&run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition.clone()]).unwrap(),
+    previous.limits().clone(),
+    flow,
+    cycle,
+    previous.wip_limits(),
+  )
+  .unwrap()
+  .with_data_schemas(vec![schema.clone()])
+  .unwrap();
+  let input = FlowNodeInput::new(
+    &work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    original_input.node().clone(),
+    original_input.payload().clone(),
+  )
+  .unwrap()
+  .with_context(original_input.context().unwrap().clone(), vec![])
+  .unwrap();
+  let attempt = NodeAttempt::new(
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    &definition,
+    NodeAttemptInput {
+      id: NodeAttemptId::generate(),
+      node_key: input.node().clone(),
+      node_kind: FlowNodeKind::Reasoning,
+      number: NodeAttemptNumber::INITIAL,
+      input_digest: input.digest().unwrap(),
+      budget: old.budget(),
+      started_at: old.started_at(),
+      deadline: old.deadline(),
+      execution: old.execution().clone(),
+      ownership: FactoryClaimOwnership::new(old.owner().clone(), old.claim()),
+    },
+  )
+  .unwrap();
+  let intent = FlowBuildIntent::new(input.clone(), &admitted, attempt.clone(), BudgetUsage::default(), 1).unwrap();
+  let payload = FlowPayload::new(&schema, serde_json::json!({"count":9})).unwrap();
+  let record = FlowNodeRecord::new(
+    &input,
+    &attempt,
+    &definition,
+    FlowRecordObservation {
+      outcome: key("observed"),
+      payload,
+      producer: attempt.execution().clone(),
+      observed_at: time(30),
+    },
+  )
+  .unwrap();
+  let output = FlowVerifiedBuildOutput {
+    name: key("audit.report"),
+    output_kind: EvidenceOutputKind::Report,
+    schema: schema.reference().clone(),
+    artifact: FactoryArtifactReference::new(
+      octacity_server_domain::ArtifactId::generate(),
+      FactoryDigest::from_bytes([92; 32]),
+      11,
+    )
+    .unwrap(),
+    producer: EvidenceProducer::new(
+      octacity_server_domain::BuildId::generate(),
+      octacity_server_domain::AttemptId::generate(),
+      octacity_server_domain::JobId::generate(),
+      intent.profile().tool.clone(),
+      intent.profile().plugin.clone(),
+    ),
+    verified_at: time(30),
+    fresh_until: time(90),
+    data: None,
+  };
+  let good = FlowBuildProvenance::new(intent.profile().clone(), vec![output.clone()]).unwrap();
+  assert!(record.clone().with_build_provenance(good, &definition).is_ok());
+  let mut sibling_profile = intent.profile().clone();
+  sibling_profile.node = key("another_stage");
+  sibling_profile.task_digest = FactoryDigest::from_bytes([91; 32]);
+  let substituted = FlowBuildProvenance::new(sibling_profile, vec![output]).unwrap();
+  assert!(
+    record.with_build_provenance(substituted, &definition).is_err(),
+    "matching schemas and verifier tools cannot authorize another stage's task/model"
+  );
+}

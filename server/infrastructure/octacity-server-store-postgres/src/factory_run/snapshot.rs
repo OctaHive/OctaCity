@@ -112,7 +112,15 @@ pub(crate) async fn read_snapshot_in_transaction(
     outbox,
     current: locked.current,
   };
-  snapshot.controls = super::control::read_controls(transaction, &snapshot).await?;
+  snapshot.controls = super::control::read_controls(
+    transaction,
+    &snapshot.run,
+    &snapshot.admitted_flow,
+    &snapshot.flow.attempts,
+    &snapshot.flow.runs,
+    &snapshot.flow.data.stops,
+  )
+  .await?;
   octacity_server_store::validate_factory_node_control_history(&snapshot)?;
 
   Ok(snapshot)

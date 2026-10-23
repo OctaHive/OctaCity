@@ -70,6 +70,42 @@ pub fn factory_profile_selection_capabilities(admitted: &AdmittedFlow) -> Factor
       }
     }
   }
+  for candidate in &candidates {
+    for (kind, names) in [
+      (
+        FactoryChoiceKind::SecretProfile,
+        candidate
+          .profile
+          .definition()
+          .permissions
+          .secret_profiles()
+          .collect::<Vec<_>>(),
+      ),
+      (
+        FactoryChoiceKind::WorkloadIdentityProfile,
+        candidate
+          .profile
+          .definition()
+          .permissions
+          .workload_identity_profiles()
+          .collect::<Vec<_>>(),
+      ),
+    ] {
+      for name in names {
+        if !entries
+          .references
+          .iter()
+          .any(|entry| entry.kind == kind && &entry.alias == name)
+        {
+          entries.references.push(FactoryReferenceChoice {
+            kind,
+            alias: name.clone(),
+            reference: ImmutableReference::new(name.clone(), key("v1"), digest(7)),
+          });
+        }
+      }
+    }
+  }
   let mut choices = FactoryConfigurationChoices::try_new(entries).unwrap();
   for (index, candidate) in candidates.iter().enumerate() {
     choices = choices
@@ -223,6 +259,241 @@ fn selection_fixture(
 mod tests {
   use super::*;
   use serde_json::json;
+
+  fn nested_override_fixture() -> (PublishedFactoryAdmission, FlowPayload, FactoryClaimOwnership) {
+    let (mut admission, input, ownership) = factory_profile_selection_contract_fixture(Some("advanced"));
+    let prior = &admission.flow.closure().definitions()[0];
+    let budget = BudgetLimit::new(32, 32_000, 32_000, 32_000, 320_000).unwrap();
+    let permissions = admission.flow.limits().permissions().clone();
+    let binding = FlowInputBinding::new(
+      Default::default(),
+      FlowDataMapping::new(FlowValueMapping::Constant {
+        value: input.payload().value().clone(),
+      })
+      .unwrap(),
+    )
+    .unwrap();
+    let child_node = prior.nodes()[0].clone().with_input_binding(binding.clone()).unwrap();
+    let child = FlowDefinition::new(FlowDefinitionInput {
+      id: prior.reference().id(),
+      version: prior.reference().version(),
+      input_schema: prior.input_schema().cloned(),
+      entry: prior.entry().clone(),
+      nodes: vec![child_node],
+      transitions: prior.transitions().to_vec(),
+      terminals: prior.terminals().to_vec(),
+      context_projections: prior.context_projections().to_vec(),
+      data_projections: prior.data_projections().to_vec(),
+      execution: prior.execution().clone(),
+    })
+    .unwrap();
+    let returned = child.terminals()[0].key().clone();
+    let result_schema = child.terminals()[0].schema().clone();
+    let calls = ["left", "right"]
+      .into_iter()
+      .map(|name| {
+        FlowNodeDefinition::new(FlowNodeDefinitionInput {
+          key: key(name),
+          kind: FlowNodeKind::SubflowCall,
+          input_schema: Some(input.payload().schema().clone()),
+          outcomes: vec![FlowOutcomeDefinition::new(
+            returned.clone(),
+            FlowOutcomeKind::Success,
+            result_schema.clone(),
+          )],
+          budget,
+          permissions: permissions.clone(),
+          required: true,
+          subflow: Some(child.reference()),
+        })
+        .unwrap()
+        .with_input_binding(binding.clone())
+        .unwrap()
+      })
+      .collect();
+    let root = FlowDefinition::new(FlowDefinitionInput {
+      id: FlowDefinitionId::generate(),
+      version: FlowDefinitionVersion::INITIAL,
+      input_schema: Some(input.payload().schema().clone()),
+      entry: key("left"),
+      nodes: calls,
+      transitions: vec![
+        FlowTransition::new(key("left"), returned.clone(), FlowTransitionTarget::Node(key("right"))),
+        FlowTransition::new(key("right"), returned, FlowTransitionTarget::Terminal(key("done"))),
+      ],
+      terminals: vec![FlowTerminalDefinition::new(key("done"), result_schema)],
+      context_projections: vec![],
+      data_projections: vec![],
+      execution: FlowExecutionPolicy::new(budget, permissions.clone(), 1).unwrap(),
+    })
+    .unwrap();
+    let root_run = FlowRun::root(&admission.run, root.reference()).unwrap();
+    let cycle = WorkflowCycle::initial(&root_run).unwrap();
+    admission.flow = AdmittedFlow::new(
+      PinnedFlowDefinitionClosure::new(root.reference(), vec![root, child]).unwrap(),
+      FlowAdmissionLimits::product_defaults(2, budget, permissions).unwrap(),
+      root_run,
+      cycle,
+      FactoryWipLimits::new(4, 8).unwrap(),
+    )
+    .unwrap()
+    .with_data_schemas(admission.flow.data_schemas().to_vec())
+    .unwrap();
+    (admission, input.payload().clone(), ownership)
+  }
+
+  #[test]
+  fn admission_override_distinguishes_nested_call_sites_and_survives_input_recovery_and_retry() {
+    let (admission, payload, ownership) = nested_override_fixture();
+    let root = admission
+      .flow
+      .closure()
+      .definition(admission.flow.closure().root())
+      .unwrap();
+    let child = admission
+      .flow
+      .closure()
+      .definition(root.node(&key("left")).unwrap().subflow_definition().unwrap())
+      .unwrap();
+    let selected = child.nodes()[0].profile_selection().unwrap().candidates[&key("specialized")]
+      .profile
+      .reference();
+    let overrides = serde_json::from_value(
+      json!([{"stage":{"root":root.reference(),"calls":["left"],"node":child.entry()},"profile":selected}]),
+    )
+    .unwrap();
+    let work = admission
+      .work
+      .with_profile_overrides(overrides, admission.flow.closure())
+      .unwrap();
+    let calls: Vec<_> = ["left", "right"]
+      .into_iter()
+      .enumerate()
+      .map(|(index, name)| {
+        NodeAttempt::new(
+          admission.flow.root_run(),
+          admission.flow.initial_cycle(),
+          root,
+          NodeAttemptInput {
+            id: NodeAttemptId::generate(),
+            node_key: key(name),
+            node_kind: FlowNodeKind::SubflowCall,
+            number: NodeAttemptNumber::new(index as u64 + 1).unwrap(),
+            input_digest: FlowNodeInput::new(
+              &work,
+              &admission.flow,
+              admission.flow.root_run(),
+              admission.flow.initial_cycle(),
+              key(name),
+              payload.clone(),
+            )
+            .unwrap()
+            .digest()
+            .unwrap(),
+            budget: root.node(&key(name)).unwrap().budget(),
+            started_at: time(11),
+            deadline: time(99),
+            execution: NodeExecutionIdentity::BuiltIn,
+            ownership: ownership.clone(),
+          },
+        )
+        .unwrap()
+      })
+      .collect();
+    let children: Vec<_> = calls
+      .iter()
+      .map(|call| {
+        FlowRun::nested(
+          FlowRunId::generate(),
+          admission.run.id(),
+          child.reference(),
+          FlowRunParent::new(call.flow_run_id(), call.id()),
+        )
+      })
+      .collect();
+    let mut flows = vec![admission.flow.root_run().clone()];
+    flows.extend(children.clone());
+    let mut cycles = vec![admission.flow.initial_cycle().clone()];
+    cycles.extend(children.iter().map(|flow| WorkflowCycle::initial(flow).unwrap()));
+    let history = FlowRuntimeHistory {
+      stops: &[],
+      flow_runs: &flows,
+      cycles: &cycles,
+      attempts: &calls,
+      completions: &[],
+    };
+    for (index, expected) in [(0, "specialized"), (1, "advanced")] {
+      let input = FlowNodeInput::new(
+        &work,
+        &admission.flow,
+        &children[index],
+        &cycles[index + 1],
+        child.entry().clone(),
+        payload.clone(),
+      )
+      .unwrap()
+      .with_admission_profile(&work, &admission.flow, history)
+      .unwrap();
+      let previous = NodeAttempt::new(
+        &children[index],
+        &cycles[index + 1],
+        child,
+        NodeAttemptInput {
+          id: NodeAttemptId::generate(),
+          node_key: child.entry().clone(),
+          node_kind: FlowNodeKind::Reasoning,
+          number: NodeAttemptNumber::INITIAL,
+          input_digest: input.digest().unwrap(),
+          budget: child.nodes()[0].budget(),
+          started_at: time(12),
+          deadline: time(99),
+          execution: NodeExecutionIdentity::External(
+            child.nodes()[0].profile_selection().unwrap().candidates[&key(expected)]
+              .build
+              .tool
+              .clone(),
+          ),
+          ownership: ownership.clone(),
+        },
+      )
+      .unwrap();
+      // Selection scope is independent of the cycle; the ordinary journal still owns restart eligibility and bounds.
+      let next = WorkflowCycle::restart(WorkflowCycleId::generate(), &cycles[index + 1], &previous).unwrap();
+      let repeated = FlowNodeInput::new(
+        &work,
+        &admission.flow,
+        &children[index],
+        &next,
+        child.entry().clone(),
+        payload.clone(),
+      )
+      .unwrap()
+      .with_admission_profile(&work, &admission.flow, history)
+      .unwrap();
+      for (input, cycle) in [
+        (input.clone(), &cycles[index + 1]),
+        (input.retry().unwrap(), &cycles[index + 1]),
+        (repeated, &next),
+      ] {
+        let restored = FlowNodeInput::restore(
+          &serde_json::to_vec(&input).unwrap(),
+          &work,
+          &admission.flow,
+          &children[index],
+          cycle,
+          admission.flow.data_schema(payload.schema()).unwrap(),
+          input.digest().unwrap(),
+        )
+        .unwrap();
+        let choice = FlowProfileSelectionRecord::select(&restored, &admission.flow, time(12)).unwrap();
+        assert_eq!(
+          choice.candidate(),
+          Some(&key(expected)),
+          "the same child definition has independent call sites"
+        );
+      }
+    }
+  }
 
   fn rules(when: serde_json::Value) -> FlowProfileSelectionPolicy {
     serde_json::from_value(
@@ -507,6 +778,133 @@ mod tests {
       );
     }
   }
+  #[test]
+  fn admission_override_precedes_configured_rules_and_provider_selection_without_extra_budget() {
+    for policy in [
+      FlowProfileSelectionPolicy::Manual {
+        candidate: Some(key("advanced")),
+      },
+      rules(compare("/complexity", json!(2))),
+      FlowProfileSelectionPolicy::DecisionApi {
+        policy: ImmutableReference::new(key("selection-policy"), key("v1"), FactoryDigest::from_bytes([44; 32])),
+        input: FlowDataMapping::new(FlowValueMapping::Constant { value: json!(true) }).unwrap(),
+      },
+    ] {
+      let (admission, original, _) = factory_profile_selection_policy_contract_fixture(policy);
+      let node = &admission.flow.closure().definitions()[0].nodes()[0];
+      let overrides: FlowProfileAdmissionOverrides = serde_json::from_value(json!([{
+        "stage":{"root":admission.flow.closure().root(),"calls":[],"node":node.key()},
+        "profile": node.profile_selection().unwrap().candidates[&key("specialized")].profile.reference(),
+      }]))
+      .unwrap();
+      let work = admission
+        .work
+        .with_profile_overrides(overrides, admission.flow.closure())
+        .unwrap();
+      let input = FlowNodeInput::new(
+        &work,
+        &admission.flow,
+        admission.flow.root_run(),
+        admission.flow.initial_cycle(),
+        node.key().clone(),
+        original.payload().clone(),
+      )
+      .unwrap();
+      let choice = FlowProfileSelectionRecord::select(&input, &admission.flow, time(11)).unwrap();
+      assert_eq!(
+        choice.candidate(),
+        Some(&key("specialized")),
+        "admission choice precedes every automatic mode"
+      );
+      assert_eq!(choice.rules(), None);
+      assert_eq!(choice.recovery(), None);
+      assert_eq!(choice.started_at(), time(11));
+      assert_eq!(choice.deadline(), time(1011));
+      assert_eq!(
+        FlowProfileSelectionRecord::restore(
+          &serde_json::to_vec(&choice).unwrap(),
+          &input,
+          &admission.flow,
+          choice.digest().unwrap()
+        )
+        .unwrap(),
+        choice
+      );
+    }
+  }
+
+  #[test]
+  fn work_admission_retains_exact_profile_override_intent_without_rewriting_the_flow() {
+    let (admission, _, _) = factory_profile_selection_contract_fixture(Some("advanced"));
+    let definition = &admission.flow.closure().definitions()[0];
+    let node = &definition.nodes()[0];
+    let profile = node.profile_selection().unwrap().candidates[&key("specialized")]
+      .profile
+      .reference();
+    let mut wire = serde_json::to_value(&admission.work).unwrap();
+    wire["profile_overrides"] = json!([{
+      "stage": {"root":admission.flow.closure().root(), "calls":[], "node":node.key()},
+      "profile":profile,
+    }]);
+    let work: WorkEnvelope =
+      serde_json::from_value(wire.clone()).expect("admission supports explicit profile overrides");
+    work
+      .profile_overrides()
+      .validate(admission.flow.closure(), work.subject().project_id())
+      .unwrap();
+    assert_eq!(serde_json::to_value(&work).unwrap(), wire);
+    assert_eq!(work.profile_overrides().entries()[0].profile, *profile);
+    assert!(matches!(&node.profile_selection().unwrap().policy,
+      FlowProfileSelectionPolicy::Manual {candidate:Some(candidate)} if candidate == &key("advanced")));
+    assert!(
+      serde_json::to_value(&admission.work)
+        .unwrap()
+        .get("profile_overrides")
+        .is_none(),
+      "legacy Work bytes stay unchanged"
+    );
+    for (path, value) in [
+      ("/profile_overrides/0/stage/node", json!("undeclared")),
+      ("/profile_overrides/0/stage/calls", json!([node.key()])),
+      (
+        "/profile_overrides/0/stage/root/digest",
+        json!(FactoryDigest::from_bytes([99; 32])),
+      ),
+      ("/profile_overrides/0/profile/project_id", json!(ProjectId::generate())),
+      (
+        "/profile_overrides/0/profile/digest",
+        json!(FactoryDigest::from_bytes([99; 32])),
+      ),
+    ] {
+      let mut invalid = wire.clone();
+      *invalid.pointer_mut(path).unwrap() = value;
+      let invalid: WorkEnvelope = serde_json::from_value(invalid).unwrap();
+      assert!(
+        invalid
+          .profile_overrides()
+          .validate(admission.flow.closure(), work.subject().project_id())
+          .is_err(),
+        "{path}"
+      );
+    }
+    let mut duplicate = wire.clone();
+    duplicate["profile_overrides"]
+      .as_array_mut()
+      .unwrap()
+      .push(wire["profile_overrides"][0].clone());
+    assert!(serde_json::from_value::<WorkEnvelope>(duplicate).is_err());
+    let mut oversized = wire.clone();
+    oversized["profile_overrides"] = json!(vec![
+      wire["profile_overrides"][0].clone();
+      MAX_FLOW_DEFINITION_NODES + 1
+    ]);
+    assert!(serde_json::from_value::<WorkEnvelope>(oversized).is_err());
+    let mut too_deep = wire;
+    too_deep["profile_overrides"][0]["stage"]["calls"] =
+      json!(vec![node.key(); usize::from(MAX_FLOW_NESTING_DEPTH) + 1]);
+    assert!(serde_json::from_value::<WorkEnvelope>(too_deep).is_err());
+  }
+
   #[test]
   fn selected_profile_dependencies_must_remain_available_without_requiring_unused_options() {
     let (admission, _, _) = factory_profile_selection_contract_fixture(Some("advanced"));

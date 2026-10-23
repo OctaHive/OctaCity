@@ -27,6 +27,26 @@ pub struct FlowDataHistory {
   pub build_executions: Vec<crate::FlowBuildExecution>,
 }
 impl FlowDataHistory {
+  /// Highest retained selection generation; eligibility still requires current controls and fencing.
+  #[must_use]
+  pub fn current_profile_selection(&self, input: crate::FactoryDigest) -> Option<&crate::FlowProfileSelectionRecord> {
+    self
+      .profile_selections
+      .iter()
+      .filter(|s| s.input_digest() == input)
+      .max_by_key(|s| s.generation())
+  }
+
+  /// Finds the preceding committed binding for an exact next-generation frozen input.
+  /// This is provenance only; accepted retry control, stop and ownership remain mandatory.
+  #[must_use]
+  pub fn retry_source(&self, input: &FlowNodeInput) -> Option<&crate::FlowBuildIntent> {
+    self
+      .build_intents
+      .iter()
+      .find(|intent| intent.input().retry().as_ref().ok() == Some(input))
+  }
+
   /// Returns the exact terminal child result through its parent's declared outcome.
   /// A running child or an unconsumed successor cannot complete the calling node.
   pub fn subflow_result(
@@ -104,6 +124,7 @@ impl FlowDataHistory {
         return Err(invalid());
       }
       input.verify_work(work, admitted)?;
+      input.verify_admission_profile(work, admitted, history)?;
       let flow = history
         .flow_runs
         .iter()
@@ -191,7 +212,9 @@ impl FlowDataHistory {
     let mut selections = BTreeMap::new();
     for selection in &self.profile_selections {
       let input = inputs.get(&selection.input_digest()).ok_or_else(invalid)?;
-      if selections.insert(selection.input_digest(), selection).is_some()
+      if selections
+        .insert((selection.input_digest(), selection.generation()), selection)
+        .is_some()
         || crate::FlowProfileSelectionRecord::restore(
           &serde_json::to_vec(selection).map_err(|_| invalid())?,
           input,
@@ -202,6 +225,17 @@ impl FlowDataHistory {
         return Err(invalid());
       }
     }
+    for selection in &self.profile_selections {
+      if let Some(pending) = selection.pending_digest() {
+        let previous = self
+          .profile_selections
+          .iter()
+          .find(|row| row.input_digest() == selection.input_digest() && row.digest().ok() == Some(pending))
+          .ok_or_else(invalid)?;
+        let input = inputs.get(&selection.input_digest()).ok_or_else(invalid)?;
+        selection.verify_predecessor(previous, input, admitted)?;
+      }
+    }
     let mut intents = BTreeMap::new();
     for intent in &self.build_intents {
       let attempt = history
@@ -210,6 +244,44 @@ impl FlowDataHistory {
         .find(|attempt| attempt.id() == intent.node().id())
         .ok_or_else(invalid)?;
       let input = inputs.get(&attempt.input_digest()).ok_or_else(invalid)?;
+      if let Some(previous) = attempt.retry_of() {
+        let previous = self
+          .build_intents
+          .iter()
+          .find(|intent| intent.node().id() == previous)
+          .ok_or_else(invalid)?;
+        if previous.retry(
+          (*input).clone(),
+          admitted,
+          attempt.clone(),
+          intent.usage_before(),
+          intent.priority(),
+        )? != *intent
+        {
+          return Err(invalid());
+        }
+      } else if let Some(digest) = intent.selection_digest() {
+        let selected = self
+          .current_profile_selection(attempt.input_digest())
+          .ok_or_else(invalid)?;
+        if selected.digest()? != digest
+          || selected.recorded_at() > attempt.started_at()
+          || selected.deadline() != attempt.deadline()
+        {
+          return Err(invalid());
+        }
+        if crate::FlowBuildIntent::selected(
+          (*input).clone(),
+          admitted,
+          attempt.clone(),
+          intent.usage_before(),
+          intent.priority(),
+          selected,
+        )? != *intent
+        {
+          return Err(invalid());
+        }
+      }
       if intents.insert(attempt.id(), intent).is_some()
         || crate::FlowBuildIntent::restore(
           &serde_json::to_vec(intent).map_err(|_| invalid())?,
@@ -311,6 +383,9 @@ impl FlowDataHistory {
         return Err(invalid());
       }
       if let Some(provenance) = record.build_provenance() {
+        if provenance.profile() != intents.get(&record.node_attempt_id()).ok_or_else(invalid)?.profile() {
+          return Err(invalid());
+        }
         for output in provenance.outputs() {
           let execution = executions
             .get(&(record.node_attempt_id(), output.producer.attempt_id()))

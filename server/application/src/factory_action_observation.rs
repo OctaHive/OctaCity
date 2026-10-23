@@ -145,7 +145,7 @@ impl<S: FactoryRunStore + FactoryDiscoveryStore + 'static> ManagementQueryUseCas
         .attempts
         .iter()
         .any(|a| a.retry_of() == Some(query.node_attempt_id)),
-      FactoryRunControlIntent::Cancel => false,
+      FactoryRunControlIntent::Cancel | FactoryRunControlIntent::SelectProfile { .. } => false,
     });
     let state = if consumed {
       FactoryNodeActionState::Consumed

@@ -111,6 +111,7 @@ async fn prepare_scoped(
     .unwrap();
   let example = admission_from_configuration(900, 901, "source-issue-example", 34, configuration, repository);
   let intent = FactoryWorkAdmissionIntent {
+    profile_overrides: Default::default(),
     project_id: input.project_id(),
     configuration_id: configuration.reference().id(),
     configuration_version: configuration.reference().version(),

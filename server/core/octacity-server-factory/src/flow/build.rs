@@ -1,4 +1,4 @@
-use crate::{FactoryDigest, FactoryKey, FlowDefinitionRef, ImmutableReference};
+use crate::{FactoryDigest, FactoryKey, FlowDefinition, FlowDefinitionRef, ImmutableReference};
 use serde::{Deserialize, Serialize};
 
 /// Immutable execution selection embedded in a node before its definition is hashed.
@@ -116,6 +116,35 @@ pub struct FlowBuildProfile {
 }
 
 impl FlowBuildProfile {
+  pub(super) fn from_binding(definition: FlowDefinitionRef, node: FactoryKey, binding: &FlowBuildBinding) -> Self {
+    Self {
+      definition,
+      node,
+      tool: binding.tool.clone(),
+      result_tool: binding.result_tool.clone(),
+      capture_write_paths: binding.capture_write_paths.clone(),
+      capture_deliverables: binding.capture_deliverables.clone(),
+      plugin: binding.plugin.clone(),
+      model_or_tool: binding.model_or_tool.clone(),
+      task_digest: binding.task_digest,
+      build_configuration: binding.build_configuration.clone(),
+      result_output: binding.result_output.clone(),
+      result_output_kind: binding.result_output_kind,
+    }
+  }
+  /// Resolves the frozen execution contract among the containing node's exact bindings.
+  /// Selection authority is checked by the intent and the complete owner journal.
+  pub fn binding<'a>(&self, definition: &'a FlowDefinition) -> Result<&'a FlowBuildBinding, crate::FactoryError> {
+    let invalid = || crate::FactoryError::InvalidConfiguration {
+      field: "Flow Build profile",
+    };
+    let node = definition.node(&self.node).ok_or_else(invalid)?;
+    node
+      .build_bindings()
+      .find(|binding| *self == Self::from_binding(definition.reference(), node.key().clone(), binding))
+      .ok_or_else(invalid)
+  }
+
   /// Returns the frozen verifier, independently of the executed harness.
   #[must_use]
   pub fn result_tool(&self) -> &ImmutableReference {

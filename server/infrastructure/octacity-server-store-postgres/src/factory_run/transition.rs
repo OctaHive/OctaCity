@@ -93,6 +93,37 @@ async fn validate_transition(
     .into_iter()
     .map(|record| (record.id(), record))
     .collect();
+  let data = super::data::read(
+    transaction,
+    &locked.work,
+    &admitted_flow,
+    octacity_server_factory::FlowRuntimeHistory {
+      stops: &[],
+      flow_runs: &flow_runs.values().cloned().collect::<Vec<_>>(),
+      cycles: &workflow_cycles.values().cloned().collect::<Vec<_>>(),
+      attempts: &node_attempts.values().cloned().collect::<Vec<_>>(),
+      completions: &node_completions.values().cloned().collect::<Vec<_>>(),
+    },
+  )
+  .await?;
+  let controls = super::control::read_controls(
+    transaction,
+    &locked.run,
+    &admitted_flow,
+    &node_attempts.values().cloned().collect::<Vec<_>>(),
+    &flow_runs.values().cloned().collect::<Vec<_>>(),
+    &data.stops,
+  )
+  .await?;
+  let retry_requests = controls
+    .iter()
+    .filter_map(|row| match row.intent {
+      octacity_server_store::FactoryRunControlIntent::RetryNode { node_attempt_id } => {
+        Some((node_attempt_id, row.recorded_at))
+      }
+      _ => None,
+    })
+    .collect();
   validate_factory_transition(
     &FactoryTransitionBaseline {
       configuration_wip_usage: super::claim::wip_usage(transaction, locked).await?,
@@ -104,24 +135,13 @@ async fn validate_transition(
       cancellation_requested_at: sqlx::query_scalar::<_, Option<i64>>("SELECT FLOOR(EXTRACT(EPOCH FROM MIN(recorded_at)) * 1000)::BIGINT FROM factory_run_controls WHERE run_id=$1 AND control_kind='cancel-factory-run'")
         .bind(request.run_id.as_uuid()).fetch_one(&mut **transaction).await.map_err(unavailable)?.map(octacity_server_domain::Timestamp::from_unix_millis).transpose().map_err(|_| StoreError::Unavailable)?,
       lifecycle: &locked.lifecycle,
-      retry_requests: &super::control::read_retry_requests(transaction, &locked.run).await?,
+      controls: &controls,
+      retry_requests: &retry_requests,
       current: &locked.current,
       claim: &claim,
       admitted_flow: &admitted_flow,
       work: &locked.work,
-      data: &super::data::read(
-        transaction,
-        &locked.work,
-        &admitted_flow,
-        octacity_server_factory::FlowRuntimeHistory {
-          stops: &[],
-          flow_runs: &flow_runs.values().cloned().collect::<Vec<_>>(),
-          cycles: &workflow_cycles.values().cloned().collect::<Vec<_>>(),
-          attempts: &node_attempts.values().cloned().collect::<Vec<_>>(),
-          completions: &node_completions.values().cloned().collect::<Vec<_>>(),
-        },
-      )
-      .await?,
+      data: &data,
       node_attempts: &node_attempts,
       node_completions: &node_completions,
       flow_runs: &flow_runs,

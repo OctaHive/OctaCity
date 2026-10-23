@@ -394,6 +394,7 @@ impl ManagementInputFactory {
     )
     .map_err(|_| ManagementInputError::Invalid("work metadata"))?;
     Ok(crate::AdmitManualFactoryWorkCommand {
+      profile_overrides: Default::default(),
       project_id: parse(&input.project_id, "project id")?,
       configuration_id: parse(&input.configuration_id, "factory configuration id")?,
       configuration_version: version(input.configuration_version, "factory configuration version")?,

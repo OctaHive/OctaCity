@@ -137,8 +137,9 @@ impl FactoryRoleInvocation {
 #[async_trait::async_trait]
 pub trait FactoryRoleInvocationSource: Send + Sync {
   /// Resolves the package for this immutable Build intent through the required read window.
-  /// Called only when no installed static task matches. None means no retained role
-  /// invocation is available and cannot authorize a fallback to a static task.
+  /// Required for selected profiles and unmatched role-bound task identities.
+  /// None cannot authorize a fallback to a static task. Committed packages are
+  /// recovered through the publication store before this source is consulted.
   async fn invocation(
     &self,
     intent: &FlowBuildIntent,

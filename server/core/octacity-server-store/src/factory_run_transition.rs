@@ -28,6 +28,8 @@ pub struct FactoryTransitionBaseline<'a> {
   pub cancellation_requested_at: Option<octacity_server_domain::Timestamp>,
   /// Canonical accepted retry intents keyed by the exact failed attempt.
   pub retry_requests: &'a BTreeMap<NodeAttemptId, octacity_server_domain::Timestamp>,
+  /// Retained audited operator intents used to authorize manual selection consumption.
+  pub controls: &'a [crate::FactoryRunControlRecord],
   /// Current lifecycle checkpoint.
   pub lifecycle: &'a FactoryLifecycleCheckpoint,
   /// Current immutable-row pointers.
@@ -547,11 +549,38 @@ fn validate_node_journal(
     .data
     .profile_selections
     .iter()
-    .any(|selection| selection.started_at() != request.committed_at)
+    .any(|selection| selection.recorded_at() != request.committed_at)
   {
     return Err(invalid());
   }
+  for selection in &request.append.flow.data.profile_selections {
+    let latest = crate::latest_factory_profile_control(baseline.controls, selection.input_digest());
+    if latest.is_some_and(|c| selection.manual_control() != Some(c.id))
+      || baseline
+        .data
+        .build_intents
+        .iter()
+        .any(|intent| intent.input().digest().ok() == Some(selection.input_digest()))
+    {
+      return Err(invalid());
+    }
+  }
+  crate::factory_run_control::validate_factory_profile_control_history(
+    baseline.admitted_flow,
+    &data,
+    baseline.controls,
+  )
+  .map_err(|_| invalid())?;
   for intent in &request.append.flow.data.build_intents {
+    if let Some(control) =
+      crate::latest_factory_profile_control(baseline.controls, intent.input().digest().map_err(|_| invalid())?)
+      && data
+        .current_profile_selection(intent.input().digest().map_err(|_| invalid())?)
+        .is_none_or(|s| s.manual_control() != Some(control.id))
+    {
+      return Err(invalid());
+    }
+
     intent
       .verify_reservation(baseline.admitted_flow, history)
       .map_err(|_| invalid())?;

@@ -142,36 +142,35 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
       });
     let mut input = None;
     if !pending {
-      if node.profile_selection().is_some() {
+      if retry_input.is_none() && node.profile_selection().is_some() {
         input = Some(
           match crate::factory_profile_selection::frozen_input(&snapshot, &target)? {
             Some(frozen) => frozen.clone(),
-            None => match retry_input {
+            None => match retry_input.clone() {
               Some(input) => input,
               None => self.inputs.prepare(&snapshot, &target).await?,
             },
           },
         );
-      } else if let Some(pool) = node.phase_pool() {
-        let generation = u32::try_from(
-          snapshot
-            .flow
-            .attempts
-            .iter()
-            .filter(|row| {
-              row.flow_run_id() == target.flow_run_id
-                && row.workflow_cycle_id() == target.cycle_id
-                && row.node_key() == &target.node
-            })
-            .count(),
-        )
-        .map_err(|_| ApplicationError::invalid())?;
-        let frozen = snapshot.flow.data.inputs.iter().find(|input| {
-          input.flow_run_id() == target.flow_run_id
-            && input.cycle_id() == target.cycle_id
-            && input.node() == &target.node
-            && input.generation() == generation
+      }
+      if node.profile_selection().is_some()
+        && input
+          .as_ref()
+          .is_some_and(|input| !factory_profile_wait_is_open(&snapshot, input, at))
+      {
+        return Err(ApplicationError::invalid());
+      }
+      let selection_pending = retry_input.is_none()
+        && node.profile_selection().is_some()
+        && input.as_ref().is_none_or(|input| {
+          input
+            .digest()
+            .ok()
+            .and_then(|digest| snapshot.flow.data.current_profile_selection(digest))
+            .is_none_or(|selection| selection.candidate().is_none())
         });
+      if !selection_pending && let Some(pool) = node.phase_pool() {
+        let frozen = crate::factory_profile_selection::frozen_input(&snapshot, &target)?;
         let Some(frozen) = frozen else {
           let input = match retry_input {
             Some(input) => input,
@@ -184,6 +183,7 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
         };
         let selected = self.store.phase_pool_selection_for_claim(run, claim).await?;
         let input_digest = frozen.digest().map_err(invalid)?;
+        let generation = frozen.generation();
         if selected.as_ref().is_none_or(|selection| {
           selection.entry.input.flow_run_id != target.flow_run_id
             || selection.entry.input.cycle_id != target.cycle_id
@@ -203,7 +203,7 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
           return Ok(FactoryFlowStep::Ready(Box::new(entry)));
         }
         input = Some(frozen.clone());
-      } else if node.kind() != FlowNodeKind::DeterministicGate {
+      } else if input.is_none() && node.kind() != FlowNodeKind::DeterministicGate {
         input = Some(match retry_input {
           Some(input) => input,
           None => self.inputs.prepare(&snapshot, &target).await?,

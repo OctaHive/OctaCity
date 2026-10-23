@@ -272,6 +272,7 @@ async fn regrouped_preparation_contract(
     repository,
   );
   let intent = FactoryWorkAdmissionIntent {
+    profile_overrides: Default::default(),
     project_id: input.project_id(),
     configuration_id: configuration.reference().id(),
     configuration_version: configuration.reference().version(),
@@ -724,6 +725,7 @@ async fn source_artifact_contract(
   assert_eq!(visible.object, objects[0]);
   assert_eq!(visible.expires_at, time(103));
   let intent = FactoryWorkAdmissionIntent {
+    profile_overrides: Default::default(),
     project_id: input.project_id(),
     configuration_id: configuration.reference().id(),
     configuration_version: configuration.reference().version(),
@@ -1149,6 +1151,7 @@ async fn retained_intent_contract(
   let preparation = &pending[0];
   let admission = admission_from_configuration(900, 901, "prepared", 52, configuration, repository);
   let intent = FactoryWorkAdmissionIntent {
+    profile_overrides: Default::default(),
     project_id: input.project_id(),
     configuration_id: configuration.reference().id(),
     configuration_version: configuration.reference().version(),

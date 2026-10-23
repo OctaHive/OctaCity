@@ -7,6 +7,8 @@
 #![forbid(unsafe_code)]
 #![deny(missing_docs)]
 
+pub use flow::{FlowProfileAdmissionOverride, FlowProfileAdmissionOverrides, FlowStageAddress};
+
 /// Maximum exact installed execution identities admitted by one Factory owner.
 pub const MAX_FACTORY_EXECUTOR_BINDINGS: usize = 256;
 

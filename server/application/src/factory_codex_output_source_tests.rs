@@ -344,6 +344,14 @@ async fn prepared_source_with_capture_observation(
   capture_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
   observation_override: Option<serde_json::Value>,
 ) -> SourceFixture {
+  prepared_role_source(capture, capture_paths, observation_override, false).await
+}
+async fn prepared_role_source(
+  capture: Option<FactoryCodexCapturePolicy>,
+  capture_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
+  observation_override: Option<serde_json::Value>,
+  selected_role: bool,
+) -> SourceFixture {
   let capture_schema = capture
     .as_ref()
     .and_then(|capture| capture.instruction().observation.as_ref())
@@ -479,6 +487,54 @@ async fn prepared_source_with_capture_observation(
   binding.task_digest = profile.task_digest();
   let (_, admitted, schema, input, _) =
     fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work.clone(), binding, None, grants.clone());
+  let role_content = selected_role.then(|| {
+    let role = FactoryRole::publish(
+      FactoryRoleId::generate(),
+      work.subject().project_id(),
+      FactoryRoleDefinition {
+        name: FactoryText::new("Observer").unwrap(),
+        instructions: "Apply Project rules".into(),
+        template: None,
+        icon: None,
+        description: String::new(),
+        concurrency_limit: None,
+      },
+    )
+    .unwrap();
+    let mut definition = role_profile_contract_definition(work.subject().project_id());
+    definition.toolchain = profile.toolchain.clone();
+    definition.build_configuration = profile.build_configuration.clone();
+    definition.permissions = grants.clone();
+    definition.budget = admitted.closure().definitions()[0].nodes()[0].budget();
+    definition.execution = Default::default();
+    definition.model_parameters.clear();
+    definition.skills.clear();
+    definition.context_requirements.clear();
+    definition.credential_purpose = profile.consumer.purpose();
+    let selected = FactoryRoleProfile::publish(
+      FactoryRoleProfileId::generate(),
+      work.subject().project_id(),
+      &role,
+      definition,
+    )
+    .unwrap();
+    (role, selected)
+  });
+  let (admitted, input) = if let Some((_, selected)) = &role_content {
+    let mut build = admitted.closure().definitions()[0].nodes()[0].build().unwrap().clone();
+    build.task_digest = factory_role_task_digest(profile.task_digest(), selected);
+    fixtures::with_selected_profile(
+      &work,
+      &admitted,
+      &input,
+      FlowProfileCandidate {
+        profile: selected.clone(),
+        build,
+      },
+    )
+  } else {
+    (admitted, input)
+  };
   let admitted = if let Some(capture_schema) = capture_schema {
     admitted
       .with_data_schemas(vec![schema.clone(), capture_schema])
@@ -532,14 +588,102 @@ async fn prepared_source_with_capture_observation(
     cycle_id: input.cycle_id(),
     node: input.node().clone(),
   };
-  FactoryNodeRunner::new(runs.clone(), Arc::new(NeverDispatch), Arc::new(Clock))
-    .run_once(run.id(), claim.id, target, Some(input), at(1001))
+  if selected_role {
+    runs.seed_project(work.subject().project_id()).unwrap();
+    runs
+      .enable_project(
+        work.subject().project_id(),
+        factory_profile_selection_capabilities(&admitted),
+      )
+      .unwrap();
+  }
+  let owner =
+    FactoryNodeRunner::new(runs.clone(), Arc::new(NeverDispatch), Arc::new(Clock)).with_profile_catalog(runs.clone());
+  owner
+    .run_once(run.id(), claim.id, target.clone(), Some(input), at(1001))
     .await
     .unwrap();
+  if selected_role {
+    owner
+      .run_once(run.id(), claim.id, target, None, at(1002))
+      .await
+      .unwrap();
+  }
   let snapshot = runs.factory_run_snapshot(run.id()).await.unwrap();
   let intent = &snapshot.flow.data.build_intents[0];
   let context = Arc::new(ContextBytes(task.artifact_id(), selected.clone()));
   let context_map = BTreeMap::from([(task.artifact_id(), selected)]);
+  let role = role_content.map(|(role, selected)| {
+    let context = intent.input().context().unwrap();
+    let task = FactoryTaskEnvelope::new(
+      FactoryTaskDeclaration {
+        id: TaskEnvelopeId::generate(),
+        node_attempt_id: intent.node().id(),
+        subject: context.subject().clone(),
+        mode: if profile.capture.is_some() {
+          FactoryTaskMode::Implement
+        } else {
+          FactoryTaskMode::Observe
+        },
+      },
+      FactoryTaskDefinition {
+        task,
+        specifications: vec![],
+        prior_findings: vec![],
+        permissions: intent.permissions().clone(),
+        budget: intent.budget(),
+        result_schema: if profile.capture.is_some() {
+          FactoryTaskResultSchema::ImplementationV1
+        } else {
+          FactoryTaskResultSchema::FlowV1
+        },
+        deliverables: if profile.capture.is_some() {
+          vec![FactoryTaskDeliverable::new(
+            fixtures::key("changeset"),
+            FactoryRepositoryPath::new("outputs/changes.bundle").unwrap(),
+            true,
+          )]
+        } else {
+          vec![]
+        },
+      },
+      context,
+      profile.toolchain.clone(),
+      FactoryTaskControlDigests {
+        policy: FactoryDigest::from_bytes([1; 32]),
+        prompt: FactoryDigest::from_bytes([2; 32]),
+        prompt_provenance: FactoryDigest::from_bytes([3; 32]),
+        provenance: FactoryDigest::from_bytes([4; 32]),
+      },
+    )
+    .unwrap();
+    FactoryRoleInvocation::new(
+      FactoryRoleExecutionPackage::new(FactoryRoleExecutionPackageInput {
+        project_rules: vec![],
+        role,
+        profile: selected,
+        skills: Default::default(),
+        task,
+        context: context.clone(),
+      })
+      .unwrap(),
+      None,
+      Default::default(),
+    )
+    .unwrap()
+  });
+  let retained = Arc::new(crate::factory_command_materializer_tests::Inputs::default());
+  if let Some(role) = &role {
+    retained
+      .retain_factory_role_invocation(
+        intent,
+        &FactoryClaimOwnership::new(claim.owner.clone(), claim.claim),
+        role.retained().clone(),
+        at(1002),
+      )
+      .await
+      .unwrap();
+  }
   let compiled = compile_codex_flow_task_with_options(
     intent,
     &admitted,
@@ -548,13 +692,14 @@ async fn prepared_source_with_capture_observation(
     profile.consumer,
     &profile.usage_policy,
     FactoryCodexFlowCompilationOptions {
+      role: role.as_ref(),
       context: Some(&context_map),
       capture: profile.capture.as_ref(),
       ..Default::default()
     },
   )
   .unwrap();
-  finish_prepared_source(PreparedSourceInput {
+  let mut fixture = finish_prepared_source(PreparedSourceInput {
     runs,
     base,
     profile,
@@ -567,7 +712,9 @@ async fn prepared_source_with_capture_observation(
     observation_override,
     model_result: serde_json::json!({"count":9}),
   })
-  .await
+  .await;
+  fixture.role = selected_role.then_some(retained);
+  fixture
 }
 struct PreparedSourceInput {
   runs: Arc<InMemoryFactoryConfigurationStore>,
@@ -671,7 +818,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     policy_layers: FactoryBuildPolicyLayers {
       project: grants.clone(),
       configuration: grants.clone(),
-      task: grants.clone(),
+      task: intent.permissions().clone(),
       local: LocalPermissionCeiling::fully_enforced(grants),
     },
     policy: crate::factory_job_test_support::policy(&canonical),
@@ -877,6 +1024,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     bytes.0.lock().unwrap().insert(id, content);
   }
   SourceFixture {
+    role: None,
     runs,
     query,
     artifacts,
@@ -894,6 +1042,7 @@ impl FactoryExecutionClock for ObservationClock {
   }
 }
 struct SourceFixture {
+  role: Option<Arc<crate::factory_command_materializer_tests::Inputs>>,
   runs: Arc<InMemoryFactoryConfigurationStore>,
   query: Arc<Queries>,
   artifacts: Arc<InMemoryArtifactRecordStore>,
@@ -908,7 +1057,7 @@ impl SourceFixture {
     &self,
     query: Arc<Queries>,
   ) -> FactoryCodexBuildOutputSource<InMemoryFactoryConfigurationStore, Queries, InMemoryArtifactRecordStore, Bytes> {
-    FactoryCodexBuildOutputSource::new(
+    let source = FactoryCodexBuildOutputSource::new(
       self.runs.clone(),
       query,
       self.artifacts.clone(),
@@ -917,7 +1066,11 @@ impl SourceFixture {
       self.context.clone(),
       Arc::new(ObservationClock),
     )
-    .unwrap()
+    .unwrap();
+    match &self.role {
+      Some(role) => source.with_role_invocation_store(role.clone()),
+      None => source,
+    }
   }
 }
 
@@ -1658,3 +1811,29 @@ fn installed_reviewer_policy_repins_the_task_and_qualifies_only_readonly_evaluat
 
 #[path = "factory_codex_review_tests.rs"]
 mod review;
+
+#[test]
+fn selected_role_outputs_recover_the_original_package_and_verify_the_ordinary_job() {
+  crate::factory_admission_tests::run_ready(async {
+    for capture in [None, Some(capture_policy(true, 2))] {
+      let fixture = prepared_role_source(capture, vec![], None, true).await;
+      let source = fixture.source(fixture.query.clone());
+      let FactoryNodeBuildOutputObservation::Verified(outputs) = source
+        .published_outputs(
+          fixture.query.build.build.id,
+          fixture.query.attempt.id,
+          fixture.intent.budget().max_output_bytes(),
+        )
+        .await
+        .unwrap()
+      else {
+        panic!("a selected role must retain its ordinary verified result");
+      };
+      assert_eq!(outputs.execution.profile, *fixture.intent.profile());
+      assert_eq!(
+        outputs.documents[0].data.as_ref().unwrap().payload().value(),
+        &serde_json::json!({"count":9})
+      );
+    }
+  });
+}

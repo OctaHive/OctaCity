@@ -4,6 +4,7 @@ use crate::factory_node_test_support::fixtures;
 use crate::*;
 use octacity_server_domain::{ArtifactId, PipelineNodeId, Timestamp};
 use octacity_server_factory::*;
+use octacity_server_store::FactoryRoleInvocationStore;
 use serde_json::{Value, json};
 use std::{collections::BTreeMap, sync::Arc};
 
@@ -15,6 +16,21 @@ fn fixture_for_work(
   edit: impl FnOnce(&mut FactoryRoleProfileDefinition),
   skills: BTreeMap<FactoryKey, FactoryRoleSkillBundle>,
   bind_task: fn(FactoryDigest, &FactoryRoleProfile) -> FactoryDigest,
+) -> (
+  FlowBuildIntent,
+  AdmittedFlow,
+  FactoryCodexBuildProfile,
+  FactoryRoleExecutionPackage,
+  BTreeMap<ArtifactId, Vec<u8>>,
+) {
+  fixture_for_work_mode(original, edit, skills, bind_task, false)
+}
+fn fixture_for_work_mode(
+  original: WorkEnvelope,
+  edit: impl FnOnce(&mut FactoryRoleProfileDefinition),
+  skills: BTreeMap<FactoryKey, FactoryRoleSkillBundle>,
+  bind_task: fn(FactoryDigest, &FactoryRoleProfile) -> FactoryDigest,
+  selected: bool,
 ) -> (
   FlowBuildIntent,
   AdmittedFlow,
@@ -117,6 +133,20 @@ fn fixture_for_work(
   binding.task_digest = bind_task(installed.task_digest(), &profile);
   let (_, admitted, _, input, node) =
     fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work.clone(), binding, None, grants.clone());
+  let admitted = if selected {
+    fixtures::with_selected_profile(
+      &work,
+      &admitted,
+      &input,
+      FlowProfileCandidate {
+        profile: profile.clone(),
+        build: admitted.closure().definitions()[0].nodes()[0].build().unwrap().clone(),
+      },
+    )
+    .0
+  } else {
+    admitted
+  };
   let rules = b"Project rules control all additions. Use TDD.".to_vec();
   let rules_ref = FactoryArtifactReference::new(
     ArtifactId::generate(),
@@ -161,7 +191,13 @@ fn fixture_for_work(
   node_json["input_digest"] = json!(input.digest().unwrap());
   node_json["deadline"] = json!(1000);
   let node = serde_json::from_value(node_json).unwrap();
-  let intent = FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap();
+  let intent = if selected {
+    let choice =
+      FlowProfileSelectionRecord::select(&input, &admitted, Timestamp::from_unix_millis(0).unwrap()).unwrap();
+    FlowBuildIntent::selected(input, &admitted, node, Default::default(), 0, &choice).unwrap()
+  } else {
+    FlowBuildIntent::new(input, &admitted, node, Default::default(), 0).unwrap()
+  };
   let envelope = FactoryTaskEnvelope::new(
     FactoryTaskDeclaration {
       id: TaskEnvelopeId::generate(),
@@ -173,8 +209,16 @@ fn fixture_for_work(
       task,
       specifications: vec![],
       prior_findings: vec![],
-      permissions: grants,
-      budget: intent.budget(),
+      permissions: if selected {
+        intent.permissions().intersection(&profile.definition().permissions)
+      } else {
+        grants
+      },
+      budget: if selected {
+        profile.definition().budget
+      } else {
+        intent.budget()
+      },
       result_schema: FactoryTaskResultSchema::FlowV1,
       deliverables: vec![],
     },
@@ -960,5 +1004,136 @@ fn role_package_materializer_recovers_original_content_without_the_catalog() {
       .await
       .expect("recover exact retained role content");
     assert_eq!(recovered, original);
+  });
+}
+
+#[test]
+fn selected_role_cannot_bypass_its_package_by_matching_a_static_task() {
+  crate::factory_admission_tests::run_ready(async {
+    let (intent, admitted, installed, _, bytes) =
+      fixture_for_work_mode(fixtures::work(), |_| {}, BTreeMap::new(), |base, _| base, true);
+    let (materializer, inputs) = materializer_fixture(&intent, &installed, bytes);
+    let ownership = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    assert!(
+      materializer
+        .materialize(&intent, &admitted, ownership, Timestamp::from_unix_millis(41).unwrap())
+        .await
+        .is_err(),
+      "a selected role requires its package even when the technical task matches a static installation"
+    );
+    assert!(inputs.0.lock().unwrap().is_empty());
+  });
+}
+
+#[test]
+fn selected_role_package_recovers_through_the_common_materializer_without_its_source() {
+  crate::factory_admission_tests::run_ready(async {
+    let (intent, admitted, installed, package, bytes) = fixture_for_work_mode(
+      fixtures::work(),
+      |_| {},
+      BTreeMap::new(),
+      factory_role_task_digest,
+      true,
+    );
+    let (materializer, inputs) = materializer_fixture(&intent, &installed, bytes.clone());
+    let ownership = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    let materializer = materializer.with_role_invocation_source(Arc::new(RoleSource(
+      FactoryRoleInvocation::new(package.clone(), None, BTreeMap::new()).unwrap(),
+    )));
+    let original = materializer
+      .materialize(
+        &intent,
+        &admitted,
+        ownership.clone(),
+        Timestamp::from_unix_millis(41).unwrap(),
+      )
+      .await
+      .unwrap();
+    let retained = inputs
+      .factory_role_invocation(intent.operation_id().unwrap())
+      .await
+      .unwrap()
+      .unwrap();
+    assert_eq!(retained.package.digest().unwrap(), package.digest().unwrap());
+    let restarted = materializer_with_inputs(&intent, &installed, bytes, inputs.clone());
+    let recovered = restarted
+      .materialize(&intent, &admitted, ownership, Timestamp::from_unix_millis(42).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(original.intent, recovered.intent);
+    assert_eq!(original.build.id, recovered.build.id);
+    assert_eq!(original.attempt_id, recovered.attempt_id);
+    assert_eq!(original.jobs, recovered.jobs);
+    assert!(
+      inputs
+        .factory_role_invocation(intent.operation_id().unwrap())
+        .await
+        .unwrap()
+        .unwrap()
+        == retained
+    );
+  });
+}
+
+#[test]
+fn selected_role_invocation_rejects_another_profile_with_the_same_technical_settings() {
+  let (intent, _, _, package, _) = fixture_for_work_mode(
+    fixtures::work(),
+    |_| {},
+    BTreeMap::new(),
+    factory_role_task_digest,
+    true,
+  );
+  let mut content = package.inputs().clone();
+  content.profile = FactoryRoleProfile::publish(
+    FactoryRoleProfileId::generate(),
+    content.profile.reference().project_id,
+    &content.role,
+    content.profile.definition().clone(),
+  )
+  .unwrap();
+  let other = FactoryRoleInvocation::new(
+    FactoryRoleExecutionPackage::new(content).unwrap(),
+    None,
+    BTreeMap::new(),
+  )
+  .unwrap();
+  assert!(
+    other.verify_intent(&intent).is_err(),
+    "the package must name the profile chosen by the retained selection"
+  );
+}
+
+#[test]
+fn selected_role_dispatch_narrows_execution_to_the_pinned_profile_ceilings() {
+  crate::factory_admission_tests::run_ready(async {
+    let (intent, admitted, installed, package, bytes) = fixture_for_work_mode(
+      fixtures::work(),
+      |profile| {
+        profile.budget = BudgetLimit::new(1, 500, 50, 500, 5000).unwrap();
+        let mut permissions = serde_json::to_value(&profile.permissions).unwrap();
+        permissions["outputs"]["max_artifact_bytes"] = json!(512);
+        profile.permissions = serde_json::from_value(permissions).unwrap();
+      },
+      BTreeMap::new(),
+      factory_role_task_digest,
+      true,
+    );
+    assert_eq!(intent.budget().max_elapsed_millis(), 500);
+    assert_eq!(intent.permissions().outputs().max_artifact_bytes(), 512);
+    assert_eq!(intent.permissions().resources().elapsed_millis(), 500);
+    let (materializer, _) = materializer_fixture(&intent, &installed, bytes);
+    let materializer = materializer.with_role_invocation_source(Arc::new(RoleSource(
+      FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap(),
+    )));
+    materializer
+      .materialize(
+        &intent,
+        &admitted,
+        FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
+        Timestamp::from_unix_millis(41).unwrap(),
+      )
+      .await
+      .unwrap();
   });
 }

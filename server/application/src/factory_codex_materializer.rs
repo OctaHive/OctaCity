@@ -68,12 +68,11 @@ impl FactoryCodexCapturePolicy {
     use octacity_protocol::{CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT, CHANGE_SET_PATCH_OUTPUT};
     crate::factory_build_materialization::factory_capture_source_paths(intent, Some(&self.instruction))
       .map_err(|_| MissingAuthority)?;
-    let binding = admitted
+    let definition = admitted
       .closure()
       .definition(intent.input().definition())
-      .and_then(|definition| definition.node(intent.input().node()))
-      .and_then(|node| node.build())
       .ok_or(MissingAuthority)?;
+    let binding = intent.profile().binding(definition).map_err(|_| MissingAuthority)?;
     let mut required = vec![CHANGE_SET_BUNDLE_OUTPUT, CHANGE_SET_MANIFEST_OUTPUT];
     if self.instruction.patch_max_bytes.is_some() {
       required.push(CHANGE_SET_PATCH_OUTPUT);
@@ -426,7 +425,9 @@ impl<
     if at >= intent.node().deadline() || intent.node().verify_observer(&ownership, at).is_err() {
       return Err(Invalid);
     }
-    let (profile, role) = if let Some(profile) = self.profiles.iter().find(|profile| profile.matches_intent(intent)) {
+    let (profile, role) = if intent.selected_profile().is_none()
+      && let Some(profile) = self.profiles.iter().find(|profile| profile.matches_intent(intent))
+    {
       (profile, None)
     } else {
       let role = if let Some(role) = self.publisher.role_invocation(intent).await.map_err(|_| Unavailable)? {

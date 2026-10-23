@@ -250,17 +250,9 @@ fn compile_flow_task(
   usage_policy: &FactoryCodexUsagePolicy,
   options: RenderedCompilationOptions<'_>,
 ) -> Result<CompiledCodexTask, CodexCompilationError> {
-  let canonical = FlowBuildIntent::new(
-    intent.input().clone(),
-    admitted,
-    intent.node().clone(),
-    intent.usage_before(),
-    intent.priority(),
-  )
-  .map_err(|_| CodexCompilationError::NodeBindings)?;
-  if canonical != *intent {
-    return Err(CodexCompilationError::NodeBindings);
-  }
+  intent
+    .verify_admission(admitted)
+    .map_err(|_| CodexCompilationError::NodeBindings)?;
   let profile = intent.profile();
   let response_limits = validated_tool_response_limits(
     intent.permissions().tools().next().is_some(),
@@ -284,6 +276,9 @@ fn compile_flow_task(
   let selected_digest = options
     .reviewer
     .map_or(selected_digest, |review| review.policy.task_digest(selected_digest));
+  if intent.selected_profile().is_some() && options.role.is_none() {
+    return Err(CodexCompilationError::NodeBindings);
+  }
   let selected_digest = if let Some(role) = options.role {
     role
       .verify_intent(intent)

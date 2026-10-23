@@ -6,13 +6,20 @@ use crate::{IdempotencyKey, MutationDisposition};
 
 /// One closed, code-owned Factory Run control intent.
 ///
-/// The variants contain only identities used as strong confirmations. There
-/// is intentionally no caller-provided lifecycle state, candidate digest,
-/// Assessment, Decision outcome, or success value.
+/// Variants bind confirmations or operator responses to exact retained targets.
+/// They accept no caller-authored lifecycle state, Assessment, Decision outcome
+/// or execution success; a profile reference grants no new capability authority.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub enum FactoryRunControlIntent {
   /// Request cancellation through the normal reconciler path.
   Cancel,
+  /// Choose an exact admitted profile for one frozen, pending node occurrence.
+  SelectProfile {
+    /// Frozen input binds the Run, nested Flow, cycle, node and attempt generation.
+    input_digest: FactoryDigest,
+    /// Exact admitted Project/profile version; mutable aliases are not accepted.
+    profile: octacity_server_factory::FactoryRoleProfileRef,
+  },
   /// Confirm one new execution of the exact independently failed configured node.
   RetryNode {
     /// Failed attempt, used as a stale target precondition.
@@ -34,6 +41,7 @@ impl FactoryRunControlIntent {
   pub const fn operation(&self) -> &'static str {
     match self {
       Self::Cancel => "cancel-factory-run",
+      Self::SelectProfile { .. } => "select-factory-profile",
       Self::RetryNode { .. } => "retry-factory-node",
       Self::ResolveNode { .. } => "resolve-factory-node",
     }
@@ -41,6 +49,17 @@ impl FactoryRunControlIntent {
 
   fn digest(&self) -> FactoryDigest {
     match self {
+      Self::SelectProfile { input_digest, profile } => FactoryDigest::sha256(
+        "octacity.factory.control-intent.v1",
+        &[
+          b"select-profile",
+          &input_digest.as_bytes(),
+          profile.project_id.as_uuid().as_bytes(),
+          profile.id.as_uuid().as_bytes(),
+          &profile.version.get().to_be_bytes(),
+          &profile.digest.as_bytes(),
+        ],
+      ),
       Self::ResolveNode {
         node_attempt_id,
         outcome,
@@ -295,6 +314,108 @@ pub fn validate_factory_node_retry(
   Ok(())
 }
 
+/// Latest accepted choice for one occurrence; history remains append-only.
+#[must_use]
+pub fn latest_factory_profile_control(
+  controls: &[FactoryRunControlRecord],
+  input: FactoryDigest,
+) -> Option<&FactoryRunControlRecord> {
+  controls
+    .iter()
+    .filter(|control| {
+      matches!(control.intent,
+    FactoryRunControlIntent::SelectProfile { input_digest, .. } if input_digest == input)
+    })
+    .max_by_key(|control| control.run_version)
+}
+
+/// Common pre-dispatch time and budget bounds; this grants no choice or dispatch authority.
+/// Initial preparation has no selection yet. A retained wait keeps its original exclusive deadline.
+pub fn factory_profile_wait_is_open(
+  snapshot: &crate::FactoryRunSnapshot,
+  input: &octacity_server_factory::FlowNodeInput,
+  at: Timestamp,
+) -> bool {
+  let Ok(digest) = input.digest() else {
+    return false;
+  };
+  let Some(budget) = snapshot.budgets.iter().find(|row| row.id == snapshot.current.budget_id) else {
+    return false;
+  };
+  snapshot
+    .flow
+    .data
+    .current_profile_selection(digest)
+    .is_none_or(|selection| at >= selection.recorded_at() && at < selection.deadline())
+    && octacity_server_factory::FlowBuildIntent::verify_available_budget(
+      input,
+      &snapshot.admitted_flow,
+      snapshot.flow.runtime(),
+      budget.usage,
+    )
+    .is_ok()
+}
+
+/// Checks a live choice against the exact retained wait under the aggregate lock.
+/// The input digest is the occurrence precondition; acceptance never publishes a Build.
+fn validate_factory_profile_choice(
+  snapshot: &crate::FactoryRunSnapshot,
+  input_digest: FactoryDigest,
+  profile: &octacity_server_factory::FactoryRoleProfileRef,
+  at: Timestamp,
+) -> Result<(), crate::StoreError> {
+  let conflict = || crate::StoreError::Conflict {
+    entity: octacity_server_domain::EntityKind::FactoryRun,
+  };
+  let input = snapshot
+    .flow
+    .data
+    .inputs
+    .iter()
+    .find(|input| input.digest().ok() == Some(input_digest))
+    .ok_or_else(conflict)?;
+  snapshot
+    .flow
+    .data
+    .current_profile_selection(input_digest)
+    .ok_or_else(conflict)?;
+  let binding = snapshot
+    .admitted_flow
+    .closure()
+    .definition(input.definition())
+    .and_then(|d| d.node(input.node()))
+    .and_then(|n| n.profile_selection())
+    .ok_or_else(conflict)?;
+  if snapshot.run.state().is_terminal()
+    || snapshot
+      .lifecycle_checkpoints
+      .iter()
+      .find(|row| row.id == snapshot.current.lifecycle_checkpoint_id)
+      .is_none_or(|row| row.cancellation_requested)
+    || !snapshot.flow.runtime().is_current_cycle(input.cycle_id())
+    || !factory_profile_wait_is_open(snapshot, input, at)
+    || !binding.candidates.values().any(|c| c.profile.reference() == profile)
+    || profile.project_id != snapshot.work.subject().project_id()
+    || snapshot.flow.attempts.iter().any(|a| {
+      a.flow_run_id() == input.flow_run_id()
+        && a.workflow_cycle_id() == input.cycle_id()
+        && a.node_key() == input.node()
+    })
+    || snapshot
+      .flow
+      .data
+      .build_intents
+      .iter()
+      .any(|intent| intent.input().digest().ok() == Some(input_digest))
+    || latest_factory_profile_control(&snapshot.controls, input_digest).is_some_and(
+      |c| matches!(&c.intent, FactoryRunControlIntent::SelectProfile { profile: current, .. } if current == profile),
+    )
+  {
+    return Err(conflict());
+  }
+  Ok(())
+}
+
 /// Canonical common control facts prepared before either backend mutates authority.
 pub struct FactoryRunControlChange {
   /// Successor technical Run version.
@@ -348,6 +469,10 @@ pub fn prepare_factory_run_control(
     return Err(invalid());
   }
   let (cancellation, result) = match &request.intent {
+    FactoryRunControlIntent::SelectProfile { input_digest, profile } => {
+      validate_factory_profile_choice(snapshot, *input_digest, profile, request.requested_at)?;
+      (false, "profile-choice-recorded")
+    }
     FactoryRunControlIntent::Cancel => {
       if snapshot.run.state().is_terminal() || current.cancellation_requested {
         return Err(conflict());
@@ -419,10 +544,89 @@ pub fn prepare_factory_run_control(
   })
 }
 
+/// Verifies manual consumption against retained accepted intent, for both adapters.
+pub(crate) fn validate_factory_profile_control_history(
+  admitted: &octacity_server_factory::AdmittedFlow,
+  data: &octacity_server_factory::FlowDataHistory,
+  controls: &[FactoryRunControlRecord],
+) -> Result<(), crate::StoreError> {
+  let mut targets = std::collections::BTreeSet::new();
+  for control in controls {
+    if let FactoryRunControlIntent::SelectProfile { input_digest, profile } = &control.intent {
+      let input = data
+        .inputs
+        .iter()
+        .find(|i| i.digest().ok() == Some(*input_digest))
+        .ok_or(crate::StoreError::Unavailable)?;
+      let pending = data
+        .profile_selections
+        .iter()
+        .find(|s| s.input_digest() == *input_digest && s.generation() == 0)
+        .ok_or(crate::StoreError::Unavailable)?;
+      let candidate = admitted
+        .closure()
+        .definition(input.definition())
+        .and_then(|d| d.node(input.node()))
+        .and_then(|n| n.profile_selection())
+        .is_some_and(|s| s.candidates.values().any(|c| c.profile.reference() == profile));
+      if !candidate
+        || !targets.insert((*input_digest, control.run_version))
+        || control.recorded_at < pending.started_at()
+        || control.recorded_at > pending.deadline()
+      {
+        return Err(crate::StoreError::Unavailable);
+      }
+    }
+  }
+  let mut consumed = std::collections::BTreeSet::new();
+  for choice in &data.profile_selections {
+    if let Some(id) = choice.manual_control() {
+      let control = controls
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or(crate::StoreError::Unavailable)?;
+      let input = data
+        .inputs
+        .iter()
+        .find(|i| i.digest().ok() == Some(choice.input_digest()))
+        .ok_or(crate::StoreError::Unavailable)?;
+      let profile = admitted
+        .closure()
+        .definition(input.definition())
+        .and_then(|d| d.node(input.node()))
+        .and_then(|n| n.profile_selection())
+        .and_then(|s| choice.candidate().and_then(|k| s.candidates.get(k)))
+        .map(|c| c.profile.reference())
+        .ok_or(crate::StoreError::Unavailable)?;
+      let predecessor = data
+        .profile_selections
+        .iter()
+        .find(|s| s.digest().ok() == choice.pending_digest())
+        .ok_or(crate::StoreError::Unavailable)?;
+      let earlier = predecessor
+        .manual_control()
+        .and_then(|id| controls.iter().find(|c| c.id == id));
+      if !consumed.insert(id)
+        || earlier.is_some_and(|earlier| earlier.run_version >= control.run_version)
+        || control.recorded_at > choice.recorded_at()
+        || control.intent
+          != (FactoryRunControlIntent::SelectProfile {
+            input_digest: choice.input_digest(),
+            profile: profile.clone(),
+          })
+      {
+        return Err(crate::StoreError::Unavailable);
+      }
+    }
+  }
+  Ok(())
+}
+
 /// Revalidates retained technical receipts against their exact accepted operator intent.
 /// A retry lineage cannot survive restoration after its authorization row disappears.
 pub fn validate_factory_node_control_history(snapshot: &crate::FactoryRunSnapshot) -> Result<(), crate::StoreError> {
   use octacity_server_factory::FlowNodeStopReason;
+  validate_factory_profile_control_history(&snapshot.admitted_flow, &snapshot.flow.data, &snapshot.controls)?;
   let cancellation_at = snapshot
     .controls
     .iter()

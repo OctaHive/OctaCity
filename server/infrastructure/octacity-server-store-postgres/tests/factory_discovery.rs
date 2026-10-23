@@ -2293,12 +2293,13 @@ async fn profile_selections_survive_restart_without_execution() {
   let reserve = FlowProfileSelectionFailure::ReserveProfile {
     candidate: key("specialized"),
   };
-  for (policy, failure, recover, available, candidate) in [
+  for (policy, failure, recover, available, candidate, admission_override) in [
     (
       FlowProfileSelectionPolicy::Manual { candidate: None },
       manual.clone(),
       false,
       false,
+      None,
       None,
     ),
     (
@@ -2309,15 +2310,61 @@ async fn profile_selections_survive_restart_without_execution() {
       false,
       false,
       Some("specialized"),
+      None,
     ),
-    (rule("/count"), manual.clone(), false, false, Some("advanced")),
-    (rule("/complexity"), manual.clone(), false, false, None),
-    (rule("/complexity"), manual, true, false, None),
-    (rule("/complexity"), reserve.clone(), true, true, Some("specialized")),
-    (rule("/complexity"), reserve, true, false, None),
+    (rule("/count"), manual.clone(), false, false, Some("advanced"), None),
+    (rule("/complexity"), manual.clone(), false, false, None, None),
+    (rule("/complexity"), manual.clone(), true, false, None, None),
+    (
+      rule("/complexity"),
+      reserve.clone(),
+      true,
+      true,
+      Some("specialized"),
+      None,
+    ),
+    (rule("/complexity"), reserve, true, false, None, None),
+    (
+      rule("/count"),
+      manual,
+      false,
+      false,
+      Some("specialized"),
+      Some("specialized"),
+    ),
   ] {
     let database = TestDatabase::migrated().await;
-    let (admission, input, ownership) = factory_profile_selection_failure_contract_fixture(policy, failure);
+    let (mut admission, mut input, ownership) = factory_profile_selection_failure_contract_fixture(policy, failure);
+    if let Some(candidate) = admission_override {
+      let node = &admission.flow.closure().definitions()[0].nodes()[0];
+      let overrides = vec![FlowProfileAdmissionOverride {
+        stage: FlowStageAddress {
+          root: admission.flow.closure().root(),
+          calls: vec![],
+          node: node.key().clone(),
+        },
+        profile: node.profile_selection().unwrap().candidates[&key(candidate)]
+          .profile
+          .reference()
+          .clone(),
+      }]
+      .try_into()
+      .unwrap();
+      admission.work = admission
+        .work
+        .clone()
+        .with_profile_overrides(overrides, admission.flow.closure())
+        .unwrap();
+      input = FlowNodeInput::new(
+        &admission.work,
+        &admission.flow,
+        admission.flow.root_run(),
+        admission.flow.initial_cycle(),
+        node.key().clone(),
+        input.payload().clone(),
+      )
+      .unwrap();
+    }
     let (store, _) = seed_projection_admission(&database, &admission).await;
     let run = admission.run.id();
     let claim = FactoryRunClaimRecord::new(run, ownership.owner().clone(), ownership.claim());
@@ -2357,10 +2404,77 @@ async fn profile_selections_survive_restart_without_execution() {
       .await
       .unwrap();
     assert_eq!(restored.flow.data.profile_selections, vec![selection]);
+    assert_eq!(restored.work, admission.work);
     assert_eq!(restored.flow.data.inputs, vec![input]);
     assert!(restored.flow.attempts.is_empty());
     assert!(restored.flow.data.build_intents.is_empty());
     assert_eq!(restored.budgets.last().unwrap().usage, BudgetUsage::default());
     database.cleanup().await;
   }
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn live_profile_control_survives_response_loss_and_restart() {
+  use octacity_server_store::testing::{factory_profile_selection_contract_fixture, verify_factory_profile_control};
+  use octacity_server_store::{FactoryRunControlStore, FactoryRunStore, MutationDisposition};
+  let database = TestDatabase::migrated().await;
+  let (admission, input, ownership) = factory_profile_selection_contract_fixture(None);
+  let (store, _) = seed_projection_admission(&database, &admission).await;
+  let (request, accepted) = verify_factory_profile_control(&store, &admission, &input, &ownership).await;
+  let before = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  let restarted = PostgresStore::new(database.pool.clone());
+  assert_eq!(
+    before,
+    restarted.factory_run_snapshot(admission.run.id()).await.unwrap()
+  );
+  let replay = restarted.apply_factory_run_control(request).await.unwrap();
+  assert_eq!(replay.disposition, MutationDisposition::Replayed);
+  assert_eq!(replay.version, accepted.version);
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn profile_supersession_and_races_recover_the_same_shared_journal() {
+  use octacity_server_store::{FactoryRunStore, testing::*};
+  for case in 0..6 {
+    let database = TestDatabase::migrated().await;
+    let (admission, input, ownership) = if case >= 4 {
+      factory_profile_recovery_race_contract_fixture()
+    } else {
+      factory_profile_supersession_contract_fixture()
+    };
+    let (store, _) = seed_projection_admission(&database, &admission).await;
+    match case {
+      0 => verify_factory_profile_supersession(&store, &admission, &input, &ownership).await,
+      1 => verify_factory_profile_selection_fencing(&store, &admission, &input, &ownership).await,
+      2 | 3 => verify_factory_profile_dispatch_race(&store, &admission, &input, &ownership, case == 3).await,
+      _ => verify_factory_profile_automatic_race(&store, &admission, &input, &ownership, case == 5).await,
+    }
+    let before = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+    let restarted = PostgresStore::new(database.pool.clone());
+    assert_eq!(
+      before,
+      restarted.factory_run_snapshot(admission.run.id()).await.unwrap()
+    );
+    database.cleanup().await;
+  }
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn profile_wait_controls_preserve_closed_bounds_after_restart() {
+  use octacity_server_store::{FactoryRunStore, testing::*};
+  let database = TestDatabase::migrated().await;
+  let (admission, input, ownership) = factory_profile_selection_contract_fixture(None);
+  let (store, _) = seed_projection_admission(&database, &admission).await;
+  verify_factory_profile_wait_controls(&store, &admission, &input, &ownership).await;
+  let before = store.factory_run_snapshot(admission.run.id()).await.unwrap();
+  let restarted = PostgresStore::new(database.pool.clone());
+  assert_eq!(
+    before,
+    restarted.factory_run_snapshot(admission.run.id()).await.unwrap()
+  );
+  database.cleanup().await;
 }

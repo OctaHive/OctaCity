@@ -361,8 +361,9 @@ pub use factory_retention_model::{
 pub use factory_retention_port::FactoryRetentionStore;
 pub use factory_run_control::{
   ApplyFactoryRunControl, FactoryRunControlChange, FactoryRunControlIntent, FactoryRunControlOutcome,
-  FactoryRunControlRecord, factory_node_response_contract, prepare_factory_run_control,
-  validate_factory_node_control_history, validate_factory_node_response, validate_factory_node_retry,
+  FactoryRunControlRecord, factory_node_response_contract, factory_profile_wait_is_open,
+  latest_factory_profile_control, prepare_factory_run_control, validate_factory_node_control_history,
+  validate_factory_node_response, validate_factory_node_retry,
 };
 pub use factory_run_control_port::FactoryRunControlStore;
 pub use factory_run_model::{

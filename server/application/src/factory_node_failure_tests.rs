@@ -202,8 +202,8 @@ fn a_confirmed_retry_addresses_the_failed_node_and_preserves_its_frozen_input() 
   assert!(std::future::Future::poll(future.as_mut(), &mut context).is_ready());
 }
 
-struct FailedExecution {
-  ids: ExecutionIds,
+pub(crate) struct FailedExecution {
+  pub(crate) ids: ExecutionIds,
 }
 #[async_trait]
 impl FactoryNodeExecutor for FailedExecution {

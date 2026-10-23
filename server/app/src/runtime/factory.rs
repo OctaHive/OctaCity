@@ -376,6 +376,7 @@ impl FactoryRuntimeResources {
       clock.clone(),
     )
     .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
+    .with_role_invocation_store(self.runs.clone())
     .with_review_invocation_source(review_invocations.clone());
     let mut compiler = FactoryCodexBuildMaterializer::new(contexts, publisher, profiles.clone(), reader, clock.clone())
       .map_err(|_| FactoryRuntimeInstallationError::Invalid)?

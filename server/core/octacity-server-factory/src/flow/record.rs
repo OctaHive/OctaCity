@@ -191,7 +191,8 @@ impl FlowNodeRecord {
       || attempt.input_digest() != self.input.digest()?
       || &self.producer != attempt.execution()
       || declared
-        .build()
+        .build_bindings()
+        .next()
         .is_some_and(|binding| binding.result_outcome != self.outcome)
       || declared
         .outcome(&self.outcome)

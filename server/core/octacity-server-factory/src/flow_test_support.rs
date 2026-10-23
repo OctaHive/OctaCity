@@ -665,3 +665,57 @@ pub(crate) fn promotion_execution_fixture_for_work(
   .unwrap();
   (work, admitted, output, input, attempt)
 }
+
+/// Reuses an ordinary root-stage fixture with one complete, pinned role candidate.
+#[allow(dead_code)] // Consumed by the application contract modules that share this fixture file.
+pub(crate) fn with_selected_profile(
+  work: &WorkEnvelope,
+  admitted: &AdmittedFlow,
+  input: &FlowNodeInput,
+  candidate: FlowProfileCandidate,
+) -> (AdmittedFlow, FlowNodeInput) {
+  let root = admitted.closure().definition(input.definition()).unwrap();
+  let mut node = serde_json::to_value(root.node(input.node()).unwrap()).unwrap();
+  node.as_object_mut().unwrap().remove("build");
+  node["profile_selection"] = serde_json::json!({"role":candidate.profile.role(),
+    "candidates":{"chosen":candidate},"policy":{"mode":"manual","candidate":"chosen"},
+    "failure":{"kind":"manual_selection"},"selection_budget":BudgetUsage::default()});
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: root.reference().id(),
+    version: root.reference().version(),
+    input_schema: root.input_schema().cloned(),
+    entry: root.entry().clone(),
+    nodes: vec![serde_json::from_value(node).unwrap()],
+    transitions: root.transitions().to_vec(),
+    terminals: root.terminals().to_vec(),
+    context_projections: root.context_projections().to_vec(),
+    data_projections: root.data_projections().to_vec(),
+    execution: root.execution().clone(),
+  })
+  .unwrap();
+  let run = FactoryRun::admitted(input.factory_run_id(), work);
+  let flow = FlowRun::root(&run, definition.reference()).unwrap();
+  let cycle = WorkflowCycle::initial(&flow).unwrap();
+  let admitted = AdmittedFlow::new(
+    PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+    admitted.limits().clone(),
+    flow,
+    cycle,
+    admitted.wip_limits(),
+  )
+  .unwrap()
+  .with_data_schemas(admitted.data_schemas().to_vec())
+  .unwrap();
+  let input = FlowNodeInput::new(
+    work,
+    &admitted,
+    admitted.root_run(),
+    admitted.initial_cycle(),
+    input.node().clone(),
+    input.payload().clone(),
+  )
+  .unwrap()
+  .with_context(input.context().unwrap().clone(), vec![])
+  .unwrap();
+  (admitted, input)
+}

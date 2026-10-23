@@ -117,25 +117,15 @@ impl FlowBuildProvenance {
     definition: &FlowDefinition,
   ) -> Result<(), FactoryError> {
     let node = definition.node(input.node()).ok_or_else(invalid)?;
-    let binding = node.build().ok_or_else(invalid)?;
+    let binding = self.profile.binding(definition)?;
     let raw = self
       .outputs
       .iter()
       .find(|output| output.name == binding.result_output)
       .ok_or_else(invalid)?;
     binding.validate_node(node)?;
-    if Self::new(self.profile.clone(), self.outputs.clone())? != *self
-      || self.profile.definition != definition.reference()
-      || &self.profile.node != input.node()
-      || self.profile.tool != binding.tool
-      || self.profile.result_tool != binding.result_tool
-      || self.profile.capture_write_paths != binding.capture_write_paths
-      || self.profile.plugin != binding.plugin
-      || self.profile.model_or_tool != binding.model_or_tool
-      || self.profile.task_digest != binding.task_digest
-      || self.profile.build_configuration != binding.build_configuration
-      || self.profile.result_output != binding.result_output
-      || self.profile.result_output_kind != binding.result_output_kind
+    if &self.profile.node != input.node()
+      || Self::new(self.profile.clone(), self.outputs.clone())? != *self
       || &raw.schema != payload.schema()
       || raw.data.as_ref().is_some_and(|data| data.payload() != payload)
       || raw.output_kind != binding.result_output_kind

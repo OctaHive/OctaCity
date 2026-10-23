@@ -8,7 +8,7 @@ use octacity_server_factory::{
 };
 use octacity_server_store::{
   ApplyFactoryRunControl, FactoryRunControlIntent, FactoryRunControlOutcome, FactoryRunControlRecord,
-  FactoryRunSnapshot, ManagementMutation, MutationDisposition, StoreError, prepare_factory_run_control,
+  ManagementMutation, MutationDisposition, StoreError, prepare_factory_run_control,
 };
 use serde::Deserialize;
 use serde_json::{Value, json};
@@ -109,6 +109,10 @@ struct ControlDocument {
 #[serde(deny_unknown_fields)]
 enum ControlIntentDocument {
   Cancel,
+  SelectProfile {
+    input_digest: FactoryDigest,
+    profile: octacity_server_factory::FactoryRoleProfileRef,
+  },
   RetryNode {
     node_attempt_id: NodeAttemptId,
   },
@@ -123,12 +127,16 @@ enum ControlIntentDocument {
 /// checked against its exact attempt, admitted schema and immutable audit link.
 pub(super) async fn read_controls(
   transaction: &mut Transaction<'_, Postgres>,
-  snapshot: &FactoryRunSnapshot,
+  run: &octacity_server_factory::FactoryRun,
+  admitted: &octacity_server_factory::AdmittedFlow,
+  attempts: &[octacity_server_factory::NodeAttempt],
+  runs: &[octacity_server_factory::FlowRun],
+  stops: &[octacity_server_factory::FlowNodeStop],
 ) -> Result<Vec<FactoryRunControlRecord>, StoreError> {
   let rows = sqlx::query_as::<_, (Vec<u8>, i64, String, Vec<u8>, Json<Value>, i64)>(
     "SELECT id, run_version, control_kind, request_identity_digest, control, FLOOR(EXTRACT(EPOCH FROM recorded_at) * 1000)::BIGINT \
      FROM factory_run_controls WHERE run_id = $1 ORDER BY run_version, id")
-    .bind(snapshot.run.id().as_uuid()).fetch_all(&mut **transaction).await.map_err(unavailable)?;
+    .bind(run.id().as_uuid()).fetch_all(&mut **transaction).await.map_err(unavailable)?;
   // Only the audit proof for each retained control belongs in its validation
   // working set. Unbounded claim/audit history remains separately pageable.
   let audits = sqlx::query_as::<_, super::FactoryAuditRow>(
@@ -141,7 +149,7 @@ pub(super) async fn read_controls(
          AND recorded_at = control.recorded_at ORDER BY id LIMIT 1 \
      ) AS audit ON TRUE WHERE control.run_id = $1",
   )
-  .bind(snapshot.run.id().as_uuid())
+  .bind(run.id().as_uuid())
   .fetch_all(&mut **transaction)
   .await
   .map_err(unavailable)?
@@ -153,9 +161,12 @@ pub(super) async fn read_controls(
     let document: ControlDocument = serde_json::from_value(value.clone()).map_err(|_| StoreError::Unavailable)?;
     let intent = match document.intent {
       ControlIntentDocument::Cancel => FactoryRunControlIntent::Cancel,
+      ControlIntentDocument::SelectProfile { input_digest, profile } => {
+        FactoryRunControlIntent::SelectProfile { input_digest, profile }
+      }
       ControlIntentDocument::RetryNode { node_attempt_id } => {
         if controls.iter().any(|row: &FactoryRunControlRecord| matches!(row.intent, FactoryRunControlIntent::RetryNode { node_attempt_id: previous } if previous == node_attempt_id))
-          || !snapshot.flow.data.stops.iter().any(|row| row.node_attempt_id() == node_attempt_id && row.reason() == octacity_server_factory::FlowNodeStopReason::ExecutionFailed && row.observed_at() <= document.recorded_at)
+          || !stops.iter().any(|row| row.node_attempt_id() == node_attempt_id && row.reason() == octacity_server_factory::FlowNodeStopReason::ExecutionFailed && row.observed_at() <= document.recorded_at)
         { return Err(StoreError::Unavailable); }
         FactoryRunControlIntent::RetryNode { node_attempt_id }
       }
@@ -165,18 +176,14 @@ pub(super) async fn read_controls(
         payload,
       } => {
         if controls.iter().any(|record: &FactoryRunControlRecord| matches!(record.intent, FactoryRunControlIntent::ResolveNode { node_attempt_id: previous, .. } if previous == node_attempt_id)) { return Err(StoreError::Unavailable); }
-        let attempt = snapshot
-          .flow
-          .attempts
+        let attempt = attempts
           .iter()
           .find(|record| record.id() == node_attempt_id)
           .ok_or(StoreError::Unavailable)?;
-        let node = snapshot
-          .flow
-          .runs
+        let node = runs
           .iter()
           .find(|run| run.id() == attempt.flow_run_id())
-          .and_then(|run| snapshot.admitted_flow.closure().definition(run.definition()))
+          .and_then(|run| admitted.closure().definition(run.definition()))
           .and_then(|definition| definition.node(attempt.node_key()))
           .ok_or(StoreError::Unavailable)?;
         if node.kind() != FlowNodeKind::HumanGate
@@ -187,7 +194,7 @@ pub(super) async fn read_controls(
         }
         let schema = node
           .outcome(&outcome)
-          .and_then(|outcome| snapshot.admitted_flow.data_schema(outcome.schema()))
+          .and_then(|outcome| admitted.data_schema(outcome.schema()))
           .ok_or(StoreError::Unavailable)?;
         let payload = FlowPayload::restore(
           &serde_json::to_vec(&payload).map_err(|_| StoreError::Unavailable)?,
@@ -204,9 +211,9 @@ pub(super) async fn read_controls(
     let record = FactoryRunControlRecord::new(document.run_id, document.run_version, intent, document.recorded_at);
     if record.id != document.id
       || record.id != digest(&id)?
-      || record.run_id != snapshot.run.id()
+      || record.run_id != run.id()
       || record.run_version.get() != positive(version)?
-      || record.run_version > snapshot.run.version()
+      || record.run_version > run.version()
       || record.recorded_at != timestamp(at)?
       || record.intent.operation() != kind
       || serde_json::to_value(&record).map_err(|_| StoreError::Unavailable)? != value
@@ -221,43 +228,4 @@ pub(super) async fn read_controls(
     controls.push(record);
   }
   Ok(controls)
-}
-
-/// Reads only canonical audited retry authority for the locked transition.
-pub(super) async fn read_retry_requests(
-  transaction: &mut Transaction<'_, Postgres>,
-  run: &octacity_server_factory::FactoryRun,
-) -> Result<std::collections::BTreeMap<NodeAttemptId, Timestamp>, StoreError> {
-  let rows = sqlx::query_as::<_, (Vec<u8>, i64, Json<Value>, i64, bool)>(
-    "SELECT control.id, control.run_version, control.control, FLOOR(EXTRACT(EPOCH FROM control.recorded_at) * 1000)::BIGINT, \
-       EXISTS (SELECT 1 FROM factory_audit_links audit WHERE audit.run_id=control.run_id AND audit.operation=control.control_kind \
-         AND audit.recorded_at=control.recorded_at AND audit.request_identity_digest=control.request_identity_digest) \
-     FROM factory_run_controls control WHERE control.run_id=$1 AND control.control_kind='retry-factory-node' ORDER BY control.run_version")
-    .bind(run.id().as_uuid()).fetch_all(&mut **transaction).await.map_err(unavailable)?;
-  let mut requests = std::collections::BTreeMap::new();
-  for (id, version, Json(value), at, audited) in rows {
-    let document: ControlDocument = serde_json::from_value(value.clone()).map_err(|_| StoreError::Unavailable)?;
-    let ControlIntentDocument::RetryNode { node_attempt_id } = document.intent else {
-      return Err(StoreError::Unavailable);
-    };
-    let record = FactoryRunControlRecord::new(
-      document.run_id,
-      document.run_version,
-      FactoryRunControlIntent::RetryNode { node_attempt_id },
-      document.recorded_at,
-    );
-    if !audited
-      || record.id != document.id
-      || record.id != digest(&id)?
-      || record.run_id != run.id()
-      || record.run_version.get() != positive(version)?
-      || record.run_version > run.version()
-      || record.recorded_at != timestamp(at)?
-      || serde_json::to_value(&record).map_err(|_| StoreError::Unavailable)? != value
-      || requests.insert(node_attempt_id, record.recorded_at).is_some()
-    {
-      return Err(StoreError::Unavailable);
-    }
-  }
-  Ok(requests)
 }

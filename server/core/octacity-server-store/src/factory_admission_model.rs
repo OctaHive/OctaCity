@@ -109,6 +109,16 @@ impl AdmitFactoryWork {
   /// Verifies that the admitted closure is exactly the one selected by the
   /// immutable configuration version, rather than a caller-supplied variant.
   pub fn validate_configuration(&self, configuration: &FactoryConfiguration) -> Result<(), StoreError> {
+    self
+      .work
+      .profile_overrides()
+      .validate(&configuration.flow().closure, self.work.subject().project_id())
+      .map_err(|_| {
+        StoreError::invalid(
+          StoreOperation::AdmitFactoryWork,
+          StoreInputError::InvalidFactoryAdmission,
+        )
+      })?;
     let expected = AdmittedFlow::from_configuration(configuration, &self.run).map_err(|_| {
       StoreError::invalid(
         StoreOperation::AdmitFactoryWork,

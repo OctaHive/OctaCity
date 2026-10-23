@@ -581,6 +581,7 @@ pub fn observe_phase_pool_candidate(
       .as_ref()
       .is_none_or(|claim| claim.claim.expires_at() <= at)
     && at >= entry.admitted_at
+    && phase_pool_profile_ready(entry, snapshot, at)
     && phase_pool_run_budget_ready(entry, snapshot)
     && phase_pool_run_wip_ready(entry, snapshot)
     && dependencies_ready;
@@ -617,6 +618,38 @@ pub fn observe_phase_pool_candidate(
   }
 }
 
+fn phase_pool_profile_ready(entry: &PhasePoolEntry, snapshot: &FactoryRunSnapshot, at: Timestamp) -> bool {
+  let Some(input) = snapshot
+    .flow
+    .data
+    .inputs
+    .iter()
+    .find(|input| input.digest().ok() == Some(entry.input.phase_input_digest))
+  else {
+    return false;
+  };
+  let Some(node) = snapshot
+    .admitted_flow
+    .closure()
+    .definition(input.definition())
+    .and_then(|definition| definition.node(input.node()))
+  else {
+    return false;
+  };
+  node.profile_selection().is_none()
+    || ((snapshot
+      .flow
+      .data
+      .current_profile_selection(entry.input.phase_input_digest)
+      .is_some_and(|selection| selection.candidate().is_some())
+      || snapshot
+        .flow
+        .data
+        .retry_source(input)
+        .is_some_and(|intent| intent.selected_profile().is_some()))
+      && crate::factory_profile_wait_is_open(snapshot, input, at))
+}
+
 fn phase_pool_run_wip_ready(entry: &PhasePoolEntry, snapshot: &FactoryRunSnapshot) -> bool {
   let active = snapshot.flow.runtime().active_nodes().collect::<Vec<_>>();
   let Some(flow) = snapshot
@@ -642,12 +675,14 @@ fn phase_pool_run_wip_ready(entry: &PhasePoolEntry, snapshot: &FactoryRunSnapsho
 ///
 /// A selected target continues to reserve capacity after a worker claim expires.
 /// Recovery takes over ordinary run ownership without selecting Work again or
-/// opening a second capacity slot. Completion, cancellation or a new cycle releases it.
+/// opening a second capacity slot. An undispatched profile selection loses its reservation
+/// when its original selection window closes. Existing effects retain capacity until stopped.
+/// Completion, cancellation or a new cycle releases the reservation.
 #[must_use]
 pub fn phase_pool_selection_active(
   selection: &PhasePoolSelection,
   snapshot: &FactoryRunSnapshot,
-  _at: Timestamp,
+  at: Timestamp,
 ) -> bool {
   // A stop request fences new dispatch, but existing effects keep their
   // reservation until the executor's receipt confirms that they have stopped.
@@ -667,13 +702,14 @@ pub fn phase_pool_selection_active(
     })
     .collect::<Vec<_>>();
   if targets.is_empty() {
-    return snapshot
-      .flow
-      .cycles
-      .iter()
-      .filter(|cycle| cycle.flow_run_id() == selection.entry.input.flow_run_id)
-      .max_by_key(|cycle| cycle.number())
-      .is_some_and(|cycle| cycle.id() == selection.entry.input.cycle_id);
+    return phase_pool_profile_ready(&selection.entry, snapshot, at)
+      && snapshot
+        .flow
+        .cycles
+        .iter()
+        .filter(|cycle| cycle.flow_run_id() == selection.entry.input.flow_run_id)
+        .max_by_key(|cycle| cycle.number())
+        .is_some_and(|cycle| cycle.id() == selection.entry.input.cycle_id);
   }
   targets.iter().any(|attempt| {
     !snapshot

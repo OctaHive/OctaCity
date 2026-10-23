@@ -243,6 +243,10 @@ impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
       .await?;
     let configuration = &admission_context.configuration.configuration;
     validate_admission_project(&admission_context, command.project_id)?;
+    command
+      .profile_overrides
+      .validate(&configuration.flow().closure, command.project_id)
+      .map_err(|_| ApplicationError::invalid())?;
     if let Some(input) = pinned_input {
       let repository = &admission_context.repository;
       let expected = &input.definition().repository;
@@ -384,6 +388,7 @@ pub(super) fn materialize_resolved_admission(
     command.artifacts,
     command.classification,
   )
+  .and_then(|work| work.with_profile_overrides(command.profile_overrides, &configuration.flow().closure))
   .map_err(|_| ApplicationError::invalid())?;
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   let flow = octacity_server_factory::AdmittedFlow::from_configuration(configuration, &run)

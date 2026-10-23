@@ -30,6 +30,9 @@ mod installed_sources;
 #[path = "factory_source_configuration_tests.rs"]
 mod source_configuration;
 
+#[path = "factory_admission_profile_override_tests.rs"]
+mod profile_overrides;
+
 use crate::{
   AdmitManualFactoryWorkCommand, ApplicationFailure, AuthorizedCommandHandler, FactoryAdmissionHandlers,
   ManagementAction, ManagementAuthorizationDenial, ManagementAuthorizationGrant, ManagementAuthorizationPolicy,
@@ -50,6 +53,7 @@ pub(super) fn command(
   repository_id: RepositoryId,
 ) -> AdmitManualFactoryWorkCommand {
   AdmitManualFactoryWorkCommand {
+    profile_overrides: Default::default(),
     project_id,
     configuration_id,
     configuration_version: FactoryConfigurationVersion::INITIAL,

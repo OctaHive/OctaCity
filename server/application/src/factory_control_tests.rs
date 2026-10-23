@@ -18,8 +18,9 @@ use uuid::Uuid;
 
 use crate::{
   CancelFactoryRunCommand, FactoryControlHandlers, ManagementAction, ManagementAuthorizationGrant,
-  ManagementAuthorizationTarget, ManagementCommandUseCase, ManagementRequestContext, ManagementRequestId,
-  ManagementVisibility, MutationDisposition, ResolveFactoryNodeCommand, RetryFactoryNodeCommand,
+  ManagementAuthorizationMapping, ManagementAuthorizationTarget, ManagementCommandUseCase, ManagementRequestContext,
+  ManagementRequestId, ManagementResourceKind, ManagementVisibility, MutationDisposition, ResolveFactoryNodeCommand,
+  RetryFactoryNodeCommand, SelectFactoryProfileCommand,
 };
 
 #[derive(Default)]
@@ -173,4 +174,54 @@ fn run_ready<T>(future: impl Future<Output = T>) -> T {
     Poll::Ready(output) => output,
     Poll::Pending => panic!("in-memory Factory control future must be immediately ready"),
   }
+}
+
+#[test]
+fn live_profile_command_keeps_exact_occurrence_profile_and_replay_identity() {
+  run_ready(async {
+    let (admission, input, _) = octacity_server_store::testing::factory_profile_selection_contract_fixture(None);
+    let store = Arc::new(CapturingStore::default());
+    let handlers = FactoryControlHandlers::new(store.clone());
+    let profile = admission
+      .flow
+      .closure()
+      .definition(input.definition())
+      .unwrap()
+      .node(input.node())
+      .unwrap()
+      .profile_selection()
+      .unwrap()
+      .candidates[&FactoryKey::new("specialized").unwrap()]
+      .profile
+      .reference()
+      .clone();
+    let command = SelectFactoryProfileCommand {
+      run_id: admission.run.id(),
+      expected_version: admission.run.version(),
+      input_digest: input.digest().unwrap(),
+      profile: profile.clone(),
+      idempotency_key: key("select-profile"),
+      requested_at: octacity_server_domain::Timestamp::from_unix_millis(12).unwrap(),
+    };
+    assert_eq!(
+      SelectFactoryProfileCommand::AUTHORIZATION,
+      ManagementAuthorizationMapping::instance(ManagementAction::Execute, ManagementResourceKind::FactoryRun)
+    );
+    handlers
+      .execute_management_command(&context(), &grant(), command.clone())
+      .await
+      .unwrap();
+    let requests = store.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].run_id, command.run_id);
+    assert_eq!(requests[0].expected_version, command.expected_version);
+    assert_eq!(requests[0].idempotency_key, command.idempotency_key);
+    assert_eq!(
+      requests[0].intent,
+      FactoryRunControlIntent::SelectProfile {
+        input_digest: command.input_digest,
+        profile
+      }
+    );
+  });
 }

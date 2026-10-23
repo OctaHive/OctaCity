@@ -21,6 +21,7 @@ pub struct FactoryCodexBuildOutputSource<R, Q, A, B> {
   context: Arc<dyn FactoryNodeContextSource>,
   candidate_context: Option<Arc<dyn FactoryRetainedCandidateContextSource>>,
   review: Option<Arc<dyn FactoryReviewInvocationSource>>,
+  role: Option<Arc<dyn FactoryRoleInvocationStore>>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
 impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> FactoryCodexBuildOutputSource<R, Q, A, B> {
@@ -46,8 +47,17 @@ impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> Facto
       context,
       candidate_context: None,
       review: None,
+      role: None,
       clock,
     })
+  }
+
+  /// Reads the original private package through the existing publication store.
+  /// Static tasks do not consult this optional dependency or a mutable role catalog.
+  #[must_use]
+  pub fn with_role_invocation_store(mut self, store: Arc<dyn FactoryRoleInvocationStore>) -> Self {
+    self.role = Some(store);
+    self
   }
 
   /// Installs journal qualification for explicitly selected independent review plans.
@@ -173,7 +183,25 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     {
       return Err(Invalid);
     }
-    let mut profiles = self.profiles.iter().filter(|profile| profile.matches_intent(intent));
+    let role =
+      if intent.selected_profile().is_some() || !self.profiles.iter().any(|profile| profile.matches_intent(intent)) {
+        let retained = self
+          .role
+          .as_ref()
+          .ok_or(Invalid)?
+          .factory_role_invocation(intent.operation_id().map_err(|_| Invalid)?)
+          .await
+          .map_err(classify)?
+          .ok_or(Invalid)?;
+        let role = FactoryRoleInvocation::restore(retained).map_err(|_| Invalid)?;
+        role.verify_intent(intent).map_err(|_| Invalid)?;
+        Some(role)
+      } else {
+        None
+      };
+    let mut profiles = self.profiles.iter().filter(|profile| {
+      profile.matches_role_intent(intent, role.as_ref().map(|role| &role.package().inputs().profile))
+    });
     let profile = profiles.next().ok_or(Invalid)?;
     if profiles.next().is_some() {
       return Err(Invalid);
@@ -300,7 +328,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
-        role: None,
+        role: role.as_ref(),
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),
         tool_risk: profile.tool_risk,
@@ -537,13 +565,12 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     };
     if let Some(capture) = capture {
       let mut capture_observation = None;
-      let binding = snapshot
+      let definition = snapshot
         .admitted_flow
         .closure()
         .definition(intent.input().definition())
-        .and_then(|definition| definition.node(intent.input().node()))
-        .and_then(|node| node.build())
         .ok_or(Invalid)?;
+      let binding = intent.profile().binding(definition).map_err(|_| Invalid)?;
       for (record, bytes) in capture_documents {
         let evidence = binding
           .evidence

@@ -844,3 +844,13 @@ pub use profile_selection::{
   factory_profile_selection_capabilities, factory_profile_selection_contract_fixture,
   factory_profile_selection_failure_contract_fixture, factory_profile_selection_policy_contract_fixture,
 };
+
+mod profile_control;
+pub use profile_control::{verify_factory_profile_control, verify_factory_profile_wait_controls};
+
+mod profile_supersession;
+pub use profile_supersession::{
+  factory_profile_recovery_race_contract_fixture, factory_profile_supersession_contract_fixture,
+  verify_factory_profile_automatic_race, verify_factory_profile_dispatch_race,
+  verify_factory_profile_selection_fencing, verify_factory_profile_supersession,
+};

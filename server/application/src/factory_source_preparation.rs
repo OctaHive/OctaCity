@@ -140,6 +140,7 @@ impl<S: WorkSourceArtifactStore, B: ArtifactBytePublisher> FactoryWorkSourcePrep
         .await?;
     }
     let intent = FactoryWorkAdmissionIntent {
+      profile_overrides: Default::default(),
       project_id: preparation.input.project_id(),
       configuration_id: preparation.input.definition().target.id(),
       configuration_version: preparation.input.definition().target.version(),

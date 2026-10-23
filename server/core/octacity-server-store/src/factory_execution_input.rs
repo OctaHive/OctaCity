@@ -176,7 +176,10 @@ impl RetainedFactoryRoleInvocation {
     };
     let inputs = self.package.inputs();
     inputs.task.verify_build_intent(intent).map_err(|_| invalid())?;
-    if inputs.profile.definition().build_configuration != intent.profile().build_configuration
+    if intent
+      .selected_profile()
+      .is_some_and(|profile| profile != inputs.profile.reference())
+      || inputs.profile.definition().build_configuration != intent.profile().build_configuration
       || inputs.task.permissions() != intent.permissions()
       || inputs.task.budget() != intent.budget()
     {

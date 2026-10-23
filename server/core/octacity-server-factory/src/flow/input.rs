@@ -87,6 +87,8 @@ pub struct FlowNodeInput {
   incoming_digest: Option<FactoryDigest>,
   #[serde(skip_serializing_if = "Option::is_none")]
   caller_input_digest: Option<FactoryDigest>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  profile_override: Option<crate::FlowProfileAdmissionOverride>,
 }
 impl FlowNodeInput {
   /// Verifies the exact execution owner before a capability consumes frozen data.
@@ -135,7 +137,8 @@ impl FlowNodeInput {
       context.node,
       payload,
     )?
-    .with_sources(sources)?;
+    .with_sources(sources)?
+    .with_admission_profile(context.work, context.admitted, context.history)?;
     expected.incoming_digest = incoming_digest;
     expected.caller_input_digest = caller_input_digest;
     // Execution generation is checked against full attempt history by the store
@@ -176,7 +179,8 @@ impl FlowNodeInput {
       context.node,
       payload,
     )?
-    .with_sources(sources)?;
+    .with_sources(sources)?
+    .with_admission_profile(context.work, context.admitted, context.history)?;
     input.incoming_digest = incoming_digest;
     input.caller_input_digest = caller_input_digest;
     input.generation = input.preparation_generation(context.history)?;
@@ -199,12 +203,26 @@ impl FlowNodeInput {
       .definition(flow.definition())
       .and_then(|d| d.node(&node))
       .ok_or_else(invalid)?;
+    work
+      .profile_overrides()
+      .validate(admitted.closure(), work.subject().project_id())?;
     if flow.factory_run_id() != admitted.root_run().factory_run_id()
       || cycle.flow_run_id() != flow.id()
       || declared.input_schema() != Some(payload.schema())
     {
       return Err(invalid());
     }
+    let profile_override = work
+      .profile_overrides()
+      .entries()
+      .iter()
+      .find(|entry| {
+        flow.parent().is_none()
+          && entry.stage.root == admitted.closure().root()
+          && entry.stage.calls.is_empty()
+          && entry.stage.node == node
+      })
+      .cloned();
     let input = Self {
       schema_version: 1,
       work_id: work.id(),
@@ -225,6 +243,7 @@ impl FlowNodeInput {
       sources: vec![],
       incoming_digest: None,
       caller_input_digest: None,
+      profile_override,
     };
     if input.bytes()?.len() > MAX_FLOW_DATA_BYTES {
       return Err(invalid());
@@ -302,18 +321,79 @@ impl FlowNodeInput {
   pub const fn caller_input_digest(&self) -> Option<FactoryDigest> {
     self.caller_input_digest
   }
+  /// Exact original Work admission choice for this stage occurrence, if supplied.
+  #[must_use]
+  pub const fn profile_override(&self) -> Option<&crate::FlowProfileAdmissionOverride> {
+    self.profile_override.as_ref()
+  }
+  /// Freezes an admission choice using authoritative parent-call rows, without selecting automatically.
+  /// The complete journal checks those rows and this binding before accepting the input.
+  pub fn with_admission_profile(
+    mut self,
+    work: &WorkEnvelope,
+    admitted: &AdmittedFlow,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<Self, FactoryError> {
+    // Context and projected source digests may still be under preparation here.
+    // Their complete verification remains at the ordinary publication boundary.
+    if self.work_digest != work_digest(work)? {
+      return Err(invalid());
+    }
+    self.profile_override = self.expected_admission_profile(work, admitted, history)?.cloned();
+    Ok(self)
+  }
+  fn expected_admission_profile<'a>(
+    &self,
+    work: &'a WorkEnvelope,
+    admitted: &AdmittedFlow,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<Option<&'a crate::FlowProfileAdmissionOverride>, FactoryError> {
+    if work.profile_overrides().is_empty() {
+      return Ok(None);
+    }
+    let address =
+      super::profile_override::FlowStageAddress::for_occurrence(admitted, history, self.flow_run_id, &self.node)?;
+    Ok(
+      work
+        .profile_overrides()
+        .entries()
+        .iter()
+        .find(|entry| entry.stage == address),
+    )
+  }
+  pub(super) fn verify_admission_profile(
+    &self,
+    work: &WorkEnvelope,
+    admitted: &AdmittedFlow,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<(), FactoryError> {
+    if self.profile_override.as_ref() != self.expected_admission_profile(work, admitted, history)? {
+      return Err(invalid());
+    }
+    Ok(())
+  }
   pub(crate) fn verify_work(&self, work: &WorkEnvelope, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
     self.verify_admission(admitted)?;
     if self.work_id != work.id()
       || self.work_digest != work_digest(work)?
       || &self.subject != work.subject()
       || &self.configuration != work.configuration()
+      || self
+        .profile_override
+        .as_ref()
+        .is_some_and(|entry| !work.profile_overrides().entries().contains(entry))
     {
       return Err(invalid());
     }
     Ok(())
   }
   pub(crate) fn verify_admission(&self, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
+    if let Some(entry) = &self.profile_override {
+      let definition = entry.stage.definition(admitted.closure())?;
+      if definition != self.definition || entry.stage.node != self.node {
+        return Err(invalid());
+      }
+    }
     if self.root_definition != admitted.closure().root()
       || &self.admission_limits != admitted.limits()
       || self.factory_run_id != admitted.root_run().factory_run_id()
@@ -374,12 +454,15 @@ impl FlowNodeInput {
     if let Some(digest) = wire.get("caller_input_digest") {
       input.caller_input_digest = Some(serde_json::from_value(digest.clone()).map_err(|_| invalid())?);
     }
+    if let Some(entry) = wire.get("profile_override") {
+      input.profile_override = Some(serde_json::from_value(entry.clone()).map_err(|_| invalid())?);
+    }
     input.generation =
       serde_json::from_value(wire.get("generation").ok_or_else(invalid)?.clone()).map_err(|_| invalid())?;
     if wire != serde_json::to_value(&input).map_err(|_| invalid())? || input.digest()? != expected_digest {
       return Err(invalid());
     }
-    input.verify_admission(admitted)?;
+    input.verify_work(work, admitted)?;
     Ok(input)
   }
   /// Returns the stable identity consumed by the persisted Node Attempt.

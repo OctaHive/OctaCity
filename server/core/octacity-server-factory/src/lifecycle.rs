@@ -176,6 +176,8 @@ pub struct WorkEnvelope {
   priority: WorkPriority,
   risk: RiskClass,
   metadata: FactoryMetadata,
+  #[serde(default, skip_serializing_if = "crate::FlowProfileAdmissionOverrides::is_empty")]
+  profile_overrides: crate::FlowProfileAdmissionOverrides,
 }
 
 impl WorkEnvelope {
@@ -200,6 +202,7 @@ impl WorkEnvelope {
       priority: classification.priority,
       risk: classification.risk,
       metadata: classification.metadata,
+      profile_overrides: Default::default(),
     })
   }
 
@@ -249,6 +252,21 @@ impl WorkEnvelope {
   #[must_use]
   pub const fn metadata(&self) -> &FactoryMetadata {
     &self.metadata
+  }
+  /// Retains explicit stage choices without changing the admitted Flow definitions.
+  pub fn with_profile_overrides(
+    mut self,
+    overrides: crate::FlowProfileAdmissionOverrides,
+    closure: &crate::PinnedFlowDefinitionClosure,
+  ) -> Result<Self, FactoryError> {
+    overrides.validate(closure, self.subject.project_id())?;
+    self.profile_overrides = overrides;
+    Ok(self)
+  }
+  /// Original immutable admission choices; later profile controls cannot edit them.
+  #[must_use]
+  pub const fn profile_overrides(&self) -> &crate::FlowProfileAdmissionOverrides {
+    &self.profile_overrides
   }
 }
 

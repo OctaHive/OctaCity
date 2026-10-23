@@ -198,17 +198,7 @@ where
     ownership: FactoryClaimOwnership,
     at: Timestamp,
   ) -> Result<FactoryNodeBuildStep, ApplicationError> {
-    let checked = FlowBuildIntent::new(
-      intent.input().clone(),
-      admitted,
-      intent.node().clone(),
-      intent.usage_before(),
-      intent.priority(),
-    )
-    .map_err(invalid)?;
-    if &checked != intent {
-      return Err(ApplicationError::invalid());
-    }
+    intent.verify_admission(admitted).map_err(invalid)?;
     let definition = admitted
       .closure()
       .definition(intent.input().definition())
@@ -550,7 +540,7 @@ fn complete_node(
     fresh_until: outputs.fresh_until,
     data: document.data.clone(),
   }];
-  for requirement in &node.build().ok_or_else(ApplicationError::invalid)?.evidence {
+  for requirement in &intent.profile().binding(definition).map_err(invalid)?.evidence {
     let evidence = selected_document(
       &outputs.documents,
       requirement.kind(),

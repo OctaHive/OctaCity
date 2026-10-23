@@ -1102,6 +1102,7 @@ fn validate_transition(
         .map(|row| row.recorded_at)
         .min(),
       lifecycle: current_checkpoint,
+      controls: &stored.controls.values().cloned().collect::<Vec<_>>(),
       retry_requests: &stored
         .controls
         .values()
@@ -1149,7 +1150,7 @@ fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppen
   for selection in &append.flow.data.profile_selections {
     append_unique(
       &mut stored.profile_selections,
-      selection.input_digest(),
+      selection.digest().map_err(|_| StoreError::Unavailable)?,
       selection.clone(),
     )?;
   }

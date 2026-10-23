@@ -310,10 +310,137 @@ execution and unselected manual waits need no catalog dependency. No additional 
 scheduler, table or provider fallback is introduced.
 
 Fixed-choice retention, pending state, deterministic rules, their failure
-recovery and current capability validation are implemented. Live selection
-commands, provider consumption and selected Build dispatch remain subsequent
-tasks (5–6); a recorded reserve is not dispatched execution or stage completion.
+recovery, current capability validation, live application selection commands and
+selected Build dispatch are implemented. Decision provider consumption remains
+section 6; a recorded reserve alone is not dispatched execution or stage completion.
 Manual task creation and static Build execution keep their existing mechanisms.
+
+### Work admission profile overrides
+
+The application Work admission intent accepts optional `profile_overrides`: a
+bounded array of exact stage/profile pairs. A stage contains the immutable root
+Flow reference (`root`), an ordered path of subflow-call node keys (`calls`), and
+the final node key (`node`). An empty call path addresses a root stage. The profile
+is a complete Project-owned ID/version/digest reference from that stage's pinned
+candidate map. Two calls of the same nested definition have different addresses.
+There are no wildcard targets, mutable aliases or per-setting patches.
+
+Admission validates these references before resolving the repository and again
+at the atomic store boundary. Duplicate stages, foreign or unpinned profiles,
+unknown calls/nodes and static stages are rejected without partial Work.
+The collection uses the existing Flow node-count, nesting and data-byte bounds.
+Canonical stage ordering makes equivalent request ordering replay-identical.
+Changing a choice under an accepted idempotency identity conflicts; an identical
+request returns the original Work/Run before another VCS resolution.
+
+The ordinary immutable Work snapshot retains the choices. Each prepared input
+binds its applicable choice through the actual parent-call ancestry, and the
+ordinary journal verifies that association. A matching override precedes manual,
+rules and Decision API policies without evaluating rules or calling a provider.
+It applies to each permitted occurrence of the declared stage, including retries
+and later cycles; unrelated stages keep their configured policy. Selection
+records retain the exact input and profile with no automatic rule/recovery result
+or added budget. Current capability validation still applies before execution.
+Existing Work and input bytes omit the optional fields when no override exists.
+
+REST/Console authoring remains in sections 7–8; admission cannot replace an
+already dispatched invocation or authorize
+an otherwise forbidden restart, cycle or retry.
+
+### Live profile choices before dispatch
+
+`SelectFactoryProfileCommand` uses the existing authorized Run control handler.
+It addresses one exact frozen `input_digest` (including nested Flow, cycle,
+node and execution generation), an admitted Project/profile ID/version/digest
+and the current Run version. The atomic control boundary accepts pending or
+already selected occurrences before Build intent commitment, within the original
+deadline and without cancellation or terminal state. Unknown/unpinned choices,
+stale versions and a duplicate of the latest accepted intent conflict without
+changing history. Acceptance retains the actor and request through the existing
+audit, records `select-factory-profile`, advances the Run version and fences the
+previous owner. It does not create an execution attempt or Build.
+
+The next fenced owner revalidates current capability availability and consumes
+only the latest accepted control for the occurrence. An operator may replace
+an unconsumed intent after reviewing the new Run version; all earlier intents
+remain retained. Consumption appends a selection generation linked to its exact
+predecessor and control. Initial automatic choices, reserve/failure provenance,
+manual choices and superseded facts remain immutable. The frozen input,
+original start/deadline and measured budget are preserved. An unavailable
+capability blocks consumption without silently choosing another profile.
+Polling after consumption adds no rows.
+
+The common journal validates the complete predecessor chain, unique generations
+and canonical pinned candidates. Run version and worker ownership checks serialize
+competing publication. A renewed worker fence cannot authorize an older control,
+a stale generation or an automatic result after manual acceptance. The same
+publication checks cover the existing one-shot reserve/manual recovery over a
+retained raw selector failure; they do not restart the selector or renew its
+limits. Earlier first-generation manual records retain their original wire
+representation and content identities.
+
+A selected ordinary `FlowBuildIntent` retains the exact selection digest and
+Project/profile ID/version/digest alongside its immutable execution binding. The journal checks
+that it references the current generation. Commitment and manual acceptance use
+the same Run lock/version, so only one wins; a pending newer control must be
+consumed before commitment. A committed intent, including an unknown dispatch
+response, cannot be replaced by another choice. Current selection/control lookup
+is derived from the retained journals without another mutable projection.
+Memory and PostgreSQL share these checks and the existing tables and recovery
+paths.
+
+An identical idempotent request returns its original acceptance receipt even
+after supersession, consumption, later progress or expiry, without another
+version increment. Changing the intent under that identity conflicts. A receipt
+confirms recorded intent, not execution. The Flow owner commits the selected
+Node Attempt and ordinary Build intent together, using the frozen input and
+original selection deadline. Execution permissions and budget narrow to the pinned
+profile, including its elapsed-time watchdog; the Node Attempt keeps the enclosing
+stage reservation. Configured phase pools retain their normal ready queue and
+capacity admission before attempt allocation. Before publishing a choice or selected
+intent, the owner rechecks its exclusive deadline with a fresh clock reading,
+including after asynchronous catalog qualification.
+
+Before selection, owner polling, live choice acceptance and phase-pool admission
+share the ordinary stage reservation check against the remaining Run and Flow
+budgets. A retained selection is actionable strictly before its original deadline;
+polling and takeover cannot renew it or spend new attempts/tokens. Expiry or
+exhausted hard budgets reject progress without introducing another Run state.
+An undispatched expired selection cannot reenter the ready queue or keep a
+phase-pool reservation. Once execution exists, its reservation remains until the
+ordinary completion or confirmed stop receipt.
+
+A manual profile wait consumes its enclosing Run WIP slot, but allocates no
+Node Attempt, Build or execution slot. Cancellation follows the existing Run owner,
+closes the Run and releases its WIP; a late profile control cannot revive it.
+Reserve/manual selection-failure policies apply only before dispatch. An execution
+failure retains its selected binding and measured cost in the normal stop/retry
+history, without another selector call or an automatic upgrade.
+
+Selected invocations require the complete exact role package, even if a technical
+task could match an installed static profile. The existing compiler/materializer
+qualifies that package and publishes it through the ordinary retained-input owner;
+a missing or substituted package cannot authorize a static fallback. Installed
+invocation sources supply original pins and authorized content, never current
+defaults. Output verification reads the same private retained package through an
+optional publication-store dependency and reconstructs the qualified ordinary Job,
+including capture contracts. Static tasks do not consult that role dependency.
+
+After intent commitment, takeover observes or replays the same ordinary Build
+operation without consulting the selection catalog. A lost dispatch acknowledgement
+cannot allocate another Build. Ordinary Build retries keep that operation, profile
+and package while retaining the actual Attempt/Job provenance; they do not invoke
+selection or its reserve policy.
+
+An explicitly confirmed `RetryNode` after technical failure also retains the
+preceding committed binding and original selection provenance. It creates the next
+frozen input generation and a new ordinary operation under the existing retry
+permission, budget and execution window; it never evaluates selection or recovery
+again. Current capability qualification still applies, and a configured phase pool
+requires a fresh capacity selection. Result provenance must match both the exact
+input node and the committed intent profile in the common journal; another
+compatible node or candidate cannot substitute its task/model contract.
+REST and Console expose the application contracts in sections 7 and 8.
 
 ### Role package recovery and lifetime
 

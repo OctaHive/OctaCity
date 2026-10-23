@@ -490,7 +490,7 @@ pub use factory_configuration_cqrs::{
 };
 pub use factory_control::{
   CancelFactoryRunCommand, ConfirmFactoryNodeOperationCommand, FactoryControlHandlers, FactoryRunControlCommandOutcome,
-  MAX_FACTORY_OPERATOR_REASON_BYTES, ResolveFactoryNodeCommand, RetryFactoryNodeCommand,
+  MAX_FACTORY_OPERATOR_REASON_BYTES, ResolveFactoryNodeCommand, RetryFactoryNodeCommand, SelectFactoryProfileCommand,
   SubmitFactoryNodeResponseCommand,
 };
 pub use factory_credentials::{FactoryCredentialResolutionError, ScopedFactoryCredential, resolve_factory_credential};

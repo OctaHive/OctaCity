@@ -42,6 +42,12 @@ pub struct FactoryWorkAdmissionIntent {
   pub artifacts: WorkArtifacts,
   /// Bounded priority, risk, and source metadata.
   pub classification: WorkClassification,
+  /// Explicit exact stage choices; omission preserves existing admission bytes and replay identity.
+  #[serde(
+    default,
+    skip_serializing_if = "octacity_server_factory::FlowProfileAdmissionOverrides::is_empty"
+  )]
+  pub profile_overrides: octacity_server_factory::FlowProfileAdmissionOverrides,
   /// Stable transport replay identity.
   pub idempotency_key: IdempotencyKey,
   /// Authoritative admission time.
@@ -79,6 +85,21 @@ pub fn factory_admission_intent_digest(command: &FactoryWorkAdmissionIntent, dom
   for (key, value) in command.classification.metadata().iter() {
     fields.push(key.as_bytes().to_vec());
     fields.push(value.as_bytes().to_vec());
+  }
+  if !command.profile_overrides.is_empty() {
+    fields.push(b"profile_overrides.v1".to_vec());
+    for entry in command.profile_overrides.entries() {
+      fields.push(entry.stage.root.id().to_string().into_bytes());
+      fields.push(entry.stage.root.version().get().to_string().into_bytes());
+      fields.push(entry.stage.root.digest().as_bytes().to_vec());
+      fields.push(entry.stage.calls.len().to_string().into_bytes());
+      fields.extend(entry.stage.calls.iter().map(|call| call.as_str().as_bytes().to_vec()));
+      fields.push(entry.stage.node.as_str().as_bytes().to_vec());
+      fields.push(entry.profile.project_id.to_string().into_bytes());
+      fields.push(entry.profile.id.to_string().into_bytes());
+      fields.push(entry.profile.version.get().to_string().into_bytes());
+      fields.push(entry.profile.digest.as_bytes().to_vec());
+    }
   }
   let fields = fields.iter().map(Vec::as_slice).collect::<Vec<_>>();
   FactoryDigest::sha256(domain, &fields)

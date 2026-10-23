@@ -277,23 +277,57 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       Some(attempt) if ready_again(&snapshot, &target, attempt)? => None,
       other => other,
     };
-    if attempt.is_none() && node.profile_selection().is_some() {
-      return match crate::factory_profile_selection::prepare(
+    let mut input = input;
+    let retry_build = retry.and_then(|previous| {
+      snapshot
+        .flow
+        .data
+        .build_intents
+        .iter()
+        .find(|intent| intent.node().id() == previous.id())
+    });
+    if let Some(profile) = retry_build.and_then(|intent| intent.selected_profile()) {
+      let candidate = node
+        .profile_selection()
+        .and_then(|binding| {
+          binding
+            .candidates
+            .values()
+            .find(|candidate| candidate.profile.reference() == profile)
+        })
+        .ok_or_else(ApplicationError::invalid)?;
+      crate::factory_profile_selection::validate_candidate(&snapshot, self.profile_catalog.as_deref(), candidate)
+        .await?;
+      at = self.current_time(at)?;
+    }
+    let selection = if attempt.is_none() && retry.is_none() && node.profile_selection().is_some() {
+      if let Some(append) = crate::factory_profile_selection::prepare(
         &snapshot,
         &target,
-        input,
+        input.clone(),
         at,
         self.profile_catalog.as_deref(),
       )
       .await?
       {
-        Some(append) => {
-          self.commit(&snapshot, append, at).await?;
-          Ok(FactoryNodeStep::Advanced)
-        }
-        None => Ok(FactoryNodeStep::Waiting),
-      };
-    }
+        self.commit(&snapshot, append, at).await?;
+        return Ok(FactoryNodeStep::Advanced);
+      }
+      let frozen =
+        crate::factory_profile_selection::frozen_input(&snapshot, &target)?.ok_or_else(ApplicationError::invalid)?;
+      let selection = snapshot
+        .flow
+        .data
+        .current_profile_selection(frozen.digest().map_err(invalid)?)
+        .ok_or_else(ApplicationError::invalid)?;
+      if selection.candidate().is_none() {
+        return Ok(FactoryNodeStep::Waiting);
+      }
+      input = Some(frozen.clone());
+      Some(selection)
+    } else {
+      None
+    };
     if let Some(attempt) = attempt {
       let frozen = snapshot
         .flow
@@ -493,13 +527,25 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       .unwrap_or(0)
       .checked_add(1)
       .ok_or_else(ApplicationError::invalid)?;
-    let deadline = Timestamp::from_unix_millis(
-      at.unix_millis()
-        .checked_add(i64::try_from(node.budget().max_elapsed_millis()).map_err(|_| ApplicationError::invalid())?)
-        .ok_or_else(ApplicationError::invalid)?,
-    )
-    .map_err(|_| ApplicationError::invalid())?;
-    let execution = if let Some(build) = node.build() {
+    let deadline = if let Some(selection) = selection {
+      selection.deadline()
+    } else {
+      Timestamp::from_unix_millis(
+        at.unix_millis()
+          .checked_add(i64::try_from(node.budget().max_elapsed_millis()).map_err(|_| ApplicationError::invalid())?)
+          .ok_or_else(ApplicationError::invalid)?,
+      )
+      .map_err(|_| ApplicationError::invalid())?
+    };
+    let build = if let Some(previous) = retry_build {
+      Some(previous.profile().binding(definition).map_err(invalid)?)
+    } else {
+      selection
+        .and_then(|selection| node.profile_selection()?.candidates.get(selection.candidate()?))
+        .map(|candidate| &candidate.build)
+        .or_else(|| node.build())
+    };
+    let execution = if let Some(build) = build {
       NodeExecutionIdentity::External(build.tool.clone())
     } else if let Some(action) = node.action() {
       NodeExecutionIdentity::External(action.plugin().clone())
@@ -541,14 +587,33 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         .push(WorkflowCycle::initial(&child).map_err(invalid)?);
       append.flow.runs.push(child);
     }
-    if node.build().is_some() {
-      let intent = FlowBuildIntent::new(
-        input.clone(),
-        &snapshot.admitted_flow,
-        attempt.clone(),
-        current_usage(&snapshot)?,
-        i64::from(snapshot.work.priority().get()),
-      )
+    if build.is_some() {
+      let intent = if let Some(previous) = retry_build {
+        previous.retry(
+          input.clone(),
+          &snapshot.admitted_flow,
+          attempt.clone(),
+          current_usage(&snapshot)?,
+          i64::from(snapshot.work.priority().get()),
+        )
+      } else if let Some(selection) = selection {
+        FlowBuildIntent::selected(
+          input.clone(),
+          &snapshot.admitted_flow,
+          attempt.clone(),
+          current_usage(&snapshot)?,
+          i64::from(snapshot.work.priority().get()),
+          selection,
+        )
+      } else {
+        FlowBuildIntent::new(
+          input.clone(),
+          &snapshot.admitted_flow,
+          attempt.clone(),
+          current_usage(&snapshot)?,
+          i64::from(snapshot.work.priority().get()),
+        )
+      }
       .map_err(invalid)?;
       intent
         .verify_reservation(&snapshot.admitted_flow, runtime(&snapshot))
@@ -694,10 +759,27 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     outbox: Vec<FactoryOutboxRecord>,
   ) -> Result<(), ApplicationError> {
     let claim = snapshot.current_claim.as_ref().ok_or_else(ApplicationError::invalid)?;
+    let publication_time = self.current_time(at)?;
     claim
       .claim
-      .verify_fence(claim.claim.fence(), self.current_time(at)?)
+      .verify_fence(claim.claim.fence(), publication_time)
       .map_err(invalid)?;
+    // Catalog reads may outlive the selection window while the worker lease remains valid.
+    if append
+      .flow
+      .data
+      .profile_selections
+      .iter()
+      .any(|selection| publication_time >= selection.deadline())
+      || append
+        .flow
+        .data
+        .build_intents
+        .iter()
+        .any(|intent| intent.selected_profile().is_some() && publication_time >= intent.node().deadline())
+    {
+      return Err(ApplicationError::invalid());
+    }
     let version = FactoryRunVersion::new(
       snapshot
         .run

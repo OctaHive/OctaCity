@@ -2,7 +2,16 @@ use crate::{
   AdmittedFlow, BudgetLimit, BudgetUsage, FactoryDigest, FactoryError, FactoryKey, FactoryPermissionSet,
   FlowBuildProfile, FlowNodeInput, MAX_FLOW_DATA_BYTES, NodeAttempt, NodeExecutionIdentity,
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+
+/// Immutable link to one selected generation; execution settings stay in the pinned candidate.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+struct SelectedProfile {
+  digest: FactoryDigest,
+  profile: crate::FactoryRoleProfileRef,
+  budget: BudgetLimit,
+}
 
 /// Frozen ordinary Build intent for any configured command or reasoning node.
 ///
@@ -14,6 +23,8 @@ use serde::Serialize;
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FlowBuildIntent {
   input: FlowNodeInput,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  selection: Option<SelectedProfile>,
   node: NodeAttempt,
   usage_before: BudgetUsage,
   priority: i64,
@@ -34,11 +45,97 @@ impl FlowBuildIntent {
     usage_before: BudgetUsage,
     priority: i64,
   ) -> Result<Self, FactoryError> {
+    Self::with_selection(input, admitted, node, usage_before, priority, None)
+  }
+  /// Freezes the exact retained selection generation before dispatch commitment.
+  /// The complete journal verifies that this is the current, authorized generation.
+  pub fn selected(
+    input: FlowNodeInput,
+    admitted: &AdmittedFlow,
+    node: NodeAttempt,
+    usage_before: BudgetUsage,
+    priority: i64,
+    selection: &crate::FlowProfileSelectionRecord,
+  ) -> Result<Self, FactoryError> {
+    if selection.input_digest() != input.digest()?
+      || node.started_at() < selection.recorded_at()
+      || node.deadline() != selection.deadline()
+    {
+      return Err(invalid());
+    }
+    let candidate = admitted
+      .closure()
+      .definition(input.definition())
+      .and_then(|definition| definition.node(input.node()))
+      .and_then(|node| node.profile_selection())
+      .and_then(|binding| binding.candidates.get(selection.candidate()?))
+      .ok_or_else(invalid)?;
+    let selected = SelectedProfile {
+      digest: selection.digest()?,
+      profile: candidate.profile.reference().clone(),
+      budget: candidate.profile.definition().budget,
+    };
+    Self::with_selection(input, admitted, node, usage_before, priority, Some(selected))
+  }
+
+  /// Creates an explicitly authorized technical retry with the preceding execution binding.
+  /// The journal separately verifies the failed predecessor and accepted retry control.
+  pub fn retry(
+    &self,
+    input: FlowNodeInput,
+    admitted: &AdmittedFlow,
+    node: NodeAttempt,
+    usage_before: BudgetUsage,
+    priority: i64,
+  ) -> Result<Self, FactoryError> {
+    self.verify_admission(admitted)?;
+    if node.retry_of() != Some(self.node.id()) || input != self.input.retry()? {
+      return Err(invalid());
+    }
+    Self::with_selection(input, admitted, node, usage_before, priority, self.selection.clone())
+  }
+
+  fn with_selection(
+    input: FlowNodeInput,
+    admitted: &AdmittedFlow,
+    node: NodeAttempt,
+    usage_before: BudgetUsage,
+    priority: i64,
+    selection: Option<SelectedProfile>,
+  ) -> Result<Self, FactoryError> {
     input.verify_admission(admitted)?;
     node.validate_execution_window()?;
     let definition = admitted.closure().definition(input.definition()).ok_or_else(invalid)?;
     let declared = definition.node(input.node()).ok_or_else(invalid)?;
-    let binding = declared.build().ok_or_else(invalid)?;
+    let candidate = selection.as_ref().and_then(|selected| {
+      declared
+        .profile_selection()?
+        .candidates
+        .values()
+        .find(|candidate| candidate.profile.reference() == &selected.profile)
+    });
+    let binding = match &selection {
+      None => declared.build(),
+      Some(selected) => {
+        let candidate = candidate.ok_or_else(invalid)?;
+        if selected.budget != candidate.profile.definition().budget {
+          return Err(invalid());
+        }
+        Some(&candidate.build)
+      }
+    }
+    .ok_or_else(invalid)?;
+    let permissions = candidate.map_or_else(
+      || declared.permissions().clone(),
+      |candidate| {
+        candidate
+          .profile
+          .definition()
+          .permissions
+          .clone()
+          .with_elapsed_limit(candidate.profile.definition().budget.max_elapsed_millis())
+      },
+    );
     if node.factory_run_id() != input.factory_run_id()
       || node.flow_run_id() != input.flow_run_id()
       || node.workflow_cycle_id() != input.cycle_id()
@@ -60,20 +157,7 @@ impl FlowBuildIntent {
       .checked_add(reservation(budget))
       .ok_or_else(invalid)?
       .validate(admitted.limits().budget())?;
-    let profile = FlowBuildProfile {
-      definition: definition.reference(),
-      node: declared.key().clone(),
-      tool: binding.tool.clone(),
-      result_tool: binding.result_tool.clone(),
-      capture_write_paths: binding.capture_write_paths.clone(),
-      capture_deliverables: binding.capture_deliverables.clone(),
-      plugin: binding.plugin.clone(),
-      model_or_tool: binding.model_or_tool.clone(),
-      task_digest: binding.task_digest,
-      build_configuration: binding.build_configuration.clone(),
-      result_output: binding.result_output.clone(),
-      result_output_kind: binding.result_output_kind,
-    };
+    let profile = FlowBuildProfile::from_binding(definition.reference(), declared.key().clone(), binding);
     let intent = Self {
       verification_check: if definition
         .execution()
@@ -85,13 +169,14 @@ impl FlowBuildIntent {
         None
       },
       input,
+      selection,
       node,
       usage_before,
       priority,
       profile,
       action: declared.action().cloned(),
       result_outcome: binding.result_outcome.clone(),
-      permissions: declared.permissions().clone(),
+      permissions,
     };
     if intent.bytes()?.len() > MAX_FLOW_DATA_BYTES {
       return Err(invalid());
@@ -106,25 +191,48 @@ impl FlowBuildIntent {
     admitted: &AdmittedFlow,
     history: crate::FlowRuntimeHistory<'_>,
   ) -> Result<(), FactoryError> {
-    let definition = admitted
-      .closure()
-      .definition(self.input.definition())
-      .ok_or_else(invalid)?;
+    Self::verify_budget(&self.input, admitted, history, self.usage_before, Some(self.node.id()))
+  }
+  /// Checks the ordinary stage reservation before selection or intent publication.
+  /// Waiting allocates no attempt and must leave capacity for the ordinary stage reservation.
+  pub fn verify_available_budget(
+    input: &FlowNodeInput,
+    admitted: &AdmittedFlow,
+    history: crate::FlowRuntimeHistory<'_>,
+    usage_before: BudgetUsage,
+  ) -> Result<(), FactoryError> {
+    Self::verify_budget(input, admitted, history, usage_before, None)
+  }
+
+  fn verify_budget(
+    input: &FlowNodeInput,
+    admitted: &AdmittedFlow,
+    history: crate::FlowRuntimeHistory<'_>,
+    usage_before: BudgetUsage,
+    prospective_attempt: Option<crate::NodeAttemptId>,
+  ) -> Result<(), FactoryError> {
+    input.verify_admission(admitted)?;
+    let definition = admitted.closure().definition(input.definition()).ok_or_else(invalid)?;
+    let budget = definition.node(input.node()).ok_or_else(invalid)?.budget();
+    usage_before
+      .checked_add(reservation(budget))
+      .ok_or_else(invalid)?
+      .validate(admitted.limits().budget())?;
     let mut usage = history
       .observed_usage_by_flow()?
-      .get(&self.input.flow_run_id())
+      .get(&input.flow_run_id())
       .copied()
       .unwrap_or_default();
     usage.attempts = u32::try_from(
       history
         .attempts
         .iter()
-        .filter(|attempt| attempt.flow_run_id() == self.input.flow_run_id() && attempt.id() != self.node.id())
+        .filter(|attempt| attempt.flow_run_id() == input.flow_run_id() && Some(attempt.id()) != prospective_attempt)
         .count(),
     )
     .map_err(|_| invalid())?;
     usage
-      .checked_add(reservation(self.node.budget()))
+      .checked_add(reservation(budget))
       .ok_or_else(invalid)?
       .validate(definition.execution().budget())
       .map(|_| ())
@@ -149,11 +257,33 @@ impl FlowBuildIntent {
     let field = |name| wire.get(name).cloned().ok_or_else(invalid);
     let usage = serde_json::from_value(field("usage_before")?).map_err(|_| invalid())?;
     let priority = serde_json::from_value(field("priority")?).map_err(|_| invalid())?;
-    let intent = Self::new(input.clone(), admitted, node.clone(), usage, priority)?;
+    let selection = serde_json::from_value(wire.get("selection").cloned().unwrap_or(serde_json::Value::Null))
+      .map_err(|_| invalid())?;
+    let intent = Self::with_selection(input.clone(), admitted, node.clone(), usage, priority, selection)?;
     if wire != serde_json::to_value(&intent).map_err(|_| invalid())? || intent.operation_id()? != expected_digest {
       return Err(invalid());
     }
     Ok(intent)
+  }
+  /// Rechecks the complete immutable static or selected contract against its pinned admission.
+  pub fn verify_admission(&self, admitted: &AdmittedFlow) -> Result<(), FactoryError> {
+    if Self::with_selection(
+      self.input.clone(),
+      admitted,
+      self.node.clone(),
+      self.usage_before,
+      self.priority,
+      self.selection.clone(),
+    )? != *self
+    {
+      return Err(invalid());
+    }
+    Ok(())
+  }
+  /// Exact chosen profile identity, available without a mutable catalog during package recovery.
+  #[must_use]
+  pub fn selected_profile(&self) -> Option<&crate::FactoryRoleProfileRef> {
+    self.selection.as_ref().map(|selection| &selection.profile)
   }
   /// Stable identity including frozen inputs, selected profile, priority and resource reservation.
   pub fn operation_id(&self) -> Result<FactoryDigest, FactoryError> {
@@ -164,6 +294,11 @@ impl FlowBuildIntent {
   }
   fn bytes(&self) -> Result<Vec<u8>, FactoryError> {
     serde_json::to_vec(self).map_err(|_| invalid())
+  }
+  /// Selected generation bound to this operation, absent for ordinary static nodes.
+  #[must_use]
+  pub fn selection_digest(&self) -> Option<FactoryDigest> {
+    self.selection.as_ref().map(|s| s.digest)
   }
   /// Returns the exact common node input and selected context.
   #[must_use]
@@ -190,10 +325,14 @@ impl FlowBuildIntent {
   pub const fn permissions(&self) -> &FactoryPermissionSet {
     &self.permissions
   }
-  /// Returns the immutable per-node hard ceiling.
+  /// Returns the immutable execution ceiling, narrowed to the selected profile when present.
+  /// The Node Attempt separately retains the enclosing stage reservation.
   #[must_use]
   pub const fn budget(&self) -> BudgetLimit {
-    self.node.budget()
+    match &self.selection {
+      Some(selected) => selected.budget,
+      None => self.node.budget(),
+    }
   }
   /// Returns cumulative consumption preceding this external execution.
   #[must_use]
