@@ -201,75 +201,89 @@ impl<S: ProjectSkillImportStore, B: ArtifactByteReader> ProjectSkillImport<S, B>
     project: ProjectId,
     selected: BTreeMap<FactoryRepositoryPath, FactoryRoleSkillBundle>,
   ) -> Result<ProtectedInputManifestV3, ApplicationError> {
-    let mut count = 0_usize;
-    let mut total = 0_u64;
-    for bundle in selected.values() {
-      count = count
-        .checked_add(bundle.files().len())
-        .ok_or_else(ApplicationError::invalid)?;
-      for file in bundle.files().values() {
-        total = total
-          .checked_add(file.encoded_size())
-          .ok_or_else(ApplicationError::invalid)?;
-      }
-    }
-    if count > octacity_server_factory::MAX_CONTEXT_MANIFEST_ENTRIES
-      || total > octacity_server_factory::MAX_CONTEXT_MANIFEST_BYTES
-    {
-      return Err(ApplicationError::invalid());
-    }
-    let mut inputs = Vec::new();
-    let mut retained = Vec::new();
-    for (destination, bundle) in selected {
-      let record = self
-        .store
-        .project_skill_import(project, bundle.reference())
-        .await?
-        .ok_or_else(ApplicationError::invalid)?;
-      if record.intent.bundle != bundle {
-        return Err(ApplicationError::invalid());
-      }
-      let objects: BTreeMap<_, _> = record
-        .inputs()?
-        .into_iter()
-        .map(|input| (input.artifact_id, input))
-        .collect();
-      for (path, file) in bundle.files() {
-        let input = objects.get(&file.artifact_id()).ok_or_else(ApplicationError::invalid)?;
-        let relative = FactoryRepositoryPath::new(format!("{}/{}", destination.as_str(), path.as_str()))
-          .map_err(|_| ApplicationError::invalid())?;
-        retained.push(input.clone());
-        inputs.push(ProtectedInputV3 {
-          artifact_id: input.artifact_id.to_string(),
-          size_bytes: input.size_bytes,
-          sha256: input.digest.to_string(),
-          media_type: input.media_type.as_str().into(),
-          destination: format!("{PROTECTED_INPUT_ROOT}/{}", relative.as_str()),
-        });
-      }
-    }
-    inputs.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
-    let manifest = ProtectedInputManifestV3 { inputs };
-    manifest.validate().map_err(|_| ApplicationError::invalid())?;
-    for input in &retained {
-      self.read_verified(input).await?;
-    }
-    Ok(manifest)
+    materialize_project_skills(self.store.as_ref(), self.bytes.as_ref(), project, selected).await
   }
+
   async fn read_verified(&self, input: &PublishedExecutionInput) -> Result<(), ApplicationError> {
-    let bytes = self
-      .bytes
-      .read_published(&object(input)?, input.size_bytes)
-      .await
-      .map_err(|_| ApplicationError::unavailable())?;
-    if bytes.len() as u64 != input.size_bytes
-      || FactoryDigest::content_sha256(&bytes).as_bytes() != input.digest.as_bytes()
-    {
-      return Err(ApplicationError::unavailable());
-    }
-    Ok(())
+    read_verified(self.bytes.as_ref(), input).await
   }
 }
+pub(crate) async fn materialize_project_skills<S: ProjectSkillImportStore, B: ArtifactByteReader>(
+  store: &S,
+  bytes: &B,
+  project: ProjectId,
+  selected: BTreeMap<FactoryRepositoryPath, FactoryRoleSkillBundle>,
+) -> Result<ProtectedInputManifestV3, ApplicationError> {
+  let mut count = 0_usize;
+  let mut total = 0_u64;
+  for bundle in selected.values() {
+    count = count
+      .checked_add(bundle.files().len())
+      .ok_or_else(ApplicationError::invalid)?;
+    for file in bundle.files().values() {
+      total = total
+        .checked_add(file.encoded_size())
+        .ok_or_else(ApplicationError::invalid)?;
+    }
+  }
+  if count > octacity_server_factory::MAX_CONTEXT_MANIFEST_ENTRIES
+    || total > octacity_server_factory::MAX_CONTEXT_MANIFEST_BYTES
+  {
+    return Err(ApplicationError::invalid());
+  }
+  let mut inputs = Vec::new();
+  let mut retained = Vec::new();
+  for (destination, bundle) in selected {
+    let record = store
+      .project_skill_import(project, bundle.reference())
+      .await?
+      .ok_or_else(ApplicationError::invalid)?;
+    if record.intent.bundle != bundle {
+      return Err(ApplicationError::invalid());
+    }
+    let objects: BTreeMap<_, _> = record
+      .inputs()?
+      .into_iter()
+      .map(|input| (input.artifact_id, input))
+      .collect();
+    for (path, file) in bundle.files() {
+      let input = objects.get(&file.artifact_id()).ok_or_else(ApplicationError::invalid)?;
+      let relative = FactoryRepositoryPath::new(format!("{}/{}", destination.as_str(), path.as_str()))
+        .map_err(|_| ApplicationError::invalid())?;
+      retained.push(input.clone());
+      inputs.push(ProtectedInputV3 {
+        artifact_id: input.artifact_id.to_string(),
+        size_bytes: input.size_bytes,
+        sha256: input.digest.to_string(),
+        media_type: input.media_type.as_str().into(),
+        destination: format!("{PROTECTED_INPUT_ROOT}/{}", relative.as_str()),
+      });
+    }
+  }
+  inputs.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
+  let manifest = ProtectedInputManifestV3 { inputs };
+  manifest.validate().map_err(|_| ApplicationError::invalid())?;
+  for input in &retained {
+    read_verified(bytes, input).await?;
+  }
+  Ok(manifest)
+}
+async fn read_verified<B: ArtifactByteReader>(
+  bytes: &B,
+  input: &PublishedExecutionInput,
+) -> Result<(), ApplicationError> {
+  let bytes = bytes
+    .read_published(&object(input)?, input.size_bytes)
+    .await
+    .map_err(|_| ApplicationError::unavailable())?;
+  if bytes.len() as u64 != input.size_bytes
+    || FactoryDigest::content_sha256(&bytes).as_bytes() != input.digest.as_bytes()
+  {
+    return Err(ApplicationError::unavailable());
+  }
+  Ok(())
+}
+
 fn object(input: &PublishedExecutionInput) -> Result<ArtifactObject, ApplicationError> {
   ArtifactObject::new(
     input.artifact_id,
@@ -366,5 +380,24 @@ impl<S: ProjectSkillImportStore, B: ArtifactByteReader> ManagementQueryUseCase<L
         .next_cursor
         .map(|r| format!("1:{}:{}:{}:{}", query.project_id, r.identity(), r.version(), r.digest())),
     })
+  }
+}
+
+impl<S: octacity_server_store::ProjectSkillImportStore, B: octacity_artifact_store::ArtifactByteReader>
+  crate::ProjectSkillImport<S, B>
+{
+  /// Verifies the selected retained dependencies with the existing Project input reader.
+  pub async fn prepare_invocation(
+    &self,
+    package: octacity_server_factory::FactoryRoleExecutionPackage,
+    secret_variables: BTreeMap<String, octacity_server_secrets::LogicalSecretReference>,
+  ) -> Result<crate::FactoryRoleInvocation, ApplicationError> {
+    crate::factory_role_invocation::prepare_factory_role_invocation(
+      self.store.as_ref(),
+      self.bytes.as_ref(),
+      package,
+      secret_variables,
+    )
+    .await
   }
 }

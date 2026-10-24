@@ -847,6 +847,11 @@ mod factory_role_materialization_tests;
 
 mod factory_role_invocation;
 pub use factory_role_invocation::*;
+mod factory_codex_role_source;
+pub use factory_codex_role_source::FactoryStoredCodexRoleInvocationSource;
 
 #[cfg(test)]
 mod factory_profile_diagnostics_tests;
+
+mod factory_codex_mcp;
+pub use factory_codex_mcp::{FactoryCodexMcpConfiguration, FactoryCodexMcpServer};

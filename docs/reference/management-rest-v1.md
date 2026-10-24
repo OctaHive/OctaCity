@@ -1028,6 +1028,20 @@ validation, installed compatible capability discovery, atomic
 `factory-role-publications`, and `factory-skills` import/catalog operations.
 These reuse existing Project View/Admin authorization and immutable publication;
 they are independent of enrolled CI/CD workers and Decision API installation.
+Console **AI agents** (`AI-агенты`) reuse these Role identities and own profiles;
+there is no AI-worker enrollment endpoint. Role content includes name, icon,
+description, ordered shared instructions and concurrency. Profiles carry exact
+runtime/model/thinking, additional instructions, skills, explicit environment and
+CLI settings, authorized MCP/integration bindings, tools and resource ceilings.
+Dedicated detail reads expose editable content with no-store; generic catalogs
+and audit omit instructions, environment values, CLI contents and skill bytes.
+
+Installed compatibility and executable support are separate from publication.
+`factory-profile-capabilities` exposes installed schemas and approved choices;
+validation rejects unsupported settings without contacting a provider. Importing
+a folder through `factory-skills` retains its reviewed regular files as one bundle
+and returns an exact reference. Reimport and profile adoption are separate explicit
+commands. The Console preserves the open in-memory profile draft during import.
 See [Factory operations](../operations/factory.md#project-roleprofile-http-authoring-and-safe-selection-history)
 for paths, request shapes, byte limits and replay/precondition semantics. OpenAPI
 is the authoritative bounded schema and authorization inventory.

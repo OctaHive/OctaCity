@@ -4470,6 +4470,7 @@ dependencies = [
  "octacity-server-factory",
  "octacity-server-job",
  "octacity-server-store",
+ "octacity-server-store-postgres",
  "octacity-source",
  "octacity-source-plugin",
  "octacity-vcs-protocol",

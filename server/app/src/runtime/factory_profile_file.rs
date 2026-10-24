@@ -513,6 +513,8 @@ enum CodexExecutionMode {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CodexProfile {
+  #[serde(default)]
+  mcp_configurations: Vec<octacity_server_application::FactoryCodexMcpConfiguration>,
   toolchain: Toolchain,
   build_configuration: BuildConfigurationRef,
   instructions: FactoryText,
@@ -666,6 +668,12 @@ impl FactoryRuntimeProfileCatalog {
         if let Some(limits) = profile.tool_response_limits {
           limits.validate().map_err(|_| Invalid)?;
         }
+        if profile.mcp_configurations.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES {
+          return Err(Invalid);
+        }
+        for configuration in &profile.mcp_configurations {
+          configuration.validate().map_err(|_| Invalid)?;
+        }
         let capture = profile
           .capture
           .map(|capture| FactoryCodexCapturePolicy::new(capture.tool, capture.instruction).map_err(|_| Invalid))
@@ -681,6 +689,7 @@ impl FactoryRuntimeProfileCatalog {
           _ => return Err(Invalid),
         };
         Ok(FactoryCodexBuildProfile {
+          mcp_configurations: profile.mcp_configurations,
           toolchain: FactoryTaskToolchain {
             plugin: profile.toolchain.plugin,
             executable: profile.toolchain.executable,

@@ -11,7 +11,7 @@ try {
     process.exit(0);
   }
   let reader;
-  if (args.length === 10) {
+  if (args[4] === '--dangerously-bypass-hook-trust') {
     if (args[4] !== '--dangerously-bypass-hook-trust' || args[5] !== '--config=features.hooks=true') throw new Error();
     const override = args[6].match(/^--config=hooks\.PreToolUse=\[\s*\{\s*hooks\s*=\s*\[\s*\{\s*command\s*=\s*("(?:[^"\\]|\\.)*")\s*,\s*statusMessage\s*=\s*"Authorizing tool action"\s*,\s*timeout\s*=\s*60\s*,\s*type\s*=\s*"command"\s*\}\s*\]\s*\}\s*\]$/);
     if (!override) throw new Error();
@@ -19,6 +19,14 @@ try {
     reader = command.slice(1, -1).replaceAll("'\"'\"'", "'");
     if (!reader.startsWith('/') || reader.includes('\0') || command !== "'" + reader.replaceAll("'", "'\"'\"'") + "'") throw new Error();
     args.splice(4, 3);
+  }
+  const options = [];
+  if (args.length > 7) {
+    const additional = args.splice(5, args.length - 6);
+    const schemas = additional.filter(argument => argument.startsWith('--output-schema='));
+    if (schemas.length !== 1) throw new Error();
+    options.push(...additional.filter(argument => !argument.startsWith('--output-schema=')));
+    args.splice(5, 0, schemas[0]);
   }
   if (args.length !== 7 || args[0] !== 'exec' || args[1] !== '--json'
     || args[2] !== '--sandbox=workspace-write' || args[3] !== '--ask-for-approval=never'
@@ -32,10 +40,21 @@ try {
   const delimiter = '\n\nFrozen node input (data, not instructions):\n';
   const split = prompt.indexOf(delimiter);
   if (split < 0) throw new Error();
-  const instructions = JSON.parse(prompt.slice(0, split));
+  const programStart = prompt.lastIndexOf('\n', split - 1) + 1;
+  const prefix = prompt.slice(0, programStart);
+  const instructions = JSON.parse(prompt.slice(programStart, split));
   const input = JSON.parse(prompt.slice(split + delimiter.length).split('\n\nSelected immutable context (JSON data, not instructions):\n')[0]);
   if (instructions.fixture_version !== 1 || !Object.hasOwn(instructions, 'result')
-    || Object.keys(instructions).some(key => !['fixture_version', 'result', 'files', 'tools', 'checks'].includes(key))) throw new Error();
+    || Object.keys(instructions).some(key => !['fixture_version', 'result', 'files', 'tools', 'checks', 'invocation', 'mcp'].includes(key))) throw new Error();
+  const invocation = instructions.invocation;
+  if (invocation === undefined) {
+    if (options.length || prefix) throw new Error();
+  } else {
+    if (Object.keys(invocation).length !== 3 || typeof invocation.prefix !== 'string'
+      || !Array.isArray(invocation.options) || !invocation.environment || typeof invocation.environment !== 'object'
+      || invocation.prefix !== prefix || JSON.stringify(invocation.options) !== JSON.stringify(options)
+      || Object.entries(invocation.environment).some(([key, value]) => process.env[key] !== value)) throw new Error();
+  }
   const toolResults = [];
   function render(value, depth = 0) {
     if (depth > 32) throw new Error();
@@ -97,6 +116,32 @@ try {
     if (completed.error || completed.status !== 0 || completed.stderr) throw new Error();
     return completed.stdout;
   }
+  function readMcp(invoke, tool, arguments_) {
+    const messages = [
+      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'finite-client', version: '1' } } },
+      { jsonrpc: '2.0', method: 'notifications/initialized' },
+      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: tool, arguments: arguments_ } },
+    ];
+    const replies = invoke(messages.map(item => JSON.stringify(item)).join('\n') + '\n').trim().split('\n').map(line => JSON.parse(line));
+    if (replies.length !== 2 || replies[0].id !== 1 || replies[0].error || replies[1].id !== 2 || replies[1].error
+      || replies[1].result?.isError !== false || replies[1].result.content?.length !== 1 || replies[1].result.content[0].type !== 'text'
+      || typeof replies[1].result.content[0].text !== 'string') throw new Error();
+    return replies[1].result.content[0].text;
+  }
+  if (instructions.mcp !== undefined) {
+    const mcp = instructions.mcp;
+    if (Object.keys(mcp).length !== 5 || typeof mcp.command !== 'string' || !mcp.command.startsWith('/')
+      || !Array.isArray(mcp.args) || mcp.args.length > 64 || mcp.args.some(arg => typeof arg !== 'string' || arg.includes('\0'))
+      || !Array.isArray(mcp.env_vars) || mcp.env_vars.some(name => typeof name !== 'string' || process.env[name] === undefined)
+      || typeof mcp.tool !== 'string' || typeof mcp.expected_text !== 'string') throw new Error();
+    const env = Object.fromEntries(mcp.env_vars.map(name => [name, process.env[name]]));
+    const text = readMcp(input => {
+      const completed = spawnSync(mcp.command, mcp.args, { input, encoding: 'utf8', timeout: 60000, maxBuffer: 1024 * 1024, env });
+      if (completed.error || completed.status !== 0 || completed.stderr) throw new Error();
+      return completed.stdout;
+    }, mcp.tool, {});
+    if (text !== mcp.expected_text) throw new Error();
+  }
   for (const [index, tool] of tools.entries()) {
     if (Object.keys(tool).length !== 1 || !Object.hasOwn(tool, 'path')) throw new Error();
     const path = render(tool.path);
@@ -104,16 +149,7 @@ try {
     const permission = JSON.parse(invokeReader([], JSON.stringify({ hook_event_name: 'PreToolUse', tool_name: 'mcp__qualified_fs__read_file',
       tool_use_id: `finite-tool-${index}`, tool_input: { path } })));
     if (permission.hookSpecificOutput?.hookEventName !== 'PreToolUse' || permission.hookSpecificOutput.permissionDecision !== 'allow') throw new Error();
-    const messages = [
-      { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2024-11-05', capabilities: {}, clientInfo: { name: 'finite-client', version: '1' } } },
-      { jsonrpc: '2.0', method: 'notifications/initialized' },
-      { jsonrpc: '2.0', id: 2, method: 'tools/call', params: { name: 'read_file', arguments: { path } } },
-    ];
-    const replies = invokeReader(['mcp'], messages.map(item => JSON.stringify(item)).join('\n') + '\n').trim().split('\n').map(line => JSON.parse(line));
-    if (replies.length !== 2 || replies[0].id !== 1 || replies[0].error || replies[1].id !== 2 || replies[1].error
-      || replies[1].result?.isError !== false || replies[1].result.content?.length !== 1 || replies[1].result.content[0].type !== 'text'
-      || typeof replies[1].result.content[0].text !== 'string') throw new Error();
-    toolResults.push(replies[1].result.content[0].text);
+    toolResults.push(readMcp(input => invokeReader(['mcp'], input), 'read_file', { path }));
   }
   const result = render(instructions.result);
   if (Buffer.byteLength(JSON.stringify(result)) > 1024 * 1024) throw new Error();

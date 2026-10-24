@@ -6,6 +6,7 @@ pub use flow::{
   FactoryCodexFlowCompilationOptions, FactoryCodexReviewCompilation, codex_flow_task_digest, compile_codex_flow_task,
   compile_codex_flow_task_with_context, compile_codex_flow_task_with_options,
 };
+pub(crate) use flow::{RolePrompt, render_context, render_role_prompt};
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -25,7 +26,9 @@ use crate::factory_codex_contract::{
 };
 
 const CODEX_AUTH_VARIABLE: &str = "OCTACITY_CODEX_AUTH";
-const CODEX_HOME_ENVIRONMENT: &str = "HOME";
+// Octa overlays ambient variables onto declarations. Keep the child HOME mapping
+// in the compiler-owned namespace rather than shadowing the ambient HOME key.
+const CODEX_HOME_VARIABLE: &str = "OCTACITY_FACTORY_CODEX_HOME";
 const CODEX_AUTH_ENVIRONMENT: &str = "OPENAI_API_KEY";
 const FACTORY_TASK_ENVELOPE_VARIABLE: &str = "OCTACITY_FACTORY_TASK_ENVELOPE_PATH";
 const FACTORY_PROMPT_VARIABLE: &str = "OCTACITY_FACTORY_PROMPT_PATH";
@@ -337,6 +340,8 @@ pub fn compile_codex_task(
           id: CODEX_PLUGIN_IDENTITY,
           codex: CodexTask {
             reasoning_effort: None,
+            cli_arguments: vec![],
+            mcp_servers: None,
             prompt: rendered_prompt,
             model: envelope.model().identity().as_str(),
             result_schema: &result_schema,
@@ -698,13 +703,13 @@ fn secret_environment() -> BTreeMap<String, String> {
 
 fn octafile_variables(public: &BTreeMap<String, String>) -> BTreeMap<String, Value> {
   let mut variables = public
-    .keys()
+    .values()
     .map(|variable| {
       let value = match variable.as_str() {
         FACTORY_PROMPT_VARIABLE => PROMPT_DESTINATION,
         FACTORY_RESULT_SCHEMA_VARIABLE => RESULT_SCHEMA_DESTINATION,
         FACTORY_TASK_ENVELOPE_VARIABLE => TASK_ENVELOPE_DESTINATION,
-        CODEX_HOME_ENVIRONMENT => FACTORY_SCRATCH_ROOT,
+        "HOME" | CODEX_HOME_VARIABLE => FACTORY_SCRATCH_ROOT,
         _ => unreachable!("public mappings are compiler-owned"),
       };
       (variable.clone(), Value::String(value.to_owned()))
@@ -860,6 +865,10 @@ struct OctaCommand<'a> {
 struct CodexTask<'a> {
   #[serde(skip_serializing_if = "Option::is_none")]
   reasoning_effort: Option<&'a str>,
+  #[serde(skip_serializing_if = "Vec::is_empty")]
+  cli_arguments: Vec<String>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  mcp_servers: Option<BTreeMap<String, crate::FactoryCodexMcpServer>>,
   prompt: &'a str,
   model: &'a str,
   result_schema: &'a Value,

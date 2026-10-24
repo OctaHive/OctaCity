@@ -64,6 +64,26 @@ _Avoid_: Editable task, latest requirements
 The technical execution and control history of one admitted Work Envelope. Nested Flows, attempts, retries and clarification remain children of that original execution.
 _Avoid_: Business status, Build Attempt
 
+**Factory Role (AI agent)**:
+A Project-owned, versioned responsibility with a display name, icon, description, ordered shared instructions and concurrency ceiling. Console calls it an AI agent; it is independent of enrolled CI/CD workers.
+_Avoid_: Worker Agent, Agent Pool, runtime installation
+
+**Role Profile**:
+An immutable version of one AI agent's complete execution settings, pinned to an exact Role version and qualified installed runtime/model, instructions, skills, environment, external bindings and resource ceilings.
+_Avoid_: Performance tier, live inheritance, worker configuration
+
+**Skill bundle**:
+An immutable version of one explicitly selected skill folder, containing its root `SKILL.md` and reviewed supporting files. Its content describes behavior but grants no execution or credential authority.
+_Avoid_: Ambient workstation folder, installed software, permission grant
+
+**Profile selection**:
+The retained choice of one pinned compatible profile for an exact stage occurrence, made manually, by ordered rules or by a qualified Decision Signal. A recorded control intent is distinct from a consumed choice and dispatched execution.
+_Avoid_: Routing edge, stage completion, automatic model upgrade
+
+**Execution package**:
+The immutable effective invocation containing controlling Project rules, exact Role/Profile and skill versions, task, Context and execution settings. Recovery retains that invocation instead of adopting current defaults.
+_Avoid_: Current catalog, mutable profile, deployment image
+
 **External source link**:
 The optional primary verified native ticket association in its Project/security/installation/resource/item namespace. Field ownership and external-status mapping are separately reviewed; a link alone authorizes no synchronization.
 _Avoid_: URL-derived authority, PR/MR association

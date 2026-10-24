@@ -46,6 +46,7 @@ octacity-server-application = { path = "../../application" }
 octacity-server-domain = { path = "../../core/octacity-server-domain" }
 octacity-server-factory = { path = "../../core/octacity-server-factory" }
 octacity-server-store = { path = "../../core/octacity-server-store" }
+octacity-server-store-postgres = { path = "../../infrastructure/octacity-server-store-postgres" }
 octacity-job = { path = "../../../agent/octacity-job" }
 octacity-source = { path = "../../../agent/octacity-source" }
 octacity-identity = { path = "../../../agent/octacity-identity" }

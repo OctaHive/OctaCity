@@ -1334,6 +1334,7 @@ fn qualified_codex_profile() -> FactoryCodexBuildProfile {
 
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   FactoryCodexBuildProfile {
+    mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
       plugin: managed::reference("codex", "0.5.0"),
       executable: managed::reference("codex-cli", "0.116.0"),
@@ -1389,6 +1390,31 @@ fn codex_catalog_document(profile: &FactoryCodexBuildProfile) -> serde_json::Val
         "enforceable": PermissionCategory::ALL}
     }]
   })
+}
+
+#[test]
+fn deployment_codex_mcp_configuration_keeps_its_exact_content_pin() {
+  use octacity_server_application::{FactoryCodexMcpConfiguration, FactoryCodexMcpServer};
+  let key = |value: &str| FactoryKey::new(value).unwrap();
+  let installed = FactoryCodexMcpConfiguration::new(
+    key("installed-reader"),
+    key("v1"),
+    FactoryCodexMcpServer::Stdio {
+      command: "/usr/bin/true".into(),
+      args: vec![],
+      env_vars: vec![],
+      enabled_tools: None,
+    },
+    None,
+  )
+  .unwrap();
+  let profile = qualified_codex_profile();
+  let mut document = codex_catalog_document(&profile);
+  document["codex"][0]["mcp_configurations"] = serde_json::json!([installed]);
+  let parsed = FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).unwrap();
+  assert_eq!(parsed.codex[0].mcp_configurations[0].reference(), installed.reference());
+  document["codex"][0]["mcp_configurations"][0]["server"]["command"] = serde_json::json!("/usr/bin/false");
+  assert!(FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).is_err());
 }
 
 #[tokio::test]
@@ -2111,7 +2137,10 @@ fn native_codex_selection_keeps_readonly_and_capture_profiles_separate_under_one
       None,
       None,
     );
-    FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap()
+    (
+      FlowBuildIntent::new(input, &admitted, node, BudgetUsage::default(), 7).unwrap(),
+      admitted,
+    )
   };
   let executor = NativeCodexNodeExecutor {
     builds: Arc::new(()),
@@ -2119,9 +2148,10 @@ fn native_codex_selection_keeps_readonly_and_capture_profiles_separate_under_one
     profiles: vec![coding.clone(), readonly.clone(), other.clone()],
     review_invocations: Arc::new(()),
   };
-  let capture_tool = |executor: &NativeCodexNodeExecutor<(), (), ()>, intent: &FlowBuildIntent| {
+  let capture_tool = |executor: &NativeCodexNodeExecutor<(), (), ()>,
+                      (intent, admitted): &(FlowBuildIntent, AdmittedFlow)| {
     executor
-      .profile(intent)
+      .profile(intent, admitted)
       .map(|profile| profile.capture.as_ref().map(|capture| capture.tool().clone()))
   };
   assert_eq!(capture_tool(&executor, &intent(&readonly)).unwrap(), None);
@@ -2143,6 +2173,83 @@ fn native_codex_selection_keeps_readonly_and_capture_profiles_separate_under_one
     review_invocations: Arc::new(()),
   };
   assert!(capture_tool(&duplicate, &intent(&readonly)).is_err());
+}
+
+#[test]
+fn native_codex_dispatch_uses_the_frozen_selected_profile() {
+  let work = selection_fixtures::work();
+  let mut installed = qualified_codex_profile();
+  let mut binding = selection_fixtures::binding(work.subject().project_id());
+  installed.build_configuration = binding.build_configuration.clone();
+  binding.tool = installed.toolchain.executable.clone();
+  binding.plugin = installed.toolchain.plugin.clone();
+  binding.model_or_tool = installed.toolchain.model.clone();
+  let role = FactoryRole::publish(
+    FactoryRoleId::generate(),
+    work.subject().project_id(),
+    serde_json::from_value(serde_json::json!({"name":"Reviewer","instructions":["Check the contract."]})).unwrap(),
+  )
+  .unwrap();
+  let mut definition = octacity_server_store::testing::role_profile_contract_definition(work.subject().project_id());
+  definition.toolchain = installed.toolchain.clone();
+  definition.build_configuration = binding.build_configuration.clone();
+  definition.permissions = installed.project_permissions.clone();
+  definition.credential_purpose = installed.consumer.purpose();
+  definition.skills.clear();
+  definition.context_requirements.clear();
+  definition.budget = BudgetLimit::new(1, 1000, 10, 10, 10000).unwrap();
+  let profile = FactoryRoleProfile::publish(
+    FactoryRoleProfileId::generate(),
+    work.subject().project_id(),
+    &role,
+    definition,
+  )
+  .unwrap();
+  binding.task_digest = factory_role_task_digest(installed.task_digest(), &profile);
+  let (_, admitted, _, input, node) = selection_fixtures::execution_fixture_with_permissions(
+    FlowNodeKind::Reasoning,
+    work.clone(),
+    binding.clone(),
+    None,
+    installed.project_permissions.clone(),
+  );
+  let (admitted, input) = selection_fixtures::with_selected_profile(
+    &work,
+    &admitted,
+    &input,
+    FlowProfileCandidate {
+      profile,
+      build: binding,
+    },
+  );
+  let mut node_json = serde_json::to_value(&node).unwrap();
+  node_json["input_digest"] = serde_json::json!(input.digest().unwrap());
+  node_json["deadline"] = serde_json::json!(1000);
+  let node: NodeAttempt = serde_json::from_value(node_json).unwrap();
+  let choice = FlowProfileSelectionRecord::select(
+    &input,
+    &admitted,
+    octacity_server_domain::Timestamp::from_unix_millis(0).unwrap(),
+  )
+  .unwrap();
+  let intent = FlowBuildIntent::selected(input, &admitted, node, Default::default(), 0, &choice).unwrap();
+  let executor = NativeCodexNodeExecutor {
+    builds: Arc::new(()),
+    outputs: Arc::new(()),
+    profiles: vec![installed.clone()],
+    review_invocations: Arc::new(()),
+  };
+  assert!(
+    executor.profile(&intent, &admitted).is_ok(),
+    "a frozen role selection must reach its installed compiler"
+  );
+  let mut changed = installed;
+  changed.instructions = FactoryText::new("Substituted installed instructions.").unwrap();
+  let substituted = NativeCodexNodeExecutor {
+    profiles: vec![changed],
+    ..executor
+  };
+  assert!(substituted.profile(&intent, &admitted).is_err());
 }
 
 #[tokio::test]

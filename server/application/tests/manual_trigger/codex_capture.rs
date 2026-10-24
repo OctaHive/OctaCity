@@ -155,6 +155,7 @@ fn installed_codex_author_materializes_only_the_explicit_trusted_capture_scope_w
       observation: None,
     };
     let profile = FactoryCodexBuildProfile {
+      mcp_configurations: vec![],
       toolchain: FactoryTaskToolchain {
         executable: binding.tool.clone(),
         plugin: binding.plugin.clone(),

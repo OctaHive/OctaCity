@@ -442,6 +442,54 @@ requires a verified publication in selected result ancestry, including explicit
 intermediate results; control ordering alone grants no context. Repository range
 or fragment retrieval requires a separately installed retrieval capability.
 
+### Project AI agents, profile selection and retained execution
+
+Console **AI agents** are Project-owned `FactoryRole` definitions and their
+`FactoryRoleProfile` versions. They do not enroll workers or create another
+runtime registry. Role publication owns presentation, ordered shared instructions
+and agent-wide concurrency; a profile pins one Role version and its complete
+execution settings. Release templates copy into ordinary independent identities.
+Updating a Role, profile or template cannot rewrite an admitted invocation.
+
+The installed `FactoryConfigurationChoices` catalog bounds authoring and current
+eligibility through the same `FactoryRoleProfileCapability` contract. Profile
+names confer no authority. Compatible runtime/model parameters, explicit public
+environment, logical secret references, approved argv, skills, MCP/integrations,
+tools and budgets remain installation data. The adapter qualifies the complete
+setting set before compilation; a catalog declaration does not install an executor.
+
+A reasoning stage may pin a finite set of complete profiles instead of a static
+Build binding. `manual` waits or fixes one candidate; `rules` uses the common typed
+predicate grammar; `decision_api` uses an exact installed selector through the
+existing Signal bridge. Selection and reserve/manual recovery retain their input,
+original deadline and provenance before the common fenced owner commits an ordinary
+Build intent. An accepted manual control is not execution or stage success. Capacity
+waiting retains the choice and uses ordinary Build/Placement admission.
+
+`FactoryRoleExecutionPackage` binds selected Context Policy text as controlling
+Project rules, exact Role/Profile versions, ordered instructions, complete skill
+dependencies, task and effective limits. `FactoryRoleInvocationSource` is the
+installed compiler seam for constructing the first package from authorized exact
+content. Native Codex assembly installs `FactoryStoredCodexRoleInvocationSource`
+for readonly review and tool reasoning. It reads exact catalog versions and selected
+retained inputs; replay uses the durable package while rechecking current integration
+grants. Compatibility discovery alone does not install another runtime.
+`ProjectSkillImport` reuses retained-input/object storage and protected transfer.
+After preparation, the ordinary input publisher retains the invocation under the
+original node operation before compiler writes. Recovery reads that snapshot before
+the mutable source; substitution fails rather than falling back to a static task.
+Run/Build retention and holds preserve the referenced versions and objects.
+
+Role-wide concurrency uses queued/running ordinary Builds across all profile and
+Role versions. The acceptance transaction checks the current Role ceiling under
+the publication lock. Terminal Build state releases capacity without another
+counter, scheduler or release worker. Existing static Flows, manual admission and
+ordinary CI/CD do not require roles, a selector or a provider.
+
+See [role compilation and lifetime](../operations/factory.md#role-packages-in-ordinary-build-compilation),
+[management contracts](../reference/management-rest-v1.md#project-ai-agent-roleprofile-contracts)
+and [Console authoring](../operations/operator-console.md) for the supported surfaces.
+
 Decision Signal nodes use the same exact immutable operation binding as trusted
 actions. Their installed adapter owns the parameter contract and provider policy;
 logical node names do not choose a provider or confer transition authority.

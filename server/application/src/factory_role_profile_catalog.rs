@@ -243,42 +243,7 @@ impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + Integration
     {
       return Ok(false);
     }
-    let Some(access) = self
-      .store
-      .integration_project_access(binding.connection_id, project)
-      .await?
-    else {
-      return Ok(false);
-    };
-    if access.version != binding.access_version || access.connection_version != binding.connection_version {
-      return Ok(false);
-    }
-    let metadata = self.store.integration_connection(binding.connection_id, None).await?;
-    if metadata.version != binding.connection_version {
-      return Ok(false);
-    }
-    let Some(capability) = metadata
-      .definition
-      .resources
-      .iter()
-      .find(|r| r.reference == binding.resource)
-      .and_then(|r| r.capabilities.iter().find(|c| c.capability == binding.capability))
-    else {
-      return Ok(false);
-    };
-    let request = IntegrationResourceAccess {
-      connection_id: binding.connection_id,
-      connection_version: binding.connection_version,
-      project_id: project,
-      resource: binding.resource.clone(),
-      purpose: capability.purpose,
-    };
-    match authorize_integration_resource(self.store.as_ref(), &request).await {
-      Ok(_) => {}
-      Err(ApplicationError::CapabilityUnavailable) => return Ok(false),
-      Err(error) => return Err(error),
-    }
-    Ok(true)
+    factory_role_integration_available(self.store.as_ref(), binding).await
   }
 }
 
@@ -363,4 +328,48 @@ impl<
       .ok_or_else(ApplicationError::capability_unavailable)?;
     self.available_profile_capability(context, project, cap.clone()).await
   }
+}
+
+// Shared protected-use qualification for authoring and native dispatch. No provider or secret I/O.
+pub(crate) async fn factory_role_integration_available<
+  S: IntegrationProjectAccessStore + IntegrationConnectionStore + IntegrationAdministrationStore,
+>(
+  store: &S,
+  binding: &FactoryRoleIntegrationBinding,
+) -> Result<bool, ApplicationError> {
+  let Some(access) = store
+    .integration_project_access(binding.connection_id, binding.project_id)
+    .await?
+  else {
+    return Ok(false);
+  };
+  if access.version != binding.access_version || access.connection_version != binding.connection_version {
+    return Ok(false);
+  }
+  let metadata = store.integration_connection(binding.connection_id, None).await?;
+  if metadata.version != binding.connection_version {
+    return Ok(false);
+  }
+  let Some(capability) = metadata
+    .definition
+    .resources
+    .iter()
+    .find(|r| r.reference == binding.resource)
+    .and_then(|r| r.capabilities.iter().find(|c| c.capability == binding.capability))
+  else {
+    return Ok(false);
+  };
+  let request = IntegrationResourceAccess {
+    connection_id: binding.connection_id,
+    connection_version: binding.connection_version,
+    project_id: binding.project_id,
+    resource: binding.resource.clone(),
+    purpose: capability.purpose,
+  };
+  match authorize_integration_resource(store, &request).await {
+    Ok(_) => {}
+    Err(ApplicationError::CapabilityUnavailable) => return Ok(false),
+    Err(error) => return Err(error),
+  }
+  Ok(true)
 }

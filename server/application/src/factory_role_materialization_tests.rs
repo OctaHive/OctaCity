@@ -38,6 +38,22 @@ fn fixture_for_work_mode(
   FactoryRoleExecutionPackage,
   BTreeMap<ArtifactId, Vec<u8>>,
 ) {
+  fixture_for_work_mode_with_context(original, edit, skills, bind_task, selected, &[])
+}
+fn fixture_for_work_mode_with_context(
+  original: WorkEnvelope,
+  edit: impl FnOnce(&mut FactoryRoleProfileDefinition),
+  skills: BTreeMap<FactoryKey, FactoryRoleSkillBundle>,
+  bind_task: fn(FactoryDigest, &FactoryRoleProfile) -> FactoryDigest,
+  selected: bool,
+  extra_context: &[(ContextSourceKind, FactoryKey, Vec<u8>)],
+) -> (
+  FlowBuildIntent,
+  AdmittedFlow,
+  FactoryCodexBuildProfile,
+  FactoryRoleExecutionPackage,
+  BTreeMap<ArtifactId, Vec<u8>>,
+) {
   let task_bytes = b"Measure the selected code.".to_vec();
   let task = FactoryArtifactReference::new(
     ArtifactId::generate(),
@@ -78,6 +94,7 @@ fn fixture_for_work_mode(
   binding.model_or_tool = toolchain.model.clone();
   binding.result_output = key("codex-run-result");
   let installed = FactoryCodexBuildProfile {
+    mcp_configurations: vec![],
     toolchain: toolchain.clone(),
     build_configuration: binding.build_configuration.clone(),
     instructions: FactoryText::new("Return the stage result.").unwrap(),
@@ -169,6 +186,29 @@ fn fixture_for_work_mode(
     )
     .unwrap(),
   );
+  let mut extra_inputs = BTreeMap::new();
+  for (kind, name, bytes) in extra_context {
+    let artifact = FactoryArtifactReference::new(
+      ArtifactId::generate(),
+      FactoryDigest::content_sha256(bytes),
+      bytes.len() as u64,
+    )
+    .unwrap();
+    entries.push(
+      ContextManifestEntry::new(
+        *kind,
+        name.clone(),
+        old_context.subject().clone(),
+        FactoryContextReference::Artifact(artifact.clone()),
+        artifact.content_digest(),
+        artifact.encoded_size(),
+        FactorySafeText::new("Selected parent result").unwrap(),
+        FactoryDigest::from_bytes([7; 32]),
+      )
+      .unwrap(),
+    );
+    extra_inputs.insert(artifact.artifact_id(), bytes.clone());
+  }
   let context = ContextManifest::new(
     old_context.id(),
     old_context.subject().clone(),
@@ -244,7 +284,7 @@ fn fixture_for_work_mode(
     context,
   })
   .unwrap();
-  let bytes = [
+  let mut bytes: BTreeMap<ArtifactId, Vec<u8>> = [
     (rules_ref.artifact_id(), rules),
     (
       intent
@@ -263,6 +303,7 @@ fn fixture_for_work_mode(
     ),
   ]
   .into();
+  bytes.extend(extra_inputs);
   (intent, admitted, installed, package, bytes)
 }
 fn fixture_with(
@@ -514,6 +555,274 @@ fn compile_profile(
       ..Default::default()
     },
   )
+}
+
+#[test]
+fn role_package_passes_only_exact_installed_mcp_settings() {
+  let server = FactoryCodexMcpServer::Stdio {
+    command: "/usr/bin/true".into(),
+    args: vec![],
+    env_vars: vec!["LANGUAGE".into()],
+    enabled_tools: Some(vec!["read".into()]),
+  };
+  let configuration = FactoryCodexMcpConfiguration::new(key("local-reader"), key("v1"), server, None).unwrap();
+  let (intent, admitted, installed, package, bytes) = fixture_with(
+    |profile| {
+      profile.execution.mcp_servers.insert(
+        key("reader"),
+        FactoryRoleMcpBinding {
+          configuration: configuration.reference().clone(),
+          integration: None,
+        },
+      );
+    },
+    BTreeMap::new(),
+  );
+  let role = FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap();
+  let compile = |configurations: &[FactoryCodexMcpConfiguration]| {
+    compile_codex_flow_task_with_options(
+      &intent,
+      &admitted,
+      &installed.instructions,
+      &installed.credentials,
+      installed.consumer,
+      &installed.usage_policy,
+      FactoryCodexFlowCompilationOptions {
+        role: Some(&role),
+        context: Some(&bytes),
+        mcp_configurations: Some(configurations),
+        ..Default::default()
+      },
+    )
+  };
+  assert!(compile(&[]).is_err());
+  let compiled = compile(std::slice::from_ref(&configuration)).unwrap();
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  let task = &octafile["tasks"]["observe"]["cmds"][0]["codex"];
+  assert_eq!(
+    task["mcp_servers"],
+    json!({"reader":{"transport":"stdio","command":"/usr/bin/true","args":[],"env_vars":["LANGUAGE"],"enabled_tools":["read"]}})
+  );
+  assert_eq!(task["environment"]["public"]["HOME"], "OCTACITY_FACTORY_CODEX_HOME");
+  let substituted = FactoryCodexMcpConfiguration::new(
+    key("local-reader"),
+    key("v1"),
+    FactoryCodexMcpServer::Stdio {
+      command: "/usr/bin/false".into(),
+      args: vec![],
+      env_vars: vec![],
+      enabled_tools: None,
+    },
+    None,
+  )
+  .unwrap();
+  assert!(compile(&[substituted]).is_err());
+}
+
+#[test]
+fn role_mcp_server_name_obeys_the_runtime_boundary() {
+  let server = FactoryCodexMcpServer::Stdio {
+    command: "/usr/bin/true".into(),
+    args: vec![],
+    env_vars: vec![],
+    enabled_tools: None,
+  };
+  assert!(compile_mcp_profile(&"r".repeat(64), server.clone()).is_ok());
+  assert!(matches!(
+    compile_mcp_profile(&"r".repeat(65), server),
+    Err(CodexCompilationError::UnsupportedToolchain)
+  ));
+}
+
+fn compile_mcp_profile(alias: &str, server: FactoryCodexMcpServer) -> Result<CompiledCodexTask, CodexCompilationError> {
+  let configuration = FactoryCodexMcpConfiguration::new(key("local-reader"), key("v1"), server, None)?;
+  let (intent, admitted, installed, package, bytes) = fixture_with(
+    |profile| {
+      profile.execution.mcp_servers.insert(
+        key(alias),
+        FactoryRoleMcpBinding {
+          configuration: configuration.reference().clone(),
+          integration: None,
+        },
+      );
+    },
+    BTreeMap::new(),
+  );
+  let role = FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap();
+  compile_codex_flow_task_with_options(
+    &intent,
+    &admitted,
+    &installed.instructions,
+    &installed.credentials,
+    installed.consumer,
+    &installed.usage_policy,
+    FactoryCodexFlowCompilationOptions {
+      role: Some(&role),
+      context: Some(&bytes),
+      mcp_configurations: Some(&[configuration]),
+      ..Default::default()
+    },
+  )
+}
+
+#[test]
+fn role_mcp_tool_selections_obey_the_runtime_contract() {
+  for transport in [
+    json!({"transport":"stdio", "command":"/usr/bin/true"}),
+    json!({"transport":"http", "url":"https://reader.example.test/mcp"}),
+  ] {
+    for tools in [
+      vec![],
+      vec!["r".repeat(256)],
+      (0..64).map(|i| format!("read-{i}")).collect(),
+    ] {
+      let mut server = transport.clone();
+      server["enabled_tools"] = json!(tools);
+      assert!(compile_mcp_profile("reader", serde_json::from_value(server).unwrap()).is_ok());
+    }
+    for tools in [
+      vec!["read".into(), "read".into()],
+      vec![String::new()],
+      vec![" read".into()],
+      vec!["read\n".into()],
+      vec!["r".repeat(257)],
+      (0..65).map(|i| format!("read-{i}")).collect(),
+    ] {
+      let mut server = transport.clone();
+      server["enabled_tools"] = json!(tools);
+      assert!(
+        matches!(
+          compile_mcp_profile("reader", serde_json::from_value(server).unwrap()),
+          Err(CodexCompilationError::UnsupportedToolchain)
+        ),
+        "invalid MCP tool selection must fail before producing executable inputs: {tools:?}"
+      );
+    }
+  }
+}
+
+#[test]
+fn installed_mcp_environment_selection_is_bounded_and_unique() {
+  let configure = |env_vars| {
+    FactoryCodexMcpConfiguration::new(
+      key("local-reader"),
+      key("v1"),
+      FactoryCodexMcpServer::Stdio {
+        command: "/usr/bin/true".into(),
+        args: vec![],
+        env_vars,
+        enabled_tools: None,
+      },
+      None,
+    )
+  };
+  assert!(configure(vec![]).is_ok());
+  assert!(configure((0..64).map(|i| format!("VARIABLE_{i}")).collect()).is_ok());
+  for names in [
+    vec!["LANGUAGE".into(), "LANGUAGE".into()],
+    (0..65).map(|i| format!("VARIABLE_{i}")).collect(),
+  ] {
+    assert!(matches!(
+      configure(names),
+      Err(CodexCompilationError::UnsupportedToolchain)
+    ));
+  }
+}
+
+#[test]
+fn role_mcp_cannot_inherit_the_model_credential_mapping() {
+  let configuration = FactoryCodexMcpConfiguration::new(
+    key("unmapped-reader"),
+    key("v1"),
+    FactoryCodexMcpServer::Stdio {
+      command: "/usr/bin/true".into(),
+      args: vec![],
+      env_vars: vec!["OPENAI_API_KEY".into()],
+      enabled_tools: None,
+    },
+    None,
+  )
+  .unwrap();
+  let (intent, admitted, installed, package, bytes) = fixture_with(
+    |profile| {
+      profile.execution.mcp_servers.insert(
+        key("reader"),
+        FactoryRoleMcpBinding {
+          configuration: configuration.reference().clone(),
+          integration: None,
+        },
+      );
+    },
+    BTreeMap::new(),
+  );
+  let role = FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap();
+  assert!(
+    compile_codex_flow_task_with_options(
+      &intent,
+      &admitted,
+      &installed.instructions,
+      &installed.credentials,
+      installed.consumer,
+      &installed.usage_policy,
+      FactoryCodexFlowCompilationOptions {
+        role: Some(&role),
+        context: Some(&bytes),
+        mcp_configurations: Some(&[configuration]),
+        ..Default::default()
+      }
+    )
+    .is_err(),
+    "MCP receives only profile-declared mappings, never the implicit model credential"
+  );
+}
+
+#[test]
+fn role_package_passes_qualified_cli_arguments_with_an_isolated_home() {
+  let compiled = compile_profile(|profile| {
+    profile.execution.cli_arguments = vec!["--ephemeral".into(), "--color=never".into()];
+  })
+  .unwrap();
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  let task = &octafile["tasks"]["observe"]["cmds"][0]["codex"];
+  assert_eq!(task["cli_arguments"], json!(["--ephemeral", "--color=never"]));
+  assert_eq!(task["environment"]["public"]["HOME"], "OCTACITY_FACTORY_CODEX_HOME");
+  assert_eq!(
+    octafile["vars"]["OCTACITY_FACTORY_CODEX_HOME"],
+    octacity_protocol::FACTORY_SCRATCH_ROOT
+  );
+  for arguments in [
+    vec!["--model=unapproved"],
+    vec!["--config=mcp_servers={}"],
+    vec!["--ephemeral", "--ephemeral"],
+  ] {
+    assert!(
+      compile_profile(|profile| {
+        profile.execution.cli_arguments = arguments.into_iter().map(str::to_owned).collect();
+      })
+      .is_err()
+    );
+  }
+}
+
+#[test]
+fn role_package_rejects_conflicting_color_arguments() {
+  for arguments in [
+    vec!["--color=never", "--color=always"],
+    vec!["--color=auto", "--color=never"],
+    vec!["--color=always", "--color=auto"],
+  ] {
+    assert!(
+      matches!(
+        compile_profile(|profile| {
+          profile.execution.cli_arguments = arguments.iter().map(|argument| (*argument).to_owned()).collect();
+        }),
+        Err(CodexCompilationError::UnsupportedToolchain)
+      ),
+      "conflicting color flags must fail before producing executable inputs: {arguments:?}"
+    );
+  }
 }
 
 #[test]
@@ -1135,5 +1444,252 @@ fn selected_role_dispatch_narrows_execution_to_the_pinned_profile_ceilings() {
       )
       .await
       .unwrap();
+  });
+}
+
+#[test]
+fn selected_role_first_package_uses_exact_published_content_and_real_prompt_digests() {
+  crate::factory_admission_tests::run_ready(async {
+    for extra in [
+      vec![],
+      vec![
+        (
+          ContextSourceKind::TypedResult,
+          key("parent-a"),
+          b"same-parent-finding".to_vec(),
+        ),
+        (
+          ContextSourceKind::TypedResult,
+          key("parent-b"),
+          b"same-parent-finding".to_vec(),
+        ),
+      ],
+    ] {
+      let (intent, admitted, installed, expected, bytes) = fixture_for_work_mode_with_context(
+        fixtures::work(),
+        |_| {},
+        BTreeMap::new(),
+        factory_role_task_digest,
+        true,
+        &extra,
+      );
+      let content = expected.inputs();
+      let store = publish_package_roles(&expected).await;
+      let source = FactoryStoredCodexRoleInvocationSource::new(
+        store,
+        Arc::new(crate::factory_skill_import_tests::Bytes::default()),
+        Arc::new(ContextBytes(bytes.clone())),
+        vec![installed.clone()],
+      );
+      let role = source
+        .invocation(
+          &intent,
+          Timestamp::from_unix_millis(41).unwrap(),
+          intent.node().deadline(),
+        )
+        .await
+        .unwrap()
+        .expect("initial package from the immutable published profile");
+      assert_eq!(role.package().inputs().role, content.role);
+      assert_eq!(role.package().inputs().profile, content.profile);
+      assert_eq!(role.package().inputs().project_rules, content.project_rules);
+      role.verify_intent(&intent).unwrap();
+      let compiled = compile_codex_flow_task_with_options(
+        &intent,
+        &admitted,
+        &installed.instructions,
+        &installed.credentials,
+        installed.consumer,
+        &installed.usage_policy,
+        FactoryCodexFlowCompilationOptions {
+          role: Some(&role),
+          context: Some(&bytes),
+          ..Default::default()
+        },
+      )
+      .unwrap();
+      let prompt = std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap();
+      assert_eq!(
+        role.package().inputs().task.digests().prompt,
+        codex_prompt_digest(prompt)
+      );
+      assert_eq!(
+        role.package().inputs().task.digests().prompt_provenance,
+        codex_prompt_provenance_digest(prompt)
+      );
+      assert_eq!(
+        role.package().inputs().task.prior_findings(),
+        if extra.is_empty() {
+          vec![]
+        } else {
+          vec![FactoryDigest::content_sha256(b"same-parent-finding")]
+        }
+      );
+    }
+  });
+}
+
+async fn publish_package_roles(
+  package: &FactoryRoleExecutionPackage,
+) -> Arc<octacity_server_store::testing::InMemoryFactoryConfigurationStore> {
+  let content = package.inputs();
+  let project = content.profile.reference().project_id;
+  let store = Arc::new(octacity_server_store::testing::InMemoryFactoryConfigurationStore::default());
+  store.seed_project(project).unwrap();
+  AuthorizedCommandHandler::new(
+    Arc::new(TrustedNetworkManagementPolicy),
+    Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
+  )
+  .handle_command(
+    &crate::factory_admission_tests::context(),
+    PublishFactoryRoleProfilesCommand {
+      intent: octacity_server_store::FactoryRoleProfilesIntent {
+        project_id: project,
+        role: Some(octacity_server_store::FactoryRoleIntent {
+          id: content.role.reference().id,
+          expected_current_version: None,
+          definition: content.role.definition().clone(),
+        }),
+        profiles: vec![octacity_server_store::FactoryRoleProfileIntent {
+          id: content.profile.reference().id,
+          expected_current_version: None,
+          role: content.profile.role().clone(),
+          definition: content.profile.definition().clone(),
+        }],
+      },
+      idempotency_key: "first-package".parse().unwrap(),
+      published_at: Timestamp::from_unix_millis(1).unwrap(),
+    },
+  )
+  .await
+  .unwrap();
+  store
+}
+
+#[test]
+fn selected_role_first_package_rechecks_managed_connection_access() {
+  crate::factory_admission_tests::run_ready(async {
+    let (intent, _, installed, package, bytes) = fixture_for_work_mode(
+      fixtures::work(),
+      |profile| {
+        profile.execution.integrations =
+          octacity_server_store::testing::role_profile_contract_definition(profile.build_configuration.project_id())
+            .execution
+            .integrations;
+      },
+      BTreeMap::new(),
+      factory_role_task_digest,
+      true,
+    );
+    let store = publish_package_roles(&package).await;
+    let source = FactoryStoredCodexRoleInvocationSource::new(
+      store,
+      Arc::new(crate::factory_skill_import_tests::Bytes::default()),
+      Arc::new(ContextBytes(bytes)),
+      vec![installed],
+    );
+    assert!(
+      source
+        .invocation(
+          &intent,
+          Timestamp::from_unix_millis(41).unwrap(),
+          intent.node().deadline()
+        )
+        .await
+        .is_err(),
+      "an installed profile cannot borrow a missing Project connection grant"
+    );
+  });
+}
+
+#[test]
+fn retained_role_package_rechecks_access_without_reloading_its_catalog() {
+  struct Access {
+    role: FactoryRoleInvocation,
+    allowed: std::sync::atomic::AtomicBool,
+    reads: std::sync::atomic::AtomicUsize,
+  }
+  #[async_trait::async_trait]
+  impl FactoryRoleInvocationSource for Access {
+    async fn invocation(
+      &self,
+      _: &FlowBuildIntent,
+      _: Timestamp,
+      _: Timestamp,
+    ) -> Result<Option<FactoryRoleInvocation>, ApplicationError> {
+      self.reads.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+      Ok(Some(self.role.clone()))
+    }
+    async fn authorize_dependencies(&self, _: &FactoryRoleInvocation) -> Result<(), ApplicationError> {
+      if self.allowed.load(std::sync::atomic::Ordering::SeqCst) {
+        Ok(())
+      } else {
+        Err(ApplicationError::capability_unavailable())
+      }
+    }
+  }
+  crate::factory_admission_tests::run_ready(async {
+    let project = fixtures::work().subject().project_id();
+    let integration = octacity_server_store::testing::role_profile_contract_definition(project)
+      .execution
+      .integrations
+      .into_values()
+      .next()
+      .unwrap();
+    let work = fixtures::work();
+    let mut integration = integration;
+    integration.project_id = work.subject().project_id();
+    let configuration = FactoryCodexMcpConfiguration::new(
+      key("retained-reader"),
+      key("v1"),
+      FactoryCodexMcpServer::Stdio {
+        command: "/usr/bin/true".into(),
+        args: vec![],
+        env_vars: vec![],
+        enabled_tools: None,
+      },
+      Some(integration.clone()),
+    )
+    .unwrap();
+    let (intent, admitted, mut installed, package, bytes) = fixture_for_work_mode(
+      work,
+      |profile| {
+        profile.execution.integrations.insert(key("reader"), integration);
+        profile.execution.mcp_servers.insert(
+          key("reader"),
+          FactoryRoleMcpBinding {
+            configuration: configuration.reference().clone(),
+            integration: Some(key("reader")),
+          },
+        );
+      },
+      BTreeMap::new(),
+      factory_role_task_digest,
+      true,
+    );
+    installed.mcp_configurations = vec![configuration];
+    let source = Arc::new(Access {
+      role: FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap(),
+      allowed: std::sync::atomic::AtomicBool::new(true),
+      reads: std::sync::atomic::AtomicUsize::new(0),
+    });
+    let (materializer, _) = materializer_fixture(&intent, &installed, bytes);
+    let materializer = materializer.with_role_invocation_source(source.clone());
+    let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    let at = Timestamp::from_unix_millis(41).unwrap();
+    materializer
+      .materialize(&intent, &admitted, owner.clone(), at)
+      .await
+      .unwrap();
+    source.allowed.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert!(
+      materializer.materialize(&intent, &admitted, owner, at).await.is_err(),
+      "retention cannot preserve a revoked access grant"
+    );
+    assert_eq!(
+      source.reads.load(std::sync::atomic::Ordering::SeqCst),
+      1,
+      "authoring catalog is not consulted again"
+    );
   });
 }

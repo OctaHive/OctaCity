@@ -136,6 +136,24 @@ impl FactoryRoleInvocation {
 /// original pins, never current defaults.
 #[async_trait::async_trait]
 pub trait FactoryRoleInvocationSource: Send + Sync {
+  /// Rechecks current managed access for a retained package without reading authoring catalogs.
+  /// Sources without that authority may recover packages with no managed connections.
+  async fn authorize_dependencies(&self, invocation: &FactoryRoleInvocation) -> Result<(), ApplicationError> {
+    if invocation
+      .package()
+      .inputs()
+      .profile
+      .definition()
+      .execution
+      .integrations
+      .is_empty()
+    {
+      Ok(())
+    } else {
+      Err(ApplicationError::capability_unavailable())
+    }
+  }
+
   /// Resolves the package for this immutable Build intent through the required read window.
   /// Required for selected profiles and unmatched role-bound task identities.
   /// None cannot authorize a fallback to a static task. Committed packages are
@@ -148,39 +166,42 @@ pub trait FactoryRoleInvocationSource: Send + Sync {
   ) -> Result<Option<FactoryRoleInvocation>, ApplicationError>;
 }
 
-impl<S: octacity_server_store::ProjectSkillImportStore, B: octacity_artifact_store::ArtifactByteReader>
-  crate::ProjectSkillImport<S, B>
-{
-  /// Verifies the selected retained dependencies with the existing Project input reader.
-  pub async fn prepare_invocation(
-    &self,
-    package: FactoryRoleExecutionPackage,
-    secret_variables: BTreeMap<String, LogicalSecretReference>,
-  ) -> Result<FactoryRoleInvocation, ApplicationError> {
-    let selected = package
-      .inputs()
-      .skills
-      .iter()
-      .map(|(alias, bundle)| {
-        Ok((
-          octacity_server_factory::FactoryRepositoryPath::new(format!(
-            "{FACTORY_ROLE_SKILL_DIRECTORY}/{}",
-            alias.as_str()
-          ))
-          .map_err(|_| ApplicationError::invalid())?,
-          bundle.clone(),
+pub(crate) async fn prepare_factory_role_invocation<
+  S: octacity_server_store::ProjectSkillImportStore,
+  B: octacity_artifact_store::ArtifactByteReader,
+>(
+  store: &S,
+  bytes: &B,
+  package: FactoryRoleExecutionPackage,
+  secret_variables: BTreeMap<String, LogicalSecretReference>,
+) -> Result<FactoryRoleInvocation, ApplicationError> {
+  let selected = package
+    .inputs()
+    .skills
+    .iter()
+    .map(|(alias, bundle)| {
+      Ok((
+        octacity_server_factory::FactoryRepositoryPath::new(format!(
+          "{FACTORY_ROLE_SKILL_DIRECTORY}/{}",
+          alias.as_str()
         ))
-      })
-      .collect::<Result<BTreeMap<_, _>, ApplicationError>>()?;
-    let skills = if selected.is_empty() {
-      None
-    } else {
-      Some(
-        self
-          .materialize(package.inputs().profile.reference().project_id, selected)
-          .await?,
+        .map_err(|_| ApplicationError::invalid())?,
+        bundle.clone(),
+      ))
+    })
+    .collect::<Result<BTreeMap<_, _>, ApplicationError>>()?;
+  let skills = if selected.is_empty() {
+    None
+  } else {
+    Some(
+      crate::factory_skill_import::materialize_project_skills(
+        store,
+        bytes,
+        package.inputs().profile.reference().project_id,
+        selected,
       )
-    };
-    FactoryRoleInvocation::new(package, skills, secret_variables)
-  }
+      .await?,
+    )
+  };
+  FactoryRoleInvocation::new(package, skills, secret_variables)
 }

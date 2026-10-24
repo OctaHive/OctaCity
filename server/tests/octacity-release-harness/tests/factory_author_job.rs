@@ -709,6 +709,7 @@ fn compile_author(
     FactoryDigest::content_sha256(b"ordinary configuration"),
   );
   let profile = FactoryCodexBuildProfile {
+    mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
       plugin: plugin.clone(),
       executable: executable.clone(),

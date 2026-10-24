@@ -161,22 +161,73 @@ protected destinations before reading files, then verifies every retained byte
 identity. Missing or substituted content fails without an ambient/global fallback.
 The resulting unchanged `ProtectedInputManifestV3` uses the existing Artifact input
 transfer and Agent materializer, with no provider URL or new file backend. Import
-creates no Work, Build or executable grant. Installed capability qualification,
-REST uses this same import owner (see the Project skill routes below); Console
-folder selection/review remains section 8.1.
+creates no Work, Build or executable grant. REST uses this same import owner
+(see the Project skill routes below); Console offers reviewed folder import
+inside the open profile draft.
 
 ### Role packages in ordinary Build compilation
 
+The version-1 `factory_profiles_file` separates executable installations from
+Project authoring choices. Within `projects`, optional `role_profiles` entries
+are keyed by an existing node-capability alias and contain `ceiling`, `parameters`,
+`public_environment` and `enforcement`. `ceiling` is the complete ordinary profile
+definition, with exact toolchain and Build Configuration pins; the alias resolves
+its installed executable. The selected Build Configuration must belong to that
+Project. Parameter/environment values use the existing closed Flow schemas.
+`enforcement` declares the supported local permission categories.
+
+These entries constrain authoring and validation; they do not install Codex,
+resolve credentials, start a worker, or grant a permission. Exact runtime/model and
+Build availability are required. Unavailable optional skills, tools, MCP or
+integration choices are removed from the available ceiling; selecting an unavailable
+entry is rejected. External connections reuse existing Project integration access
+and credential purposes. User-authored instructions never extend that ceiling.
+
+Install each actual compiler/runtime independently and qualify its supported
+settings. The current pinned Codex adapter supports its model/reasoning fields,
+explicit public environment and installed logical secret mappings. Octa 0.7.0
+accepts the additive flags `--ephemeral`, `--skip-git-repo-check` and
+`--color=never|always|auto`. Arguments must be unique and select at most one
+`--color=` value; conflicting flags are rejected during compilation, before
+execution inputs or an ordinary Build are published. Installed MCP transports
+live in the Codex entry's `mcp_configurations` and are selected by content-pinned
+profile references. MCP aliases use 1–64 ASCII letters, digits, `_` or `-`. Each transport
+allows up to 64 distinct `enabled_tools`, whose names contain 1–256 UTF-8 bytes
+without surrounding whitespace or control characters. An empty tool list remains
+valid. Stdio `env_vars` contains at most 64 distinct names; every name must also
+be explicitly mapped by the selected profile. These list constraints are checked
+when constructing or validating installed transport metadata. Compilation also
+checks aliases and explicit profile environment mappings. A transport can bind
+one exact existing Project integration grant; the grant and connection
+administration are rechecked before dispatch, including retained-package replay.
+MCP receives only environment names explicitly declared
+by that profile; the implicit model credential is not inherited. A declaration
+for another adapter does not install its runtime support.
+Keep the installation's exact identities and retained old bindings available for
+existing Runs. Roll back by preventing new role-selected admissions and draining or
+cancelling them with a compatible binary; preserve retained packages/history and
+do not feed live new-format Runs to an older decoder.
+
 An installed materializer can opt into `FactoryRoleInvocationSource` to obtain one
-selected immutable package. Exact installed static task matches bypass the source,
-so its storage availability cannot block static Builds. The source is consulted
-only when a static match is absent; a missing package cannot authorize a fallback.
+selected immutable package. An unselected exact installed static task bypasses the
+source, so its storage availability cannot block static Builds. Selected profiles
+always require their retained package, even when their runtime matches a static
+installation; a missing package cannot authorize a fallback.
 The source must use existing capability qualification, authorize dependencies and
 read exact retained content; it cannot choose current catalog defaults. `ProjectSkillImport.prepare_invocation` composes the existing
 skill reader with the common invocation contract, including every supporting file
 under `/octacity/protected/skills/<alias>/`. Missing, extra or substituted file
 identities are rejected. Credential mappings contain selected logical references
 and installed variable names, never secret values or a new credential resolver.
+
+Native `FactoryRuntimeResources::codex_executor` supplies
+`FactoryStoredCodexRoleInvocationSource` for the first readonly observation package
+and retains it through the common input journal. It reads exact historical Role,
+Profile and imported-skill versions plus the explicitly selected Context. Replay
+uses the retained package rather than current catalog heads. This stock source
+supports readonly review and tool reasoning, and supplies no additional secret
+variable mappings; unsupported authoring or secret selections fail closed.
+Released-process qualification is tracked separately in task 9.1.
 
 `factory_role_task_digest` binds the installed task policy to exact role/profile
 references. Matching includes the ordinary Build configuration and full
@@ -195,9 +246,13 @@ and no ambient Project policy is discovered at compilation time.
 The existing Codex compiler preserves ordered controlling Project rules, shared
 role instructions, profile additions and installed stage instructions. It emits
 native model/reasoning settings, explicit public variables and qualified secret
-variable mappings. The pinned native task has a fixed CLI and no per-task
-MCP/integration override: nonempty overrides, unknown model settings, protected
-environment overrides and unresolved credential mappings fail before publication.
+variable mappings and qualified additive CLI/MCP settings. Unknown model settings,
+protected environment overrides and unresolved credential mappings fail before
+publication. Explicit runtime settings map child `HOME` through a compiler-owned
+variable to `/workspace/scratch`, so Octa's ambient `HOME` overlay cannot replace
+it. Existing static task documents keep their retained representation. The qualified
+Agent/Microsandbox installation must exclude ambient Codex configuration;
+`--ignore-user-config` alone does not remove every configuration source.
 These restrictions belong to the adapter, rather than a provider enum in core.
 
 The canonical package is another protected input at
@@ -213,8 +268,8 @@ Internal Task Envelopes additionally support `observe` with `flow_v1` for ordina
 Flow observations; the immutable Flow outcome supplies the actual result schema.
 This does not claim an independent candidate evaluation or relax existing
 implementation/evaluation contracts. JobSpec v3 and Agent wire schemas are
-unchanged. Stage selection/dispatch integration and released-process qualification
-remain their later tasks (4–5 and 9.1).
+unchanged. Stage selection and dispatch use the retained selection contracts below;
+released-process qualification remains tracked separately in task 9.1.
 
 ### Stage profile selection contracts
 
@@ -319,8 +374,9 @@ scheduler, table or provider fallback is introduced.
 
 Fixed-choice retention, pending state, deterministic rules, their failure
 recovery, current capability validation, live application selection commands and
-selected Build dispatch are implemented. Decision provider consumption remains
-section 6; a recorded reserve alone is not dispatched execution or stage completion.
+selected Build dispatch are implemented. Decision provider consumption uses the
+purpose-specific existing Signal bridge; a recorded reserve alone
+is not dispatched execution or stage completion.
 Manual task creation and static Build execution keep their existing mechanisms.
 
 ### Work admission profile overrides
@@ -351,12 +407,28 @@ records retain the exact input and profile with no automatic rule/recovery resul
 or added budget. Current capability validation still applies before execution.
 Existing Work and input bytes omit the optional fields when no override exists.
 
-REST admission accepts optional exact `profile_overrides`; Console authoring remains
-in section 8. Admission cannot replace an
+REST and Console admission accept optional exact `profile_overrides`.
+Admission cannot replace an
 already dispatched invocation or authorize
 an otherwise forbidden restart, cycle or retry.
 
 ### Decision API profile selection
+
+The three stage policies use the same pinned candidate map. For example, a stage
+with `default` and `pro` candidates can declare:
+
+| Mode | Explicit choice | Result before dispatch |
+| --- | --- | --- |
+| `manual` | `{"mode":"manual","candidate":null}` | Wait for an operator; `candidate:"default"` fixes that pinned candidate instead. |
+| `rules` | `{"mode":"rules","rules":[{"when":{"operation":"compare","comparison":"equal","left":{"source":"path","path":"/complexity"},"right":{"source":"literal","value":"high"}},"candidate":"pro"}],"otherwise":"default"}` | High complexity chooses `pro`; a valid different value chooses `default`; missing required input invokes the declared failure policy. |
+| `decision_api` | Choose an exact installed profile-purpose policy and its declared input mapping; explicitly bind its finite answer keys to the pinned candidates. | The qualified provider recommendation is consumed under its own rollout/thresholds; failure uses the stage's pinned reserve/manual policy. |
+
+All modes require one explicit `failure`: `{"kind":"manual_selection"}` or,
+for these candidate aliases, `{"kind":"reserve_profile","candidate":"default"}`.
+Names such as `pro` carry no privilege. Admission overrides and live manual controls
+may select only the already pinned eligible profiles and never replace a dispatched
+Build. Reusing a routing policy or inventing answer keys does not qualify a profile
+selector. The exact installed input projection and call allowance still apply.
 
 The private deployment catalog accepts `profile_selectors` entries with
 `selection_policy`, `project_id`, `plan`, `baseline`, `credential_profile`,

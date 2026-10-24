@@ -291,6 +291,11 @@ Create a custom role, then add profiles, or copy a release template into indepen
 role/profile identities. Name, icon, description, ordered shared instructions and
 concurrency belong to the role. A profile shows its exact shared-instruction pin
 and additional instructions; adopting a newer role version is explicit.
+Publishing definitions does not install an execution runtime or the source that
+constructs the first retained package. Native Codex assembly supplies that source
+for readonly observations, with exact historical content and current integration
+authorization. Other adapters require their own qualified installation. See
+[installation and compilation](factory.md#role-packages-in-ordinary-build-compilation).
 
 Profile Runtime/Model choices come from the authorized capability catalog. Thinking
 uses the installed parameter schema, without provider-specific field names.

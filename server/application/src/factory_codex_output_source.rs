@@ -328,6 +328,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
+        mcp_configurations: Some(&profile.mcp_configurations),
         role: role.as_ref(),
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),

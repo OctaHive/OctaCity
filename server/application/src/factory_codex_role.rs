@@ -2,6 +2,9 @@
 use super::*;
 use octacity_server_factory::{FactoryRoleEnvironmentValue, FactoryTaskMode};
 
+// The pinned native task limits MCP aliases more narrowly than FactoryKey.
+const MAX_MCP_SERVER_NAME_BYTES: usize = 64;
+
 pub(super) fn apply<'a>(
   role: &'a crate::FactoryRoleInvocation,
   consumer: FactoryCredentialConsumer,
@@ -22,12 +25,23 @@ pub(super) fn apply<'a>(
     FactoryCredentialConsumer::ToolReasoning => inputs.task.mode() == FactoryTaskMode::Observe,
     _ => false,
   };
-  // Octa's pinned native task has a fixed CLI and no per-task MCP/integration override.
+  // Only additive flags can cross this adapter; execution authority stays installed.
   if !mode_matches
     || profile.credential_purpose != consumer.purpose()
-    || !profile.execution.cli_arguments.is_empty()
-    || !profile.execution.mcp_servers.is_empty()
-    || !profile.execution.integrations.is_empty()
+    || profile.execution.cli_arguments.iter().any(|argument| {
+      !matches!(
+        argument.as_str(),
+        "--ephemeral" | "--skip-git-repo-check" | "--color=never" | "--color=always" | "--color=auto"
+      )
+    })
+    || profile.execution.cli_arguments.iter().collect::<BTreeSet<_>>().len() != profile.execution.cli_arguments.len()
+    || profile
+      .execution
+      .cli_arguments
+      .iter()
+      .filter(|argument| argument.starts_with("--color="))
+      .count()
+      > 1
     || profile
       .model_parameters
       .keys()
@@ -101,4 +115,46 @@ pub(super) fn apply<'a>(
     return Err(unsupported);
   }
   Ok(effort)
+}
+
+pub(super) fn mcp(
+  role: &crate::FactoryRoleInvocation,
+  configurations: &[crate::FactoryCodexMcpConfiguration],
+  public: &BTreeMap<String, String>,
+  secret: &BTreeMap<String, String>,
+) -> Result<Option<BTreeMap<String, crate::FactoryCodexMcpServer>>, CodexCompilationError> {
+  let execution = &role.package().inputs().profile.definition().execution;
+  let invalid = CodexCompilationError::UnsupportedToolchain;
+  let mut used = BTreeSet::new();
+  let mut servers = BTreeMap::new();
+  for (name, binding) in &execution.mcp_servers {
+    if name.as_str().len() > MAX_MCP_SERVER_NAME_BYTES
+      || name
+        .as_str()
+        .bytes()
+        .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'-'))
+    {
+      return Err(invalid);
+    }
+    let installed = configurations
+      .iter()
+      .find(|config| config.reference() == &binding.configuration)
+      .ok_or(invalid)?;
+    let integration = binding
+      .integration
+      .as_ref()
+      .map(|alias| {
+        used.insert(alias);
+        execution.integrations.get(alias).ok_or(invalid)
+      })
+      .transpose()?;
+    servers.insert(
+      name.as_str().to_owned(),
+      installed.resolve(integration, &execution.environment, public, secret)?,
+    );
+  }
+  if used.len() != execution.integrations.len() {
+    return Err(invalid);
+  }
+  Ok((!servers.is_empty()).then_some(servers))
 }

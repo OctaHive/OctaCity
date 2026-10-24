@@ -230,6 +230,7 @@ pub(super) async fn publish_ordinary_configuration(
   permissions["outputs"]["max_report_bytes"] = json!(100000);
   let permissions: FactoryPermissionSet = serde_json::from_value(permissions).unwrap();
   FactoryCodexBuildProfile {
+    mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
       plugin: managed::reference("codex", "0.5.0"),
       executable: managed::reference("codex-cli", "0.116.0"),

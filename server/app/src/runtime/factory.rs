@@ -397,9 +397,16 @@ impl FactoryRuntimeResources {
     .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
     .with_role_invocation_store(self.runs.clone())
     .with_review_invocation_source(review_invocations.clone());
+    let role_invocations = Arc::new(FactoryStoredCodexRoleInvocationSource::new(
+      self.runs.clone(),
+      self.objects.clone(),
+      reader.clone(),
+      profiles.clone(),
+    ));
     let mut compiler = FactoryCodexBuildMaterializer::new(contexts, publisher, profiles.clone(), reader, clock.clone())
       .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
-      .with_review_invocation_source(review_invocations.clone());
+      .with_review_invocation_source(review_invocations.clone())
+      .with_role_invocation_source(role_invocations);
     if let Some(candidate_contexts) = candidate_contexts {
       outputs = outputs.with_retained_candidate_context_source(candidate_contexts.clone());
       compiler = compiler.with_candidate_context_source(candidate_contexts);
@@ -437,8 +444,35 @@ impl<B, O, R> NativeCodexNodeExecutor<B, O, R> {
   pub(super) fn profile(
     &self,
     intent: &octacity_server_factory::FlowBuildIntent,
+    admitted: &octacity_server_factory::AdmittedFlow,
   ) -> Result<&octacity_server_application::FactoryCodexBuildProfile, octacity_server_application::ApplicationError> {
-    let mut matches = self.profiles.iter().filter(|profile| profile.matches_intent(intent));
+    use octacity_server_application::ApplicationError;
+    intent
+      .verify_admission(admitted)
+      .map_err(|_| ApplicationError::invalid())?;
+    // The admitted candidate is immutable; dispatch never resolves current catalog heads.
+    let selected = intent
+      .selected_profile()
+      .map(|selected| {
+        admitted
+          .closure()
+          .definition(intent.input().definition())
+          .and_then(|definition| definition.node(intent.input().node()))
+          .and_then(|node| node.profile_selection())
+          .and_then(|selection| {
+            selection
+              .candidates
+              .values()
+              .find(|candidate| candidate.profile.reference() == selected)
+          })
+          .map(|candidate| &candidate.profile)
+          .ok_or_else(ApplicationError::invalid)
+      })
+      .transpose()?;
+    let mut matches = self
+      .profiles
+      .iter()
+      .filter(|profile| profile.matches_role_intent(intent, selected));
     let profile = matches
       .next()
       .ok_or_else(octacity_server_application::ApplicationError::invalid)?;
@@ -461,7 +495,7 @@ where
   ) -> Result<octacity_server_application::FactoryNodeExecutionStep, octacity_server_application::ApplicationError> {
     use octacity_server_application::*;
     let intent = request.build.ok_or_else(ApplicationError::invalid)?;
-    let profile = self.profile(intent)?;
+    let profile = self.profile(intent, request.admitted)?;
     match (&profile.capture, &profile.reviewer) {
       (Some(capture), None) => {
         FactoryNodeCaptureBuildAdapter::new(self.builds.clone(), self.outputs.clone(), capture.tool().clone())

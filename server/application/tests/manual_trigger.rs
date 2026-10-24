@@ -1138,6 +1138,7 @@ fn installed_codex_materializer_publishes_selected_context_and_prepares_an_ordin
     .unwrap();
     let intent = FlowBuildIntent::new(input, &admitted, attempt, Default::default(), 17).unwrap();
     let profile = FactoryCodexBuildProfile {
+      mcp_configurations: vec![],
       toolchain: FactoryTaskToolchain {
         executable: intent.profile().tool.clone(),
         plugin: intent.profile().plugin.clone(),
@@ -1994,6 +1995,7 @@ fn installed_readonly_codex_materializer_uses_verified_candidate_source_without_
       .secret_profiles
       .insert(SecretProfileName::new("model-evaluation").unwrap());
     let profile = FactoryCodexBuildProfile {
+      mcp_configurations: vec![],
       toolchain,
       build_configuration: fixture.intent.profile().build_configuration.clone(),
       instructions: fixture.instructions.clone(),

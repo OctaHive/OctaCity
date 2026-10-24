@@ -29,6 +29,7 @@ pub(super) async fn run_model(
   revision: &str,
   artifacts: &Value,
   tools: Option<&workflow_tools::InstalledTools>,
+  role: Option<&workflow_roles::RolePilot>,
 ) {
   let profile = &model.profile;
   let credential_profile = profile.credentials.profile(profile.consumer.purpose());
@@ -51,10 +52,13 @@ pub(super) async fn run_model(
     "codex":[{"toolchain":{"plugin":profile.toolchain.plugin,"executable":profile.toolchain.executable,"model":profile.toolchain.model},
       "build_configuration":profile.build_configuration,"instructions":profile.instructions,"credentials":profile.credentials,
       "credential_purpose":"evaluator","usage_policy":profile.usage_policy,"pipeline_node":profile.pipeline_node,
-      "parameters":profile.parameters,"project_permissions":profile.project_permissions,
+      "parameters":profile.parameters,"mcp_configurations":profile.mcp_configurations,"project_permissions":profile.project_permissions,
       "local_permissions":{"grants":profile.local_permissions.grants(),"enforceable":PermissionCategory::ALL}}]});
   if let Some(tools) = tools {
     tools.catalog(&mut catalog, profile);
+  }
+  if let Some(role) = role {
+    role.catalog(&mut catalog);
   }
   let profiles = private_file(directory, "profiles.json", &catalog.to_string());
   let connectors = tools.map_or_else(
@@ -212,7 +216,10 @@ pub(super) async fn run_model(
     evidence: vec![],
   };
   let mut observation = node(&selected, "reasoning", &schema, budget, permissions, "observed");
-  observation["build"] = json!(binding);
+  observation["build"] = json!(&binding);
+  if let Some(role) = role {
+    role.select(&mut observation, binding, model, artifacts);
+  }
   observation["input_binding"]["mapping"]["value"]["value"] = value.clone();
   let child=post_management(&client,&origin,"/api/v1/flow-definitions",&format!("child-{identity}"),json!({
     "id":Uuid::new_v4(),"project_id":resources.project,
@@ -337,6 +344,13 @@ pub(super) async fn run_model(
     "actual nested closure"
   );
 
+  let retained = if let Some(role) = role {
+    let snapshot = role.retained(postgres, &builds).await;
+    role.replace_catalog(&client, &origin, &resources.project).await;
+    Some(snapshot)
+  } else {
+    None
+  };
   worker.kill().await.unwrap();
   worker.wait().await.unwrap();
   shutdown_server(&mut server, &server_log).await;
@@ -353,6 +367,13 @@ pub(super) async fn run_model(
     &installation.join("restart.stdout.log"),
     &installation.join("restart.stderr.log"),
   );
+  if let Some(role) = role {
+    assert_eq!(
+      Some(role.retained(postgres, &builds).await),
+      retained,
+      "retained package survives catalog replacement and process restart exactly"
+    );
+  }
   assert_eq!(
     diagnostic(&client, &origin, &run, "node-completions").await,
     completed,

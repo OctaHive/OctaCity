@@ -114,6 +114,7 @@ impl InstalledModel {
     .unwrap();
     Self {
       profile: FactoryCodexBuildProfile {
+        mcp_configurations: vec![],
         toolchain: FactoryTaskToolchain {
           plugin,
           executable: executable_pin,

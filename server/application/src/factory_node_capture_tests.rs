@@ -1165,6 +1165,7 @@ fn installed_candidate_profile(
 ) -> FactoryCodexBuildProfile {
   let frozen = fixture.intent.profile();
   FactoryCodexBuildProfile {
+    mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
       plugin: frozen.plugin.clone(),
       executable: frozen.tool.clone(),

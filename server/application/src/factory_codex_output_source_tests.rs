@@ -419,6 +419,7 @@ async fn prepared_role_source(
   binding.result_output = FactoryKey::new("codex-run-result").unwrap();
   let base = authoritative_store_contract_fixture();
   let profile = FactoryCodexBuildProfile {
+    mcp_configurations: vec![],
     toolchain: FactoryTaskToolchain {
       plugin: binding.plugin.clone(),
       executable: binding.tool.clone(),

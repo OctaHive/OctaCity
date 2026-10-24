@@ -130,6 +130,8 @@ impl FactoryCodexReviewerPolicy {
 /// No logical Flow or node name selects these instructions or credential purpose.
 #[derive(Clone)]
 pub struct FactoryCodexBuildProfile {
+  /// Immutable installed MCP transport versions; selection grants no additional authority.
+  pub mcp_configurations: Vec<crate::FactoryCodexMcpConfiguration>,
   /// Exact installed executable, plugin and model, independent of Flow names.
   pub toolchain: FactoryTaskToolchain,
   /// Exact immutable ordinary Build Configuration authorized for this capability.
@@ -221,6 +223,12 @@ impl FactoryCodexBuildProfile {
     use crate::factory_codex_contract::{
       CODEX_EXECUTABLE_IDENTITY, CODEX_PLUGIN_IDENTITY, CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT, CODEX_RUN_TRACE,
     };
+    if self.mcp_configurations.len() > octacity_server_factory::MAX_FACTORY_ROLE_PROFILE_ENTRIES {
+      return Err(CodexCompilationError::UnsupportedToolchain);
+    }
+    for configuration in &self.mcp_configurations {
+      configuration.validate()?;
+    }
     approved
       .validate()
       .map_err(|_| CodexCompilationError::UnsupportedToolchain)?;
@@ -431,6 +439,23 @@ impl<
       (profile, None)
     } else {
       let role = if let Some(role) = self.publisher.role_invocation(intent).await.map_err(|_| Unavailable)? {
+        if !role
+          .package()
+          .inputs()
+          .profile
+          .definition()
+          .execution
+          .integrations
+          .is_empty()
+        {
+          self
+            .role
+            .as_ref()
+            .ok_or(Unavailable)?
+            .authorize_dependencies(&role)
+            .await
+            .map_err(|_| Unavailable)?;
+        }
         role
       } else {
         self
@@ -544,6 +569,7 @@ impl<
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
+        mcp_configurations: Some(&profile.mcp_configurations),
         role: role.as_ref(),
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),
