@@ -261,6 +261,21 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   .with_precondition_failed_response()
   .with_no_store_response(),
   operation!(
+    octacity_server_application::DeleteFactoryRoleCommand,
+    "DELETE",
+    "/api/v1/projects/{project_id}/factory-roles/{role_id}",
+    "deleteFactoryRole",
+    "Factory",
+    "Remove an AI agent from new use, retaining immutable versions and Run history",
+    None,
+    "DeleteFactoryRoleResponse",
+    "200",
+    true,
+    true
+  )
+  .with_precondition_failed_response()
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::GetFactoryRoleQuery,
     "GET",
     "/api/v1/projects/{project_id}/factory-roles/{role_id}",

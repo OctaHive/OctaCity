@@ -320,6 +320,13 @@ Permission controls use the capability's separate plugin, executable, tool,
 secret-profile and workload-identity sets; a tool is not offered as a plugin or
 executable. Each optional grant can be removed and restored within its own set.
 
+**Delete AI agent** in the agent card requires explicit confirmation against the
+displayed role version. It removes the agent and its profiles from current choices,
+including a pending stage's new manual selection. Existing Run history and exact
+versions remain readable; deleting an agent does not cancel accepted Builds.
+After success the card closes, the catalog refreshes and keyboard focus returns to
+**Create AI agent**. Transport retry uses the same reviewed command and replay key.
+
 **Import skill folder** stays inside the AI-agent draft. Choose a folder with root
 `SKILL.md`, review its relative file inventory, then confirm import. Cancellation,
 read/import failure and lost-response retry preserve the other draft fields.

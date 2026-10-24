@@ -62,6 +62,8 @@ pub enum StoreOperation {
   PublishWorkSourceConfiguration,
   /// Atomically publish Project AI-agent definitions and their replay receipt.
   PublishFactoryRoleProfiles,
+  /// Remove an AI agent from new use without deleting immutable history.
+  DeleteFactoryRole,
   /// List safe current Project roles.
   ListFactoryRoles,
   /// List safe current profiles under one owned role.

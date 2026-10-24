@@ -847,7 +847,9 @@ pub use profile_selection::{
 };
 
 mod profile_control;
-pub use profile_control::{verify_factory_profile_control, verify_factory_profile_wait_controls};
+pub use profile_control::{
+  freeze_profile_selection, verify_factory_profile_control, verify_factory_profile_wait_controls,
+};
 
 mod profile_supersession;
 pub use profile_supersession::{

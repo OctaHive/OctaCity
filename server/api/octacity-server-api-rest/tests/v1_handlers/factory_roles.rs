@@ -725,7 +725,7 @@ unavailable_role_use_cases!(query:
   GetProjectSkillQuery=>"get_project_skill",
 );
 unavailable_role_use_cases!(command:
-  PublishFactoryRoleProfilesCommand=>"publish_factory_role_profiles", CopyFactoryRoleTemplateCommand=>"copy_factory_role_template",
+  DeleteFactoryRoleCommand=>"delete_factory_role", PublishFactoryRoleProfilesCommand=>"publish_factory_role_profiles", CopyFactoryRoleTemplateCommand=>"copy_factory_role_template",
   ImportProjectSkill=>"import_project_skill", SelectFactoryProfileCommand=>"select_factory_profile",
 );
 
@@ -740,6 +740,7 @@ pub(super) fn management_requests() -> Vec<Request<Body>> {
   let template = serde_json::json!({"identity":"starter","version":"v1","digest":"01".repeat(32)});
   vec![
     json_request("POST",&format!("{prefix}/factory-role-publications"),"publish",None,&intent.to_string()),
+    empty_request("DELETE", &format!("{prefix}/factory-roles/{role}"), Some(("delete-role", "\"1\""))),
     empty_request("GET",&format!("{prefix}/factory-roles?limit=1"),None),
     empty_request("GET",&format!("{prefix}/factory-roles/{role}"),None),
     empty_request("GET",&format!("{prefix}/factory-roles/{role}/versions/1"),None),
@@ -799,4 +800,101 @@ async fn flow_authoring_content_that_can_embed_profile_instructions_is_not_cache
       "{path}"
     );
   }
+}
+
+#[tokio::test]
+async fn factory_roles_http_deletion_fences_replays_and_keeps_exact_history() {
+  let policy = Arc::new(ControlPolicy(AtomicBool::new(true)));
+  let (router, project, intent) = role_router_with_policy(policy.clone());
+  let published = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      &format!("/api/v1/projects/{project}/factory-role-publications"),
+      "create-before-delete",
+      None,
+      &intent.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(published.status(), StatusCode::OK);
+  let original = json_response(published).await;
+  let id = original["role"]["reference"]["id"].as_str().unwrap();
+  let path = format!("/api/v1/projects/{project}/factory-roles/{id}");
+  let missing = router
+    .clone()
+    .oneshot(json_request("DELETE", &path, "delete-agent", None, ""))
+    .await
+    .unwrap();
+  assert_eq!(missing.status(), StatusCode::PRECONDITION_REQUIRED);
+  let stale = router
+    .clone()
+    .oneshot(json_request("DELETE", &path, "stale-delete", Some("\"2\""), ""))
+    .await
+    .unwrap();
+  assert_eq!(stale.status(), StatusCode::PRECONDITION_FAILED);
+  let deleted = router
+    .clone()
+    .oneshot(json_request("DELETE", &path, "delete-agent", Some("\"1\""), ""))
+    .await
+    .unwrap();
+  assert_eq!(deleted.status(), StatusCode::OK);
+  assert_eq!(deleted.headers()["cache-control"], "no-store");
+  let receipt = json_response(deleted).await;
+  assert_json_matches_component(&openapi_document(), "DeleteFactoryRoleResponse", &receipt);
+  assert_eq!(receipt["role"], original["role"]["reference"]);
+  assert_eq!(
+    router
+      .clone()
+      .oneshot(empty_request("GET", &path, None))
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::NOT_FOUND
+  );
+  let page = json_response(
+    router
+      .clone()
+      .oneshot(empty_request(
+        "GET",
+        &format!("/api/v1/projects/{project}/factory-roles"),
+        None,
+      ))
+      .await
+      .unwrap(),
+  )
+  .await;
+  assert_eq!(page["total"], 0);
+  let exact = router
+    .clone()
+    .oneshot(empty_request("GET", &format!("{path}/versions/1"), None))
+    .await
+    .unwrap();
+  assert_eq!(json_response(exact).await, original["role"]);
+  for profile in original["profiles"].as_array().unwrap() {
+    let path = format!(
+      "/api/v1/projects/{project}/factory-role-profiles/{}/versions/1",
+      profile["reference"]["id"].as_str().unwrap()
+    );
+    assert_eq!(
+      json_response(router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap()).await,
+      *profile
+    );
+  }
+  let replay = json_response(
+    router
+      .clone()
+      .oneshot(json_request("DELETE", &path, "delete-agent", Some("\"1\""), ""))
+      .await
+      .unwrap(),
+  )
+  .await;
+  assert_eq!(replay["disposition"], "replayed");
+  assert_eq!(replay["deleted_at"], receipt["deleted_at"]);
+  policy.0.store(false, Ordering::SeqCst);
+  let denied = router
+    .oneshot(json_request("DELETE", &path, "delete-agent", Some("\"1\""), ""))
+    .await
+    .unwrap();
+  assert_eq!(denied.status(), StatusCode::FORBIDDEN);
 }

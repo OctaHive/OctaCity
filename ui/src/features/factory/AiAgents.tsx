@@ -1,5 +1,7 @@
-import { useState } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useRef, useState, type RefObject } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
+import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
@@ -17,6 +19,7 @@ import { SkillReferences } from './SkillContents';
 type Reference = components['schemas']['FactoryRoleReference'];
 export function AiAgents({ api, projectId }: { api: FactoryRolesApi; projectId: string }) {
   const { t } = usePresentation();
+  const createButtonRef = useRef<HTMLButtonElement>(null);
   const [selected, setSelected] = useState<Reference | null>(null);
   const [template, setTemplate] = useState<
     components['schemas']['FactoryImmutableReferenceResource'] | null
@@ -39,7 +42,12 @@ export function AiAgents({ api, projectId }: { api: FactoryRolesApi; projectId: 
   return (
     <section aria-label={t('factory.agents')}>
       <h2>{t('factory.agents')}</h2>
-      <button type="button" disabled={creating} onClick={() => setCreating(true)}>
+      <button
+        ref={createButtonRef}
+        type="button"
+        disabled={creating}
+        onClick={() => setCreating(true)}
+      >
         {t('factory.createAgent')}
       </button>
       {creating ? (
@@ -89,13 +97,32 @@ export function AiAgents({ api, projectId }: { api: FactoryRolesApi; projectId: 
         )}
       </PagedExplorerBranch>
       {selected ? (
-        <AgentDetails key={`${selected.id}:${selected.version}`} api={api} reference={selected} />
+        <AgentDetails
+          key={`${selected.id}:${selected.version}`}
+          api={api}
+          reference={selected}
+          onDeleted={() => setSelected(null)}
+          fallbackFocusRef={createButtonRef}
+        />
       ) : null}
     </section>
   );
 }
-function AgentDetails({ api, reference }: { api: FactoryRolesApi; reference: Reference }) {
+function AgentDetails({
+  api,
+  reference,
+  onDeleted,
+  fallbackFocusRef,
+}: {
+  api: FactoryRolesApi;
+  reference: Reference;
+  onDeleted: () => void;
+  fallbackFocusRef: RefObject<HTMLButtonElement | null>;
+}) {
   const { t } = usePresentation();
+  const client = useQueryClient();
+  const [deleting, setDeleting] = useState<HTMLElement | null>(null);
+  const [deleted, setDeleted] = useState(false);
   const [selected, setSelected] = useState<Reference | null>(null);
   const [editing, setEditing] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -128,6 +155,47 @@ function AgentDetails({ api, reference }: { api: FactoryRolesApi; reference: Ref
       <button type="button" onClick={() => setCreating(true)}>
         {t('factory.createProfile')}
       </button>
+      <button
+        type="button"
+        disabled={editing || creating || deleting !== null}
+        onClick={(event) => setDeleting(event.currentTarget)}
+      >
+        {t('factory.deleteAgent')}
+      </button>
+      {deleting ? (
+        <ConfirmedCommand
+          title={t('factory.deleteAgent')}
+          confirmLabel={t('factory.deleteAgent')}
+          consequence={`${role.data.definition.name} · ${t('factory.deleteAgentConsequence')}`}
+          request={reference}
+          version={reference.version}
+          returnFocus={deleting}
+          fallbackFocusRef={fallbackFocusRef}
+          queryClient={client}
+          invalidations={[
+            { queryKey: queryKeys.factoryRoleCatalog(reference.project_id, 'roles') },
+            {
+              queryKey: queryKeys.factoryRoleCatalog(
+                reference.project_id,
+                'profiles',
+                reference.id,
+              ),
+            },
+            { queryKey: queryKeys.audit },
+          ]}
+          execute={async (attempt) => {
+            const result = await api.deleteRole(
+              reference.project_id,
+              reference.id,
+              requireVersionedMutationHeaders(attempt.headers),
+            );
+            setDeleted(true);
+            return result;
+          }}
+          onClose={() => (deleted ? onDeleted() : setDeleting(null))}
+          renderSuccess={() => <p>{t('factory.agentDeleted')}</p>}
+        />
+      ) : null}
       {editing ? (
         <AgentEditor
           api={api}

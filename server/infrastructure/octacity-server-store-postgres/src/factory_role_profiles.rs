@@ -19,6 +19,13 @@ use crate::{
 
 #[async_trait]
 impl FactoryRoleProfileStore for PostgresStore {
+  async fn delete_factory_role(
+    &self,
+    request: ManagementMutation<DeleteFactoryRole>,
+  ) -> Result<DeleteFactoryRoleOutcome, FactoryRoleProfilePublicationError> {
+    crate::factory_role_deletion::delete(self, request).await
+  }
+
   async fn list_factory_roles(
     &self,
     project: ProjectId,
@@ -28,7 +35,7 @@ impl FactoryRoleProfileStore for PostgresStore {
     check_factory_role_catalog_limit(limit, StoreOperation::ListFactoryRoles)?;
     crate::discovery::require_project(self.pool(), project).await?;
     let (total, Json(rows)): (i64, Json<Vec<(String, i64, FactoryRole)>>) = sqlx::query_as(
-      "WITH owned AS (SELECT id, current_version AS version FROM factory_roles WHERE project_id=$1), page AS (SELECT * FROM owned WHERE ($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3) SELECT (SELECT COUNT(*) FROM owned), COALESCE(jsonb_agg(jsonb_build_array(p.id,p.version,v.definition) ORDER BY p.id),'[]'::jsonb) FROM page p JOIN factory_role_versions v ON v.id=p.id AND v.version=p.version"
+      "WITH owned AS (SELECT id, current_version AS version FROM factory_roles WHERE project_id=$1 AND NOT deleted), page AS (SELECT * FROM owned WHERE ($2::uuid IS NULL OR id>$2) ORDER BY id LIMIT $3) SELECT (SELECT COUNT(*) FROM owned), COALESCE(jsonb_agg(jsonb_build_array(p.id,p.version,v.definition) ORDER BY p.id),'[]'::jsonb) FROM page p JOIN factory_role_versions v ON v.id=p.id AND v.version=p.version"
     ).bind(project.as_uuid()).bind(after.map(FactoryRoleId::as_uuid)).bind(crate::discovery::requested_row_limit(limit)).fetch_one(self.pool()).await.map_err(unavailable)?;
     let (items, next_cursor) = crate::discovery::decode_page(
       rows,
@@ -192,6 +199,7 @@ impl FactoryRoleProfileStore for PostgresStore {
         intent.expected_current_version.map(|v| v.get()),
         EntityKind::FactoryRoleProfile,
       )?;
+      read_role(&mut *transaction, project, intent.role.id, None).await?;
       let exact = read_role(&mut *transaction, project, intent.role.id, Some(intent.role.version)).await?;
       if exact.reference() != &intent.role {
         return Err(missing(EntityKind::FactoryRole).into());
@@ -265,7 +273,7 @@ pub(crate) async fn read_role<'e>(
   version: Option<FactoryRoleVersion>,
 ) -> Result<FactoryRole, StoreError> {
   let (stored_version, Json(role)): (i64, Json<FactoryRole>) = sqlx::query_as(
-    "SELECT v.version, v.definition FROM factory_roles h JOIN factory_role_versions v ON v.id=h.id AND v.project_id=h.project_id WHERE h.id=$1 AND h.project_id=$2 AND v.version=COALESCE($3,h.current_version)",
+    "SELECT v.version, v.definition FROM factory_roles h JOIN factory_role_versions v ON v.id=h.id AND v.project_id=h.project_id WHERE h.id=$1 AND h.project_id=$2 AND ($3::bigint IS NOT NULL OR NOT h.deleted) AND v.version=COALESCE($3,h.current_version)",
   ).bind(id.as_uuid()).bind(project.as_uuid()).bind(version.map(|v| number(v.get())).transpose()?).fetch_optional(executor).await.map_err(unavailable)?.ok_or_else(|| missing(EntityKind::FactoryRole))?;
   if role.reference().id != id
     || role.reference().project_id != project
@@ -282,7 +290,7 @@ pub(crate) async fn read_profile<'e>(
   version: Option<FactoryRoleProfileVersion>,
 ) -> Result<FactoryRoleProfile, StoreError> {
   let (stored_version, role_id, role_version, Json(profile)): (i64, uuid::Uuid, i64, Json<FactoryRoleProfile>) = sqlx::query_as(
-    "SELECT v.version, v.role_id, v.role_version, v.definition FROM factory_role_profiles h JOIN factory_role_profile_versions v ON v.id=h.id AND v.project_id=h.project_id WHERE h.id=$1 AND h.project_id=$2 AND v.version=COALESCE($3,h.current_version)",
+    "SELECT v.version, v.role_id, v.role_version, v.definition FROM factory_role_profiles h JOIN factory_role_profile_versions v ON v.id=h.id AND v.project_id=h.project_id JOIN factory_roles r ON r.id=v.role_id AND r.project_id=v.project_id WHERE h.id=$1 AND h.project_id=$2 AND ($3::bigint IS NOT NULL OR NOT r.deleted) AND v.version=COALESCE($3,h.current_version)",
   ).bind(id.as_uuid()).bind(project.as_uuid()).bind(version.map(|v| number(v.get())).transpose()?).fetch_optional(executor).await.map_err(unavailable)?.ok_or_else(|| missing(EntityKind::FactoryRoleProfile))?;
   if profile.reference().id != id
     || profile.reference().project_id != project

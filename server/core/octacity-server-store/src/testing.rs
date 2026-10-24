@@ -89,6 +89,11 @@ pub use crate::factory_phase_pool_contract_testing::{
   FactoryPhasePoolContractScenario, freeze_phase_pool_contract_input, phase_pool_contract_input,
   verify_factory_phase_pool_contract, verify_factory_phase_pool_progress, verify_factory_phase_pool_scan_invalidation,
 };
+pub use crate::factory_role_deletion_contract_testing::{
+  verify_factory_role_deletion, verify_factory_role_deletion_blocks_automatic_selection,
+  verify_factory_role_deletion_blocks_live_selection,
+};
+
 pub use crate::factory_role_profile_contract_testing::{
   role_profile_contract_definition, role_profile_contract_intent, verify_factory_role_profile_atomicity,
   verify_factory_role_profile_catalog, verify_factory_role_profile_publication,
@@ -636,9 +641,9 @@ pub use crate::factory_node_journal_testing::{
   factory_profile_selection_failure_contract_fixture, factory_profile_selection_policy_contract_fixture,
   factory_profile_signal_contract_fixture, factory_profile_supersession_contract_fixture,
   factory_two_check_journal_fixture, factory_verification_journal_contract_fixture,
-  factory_verified_check_journal_fixture, verify_factory_node_journal_contract, verify_factory_profile_automatic_race,
-  verify_factory_profile_control, verify_factory_profile_dispatch_race, verify_factory_profile_selection_fencing,
-  verify_factory_profile_supersession, verify_factory_profile_wait_controls,
+  factory_verified_check_journal_fixture, freeze_profile_selection, verify_factory_node_journal_contract,
+  verify_factory_profile_automatic_race, verify_factory_profile_control, verify_factory_profile_dispatch_race,
+  verify_factory_profile_selection_fencing, verify_factory_profile_supersession, verify_factory_profile_wait_controls,
 };
 
 pub use crate::integration_administration_tests::{

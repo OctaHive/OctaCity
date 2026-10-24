@@ -121,12 +121,42 @@ pub enum FactoryRoleProfilePublicationError {
   #[error(transparent)]
   Store(#[from] StoreError),
 }
+/// Removes an agent from new use, retaining all immutable versions and Run pins.
+#[derive(Clone, Debug)]
+pub struct DeleteFactoryRole {
+  /// Existing owning Project.
+  pub project_id: ProjectId,
+  /// Stable agent identity.
+  pub id: FactoryRoleId,
+  /// Reviewed current role version.
+  pub expected_current_version: FactoryRoleVersion,
+  /// Scoped replay identity.
+  pub idempotency_key: IdempotencyKey,
+  /// Trusted first acceptance time.
+  pub deleted_at: Timestamp,
+}
+/// Durable deletion receipt, returned unchanged except for replay disposition.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeleteFactoryRoleOutcome {
+  /// First application or original replay.
+  pub disposition: MutationDisposition,
+  /// Exact role removed from the current catalog.
+  pub role: FactoryRoleRef,
+  /// Original deletion time.
+  pub deleted_at: Timestamp,
+}
 /// Operation-shaped authority shared by memory and PostgreSQL implementations.
 /// Each publication atomically commits all definitions, heads, scoped intent/receipt,
 /// audit and outbox evidence. Failed publications commit nothing; exact replay
 /// precedes current-version checks and returns the original receipt without new evidence.
 #[async_trait::async_trait]
 pub trait FactoryRoleProfileStore: Send + Sync {
+  /// Atomically tombstones the role with current-version fencing, audit, outbox and replay.
+  async fn delete_factory_role(
+    &self,
+    request: ManagementMutation<DeleteFactoryRole>,
+  ) -> Result<DeleteFactoryRoleOutcome, FactoryRoleProfilePublicationError>;
   /// Lists current safe role metadata in stable ID order under the common page bound.
   async fn list_factory_roles(
     &self,

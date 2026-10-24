@@ -844,6 +844,17 @@ readable; conflicting shared/legacy aliases are rejected. As with instructions,
 changes publish a new Role version and profiles adopt it explicitly; retained Runs
 keep their original content.
 
+AI-agent deletion marks the existing role as unavailable for new use rather than
+removing immutable content. Current catalogs/current-alias reads exclude the role
+and its profiles; exact versions, admitted Flow pins and retained execution packages
+remain readable under their existing authorization and retention rules. The common
+candidate qualification rejects deleted roles for automatic/reserve selection and
+new Flow publication. Live manual selection checks the role from the admitted
+binding under the deletion Project fence; new automatic-selection journal appends use the
+same fence. Deletion does not cancel accepted Builds
+or rewrite Run history. The Console and DELETE endpoint share the ordinary reviewed,
+version-fenced, audited and idempotent management mechanism.
+
 Import a folder with root `SKILL.md` in the agent editor. Successful import adds
 its exact version to the draft’s selected skills; saving the agent still requires
 a separate reviewed publication. Use View skill to inspect retained files without

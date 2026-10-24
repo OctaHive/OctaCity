@@ -84,6 +84,10 @@ export const ruMessages = {
   'factory.agents': 'AI-агенты',
   'factory.createAgent': 'Создать AI-агента',
   'factory.agentEditor': 'Редактор AI-агента',
+  'factory.deleteAgent': 'Удалить AI-агента',
+  'factory.deleteAgentConsequence':
+    'История запусков сохранится. Профили станут недоступны для нового выбора.',
+  'factory.agentDeleted': 'AI-агент удалён.',
   'factory.agentName': 'Имя AI-агента',
   'factory.agentDescription': 'Описание',
   'factory.agentIcon': 'Иконка',

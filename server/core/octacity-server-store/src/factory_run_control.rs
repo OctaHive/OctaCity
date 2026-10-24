@@ -371,7 +371,7 @@ fn validate_factory_profile_choice(
   input_digest: FactoryDigest,
   profile: &octacity_server_factory::FactoryRoleProfileRef,
   at: Timestamp,
-) -> Result<(), crate::StoreError> {
+) -> Result<octacity_server_factory::FactoryRoleRef, crate::StoreError> {
   let conflict = || crate::StoreError::Conflict {
     entity: octacity_server_domain::EntityKind::FactoryRun,
   };
@@ -421,7 +421,7 @@ fn validate_factory_profile_choice(
   {
     return Err(conflict());
   }
-  Ok(())
+  Ok(binding.role.clone())
 }
 
 /// Read-only eligibility using the same checks as atomic manual acceptance.
@@ -438,6 +438,8 @@ pub fn factory_profile_choice_is_open(
 
 /// Canonical common control facts prepared before either backend mutates authority.
 pub struct FactoryRunControlChange {
+  /// Owning role resolved from the validated admitted binding, independent of profile catalogs.
+  pub selected_role: Option<octacity_server_factory::FactoryRoleRef>,
   /// Successor technical Run version.
   pub run: octacity_server_factory::FactoryRun,
   /// Unchanged measured consumption under the new aggregate version.
@@ -488,16 +490,16 @@ pub fn prepare_factory_run_control(
   {
     return Err(invalid());
   }
-  let (cancellation, result) = match &request.intent {
+  let (cancellation, result, selected_role) = match &request.intent {
     FactoryRunControlIntent::SelectProfile { input_digest, profile } => {
-      validate_factory_profile_choice(snapshot, *input_digest, profile, request.requested_at)?;
-      (false, "profile-choice-recorded")
+      let role = validate_factory_profile_choice(snapshot, *input_digest, profile, request.requested_at)?;
+      (false, "profile-choice-recorded", Some(role))
     }
     FactoryRunControlIntent::Cancel => {
       if snapshot.run.state().is_terminal() || current.cancellation_requested {
         return Err(conflict());
       }
-      (true, "cancel-requested")
+      (true, "cancel-requested", None)
     }
     FactoryRunControlIntent::ResolveNode {
       node_attempt_id,
@@ -505,11 +507,11 @@ pub fn prepare_factory_run_control(
       payload,
     } => {
       validate_factory_node_response(snapshot, *node_attempt_id, outcome, payload, request.requested_at)?;
-      (false, "node-response-recorded")
+      (false, "node-response-recorded", None)
     }
     FactoryRunControlIntent::RetryNode { node_attempt_id } => {
       validate_factory_node_retry(snapshot, *node_attempt_id, request.requested_at)?;
-      (false, "node-retry-requested")
+      (false, "node-retry-requested", None)
     }
   };
   let version =
@@ -549,6 +551,7 @@ pub fn prepare_factory_run_control(
     request.requested_at,
   );
   Ok(FactoryRunControlChange {
+    selected_role,
     run,
     budget: crate::FactoryBudgetRecord::new(request.run_id, version, budget.usage, request.requested_at),
     lifecycle,

@@ -8,11 +8,22 @@ use std::collections::BTreeMap;
 
 #[derive(Clone, Default)]
 pub(super) struct RoleProfileMemoryState {
+  deleted: std::collections::BTreeSet<FactoryRoleId>,
+  deletions: BTreeMap<ManagementIdempotencyKey, DeleteFactoryRoleOutcome>,
   pub(crate) roles: BTreeMap<FactoryRoleId, BTreeMap<FactoryRoleVersion, FactoryRole>>,
   profiles: BTreeMap<FactoryRoleProfileId, BTreeMap<FactoryRoleProfileVersion, FactoryRoleProfile>>,
   mutations: BTreeMap<ManagementIdempotencyKey, (FactoryRoleProfilesIntent, FactoryRoleProfilesOutcome)>,
 }
 impl RoleProfileMemoryState {
+  pub(crate) fn role_is_deleted(&self, id: FactoryRoleId) -> bool {
+    self.deleted.contains(&id)
+  }
+  pub(crate) fn exclude_deleted(&self, choices: &mut FactoryConfigurationChoices) {
+    for id in &self.deleted {
+      choices.exclude_role(*id);
+    }
+  }
+
   pub(crate) fn verify_package(&self, package: &FactoryRoleExecutionPackage) -> Result<(), StoreError> {
     let inputs = package.inputs();
     if self
@@ -61,6 +72,63 @@ fn replay(
 }
 #[async_trait::async_trait]
 impl FactoryRoleProfileStore for InMemoryFactoryConfigurationStore {
+  async fn delete_factory_role(
+    &self,
+    request: ManagementMutation<DeleteFactoryRole>,
+  ) -> Result<DeleteFactoryRoleOutcome, FactoryRoleProfilePublicationError> {
+    let (request, audit) = request.into_parts();
+    let key = audit.scoped_idempotency_key(&request.idempotency_key);
+    let mut state = self.lock()?;
+    if let Some(prior) = state.role_profiles.deletions.get(&key) {
+      if prior.role.project_id != request.project_id
+        || prior.role.id != request.id
+        || prior.role.version != request.expected_current_version
+      {
+        return Err(
+          StoreError::Conflict {
+            entity: EntityKind::FactoryRole,
+          }
+          .into(),
+        );
+      }
+      let mut prior = prior.clone();
+      prior.disposition = MutationDisposition::Replayed;
+      return Ok(prior);
+    }
+    let role = state
+      .role_profiles
+      .roles
+      .get(&request.id)
+      .and_then(|rows| rows.last_key_value())
+      .map(|(_, role)| role)
+      .filter(|role| {
+        role.reference().project_id == request.project_id && !state.role_profiles.deleted.contains(&request.id)
+      })
+      .ok_or_else(|| missing(EntityKind::FactoryRole))?;
+    if role.reference().version != request.expected_current_version {
+      return Err(FactoryRoleProfilePublicationError::PreconditionFailed);
+    }
+    let outcome = DeleteFactoryRoleOutcome {
+      disposition: MutationDisposition::Applied,
+      role: role.reference().clone(),
+      deleted_at: request.deleted_at,
+    };
+    state.role_profiles.deleted.insert(request.id);
+    state.role_profiles.deletions.insert(key.clone(), outcome.clone());
+    state.evidence.insert(format!(
+      "delete-factory-role:{}:{}",
+      key.security_scope().as_str(),
+      key.caller_key()
+    ));
+    state.audit.insert(recorded_management_audit(
+      &audit,
+      StoreOperation::DeleteFactoryRole,
+      EntityKind::Project,
+      request.project_id,
+    ));
+    Ok(outcome)
+  }
+
   async fn list_factory_roles(
     &self,
     project: ProjectId,
@@ -78,7 +146,9 @@ impl FactoryRoleProfileStore for InMemoryFactoryConfigurationStore {
       .values()
       .filter_map(|versions| versions.last_key_value())
       .map(|(_, role)| role)
-      .filter(|role| role.reference().project_id == project)
+      .filter(|role| {
+        role.reference().project_id == project && !state.role_profiles.deleted.contains(&role.reference().id)
+      })
       .map(FactoryRoleSummary::from)
       .collect();
     let total = items.len() as u64;
@@ -101,6 +171,9 @@ impl FactoryRoleProfileStore for InMemoryFactoryConfigurationStore {
   ) -> Result<FactoryRoleCatalogPage<FactoryRoleProfileId, FactoryRoleProfileSummary>, StoreError> {
     let limit = check_factory_role_catalog_limit(limit, StoreOperation::ListFactoryRoleProfiles)?;
     let state = self.lock()?;
+    if state.role_profiles.deleted.contains(&role) {
+      return Err(missing(EntityKind::FactoryRole));
+    }
     if !state
       .role_profiles
       .roles
@@ -159,6 +232,9 @@ impl FactoryRoleProfileStore for InMemoryFactoryConfigurationStore {
     }
     let mut next = state.role_profiles.clone();
     let role = if let Some(intent) = &request.intent.role {
+      if next.deleted.contains(&intent.id) {
+        return Err(missing(EntityKind::FactoryRole).into());
+      }
       let current = next
         .roles
         .get(&intent.id)
@@ -194,6 +270,9 @@ impl FactoryRoleProfileStore for InMemoryFactoryConfigurationStore {
     };
     let mut profiles = vec![];
     for intent in &request.intent.profiles {
+      if next.deleted.contains(&intent.role.id) {
+        return Err(missing(EntityKind::FactoryRole).into());
+      }
       let current = next
         .profiles
         .get(&intent.id)
@@ -260,6 +339,9 @@ impl FactoryRoleProfileStore for InMemoryFactoryConfigurationStore {
     version: Option<FactoryRoleVersion>,
   ) -> Result<FactoryRole, StoreError> {
     let state = self.lock()?;
+    if version.is_none() && state.role_profiles.deleted.contains(&id) {
+      return Err(missing(EntityKind::FactoryRole));
+    }
     state
       .role_profiles
       .roles
@@ -287,7 +369,10 @@ impl FactoryRoleProfileStore for InMemoryFactoryConfigurationStore {
         Some(v) => rows.get(&v),
         None => rows.last_key_value().map(|(_, row)| row),
       })
-      .filter(|row| row.reference().project_id == project)
+      .filter(|row| {
+        row.reference().project_id == project
+          && (version.is_some() || !state.role_profiles.deleted.contains(&row.role().id))
+      })
       .cloned()
       .ok_or_else(|| missing(EntityKind::FactoryRoleProfile))
   }

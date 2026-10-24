@@ -66,3 +66,10 @@ Console SHALL provide a discoverable Project settings workflow for supported pro
 #### Scenario: Operator binds two profiles to different models
 - **WHEN** the operator configures a supported runtime/provider and edits default and pro
 - **THEN** each profile can save its own exact available model/thinking choice while both use the agent's shared skills and instructions
+
+### Requirement: AI-agent deletion from its card
+The Console SHALL offer Delete AI agent in the AI-agent card through the existing confirmed-command and generated REST mechanisms. Confirmation SHALL explain that profiles become unavailable for new selection while Run history remains retained. Cancellation and definitive failure SHALL leave the card intact; transport retry SHALL retain the original key and displayed version. Success SHALL refresh current catalogs, close the removed card and restore keyboard focus to Create AI agent. The action SHALL be localized and independent of CI/CD enrollment and provider configuration.
+
+#### Scenario: Review and delete an AI agent
+- **WHEN** an operator confirms deletion of the displayed AI agent
+- **THEN** the original version/key is submitted, the removed agent no longer appears in current choices, retained history is unchanged and keyboard focus returns to the catalog control

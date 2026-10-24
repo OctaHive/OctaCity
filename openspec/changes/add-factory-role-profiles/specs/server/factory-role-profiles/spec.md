@@ -242,3 +242,14 @@ Project operators SHALL be able to configure model-provider access for registere
 #### Scenario: Project has no configured execution runtime
 - **WHEN** an operator creates an AI agent before configuring provider/runtime access
 - **THEN** identity, avatar, instructions and shared skills can be saved, and execution-profile setup reports the missing configuration without inventing models
+
+### Requirement: AI-agent deletion preserves retained history and prevents new use
+The server SHALL delete an AI agent by marking its existing Role unavailable for new use. It SHALL preserve immutable Role/Profile versions, admitted Flow pins, execution packages and Run history under their existing authorization and retention contracts. Current catalogs and current-alias reads SHALL omit the agent and its profiles. New publication SHALL NOT resurrect the identity. The common candidate qualification SHALL reject its profiles for new automatic, configured, rule and reserve selection. Live manual selection SHALL reject a deleted role from the admitted binding, including an embedded profile without a separate catalog publication. Deletion SHALL NOT cancel already accepted Builds. Deletion SHALL use current-version fencing and atomic scoped replay/audit/outbox through the shared Project publication lock; successful historical replay SHALL retain its original result.
+
+#### Scenario: Delete an agent referenced by a retained Run
+- **WHEN** an authorized operator deletes the displayed current Role version
+- **THEN** current choices exclude the agent, new profile choices are rejected, and the Run history and authorized exact-version reads retain their original content
+
+#### Scenario: An old picker submits a choice after deletion
+- **WHEN** a profile choice for a deleted role reaches the ordinary live-control transaction
+- **THEN** no control or Run-history change is committed, including for an embedded profile, while a previously accepted command can still replay its original receipt

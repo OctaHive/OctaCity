@@ -59,3 +59,10 @@ REST SHALL expose Project-authorized operation-shaped configuration, availabilit
 #### Scenario: Catalog is configured without invoking a model
 - **WHEN** an authorized operator configures a supported provider binding and selects its available Runtime/Model reference
 - **THEN** the same exact choice is available for profile validation, configuration survives restart, and no model execution or credential disclosure occurs
+
+### Requirement: Reviewed AI-agent deletion endpoint
+The REST API SHALL expose `DELETE /api/v1/projects/{project_id}/factory-roles/{role_id}` with Project Delete authorization, `Idempotency-Key` and strong `If-Match`. It SHALL return a no-store receipt containing disposition, exact role reference and original deletion time. Stale current versions SHALL return 412. Replays SHALL reauthorize and return the original receipt without new audit/outbox evidence. Authorized exact-version history SHALL remain readable after deletion.
+
+#### Scenario: Delete and replay a reviewed AI agent
+- **WHEN** an operator submits and retries the same authorized version-fenced delete command
+- **THEN** one deletion is committed, replay returns its original role/time, current catalogs omit the agent and exact historical reads still succeed

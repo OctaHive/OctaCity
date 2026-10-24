@@ -589,6 +589,10 @@ fn registered_routes() -> ManagementRoutes {
       super::factory_roles::publish,
     )
     .get::<octacity_server_application::GetFactoryRoleQuery, _, _>("getFactoryRole", super::factory_roles::role)
+    .delete::<octacity_server_application::DeleteFactoryRoleCommand, _, _>(
+      "deleteFactoryRole",
+      super::factory_roles::delete,
+    )
     .get::<GetFactoryNodeActionQuery, _, _>("getFactoryNodeAction", super::factory_actions::observe)
     .get::<ListFactoryActionsQuery, _, _>("listFactoryActions", super::factory_actions::global)
     .get::<ListFactoryActionsQuery, _, _>("listProjectFactoryActions", super::factory_actions::project)

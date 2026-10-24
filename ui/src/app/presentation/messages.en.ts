@@ -82,6 +82,10 @@ export const enMessages = {
   'factory.agents': 'AI agents',
   'factory.createAgent': 'Create AI agent',
   'factory.agentEditor': 'AI-agent editor',
+  'factory.deleteAgent': 'Delete AI agent',
+  'factory.deleteAgentConsequence':
+    'Run history is retained. Its profiles become unavailable for new selections.',
+  'factory.agentDeleted': 'AI agent deleted.',
   'factory.agentName': 'Agent name',
   'factory.agentDescription': 'Description',
   'factory.agentIcon': 'Icon',

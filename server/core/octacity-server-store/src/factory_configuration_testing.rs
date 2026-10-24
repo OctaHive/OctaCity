@@ -264,10 +264,16 @@ impl FactoryConfigurationStore for InMemoryFactoryConfigurationStore {
     if !state.projects.contains(&project_id) {
       return Err(not_found(EntityKind::Project));
     }
-    Ok(state.choices.get(&project_id).cloned().map_or(
-      FactoryConfigurationAvailability::Disabled,
-      FactoryConfigurationAvailability::Available,
-    ))
+    Ok(
+      state
+        .choices
+        .get(&project_id)
+        .cloned()
+        .map_or(FactoryConfigurationAvailability::Disabled, |mut choices| {
+          state.role_profiles.exclude_deleted(&mut choices);
+          FactoryConfigurationAvailability::Available(choices)
+        }),
+    )
   }
 
   async fn create_factory_configuration(

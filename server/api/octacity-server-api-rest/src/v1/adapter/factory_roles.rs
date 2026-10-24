@@ -1,8 +1,9 @@
 //! Project role/profile HTTP operations over the existing audited publication authority.
 use super::*;
 use octacity_server_application::{
-  ApplicationError, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler, GetFactoryRoleProfileQuery,
-  GetFactoryRoleQuery, ListFactoryRoleProfilesQuery, ListFactoryRolesQuery, PublishFactoryRoleProfilesCommand,
+  ApplicationError, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler, DeleteFactoryRoleCommand,
+  GetFactoryRoleProfileQuery, GetFactoryRoleQuery, ListFactoryRoleProfilesQuery, ListFactoryRolesQuery,
+  PublishFactoryRoleProfilesCommand,
 };
 use octacity_server_application::{
   CopyFactoryRoleTemplateCommand, GetFactoryRoleTemplateQuery, ListFactoryRoleTemplatesQuery, ValidateFactoryRoleQuery,
@@ -13,6 +14,7 @@ use octacity_server_application::{
 use octacity_server_application::{GetProjectSkillQuery, ImportProjectSkill, ListProjectSkillsQuery};
 /// Optional AI-agent authoring, independent of worker enrollment and execution providers.
 pub struct FactoryRoleManagementApplication {
+  delete: Arc<dyn AuthorizedManagementCommandHandler<DeleteFactoryRoleCommand, Error = ApplicationError>>,
   capabilities:
     Arc<dyn AuthorizedManagementQueryHandler<ListFactoryRoleProfileCapabilitiesQuery, Error = ApplicationError>>,
   capability: Arc<dyn AuthorizedManagementQueryHandler<GetFactoryRoleProfileCapabilityQuery, Error = ApplicationError>>,
@@ -48,7 +50,8 @@ impl FactoryRoleManagementApplication {
   /// Shares the same Project authorization and immutable catalog services.
   pub fn new<C, Q>(commands: Arc<C>, queries: Arc<Q>) -> Self
   where
-    C: AuthorizedManagementCommandHandler<PublishFactoryRoleProfilesCommand, Error = ApplicationError>
+    C: AuthorizedManagementCommandHandler<DeleteFactoryRoleCommand, Error = ApplicationError>
+      + AuthorizedManagementCommandHandler<PublishFactoryRoleProfilesCommand, Error = ApplicationError>
       + AuthorizedManagementCommandHandler<CopyFactoryRoleTemplateCommand, Error = ApplicationError>
       + 'static,
     Q: AuthorizedManagementQueryHandler<GetFactoryRoleQuery, Error = ApplicationError>
@@ -64,6 +67,7 @@ impl FactoryRoleManagementApplication {
       + 'static,
   {
     Self {
+      delete: commands.clone(),
       capabilities: queries.clone(),
       capability: queries.clone(),
       validate_profile: queries.clone(),
@@ -416,4 +420,24 @@ pub(super) async fn validate_profile(
     .validate_factory_role_profile(&project, &body.id, body.role, &body.capability, body.definition)
     .map_err(|e| invalid_input(e, &id))?;
   read(&endpoints(&app, &id)?.validate_profile, &context, query, &id).await
+}
+
+pub(super) async fn delete(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, role)): Path<(String, String)>,
+  headers: HeaderMap,
+) -> Result<impl IntoResponse, ApiError> {
+  let key = idempotency_key(&headers, &id)?;
+  let expected = precondition(&headers, &id)?;
+  let command = app
+    .inputs
+    .delete_factory_role(&project, &role, expected.version(), key.as_str(), now_unix_ms(&id)?)
+    .map_err(|e| invalid_input(e, &id))?;
+  let result = endpoints(&app, &id)?
+    .delete
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(([("cache-control", "no-store")], Json(encode(result, &id)?)))
 }

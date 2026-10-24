@@ -553,3 +553,24 @@ fn fixed_manual_selection_names_one_exact_declared_candidate() {
     "a fixed manual choice cannot invent or resolve another profile"
   );
 }
+
+#[test]
+fn deleted_agent_candidates_are_unavailable_without_changing_retained_flow_history() {
+  let project = ProjectId::generate();
+  let node: FlowNodeDefinition = serde_json::from_value(stage(project)).unwrap();
+  let selected = node.profile_selection().unwrap().clone();
+  let retained_flow = flow(node);
+  let mut installed = choices(&retained_flow, None);
+  assert!(selected.validate_capabilities(&installed).is_ok());
+  let retained = serde_json::to_value(&retained_flow).unwrap();
+  installed.exclude_role(selected.role.id);
+  for candidate in selected.candidates.values() {
+    assert!(candidate.validate_capabilities(&installed).is_err());
+  }
+  assert!(publish(project, retained_flow.clone(), &installed).is_err());
+  assert_eq!(serde_json::to_value(&retained_flow).unwrap(), retained);
+  let other = flow(serde_json::from_value(stage(project)).unwrap());
+  let mut other_choices = choices(&other, None);
+  other_choices.exclude_role(selected.role.id);
+  assert!(publish(project, other, &other_choices).is_ok());
+}

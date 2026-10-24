@@ -93,7 +93,8 @@ pub struct FlowProfileSelectionBinding {
 impl FlowProfileCandidate {
   /// Qualifies this exact profile using the shared installed-capability contract.
   pub fn validate_capabilities(&self, choices: &crate::FactoryConfigurationChoices) -> Result<(), crate::FactoryError> {
-    if choices.supports_build_binding(&self.build)
+    if choices.role_is_available(self.profile.role().id)
+      && choices.supports_build_binding(&self.build)
       && choices.role_profile_capabilities().iter().any(|(alias, capability)| {
         choices
           .available_role_profile_capability(alias, capability)

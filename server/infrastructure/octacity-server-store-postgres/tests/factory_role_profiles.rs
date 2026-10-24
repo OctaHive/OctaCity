@@ -403,3 +403,71 @@ async fn catalog_matches_the_shared_memory_contract() {
   .await;
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn deletion_preserves_versions_and_replays_after_restart() {
+  use octacity_server_store::{
+    DeleteFactoryRole, FactoryRoleProfileStore as _, MutationDisposition, testing::management_mutation,
+  };
+  let database = TestDatabase::migrated().await;
+  let project = seed_project(&database.pool).await;
+  struct Enabled;
+  #[async_trait::async_trait]
+  impl octacity_server_store_postgres::FactoryCapabilitySource for Enabled {
+    async fn availability(
+      &self,
+      _: ProjectId,
+    ) -> Result<octacity_server_store::FactoryConfigurationAvailability, octacity_server_store::StoreError> {
+      Ok(octacity_server_store::FactoryConfigurationAvailability::Available(
+        octacity_server_factory::FactoryConfigurationChoices::try_new(Default::default()).unwrap(),
+      ))
+    }
+  }
+  let store = PostgresStore::with_factory_capabilities(database.pool.clone(), std::sync::Arc::new(Enabled));
+  octacity_server_store::testing::verify_factory_role_deletion(
+    &store,
+    &PostgresEvidenceProbe(database.pool.clone()),
+    project,
+  )
+  .await;
+  let project = seed_project(&database.pool).await;
+  let publication = store
+    .publish_factory_role_profiles(management_mutation(request(
+      octacity_server_store::testing::role_profile_contract_intent(project),
+      "restart-role",
+    )))
+    .await
+    .unwrap();
+  let role = publication.role.unwrap();
+  let command = DeleteFactoryRole {
+    project_id: project,
+    id: role.reference().id,
+    expected_current_version: role.reference().version,
+    idempotency_key: octacity_server_store::IdempotencyKey::new("restart-delete").unwrap(),
+    deleted_at: octacity_server_domain::Timestamp::from_unix_millis(10).unwrap(),
+  };
+  let first = store
+    .delete_factory_role(management_mutation(command.clone()))
+    .await
+    .unwrap();
+  let pool = independent_pool(&database.pool).await;
+  let restarted = PostgresStore::new(pool.clone());
+  let replay = restarted
+    .delete_factory_role(management_mutation(command))
+    .await
+    .unwrap();
+  assert_eq!(replay.disposition, MutationDisposition::Replayed);
+  assert_eq!(replay.role, first.role);
+  assert_eq!(replay.deleted_at, first.deleted_at);
+  assert_eq!(
+    restarted
+      .factory_role(project, role.reference().id, Some(role.reference().version))
+      .await
+      .unwrap(),
+    role
+  );
+  assert_eq!(restarted.list_factory_roles(project, None, 25).await.unwrap().total, 0);
+  pool.close().await;
+  database.cleanup().await;
+}

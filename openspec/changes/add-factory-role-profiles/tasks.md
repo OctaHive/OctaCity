@@ -171,3 +171,22 @@ Console correction (Red/Green verified): uploaded avatar/name/description/instru
 Correction verification: core Role/Profile tests first rejected shared skill/avatar fields; the shared-package case then passed for both default/pro without profile copies, preserving restored package identities. The initial package-source test failed until the source used the shared skill closure, and the existing transfer test failed until the common prompt renderer included those skills. The REST avatar test first accepted a truncated PNG, then rejected it through the shared bounded raster decoder. Skill reads first lacked their query/route; retained inventory/text reads, Project scoping and generic allow/deny-before-dispatch gates now pass through existing storage and authorization. Console tests first lacked agent-level skill selection, retained-file viewing and avatar upload; the browser and component contracts now pass with draft preservation. New profile/template copies do not silently select installed per-profile skills; legacy additions remain readable.
 
 Final recorded checks: 38 core role/package tests; 65 focused application tests (roles, skill imports/reads, result panels and manual profile selection); 235 REST tests; 730 Console unit tests with the focused agent suite repeated after follow-ups; five English/Russian browser scenarios including real avatar normalization and shared folder import; UI type/lint/format/build and unchanged bundle budgets; workspace architecture and strict OpenSpec validation. Documentation/planning edits have no executable TDD boundary. No dependency, SQL migration, new object store, provider call or worker-enrollment change was added. Section 10 remains five unimplemented tasks; provider/runtime setup has not been claimed as complete.
+
+## 11. AI-agent deletion correction
+
+- [x] 11.1 Through TDD, add reviewed REST/Console deletion over the existing Role and shared mutation mechanisms. Preserve immutable versions and Run history; exclude deleted roles from current catalogs and new profile qualification, and fence stale live manual choices. Reuse shared memory/PostgreSQL deletion contracts, existing Run journal fixtures and Console confirmation/retry/focus contracts; document the endpoint and migration without a new verification matrix.
+
+Deletion evidence: store/HTTP/Console tests first lacked the delete operation; live
+manual choices and prepared automatic journal appends then exposed deleted-role
+bypasses, including embedded profiles and authorization-filtered catalogs. Those
+Reds now pass through shared role qualification, mutation receipts and the Project
+fence. Regression checks passed 109 store tests, 39 core role/profile tests, nine
+PostgreSQL role/publication tests, six PostgreSQL profile/journal tests, 83 focused
+application tests and the REST suite. Console deletion/cancel/retry/fallback focus
+passes in the focused agent-test suite; existing five English/Russian browser journeys
+also pass. UI build/type/lint/format and the bounded 2 KiB budget adjustment pass.
+Two broad Console runs encountered intermittent existing navigation tests in
+CredentialSetup and IssueExecutions; their unchanged files and the agent suite
+passed together in a separate focused run. Those unrelated features were not edited.
+Migration 0103 adds only the role-head tombstone; no dependency, provider call,
+CI/CD enrollment or manual Factory input contract was introduced or replaced.

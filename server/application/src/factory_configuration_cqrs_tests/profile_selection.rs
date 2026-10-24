@@ -184,6 +184,26 @@ fn selection_validation_and_diagnostics_include_every_candidate_build_contract()
       models.contains(&"default") && models.contains(&"pro") && models.contains(&"specialized"),
       "candidate models absent from diagnostics: {models:?}"
     );
+    let mut deleted_choices = fixture.choices.clone();
+    let role = query_input
+      .draft
+      .flow
+      .as_ref()
+      .unwrap()
+      .closure
+      .definitions()
+      .iter()
+      .flat_map(|definition| definition.nodes())
+      .find_map(|node| node.profile_selection())
+      .unwrap()
+      .role
+      .id;
+    deleted_choices.exclude_role(role);
+    store.enable_project(project, deleted_choices).unwrap();
+    assert!(
+      query(&handlers, query_input.clone()).await.is_err(),
+      "authorization filtering must preserve deleted-role exclusions"
+    );
     let mut entries = fixture.choices.entries();
     entries
       .references

@@ -686,7 +686,12 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
     let stored = state.factory_runs.get(&request.run_id).ok_or(StoreError::NotFound {
       entity: EntityKind::FactoryRun,
     })?;
-    validate_transition(stored, &request, selection.as_ref(), configuration_wip_usage)?;
+    let roles = validate_transition(stored, &request, selection.as_ref(), configuration_wip_usage)?;
+    if roles.iter().any(|id| state.role_profiles.role_is_deleted(*id)) {
+      return Err(StoreError::Conflict {
+        entity: EntityKind::FactoryRoleProfile,
+      });
+    }
     let mut next = stored.clone();
     next.append_transition(&request)?;
     let outcome = CommitFactoryRunTransitionOutcome {
@@ -879,8 +884,19 @@ impl FactoryRunControlStore for InMemoryFactoryConfigurationStore {
     if stored.run.version() != request.expected_version {
       return Err(conflict());
     }
+    let change =
+      crate::prepare_factory_run_control(&stored.snapshot()?, &request, &audit_context, stored.record_count())?;
+    if change
+      .selected_role
+      .as_ref()
+      .is_some_and(|role| state.role_profiles.role_is_deleted(role.id))
+    {
+      return Err(StoreError::Conflict {
+        entity: EntityKind::FactoryRoleProfile,
+      });
+    }
     let mut next = stored.clone();
-    let outcome = apply_control(&mut next, &request, &audit_context)?;
+    let outcome = apply_control(&mut next, change)?;
     state.factory_run_controls.insert(
       (operation, idempotency),
       StoredFactoryRunControl {
@@ -895,10 +911,8 @@ impl FactoryRunControlStore for InMemoryFactoryConfigurationStore {
 
 fn apply_control(
   stored: &mut StoredFactoryRun,
-  request: &ApplyFactoryRunControl,
-  context: &MutationAuditContext,
+  change: crate::FactoryRunControlChange,
 ) -> Result<FactoryRunControlOutcome, StoreError> {
-  let change = crate::prepare_factory_run_control(&stored.snapshot()?, request, context, stored.record_count())?;
   append_unique(&mut stored.budgets, change.budget.id, change.budget.clone())?;
   append_unique(
     &mut stored.lifecycle_checkpoints,
@@ -1081,7 +1095,7 @@ fn validate_transition(
   request: &CommitFactoryRunTransition,
   selection: Option<&crate::PhasePoolSelection>,
   configuration_wip_usage: FactoryWipUsage,
-) -> Result<(), StoreError> {
+) -> Result<BTreeSet<octacity_server_factory::FactoryRoleId>, StoreError> {
   let claim = stored
     .current_claim_id
     .filter(|id| *id == request.claim_id)
@@ -1095,6 +1109,7 @@ fn validate_transition(
     .lifecycle_checkpoints
     .get(&stored.current.lifecycle_checkpoint_id)
     .ok_or(StoreError::Unavailable)?;
+  let data = stored.data_history();
   crate::validate_factory_transition(
     &crate::FactoryTransitionBaseline {
       configuration_wip_usage,
@@ -1121,7 +1136,7 @@ fn validate_transition(
       claim,
       admitted_flow: &stored.admitted_flow,
       work: &stored.work,
-      data: &stored.data_history(),
+      data: &data,
       node_attempts: &stored.node_attempts,
       node_completions: &stored.node_attempt_completions,
       flow_runs: &stored.flow_runs,
@@ -1129,7 +1144,8 @@ fn validate_transition(
       record_count: stored.record_count(),
     },
     request,
-  )
+  )?;
+  crate::factory_profile_selection_roles(&stored.admitted_flow, &data.inputs, &request.append)
 }
 
 fn append_history(stored: &mut StoredFactoryRun, append: &FactoryRunHistoryAppend) -> Result<(), StoreError> {

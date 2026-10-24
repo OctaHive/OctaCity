@@ -2478,3 +2478,31 @@ async fn profile_wait_controls_preserve_closed_bounds_after_restart() {
   );
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn deleted_agents_cannot_receive_new_live_profile_choices_and_keep_run_history() {
+  use octacity_server_store::testing::factory_profile_selection_contract_fixture;
+  let database = TestDatabase::migrated().await;
+  let (admission, input, ownership) = factory_profile_selection_contract_fixture(None);
+  let (store, _) = seed_projection_admission(&database, &admission).await;
+  octacity_server_store::testing::verify_factory_role_deletion_blocks_live_selection(
+    &store, &admission, &input, &ownership,
+  )
+  .await;
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn deleted_agents_cannot_receive_new_automatic_profile_choices() {
+  let database = TestDatabase::migrated().await;
+  let (admission, input, ownership) =
+    octacity_server_store::testing::factory_profile_selection_contract_fixture(Some("baseline"));
+  let (store, _) = seed_projection_admission(&database, &admission).await;
+  octacity_server_store::testing::verify_factory_role_deletion_blocks_automatic_selection(
+    &store, &admission, &input, &ownership,
+  )
+  .await;
+  database.cleanup().await;
+}

@@ -8,6 +8,19 @@ import type { components } from '../../../.generated/api/schema';
 /** AI-agent content uses Project Role/Profile contracts, independently of worker enrollment. */
 export function createFactoryRolesApi(client = managementApi) {
   return {
+    async deleteRole(
+      project: string,
+      role: string,
+      headers: IdempotencyRequestHeaders & Readonly<{ 'If-Match': string }>,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.DELETE('/api/v1/projects/{project_id}/factory-roles/{role_id}', {
+            params: { path: { project_id: project, role_id: role }, header: headers },
+          })
+        ).data,
+      );
+    },
     async currentRole(project: string, role: string) {
       return requireManagementResponse(
         (

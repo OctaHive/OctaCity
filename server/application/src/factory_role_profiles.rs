@@ -31,6 +31,40 @@ impl ManagementAuthorizationTarget for PublishFactoryRoleProfilesCommand {
     crate::management_security::instance_resource(ManagementResourceKind::Project, self.intent.project_id)
   }
 }
+/// Explicit agent deletion; immutable versions remain available for retained Runs.
+#[derive(Clone, Debug)]
+pub struct DeleteFactoryRoleCommand {
+  /// Reviewed deletion and scoped replay identity.
+  pub request: octacity_server_store::DeleteFactoryRole,
+}
+impl Command for DeleteFactoryRoleCommand {
+  type Outcome = octacity_server_store::DeleteFactoryRoleOutcome;
+}
+impl ManagementAuthorizationTarget for DeleteFactoryRoleCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Delete, ManagementResourceKind::Project);
+  fn management_resource(&self) -> ManagementResourceResult {
+    crate::management_security::instance_resource(ManagementResourceKind::Project, self.request.project_id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: FactoryRoleProfileStore> ManagementCommandUseCase<DeleteFactoryRoleCommand> for FactoryRoleProfileHandlers<S> {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    command: DeleteFactoryRoleCommand,
+  ) -> Result<octacity_server_store::DeleteFactoryRoleOutcome, ApplicationError> {
+    require_project_visibility(grant, command.request.project_id)?;
+    Ok(
+      self
+        .store
+        .delete_factory_role(crate::management_security::audited_mutation(context, command.request)?)
+        .await?,
+    )
+  }
+}
 /// Authorized exact role content read; no provider or worker connection is needed.
 #[derive(Clone, Debug)]
 pub struct GetFactoryRoleQuery {

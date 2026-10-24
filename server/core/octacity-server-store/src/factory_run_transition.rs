@@ -693,3 +693,37 @@ fn validate_node_journal(
     .map_err(|_| invalid())?;
   Ok(())
 }
+
+/// Resolves only new selected profiles from the validated journal to their admitted roles.
+/// Adapters recheck those roles under the same fence as deletion before committing history.
+pub fn factory_profile_selection_roles(
+  admitted: &AdmittedFlow,
+  retained_inputs: &[octacity_server_factory::FlowNodeInput],
+  append: &crate::FactoryRunHistoryAppend,
+) -> Result<BTreeSet<octacity_server_factory::FactoryRoleId>, StoreError> {
+  append
+    .flow
+    .data
+    .profile_selections
+    .iter()
+    .filter(|selection| selection.candidate().is_some())
+    .map(|selection| {
+      let input = retained_inputs
+        .iter()
+        .chain(&append.flow.data.inputs)
+        .find(|input| input.digest().ok() == Some(selection.input_digest()));
+      input
+        .and_then(|input| {
+          admitted
+            .closure()
+            .definition(input.definition())
+            .and_then(|d| d.node(input.node()))
+        })
+        .and_then(|node| node.profile_selection())
+        .map(|binding| binding.role.id)
+        .ok_or(StoreError::Conflict {
+          entity: octacity_server_domain::EntityKind::FactoryRun,
+        })
+    })
+    .collect()
+}

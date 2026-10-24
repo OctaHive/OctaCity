@@ -18,7 +18,19 @@ impl FactoryConfigurationStore for PostgresStore {
     project_id: ProjectId,
   ) -> Result<FactoryConfigurationAvailability, StoreError> {
     crate::discovery::require_project(&self.pool, project_id).await?;
-    self.factory_capabilities().availability(project_id).await
+    let mut availability = self.factory_capabilities().availability(project_id).await?;
+    if let FactoryConfigurationAvailability::Available(choices) = &mut availability {
+      let deleted: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT id FROM factory_roles WHERE project_id=$1 AND deleted")
+        .bind(project_id.as_uuid())
+        .fetch_all(&self.pool)
+        .await
+        .map_err(crate::database::unavailable)?;
+      for id in deleted {
+        choices
+          .exclude_role(octacity_server_factory::FactoryRoleId::from_uuid(id).map_err(|_| StoreError::Unavailable)?);
+      }
+    }
+    Ok(availability)
   }
 
   async fn create_factory_configuration(

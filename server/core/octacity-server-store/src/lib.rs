@@ -378,7 +378,9 @@ pub use factory_run_model::{
   MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
 };
 pub use factory_run_port::FactoryRunStore;
-pub use factory_run_transition::{FactoryTransitionBaseline, validate_factory_transition};
+pub use factory_run_transition::{
+  FactoryTransitionBaseline, factory_profile_selection_roles, validate_factory_transition,
+};
 pub use idempotency::{
   IdempotencyKey, MAX_IDEMPOTENCY_KEY_BYTES, MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, ManagementIdempotencyKey,
   ManagementSecurityScope,
@@ -867,6 +869,8 @@ pub use issue_legacy::*;
 mod issue_retention;
 pub use issue_retention::*;
 
+#[cfg(any(test, feature = "test-support"))]
+mod factory_role_deletion_contract_testing;
 #[cfg(any(test, feature = "test-support"))]
 mod factory_role_profile_contract_testing;
 mod factory_role_profiles;

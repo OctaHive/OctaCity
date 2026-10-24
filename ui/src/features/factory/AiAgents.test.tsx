@@ -28,6 +28,11 @@ function setup() {
       ]),
     ),
     getRole: vi.fn(async () => role),
+    deleteRole: vi.fn(async () => ({
+      disposition: 'applied' as const,
+      role: role.reference,
+      deleted_at: 100,
+    })),
     currentRole: vi.fn(async () => role),
     currentProfile: vi.fn(async () => profile),
     listProfiles: vi.fn(async () =>
@@ -724,4 +729,44 @@ it('edits distinct installed permission categories without offering tool referen
       definition: expect.objectContaining({ permissions }),
     }),
   );
+});
+
+it('deletes an AI agent only after review and safely retries a lost response before clearing its card', async () => {
+  const { roles, role } = setup();
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
+  const remove = screen.getByRole('button', { name: 'Delete AI agent' });
+  await userEvent.click(remove);
+  let dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByText(/Run history is retained/)).toBeTruthy();
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Abandon' }));
+  expect(roles.deleteRole).not.toHaveBeenCalled();
+  expect(remove).toHaveProperty('isConnected', true);
+  roles.deleteRole.mockRejectedValueOnce(
+    new ManagementApiError({
+      code: 'transport_failure',
+      message: 'Unavailable',
+      requestId: null,
+      retryAfterMilliseconds: null,
+      status: null,
+    }),
+  );
+  await userEvent.click(remove);
+  dialog = await screen.findByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Delete AI agent' }));
+  const retry = await within(dialog).findByRole('button', { name: 'Retry same command' });
+  roles.listRoles.mockResolvedValue({ items: [], total: 0, next_cursor: null });
+  await userEvent.click(retry);
+  await within(dialog).findByText('AI agent deleted.');
+  expect(roles.deleteRole).toHaveBeenCalledTimes(2);
+  expect(roles.deleteRole.mock.calls[0]).toEqual(roles.deleteRole.mock.calls[1]);
+  expect(roles.deleteRole).toHaveBeenCalledWith(
+    role.reference.project_id,
+    role.reference.id,
+    expect.objectContaining({ 'If-Match': '"1"', 'Idempotency-Key': expect.any(String) }),
+  );
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('heading', { name: /Code specialist/ })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Code specialist' })).toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Create AI agent' }));
 });

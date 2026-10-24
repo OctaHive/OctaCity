@@ -1026,7 +1026,7 @@ The Factory Project API now includes role/profile current catalogs and exact
 version reads, exact release templates and independent copies, side-effect-free
 validation, installed compatible capability discovery, atomic
 `factory-role-publications`, and `factory-skills` import/catalog operations.
-These reuse existing Project View/Admin authorization and immutable publication;
+These reuse existing Project View/Admin/Delete authorization and immutable publication;
 they are independent of enrolled CI/CD workers and Decision API installation.
 Console **AI agents** (`AI-агенты`) reuse these Role identities and own profiles;
 there is no AI-worker enrollment endpoint. Role content includes name, uploaded PNG avatar,
@@ -1036,6 +1036,17 @@ runtime/model/thinking, additional instructions, explicit environment and
 CLI settings, authorized MCP/integration bindings, tools and resource ceilings.
 Dedicated detail reads expose editable content with no-store; generic catalogs
 and audit omit instructions, environment values, CLI contents and skill bytes.
+
+`DELETE /api/v1/projects/{project_id}/factory-roles/{role_id}` requires Project
+Delete authority, `Idempotency-Key` and a strong `If-Match` for the displayed role
+version. The no-store receipt contains `disposition`, the exact `role` reference
+and `deleted_at`. Deletion atomically retains a tombstone, receipt, audit and outbox
+using the same Project lock as publication. Stale versions return 412; a replay
+returns the original receipt under current authorization. Current role/profile
+catalogs and current-alias reads exclude the agent; authorized exact-version reads
+remain available. New publication cannot resurrect it. New automatic/reserve choices
+fail common candidate qualification, and live manual controls reject a deleted role
+under the same Project fence. Existing Run history and accepted Builds are unchanged.
 
 Installed compatibility and executable support are separate from publication.
 `factory-profile-capabilities` exposes installed schemas and approved choices;

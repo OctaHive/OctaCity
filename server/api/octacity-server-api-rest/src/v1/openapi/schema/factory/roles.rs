@@ -8,6 +8,17 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let reference = || schema_ref("FactoryImmutableReferenceResource");
   let digest = || schema_ref("FactoryDigest");
   schemas.insert(
+    "DeleteFactoryRoleResponse".into(),
+    object(
+      [
+        ("disposition", schema_ref("MutationDisposition")),
+        ("role", schema_ref("FactoryRoleReference")),
+        ("deleted_at", integer()),
+      ],
+      &["disposition", "role", "deleted_at"],
+    ),
+  );
+  schemas.insert(
     "ProjectSkillDetails".into(),
     object(
       [

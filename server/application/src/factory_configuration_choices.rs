@@ -364,6 +364,7 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
     },
   )
   .map_err(|_| ApplicationError::invalid())?;
+  visible.intersect_role_availability(&choices);
   for (alias, cap) in choices.role_profile_capabilities() {
     if let Some(cap) = visible.available_role_profile_capability(alias, cap) {
       visible = visible

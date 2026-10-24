@@ -213,3 +213,21 @@ Console settings guide an operator from an empty Project through provider/runtim
 The avatar is uploaded raster content, normalized to a small PNG in the browser and decoded with the common bounded raster validator before publication. The bounded data URI is role presentation metadata under the existing definition-size limit; old omitted fields preserve retained digests. There is no avatar service, extra object store or remote image URL fetch.
 
 Shared skills live on the immutable Role version and are resolved once for every pinned profile by the existing package builder, retained-input transfer and common prompt renderer. Profiles do not copy these references or offer an independent skill editor. Retained legacy profile additions remain readable and executable; conflicting aliases never silently override a shared skill. Updating shared skills follows the same explicit role-version adoption rule as shared instructions. A confirmed successful Console import selects its exact skill version in the current agent draft; saving the Role remains a separate reviewed publication. Import, file browsing and avatar selection preserve the other in-memory draft fields.
+
+### AI-agent deletion
+
+Use one tombstone on the existing role head. Do not remove version rows, profile
+pins, admitted Flow content or retained execution packages. The delete operation
+shares Project publication locking, current-version fencing, scoped replay, audit
+and outbox. Current catalogs/current aliases omit deleted agents; exact version
+reads remain authorized historical reads. New role/profile publication cannot
+resurrect the identity. Project capability snapshots exclude deleted role IDs at
+the existing candidate qualification boundary, covering configured/rule/reserve
+selection. Authorization narrowing preserves these exclusions. New selected-profile
+journal appends share the same Project fence, preventing a prepared automatic choice
+from committing after deletion. Live manual control checks the role in its admitted binding inside the
+same Project fence, including when the Flow embeds an unpublished profile. Replay
+precedes mutable availability checks. Accepted Builds and Run history are unchanged.
+Console uses the generated DELETE contract and ConfirmedCommand with catalog refresh
+and fallback keyboard focus. Its small UI/translation addition raises the existing
+total JavaScript and static output budgets by 2 KiB each; no dependency is added.

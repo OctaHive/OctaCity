@@ -16,6 +16,26 @@ pub struct FactoryNodeControlInput<'a> {
 }
 
 impl ManagementInputFactory {
+  /// Uses the ordinary strong version precondition and scoped idempotency key.
+  pub fn delete_factory_role(
+    &self,
+    project: &str,
+    id: &str,
+    expected: u64,
+    key: &str,
+    now: i64,
+  ) -> Result<crate::DeleteFactoryRoleCommand, ManagementInputError> {
+    Ok(crate::DeleteFactoryRoleCommand {
+      request: octacity_server_store::DeleteFactoryRole {
+        project_id: parse(project, "project id")?,
+        id: parse(id, "role id")?,
+        expected_current_version: version(expected, "role version")?,
+        idempotency_key: parse(key, "idempotency key")?,
+        deleted_at: timestamp(now)?,
+      },
+    })
+  }
+
   /// Retains an exact pre-dispatch choice using ordinary Run preconditions and replay identity.
   pub fn select_factory_profile(
     &self,

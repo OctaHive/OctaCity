@@ -149,7 +149,9 @@ async fn validate_transition(
       record_count,
     },
     request,
-  )
+  )?;
+  let roles = octacity_server_store::factory_profile_selection_roles(&admitted_flow, &data.inputs, &request.append)?;
+  crate::factory_role_deletion::require_roles_available(transaction, locked.work.subject().project_id(), &roles).await
 }
 
 pub(super) async fn insert_budget(

@@ -181,7 +181,7 @@ pub async fn verify_factory_profile_control<S: FactoryRunStore + FactoryRunContr
 }
 
 /// Retains a selection through the same owner journal in every backend contract.
-pub(super) async fn freeze_profile_selection<S: FactoryRunStore>(
+pub async fn freeze_profile_selection<S: FactoryRunStore>(
   store: &S,
   admission: &PublishedFactoryAdmission,
   input: &FlowNodeInput,

@@ -50,6 +50,9 @@ pub(crate) async fn apply_control(
   let snapshot = read_snapshot_in_transaction(&mut transaction, request.run_id).await?;
   let (count, _) = super::snapshot::snapshot_record_counts(&mut transaction, request.run_id).await?;
   let change = prepare_factory_run_control(&snapshot, &request, &context, count)?;
+  if let Some(role) = &change.selected_role {
+    crate::factory_role_deletion::require_roles_available(&mut transaction, role.project_id, &[role.id].into()).await?;
+  }
   insert_budget(&mut transaction, request.run_id, &change.budget).await?;
   insert_lifecycle(&mut transaction, &change.lifecycle).await?;
   insert_audit(&mut transaction, &change.audit).await?;

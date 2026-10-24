@@ -179,6 +179,7 @@ pub struct FactoryConfigurationChoices {
   build_configurations: BTreeMap<FactoryKey, BuildConfigurationRef>,
   metadata: BTreeMap<(FactoryChoiceKind, FactoryKey), FactoryChoiceMetadata>,
   role_profiles: BTreeMap<FactoryKey, crate::FactoryRoleProfileCapability>,
+  excluded_roles: std::collections::BTreeSet<crate::FactoryRoleId>,
 }
 
 /// Safe deployment-declared capabilities. Absence means no declaration is available;
@@ -251,6 +252,7 @@ impl FactoryConfigurationChoices {
       build_configurations: choice_map(entries.build_configurations, FactoryChoiceKind::BuildConfiguration)?,
       metadata: BTreeMap::new(),
       role_profiles: BTreeMap::new(),
+      excluded_roles: Default::default(),
     })
   }
 
@@ -324,6 +326,20 @@ impl FactoryConfigurationChoices {
     }
     self.role_profiles.insert(alias, capability);
     Ok(self)
+  }
+  /// Removes a deleted agent from all new candidate qualification, preserving retained content.
+  pub fn exclude_role(&mut self, id: crate::FactoryRoleId) {
+    self.excluded_roles.insert(id);
+  }
+  /// Keeps dynamic exclusions when an authorized subset rebuilds selectable entries.
+  /// Intersection can only narrow role eligibility, never restore a deleted role.
+  pub fn intersect_role_availability(&mut self, source: &Self) {
+    self.excluded_roles.extend(source.excluded_roles.iter().copied());
+  }
+  /// Current eligibility is independent of immutable Role/Profile version reads.
+  #[must_use]
+  pub fn role_is_available(&self, id: crate::FactoryRoleId) -> bool {
+    !self.excluded_roles.contains(&id)
   }
   /// Borrows exact trusted declarations; authorization filters their dependencies before disclosure.
   #[must_use]
