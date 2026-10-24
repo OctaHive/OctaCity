@@ -1297,6 +1297,10 @@ permission bits use method-level platform guards. Portable Node process tests
 retain `SystemRoot` in their otherwise isolated environment so Windows can
 initialize its loader and crypto provider; ambient credentials and runtime
 options are not inherited.
+The finite CLI uses host-platform absolute-path rules for MCP executables,
+including Windows drive paths. Its MCP and reader children retain the same
+`SystemRoot` bootstrap allowance; other environment variables remain explicitly
+selected.
 Frozen prompts are sent as UTF-8 bytes so Windows text-mode stdin translation
 cannot replace their LF protocol delimiters. The transport regression checks
 exact projected file bytes, including Unicode and mixed payload line endings.

@@ -70,6 +70,71 @@ class FactoryPilotCliTests(unittest.TestCase):
             self.assertEqual(rejected.stdout, "")
             self.assertEqual(rejected.stderr, "finite model fixture rejected its invocation\n")
 
+    def test_role_process_accepts_an_absolute_windows_mcp_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            server = root / "server.mjs"
+            server.write_bytes(FIXTURE.with_name("role-mcp.mjs").read_bytes())
+            (root / "supporting.txt").write_text("retained facts")
+            command = r"C:\qualified runtime\node.exe"
+            # Emulate Windows path interpretation and executable lookup while
+            # running the real CLI and MCP processes on every host.
+            modules = {
+                "node:path": "const path = process.getBuiltinModule('path'); "
+                             "export const dirname = path.dirname; "
+                             "export const isAbsolute = path.win32.isAbsolute;",
+                "node:child_process": "export function spawnSync(command, args, options) { "
+                                      f"if (command !== {json.dumps(command)}) throw new Error(); "
+                                      "return process.getBuiltinModule('child_process')"
+                                      ".spawnSync(process.execPath, args, options); }",
+            }
+            loader = root / "windows-loader.mjs"
+            loader.write_text(
+                f"const modules = {json.dumps(modules)};\n"
+                "export async function resolve(specifier, context, next) {\n"
+                "  if (Object.hasOwn(modules, specifier)) return { shortCircuit: true,\n"
+                "    url: 'data:text/javascript,' + encodeURIComponent(modules[specifier]) };\n"
+                "  return next(specifier, context);\n}\n",
+                encoding="utf-8",
+            )
+            bootstrap = root / "windows-bootstrap.mjs"
+            bootstrap.write_text(
+                "import { register } from 'node:module';\n"
+                f"register({json.dumps(loader.as_uri())}, import.meta.url);\n",
+                encoding="utf-8",
+            )
+            program = {"fixture_version": 1, "result": True, "mcp": {
+                "command": command, "args": [str(server)], "env_vars": ["LANGUAGE"],
+                "tool": "facts", "expected_text": "ru:retained facts"}}
+            accepted = self.invoke(directory, program, {}, environment={
+                "LANGUAGE": "ru", "NODE_OPTIONS": "--import=" + bootstrap.as_uri()})
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertIs(json.loads(accepted.stdout.splitlines()[-1])["result"], True)
+            self.assertEqual(accepted.stderr, "")
+
+    def test_role_mcp_retains_os_bootstrap_without_ambient_environment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            system_root = os.environ.get("SystemRoot", r"C:\system-root-canary")
+            server = root / "server.mjs"
+            server.write_text(
+                f"if (process.env.SystemRoot !== {json.dumps(system_root)} "
+                "|| process.env.UNMAPPED_CANARY !== undefined "
+                "|| process.env.NODE_OPTIONS !== undefined) throw new Error('invalid environment');\n"
+                + FIXTURE.with_name("role-mcp.mjs").read_text(encoding="utf-8"),
+                encoding="utf-8",
+            )
+            (root / "supporting.txt").write_text("retained facts")
+            program = {"fixture_version": 1, "result": True, "mcp": {
+                "command": NODE, "args": [str(server)], "env_vars": ["LANGUAGE"],
+                "tool": "facts", "expected_text": "ru:retained facts"}}
+            accepted = self.invoke(directory, program, {}, environment={
+                "LANGUAGE": "ru", "SystemRoot": system_root,
+                "UNMAPPED_CANARY": "ambient-private-canary", "NODE_OPTIONS": "--trace-warnings"})
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            self.assertIs(json.loads(accepted.stdout.splitlines()[-1])["result"], True)
+            self.assertEqual(accepted.stderr, "")
+
     def test_compatibility_probe_is_a_finite_credentialless_operation(self):
         result = subprocess.run([NODE, str(FIXTURE), "--version"], text=True, capture_output=True, timeout=5,
                                 env=fixture_environment())

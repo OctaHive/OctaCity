@@ -1,7 +1,7 @@
 #!/usr/local/bin/node
 // Adapter-local finite model fixture. It has no lifecycle authority or name dispatch.
 import { readFileSync, lstatSync, mkdirSync, writeFileSync, openSync, readSync, closeSync, fstatSync, constants } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
 try {
@@ -109,9 +109,13 @@ try {
   }
   const tools = instructions.tools ?? [];
   if (!Array.isArray(tools) || tools.length > 16 || (tools.length && !reader)) throw new Error();
-  function invokeReader(arguments_, input) {
-    const env = Object.fromEntries(['PATH', 'HOME', 'TMPDIR', 'OCTACITY_CODEX_READER_CONFIG']
+  function childEnvironment(names) {
+    // Windows needs SystemRoot for OS bootstrap; other inputs stay explicit.
+    return Object.fromEntries(['SystemRoot', ...names]
       .filter(key => process.env[key] !== undefined).map(key => [key, process.env[key]]));
+  }
+  function invokeReader(arguments_, input) {
+    const env = childEnvironment(['PATH', 'HOME', 'TMPDIR', 'OCTACITY_CODEX_READER_CONFIG']);
     const completed = spawnSync(reader, arguments_, { input, encoding: 'utf8', timeout: 60000, maxBuffer: 1024 * 1024, env });
     if (completed.error || completed.status !== 0 || completed.stderr) throw new Error();
     return completed.stdout;
@@ -130,11 +134,11 @@ try {
   }
   if (instructions.mcp !== undefined) {
     const mcp = instructions.mcp;
-    if (Object.keys(mcp).length !== 5 || typeof mcp.command !== 'string' || !mcp.command.startsWith('/')
+    if (Object.keys(mcp).length !== 5 || typeof mcp.command !== 'string' || !isAbsolute(mcp.command)
       || !Array.isArray(mcp.args) || mcp.args.length > 64 || mcp.args.some(arg => typeof arg !== 'string' || arg.includes('\0'))
       || !Array.isArray(mcp.env_vars) || mcp.env_vars.some(name => typeof name !== 'string' || process.env[name] === undefined)
       || typeof mcp.tool !== 'string' || typeof mcp.expected_text !== 'string') throw new Error();
-    const env = Object.fromEntries(mcp.env_vars.map(name => [name, process.env[name]]));
+    const env = childEnvironment(mcp.env_vars);
     const text = readMcp(input => {
       const completed = spawnSync(mcp.command, mcp.args, { input, encoding: 'utf8', timeout: 60000, maxBuffer: 1024 * 1024, env });
       if (completed.error || completed.status !== 0 || completed.stderr) throw new Error();
