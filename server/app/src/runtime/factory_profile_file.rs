@@ -20,6 +20,7 @@ pub(super) struct FileProfileInstaller {
   bindings: FileBindings,
 }
 struct FileBindings {
+  model_discovery: Vec<(ProjectId, FactoryKey, ModelDiscoveryDeclaration)>,
   protected_validation: Vec<ValidationCommandBinding>,
   promotions: Vec<PromotionCommandBinding>,
   commands: Vec<octacity_server_application::FactoryCommandBuildProfile>,
@@ -161,7 +162,31 @@ impl super::FactoryRuntimeInstaller for FileProfileInstaller {
     for binding in &self.bindings.delivery {
       catalog.executors.push(binding.install(&resources)?);
     }
+    let mut model_discovery = BTreeMap::new();
+    for (project, alias, declaration) in &self.bindings.model_discovery {
+      let plugin = &catalog
+        .projects
+        .iter()
+        .find(|(id, _)| id == project)
+        .ok_or(FactoryRuntimeInstallationError::Invalid)?
+        .1
+        .role_profile_capabilities()
+        .get(alias)
+        .ok_or(FactoryRuntimeInstallationError::Invalid)?
+        .ceiling
+        .toolchain
+        .plugin;
+      let source = super::factory_model_catalog::PluginModelDiscovery::load(
+        &declaration.executable,
+        plugin,
+        &declaration.executable_sha256,
+        declaration.environment.clone(),
+      )
+      .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+      model_discovery.insert((*project, alias.clone()), source);
+    }
     let mut installed = super::FactoryProfileRuntimeInstaller::new(catalog, readiness, vec![])?
+      .with_model_discovery(model_discovery)
       .install(resources)
       .await?;
     installed.output_finalizer = output_finalizer;
@@ -471,6 +496,16 @@ struct RoleProfileDeclaration {
   parameters: FlowDataSchema,
   public_environment: BTreeMap<String, FlowDataSchema>,
   enforcement: Vec<PermissionCategory>,
+  #[serde(default)]
+  model_discovery: Option<ModelDiscoveryDeclaration>,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ModelDiscoveryDeclaration {
+  executable: std::path::PathBuf,
+  executable_sha256: String,
+  #[serde(default)]
+  environment: BTreeMap<String, String>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -574,6 +609,7 @@ impl FactoryRuntimeProfileCatalog {
       || !bindings.protected_validation_evidence.is_empty()
       || !bindings.evaluation_decisions.is_empty()
       || !bindings.delivery.is_empty()
+      || !bindings.model_discovery.is_empty()
     {
       return Err(FactoryRuntimeInstallationError::Invalid);
     }
@@ -612,6 +648,7 @@ impl FactoryRuntimeProfileCatalog {
     {
       return Err(Invalid);
     }
+    let mut model_discovery = Vec::new();
     let projects = file
       .projects
       .into_iter()
@@ -642,6 +679,9 @@ impl FactoryRuntimeProfileCatalog {
               .any(|(_, reference)| reference == &declaration.ceiling.build_configuration)
           {
             return Err(Invalid);
+          }
+          if let Some(discovery) = declaration.model_discovery {
+            model_discovery.push((project.project_id, alias.clone(), discovery));
           }
           let local_permissions =
             LocalPermissionCeiling::try_new(declaration.ceiling.permissions.clone(), declaration.enforcement)
@@ -962,6 +1002,7 @@ impl FactoryRuntimeProfileCatalog {
     Ok((
       catalog,
       FileBindings {
+        model_discovery,
         protected_validation,
         promotions,
         commands,

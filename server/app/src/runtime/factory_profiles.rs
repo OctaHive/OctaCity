@@ -3,7 +3,7 @@ use super::factory::*;
 use async_trait::async_trait;
 use octacity_server_application::*;
 use octacity_server_domain::ProjectId;
-use octacity_server_factory::{DecisionSignalProvider, FactoryChoiceKind, FactoryConfigurationChoices};
+use octacity_server_factory::{DecisionSignalProvider, FactoryChoiceKind, FactoryConfigurationChoices, FactoryKey};
 use octacity_server_store::{FactoryConfigurationAvailability, StoreError};
 use octacity_server_store_postgres::FactoryCapabilitySource;
 use std::sync::Arc;
@@ -44,8 +44,17 @@ pub struct FactoryProfileRuntimeInstaller {
   readiness: Arc<dyn FactoryRuntimeReadiness>,
   outbox: Vec<Arc<dyn FactoryOutboxDispatcher>>,
   work_sources: Option<Arc<dyn super::FactorySourceRuntime>>,
+  model_discovery:
+    std::collections::BTreeMap<(ProjectId, FactoryKey), super::factory_model_catalog::PluginModelDiscovery>,
 }
 impl FactoryProfileRuntimeInstaller {
+  pub(super) fn with_model_discovery(
+    mut self,
+    sources: std::collections::BTreeMap<(ProjectId, FactoryKey), super::factory_model_catalog::PluginModelDiscovery>,
+  ) -> Self {
+    self.model_discovery = sources;
+    self
+  }
   /// Enables independent Source polling; availability never gates manual Factory admission.
   pub fn with_work_sources(mut self, worker: Arc<dyn super::FactorySourceRuntime>) -> Self {
     self.work_sources = Some(worker);
@@ -64,6 +73,7 @@ impl FactoryProfileRuntimeInstaller {
       readiness,
       outbox,
       work_sources: None,
+      model_discovery: Default::default(),
     })
   }
 }
@@ -161,19 +171,55 @@ impl FactoryRuntimeProfileCatalog {
     Ok(())
   }
 }
-struct ProjectCatalog(Vec<(ProjectId, FactoryConfigurationChoices)>);
+struct ProjectCatalog {
+  projects: tokio::sync::RwLock<Vec<(ProjectId, FactoryConfigurationChoices)>>,
+  discovery: std::collections::BTreeMap<(ProjectId, FactoryKey), super::factory_model_catalog::PluginModelDiscovery>,
+}
+
 #[async_trait]
 impl FactoryCapabilitySource for ProjectCatalog {
   async fn availability(&self, project: ProjectId) -> Result<FactoryConfigurationAvailability, StoreError> {
     Ok(
       self
-        .0
+        .projects
+        .read()
+        .await
         .iter()
         .find(|(owner, _)| *owner == project)
         .map_or(FactoryConfigurationAvailability::Disabled, |(_, choices)| {
           FactoryConfigurationAvailability::Available(choices.clone())
         }),
     )
+  }
+  async fn refresh_role_models(&self, project: ProjectId, alias: &FactoryKey) -> Result<(), StoreError> {
+    let source = self
+      .discovery
+      .get(&(project, alias.clone()))
+      .ok_or(StoreError::Unavailable)?;
+    // Serialize only this source through replacement, without an unbounded queue
+    // or delaying refreshes for other installed capabilities.
+    let _refresh = source.refresh.try_lock().map_err(|_| StoreError::Unavailable)?;
+    let (catalog, parameters) = source.discover().await?;
+    let mut projects = self.projects.write().await;
+    let (_, choices) = projects
+      .iter_mut()
+      .find(|(id, _)| *id == project)
+      .ok_or(StoreError::Unavailable)?;
+    let mut cap = choices
+      .role_profile_capabilities()
+      .get(alias)
+      .cloned()
+      .ok_or(StoreError::Unavailable)?;
+    if !catalog.available && cap.model_catalog.as_ref().is_some_and(|old| old.available) {
+      return Err(StoreError::Unavailable);
+    }
+    cap.model_catalog = Some(catalog);
+    cap.parameters = parameters;
+    *choices = choices
+      .clone()
+      .with_role_profile_capability(alias.clone(), cap)
+      .map_err(|_| StoreError::Unavailable)?;
+    Ok(())
   }
 }
 #[async_trait]
@@ -270,8 +316,17 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
         }
       }
     }
+    let capabilities = ProjectCatalog {
+      projects: tokio::sync::RwLock::new(projects),
+      discovery: self.model_discovery.clone(),
+    };
+    for (project, alias) in capabilities.discovery.keys() {
+      // Initial registration may provide manual input even when discovery is unavailable.
+      // Failure does not disable independent Factory/worker operation.
+      let _ = capabilities.refresh_role_models(*project, alias).await;
+    }
     Ok(FactoryRuntimeInstallation {
-      capabilities: Arc::new(ProjectCatalog(projects)),
+      capabilities: Arc::new(capabilities),
       executors,
       inputs: Arc::new(FactoryArtifactFlowInputs::new(
         reader,

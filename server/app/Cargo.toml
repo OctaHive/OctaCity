@@ -9,6 +9,7 @@ publish = false
 description = "Composition root for the OctaCity server"
 
 [dependencies]
+octacity-server-adapter-host = { path = "../infrastructure/octacity-server-adapter-host" }
 async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true

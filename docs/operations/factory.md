@@ -870,6 +870,37 @@ provider call or execution grant is introduced.
 The demonstration `tools/factory-stand` currently declares neither Codex execution
 profiles nor Project role-profile capabilities. An empty Runtime/Model list means
 missing execution configuration. Agent identity/instructions/shared skills remain
-authorable. Configuring supported provider/runtime access and available models
-from Console is planned in section 10 of `add-factory-role-profiles`; existing
-server-installed capability declarations remain the current setup path.
+authorable. Runtime installation and provider access remain operator-owned; Console
+uses the installed plugin's advisory model catalog and supports explicit refresh
+and manual model entry when declared. Names such as default/pro have no implicit
+model or provider meaning.
+
+An installed role-profile declaration may attach `model_discovery` with an absolute
+`executable`, its `executable_sha256`, and an installation-owned `environment` map.
+The verified native plugin runs `--describe-models` through the existing bounded
+process host. This executable has its own digest: a native Server discovery binary
+can differ from the Linux plugin retained for Agent/Microsandbox execution. Neither
+path nor environment is supplied by a Role or exposed as credential metadata.
+Without this attachment, existing static capability declarations remain valid.
+
+Octa 0.7.1 adds the optional `model-catalog.v1` contract. Catalogs are bounded to
+256 suggestions and 256 KiB; model identifiers are opaque UTF-8 up to 256 bytes.
+OctaCity accepts the existing Flow scalar parameter grammar: closed object schemas
+with string, integer, boolean or finite scalar enum properties. Flow bounds strings
+in UTF-8 bytes: a plugin's `maxLength` becomes a conservative byte ceiling;
+positive character-based `minLength` is rejected because it cannot be preserved
+by the shared byte grammar. Unsupported schema constructs fail discovery
+explicitly rather than weakening validation.
+Initial unavailability does not fabricate models; a failed explicit refresh preserves
+the previous usable catalog. Refreshes for different installed sources are
+independent. An overlapping refresh for the same source fails immediately,
+retaining its snapshot instead of joining an unbounded queue. Cached reads and
+profile validation never discover.
+
+Profiles retain `model_identifier` and the exact parameter values in their immutable
+content and execution package. Omitted identifiers preserve legacy installed-model
+behavior. The toolchain model reference still pins the installed execution/accounting
+contract; the explicit identifier is passed unchanged to the runtime and checked
+against observations. Exact token-rate pricing cannot be reused for a different
+identifier; the installed accounting policy must support the selected model.
+Refresh does not rewrite profiles, pending manual choices or retained runs.

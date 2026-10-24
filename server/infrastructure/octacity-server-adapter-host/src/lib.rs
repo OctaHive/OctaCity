@@ -15,4 +15,5 @@ pub use process::{
 };
 pub use registry::{
   AdapterRegistry, MAX_EXECUTABLE_BYTES, RegistryAdapter, RegistryError, VerifiedExecutable, load_verified_adapter,
+  verify_installed_program,
 };

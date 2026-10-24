@@ -139,6 +139,8 @@ pub struct ProcessRequest<'a> {
   request_frame: Vec<u8>,
   cancellation_frame: Option<Vec<u8>>,
   max_message_bytes: usize,
+  arguments: &'a [String],
+  environment: Option<&'a std::collections::BTreeMap<String, String>>,
 }
 
 impl<'a> ProcessRequest<'a> {
@@ -157,7 +159,21 @@ impl<'a> ProcessRequest<'a> {
       request_frame,
       cancellation_frame,
       max_message_bytes,
+      arguments: &[],
+      environment: None,
     }
+  }
+  /// Adds deployment-owned launch settings. Never populate these from an
+  /// operation payload: callers retain executable/argument/environment authority.
+  #[must_use]
+  pub fn with_launch(
+    mut self,
+    arguments: &'a [String],
+    environment: &'a std::collections::BTreeMap<String, String>,
+  ) -> Self {
+    self.arguments = arguments;
+    self.environment = Some(environment);
+    self
   }
 }
 
@@ -205,6 +221,10 @@ where
     .stdin(Stdio::piped())
     .stdout(Stdio::piped())
     .stderr(Stdio::piped());
+  command.args(request.arguments);
+  if let Some(environment) = request.environment {
+    command.envs(environment);
+  }
   let process_group = ProcessGroup::new().map_err(|source| HostError::Spawn {
     adapter: adapter.clone(),
     source: std::io::Error::other(source),
@@ -672,5 +692,45 @@ mod tests {
       .await
       .unwrap_err();
     assert!(matches!(error, HostError::ProtocolFault { .. }));
+  }
+}
+
+#[cfg(all(test, unix))]
+mod installed_launch_tests {
+  use super::*;
+  use sha2::Digest;
+  use std::os::unix::fs::PermissionsExt;
+  #[tokio::test]
+  async fn verified_process_receives_only_installed_arguments_and_environment() {
+    let temporary = tempfile::tempdir().unwrap();
+    let root = temporary.path().join("models");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::set_permissions(root.as_path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let program = root.as_path().join("adapter");
+    std::fs::write(&program, b"#!/bin/sh\n[ \"$1\" = \"--describe-models\" ] || exit 64\n[ \"$PLUGIN_RUNTIME\" = \"installed\" ] || exit 65\n[ -z \"$HOME\" ] || exit 66\nread request\nprintf '{\"available\":true}\\n'\n").unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let sha = hex::encode(sha2::Sha256::digest(std::fs::read(&program).unwrap()));
+    std::fs::write(root.as_path().join("adapter.toml"), format!("manifest_version=1\nadapter_id='models'\nexecutable='adapter'\nexecutable_sha256='{sha}'\nprotocol=1\ncapabilities=[]\n")).unwrap();
+    std::fs::set_permissions(
+      root.as_path().join("adapter.toml"),
+      std::fs::Permissions::from_mode(0o600),
+    )
+    .unwrap();
+    let (_, executable) =
+      crate::load_verified_adapter(root.as_path(), |_: &str, _: &str, _: u16, _: Vec<String>| Ok(())).unwrap();
+    let arguments = vec!["--describe-models".to_owned()];
+    let environment = std::collections::BTreeMap::from([("PLUGIN_RUNTIME".into(), "installed".into())]);
+    let request =
+      ProcessRequest::new(&executable, "discovery", b"{}\n".to_vec(), None, 1024).with_launch(&arguments, &environment);
+    let value = execute_process(
+      request,
+      Duration::from_secs(2),
+      Duration::from_millis(100),
+      CancellationToken::new(),
+      |frame| Ok(frame.to_vec()),
+    )
+    .await
+    .unwrap();
+    assert_eq!(value, b"{\"available\":true}");
   }
 }

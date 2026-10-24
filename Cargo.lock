@@ -4537,6 +4537,7 @@ dependencies = [
  "octacity-github",
  "octacity-observability",
  "octacity-protocol",
+ "octacity-server-adapter-host",
  "octacity-server-api-agent",
  "octacity-server-api-cache",
  "octacity-server-api-rest",

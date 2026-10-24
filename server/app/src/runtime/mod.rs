@@ -20,6 +20,7 @@ mod factory_connector_file;
 pub use factory_connector_file::{
   FactoryRuntimeSignalConnector, FactoryRuntimeSignalReadiness, load_factory_signal_connectors,
 };
+mod factory_model_catalog;
 mod factory_profiles;
 mod factory_signal_provider;
 pub use factory_profiles::{FactoryProfileRuntimeInstaller, FactoryRuntimeProfileCatalog, FactoryRuntimeSignalProfile};
@@ -164,3 +165,6 @@ mod postgres_test_support;
 #[allow(dead_code)]
 #[path = "../../tests/support/runtime.rs"]
 mod test_runtime_config;
+
+#[cfg(all(test, unix))]
+mod factory_model_catalog_tests;

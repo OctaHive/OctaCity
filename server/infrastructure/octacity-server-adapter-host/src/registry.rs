@@ -283,6 +283,33 @@ fn read_manifest(directory: &Path) -> Result<(PathBuf, String), RegistryError> {
   Ok((path, contents))
 }
 
+/// Verifies one explicitly installed program without creating another adapter registry.
+/// The supplied identity is diagnostic; the existing regular-file and digest checks
+/// bind execution to the deployment-selected file.
+pub fn verify_installed_program(
+  path: &Path,
+  identity: &str,
+  sha256: &str,
+) -> Result<VerifiedExecutable, RegistryError> {
+  if !path.is_absolute() {
+    return Err(invalid_entry(path, "installed program must be absolute"));
+  }
+  let directory = path
+    .parent()
+    .ok_or_else(|| invalid_entry(path, "missing installation directory"))?;
+  let directory_name = directory
+    .file_name()
+    .and_then(|name| name.to_str())
+    .ok_or_else(|| invalid_entry(path, "invalid installation directory"))?;
+  let file = path
+    .file_name()
+    .and_then(|name| name.to_str())
+    .ok_or_else(|| invalid_entry(path, "invalid program name"))?;
+  let mut executable = verify_executable(directory, directory_name.into(), file, sha256.into())?;
+  executable.adapter_id = identity.into();
+  Ok(executable)
+}
+
 /// Verifies one normalized relative executable path, confinement, size, and digest.
 fn verify_executable(
   directory: &Path,
