@@ -19,10 +19,11 @@ SPEC.loader.exec_module(SECURITY_MATRIX)
 
 class SecurityMatrixTests(unittest.TestCase):
     def test_locked_dependencies_exclude_known_vulnerable_releases(self):
-        # RUSTSEC-2026-0381/0382/0383/0385: retain patched stable dependencies
+        # RUSTSEC-2026-0381/0382/0383/0385/0386: retain patched stable dependencies
         # in every independently resolved graph audited by the security workflow.
         minimum_versions = {
             "ctutils": (0, 4, 4),
+            "tokio": (1, 53, 3),
             "rustls-webpki": (0, 103, 16),
             "webpki-root-certs": (1, 0, 10),
             "webpki-roots": (1, 0, 10),
