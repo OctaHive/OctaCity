@@ -433,10 +433,14 @@ def _serve(root: Path, name: str, descriptor: int) -> int:
                         if _request_graceful_group_stop(process_group_id, child, graceful):
                             _send_response(connection, "graceful")
                             return 0
-                        _send_response(connection, "forced")
-                        connection.shutdown(socket.SHUT_WR)
-                        time.sleep(0.01)
-                        os.killpg(process_group_id, signal.SIGKILL)
+                        try:
+                            _send_response(connection, "forced")
+                            connection.shutdown(socket.SHUT_WR)
+                        finally:
+                            # A disconnected caller must not prevent the owned
+                            # group from being killed after graceful stop failed.
+                            time.sleep(0.01)
+                            os.killpg(process_group_id, signal.SIGKILL)
                         return 1  # unreachable
                 except (OSError, SupervisorError) as error:
                     try:

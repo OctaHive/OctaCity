@@ -373,6 +373,29 @@ class LocalStandLifecycleTests(unittest.TestCase):
         self.assertFalse((self.root / "lifecycle/agent.json").exists())
 
     def test_real_forced_shutdown_removes_a_stubborn_descendant(self):
+        self.assert_forced_shutdown_removes_stubborn_descendant()
+
+    def test_forced_shutdown_survives_a_closed_control_connection(self):
+        wrapper = self.root.parent / "disconnected_supervisor.py"
+        wrapper.write_text(
+            "import errno, sys\n"
+            f"sys.path.insert(0, {str(REPOSITORY / 'tools')!r})\n"
+            "import local_stand_supervisor as supervisor\n"
+            "send_response = supervisor._send_response\n"
+            "def disconnect(connection, status):\n"
+            "    send_response(connection, status)\n"
+            "    if status == 'forced':\n"
+            "        connection.settimeout(5)\n"
+            "        assert connection.recv(1) == b''\n"
+            "        raise OSError(errno.ENOTCONN, 'control peer disconnected')\n"
+            "supervisor._send_response = disconnect\n"
+            "raise SystemExit(supervisor.main())\n",
+            encoding="utf-8",
+        )
+        with mock.patch.object(LIFECYCLE.supervisor, "__file__", str(wrapper)):
+            self.assert_forced_shutdown_removes_stubborn_descendant()
+
+    def assert_forced_shutdown_removes_stubborn_descendant(self):
         marker = self.root / "descendant.pid"
         program = (
             "import pathlib, signal, subprocess, sys, time; "

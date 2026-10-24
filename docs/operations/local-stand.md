@@ -138,6 +138,11 @@ tools/local-stand down
 `down` is idempotent. A later `up` reuses the durable state and is the normal
 restart procedure.
 
+The private supervisor stops its own Agent process group. If graceful stop
+fails, it sends SIGKILL even if the control client disconnects while receiving
+the response. After an acknowledged shutdown, the launcher waits for the owner
+and its live descendants to exit before removing the ownership record.
+
 ## URLs and local CA
 
 The gateway uses one fixed loopback TLS port:
