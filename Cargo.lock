@@ -3944,7 +3944,7 @@ dependencies = [
 
 [[package]]
 name = "octa-cache-protocol"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "blake3",
  "serde",
@@ -3954,14 +3954,14 @@ dependencies = [
 
 [[package]]
 name = "octa-plugin-lock"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "octa-runner-protocol"
-version = "0.7.0"
+version = "0.7.1"
 dependencies = [
  "octa-cache-protocol",
  "serde",

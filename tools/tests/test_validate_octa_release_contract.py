@@ -71,20 +71,21 @@ class OctaReleaseContractTests(unittest.TestCase):
                 ):
                     VALIDATOR.validate_codex_compatibility(path, "0.6.0")
 
-    def test_accepts_the_released_runtime_settings_and_authorization_contract(self):
+    def test_accepts_the_released_model_catalog_and_runtime_settings_contract(self):
         with tempfile.TemporaryDirectory() as temporary:
             path = Path(temporary) / "codex-compatibility.json"
             released = {
                 "format_version": 2,
                 "plugin": {
                     "name": "codex",
-                    "version": "0.7.0",
+                    "version": "0.7.1",
                     "protocol": 2,
                     "manifest": "plugins/codex.plugin.yml",
                     "capabilities": [
                         "codex.blocking-pre-tool-authorization.v1",
                         "public-command-file-observations.v1",
                         "codex.task-runtime-settings.v1",
+                        "model-catalog.v1",
                     ],
                 },
                 "executable": {
@@ -101,7 +102,7 @@ class OctaReleaseContractTests(unittest.TestCase):
             }
             path.write_text(json.dumps(released), encoding="utf-8")
 
-            VALIDATOR.validate_codex_compatibility(path, "0.7.0")
+            VALIDATOR.validate_codex_compatibility(path, "0.7.1")
 
     def test_rejects_oversized_release_metadata_before_parsing(self):
         with tempfile.TemporaryDirectory() as temporary:

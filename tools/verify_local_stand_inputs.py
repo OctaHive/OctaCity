@@ -338,6 +338,7 @@ def validate_octa(value: dict[str, Any]) -> None:
             "codex.blocking-pre-tool-authorization.v1",
             "public-command-file-observations.v1",
             "codex.task-runtime-settings.v1",
+            "model-catalog.v1",
         ],
         "selection_environment": "OCTA_CODEX_EXECUTABLE",
         "supported_cli_versions": ["0.161.0"],

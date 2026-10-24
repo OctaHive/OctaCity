@@ -35,18 +35,19 @@ class LocalStandInputTests(unittest.TestCase):
         VERIFIER.validate_repository_pins(self.document, tags, REPOSITORY)
         self.assertEqual(set(tags), VERIFIER.EXPECTED_IMAGE_ROLES)
 
-    def test_pins_the_released_runtime_settings_capable_octa(self):
+    def test_pins_the_released_model_catalog_capable_octa(self):
         octa = self.document["native"]["octa"]
-        self.assertEqual(octa["version"], "0.7.0")
-        self.assertEqual(octa["source_revision"], "18d0cf01dda15680575b8f3da2a411a7a41052b5")
+        self.assertEqual(octa["version"], "0.7.1")
+        self.assertEqual(octa["source_revision"], "a25c08c4b04f309a7c6c5fd45be7432bf77cd237")
         self.assertEqual(
             octa["sha256"],
-            "b69f139383a8963ec150ef888da1b92512ecae37e32573d694e7e24cadd84d51",
+            "7a170bc456c50e7c2f5534df16f4775994ca38707c95f38adce9be39ea881b09",
         )
         self.assertEqual(octa["codex"]["required_capabilities"], [
             "codex.blocking-pre-tool-authorization.v1",
             "public-command-file-observations.v1",
             "codex.task-runtime-settings.v1",
+            "model-catalog.v1",
         ])
         tags = self.validate()
         VERIFIER.validate_repository_pins(self.document, tags, REPOSITORY)
