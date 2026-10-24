@@ -1,6 +1,13 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'factory.modelSuggestions': 'Предлагаемые модели',
+  'factory.modelIdentifier': 'Идентификатор модели',
+  'factory.refreshModels': 'Обновить модели',
+  'factory.modelSuggestionsHint':
+    'Подсказки получены от runtime. Можно ввести модель вручную; runtime проверит поддержку при запуске.',
+  'factory.modelDiscoveryUnavailable':
+    'Список моделей недоступен. Можно ввести модель вручную, если runtime поддерживает это.',
   'factory.editAgent': 'Изменить AI-агента',
   'factory.createProfile': 'Создать профиль',
   'factory.editProfile': 'Изменить профиль',

@@ -102,6 +102,9 @@ pub(super) async fn run_model(
     &directory.join("factory-server.stderr.log"),
   );
   wait_for_server_ready(&client, &origin, &mut server, &server_log).await;
+  if let Some(role) = role {
+    role.check_model_catalog(&client, &origin, &resources.project).await;
+  }
 
   let installation = directory.join("observer");
   fs::create_dir(&installation).unwrap();

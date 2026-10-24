@@ -1,4 +1,11 @@
 export const enMessages = {
+  'factory.modelSuggestions': 'Suggested models',
+  'factory.modelIdentifier': 'Model identifier',
+  'factory.refreshModels': 'Refresh models',
+  'factory.modelSuggestionsHint':
+    'Suggestions come from the runtime. You can also enter a model identifier; the runtime checks support when it runs.',
+  'factory.modelDiscoveryUnavailable':
+    'Model discovery is unavailable. Enter a model identifier manually if supported by this runtime.',
   'factory.editAgent': 'Edit AI agent',
   'factory.createProfile': 'Create profile',
   'factory.editProfile': 'Edit profile',

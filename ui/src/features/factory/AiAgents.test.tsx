@@ -49,6 +49,7 @@ function setup() {
     getProfile: vi.fn(async () => profile),
     listCapabilities: vi.fn(async () => page([choice])),
     getCapability: vi.fn(async () => capability),
+    refreshCapability: vi.fn(async () => capability),
     listTemplates: vi.fn(async (): Promise<components['schemas']['FactoryRoleTemplatePage']> =>
       page([]),
     ),
@@ -796,4 +797,169 @@ it('deletes an AI agent only after review and safely retries a lost response bef
   expect(screen.queryByRole('heading', { name: /Code specialist/ })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Code specialist' })).toBeNull();
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Create AI agent' }));
+});
+
+it('selects plugin model suggestions and preserves a manual model and draft through refresh', async () => {
+  const { roles, profile } = setup();
+  const { capability } = factoryRoleFixture();
+  const choice = {
+    identifier: 'runtime/suggested',
+    label: 'Suggested model',
+    parameters: capability.parameters,
+  };
+  const installed = {
+    ...capability,
+    model_catalog: { available: true, manual_model: true, models: [choice] },
+  };
+  roles.getProfile.mockResolvedValue({
+    ...profile,
+    definition: { ...profile.definition, model_identifier: 'runtime/suggested' },
+  });
+  roles.getCapability.mockResolvedValue(installed);
+  roles.refreshCapability
+    .mockRejectedValueOnce(new Error('catalog offline'))
+    .mockResolvedValueOnce({
+      ...installed,
+      model_catalog: {
+        ...installed.model_catalog,
+        models: [{ ...choice, identifier: 'runtime/new', label: 'New model' }],
+      },
+    });
+  roles.validateProfile.mockImplementation(async (_project, request) => ({
+    profile: { ...profile, definition: request.definition },
+    incompatibility: null,
+  }));
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'default' }));
+  expect(
+    await screen.findByText(`${profile.definition.toolchain.plugin.identity} · runtime/suggested`),
+  ).toBeTruthy();
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
+  const model = await screen.findByRole('textbox', { name: 'Model identifier' });
+  await userEvent.click(screen.getByRole('combobox', { name: 'Suggested models' }));
+  await userEvent.click(await screen.findByRole('option', { name: 'Suggested model' }));
+  expect(model).toHaveProperty('value', 'runtime/suggested');
+  await userEvent.clear(model);
+  await userEvent.type(model, 'Vendor/future:preview');
+  await userEvent.clear(screen.getByRole('textbox', { name: 'Profile name' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Profile name' }), 'my profile');
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+  await screen.findByRole('alert');
+  expect(model).toHaveProperty('value', 'Vendor/future:preview');
+  await userEvent.click(screen.getByRole('button', { name: 'Refresh models' }));
+  await waitFor(() => expect(roles.refreshCapability).toHaveBeenCalledTimes(2));
+  expect(model).toHaveProperty('value', 'Vendor/future:preview');
+  expect(screen.getByRole('textbox', { name: 'Profile name' })).toHaveProperty(
+    'value',
+    'my profile',
+  );
+  await userEvent.click(screen.getByRole('combobox', { name: 'Suggested models' }));
+  expect(await screen.findByRole('option', { name: 'New model' })).toBeTruthy();
+  await userEvent.keyboard('{Escape}');
+  await userEvent.click(screen.getByRole('button', { name: 'Review profile' }));
+  await screen.findByRole('dialog');
+  expect(roles.validateProfile).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      definition: expect.objectContaining({
+        model_identifier: 'Vendor/future:preview',
+        name: 'my profile',
+        model_parameters: profile.definition.model_parameters,
+        thinking_parameter: profile.definition.thinking_parameter,
+      }),
+    }),
+  );
+});
+
+it('removes unsupported thinking when explicitly selecting a model without parameters', async () => {
+  const { roles, profile } = setup();
+  const { capability } = factoryRoleFixture();
+  roles.getCapability.mockResolvedValue({
+    ...capability,
+    model_catalog: {
+      available: true,
+      manual_model: true,
+      models: [
+        {
+          identifier: 'runtime/plain',
+          label: 'Plain model',
+          parameters: { ...capability.parameters, shape: { type: 'object', fields: {} } },
+        },
+      ],
+    },
+  });
+  roles.validateProfile.mockImplementation(async (_project, request) => ({
+    profile: { ...profile, definition: request.definition },
+    incompatibility: null,
+  }));
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'default' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
+  await screen.findByRole('textbox', { name: 'Model identifier' });
+  await userEvent.click(screen.getByRole('combobox', { name: 'Suggested models' }));
+  await userEvent.click(await screen.findByRole('option', { name: 'Plain model' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review profile' }));
+  await screen.findByRole('dialog');
+  expect(roles.validateProfile).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      definition: expect.objectContaining({
+        model_identifier: 'runtime/plain',
+        model_parameters: {},
+        thinking_parameter: null,
+      }),
+    }),
+  );
+});
+
+it('keeps model-specific parameters while an identifier is being edited and restored', async () => {
+  const { roles, profile } = setup();
+  const { capability } = factoryRoleFixture();
+  roles.getProfile.mockResolvedValue({
+    ...profile,
+    definition: {
+      ...profile.definition,
+      model_identifier: 'runtime/custom',
+    },
+  });
+  roles.getCapability.mockResolvedValue({
+    ...capability,
+    parameters: { ...capability.parameters, shape: { type: 'object', fields: {} } },
+    model_catalog: {
+      available: true,
+      manual_model: true,
+      models: [
+        {
+          identifier: 'runtime/custom',
+          label: 'Custom model',
+          parameters: capability.parameters,
+        },
+      ],
+    },
+  });
+  roles.validateProfile.mockImplementation(async (_project, request) => ({
+    profile: { ...profile, definition: request.definition },
+    incompatibility: null,
+  }));
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'default' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
+  const model = await screen.findByRole('textbox', { name: 'Model identifier' });
+  await userEvent.clear(model);
+  await userEvent.type(model, 'runtime/custom');
+  await userEvent.click(screen.getByRole('button', { name: 'Review profile' }));
+  await screen.findByRole('dialog');
+  expect(roles.validateProfile).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({
+      definition: expect.objectContaining({
+        model_identifier: 'runtime/custom',
+        model_parameters: profile.definition.model_parameters,
+        thinking_parameter: 'deliberation',
+      }),
+    }),
+  );
 });

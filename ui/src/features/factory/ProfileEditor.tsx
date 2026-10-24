@@ -75,14 +75,59 @@ export function ProfileEditor({
     enabled: !!selectedAlias,
     queryFn: ({ signal }) => api.getCapability(project, selectedAlias, signal),
   });
+  const models = capability.data?.model_catalog;
+  const model = definition?.model_identifier ?? definition?.toolchain.model.identity ?? '';
+  const selectedModel = models?.models.find((choice) => choice.identifier === model);
+  async function refreshModels() {
+    setPending(true);
+    setError(null);
+    try {
+      const refreshed = await api.refreshCapability(project, selectedAlias);
+      client.setQueryData(
+        queryKeys.factoryRoleCatalog(project, 'capability', selectedAlias),
+        refreshed,
+      );
+      void client.invalidateQueries({
+        queryKey: queryKeys.factoryRoleCatalog(project, 'capabilities'),
+      });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure : new Error());
+    } finally {
+      setPending(false);
+    }
+  }
   const pinnedRole = useQuery({
     queryKey: queryKeys.factoryRole(rolePin),
     queryFn: ({ signal }) => api.getRole(project, rolePin.id, rolePin.version, signal),
   });
-  const update = (patch: Partial<Definition>) =>
-    definition && setDefinition({ ...definition, ...patch });
+  function update(patch: Partial<Definition>) {
+    if (!definition) return;
+    const next = { ...definition, ...patch };
+    if (patch.model_parameters) {
+      const thinking = capability.data?.definition.thinking_parameter;
+      next.thinking_parameter =
+        thinking && Object.hasOwn(next.model_parameters, thinking) ? thinking : null;
+    }
+    setDefinition(next);
+    return next;
+  }
+  function selectModel(identifier: string) {
+    if (!definition || !capability.data) return;
+    const schema =
+      models?.models.find((choice) => choice.identifier === identifier)?.parameters ??
+      capability.data.parameters;
+    const fields = schema.shape.type === 'object' ? schema.shape.fields : {};
+    return update({
+      model_identifier: identifier,
+      model_parameters: Object.fromEntries(
+        Object.entries(definition.model_parameters).filter(([name]) => Object.hasOwn(fields, name)),
+      ),
+    });
+  }
   async function validate(target: HTMLElement) {
     if (!definition || !selectedAlias || !capability.data || capability.error) return;
+    const reviewed = definition.model_identifier == null ? definition : selectModel(model);
+    if (!reviewed) return;
     setPending(true);
     setError(null);
     setIncompatibility(null);
@@ -91,7 +136,7 @@ export function ProfileEditor({
         id,
         role: rolePin,
         capability: selectedAlias,
-        definition: structuredClone(definition),
+        definition: structuredClone(reviewed),
       });
       if (validation.incompatibility || !validation.profile)
         setIncompatibility(validation.incompatibility ?? 'dependencies');
@@ -206,6 +251,42 @@ export function ProfileEditor({
                 onChange={(event) => update({ name: event.target.value })}
               />
             </label>
+            {models ? (
+              <>
+                <SelectMenu
+                  ariaLabel={t('factory.modelSuggestions')}
+                  value={selectedModel?.identifier ?? ''}
+                  options={[
+                    { value: '', label: t('factory.none') },
+                    ...models.models.map((choice) => ({
+                      value: choice.identifier,
+                      label: choice.label,
+                    })),
+                  ]}
+                  onValueChange={(value) => {
+                    if (value) selectModel(value);
+                  }}
+                />
+                <label>
+                  {t('factory.modelIdentifier')}
+                  <input
+                    value={model}
+                    readOnly={!models.manual_model}
+                    onChange={(event) => update({ model_identifier: event.target.value })}
+                  />
+                </label>
+                <p>
+                  {t(
+                    models.available
+                      ? 'factory.modelSuggestionsHint'
+                      : 'factory.modelDiscoveryUnavailable',
+                  )}
+                </p>
+                <button type="button" onClick={() => void refreshModels()}>
+                  {t('factory.refreshModels')}
+                </button>
+              </>
+            ) : null}
             <InstructionFields
               label={t('factory.profileInstruction')}
               value={definition.instructions}
@@ -240,7 +321,7 @@ export function ProfileEditor({
             {capability.data && !capability.error ? (
               <>
                 <FactoryValueInput
-                  schema={capability.data.parameters.shape}
+                  schema={(selectedModel?.parameters ?? capability.data.parameters).shape}
                   value={definition.model_parameters}
                   label={t('factory.modelParameters')}
                   onChange={(value) =>

@@ -157,20 +157,53 @@ Review fix for 4.4–4.5: `cargo test -p octacity-server-store --lib selected_pr
 
   Correction verification: `cargo test -p octacity-server-application --lib factory_role_ --locked` passes 37 tests; `--lib codex` passes 59; `--lib factory_node_tests::profile_selection` passes 20, including manual choice and retained selection/retry. `cargo test -p octacity-server --lib runtime::factory_tests --locked` passes 30 installation/composition tests. Two-package all-target/all-feature Clippy with warnings denied, Rust formatting, strict OpenSpec validation and whitespace checks pass. Valid transport serialization and compiler outputs are unchanged, so the previously passing released journey was not rebuilt for these rejection-only checks. No dependency, provider contract, role model, selection policy or migration changed; the existing target was reused with two jobs and no incremental output, leaving approximately 21 GiB free.
 
-## 10. Project provider/runtime settings and available models (planned)
+## 10. Plugin-owned models and parameters
 
-- [ ] 10.1 Through TDD, add the minimum Project-scoped versioned configuration contracts for supported provider/runtime bindings and available models. Reuse registered runtime/deployment ceilings, managed credential publication, logical secret references and existing authorization/audit/current-version/idempotency/store mechanisms. Cover accepted configuration, unauthorized/unsupported input and recovery with the shared memory/PostgreSQL contract; do not create another agent registry or install executables from role content.
-- [ ] 10.2 Through TDD, project configured Runtime/Model/thinking choices into the existing role-profile capability catalog and execution path. Start with the qualified Codex adapter, preserve exact retained bindings and manual selection, and block new use after disable/revocation. Add explicit bounded authorized discovery/refresh only where the adapter supports it; no model invocation on reads/validation, fabricated models or vendor-wide SDK expansion.
-- [ ] 10.3 Through TDD, expose the narrow configuration/model-catalog operations in REST/OpenAPI and the generated client using existing credential boundaries and safe errors. Cover reviewed writes/replay/preconditions and one authorized exact catalog read; do not repeat the application/store matrix at HTTP level.
-- [ ] 10.4 Through TDD, add discoverable Project Console settings for provider/runtime access and available models, then bind independent Runtime/Model/thinking choices to arbitrary profiles such as default/pro. Keep agent/avatar/instructions/shared-skill authoring available before setup; preserve drafts, secret handling, localization and keyboard use. Reuse current form/confirmation/choice components and put state/failure cases in focused component tests.
-- [ ] 10.5 Extend one existing composed local-stand/pilot journey from an empty Project through supported provider/runtime setup and two model-bound profiles, then restart and verify retained configuration and an ordinary selected-profile invocation. Use a credential-free approved provider fixture and the existing browser/gateway/server/PostgreSQL/object-storage/runtime harness; no new harness, exhaustive provider matrix or mandatory live paid-model calls. Record the supported adapter scope and update operator docs.
+- [x] 10.1 Through TDD, extend the existing Octa plugin registration/capability boundary with bounded plugin-owned model suggestions and parameter contracts. The plugin queries its installed runtime where supported; an unavailable discovery returns explicit availability without fabricated models. Model identifiers remain open to manual input. Reuse existing schemas and process ownership; no global model/thinking enum, provider SDK registry or Console API-key setup.
+- [x] 10.2 Through TDD, consume plugin model/parameter metadata in the existing Project role-profile capability catalog and exact execution-package/compiler path. Preserve executable/plugin/Build and credential ceilings, independent named profiles, retained model/parameter choices and manual stage selection. Suggestions are not an exhaustive allowlist; unknown models remain submitable, runtime rejection is explicit, and neither catalog refresh nor runtime errors substitute models. Keep exact pricing restrictions where the installed accounting policy requires them.
+- [x] 10.3 Through TDD, expose authorized cached catalog reads and explicit bounded refresh through existing REST/OpenAPI/generated-client and capability-source mechanisms. Ordinary reads and validation perform no discovery or model invocation. Refresh never changes published profiles or retained executions; errors preserve the previous usable catalog and are reported safely. Do not duplicate domain/store cases at HTTP level.
+- [x] 10.4 Through TDD, let Console select a registered runtime, choose a suggested model or enter its identifier manually, edit plugin-declared parameters/thinking, and explicitly refresh suggestions while retaining the draft. Reuse existing role/profile forms and REST; localize controls and preserve keyboard use. Agent identity/instructions/shared skills remain editable without runtime availability; default/pro are ordinary independent profile names.
+- [x] 10.5 Release Octa 0.7.1 with the optional model catalog contract after GitHub checks, then update OctaCity's dependency locks and pinned release metadata. Extend one existing composed local-stand/pilot journey with a credential-free plugin/runtime fixture: discover suggestions, publish two independent profiles including an unlisted model, refresh without rewriting them, recover after restart and verify the selected model/parameters reach the ordinary invocation. Use existing infrastructure and focused regressions; no new exhaustive matrix or paid model calls. Update operator docs and record supported discovery limits.
 
-Console correction (Red/Green verified): uploaded avatar/name/description/instructions and shared skills belong to the AI agent; skill-folder import and exact retained-file browsing use the existing Role publication, input/object reader and package machinery. Profile skill editors are removed; old retained profile additions remain readable. The empty runtime message identifies missing server configuration. Section 10 is intentionally unchecked and has not been implemented by these corrections.
+Section 10 evidence: the plugin wire/CLI discovery, installed capability refresh,
+manual model compiler/provenance/pricing, REST schema and Console journeys first
+failed at their owning public boundaries and then passed. Additional Red/Green
+checks removed duplicate model metadata from runtime lists and a second thinking
+value enum, preserved draft parameters, and qualified models without thinking.
+The finite CLI model assertion was corrected through
+`python3 -m unittest tools.tests.test_factory_pilot_cli` (14 passing process tests).
+Octa v0.7.1 is published at source `a25c08c4b04f309a7c6c5fd45be7432bf77cd237`;
+GitHub Tests/Coverage on all three hosts, Security and five-platform release Build
+passed. The release tag remains immutable; subsequent source corrections are
+recorded below.
+The composed `packaged_factory_pilot_runs_real_jobs_before_work_admission` Red
+(missing model metadata) passed in 89.61 seconds using checksummed current
+Server/Agent bundles, released host/guest Octa 0.7.1, PostgreSQL, object storage
+and the existing qualified Microsandbox image. It verifies default/pro publication,
+unlisted model and parameter delivery, actual refresh, unchanged versions and
+retained execution after restart. No successful Job result or receipt was inserted directly.
+Regression commands: `cargo test --locked -p octacity-server-application --lib --all-features`
+(752 passed), the affected factory/store/server/REST/adapter-host package suite
+(940 passed), `cargo clippy --locked --workspace --all-targets --all-features -- -D warnings`,
+`pnpm exec vitest run src/features/factory`, `pnpm build`, and the existing release,
+stand-input and security-matrix Python tests (73 passed). Root/fuzz locked metadata,
+architecture, formatting and strict OpenSpec checks pass. The UI's measured
+aggregate JavaScript/static budgets add only 3 KiB each; entry/CSS/asset-count
+limits and the unplanned-growth rejection remain unchanged, with no new dependency.
 
-
-Correction verification: core Role/Profile tests first rejected shared skill/avatar fields; the shared-package case then passed for both default/pro without profile copies, preserving restored package identities. The initial package-source test failed until the source used the shared skill closure, and the existing transfer test failed until the common prompt renderer included those skills. The REST avatar test first accepted a truncated PNG, then rejected it through the shared bounded raster decoder. Skill reads first lacked their query/route; retained inventory/text reads, Project scoping and generic allow/deny-before-dispatch gates now pass through existing storage and authorization. Console tests first lacked agent-level skill selection, retained-file viewing and avatar upload; the browser and component contracts now pass with draft preservation. New profile/template copies do not silently select installed per-profile skills; legacy additions remain readable.
-
-Final recorded checks: 38 core role/package tests; 65 focused application tests (roles, skill imports/reads, result panels and manual profile selection); 235 REST tests; 730 Console unit tests with the focused agent suite repeated after follow-ups; five English/Russian browser scenarios including real avatar normalization and shared folder import; UI type/lint/format/build and unchanged bundle budgets; workspace architecture and strict OpenSpec validation. Documentation/planning edits have no executable TDD boundary. No dependency, SQL migration, new object store, provider call or worker-enrollment change was added. Section 10 remains five unimplemented tasks; provider/runtime setup has not been claimed as complete.
+Review corrections: behavioral Reds reproduced loss of model-specific parameters
+while editing/restoring an identifier, legacy model-schema bypass, weakening of
+Unicode `minLength`, and cross-source/overlapping refresh waits. Those now pass
+through the existing Console, capability validation and installed-process boundaries:
+42 core role/profile tests, five native catalog tests and 167 Factory UI tests.
+Positive character minima fail discovery explicitly; conservative byte maxima and
+finite scalar enums are documented. Refresh uses one non-queuing gate per source,
+held through snapshot replacement. No extra model registry or parameter grammar
+was introduced. Octa's public process test separately reproduced a 14.25-second
+discovery and now completes within its single 10-second deadline, including
+qualification; all 20 Codex process integration tests pass and the runtime is reaped.
+That Octa source correction is a separate commit after the immutable v0.7.1 release;
+the pinned release is unchanged and does not yet include that correction.
 
 ## 11. AI-agent deletion correction
 

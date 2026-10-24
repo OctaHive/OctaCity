@@ -53,12 +53,12 @@ REST Factory diagnostics SHALL expose exact role/profile/selection identities, e
 - **WHEN** an existing client admits or reads a statically bound Factory Run
 - **THEN** its previous request contract remains accepted and optional role-selection metadata does not become mandatory
 
-### Requirement: Model connection and available-model management
-REST SHALL expose Project-authorized operation-shaped configuration, availability and explicit supported model-discovery operations over existing registered runtime/credential mechanisms. Writes SHALL use current-version preconditions, scoped idempotency and audit; reads SHALL not expose credentials or invoke models. Available Runtime/Model choices SHALL feed existing role-profile capability validation rather than another profile catalog. Disabled/revoked configurations SHALL be rejected for new use while retaining exact history. Exact skill inventory/file reads SHALL use retained Project skill imports, no-store responses and current content authority.
+### Requirement: Plugin model catalog and explicit refresh
+REST SHALL expose Project-authorized cached plugin model/parameter metadata and explicit bounded refresh through the existing role-profile capability mechanism. Reads and validation SHALL NOT invoke discovery or models. Refresh SHALL preserve published profile history and the previous usable snapshot on failure. Ordinary profile publication SHALL accept manual model identifiers under the registered plugin contract and existing installed authority. Responses SHALL contain no credentials. Exact skill inventory/file reads SHALL retain their existing authority and no-store behavior.
 
-#### Scenario: Catalog is configured without invoking a model
-- **WHEN** an authorized operator configures a supported provider binding and selects its available Runtime/Model reference
-- **THEN** the same exact choice is available for profile validation, configuration survives restart, and no model execution or credential disclosure occurs
+#### Scenario: Refresh and manual publication use the same capability
+- **WHEN** an authorized operator refreshes suggestions and publishes a manually entered model
+- **THEN** validation and execution use the same plugin-owned contracts and retain the selected model independently of subsequent catalog refresh
 
 ### Requirement: Reviewed AI-agent deletion endpoint
 The REST API SHALL expose `DELETE /api/v1/projects/{project_id}/factory-roles/{role_id}` with Project Delete authorization, `Idempotency-Key` and strong `If-Match`. It SHALL return a no-store receipt containing disposition, exact role reference and original deletion time. Stale current versions SHALL return 412. Replays SHALL reauthorize and return the original receipt without new audit/outbox evidence. Authorized exact-version history SHALL remain readable after deletion.

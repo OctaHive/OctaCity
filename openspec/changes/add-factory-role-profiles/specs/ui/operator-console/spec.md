@@ -60,12 +60,12 @@ The Console SHALL support optional explicit stage profile overrides during Work 
 - **WHEN** the stage's criteria or skill package reference protected content
 - **THEN** the Console displays safe policy, rule, profile, and receipt metadata without copying raw content into history, URLs, browser storage, analytics, or errors
 
-### Requirement: Discoverable provider/runtime setup and independent model choices
-Console SHALL provide a discoverable Project settings workflow for supported provider/runtime configuration and the available-model catalog. Credentials SHALL use existing managed-secret operations and SHALL not persist in browser storage or Role/Profile content. An operator SHALL choose Runtime, model and supported thinking separately for each arbitrary named profile, including default/pro, using the same authorized server choices as validation. Missing execution configuration SHALL have an actionable explanation while ordinary agent identity/instructions/shared-skill authoring remains usable. Skill browsing SHALL show the retained relative file inventory and explicitly selected inert text without discarding the agent draft.
+### Requirement: Plugin model choices and manual model entry
+Console SHALL offer registered runtimes, plugin-owned model suggestions, manual model identifier entry and plugin-declared parameter/thinking settings independently for each ordinary named profile. An explicit refresh control SHALL preserve the current draft; discovery unavailability SHALL explain manual entry without fabricating choices. No provider-specific model/thinking list SHALL be hardcoded in Console. Identity, avatar, instructions and shared-skill authoring SHALL remain usable without discovery. Skill browsing SHALL preserve existing retained inventory and inert previews.
 
 #### Scenario: Operator binds two profiles to different models
-- **WHEN** the operator configures a supported runtime/provider and edits default and pro
-- **THEN** each profile can save its own exact available model/thinking choice while both use the agent's shared skills and instructions
+- **WHEN** an operator edits default and pro and enters an unlisted model for one profile
+- **THEN** each profile retains its own selected model and parameters, and refreshing suggestions neither clears the draft nor changes the saved sibling profile
 
 ### Requirement: AI-agent deletion from its card
 The Console SHALL offer Delete AI agent in the AI-agent card through the existing confirmed-command and generated REST mechanisms. Confirmation SHALL explain that profiles become unavailable for new selection while Run history remains retained. Cancellation and definitive failure SHALL leave the card intact; transport retry SHALL retain the original key and displayed version. Success SHALL refresh current catalogs, close the removed card and restore keyboard focus to Create AI agent. The action SHALL be localized and independent of CI/CD enrollment and provider configuration.

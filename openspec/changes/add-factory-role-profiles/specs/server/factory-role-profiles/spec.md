@@ -232,16 +232,16 @@ Shared skill references SHALL belong to the exact Role version used by every pro
 - **WHEN** an authorized operator selects an exact skill version and one retained relative file
 - **THEN** the response contains that version's bounded verified text only after current content authority succeeds; foreign Projects, absent paths and substituted bytes are unavailable
 
-### Requirement: Configured model access and profile binding
-Project operators SHALL be able to configure model-provider access for registered supported runtimes through existing credential and deployment authority, discover authorized available models and supported thinking settings, and publish independent exact choices in arbitrary named profiles. Configuration SHALL be versioned, audited, idempotent and recoverable after restart. Reads and validation SHALL NOT invoke a model. Disabling or revoking a connection SHALL block new use without rewriting retained profile/invocation history. Literal credentials SHALL remain outside Role/Profile content. AI-agent identity, instructions and shared skills SHALL remain authorable without a provider. Initial qualification SHALL use the existing Codex route; unsupported vendor/runtime combinations SHALL be reported explicitly.
+### Requirement: Plugin-owned models and profile binding
+Installed plugins SHALL supply model suggestions and supported parameter/thinking contracts through the existing runtime capability boundary. Suggestions SHALL be advisory, names SHALL NOT be hardcoded in OctaCity, and an operator SHALL be able to enter an unlisted model identifier manually. Where supported, explicit bounded refresh SHALL query the installed runtime without model execution; ordinary reads and validation SHALL use cached metadata. Unavailable discovery SHALL be explicit and failed refresh SHALL preserve the previous usable catalog. Profiles and execution packages SHALL retain exact selected model/parameters through refresh and restart. Runtime rejection SHALL NOT select another model automatically. Existing executable, credential, permission, and exact pricing restrictions SHALL remain enforced. AI-agent identity/instructions/shared skills and manual selection SHALL remain independent of discovery availability.
 
-#### Scenario: Operator configures models for default and pro
-- **WHEN** a Project has configured authorized Runtime/Model choices
-- **THEN** its default and pro profiles can pin independently selected models and supported thinking settings while retaining the same role instructions and skills
+#### Scenario: A new model is absent from suggestions
+- **WHEN** an operator publishes an unlisted model using a registered runtime with manual model support
+- **THEN** the selected identifier and supported parameters are retained and passed to that runtime without replacing the model from current suggestions
 
-#### Scenario: Project has no configured execution runtime
-- **WHEN** an operator creates an AI agent before configuring provider/runtime access
-- **THEN** identity, avatar, instructions and shared skills can be saved, and execution-profile setup reports the missing configuration without inventing models
+#### Scenario: Discovery is refreshed independently
+- **WHEN** an operator explicitly refreshes the registered runtime catalog
+- **THEN** new authoring suggestions are available without changing published profiles or prior invocation identities; a failed refresh preserves the previous usable catalog
 
 ### Requirement: AI-agent deletion preserves retained history and prevents new use
 The server SHALL delete an AI agent by marking its existing Role unavailable for new use. It SHALL preserve immutable Role/Profile versions, admitted Flow pins, execution packages and Run history under their existing authorization and retention contracts. Current catalogs and current-alias reads SHALL omit the agent and its profiles. New publication SHALL NOT resurrect the identity. The common candidate qualification SHALL reject its profiles for new automatic, configured, rule and reserve selection. Live manual selection SHALL reject a deleted role from the admitted binding, including an embedded profile without a separate catalog publication. Deletion SHALL NOT cancel already accepted Builds. Deletion SHALL use current-version fencing and atomic scoped replay/audit/outbox through the shared Project publication lock; successful historical replay SHALL retain its original result.

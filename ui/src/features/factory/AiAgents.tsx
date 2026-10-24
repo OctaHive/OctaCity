@@ -299,7 +299,8 @@ function ProfileDetails({
         ))}
       </ul>
       <p>
-        {definition.toolchain.plugin.identity} · {definition.toolchain.model.identity}
+        {definition.toolchain.plugin.identity} ·{' '}
+        {definition.model_identifier ?? definition.toolchain.model.identity}
       </p>
       <p>
         {definition.thinking_parameter

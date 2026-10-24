@@ -50,7 +50,9 @@ try {
   if (invocation === undefined) {
     if (options.length || prefix) throw new Error();
   } else {
-    if (Object.keys(invocation).length !== 3 || typeof invocation.prefix !== 'string'
+    if (Object.keys(invocation).length !== (invocation.model === undefined ? 3 : 4)
+      || (invocation.model !== undefined && invocation.model !== args[4].slice('--model='.length))
+      || typeof invocation.prefix !== 'string'
       || !Array.isArray(invocation.options) || !invocation.environment || typeof invocation.environment !== 'object'
       || invocation.prefix !== prefix || JSON.stringify(invocation.options) !== JSON.stringify(options)
       || Object.entries(invocation.environment).some(([key, value]) => process.env[key] !== value)) throw new Error();

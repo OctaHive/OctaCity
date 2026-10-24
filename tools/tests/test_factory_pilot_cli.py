@@ -14,7 +14,7 @@ NODE = shutil.which("node")
 
 
 class FactoryPilotCliTests(unittest.TestCase):
-    def invoke(self, directory, instructions, value, hook=None, *, prefix="", options=(), environment=None):
+    def invoke(self, directory, instructions, value, hook=None, *, prefix="", options=(), environment=None, model="installed-fixture"):
         self.assertIsNotNone(NODE, "restore the Node test environment before implementing the CLI")
         schema = Path(directory) / "schema.json"
         schema.write_text('{"type":"object"}')
@@ -24,7 +24,7 @@ class FactoryPilotCliTests(unittest.TestCase):
             arguments.extend(["--dangerously-bypass-hook-trust", "--config=features.hooks=true",
                 "--config=hooks.PreToolUse=[{ hooks = [{ command = " + json.dumps("'" + str(hook) + "'") +
                 ", statusMessage = \"Authorizing tool action\", timeout = 60, type = \"command\" }] }]"])
-        arguments.append("--model=installed-fixture")
+        arguments.append("--model=" + model)
         arguments.extend(options)
         arguments.extend([f"--output-schema={schema}", "-"])
         completed = subprocess.run(
@@ -52,6 +52,16 @@ class FactoryPilotCliTests(unittest.TestCase):
                 self.assertEqual(rejected.returncode, 64)
                 self.assertEqual(rejected.stdout, "")
                 self.assertEqual(rejected.stderr, "finite model fixture rejected its invocation\n")
+
+    def test_role_process_verifies_the_explicit_model_separately_from_additional_options(self):
+        with tempfile.TemporaryDirectory() as directory:
+            program = {"fixture_version": 1, "result": True, "invocation": {
+                "prefix": "", "options": [], "environment": {}, "model": "Vendor/future:preview"}}
+            accepted = self.invoke(directory, program, {}, model="Vendor/future:preview")
+            self.assertEqual(accepted.returncode, 0, accepted.stderr)
+            rejected = self.invoke(directory, program, {}, model="another-model")
+            self.assertEqual(rejected.returncode, 64)
+            self.assertEqual(rejected.stdout, "")
 
     def test_role_process_calls_the_declared_mcp_with_only_mapped_environment(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1285,6 +1285,17 @@ The fixture accepts a bounded installed JSON program. It does not dispatch on
 Flow names, node names or model roles. Changes to the embedded program require
 rebuilding the executable; its actual SHA-256 is pinned in the installed profile.
 
+The composed role/profile slice also requires `OCTACITY_MODEL_DISCOVERY_PLUGIN`
+(the native host's released Octa 0.7.1 Codex plugin) and
+`OCTACITY_MODEL_DISCOVERY_RUNTIME` (the credential-free `codex-test-fixture`
+executable built from the matching Octa sources). Discovery runs on the Server
+host, separately from the Linux fixture executed inside Microsandbox. Its native
+program digest is pinned independently from the guest plugin digest. The test
+publishes ordinary default/pro profiles, selects an unlisted model, changes the
+runtime's suggestions and refreshes through REST without changing the profiles.
+The existing real Job and restart assertions verify the selected model, parameters
+and retained role/skill package; no provider credentials or paid calls are needed.
+
 The shell CLI fixtures and `requirements-author.mjs` are qualified on Unix.
 Their Python process contracts run on Linux/macOS and explicitly skip Windows,
 matching the Unix-only Rust pilot. This includes the author's native path and

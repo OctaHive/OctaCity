@@ -110,6 +110,18 @@ export function createFactoryRolesApi(client = managementApi) {
         ).data,
       );
     },
+    async refreshCapability(project: string, alias: string) {
+      return requireManagementResponse(
+        (
+          await client.POST(
+            '/api/v1/projects/{project_id}/factory-profile-capabilities/{alias}/refresh',
+            {
+              params: { path: { project_id: project, alias } },
+            },
+          )
+        ).data,
+      );
+    },
     async listCapabilities(project: string, after: string | null, signal?: AbortSignal) {
       return requireManagementResponse(
         (

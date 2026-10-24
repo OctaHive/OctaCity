@@ -309,9 +309,15 @@ Profile Runtime/Model choices come from the authorized capability catalog. Each 
 Runtime/Model; names have no implicit provider meaning. With no installed choices,
 configure Factory Runtime/Model settings on the server before creating execution
 profiles; agent identity, shared instructions and skill authoring remain available.
-The follow-up Console configuration workflow is planned in section 10 of
-`add-factory-role-profiles`; it is not yet an available provider-setup screen. Thinking
-uses the installed parameter schema, without provider-specific field names.
+After selecting Runtime, choose a model suggestion or enter its opaque identifier
+manually when the plugin permits it. Model names and parameter controls come from
+the installed plugin/runtime, including per-model thinking options. Suggestions are
+advisory and may be unavailable or incomplete; execution reports unsupported choices
+without substituting another model. **Refresh models** explicitly updates the cached
+metadata and preserves the open draft, saved profiles and existing runs. Ordinary
+reads and validation do not start discovery or a model invocation. This screen does
+not install runtimes or configure provider credentials. Thinking uses the installed
+parameter schema, without provider-specific field names.
 Environment entries, logical secret references, MCP/integrations, tools and budgets
 stay within installed declarations. CLI arguments are shown as the exact approved
 vector; changing it requires an installation change. Validation reports unsupported
