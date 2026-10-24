@@ -43,6 +43,7 @@ export function SkillFolderFields({
   const [request, setRequest] = useState<Request | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
+  const [missingRoot, setMissingRoot] = useState(false);
   const [review, setReview] = useState<{ request: Request; target: HTMLElement } | null>(null);
   const [imported, setImported] = useState<Ref[]>([]);
   const [viewing, setViewing] = useState<Ref | null>(null);
@@ -81,11 +82,16 @@ export function SkillFolderFields({
     if (!files.length) return;
     setBusy(true);
     setError(null);
+    setMissingRoot(false);
     setRequest(null);
     try {
       const root = files[0]!.webkitRelativePath.split('/')[0];
       if (!root || files.some((file) => !file.webkitRelativePath.startsWith(`${root}/`)))
         throw new Error('Choose one folder');
+      if (!files.some((file) => file.webkitRelativePath === `${root}/SKILL.md`)) {
+        setMissingRoot(true);
+        return;
+      }
       // The wire limit includes JSON encoding. This preliminary bound avoids reading oversized folders.
       if (files.reduce((size, file) => size + file.size, 0) > 8 * 1024 * 1024)
         throw new Error('Folder exceeds request limit');
@@ -114,6 +120,7 @@ export function SkillFolderFields({
     <section>
       <fieldset disabled={busy || !!review}>
         <legend>{label}</legend>
+        <p>{t('factory.skillFolderHint')}</p>
         <label>
           {t('factory.importFolder')}
           <input
@@ -129,6 +136,7 @@ export function SkillFolderFields({
           />
         </label>
         {busy ? <p role="status">{t('factory.readingFolder')}</p> : null}
+        {missingRoot ? <p role="alert">{t('factory.skillRootRequired')}</p> : null}
         {error ? (
           <QueryFailureNotice
             title={t('factory.importFolder')}

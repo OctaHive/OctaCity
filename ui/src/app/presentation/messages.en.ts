@@ -20,6 +20,9 @@ export const enMessages = {
   'factory.skills': 'Skills',
   'factory.importFolder': 'Import skill folder',
   'factory.readingFolder': 'Reading selected folder…',
+  'factory.skillFolderHint': 'Select one skill folder containing SKILL.md.',
+  'factory.skillRootRequired':
+    'Missing SKILL.md at folder root (case-sensitive). Rename the file and retry.',
   'factory.skillIdentity': 'Skill name',
   'factory.reviewImport': 'Review skill import',
   'factory.confirmImport': 'Confirm import',

@@ -280,6 +280,33 @@ async function openProfile() {
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
   return state;
 }
+it('explains a missing root SKILL.md before import and lets the operator correct the folder without losing the agent draft', async () => {
+  const { roles } = setup();
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
+  const name = screen.getByRole('textbox', { name: 'Agent name' });
+  await userEvent.type(name, 'my agent');
+  const input = screen.getByLabelText('Import skill folder');
+  const wrong = new File(['# Instructions'], 'skill1.md', { type: 'text/markdown' });
+  Object.defineProperty(wrong, 'webkitRelativePath', { value: 'skills/skill1.md' });
+  await userEvent.upload(input, wrong);
+  expect(await screen.findByRole('alert')).toHaveProperty(
+    'textContent',
+    'Missing SKILL.md at folder root (case-sensitive). Rename the file and retry.',
+  );
+  expect(screen.queryByRole('button', { name: 'Review skill import' })).toBeNull();
+  expect(roles.importSkill).not.toHaveBeenCalled();
+  expect(name).toHaveProperty('value', 'my agent');
+
+  const corrected = new File(['# Instructions'], 'SKILL.md', { type: 'text/markdown' });
+  Object.defineProperty(corrected, 'webkitRelativePath', { value: 'skills/SKILL.md' });
+  await userEvent.upload(input, corrected);
+  await screen.findByText('SKILL.md · 14 bytes');
+  expect(screen.queryByRole('alert')).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Review skill import' }));
+  expect(await screen.findByRole('dialog')).toBeTruthy();
+  expect(name).toHaveProperty('value', 'my agent');
+});
 it('imports a reviewed shared skill folder inline, replays a lost response and keeps the agent draft on cancel and failure', async () => {
   const { roles, role } = setup();
   const existing = { identity: 'existing', version: 'v2', digest: 'b'.repeat(64) };
