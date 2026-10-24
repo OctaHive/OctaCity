@@ -141,6 +141,30 @@ impl ManagementInputFactory {
       definition: factory_decode(definition)?,
     })
   }
+  /// Reads an exact retained skill and optional relative file under Project authorization.
+  pub fn get_project_skill(
+    &self,
+    project: &str,
+    identity: &str,
+    version: &str,
+    digest: &str,
+    path: Option<&str>,
+  ) -> Result<crate::GetProjectSkillQuery, ManagementInputError> {
+    Ok(crate::GetProjectSkillQuery {
+      project_id: parse(project, "project id")?,
+      reference: octacity_server_factory::ImmutableReference::new(
+        parse(identity, "skill identity")?,
+        parse(version, "skill version")?,
+        parse(digest, "skill digest")?,
+      ),
+      path: path
+        .map(|path| {
+          octacity_server_factory::FactoryRepositoryPath::new(path)
+            .map_err(|_| ManagementInputError::Invalid("skill file path"))
+        })
+        .transpose()?,
+    })
+  }
   /// Reads one exact release template after Project authorization.
   pub fn get_factory_role_template(
     &self,

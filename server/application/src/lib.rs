@@ -855,3 +855,5 @@ mod factory_profile_diagnostics_tests;
 
 mod factory_codex_mcp;
 pub use factory_codex_mcp::{FactoryCodexMcpConfiguration, FactoryCodexMcpServer};
+
+mod raster_preview;

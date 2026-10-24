@@ -87,6 +87,8 @@ pub fn role_profile_contract_intent(project: ProjectId) -> FactoryRoleProfilesIn
     FactoryRoleId::generate(),
     project,
     FactoryRoleDefinition {
+      avatar: None,
+      skills: Default::default(),
       template: None,
       icon: Some(FactoryKey::new("bot").unwrap()),
       description: "Custom Project reviewer".into(),

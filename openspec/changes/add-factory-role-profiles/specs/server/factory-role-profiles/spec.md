@@ -5,7 +5,7 @@ Defines Project-owned Factory roles and reproducible execution profiles, includi
 ## ADDED Requirements
 
 ### Requirement: Project-owned arbitrary roles and multiple profiles
-The server SHALL allow each Project to publish arbitrary Factory Roles and multiple Role Profiles per role without a fixed business-role enumeration. A role SHALL define a display name, an icon avatar selected from the Console icon set, description, an ordered bounded set of shared instruction entries and an agent-wide positive concurrency limit. A profile SHALL bind one exact role version to its runtime, model, thinking level, skills, additional ordered instructions, environment variables, CLI arguments, MCP servers, external integrations, tools, resource limits and installed execution capability. Existing single-text instruction content SHALL remain readable as one instruction entry, and older definitions missing presentation metadata SHALL use neutral defaults without rewriting retained versions. Both SHALL have stable identities, immutable positive versions, content digests, and editable display names. Replacement SHALL require the current-version precondition and SHALL preserve old versions. Console AI-agent cards SHALL use these same role identities and owned profiles without an additional AI-agent entity or duplicated instructions/skills. Profiles and roles SHALL NOT represent enrolled worker Agents, Agent Pools, or additional execution runtimes.
+The server SHALL allow each Project to publish arbitrary Factory Roles and multiple Role Profiles per role without a fixed business-role enumeration. A role SHALL define a display name, an uploaded bounded raster avatar, description, an exact bounded shared skill set, an ordered bounded set of shared instruction entries and an agent-wide positive concurrency limit. A profile SHALL bind one exact role version to its runtime, model, thinking level, additional ordered instructions, environment variables, CLI arguments, MCP servers, external integrations, tools, resource limits and installed execution capability. Existing single-text instruction content SHALL remain readable as one instruction entry, and older definitions missing presentation metadata SHALL use neutral defaults without rewriting retained versions. Both SHALL have stable identities, immutable positive versions, content digests, and editable display names. Replacement SHALL require the current-version precondition and SHALL preserve old versions. Console AI-agent cards SHALL use these same role identities and owned profiles without an additional AI-agent entity or duplicated instructions/skills. Profiles and roles SHALL NOT represent enrolled worker Agents, Agent Pools, or additional execution runtimes.
 
 #### Scenario: Projects configure similarly named roles independently
 - **WHEN** two Projects publish a role named `coder` with different model and skill configurations
@@ -20,7 +20,7 @@ The server SHALL allow each Project to publish arbitrary Factory Roles and multi
 - **THEN** existing profiles continue to reference their original exact role version until explicitly replaced, and retained Runs preserve their selected versions
 
 #### Scenario: Operator configures AI-agent identity
-- **WHEN** an operator publishes a custom name, icon, description and ordered shared instruction set
+- **WHEN** an operator publishes a custom name, uploaded avatar, description and ordered shared instruction set
 - **THEN** these belong to the existing role identity, and its profiles retain their explicitly pinned role versions
 
 ### Requirement: Starter templates are independent copies
@@ -220,3 +220,25 @@ Every selection SHALL retain Project, role/profile versions and digests, Flow/Ru
 #### Scenario: Package identity is substituted
 - **WHEN** materialization or recovery supplies model, skills, instructions, or runtime parameters inconsistent with the retained selection
 - **THEN** the invocation is rejected before execution or result acceptance
+
+### Requirement: Shared agent skill ownership and retained browsing
+Shared skill references SHALL belong to the exact Role version used by every profile. Assembly and prompt rendering SHALL use the same resolved skill closure without copying shared selections into new profile definitions. Historical profile additions SHALL remain readable; an alias conflict with shared skills SHALL fail rather than silently substitute content. Dedicated Project-authorized reads SHALL expose the retained file inventory and an explicitly selected bounded UTF-8 preview through the existing import/object reader, checking exact bundle membership, byte integrity and current Artifact download authority. Text SHALL NOT execute as Markdown, HTML or scripts. Avatar publication SHALL validate complete bounded PNG content through the common raster mechanism; external URLs and active image formats SHALL be rejected.
+
+#### Scenario: Default and pro use one shared skill set
+- **WHEN** two profiles pin the same agent version with imported skills
+- **THEN** both materialize the same retained shared files without separately editable profile copies, and restoring a retained invocation preserves that closure
+
+#### Scenario: Operator reads an imported file
+- **WHEN** an authorized operator selects an exact skill version and one retained relative file
+- **THEN** the response contains that version's bounded verified text only after current content authority succeeds; foreign Projects, absent paths and substituted bytes are unavailable
+
+### Requirement: Configured model access and profile binding
+Project operators SHALL be able to configure model-provider access for registered supported runtimes through existing credential and deployment authority, discover authorized available models and supported thinking settings, and publish independent exact choices in arbitrary named profiles. Configuration SHALL be versioned, audited, idempotent and recoverable after restart. Reads and validation SHALL NOT invoke a model. Disabling or revoking a connection SHALL block new use without rewriting retained profile/invocation history. Literal credentials SHALL remain outside Role/Profile content. AI-agent identity, instructions and shared skills SHALL remain authorable without a provider. Initial qualification SHALL use the existing Codex route; unsupported vendor/runtime combinations SHALL be reported explicitly.
+
+#### Scenario: Operator configures models for default and pro
+- **WHEN** a Project has configured authorized Runtime/Model choices
+- **THEN** its default and pro profiles can pin independently selected models and supported thinking settings while retaining the same role instructions and skills
+
+#### Scenario: Project has no configured execution runtime
+- **WHEN** an operator creates an AI agent before configuring provider/runtime access
+- **THEN** identity, avatar, instructions and shared skills can be saved, and execution-profile setup reports the missing configuration without inventing models

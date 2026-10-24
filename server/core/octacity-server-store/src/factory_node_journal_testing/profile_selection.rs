@@ -204,6 +204,8 @@ fn configured_selection_fixture(
     FactoryRoleId::generate(),
     project,
     FactoryRoleDefinition {
+      avatar: None,
+      skills: Default::default(),
       name: FactoryText::new("Arbitrary AI specialist").unwrap(),
       instructions: "Follow Project rules".into(),
       template: None,
@@ -1003,6 +1005,8 @@ mod tests {
       FactoryRoleId::generate(),
       project,
       FactoryRoleDefinition {
+        avatar: None,
+        skills: Default::default(),
         name: FactoryText::new("Dependency qualification").unwrap(),
         instructions: "Use the selected dependencies".into(),
         template: None,

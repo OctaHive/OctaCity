@@ -284,12 +284,15 @@ frozen adapter parameters and task provenance instead of asking for provider
 payloads, digests, scripts or mutable model aliases. Data-schema normalization
 returns a server-computed exact reference without publishing a document.
 
+**Navigation:** open **Factory**, click the Project name in its explorer, then
+**AI agents**. This catalog is scoped to the selected Project.
+
 The Project workbench also has **AI agents** (**AI-агенты**). These are ordinary
 Factory Roles with immutable profiles, separate from the enrolled CI/CD Agents
 and Agent Pools. Their catalog remains available without an execution installation.
 Create a custom role, then add profiles, or copy a release template into independent
-role/profile identities. Name, icon, description, ordered shared instructions and
-concurrency belong to the role. A profile shows its exact shared-instruction pin
+role/profile identities. Name, uploaded avatar, description, ordered shared instructions, shared skill
+folders and concurrency belong to the role. A profile shows its exact shared-instruction pin
 and additional instructions; adopting a newer role version is explicit.
 Publishing definitions does not install an execution runtime or the source that
 constructs the first retained package. Native Codex assembly supplies that source
@@ -297,7 +300,17 @@ for readonly observations, with exact historical content and current integration
 authorization. Other adapters require their own qualified installation. See
 [installation and compilation](factory.md#role-packages-in-ordinary-build-compilation).
 
-Profile Runtime/Model choices come from the authorized capability catalog. Thinking
+Upload a PNG/JPEG/WebP avatar (up to 4 MiB and 4096 × 4096 source pixels); the
+browser crops/resizes it to a 96 × 96 PNG. Server publication revalidates the
+bounded raster through the common preview decoder. The image is immutable role
+metadata; no external image URL is fetched.
+
+Profile Runtime/Model choices come from the authorized capability catalog. Each profile, including arbitrary names such as default/pro, pins its own
+Runtime/Model; names have no implicit provider meaning. With no installed choices,
+configure Factory Runtime/Model settings on the server before creating execution
+profiles; agent identity, shared instructions and skill authoring remain available.
+The follow-up Console configuration workflow is planned in section 10 of
+`add-factory-role-profiles`; it is not yet an available provider-setup screen. Thinking
 uses the installed parameter schema, without provider-specific field names.
 Environment entries, logical secret references, MCP/integrations, tools and budgets
 stay within installed declarations. CLI arguments are shown as the exact approved
@@ -307,12 +320,16 @@ Permission controls use the capability's separate plugin, executable, tool,
 secret-profile and workload-identity sets; a tool is not offered as a plugin or
 executable. Each optional grant can be removed and restored within its own set.
 
-**Import skill folder** stays inside the profile draft. Choose a folder with root
+**Import skill folder** stays inside the AI-agent draft. Choose a folder with root
 `SKILL.md`, review its relative file inventory, then confirm import. Cancellation,
 read/import failure and lost-response retry preserve the other draft fields.
-The receipt adds an exact skill version to the choices; selecting it is explicit.
-Import alone grants no execution compatibility: profile validation still checks
-its installed dependency ceiling. Folder contents, settings and instructions never
+The receipt adds an exact skill version to the choices; selecting it on the agent is explicit.
+Use **View skill** to inspect its retained relative files and open a bounded plain-text
+preview. Markdown, HTML and scripts are shown as text. Binary/large files retain
+metadata without an inline text preview. Browsing preserves all draft fields.
+Import alone grants no execution compatibility: execution still uses the pinned role version and the existing retained-input and
+permission boundaries. Historical profile skill additions remain readable; new
+profiles use the shared agent set. Folder contents, settings and instructions never
 enter navigation or browser persistence, and local edits require explicit reimport.
 
 Reasoning stages can replace an existing static Build binding with role-backed

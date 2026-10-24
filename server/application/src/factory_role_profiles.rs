@@ -98,6 +98,9 @@ impl<S: FactoryRoleProfileStore> ManagementCommandUseCase<PublishFactoryRoleProf
     command: PublishFactoryRoleProfilesCommand,
   ) -> Result<FactoryRoleProfilesOutcome, ApplicationError> {
     require_project_visibility(grant, command.intent.project_id)?;
+    if let Some(role) = &command.intent.role {
+      validate_avatar(&role.definition)?;
+    }
     Ok(
       self
         .store
@@ -197,8 +200,20 @@ impl<S: FactoryRoleProfileStore> ManagementQueryUseCase<ValidateFactoryRoleQuery
     query: ValidateFactoryRoleQuery,
   ) -> Result<FactoryRole, ApplicationError> {
     require_project_visibility(grant, query.project_id)?;
+    validate_avatar(&query.definition)?;
     FactoryRole::publish(query.id, query.project_id, query.definition).map_err(|_| ApplicationError::invalid())
   }
+}
+
+fn validate_avatar(definition: &octacity_server_factory::FactoryRoleDefinition) -> Result<(), ApplicationError> {
+  if let Some(avatar) = &definition.avatar {
+    use base64::Engine as _;
+    let bytes = base64::engine::general_purpose::STANDARD
+      .decode(avatar.encoded_png())
+      .map_err(|_| ApplicationError::invalid())?;
+    crate::raster_preview::png("image/png", bytes).map_err(|_| ApplicationError::invalid())?;
+  }
+  Ok(())
 }
 /// Explicit independent copy, published by the ordinary atomic Role/Profile operation.
 #[derive(Clone, Debug)]

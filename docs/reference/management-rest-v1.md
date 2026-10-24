@@ -1029,9 +1029,10 @@ validation, installed compatible capability discovery, atomic
 These reuse existing Project View/Admin authorization and immutable publication;
 they are independent of enrolled CI/CD workers and Decision API installation.
 Console **AI agents** (`AI-агенты`) reuse these Role identities and own profiles;
-there is no AI-worker enrollment endpoint. Role content includes name, icon,
-description, ordered shared instructions and concurrency. Profiles carry exact
-runtime/model/thinking, additional instructions, skills, explicit environment and
+there is no AI-worker enrollment endpoint. Role content includes name, uploaded PNG avatar,
+description, ordered shared instructions, exact shared skill references and concurrency.
+Optional avatar/skills fields preserve old omitted-field digests. Profiles carry exact
+runtime/model/thinking, additional instructions, explicit environment and
 CLI settings, authorized MCP/integration bindings, tools and resource ceilings.
 Dedicated detail reads expose editable content with no-store; generic catalogs
 and audit omit instructions, environment values, CLI contents and skill bytes.
@@ -1041,7 +1042,12 @@ Installed compatibility and executable support are separate from publication.
 validation rejects unsupported settings without contacting a provider. Importing
 a folder through `factory-skills` retains its reviewed regular files as one bundle
 and returns an exact reference. Reimport and profile adoption are separate explicit
-commands. The Console preserves the open in-memory profile draft during import.
+commands. The Console preserves the open in-memory AI-agent draft during import.
+`GET /api/v1/projects/{project_id}/factory-skills/{identity}/versions/{version}`
+requires the exact `digest` query value and returns the retained file inventory.
+Optional `path` expands one member as a verified UTF-8 preview up to 64 KiB,
+requiring current Artifact download authority; binary/large files have null text.
+These dedicated responses use no-store and never execute file content.
 See [Factory operations](../operations/factory.md#project-roleprofile-http-authoring-and-safe-selection-history)
 for paths, request shapes, byte limits and replay/precondition semantics. OpenAPI
 is the authoritative bounded schema and authorization inventory.

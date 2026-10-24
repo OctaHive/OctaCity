@@ -284,3 +284,10 @@
   height: 1rem;
   padding: 0;
 }
+.skillPreview {
+  max-height: 24rem;
+  max-width: 100%;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

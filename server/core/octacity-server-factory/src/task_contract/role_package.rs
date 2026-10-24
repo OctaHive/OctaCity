@@ -128,6 +128,7 @@ impl FactoryRoleExecutionPackage {
       return Err(invalid("role Project rule count"));
     }
     let profile = inputs.profile.definition();
+    let skills = inputs.role.effective_skills(&inputs.profile)?;
     let task = &inputs.task;
     let context = &inputs.context;
     if inputs.profile.role() != inputs.role.reference()
@@ -146,11 +147,11 @@ impl FactoryRoleExecutionPackage {
           .iter()
           .any(|entry| entry.logical_identity() == required)
       })
-      || inputs.skills.len() != profile.skills.len()
+      || inputs.skills.len() != skills.len()
       || inputs
         .skills
         .iter()
-        .any(|(alias, bundle)| profile.skills.get(alias) != Some(bundle.reference()))
+        .any(|(alias, bundle)| skills.get(alias) != Some(bundle.reference()))
     {
       return Err(invalid("role execution package bindings"));
     }

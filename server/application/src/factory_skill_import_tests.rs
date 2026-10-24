@@ -14,7 +14,7 @@ impl FactoryExecutionClock for Clock {
     Ok(Timestamp::from_unix_millis(20).unwrap())
   }
 }
-fn command(project_id: ProjectId) -> ImportProjectSkill {
+pub(crate) fn command(project_id: ProjectId) -> ImportProjectSkill {
   ImportProjectSkill {
     project_id,
     identity: FactoryKey::new("custom-coder").unwrap(),
@@ -32,6 +32,45 @@ fn command(project_id: ProjectId) -> ImportProjectSkill {
       },
     ],
   }
+}
+
+#[test]
+fn imported_skill_tree_and_text_are_read_from_exact_retained_project_content() {
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::default());
+    store.seed_project(project).unwrap();
+    let import = Arc::new(ProjectSkillImport::new(
+      store,
+      Arc::new(Bytes::default()),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    ));
+    let context = crate::factory_admission_tests::context();
+    let record = import.import(&context, command(project)).await.unwrap();
+    let reader = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), import);
+    let mut query = GetProjectSkillQuery {
+      project_id: project,
+      reference: record.intent.bundle.reference().clone(),
+      path: None,
+    };
+    let tree = reader.handle_query(&context, query.clone()).await.unwrap();
+    assert_eq!(tree.bundle, record.intent.bundle);
+    assert!(tree.file.is_none());
+    for (path, expected) in [
+      ("SKILL.md", "# Private skill\n"),
+      ("examples/sample.txt", "retained example"),
+    ] {
+      query.path = Some(octacity_server_factory::FactoryRepositoryPath::new(path).unwrap());
+      let content = reader.handle_query(&context, query.clone()).await.unwrap();
+      assert_eq!(content.file.unwrap().text.as_deref(), Some(expected));
+    }
+    query.path = Some(octacity_server_factory::FactoryRepositoryPath::new("absent.txt").unwrap());
+    assert!(reader.handle_query(&context, query.clone()).await.is_err());
+    query.project_id = ProjectId::generate();
+    query.path = None;
+    assert!(reader.handle_query(&context, query).await.is_err());
+  });
 }
 #[test]
 fn skill_import_retains_complete_tree_replays_and_materializes_exact_protected_inputs() {

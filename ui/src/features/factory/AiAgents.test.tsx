@@ -47,7 +47,9 @@ function setup() {
     listTemplates: vi.fn(async (): Promise<components['schemas']['FactoryRoleTemplatePage']> =>
       page([]),
     ),
-    listSkills: vi.fn(async () => page([])),
+    listSkills: vi.fn(async (): Promise<components['schemas']['ProjectSkillCatalogPage']> =>
+      page([]),
+    ),
     validateRole: vi.fn(
       async (_project: string, body: components['schemas']['ValidateFactoryRoleRequest']) => ({
         reference: { ...role.reference, id: body.id },
@@ -64,6 +66,7 @@ function setup() {
     copyTemplate: vi.fn(),
     getTemplate: vi.fn(),
     importSkill: vi.fn(),
+    getSkill: vi.fn(),
   };
   const api = {
     ...factoryApi,
@@ -103,6 +106,71 @@ it('discovers role-backed AI agents separately from worker enrollment and reads 
     expect.any(AbortSignal),
   );
   expect(screen.queryByRole('button', { name: 'Enroll agent' })).toBeNull();
+});
+
+it('opens the retained skill tree and selected file as inert text without losing the agent draft', async () => {
+  const { roles } = setup();
+  const skill = { identity: 'review', version: 'v1', digest: 'a'.repeat(64) };
+  roles.listSkills.mockResolvedValue({ items: [skill], total: 1, next_cursor: null });
+  const bundle = {
+    reference: skill,
+    files: {
+      'SKILL.md': {
+        artifact_id: '10000000-0000-4000-8000-000000000001',
+        content_digest: 'b'.repeat(64),
+        encoded_size: 24,
+      },
+    },
+  };
+  roles.getSkill.mockResolvedValueOnce({ bundle, file: null }).mockResolvedValueOnce({
+    bundle,
+    file: { path: 'SKILL.md', size_bytes: 24, text: '# Review\n<script>bad()</script>' },
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'Unsaved reviewer');
+  await userEvent.click(await screen.findByRole('button', { name: 'View skill review · v1' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'SKILL.md' }));
+  expect(
+    await screen.findByText('# Review\n<script>bad()</script>', {
+      exact: true,
+      normalizer: (value) => value,
+    }),
+  ).toHaveProperty('tagName', 'PRE');
+  expect(screen.getByRole('textbox', { name: 'Agent name' })).toHaveProperty(
+    'value',
+    'Unsaved reviewer',
+  );
+  expect(roles.getSkill).toHaveBeenLastCalledWith(
+    expect.any(String),
+    skill,
+    'SKILL.md',
+    expect.any(AbortSignal),
+  );
+  expect(roles.publish).not.toHaveBeenCalled();
+});
+
+it('selects shared skills in the AI agent draft without needing an installed runtime', async () => {
+  const { roles } = setup();
+  const skill = { identity: 'review', version: 'v1', digest: 'a'.repeat(64) };
+  roles.listSkills.mockResolvedValue({ items: [skill], total: 1, next_cursor: null });
+  roles.listCapabilities.mockResolvedValue({ items: [], total: 0, next_cursor: null });
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'Shared reviewer');
+  await userEvent.click(
+    await screen.findByRole('checkbox', { name: `review · v1 · ${skill.digest}` }),
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Review AI agent' }));
+  await screen.findByRole('dialog');
+  expect(roles.validateRole).toHaveBeenCalledWith(
+    expect.any(String),
+    expect.objectContaining({
+      definition: expect.objectContaining({ name: 'Shared reviewer', skills: { review: skill } }),
+    }),
+  );
+  expect(roles.listCapabilities).not.toHaveBeenCalled();
+  expect(roles.publish).not.toHaveBeenCalled();
 });
 
 it('creates an arbitrary role with ordered instructions and concurrency only after server validation and explicit review', async () => {
@@ -207,10 +275,11 @@ async function openProfile() {
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
   return state;
 }
-it('imports a reviewed skill folder inline, replays a lost response and keeps the profile draft on cancel and failure', async () => {
-  const { roles, profile } = await openProfile();
-  const name = screen.getByRole('textbox', { name: 'Profile name' });
-  await userEvent.clear(name);
+it('imports a reviewed shared skill folder inline, replays a lost response and keeps the agent draft on cancel and failure', async () => {
+  const { roles, role } = setup();
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
+  const name = screen.getByRole('textbox', { name: 'Agent name' });
   await userEvent.type(name, 'private local draft');
   const file = new File(['# Skill\nInstructions'], 'SKILL.md', { type: 'text/markdown' });
   Object.defineProperty(file, 'webkitRelativePath', { value: 'review/SKILL.md' });
@@ -252,9 +321,9 @@ it('imports a reviewed skill folder inline, replays a lost response and keeps th
   await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
   expect(name).toHaveProperty('value', 'private local draft');
   await userEvent.click(await screen.findByRole('checkbox', { name: /review.*v1/ }));
-  await userEvent.click(screen.getByRole('button', { name: 'Review profile' }));
-  expect(roles.validateProfile).toHaveBeenLastCalledWith(
-    profile.role.project_id,
+  await userEvent.click(screen.getByRole('button', { name: 'Review AI agent' }));
+  expect(roles.validateRole).toHaveBeenLastCalledWith(
+    role.reference.project_id,
     expect.objectContaining({
       definition: expect.objectContaining({ skills: { review: bundle } }),
     }),
@@ -307,6 +376,14 @@ it('blocks incompatible profile publication and reconciles a stale head without 
 
 it('copies a starter template into independent default/pro profiles using installed settings', async () => {
   const { roles, role, profile } = setup();
+  const { capability } = factoryRoleFixture();
+  roles.getCapability.mockResolvedValue({
+    ...capability,
+    definition: {
+      ...capability.definition,
+      skills: { installed: { identity: 'installed', version: 'v1', digest: 'd'.repeat(64) } },
+    },
+  });
   const reference = { identity: 'coder', version: 'v1', digest: 'c'.repeat(64) };
   roles.listTemplates.mockResolvedValue({
     items: [{ reference, name: 'Coder', profiles: ['default', 'pro'] }],
@@ -369,6 +446,42 @@ it('copies a starter template into independent default/pro profiles using instal
   );
   const request = roles.copyTemplate.mock.calls[0]?.[1];
   expect(request.profiles.default.id).not.toBe(request.profiles.pro.id);
+  expect(request.profiles.default.definition.skills).toEqual({});
+  expect(request.profiles.pro.definition.skills).toEqual({});
+});
+
+it('explains missing runtime configuration for default/pro instead of claiming no resources', async () => {
+  const { roles, role } = setup();
+  const reference = { identity: 'coder', version: 'v1', digest: 'c'.repeat(64) };
+  roles.listTemplates.mockResolvedValue({
+    items: [{ reference, name: 'Coder', profiles: ['default', 'pro'] }],
+    total: 1,
+    next_cursor: null,
+  });
+  roles.getTemplate.mockResolvedValue({
+    identity: 'coder',
+    version: 'v1',
+    role: role.definition,
+    profiles: {
+      default: { name: 'default', instructions: [] },
+      pro: { name: 'pro', instructions: [] },
+    },
+  });
+  roles.listCapabilities.mockResolvedValue({ items: [], total: 0, next_cursor: null });
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Copy Coder' }));
+  expect(
+    await screen.findByText(
+      'No Factory runtime/model is configured for this Project. Configure one on the server before creating execution profiles.',
+    ),
+  ).toBeTruthy();
+  for (const alias of ['default', 'pro']) {
+    expect(screen.getByRole('combobox', { name: `Runtime / Model · ${alias}` })).toHaveProperty(
+      'disabled',
+      true,
+    );
+  }
+  expect(roles.copyTemplate).not.toHaveBeenCalled();
 });
 
 it('keeps profile instructions pinned until the current role version is explicitly adopted', async () => {
@@ -403,7 +516,9 @@ it('keeps profile instructions pinned until the current role version is explicit
   expect(await within(detail).findByText('Follow Project rules.')).toBeTruthy();
   expect(within(detail).queryByText('New shared rules')).toBeNull();
   await userEvent.click(within(detail).getByRole('button', { name: 'Edit profile' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Adopt shared instructions v2' }));
+  await userEvent.click(
+    screen.getByRole('button', { name: 'Adopt agent v2 (instructions and skills)' }),
+  );
   await userEvent.click(screen.getByRole('button', { name: 'Review profile' }));
   expect(roles.validateProfile).toHaveBeenLastCalledWith(
     profile.role.project_id,
@@ -503,7 +618,7 @@ it('keeps authored settings when choosing a Runtime and resets them only through
   );
 });
 
-it('preserves and removes an assigned skill by its declared alias rather than renaming it to the bundle identity', async () => {
+it('keeps retained legacy profile skills readable without offering a separate profile skill editor', async () => {
   const { roles, profile } = setup();
   const bundle = { identity: 'review.bundle', version: 'v1', digest: 'f'.repeat(64) };
   roles.getProfile.mockResolvedValue({
@@ -518,13 +633,14 @@ it('preserves and removes an assigned skill by its declared alias rather than re
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
-  const skill = await screen.findByRole('checkbox', { name: /reviewer.*review.bundle.*v1/ });
-  expect(skill).toHaveProperty('checked', true);
-  await userEvent.click(skill);
+  expect(screen.queryByLabelText('Import skill folder')).toBeNull();
+  expect(screen.queryByRole('checkbox', { name: /reviewer.*review.bundle.*v1/ })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Review profile' }));
   expect(roles.validateProfile).toHaveBeenCalledWith(
     profile.role.project_id,
-    expect.objectContaining({ definition: expect.objectContaining({ skills: {} }) }),
+    expect.objectContaining({
+      definition: expect.objectContaining({ skills: { reviewer: bundle } }),
+    }),
   );
 });
 

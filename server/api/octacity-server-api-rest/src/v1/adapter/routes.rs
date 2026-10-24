@@ -550,6 +550,7 @@ fn registered_routes() -> ManagementRoutes {
       super::factory_roles::import_skill,
     )
     .get::<octacity_server_application::ListProjectSkillsQuery, _, _>("listProjectSkills", super::factory_roles::skills)
+    .get::<octacity_server_application::GetProjectSkillQuery, _, _>("getProjectSkill", super::factory_roles::skill)
     .get::<octacity_server_application::ListFactoryRoleTemplatesQuery, _, _>(
       "listFactoryRoleTemplates",
       super::factory_roles::templates,

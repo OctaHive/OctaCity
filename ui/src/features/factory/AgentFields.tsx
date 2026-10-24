@@ -1,12 +1,23 @@
 import { Bot, Code, Shield, Lightbulb } from 'lucide-react';
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
-import { SelectMenu } from '../../shared/SelectMenu';
+import { AgentAvatarField } from './AgentAvatarField';
 import { InstructionFields } from './InstructionFields';
+import { SkillFolderFields } from './SkillFolderFields';
+import type { FactoryRolesApi } from './roleApi';
 
 const icons = { bot: Bot, code: Code, shield: Shield, lightbulb: Lightbulb };
 type Definition = components['schemas']['FactoryRoleDefinition'];
-export function AgentIcon({ name }: { name: string | null | undefined }) {
+export function AgentIcon({
+  name,
+  avatar,
+}: {
+  name: string | null | undefined;
+  avatar?: string | null | undefined;
+}) {
+  const { t } = usePresentation();
+  if (avatar)
+    return <img src={avatar} alt={t('factory.agentAvatarImage')} width={40} height={40} />;
   if (!name) return null;
   const Icon = icons[name as keyof typeof icons] ?? Bot;
   return <Icon role="img" aria-label={name} size={20} />;
@@ -15,9 +26,15 @@ export function AgentIcon({ name }: { name: string | null | undefined }) {
 export function AgentFields({
   value,
   onChange,
+  api,
+  projectId,
+  onPendingChange,
 }: {
   value: Definition;
   onChange: (value: Definition) => void;
+  api: FactoryRolesApi;
+  projectId: string;
+  onPendingChange: (pending: boolean) => void;
 }) {
   const { t } = usePresentation();
   return (
@@ -36,18 +53,10 @@ export function AgentFields({
           onChange={(event) => onChange({ ...value, description: event.target.value })}
         />
       </label>
-      <SelectMenu
-        ariaLabel={t('factory.agentIcon')}
-        value={value.icon ?? ''}
-        options={[
-          { value: '', label: t('factory.none') },
-          ...Object.keys(icons).map((name) => ({
-            value: name,
-            label: name,
-            icon: <AgentIcon name={name} />,
-          })),
-        ]}
-        onValueChange={(icon) => onChange({ ...value, icon: icon || null })}
+      <AgentAvatarField
+        value={value.avatar}
+        onPendingChange={onPendingChange}
+        onChange={(avatar) => onChange({ ...value, avatar, icon: null })}
       />
       <label>
         {t('factory.agentConcurrency')}
@@ -67,6 +76,12 @@ export function AgentFields({
         label={t('factory.sharedInstruction')}
         value={value.instructions}
         onChange={(instructions) => onChange({ ...value, instructions })}
+      />
+      <SkillFolderFields
+        api={api}
+        project={projectId}
+        value={value.skills ?? {}}
+        onChange={(skills) => onChange({ ...value, skills })}
       />
     </>
   );

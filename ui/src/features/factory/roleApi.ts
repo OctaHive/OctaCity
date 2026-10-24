@@ -123,6 +123,31 @@ export function createFactoryRolesApi(client = managementApi) {
         ).data,
       );
     },
+    async getSkill(
+      project: string,
+      reference: components['schemas']['FactoryImmutableReferenceResource'],
+      path: string | null,
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await client.GET(
+            '/api/v1/projects/{project_id}/factory-skills/{identity}/versions/{version}',
+            {
+              params: {
+                path: {
+                  project_id: project,
+                  identity: reference.identity,
+                  version: reference.version,
+                },
+                query: { digest: reference.digest, ...(path === null ? {} : { path }) },
+              },
+              signal: signal ?? null,
+            },
+          )
+        ).data,
+      );
+    },
     async listSkills(project: string, after: string | null, signal?: AbortSignal) {
       return requireManagementResponse(
         (

@@ -205,9 +205,12 @@ impl<S: ProjectSkillImportStore, B: ArtifactByteReader> ProjectSkillImport<S, B>
   }
 
   async fn read_verified(&self, input: &PublishedExecutionInput) -> Result<(), ApplicationError> {
-    read_verified(self.bytes.as_ref(), input).await
+    read_verified(self.bytes.as_ref(), input).await.map(|_| ())
   }
 }
+
+mod read;
+pub use read::*;
 pub(crate) async fn materialize_project_skills<S: ProjectSkillImportStore, B: ArtifactByteReader>(
   store: &S,
   bytes: &B,
@@ -271,7 +274,7 @@ pub(crate) async fn materialize_project_skills<S: ProjectSkillImportStore, B: Ar
 async fn read_verified<B: ArtifactByteReader>(
   bytes: &B,
   input: &PublishedExecutionInput,
-) -> Result<(), ApplicationError> {
+) -> Result<Vec<u8>, ApplicationError> {
   let bytes = bytes
     .read_published(&object(input)?, input.size_bytes)
     .await
@@ -281,7 +284,7 @@ async fn read_verified<B: ArtifactByteReader>(
   {
     return Err(ApplicationError::unavailable());
   }
-  Ok(())
+  Ok(bytes)
 }
 
 fn object(input: &PublishedExecutionInput) -> Result<ArtifactObject, ApplicationError> {

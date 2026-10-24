@@ -25,6 +25,8 @@ fn selected_fixture(project: ProjectId) -> Fixture {
     FactoryRoleId::generate(),
     project,
     FactoryRoleDefinition {
+      avatar: None,
+      skills: Default::default(),
       name: FactoryText::new("Stage owner").unwrap(),
       instructions: "Private stage instructions".into(),
       template: None,

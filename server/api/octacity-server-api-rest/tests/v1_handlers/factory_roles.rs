@@ -51,8 +51,76 @@ async fn factory_roles_http_publishes_complete_definitions_and_replays_the_origi
   assert_eq!(replay["published_at"], first["published_at"]);
 }
 
+#[tokio::test]
+async fn factory_role_shared_skills_publish_and_read_without_profile_copies() {
+  let (router, project, mut intent) = role_router();
+  let skills = intent["profiles"][0]["definition"]["skills"].clone();
+  intent["role"]["definition"]["skills"] = skills.clone();
+  intent["profiles"] = serde_json::json!([]);
+  assert_json_matches_component(&openapi_document(), "PublishFactoryRoleProfilesRequest", &intent);
+  let result = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      &format!("/api/v1/projects/{project}/factory-role-publications"),
+      "shared-role-skills",
+      None,
+      &intent.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(result.status(), StatusCode::OK);
+  let published = json_response(result).await;
+  assert_eq!(published["role"]["definition"]["skills"], skills);
+  assert_eq!(published["profiles"], serde_json::json!([]));
+  let result = router
+    .oneshot(empty_request(
+      "GET",
+      &format!(
+        "/api/v1/projects/{project}/factory-roles/{}",
+        published["role"]["reference"]["id"].as_str().unwrap()
+      ),
+      None,
+    ))
+    .await
+    .unwrap();
+  assert_eq!(json_response(result).await, published["role"]);
+}
+
 fn role_router() -> (axum::Router, ProjectId, serde_json::Value) {
   role_router_with_policy(Arc::new(TrustedNetworkManagementPolicy))
+}
+
+#[tokio::test]
+async fn factory_agent_avatar_publication_decodes_the_complete_raster() {
+  let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgaPj/HwAEggJ/59habAAAAABJRU5ErkJggg==";
+  for (avatar, expected) in [
+    (png.to_string(), StatusCode::OK),
+    (
+      format!("data:image/png;base64,{}", &png[22..66]),
+      StatusCode::BAD_REQUEST,
+    ),
+  ] {
+    let (router, project, mut intent) = role_router();
+    intent["profiles"] = serde_json::json!([]);
+    intent["role"]["definition"]["avatar"] = serde_json::json!(avatar);
+    assert_json_matches_component(&openapi_document(), "PublishFactoryRoleProfilesRequest", &intent);
+    let response = router
+      .oneshot(json_request(
+        "POST",
+        &format!("/api/v1/projects/{project}/factory-role-publications"),
+        "uploaded-avatar",
+        None,
+        &intent.to_string(),
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), expected);
+    if expected == StatusCode::OK {
+      let result = json_response(response).await;
+      assert_eq!(result["role"]["definition"]["avatar"], png);
+    }
+  }
 }
 fn role_router_with_policy(
   policy: Arc<dyn ManagementAuthorizationPolicy>,
@@ -296,6 +364,28 @@ async fn factory_roles_http_imports_a_skill_once_without_private_bytes_in_catalo
   assert_eq!(original["bundle"]["identity"], "my-skill");
   assert!(!original.to_string().contains("SKILL.md"));
   assert!(!original.to_string().contains("HTTP skill"));
+  let read_path = format!(
+    "{path}/my-skill/versions/{}?digest={}",
+    original["bundle"]["version"].as_str().unwrap(),
+    original["bundle"]["digest"].as_str().unwrap()
+  );
+  let response = router
+    .clone()
+    .oneshot(empty_request("GET", &read_path, None))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let tree = json_response(response).await;
+  assert_json_matches_component(&openapi_document(), "ProjectSkillDetails", &tree);
+  assert!(tree["bundle"]["files"]["SKILL.md"].is_object());
+  assert!(tree["file"].is_null());
+  let response = router
+    .clone()
+    .oneshot(empty_request("GET", &format!("{read_path}&path=SKILL.md"), None))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(json_response(response).await["file"]["text"], "# HTTP skill\n");
   let response = router
     .clone()
     .oneshot(json_request("POST", &path, "skill-import", None, &request))
@@ -632,6 +722,7 @@ unavailable_role_use_cases!(query:
   GetFactoryRoleTemplateQuery=>"get_factory_role_template", ListFactoryRoleProfileCapabilitiesQuery=>"list_factory_profile_capabilities",
   GetFactoryRoleProfileCapabilityQuery=>"get_factory_profile_capability", ValidateFactoryRoleProfileQuery=>"validate_factory_role_profile",
   ListProjectSkillsQuery=>"list_project_skills",
+  GetProjectSkillQuery=>"get_project_skill",
 );
 unavailable_role_use_cases!(command:
   PublishFactoryRoleProfilesCommand=>"publish_factory_role_profiles", CopyFactoryRoleTemplateCommand=>"copy_factory_role_template",
@@ -664,6 +755,7 @@ pub(super) fn management_requests() -> Vec<Request<Body>> {
     json_request("POST",&format!("{prefix}/factory-role-profiles/validate"),"unused",None,&serde_json::json!({"id":profile,"role":reference,"capability":"runtime","definition":intent["profiles"][0]["definition"]}).to_string()),
     json_request("POST",&format!("{prefix}/factory-skills"),"import",None,&serde_json::json!({"identity":"test","files":[{"path":"SKILL.md","sha256":"01".repeat(32),"bytes":[1]}]}).to_string()),
     empty_request("GET",&format!("{prefix}/factory-skills?limit=1"),None),
+    empty_request("GET",&format!("{prefix}/factory-skills/test/versions/v1?digest={}&path=SKILL.md","01".repeat(32)),None),
     json_request("POST",&format!("/api/v1/factory-runs/{role}/profile-selections/{}","01".repeat(32)),"select",Some("\"1\""),&serde_json::json!({"profile":reference}).to_string()),
   ]
 }

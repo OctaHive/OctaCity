@@ -10,7 +10,7 @@ import { SelectMenu } from '../../shared/SelectMenu';
 import { FactoryValueInput } from '../../shared/FactoryValueInput';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { InstructionFields, InstructionText } from './InstructionFields';
-import { SkillFolderFields } from './SkillFolderFields';
+import { SkillReferences } from './SkillContents';
 import { catalogLabels } from './catalogLabels';
 import { BudgetEditor, PermissionEditor } from './ResourceEditors';
 import type { FactoryRolesApi } from './roleApi';
@@ -125,7 +125,7 @@ export function ProfileEditor({
       <fieldset disabled={pending || !!review}>
         <PagedExplorerBranch
           query={capabilities}
-          empty={t('factory.noChoices')}
+          empty={t('factory.noProfileRuntimes')}
           labels={catalogLabels(t('factory.profileRuntime'))}
         >
           {() => (
@@ -153,7 +153,12 @@ export function ProfileEditor({
                           build_configuration: installed.definition.build_configuration,
                           thinking_parameter: installed.definition.thinking_parameter ?? null,
                         }
-                      : { ...structuredClone(installed.definition), name: '', instructions: [] },
+                      : {
+                          ...structuredClone(installed.definition),
+                          name: '',
+                          instructions: [],
+                          skills: {},
+                        },
                   );
                 } catch (failure) {
                   setError(failure instanceof Error ? failure : new Error());
@@ -214,19 +219,21 @@ export function ProfileEditor({
                     ...structuredClone(capability.data!.definition),
                     name: definition.name,
                     instructions: definition.instructions,
+                    skills: definition.skills,
                   })
                 }
               >
                 {t('factory.useInstalledSettings')}
               </button>
             ) : null}
-            <SkillFolderFields
+            <SkillReferences
               api={api}
               project={project}
-              value={definition.skills}
-              available={capability.data?.definition.skills ?? {}}
-              onChange={(skills) => update({ skills })}
+              skills={pinnedRole.data?.definition.skills ?? {}}
             />
+            {Object.keys(definition.skills).length ? (
+              <SkillReferences api={api} project={project} skills={definition.skills} />
+            ) : null}
             <p>
               {t('factory.thinking')} · {definition.thinking_parameter ?? t('factory.none')}
             </p>

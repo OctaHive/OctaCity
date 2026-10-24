@@ -56,6 +56,8 @@ pub struct FactoryConfigurationDocumentBounds {
   pub instruction_bytes: usize,
   /// Encoded role/profile definition bytes.
   pub role_definition_bytes: usize,
+  /// Maximum inline encoded avatar metadata.
+  pub role_avatar_bytes: usize,
   /// Bounded UTF-8 display/environment value bytes.
   pub text_bytes: usize,
   /// Imported skill file count.
@@ -153,6 +155,7 @@ pub const fn factory_configuration_document_bounds() -> FactoryConfigurationDocu
     role_entries: factory::MAX_FACTORY_ROLE_PROFILE_ENTRIES,
     instruction_bytes: factory::MAX_FACTORY_ROLE_INSTRUCTION_BYTES,
     role_definition_bytes: factory::MAX_FACTORY_ROLE_DEFINITION_BYTES,
+    role_avatar_bytes: factory::MAX_FACTORY_ROLE_AVATAR_BYTES,
     text_bytes: factory::MAX_FACTORY_TEXT_BYTES,
     skill_files: factory::MAX_CONTEXT_MANIFEST_ENTRIES,
     skill_path_bytes: factory::MAX_FACTORY_REPOSITORY_PATH_BYTES,

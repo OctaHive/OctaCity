@@ -29,9 +29,15 @@ pub struct FactoryRoleDefinition {
   pub name: FactoryText,
   /// Exact ordered shared Markdown entries; legacy text remains one entry.
   pub instructions: crate::FactoryInstructions,
+  /// Shared exact skill versions used by every profile pinned to this agent version.
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub skills: BTreeMap<FactoryKey, ImmutableReference>,
   /// Console icon key; absent selects the neutral presentation default.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub icon: Option<FactoryKey>,
+  /// Uploaded presentation image, independent of execution settings and permissions.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub avatar: Option<crate::FactoryRoleAvatar>,
   /// Bounded descriptive text, separate from execution instructions.
   #[serde(default, skip_serializing_if = "String::is_empty")]
   pub description: String,
@@ -122,6 +128,27 @@ impl FactoryRole {
   #[must_use]
   pub const fn definition(&self) -> &FactoryRoleDefinition {
     &self.definition
+  }
+
+  /// Resolves shared skills and retained legacy profile additions without silent overrides.
+  pub fn effective_skills(
+    &self,
+    profile: &FactoryRoleProfile,
+  ) -> Result<BTreeMap<FactoryKey, ImmutableReference>, FactoryError> {
+    if profile.role() != self.reference() {
+      return Err(invalid("role skill owner"));
+    }
+    let mut skills = self.definition.skills.clone();
+    for (alias, reference) in &profile.definition().skills {
+      if skills.get(alias).is_some_and(|shared| shared != reference) {
+        return Err(invalid("conflicting role skill"));
+      }
+      skills.insert(alias.clone(), reference.clone());
+    }
+    if skills.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES {
+      return Err(invalid("role skill count"));
+    }
+    Ok(skills)
   }
 }
 
@@ -316,6 +343,9 @@ fn profile_digest(
 }
 
 pub(super) fn role_digest(definition: &FactoryRoleDefinition) -> Result<FactoryDigest, FactoryError> {
+  if definition.skills.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES {
+    return Err(invalid("role skill count"));
+  }
   validate_text(
     &definition.description,
     crate::MAX_FACTORY_TEXT_BYTES,

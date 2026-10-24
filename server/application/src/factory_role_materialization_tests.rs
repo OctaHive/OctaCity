@@ -115,7 +115,8 @@ fn fixture_for_work_mode_with_context(
     FactoryRoleId::generate(),
     work.subject().project_id(),
     serde_json::from_value(
-      json!({"name":"Custom reviewer", "instructions":["Shared responsibility.", "Shared second rule."]}),
+      json!({"name":"Custom reviewer", "instructions":["Shared responsibility.", "Shared second rule."],
+        "skills": skills.iter().map(|(alias, bundle)| (alias.clone(), bundle.reference().clone())).collect::<BTreeMap<_,_>>()}),
     )
     .unwrap(),
   )
@@ -135,10 +136,6 @@ fn fixture_for_work_mode_with_context(
   );
   definition.model_parameters = [(key("reasoning_effort"), json!("high"))].into();
   definition.instructions = FactoryInstructions::new(vec!["Profile instructions.".into()]).unwrap();
-  definition.skills = skills
-    .iter()
-    .map(|(alias, bundle)| (alias.clone(), bundle.reference().clone()))
-    .collect();
   edit(&mut definition);
   let profile = FactoryRoleProfile::publish(
     FactoryRoleProfileId::generate(),
@@ -1529,6 +1526,52 @@ fn selected_role_first_package_uses_exact_published_content_and_real_prompt_dige
   });
 }
 
+#[test]
+fn selected_role_first_package_materializes_shared_skills_from_the_agent() {
+  crate::factory_admission_tests::run_ready(async {
+    let work = fixtures::work();
+    let project = work.subject().project_id();
+    let store = Arc::new(octacity_server_store::testing::InMemoryFactoryConfigurationStore::default());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(crate::factory_skill_import_tests::Bytes::default());
+    let import = ProjectSkillImport::new(
+      store.clone(),
+      bytes.clone(),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(SystemFactoryExecutionClock),
+    );
+    let record = import
+      .import(
+        &crate::factory_admission_tests::context(),
+        crate::factory_skill_import_tests::command(project),
+      )
+      .await
+      .unwrap();
+    let (intent, _, installed, expected, context) = fixture_for_work_mode(
+      work,
+      |_| {},
+      BTreeMap::from([(key("shared"), record.intent.bundle)]),
+      factory_role_task_digest,
+      true,
+    );
+    assert!(expected.inputs().profile.definition().skills.is_empty());
+    publish_package_roles_in(&store, &expected).await;
+    let source =
+      FactoryStoredCodexRoleInvocationSource::new(store, bytes, Arc::new(ContextBytes(context)), vec![installed]);
+    let result = source
+      .invocation(
+        &intent,
+        Timestamp::from_unix_millis(41).unwrap(),
+        intent.node().deadline(),
+      )
+      .await
+      .unwrap()
+      .unwrap();
+    assert_eq!(result.package().inputs().skills, expected.inputs().skills);
+    assert_eq!(result.skills().unwrap().inputs.len(), 2);
+  });
+}
+
 async fn publish_package_roles(
   package: &FactoryRoleExecutionPackage,
 ) -> Arc<octacity_server_store::testing::InMemoryFactoryConfigurationStore> {
@@ -1536,6 +1579,15 @@ async fn publish_package_roles(
   let project = content.profile.reference().project_id;
   let store = Arc::new(octacity_server_store::testing::InMemoryFactoryConfigurationStore::default());
   store.seed_project(project).unwrap();
+  publish_package_roles_in(&store, package).await;
+  store
+}
+async fn publish_package_roles_in(
+  store: &Arc<octacity_server_store::testing::InMemoryFactoryConfigurationStore>,
+  package: &FactoryRoleExecutionPackage,
+) {
+  let content = package.inputs();
+  let project = content.profile.reference().project_id;
   AuthorizedCommandHandler::new(
     Arc::new(TrustedNetworkManagementPolicy),
     Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
@@ -1563,7 +1615,6 @@ async fn publish_package_roles(
   )
   .await
   .unwrap();
-  store
 }
 
 #[test]

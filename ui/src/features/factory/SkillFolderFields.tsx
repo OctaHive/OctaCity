@@ -7,6 +7,7 @@ import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
 import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 import type { FactoryRolesApi } from './roleApi';
+import { SkillContents } from './SkillContents';
 
 type Ref = components['schemas']['FactoryImmutableReferenceResource'];
 type Request = components['schemas']['ImportProjectSkillRequest'];
@@ -44,6 +45,7 @@ export function SkillFolderFields({
   const [error, setError] = useState<Error | null>(null);
   const [review, setReview] = useState<{ request: Request; target: HTMLElement } | null>(null);
   const [imported, setImported] = useState<Ref[]>([]);
+  const [viewing, setViewing] = useState<Ref | null>(null);
   const skills = useCursorPage(
     queryKeys.factoryRoleCatalog(project, 'skills'),
     async (cursor, signal) => {
@@ -62,10 +64,12 @@ export function SkillFolderFields({
       alias,
       reference,
     })),
-    ...(skills.data?.pages.flatMap((page) => page.items) ?? []).map((reference) => ({
-      alias: reference.identity,
-      reference,
-    })),
+    ...(skills.data?.pages.flatMap((page) => page.items) ?? []).map(
+      ({ identity, version, digest }) => ({
+        alias: identity,
+        reference: { identity, version, digest },
+      }),
+    ),
     ...imported.map((reference) => ({ alias: reference.identity, reference })),
   ].filter(
     (item, index, all) =>
@@ -146,21 +150,34 @@ export function SkillFolderFields({
           {() => null}
         </PagedExplorerBranch>
         {choices.map(({ alias, reference }) => (
-          <label key={`${alias}:${reference.identity}:${reference.version}:${reference.digest}`}>
-            <input
-              type="checkbox"
-              checked={!!value[alias] && same(value[alias]!, reference)}
-              onChange={(event) => {
-                const next = { ...value };
-                if (event.target.checked) next[alias] = reference;
-                else delete next[alias];
-                onChange(next);
-              }}
-            />
-            {alias !== reference.identity ? `${alias} · ` : ''}
-            {reference.identity} · {reference.version} · {reference.digest}
-          </label>
+          <div key={`${alias}:${reference.identity}:${reference.version}:${reference.digest}`}>
+            <label>
+              <input
+                type="checkbox"
+                checked={!!value[alias] && same(value[alias]!, reference)}
+                onChange={(event) => {
+                  const next = { ...value };
+                  if (event.target.checked) next[alias] = reference;
+                  else delete next[alias];
+                  onChange(next);
+                }}
+              />
+              {alias !== reference.identity ? `${alias} · ` : ''}
+              {reference.identity} · {reference.version} · {reference.digest}
+            </label>
+            <button type="button" onClick={() => setViewing(reference)}>
+              {t('factory.viewSkill', { name: `${alias} · ${reference.version}` })}
+            </button>
+          </div>
         ))}
+        {viewing ? (
+          <SkillContents
+            key={`${viewing.identity}:${viewing.version}:${viewing.digest}`}
+            api={api}
+            project={project}
+            reference={viewing}
+          />
+        ) : null}
         {request ? (
           <section>
             <label>

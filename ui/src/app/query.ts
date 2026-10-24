@@ -1,6 +1,20 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factorySkill: (
+    project: string,
+    reference: { identity: string; version: string; digest: string },
+    path: string | null,
+  ) =>
+    [
+      'factory',
+      'skill',
+      project,
+      reference.identity,
+      reference.version,
+      reference.digest,
+      path,
+    ] as const,
   factoryRoleCatalog: (project: string, kind: string, owner = '') =>
     ['factory', 'roles', project, kind, owner] as const,
   factoryRole: (reference: { project_id: string; id: string; version: number }) =>

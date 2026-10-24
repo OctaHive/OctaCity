@@ -12,6 +12,20 @@ use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::GetProjectSkillQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-skills/{identity}/versions/{version}",
+    "getProjectSkill",
+    "Factory",
+    "Read an exact retained skill inventory or one bounded authorized file preview",
+    None,
+    "ProjectSkillDetails",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::SelectFactoryProfileCommand,
     "POST",
     "/api/v1/factory-runs/{factory_run_id}/profile-selections/{input_digest}",

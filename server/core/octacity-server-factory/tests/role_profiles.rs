@@ -48,6 +48,8 @@ fn role(project: ProjectId, instructions: &str) -> FactoryRole {
     FactoryRoleId::generate(),
     project,
     FactoryRoleDefinition {
+      avatar: None,
+      skills: Default::default(),
       template: None,
       icon: None,
       description: String::new(),
@@ -95,6 +97,8 @@ fn projects_publish_and_replace_arbitrary_roles_without_mutating_retained_versio
     .replace(
       FactoryRoleVersion::new(2).unwrap(),
       FactoryRoleDefinition {
+        avatar: None,
+        skills: Default::default(),
         template: None,
         icon: None,
         description: String::new(),
@@ -148,6 +152,8 @@ fn independent_profiles_pin_exact_owned_roles_and_replace_without_changing_sibli
     .replace(
       FactoryRoleVersion::new(2).unwrap(),
       FactoryRoleDefinition {
+        avatar: None,
+        skills: Default::default(),
         template: None,
         icon: None,
         description: String::new(),
@@ -962,6 +968,59 @@ fn installed_profile_declarations_share_definition_bounds() {
     .map(|i| (format!("VALUE_{i}"), role_parameter_schema()))
     .collect();
   assert!(choices().with_role_profile_capability(alias, invalid).is_err());
+}
+
+#[test]
+fn agent_skills_are_shared_by_default_and_pro_without_copying_them_into_profiles() {
+  use octacity_server_factory::*;
+  let mut input = execution_package_input();
+  let shared = input.profile.definition().skills.clone();
+  assert!(!shared.is_empty());
+  let mut definition = serde_json::to_value(input.role.definition()).unwrap();
+  definition["skills"] = serde_json::to_value(&shared).unwrap();
+  let definition = serde_json::from_value(definition).expect("role accepts shared skills");
+  let role = FactoryRole::publish(input.role.reference().id, input.role.reference().project_id, definition).unwrap();
+  let mut settings = input.profile.definition().clone();
+  settings.skills.clear();
+  input.role = role;
+  for name in ["default", "pro"] {
+    settings.name = FactoryText::new(name).unwrap();
+    input.profile = FactoryRoleProfile::publish(
+      FactoryRoleProfileId::generate(),
+      input.role.reference().project_id,
+      &input.role,
+      settings.clone(),
+    )
+    .unwrap();
+    let package = FactoryRoleExecutionPackage::new(input.clone()).expect("shared skills are selected for each profile");
+    assert!(package.inputs().profile.definition().skills.is_empty());
+    assert_eq!(package.inputs().skills.len(), shared.len());
+    let restored: FactoryRoleExecutionPackage = serde_json::from_slice(&package.canonical_bytes().unwrap()).unwrap();
+    assert_eq!(restored.digest().unwrap(), package.digest().unwrap());
+  }
+}
+
+#[test]
+fn agent_avatar_is_retained_raster_content_and_rejects_active_or_invalid_payloads() {
+  let project = ProjectId::generate();
+  let original = role(project, "Shared instructions");
+  let png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgaPj/HwAEggJ/59habAAAAABJRU5ErkJggg==";
+  let mut value = serde_json::to_value(original.definition()).unwrap();
+  value["avatar"] = serde_json::json!(png);
+  let definition = serde_json::from_value(value.clone()).expect("agent accepts an uploaded avatar");
+  let saved = FactoryRole::publish(original.reference().id, project, definition).unwrap();
+  let restored: FactoryRole = serde_json::from_value(serde_json::to_value(&saved).unwrap()).unwrap();
+  assert_eq!(serde_json::to_value(restored.definition()).unwrap()["avatar"], png);
+  assert_ne!(saved.reference().digest, original.reference().digest);
+  for invalid in [
+    "https://external.invalid/avatar.png".to_string(),
+    "data:image/svg+xml;base64,PHN2Zy8+".to_string(),
+    "data:image/png;base64,AAAA".to_string(),
+    format!("data:image/png;base64,{}", "A".repeat(262144)),
+  ] {
+    value["avatar"] = serde_json::json!(invalid);
+    assert!(serde_json::from_value::<octacity_server_factory::FactoryRoleDefinition>(value.clone()).is_err());
+  }
 }
 
 fn execution_package_input() -> octacity_server_factory::FactoryRoleExecutionPackageInput {

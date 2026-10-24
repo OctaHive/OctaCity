@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Project AI agent and profile authoring
-The Console SHALL provide Project-scoped discovery, creation, validation, and immutable-version replacement of arbitrary Factory Roles and multiple Role Profiles per role through an **AI agents** catalog (`AI-агенты` in Russian). One AI-agent card SHALL represent one Factory Role using its stable identity and SHALL contain its Role Profiles. Name, icon avatar, description, ordered shared instruction entries and agent-wide concurrency limit SHALL be edited as role content. Runtime, Model, Thinking level, skills and supporting dependencies, additional ordered instructions, environment variables, CLI argument lists, MCP servers, external integration bindings, tools and resource ceilings SHALL be edited as profile content through the existing role/profile REST contracts and authorized choices. Secret variables SHALL use logical references without revealing stored credentials; runtime-specific unsupported settings SHALL be identified rather than silently ignored. For a selected exact profile, the card SHALL show its pinned shared and additional instruction layers and assigned skills from authorized role/profile details and normalized validation data. Unresolved or incompatible settings SHALL be clearly identified. The AI-agent catalog SHALL be separate from enrolled CI/CD Agent/Agent Pool management and SHALL NOT introduce another agent registry, storage model, or worker enrollment flow. It SHALL offer copy-on-create coder/default/pro, reviewer/default, and architect/default starter templates and allow independent naming and configuration of their copies. Authoring SHALL preserve the existing in-memory-only draft, reviewed immutable intent, idempotency, current-version precondition, localization, accessibility, and safe error contracts.
+The Console SHALL provide Project-scoped discovery, creation, validation, and immutable-version replacement of arbitrary Factory Roles and multiple Role Profiles per role through an **AI agents** catalog (`AI-агенты` in Russian). One AI-agent card SHALL represent one Factory Role using its stable identity and SHALL contain its Role Profiles. Name, uploaded raster avatar, description, shared versioned skill folders, ordered shared instruction entries and agent-wide concurrency limit SHALL be edited as role content. Runtime, Model, Thinking level, additional ordered instructions, environment variables, CLI argument lists, MCP servers, external integration bindings, tools and resource ceilings SHALL be edited as profile content through the existing role/profile REST contracts and authorized choices. Secret variables SHALL use logical references without revealing stored credentials; runtime-specific unsupported settings SHALL be identified rather than silently ignored. For a selected exact profile, the card SHALL show its pinned shared and additional instruction layers and assigned skills from authorized role/profile details and normalized validation data. Unresolved or incompatible settings SHALL be clearly identified. The AI-agent catalog SHALL be separate from enrolled CI/CD Agent/Agent Pool management and SHALL NOT introduce another agent registry, storage model, or worker enrollment flow. It SHALL offer copy-on-create coder/default/pro, reviewer/default, and architect/default starter templates and allow independent naming and configuration of their copies. Authoring SHALL preserve the existing in-memory-only draft, reviewed immutable intent, idempotency, current-version precondition, localization, accessibility, and safe error contracts.
 
 #### Scenario: Operator distinguishes AI agents from CI/CD workers
 - **WHEN** a Project contains a Factory Role with two profiles and the deployment has enrolled worker Agents
@@ -12,7 +12,7 @@ The Console SHALL provide Project-scoped discovery, creation, validation, and im
 - **THEN** the editor presents two independently configurable profiles and does not imply that pro grants extra permissions or that updating the template will update the copies
 
 #### Scenario: Operator creates a custom specialist
-- **WHEN** an operator creates a custom AI agent, enters shared instructions, and configures profile instructions and skills using visible installed choices
+- **WHEN** an operator creates a custom AI agent, enters shared instructions, and configures profile instructions using visible installed choices and shared skills on the AI agent
 - **THEN** the Console validates and publishes ordinary role/profile definitions through REST without a second AI-agent identity, fixed role category, or hand-entered opaque reference
 
 #### Scenario: Profile changes while being edited
@@ -24,11 +24,11 @@ The Console SHALL offer import of a local skill folder beside the profile skill 
 
 #### Scenario: Operator imports a folder while editing a custom profile
 - **WHEN** an operator has entered instructions and model settings and imports a folder containing `SKILL.md` and supporting files
-- **THEN** the saved immutable bundle becomes selectable in the same open draft, all entered fields remain intact, and publishing the profile explicitly pins the selected skill version
+- **THEN** the saved immutable bundle becomes selectable in the same open draft, all entered fields remain intact, and publishing the agent explicitly pins the shared skill version
 
 #### Scenario: Folder import fails or is cancelled
 - **WHEN** the operator cancels the folder picker or the server rejects an unsafe/oversized/incomplete folder
-- **THEN** the existing profile draft and selected skills remain intact and no successful import or profile publication is claimed
+- **THEN** the existing AI-agent draft and selected skills remain intact and no successful import or profile publication is claimed
 
 ### Requirement: Stage selection and recovery policy editing
 The Factory stage editor SHALL support `manual`, criteria-based `rules`, and `decision_api` selection over the selected AI agent's role-bound pinned compatible profiles. Selectors SHALL identify the AI agent and profile using the same exact role/profile references. It SHALL expose ordered typed criteria for rules mode and semantic criteria, installed provider choice, qualification/rollout status, and applicable thresholds for Decision API mode. Every stage SHALL explicitly choose either an exact reserve profile or manual selection on failure. The editor SHALL show candidate compatibility and the total bounded selection/execution requirements from server validation and SHALL NOT infer authority, invent unsupported provider/model parameters, or evaluate business rules in the browser.
@@ -59,3 +59,10 @@ The Console SHALL support optional explicit stage profile overrides during Work 
 #### Scenario: Selection history contains sensitive context
 - **WHEN** the stage's criteria or skill package reference protected content
 - **THEN** the Console displays safe policy, rule, profile, and receipt metadata without copying raw content into history, URLs, browser storage, analytics, or errors
+
+### Requirement: Discoverable provider/runtime setup and independent model choices
+Console SHALL provide a discoverable Project settings workflow for supported provider/runtime configuration and the available-model catalog. Credentials SHALL use existing managed-secret operations and SHALL not persist in browser storage or Role/Profile content. An operator SHALL choose Runtime, model and supported thinking separately for each arbitrary named profile, including default/pro, using the same authorized server choices as validation. Missing execution configuration SHALL have an actionable explanation while ordinary agent identity/instructions/shared-skill authoring remains usable. Skill browsing SHALL show the retained relative file inventory and explicitly selected inert text without discarding the agent draft.
+
+#### Scenario: Operator binds two profiles to different models
+- **WHEN** the operator configures a supported runtime/provider and edits default and pro
+- **THEN** each profile can save its own exact available model/thinking choice while both use the agent's shared skills and instructions

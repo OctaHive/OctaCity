@@ -172,13 +172,13 @@ impl<
     )
     .map_err(|_| invalid())?;
     let mut skills = BTreeMap::new();
-    for (alias, reference) in &profile.definition().skills {
+    for (alias, reference) in role.effective_skills(&profile).map_err(|_| invalid())? {
       let imported = self
         .store
-        .project_skill_import(selected.project_id, reference)
+        .project_skill_import(selected.project_id, &reference)
         .await?
         .ok_or_else(invalid)?;
-      skills.insert(alias.clone(), imported.intent.bundle);
+      skills.insert(alias, imported.intent.bundle);
     }
     let package = FactoryRoleExecutionPackage::new(FactoryRoleExecutionPackageInput {
       project_rules: rules,

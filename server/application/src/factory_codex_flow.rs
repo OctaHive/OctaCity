@@ -692,7 +692,12 @@ pub(crate) fn render_role_prompt(
     }
   }
   if let Some(role) = role {
-    for alias in role.profile.definition().skills.keys() {
+    for alias in role
+      .role
+      .effective_skills(role.profile)
+      .map_err(|_| CodexCompilationError::NodeBindings)?
+      .keys()
+    {
       layered.push_str(&format!(
         "Selected retained skill (read only): {PROTECTED_INPUT_ROOT}/{}/{}/SKILL.md\n",
         crate::factory_role_invocation::FACTORY_ROLE_SKILL_DIRECTORY,

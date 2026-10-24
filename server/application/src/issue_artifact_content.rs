@@ -3,7 +3,7 @@ use super::*;
 /// Existing retained Artifact reader download ceiling, shared with HTTP documentation.
 pub use octacity_artifact_store::MAX_ARTIFACT_READ_BYTES as MAX_ISSUE_ARTIFACT_DOWNLOAD_BYTES;
 /// Hard encoded preview ceiling; raw downloads retain the existing reader bound.
-pub const MAX_ISSUE_ARTIFACT_PREVIEW_BYTES: u64 = 64 * 1024;
+pub const MAX_ISSUE_ARTIFACT_PREVIEW_BYTES: u64 = crate::raster_preview::MAX_RASTER_BYTES;
 /// Explicit safe expansion mode; there is no arbitrary URL or executable preview mode.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -156,29 +156,7 @@ fn safe_preview(media_type: &str, bytes: Vec<u8>) -> Result<IssueArtifactContent
       })
     }
     "image/png" | "image/jpeg" | "image/webp" => {
-      let format = match media_type {
-        "image/png" => image::ImageFormat::Png,
-        "image/jpeg" => image::ImageFormat::Jpeg,
-        _ => image::ImageFormat::WebP,
-      };
-      if image::guess_format(&bytes).ok() != Some(format) {
-        return Err(ApplicationError::unavailable());
-      }
-      let mut reader = image::ImageReader::with_format(std::io::Cursor::new(bytes), format);
-      let mut limits = image::Limits::default();
-      limits.max_image_width = Some(MAX_ISSUE_ARTIFACT_PREVIEW_DIMENSION);
-      limits.max_image_height = Some(MAX_ISSUE_ARTIFACT_PREVIEW_DIMENSION);
-      limits.max_alloc = Some(MAX_ISSUE_ARTIFACT_PREVIEW_ALLOC_BYTES);
-      reader.limits(limits);
-      let decoded = reader.decode().map_err(|_| ApplicationError::unavailable())?;
-      let mut output = std::io::Cursor::new(Vec::new());
-      decoded
-        .write_to(&mut output, image::ImageFormat::Png)
-        .map_err(|_| ApplicationError::unavailable())?;
-      let bytes = output.into_inner();
-      if bytes.len() as u64 > MAX_ISSUE_ARTIFACT_PREVIEW_BYTES {
-        return Err(ApplicationError::unavailable());
-      }
+      let bytes = crate::raster_preview::png(media_type, bytes)?;
       Ok(IssueArtifactContent {
         media_type: "image/png".into(),
         bytes,
@@ -188,6 +166,6 @@ fn safe_preview(media_type: &str, bytes: Vec<u8>) -> Result<IssueArtifactContent
   }
 }
 /// Strict decoded raster dimension ceiling.
-pub const MAX_ISSUE_ARTIFACT_PREVIEW_DIMENSION: u32 = 4096;
+pub const MAX_ISSUE_ARTIFACT_PREVIEW_DIMENSION: u32 = crate::raster_preview::MAX_RASTER_DIMENSION;
 /// Bounded raster decoder allocation budget.
-pub const MAX_ISSUE_ARTIFACT_PREVIEW_ALLOC_BYTES: u64 = 64 * 1024 * 1024;
+pub const MAX_ISSUE_ARTIFACT_PREVIEW_ALLOC_BYTES: u64 = crate::raster_preview::MAX_RASTER_ALLOC_BYTES;

@@ -7,6 +7,44 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let text = || json!({"type":"string","maxLength":b.text_bytes});
   let reference = || schema_ref("FactoryImmutableReferenceResource");
   let digest = || schema_ref("FactoryDigest");
+  schemas.insert(
+    "ProjectSkillDetails".into(),
+    object(
+      [
+        (
+          "bundle",
+          object(
+            [
+              ("reference", reference()),
+              (
+                "files",
+                json!({"type":"object", "additionalProperties":schema_ref("FactoryArtifactReference"),
+                  "maxProperties":b.skill_files, "propertyNames":{"type":"string", "minLength":1, "maxLength":b.skill_path_bytes}}),
+              ),
+            ],
+            &["reference", "files"],
+          ),
+        ),
+        (
+          "file",
+          nullable(object(
+            [
+              ("path", non_empty_string()),
+              ("size_bytes", non_negative_integer()),
+              (
+                "text",
+                nullable(
+                  json!({"type":"string", "maxLength":octacity_server_application::MAX_PROJECT_SKILL_PREVIEW_BYTES}),
+                ),
+              ),
+            ],
+            &["path", "size_bytes", "text"],
+          )),
+        ),
+      ],
+      &["bundle", "file"],
+    ),
+  );
   let purpose = || json!({"type":"string","enum":["model","evaluator","source","delivery"]});
   let instruction = json!({"type":"string","maxLength":b.instruction_bytes});
   schemas.insert("FactoryInstructions".into(),json!({"oneOf":[instruction,bounded_array(instruction.clone(),b.role_entries)],"x-max-utf8-bytes":b.instruction_bytes}));
@@ -29,7 +67,13 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       ("template", nullable(reference())),
       ("name", text()),
       ("instructions", schema_ref("FactoryInstructions")),
+      ("skills", bounded_map(reference(), b.role_entries)),
       ("icon", nullable(key())),
+      (
+        "avatar",
+        nullable(json!({"type":"string", "maxLength":b.role_avatar_bytes,
+        "pattern":"^data:image/png;base64,[A-Za-z0-9+/]+={0,2}$"})),
+      ),
       ("description", text()),
       ("concurrency_limit", nullable(bounded_integer(1, u32::MAX.into()))),
     ],

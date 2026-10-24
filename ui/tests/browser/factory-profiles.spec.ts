@@ -9,6 +9,67 @@ import { enMessages } from '../../src/app/presentation/messages.en';
 import { ruMessages } from '../../src/app/presentation/messages.ru';
 
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
+test('AI-agent avatar upload is previewed and retained with its identity and instructions', async ({
+  page,
+}) => {
+  await installOperatorFixture(page);
+  const { role } = factoryRoleFixture();
+  const owner = role.reference.project_id;
+  let published: unknown;
+  await page.route('**/api/v1/projects/*/factory-**', async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith('/factory-roles/validate')) {
+      await route.fulfill({
+        json: { reference: role.reference, definition: route.request().postDataJSON().definition },
+      });
+    } else if (path.endsWith('/factory-role-publications')) {
+      published = route.request().postDataJSON();
+      await route.fulfill({
+        json: { disposition: 'applied', role, profiles: [], published_at: 100 },
+      });
+    } else await route.fulfill({ json: { items: [], total: 0, next_cursor: null } });
+  });
+  await page.goto(`/factory?project_id=${owner}`);
+  await page.getByRole('button', { name: 'AI agents', exact: true }).click();
+  await page.getByRole('button', { name: 'Create AI agent', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Agent name', exact: true }).fill('Reviewer');
+  await page
+    .getByRole('textbox', { name: 'Description', exact: true })
+    .fill('Checks the implementation');
+  await page
+    .getByRole('textbox', { name: 'Shared instruction 1', exact: true })
+    .fill('Review the change.');
+  await page.getByLabel('Avatar', { exact: true }).setInputFiles({
+    name: 'avatar.png',
+    mimeType: 'image/png',
+    buffer: Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNgaPj/HwAEggJ/59habAAAAABJRU5ErkJggg==',
+      'base64',
+    ),
+  });
+  const preview = page.getByRole('img', { name: 'Agent avatar', exact: true });
+  await expect(preview).toBeVisible();
+  await expect
+    .poll(() => preview.evaluate((image: HTMLImageElement) => image.naturalWidth))
+    .toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Review AI agent', exact: true }).click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Confirm publish', exact: true })
+    .click();
+  await expect(page.getByRole('dialog').getByText('Immutable version published.')).toBeVisible();
+  expect(published).toMatchObject({
+    role: {
+      definition: {
+        name: 'Reviewer',
+        description: 'Checks the implementation',
+        instructions: ['Review the change.'],
+        avatar: expect.stringMatching(/^data:image\/png;base64,/),
+      },
+    },
+    profiles: [],
+  });
+});
 async function preferences(page: Page, language: string) {
   await page.addInitScript(
     (language) =>
@@ -32,7 +93,7 @@ async function preferences(page: Page, language: string) {
 }
 for (const language of ['en', 'ru'] as const) {
   const m = language === 'en' ? enMessages : ruMessages;
-  test(`${language}: AI-agent profile authoring imports an exact skill in the open draft`, async ({
+  test(`${language}: AI-agent authoring imports a shared skill in the open draft`, async ({
     page,
   }) => {
     await installOperatorFixture(page);
@@ -75,11 +136,8 @@ for (const language of ['en', 'ru'] as const) {
         body = profile;
       else if (path === `${base}/factory-profile-capabilities`) body = pageOf([choice]);
       else if (path.startsWith(`${base}/factory-profile-capabilities/`)) body = capability;
-      else if (path === `${base}/factory-role-profiles/validate`)
-        body = {
-          profile: { ...profile, definition: route.request().postDataJSON().definition },
-          incompatibility: null,
-        };
+      else if (path === `${base}/factory-roles/validate`)
+        body = { ...role, definition: route.request().postDataJSON().definition };
       else if (path === `${base}/factory-skills`) {
         const request = route.request().postDataJSON();
         expect(request.files.map((item: { path: string }) => item.path)).toEqual(['SKILL.md']);
@@ -89,7 +147,7 @@ for (const language of ['en', 'ru'] as const) {
         };
       } else if (path === `${base}/factory-role-publications`) {
         published = route.request().postDataJSON();
-        body = { disposition: 'applied', role: null, profiles: [profile], published_at: 100 };
+        body = { disposition: 'applied', role, profiles: [], published_at: 100 };
       } else return route.fallback();
       await route.fulfill({ json: body });
     });
@@ -100,10 +158,9 @@ for (const language of ['en', 'ru'] as const) {
     ).toHaveCount(0);
     await page.getByRole('button', { name: 'Code specialist', exact: true }).click();
     await expect(page.getByRole('img', { name: 'bot', exact: true })).toBeVisible();
-    await page.getByRole('button', { name: 'default', exact: true }).click();
-    await page.getByRole('button', { name: m['factory.editProfile'] }).click();
-    const name = page.getByRole('textbox', { name: m['factory.profileName'], exact: true });
-    await name.fill('private profile draft');
+    await page.getByRole('button', { name: m['factory.editAgent'] }).click();
+    const name = page.getByRole('textbox', { name: m['factory.agentName'], exact: true });
+    await name.fill('private agent draft');
     await page
       .getByLabel(m['factory.importFolder'], { exact: true })
       .setInputFiles('tests/fixtures/skill-folder');
@@ -111,34 +168,33 @@ for (const language of ['en', 'ru'] as const) {
     const dialog = page.getByRole('dialog');
     await expect(dialog.getByRole('button', { name: m['factory.confirmImport'] })).toBeFocused();
     await page.keyboard.press('Escape');
-    await expect(name).toHaveValue('private profile draft');
+    await expect(name).toHaveValue('private agent draft');
     await expect(page.getByRole('button', { name: m['factory.reviewImport'] })).toBeFocused();
     await page.keyboard.press('Enter');
     await page.keyboard.press('Enter');
     await expect(dialog.getByText(m['factory.skillImported'])).toBeVisible();
     await dialog.getByRole('button', { name: m['common.close'], exact: true }).click();
     await page.getByRole('checkbox', { name: /skill-folder.*v1/ }).check();
-    await page.getByRole('button', { name: m['factory.reviewProfile'] }).click();
+    await page.getByRole('button', { name: m['factory.reviewAgent'] }).click();
     await dialog.getByRole('button', { name: m['factory.confirmPublish'] }).click();
     await expect(dialog.getByText(m['factory.published'])).toBeVisible();
     expect(published).toMatchObject({
-      profiles: [
-        {
-          id: profile.reference.id,
-          expected_current_version: 1,
-          definition: {
-            name: 'private profile draft',
-            skills: {
-              'skill-folder': { identity: 'skill-folder', version: 'v1', digest: 'a'.repeat(64) },
-            },
+      role: {
+        id: role.reference.id,
+        expected_current_version: 1,
+        definition: {
+          name: 'private agent draft',
+          skills: {
+            'skill-folder': { identity: 'skill-folder', version: 'v1', digest: 'a'.repeat(64) },
           },
         },
-      ],
+      },
+      profiles: [],
     });
     expect(page.url()).not.toContain('private');
     expect(
       await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage)),
-    ).not.toContain('private profile draft');
+    ).not.toContain('private agent draft');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );

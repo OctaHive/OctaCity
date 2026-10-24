@@ -832,3 +832,32 @@ ownership. Dedicated authorized content reads remain the authoring boundary.
 scalar spelling. It is null without the annotation. The projection uses the
 retained exact profile, so catalog replacement or unavailability cannot change
 historical reasoning metadata; other model parameters are never traversed.
+
+### Shared AI-agent skills and avatar authoring
+
+The AI-agent Role owns its uploaded raster avatar, name, description, shared
+instructions and exact shared skill selections. Every profile pinned to that Role
+version uses the shared skill set through the existing execution-package builder,
+verified protected-input transfer and prompt renderer. New profile editors do not
+copy or separately edit these selections. Retained legacy profile additions remain
+readable; conflicting shared/legacy aliases are rejected. As with instructions,
+changes publish a new Role version and profiles adopt it explicitly; retained Runs
+keep their original content.
+
+Import a folder with root `SKILL.md` in the agent editor. After import, select the
+exact version and use View skill to inspect its retained files without discarding
+the draft. Dedicated Project-authorized inventory/file reads reuse the import
+record and object reader, verify file integrity, and require Artifact download
+authority for content. Only bounded UTF-8 is shown inline as inert text.
+
+The avatar is a small PNG snapshot in existing bounded Role metadata. Console
+normalizes PNG/JPEG/WebP uploads; publication decodes the complete raster through
+the shared safe-preview mechanism. No remote image URL, extra file store,
+provider call or execution grant is introduced.
+
+The demonstration `tools/factory-stand` currently declares neither Codex execution
+profiles nor Project role-profile capabilities. An empty Runtime/Model list means
+missing execution configuration. Agent identity/instructions/shared skills remain
+authorable. Configuring supported provider/runtime access and available models
+from Console is planned in section 10 of `add-factory-role-profiles`; existing
+server-installed capability declarations remain the current setup path.

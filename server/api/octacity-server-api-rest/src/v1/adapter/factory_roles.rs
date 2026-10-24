@@ -10,7 +10,7 @@ use octacity_server_application::{
 use octacity_server_application::{
   GetFactoryRoleProfileCapabilityQuery, ListFactoryRoleProfileCapabilitiesQuery, ValidateFactoryRoleProfileQuery,
 };
-use octacity_server_application::{ImportProjectSkill, ListProjectSkillsQuery};
+use octacity_server_application::{GetProjectSkillQuery, ImportProjectSkill, ListProjectSkillsQuery};
 /// Optional AI-agent authoring, independent of worker enrollment and execution providers.
 pub struct FactoryRoleManagementApplication {
   capabilities:
@@ -20,6 +20,7 @@ pub struct FactoryRoleManagementApplication {
     Arc<dyn AuthorizedManagementQueryHandler<ValidateFactoryRoleProfileQuery, Error = ApplicationError>>,
   import_skill: Option<Arc<dyn AuthorizedManagementCommandHandler<ImportProjectSkill, Error = ApplicationError>>>,
   skills: Option<Arc<dyn AuthorizedManagementQueryHandler<ListProjectSkillsQuery, Error = ApplicationError>>>,
+  skill: Option<Arc<dyn AuthorizedManagementQueryHandler<GetProjectSkillQuery, Error = ApplicationError>>>,
   copy: Arc<dyn AuthorizedManagementCommandHandler<CopyFactoryRoleTemplateCommand, Error = ApplicationError>>,
   validate_role: Arc<dyn AuthorizedManagementQueryHandler<ValidateFactoryRoleQuery, Error = ApplicationError>>,
   templates: Arc<dyn AuthorizedManagementQueryHandler<ListFactoryRoleTemplatesQuery, Error = ApplicationError>>,
@@ -35,9 +36,12 @@ impl FactoryRoleManagementApplication {
   pub fn with_skills<C, Q>(mut self, commands: Arc<C>, queries: Arc<Q>) -> Self
   where
     C: AuthorizedManagementCommandHandler<ImportProjectSkill, Error = ApplicationError> + 'static,
-    Q: AuthorizedManagementQueryHandler<ListProjectSkillsQuery, Error = ApplicationError> + 'static,
+    Q: AuthorizedManagementQueryHandler<ListProjectSkillsQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<GetProjectSkillQuery, Error = ApplicationError>
+      + 'static,
   {
     self.import_skill = Some(commands);
+    self.skill = Some(queries.clone());
     self.skills = Some(queries);
     self
   }
@@ -65,6 +69,7 @@ impl FactoryRoleManagementApplication {
       validate_profile: queries.clone(),
       import_skill: None,
       skills: None,
+      skill: None,
       copy: commands.clone(),
       validate_role: queries.clone(),
       templates: queries.clone(),
@@ -340,6 +345,30 @@ pub(super) async fn skills(
     .map_err(|e| invalid_input(e, &id))?;
   let endpoint = endpoints(&app, &id)?
     .skills
+    .as_ref()
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?;
+  read(endpoint, &context, query, &id).await
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct SkillParameters {
+  digest: String,
+  path: Option<String>,
+}
+pub(super) async fn skill(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, identity, version)): Path<(String, String, String)>,
+  parameters: Result<Query<SkillParameters>, QueryRejection>,
+) -> Result<axum::response::Response, ApiError> {
+  let Query(p) = parameters.map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
+  let query = app
+    .inputs
+    .get_project_skill(&project, &identity, &version, &p.digest, p.path.as_deref())
+    .map_err(|e| invalid_input(e, &id))?;
+  let endpoint = endpoints(&app, &id)?
+    .skill
     .as_ref()
     .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?;
   read(endpoint, &context, query, &id).await

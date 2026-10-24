@@ -493,6 +493,8 @@ async fn prepared_role_source(
       FactoryRoleId::generate(),
       work.subject().project_id(),
       FactoryRoleDefinition {
+        avatar: None,
+        skills: Default::default(),
         name: FactoryText::new("Observer").unwrap(),
         instructions: "Apply Project rules".into(),
         template: None,

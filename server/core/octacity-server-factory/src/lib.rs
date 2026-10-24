@@ -89,7 +89,9 @@ mod candidate_deliverable_tests;
 #[cfg(test)]
 mod protected_test_tests;
 mod review_plan;
+mod role_avatar;
 mod role_profile;
+pub use role_avatar::{FactoryRoleAvatar, MAX_FACTORY_ROLE_AVATAR_BYTES};
 mod role_profile_capability;
 mod role_profile_execution;
 mod role_profile_instructions;

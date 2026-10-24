@@ -93,10 +93,16 @@ function CopyDraft({
         {t('factory.discardDraft')}
       </button>
       <fieldset disabled={busy || !!review}>
-        <AgentFields value={role} onChange={setRole} />
+        <AgentFields
+          api={api}
+          projectId={project}
+          value={role}
+          onChange={setRole}
+          onPendingChange={setBusy}
+        />
         <PagedExplorerBranch
           query={capabilities}
-          empty={t('factory.noChoices')}
+          empty={t('factory.noProfileRuntimes')}
           labels={catalogLabels(t('factory.profileRuntime'))}
         >
           {() => null}
@@ -106,6 +112,7 @@ function CopyDraft({
             <legend>{alias}</legend>
             <SelectMenu
               ariaLabel={`${t('factory.profileRuntime')} · ${alias}`}
+              disabled={choices.length === 0}
               value={aliases[alias] ?? ''}
               options={[
                 { value: '', label: t('factory.none') },
@@ -127,6 +134,7 @@ function CopyDraft({
                       definition: {
                         ...structuredClone(capability.definition),
                         ...seed,
+                        skills: {},
                         ...(current[alias]
                           ? {
                               instructions: current[alias].definition.instructions,

@@ -12,6 +12,7 @@ import { ProfileEditor } from './ProfileEditor';
 import { InstructionText } from './InstructionFields';
 import { catalogLabels as labels } from './catalogLabels';
 import { AgentEditor } from './AgentEditor';
+import { SkillReferences } from './SkillContents';
 
 type Reference = components['schemas']['FactoryRoleReference'];
 export function AiAgents({ api, projectId }: { api: FactoryRolesApi; projectId: string }) {
@@ -139,11 +140,16 @@ function AgentDetails({ api, reference }: { api: FactoryRolesApi; reference: Ref
         <ProfileEditor api={api} role={role.data} onDiscard={() => setCreating(false)} />
       ) : null}
       <h3>
-        <AgentIcon name={role.data.definition.icon} /> {role.data.definition.name} · v
-        {reference.version}
+        <AgentIcon name={role.data.definition.icon} avatar={role.data.definition.avatar} />{' '}
+        {role.data.definition.name} · v{reference.version}
       </h3>
       <p>{role.data.definition.description}</p>
       <InstructionText value={role.data.definition.instructions} />
+      <SkillReferences
+        api={api}
+        project={reference.project_id}
+        skills={role.data.definition.skills ?? {}}
+      />
       <PagedExplorerBranch
         query={profiles}
         labels={labels(t('factory.profiles'))}

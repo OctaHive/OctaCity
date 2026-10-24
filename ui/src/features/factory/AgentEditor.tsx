@@ -66,7 +66,13 @@ export function AgentEditor({
         {t('factory.discardDraft')}
       </button>
       <fieldset disabled={pending || review !== null}>
-        <AgentFields value={definition} onChange={setDefinition} />
+        <AgentFields
+          api={api}
+          projectId={projectId}
+          value={definition}
+          onChange={setDefinition}
+          onPendingChange={setPending}
+        />
         <button
           ref={reviewButtonRef}
           type="button"

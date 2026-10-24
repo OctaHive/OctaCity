@@ -1832,6 +1832,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "validate_factory_role_profile",
       "import_project_skill",
       "list_project_skills",
+      "get_project_skill",
       "select_factory_profile",
     ]
   );
