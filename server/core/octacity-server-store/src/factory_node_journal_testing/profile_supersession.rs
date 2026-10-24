@@ -108,6 +108,39 @@ pub async fn verify_factory_profile_supersession<S: FactoryRunStore + FactoryRun
     receipts.push((request, accepted));
     previous = after;
   }
+  let page = store
+    .list_factory_run_diagnostics(
+      crate::ListFactoryRunDiagnostics::new(run, crate::FactoryRunDiagnosticKind::ProfileSelection, None, 1).unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(page.items.len(), 1);
+  let next = page.next.expect("three retained revisions require continuation");
+  let rest = store
+    .list_factory_run_diagnostics(
+      crate::ListFactoryRunDiagnostics::new(run, crate::FactoryRunDiagnosticKind::ProfileSelection, Some(next), 100)
+        .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert_eq!(rest.items.len(), 2);
+  assert!(rest.next.is_none());
+  let mut actual = page
+    .items
+    .into_iter()
+    .chain(rest.items)
+    .map(|row| match row {
+      crate::FactoryRunDiagnosticRecord::ProfileSelection(id) => id,
+      _ => panic!("selection page mixed technical collections"),
+    })
+    .collect::<Vec<_>>();
+  actual.sort();
+  actual.dedup();
+  assert_eq!(
+    actual.len(),
+    3,
+    "diagnostic pagination retains automatic and both manual choices"
+  );
   for (request, receipt) in receipts {
     let replay = store.apply_factory_run_control(request).await.unwrap();
     assert_eq!(replay.disposition, MutationDisposition::Replayed);

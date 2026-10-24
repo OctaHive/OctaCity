@@ -12,6 +12,255 @@ use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::SelectFactoryProfileCommand,
+    "POST",
+    "/api/v1/factory-runs/{factory_run_id}/profile-selections/{input_digest}",
+    "selectFactoryProfile",
+    "Factory",
+    "Record an exact preconditioned selection intent; only the fenced owner dispatches execution",
+    Some("SelectFactoryProfileRequest"),
+    "FactoryRunControlResponse",
+    "200",
+    true,
+    true
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryRoleProfileCapabilitiesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-profile-capabilities",
+    "listFactoryProfileCapabilities",
+    "Factory",
+    "Read and qualify exact installed settings without provider or credential I/O",
+    None,
+    "FactoryRoleProfileChoicePage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListFactoryRoleProfileCapabilitiesQuery>()
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryRoleProfileCapabilityQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-profile-capabilities/{alias}",
+    "getFactoryProfileCapability",
+    "Factory",
+    "Read and qualify exact installed settings without provider or credential I/O",
+    None,
+    "FactoryRoleProfileCapabilityDetails",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ValidateFactoryRoleProfileQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-role-profiles/validate",
+    "validateFactoryRoleProfile",
+    "Factory",
+    "Read and qualify exact installed settings without provider or credential I/O",
+    Some("ValidateFactoryRoleProfileRequest"),
+    "FactoryRoleProfileValidation",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ImportProjectSkill,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-skills",
+    "importProjectSkill",
+    "Factory",
+    "Import or list exact Project-owned skill bundles through retained inputs",
+    Some("ImportProjectSkillRequest"),
+    "ProjectSkillImportReceipt",
+    "200",
+    true,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListProjectSkillsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-skills",
+    "listProjectSkills",
+    "Factory",
+    "Import or list exact Project-owned skill bundles through retained inputs",
+    None,
+    "ProjectSkillCatalogPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListProjectSkillsQuery>()
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryRoleTemplatesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-role-templates",
+    "listFactoryRoleTemplates",
+    "Factory",
+    "Authorize exact Project role/template authoring",
+    None,
+    "FactoryRoleTemplatePage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListFactoryRoleTemplatesQuery>()
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryRoleTemplateQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-role-templates/{identity}/versions/{version}",
+    "getFactoryRoleTemplate",
+    "Factory",
+    "Authorize exact Project role/template authoring",
+    None,
+    "FactoryRoleTemplate",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ValidateFactoryRoleQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-roles/validate",
+    "validateFactoryRole",
+    "Factory",
+    "Authorize exact Project role/template authoring",
+    Some("ValidateFactoryRoleRequest"),
+    "FactoryRole",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::CopyFactoryRoleTemplateCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-role-template-copies",
+    "copyFactoryRoleTemplate",
+    "Factory",
+    "Authorize exact Project role/template authoring",
+    Some("CopyFactoryRoleTemplateRequest"),
+    "FactoryRoleProfilesPublication",
+    "200",
+    true,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryRolesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-roles",
+    "listFactoryRoles",
+    "Factory",
+    "Read authorized role/profile catalog content",
+    None,
+    "FactoryRolePage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListFactoryRolesQuery>()
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryRoleProfilesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-roles/{role_id}/profiles",
+    "listFactoryRoleProfiles",
+    "Factory",
+    "Read authorized role/profile catalog content",
+    None,
+    "FactoryRoleProfilePage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListFactoryRoleProfilesQuery>()
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryRoleQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-roles/{role_id}/versions/{version}",
+    "getFactoryRoleVersion",
+    "Factory",
+    "Read authorized role/profile catalog content",
+    None,
+    "FactoryRole",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryRoleProfileQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-role-profiles/{profile_id}",
+    "getFactoryRoleProfile",
+    "Factory",
+    "Read authorized role/profile catalog content",
+    None,
+    "FactoryRoleProfile",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryRoleProfileQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-role-profiles/{profile_id}/versions/{version}",
+    "getFactoryRoleProfileVersion",
+    "Factory",
+    "Read authorized role/profile catalog content",
+    None,
+    "FactoryRoleProfile",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::PublishFactoryRoleProfilesCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-role-publications",
+    "publishFactoryRoleProfiles",
+    "Factory",
+    "Publish a reviewed atomic role/profile set with per-item current-version preconditions",
+    Some("PublishFactoryRoleProfilesRequest"),
+    "FactoryRoleProfilesPublication",
+    "200",
+    true,
+    false
+  )
+  .with_precondition_failed_response()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryRoleQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-roles/{role_id}",
+    "getFactoryRole",
+    "Factory",
+    "Read authorized current role content",
+    None,
+    "FactoryRole",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::GetFactoryNodeActionQuery,
     "GET",
     "/api/v1/factory-runs/{factory_run_id}/nodes/{node_attempt_id}/action",
@@ -254,7 +503,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "201",
     true,
     false
-  ),
+  )
+  .with_no_store_response(),
   operation!(
     ReplaceFactoryFlowDefinitionCommand,
     "POST",
@@ -268,6 +518,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     true,
     true
   )
+  .with_no_store_response()
   .with_precondition_failed_response(),
   operation!(
     GetFactoryFlowDefinitionQuery,
@@ -281,7 +532,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
-  ),
+  )
+  .with_no_store_response(),
   operation!(
     GetFactoryFlowDefinitionQuery,
     "GET",
@@ -294,7 +546,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
-  ),
+  )
+  .with_no_store_response(),
   operation!(
     ListProjectFactoryFlowDefinitionsQuery,
     "GET",
@@ -308,6 +561,7 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     false,
     false
   )
+  .with_no_store_response()
   .with_parameters(ParameterProfile::CurrentDefinitionList)
   .with_visibility::<ListProjectFactoryFlowDefinitionsQuery>(),
   operation!(
@@ -322,7 +576,8 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
     "200",
     false,
     false
-  ),
+  )
+  .with_no_store_response(),
   operation!(
     ValidateFactoryConfigurationQuery,
     "POST",

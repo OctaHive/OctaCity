@@ -257,6 +257,12 @@ fn profile_selection_runs_through_the_common_fenced_journal_before_execution() {
     let request = plan
       .prepare_profile_selection(&input, &admission.flow, &pending)
       .unwrap();
+    let expected_policy = selector_binding(
+      plan.clone(),
+      input.subject().project_id(),
+      Arc::new(CountingProvider::successful(&request, "specialized")),
+    )
+    .selection_policy;
     let provider = Arc::new(CountingProvider::successful(&request, "specialized"));
     let (store, claim) = crate::factory_node_tests::profile_selection::start(admission.clone(), ownership).await;
     let clock = crate::factory_node_test_support::clock();
@@ -304,6 +310,28 @@ fn profile_selection_runs_through_the_common_fenced_journal_before_execution() {
       .unwrap();
     assert_eq!(selected.candidate(), Some(&key("specialized")));
     assert_eq!(selected.signal().unwrap().request(), &request);
+    let history = crate::factory_profile_diagnostics_tests::safe_history(store.clone(), input.factory_run_id()).await;
+    let current = history["items"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|row| row["record"]["superseded"] == false)
+      .unwrap();
+    assert_eq!(current["record"]["method"], "decision_api");
+    assert_eq!(
+      current["record"]["policy"],
+      serde_json::to_value(expected_policy).unwrap()
+    );
+    assert_eq!(
+      current["record"]["signal"]["receipt_digest"],
+      selected
+        .signal()
+        .unwrap()
+        .receipt()
+        .unwrap()
+        .receipt_digest()
+        .to_string()
+    );
     assert_eq!(provider.dispatches(), 1);
     assert_eq!(selected.signal().unwrap().receipt().unwrap().usage().tokens, 10);
     let usage = snapshot
@@ -446,6 +474,25 @@ fn a_failed_profile_receipt_reaches_manual_recovery_without_another_query() {
             "confidence" => DecisionSignalState::Completed,
             _ => DecisionSignalState::Unavailable,
           }
+        );
+      }
+      let history = crate::factory_profile_diagnostics_tests::safe_history(store.clone(), input.factory_run_id()).await;
+      let current = history["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["record"]["superseded"] == false)
+        .unwrap();
+      assert_eq!(current["record"]["recovery"], "manual_selection");
+      assert_eq!(current["record"]["method"], "decision_api");
+      assert_eq!(current["record"]["signal"]["unobservable"], scenario == "unknown");
+      if scenario == "confidence" {
+        assert_eq!(current["record"]["signal"]["consumption"], "Fallback");
+      }
+      if scenario != "unknown" {
+        assert_eq!(
+          current["record"]["signal"]["state"],
+          serde_json::to_value(selection.signal().unwrap().receipt().unwrap().state()).unwrap()
         );
       }
       let restarted = FactoryNodeRunner::new(

@@ -886,7 +886,7 @@ include its deterministic priority tuple. Treat them as opaque and keep the same
 Project, filters and policy for continuation. Concurrent newer inserts do not
 reappear on a later page. Empty visible pages return no continuation.
 
-Run diagnostic collections are `work`, `flow-runs`, `workflow-cycles`,
+Run diagnostic collections are `profile-selections`, `work`, `flow-runs`, `workflow-cycles`,
 `node-attempts`, `node-completions`, `node-stops`, `builds`, `calls`,
 `decision-signals`, `changesets`, `evidence`, `review-plans`, `assessments`,
 `decisions`, `budgets`, `escalations`, `delivery`, `promotion`, `reporting` and
@@ -1019,3 +1019,32 @@ Event bodies require an independent exact-sequence read. All three routes and
 the common Job-event reader return no-store. See
 [execution journal reads](issues.md#exact-execution-journal-reads) for bounds,
 current visibility checks, measurement availability and generated contracts.
+
+### Project AI-agent role/profile contracts
+
+The Factory Project API now includes role/profile current catalogs and exact
+version reads, exact release templates and independent copies, side-effect-free
+validation, installed compatible capability discovery, atomic
+`factory-role-publications`, and `factory-skills` import/catalog operations.
+These reuse existing Project View/Admin authorization and immutable publication;
+they are independent of enrolled CI/CD workers and Decision API installation.
+See [Factory operations](../operations/factory.md#project-roleprofile-http-authoring-and-safe-selection-history)
+for paths, request shapes, byte limits and replay/precondition semantics. OpenAPI
+is the authoritative bounded schema and authorization inventory.
+
+Manual Factory admission adds an optional `profile_overrides` array. The exact
+live choice endpoint is
+`POST /api/v1/factory-runs/{factory_run_id}/profile-selections/{input_digest}`
+with `profile`, a strong `If-Match` and `Idempotency-Key`. It returns the ordinary
+`FactoryRunControlResponse`, representing durable intent. Missing preconditions
+are 428 and stale/competing/post-commitment choices are 409. Replays reauthorize
+and retain the original receipt. Diagnostic `profile-selections` pages carry only
+safe history and current eligible references, never executable or provider content.
+Existing static admission/read contracts remain valid without role configuration.
+Skill import returns only the exact immutable reference in `bundle` and the
+original `published_at`, including on replay; `bundle` is directly usable as a
+skill catalog selection. Profile definitions may declare `thinking_parameter`,
+the installed-approved key of their existing scalar reasoning setting. Generic
+diagnostics expose only that setting's display text as `thinking_level`, never the
+remaining model parameters. Profiles without the optional annotation remain
+unchanged and report null thinking metadata.

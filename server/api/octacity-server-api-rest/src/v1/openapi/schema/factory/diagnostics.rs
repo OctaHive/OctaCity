@@ -237,17 +237,13 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let id = non_empty_string;
   let digest = || schema_ref("FactoryDigest");
   let reference = || schema_ref("FactoryImmutableReferenceResource");
-  let disposition =
-    || json!({"oneOf":[{"type":"string","enum":["Allow","Deny","Escalate"]}, object([("Route",key())], &["Route"])]});
+  let disposition = || json!({"oneOf":[{"type":"string","enum":["Allow","Deny","Escalate"]}, object([("Route",key())], &["Route"]),object([("Profile",key())], &["Profile"])]});
   let consumption = object(
     [
       ("baseline", disposition()),
       ("recommendation", nullable(disposition())),
       ("final_disposition", disposition()),
-      (
-        "kind",
-        json!({"type":"string","enum":["Shadow","Advisory","BoundedControl","Fallback"]}),
-      ),
+      ("kind", schema_ref("FactorySignalConsumptionKind")),
     ],
     &["baseline", "recommendation", "final_disposition", "kind"],
   );
@@ -305,7 +301,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         (
           "items",
           bounded_array(
-            json!({"oneOf": [object(
+            json!({"oneOf": [tagged("kind","profile_selection",[("record",schema_ref("FactoryProfileSelectionProjection"))], &["record"]),object(
               [
                 ("kind", json!({"type":"string","const":"flow_run"})),
                 (

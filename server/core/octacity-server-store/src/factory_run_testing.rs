@@ -437,6 +437,12 @@ fn diagnostic_records(
   kind: FactoryRunDiagnosticKind,
 ) -> Box<dyn Iterator<Item = FactoryRunDiagnosticRecord> + '_> {
   match kind {
+    FactoryRunDiagnosticKind::ProfileSelection => Box::new(
+      stored
+        .profile_selections
+        .values()
+        .map(|row| FactoryRunDiagnosticRecord::ProfileSelection(row.digest().expect("verified selection identity"))),
+    ),
     FactoryRunDiagnosticKind::NodeStop => ordered_diagnostics(
       stored
         .node_stops

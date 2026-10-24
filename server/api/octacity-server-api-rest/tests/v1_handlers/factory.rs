@@ -898,6 +898,11 @@ impl ManagementCommandUseCase<octacity_server_application::AdmitManualFactoryWor
     command: octacity_server_application::AdmitManualFactoryWorkCommand,
   ) -> Result<octacity_server_application::FactoryAdmissionOutcome, Self::Error> {
     self.record("admit_manual_factory_work");
+    self
+      .factory_admission_overrides
+      .lock()
+      .unwrap()
+      .push(serde_json::to_value(&command.profile_overrides).unwrap());
     if !self.successful_workflow {
       return Err(ApplicationError::unavailable());
     }
@@ -1920,4 +1925,41 @@ async fn existing_flow_validation_forwards_exact_local_issue_action_without_prov
     *application.calls.lock().unwrap(),
     ["validate_local_issue_action", "validate_factory_flow_definition"]
   );
+}
+
+#[tokio::test]
+async fn manual_factory_admission_preserves_exact_optional_profile_overrides() {
+  let peer = Arc::new(RecordingApplication::successful_workflow());
+  let router =
+    management_router_with_application(|| true, recording_management_application(peer.clone(), peer.clone()));
+  let mut request = manual_work_request();
+  let overrides = serde_json::json!([{"stage":{"root":{"id":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa","version":1,"digest":"ab".repeat(32)},"calls":["nested_call"],"node":"implementation"},"profile":{"project_id":"11111111-1111-4111-8111-111111111111","id":"bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb","version":2,"digest":"cd".repeat(32)}}]);
+  request["profile_overrides"] = overrides.clone();
+  let path = "/api/v1/projects/11111111-1111-4111-8111-111111111111/factory-work";
+  let response = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      path,
+      "manual-override",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::CREATED);
+  assert_eq!(peer.factory_admission_overrides.lock().unwrap().as_slice(), [overrides]);
+  request["profile_overrides"][0]["stage"]["node"] = serde_json::json!("*");
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      path,
+      "invalid-override",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+  assert_eq!(peer.factory_admission_overrides.lock().unwrap().len(), 1);
 }

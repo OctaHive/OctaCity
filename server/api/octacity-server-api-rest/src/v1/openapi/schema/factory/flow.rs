@@ -129,6 +129,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("input_binding", nullable(schema_ref("FactoryFlowInputBinding"))),
         ("context_binding", nullable(schema_ref("FactoryFlowContextBinding"))),
         ("build", nullable(schema_ref("FactoryFlowBuildBinding"))),
+        (
+          "profile_selection",
+          nullable(schema_ref("FactoryProfileSelectionBinding")),
+        ),
         ("accepted_work_outcomes", bounded_array(key(), bounds.schema_entries)),
         ("max_execution_retries", non_negative_integer()),
       ],

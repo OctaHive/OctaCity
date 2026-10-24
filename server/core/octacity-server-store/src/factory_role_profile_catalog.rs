@@ -3,7 +3,7 @@ use crate::{MAX_CURRENT_DEFINITION_PAGE_SIZE, StoreError, StoreInputError, Store
 use octacity_server_factory::*;
 
 /// Visible current definitions in stable identity order.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleCatalogPage<I, T> {
   /// Count before continuation, restricted to the authorized owner.
   pub total: u64,
@@ -13,7 +13,7 @@ pub struct FactoryRoleCatalogPage<I, T> {
   pub next_cursor: Option<I>,
 }
 /// Safe current AI-agent metadata without instructions or execution settings.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleSummary {
   /// Exact current owned version.
   pub reference: FactoryRoleRef,
@@ -38,7 +38,7 @@ impl From<&FactoryRole> for FactoryRoleSummary {
   }
 }
 /// Safe current execution profile metadata; environment, argv and instructions are absent.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleProfileSummary {
   /// Exact current owned version.
   pub reference: FactoryRoleProfileRef,

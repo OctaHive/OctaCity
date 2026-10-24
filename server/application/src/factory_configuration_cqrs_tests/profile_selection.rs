@@ -48,6 +48,7 @@ fn selected_fixture(project: ProjectId) -> Fixture {
     build.result_tool = Some(verifier.clone());
     build.model_or_tool = exact(name, "v1", byte);
     let definition = FactoryRoleProfileDefinition {
+      thinking_parameter: None,
       name: FactoryText::new(name).unwrap(),
       instructions: "Private profile instructions".into(),
       template: None,

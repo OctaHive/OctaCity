@@ -11,6 +11,19 @@ pub fn factory_profile_selection_contract_fixture(
   })
 }
 
+/// Reuses the ordinary manual stage with caller-reviewed profile settings.
+pub fn factory_profile_selection_configured_contract_fixture(
+  configure: impl Fn(&mut FactoryRoleProfileDefinition),
+) -> (PublishedFactoryAdmission, FlowNodeInput, FactoryClaimOwnership) {
+  configured_selection_fixture(
+    FlowProfileSelectionPolicy::Manual { candidate: None },
+    FlowProfileSelectionFailure::ManualSelection,
+    None,
+    BudgetUsage::default(),
+    configure,
+  )
+}
+
 /// Reuses the same frozen stage contract with an explicitly configured selection policy.
 pub fn factory_profile_selection_policy_contract_fixture(
   policy: FlowProfileSelectionPolicy,
@@ -117,7 +130,20 @@ pub fn factory_profile_selection_capabilities(admitted: &AdmittedFlow) -> Factor
             key("parameters"),
             key("v1"),
             FlowValueSchema::Object {
-              fields: Default::default(),
+              fields: candidate
+                .profile
+                .definition()
+                .model_parameters
+                .iter()
+                .map(|(key, value)| {
+                  (
+                    key.clone(),
+                    FlowFieldSchema::required(FlowValueSchema::Enum {
+                      values: vec![value.clone()],
+                    }),
+                  )
+                })
+                .collect(),
             },
           )
           .unwrap(),
@@ -153,6 +179,16 @@ fn selection_fixture_with_budget(
   data: Option<(FlowDataSchema, serde_json::Value)>,
   allowance: BudgetUsage,
 ) -> (PublishedFactoryAdmission, FlowNodeInput, FactoryClaimOwnership) {
+  configured_selection_fixture(policy, failure, data, allowance, |_| {})
+}
+
+fn configured_selection_fixture(
+  policy: FlowProfileSelectionPolicy,
+  failure: FlowProfileSelectionFailure,
+  data: Option<(FlowDataSchema, serde_json::Value)>,
+  allowance: BudgetUsage,
+  configure: impl Fn(&mut FactoryRoleProfileDefinition),
+) -> (PublishedFactoryAdmission, FlowNodeInput, FactoryClaimOwnership) {
   let prior = factory_node_journal_contract_fixture();
   let work = prior.admission.work.clone();
   let project: ProjectId = work.subject().project_id();
@@ -180,7 +216,8 @@ fn selection_fixture_with_budget(
   let candidates: BTreeMap<_, _> = ["baseline", "advanced", "specialized"]
     .into_iter()
     .map(|name| {
-      let definition = FactoryRoleProfileDefinition {
+      let mut definition = FactoryRoleProfileDefinition {
+        thinking_parameter: None,
         name: FactoryText::new(name).unwrap(),
         instructions: "Private instructions".into(),
         template: None,
@@ -205,6 +242,7 @@ fn selection_fixture_with_budget(
         )
         .unwrap(),
       };
+      configure(&mut definition);
       (
         key(name),
         FlowProfileCandidate {

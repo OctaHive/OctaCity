@@ -16,7 +16,8 @@ pub struct FactoryRoleProfileCapability {
   pub local_permissions: LocalPermissionCeiling,
 }
 /// Safe incompatibility categories; no submitted values or private content.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum FactoryRoleProfileIncompatibility {
   /// Parameters are unsupported by the installed runtime/model schema.
   ModelParameters,
@@ -44,6 +45,9 @@ impl FactoryRoleProfileCapability {
     use FactoryRoleProfileIncompatibility as Failure;
     let definition = profile.definition();
     let ceiling = &self.ceiling;
+    if definition.thinking_parameter.is_some() && definition.thinking_parameter != ceiling.thinking_parameter {
+      return Err(Failure::ModelParameters);
+    }
     if definition.toolchain != ceiling.toolchain || definition.build_configuration != ceiling.build_configuration {
       return Err(Failure::Toolchain);
     }

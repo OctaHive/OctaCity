@@ -37,6 +37,11 @@ impl<S> FactoryOperatorHandlers<S> {
 trait OperatorIntent: Command<Outcome = FactoryRunControlCommandOutcome> {
   fn owning_run(&self) -> FactoryRunId;
 }
+impl OperatorIntent for crate::SelectFactoryProfileCommand {
+  fn owning_run(&self) -> FactoryRunId {
+    self.run_id
+  }
+}
 impl OperatorIntent for CancelFactoryRunCommand {
   fn owning_run(&self) -> FactoryRunId {
     self.run_id

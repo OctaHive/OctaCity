@@ -12,6 +12,8 @@ pub const MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE: u16 = octacity_server_store::MAX_FAC
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FactoryDiagnosticCollection {
+  /// Safe pre-dispatch choices and retained provenance.
+  ProfileSelections,
   /// Root and nested Flow executions.
   FlowRuns,
   /// Immutable cycle identities and causal predecessor links.
@@ -61,6 +63,7 @@ impl FactoryDiagnosticCollection {
   /// Stable path component and cursor scope.
   pub const fn as_str(self) -> &'static str {
     match self {
+      Self::ProfileSelections => "profile-selections",
       Self::FlowRuns => "flow-runs",
       Self::WorkflowCycles => "workflow-cycles",
       Self::NodeAttempts => "node-attempts",
@@ -87,6 +90,7 @@ impl FactoryDiagnosticCollection {
   }
   fn kind(self) -> FactoryRunDiagnosticKind {
     match self {
+      Self::ProfileSelections => FactoryRunDiagnosticKind::ProfileSelection,
       Self::FlowRuns => FactoryRunDiagnosticKind::FlowRun,
       Self::WorkflowCycles => FactoryRunDiagnosticKind::WorkflowCycle,
       Self::NodeAttempts => FactoryRunDiagnosticKind::NodeAttempt,
@@ -114,7 +118,8 @@ impl FactoryDiagnosticCollection {
     }
   }
   /// Closed values published in OpenAPI.
-  pub const ALL: [Self; 21] = [
+  pub const ALL: [Self; 22] = [
+    Self::ProfileSelections,
     Self::FlowRuns,
     Self::WorkflowCycles,
     Self::NodeAttempts,
@@ -142,6 +147,8 @@ impl FactoryDiagnosticCollection {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "record", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FactoryDiagnosticRecord {
+  /// Allowlisted selector history, never executable content or provider payloads.
+  ProfileSelection(Box<super::profile_selections::FactoryProfileSelectionProjection>),
   /// Exact identity, definition and parent-call correlation.
   FlowRun(octacity_server_factory::FlowRun),
   /// Exact cycle identity and causal predecessor.
@@ -503,11 +510,45 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
       .map_err(|_| ApplicationError::InvalidAuthorizationVisibility)?;
     self.visible_run_summary(context, query.run_id(), visibility).await?;
     let page = self.store.list_factory_run_diagnostics(query.page.clone()).await?;
-    let mut items: Vec<FactoryDiagnosticRecord> = page
-      .items
-      .into_iter()
-      .map(FactoryDiagnosticRecord::try_from)
-      .collect::<Result<_, _>>()?;
+    let selection_snapshot = if query.collection() == FactoryDiagnosticCollection::ProfileSelections {
+      Some(self.store.factory_run_snapshot(query.run_id()).await?)
+    } else {
+      None
+    };
+    let choices = if let Some(snapshot) = &selection_snapshot {
+      // An unavailable optional catalog removes actionability, not retained history.
+      crate::factory_profile_selection::current_choices(snapshot, self.profile_catalog.as_deref())
+        .await
+        .unwrap_or_default()
+    } else {
+      None
+    };
+    let mut items: Vec<FactoryDiagnosticRecord> = Vec::with_capacity(page.items.len());
+    for row in page.items {
+      items.push(match row {
+        FactoryRunDiagnosticRecord::ProfileSelection(id) => {
+          let snapshot = selection_snapshot.as_ref().ok_or_else(ApplicationError::invalid)?;
+          let selection = snapshot
+            .flow
+            .data
+            .profile_selections
+            .iter()
+            .find(|selection| selection.digest().ok() == Some(id))
+            .ok_or_else(ApplicationError::unavailable)?;
+          FactoryDiagnosticRecord::ProfileSelection(Box::new(
+            super::profile_selections::project(
+              selection,
+              snapshot,
+              choices.as_ref(),
+              self.profile_packages.as_deref(),
+              crate::FactoryExecutionClock::now(&crate::SystemFactoryExecutionClock)?,
+            )
+            .await?,
+          ))
+        }
+        row => FactoryDiagnosticRecord::try_from(row)?,
+      });
+    }
     if query.collection() == FactoryDiagnosticCollection::NodeAttempts {
       let snapshot = self.store.factory_run_snapshot(query.run_id()).await?;
       for item in &mut items {

@@ -6,6 +6,11 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
   let mut parameters = Vec::new();
   for name in [
     "project_id",
+    "role_id",
+    "profile_id",
+    "identity",
+    "alias",
+    "input_digest",
     "property_version",
     "workflow_id",
     "issue_id",
@@ -39,9 +44,10 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
         "name": name,
         "in": "path",
         "required": true,
-        "schema": if name == "review_id" { schema_ref("FactoryDigest") }
+        "schema": if matches!(name,"review_id" | "input_digest") { schema_ref("FactoryDigest") }
           else if name == "sequence" { positive_integer() }
           else if name == "property_version" { non_negative_integer() }
+          else if name == "version" && operation.operation_id == "getFactoryRoleTemplate" { json!({"type":"string","minLength":1,"maxLength":octacity_server_application::factory_configuration_document_bounds().key_bytes,"pattern":"^[a-z0-9][a-z0-9._-]*$"}) }
           else if name == "version" { positive_integer() }
           else if matches!(name, "workflow_id" | "issue_id" | "request_id" | "comment_id" | "work_id") { json!({"type":"string","format":"uuid"}) }
           else { non_empty_string() }
@@ -55,6 +61,9 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
   }
   if operation.path.contains("{collection}") {
     parameters.push(json!({"name":"collection","in":"path","required":true,"schema":{"type":"string","enum":octacity_server_application::FactoryDiagnosticCollection::ALL.into_iter().map(|kind| kind.as_str()).collect::<Vec<_>>()}}));
+  }
+  if operation.operation_id == "getFactoryRoleTemplate" {
+    parameters.push(json!({"name":"digest","in":"query","required":true,"schema":schema_ref("FactoryDigest")}));
   }
   match operation.parameter_profile {
     ParameterProfile::FactoryActionObservation => {

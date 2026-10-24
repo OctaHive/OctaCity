@@ -53,7 +53,7 @@ impl ManagementAuthorizationTarget for ListFactoryRoleTemplatesQuery {
   }
 }
 /// Safe seed metadata; full instructions require the dedicated exact detail query.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleTemplateSummary {
   /// Exact release identity/version/digest.
   pub reference: ImmutableReference,

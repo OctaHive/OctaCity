@@ -1,43 +1,13 @@
 use crate::*;
-use octacity_artifact_store::{ArtifactBytePublisher, ArtifactByteReader, ArtifactObject, ArtifactStoreError};
 use octacity_server_domain::{ArtifactId, ProjectId, Timestamp};
 use octacity_server_factory::{FactoryDigest, FactoryKey};
 use octacity_server_store::testing::InMemoryFactoryConfigurationStore;
 use std::{
   collections::BTreeMap,
-  sync::{
-    Arc, Mutex,
-    atomic::{AtomicBool, AtomicUsize, Ordering},
-  },
+  sync::{Arc, atomic::Ordering},
 };
 
-#[derive(Default)]
-pub(crate) struct Bytes(Mutex<BTreeMap<ArtifactId, Vec<u8>>>, AtomicBool, AtomicUsize);
-#[async_trait::async_trait]
-impl ArtifactBytePublisher for Bytes {
-  async fn publish_verified(&self, object: &ArtifactObject, bytes: Vec<u8>) -> Result<(), ArtifactStoreError> {
-    self.0.lock().unwrap().insert(object.artifact_id(), bytes);
-    if self.1.swap(false, Ordering::SeqCst) {
-      return Err(ArtifactStoreError::Backend {
-        operation: octacity_artifact_store::ArtifactStoreOperation::PublishVerified,
-      });
-    }
-    Ok(())
-  }
-}
-#[async_trait::async_trait]
-impl ArtifactByteReader for Bytes {
-  async fn read_published(&self, object: &ArtifactObject, _: u64) -> Result<Vec<u8>, ArtifactStoreError> {
-    self.2.fetch_add(1, Ordering::SeqCst);
-    self
-      .0
-      .lock()
-      .unwrap()
-      .get(&object.artifact_id())
-      .cloned()
-      .ok_or(ArtifactStoreError::NotFound)
-  }
-}
+pub(crate) use crate::factory_test_support::InMemoryArtifactBytes as Bytes;
 struct Clock;
 impl FactoryExecutionClock for Clock {
   fn now(&self) -> Result<Timestamp, ApplicationError> {

@@ -65,6 +65,14 @@ Each declaration contains:
 | `public_environment` | A bounded map from exact environment names to `FlowDataSchema` value contracts |
 | `enforcement` | The existing backend permission categories that this installation can enforce |
 
+The optional `ceiling.thinking_parameter` names the one entry in
+`model_parameters` whose scalar value is safe reasoning metadata. A profile may
+select that same key through its optional `thinking_parameter`; it must reference
+an existing parameter and pass the installed capability check. The value remains
+in `model_parameters` and participates in the ordinary profile digest. No provider
+parameter name is inferred. Profiles omitting the annotation keep their existing
+wire representation, digest and compatibility, and publish no thinking metadata.
+
 Public environment values must match their declared contracts; they cannot replace
 approved secret entries. Secret entries select only exact installed logical
 references. The argv vector must match the installed approved vector, and requested
@@ -154,8 +162,8 @@ identity. Missing or substituted content fails without an ambient/global fallbac
 The resulting unchanged `ProtectedInputManifestV3` uses the existing Artifact input
 transfer and Agent materializer, with no provider URL or new file backend. Import
 creates no Work, Build or executable grant. Installed capability qualification,
-REST transport (7.1) and Console folder selection/review (8.1) remain their
-respective boundaries.
+REST uses this same import owner (see the Project skill routes below); Console
+folder selection/review remains section 8.1.
 
 ### Role packages in ordinary Build compilation
 
@@ -343,7 +351,8 @@ records retain the exact input and profile with no automatic rule/recovery resul
 or added budget. Current capability validation still applies before execution.
 Existing Work and input bytes omit the optional fields when no override exists.
 
-REST/Console authoring remains in sections 7–8; admission cannot replace an
+REST admission accepts optional exact `profile_overrides`; Console authoring remains
+in section 8. Admission cannot replace an
 already dispatched invocation or authorize
 an otherwise forbidden restart, cycle or retry.
 
@@ -666,3 +675,71 @@ full Linux performance or Factory qualification from the push workflow alone.
 
 External ticket discovery/reporting and an Octa-local JEV task retain the
 [separate extension boundaries](../architecture/factory-extension-boundaries.md).
+
+### Project role/profile HTTP authoring and safe selection history
+
+All role/template/profile and skill routes are Project-scoped under
+`/api/v1/projects/{project_id}`. `factory-roles`, `factory-roles/{role_id}/profiles`,
+`factory-role-templates`, `factory-profile-capabilities` and `factory-skills` are
+bounded current catalogs using `limit` and opaque `after` continuation. Role and
+profile details have current and `/versions/{version}` reads. Templates use
+`factory-role-templates/{identity}/versions/{version}?digest=...`; their version
+is a release key such as `v1`, rather than an owned numeric revision.
+
+`POST factory-role-publications` atomically publishes an optional role and a
+bounded profile batch. Every supplied item carries its own
+`expected_current_version`: omit/null for creation, exact numeric head for
+replacement. A stale item returns 412 and publishes nothing. The request requires
+`Idempotency-Key`; identical retries return the original receipt before checking
+current heads. This permits independent profile replacement without copying role
+instructions. `POST factory-role-template-copies` uses the same publication owner,
+with explicit role/profile identities and complete settings, pinned to an exact
+release template. `POST factory-roles/validate` and
+`factory-role-profiles/validate` normalize content without publishing or invoking
+a provider. Profile validation also requires the exact role and installed
+`capability` alias. Dedicated details, validation and publication responses use
+`Cache-Control: no-store`; ordinary role/profile catalogs omit instructions and runtime values.
+Flow detail, validation, publication and current-page responses also use `no-store`,
+because their definitions may embed retained profile instructions.
+
+`POST factory-skills` receives one logical identity and explicit regular files,
+each with a relative `path`, SHA-256 and a JSON byte array. It opens no server-side
+path and accepts no links or archives. The shared reviewed-tree/import owner
+validates the complete tree and publishes through retained inputs/object storage.
+The transport's existing 8 MiB JSON limit includes encoding overhead; common file
+and aggregate byte limits still apply. Exact retries return the original bundle
+reference and publication time, without object locations or file content.
+The receipt's `bundle` contains `identity`, `version` and `digest`; it has the same
+shape as a skill catalog item. The separate `published_at` preserves the original time.
+File inventories stay in retained storage and are not included in the receipt.
+
+Manual Work admission optionally accepts `profile_overrides` containing an exact
+`stage` (`root`, ordered nested `calls`, `node`) and `profile` reference. Omitting
+the array preserves the earlier request. Existing admission validates candidate
+membership and immutable stage binding; no selection provider is required.
+
+`POST /api/v1/factory-runs/{run}/profile-selections/{input_digest}` takes only
+`profile`, `Idempotency-Key` and a strong numeric `If-Match`. Missing preconditions
+return 428; stale versions, competing intents and post-commitment choices return
+409 through the ordinary Run-control contract. A 200 receipt records accepted
+intent, not execution. The fenced owner consumes that exact intent separately.
+An exact replay returns the original receipt after dispatch, but current Run and
+owning Project authorization are always rechecked. Execute authority is required;
+this endpoint cannot replace a committed package or create a profile.
+
+The existing paged Run diagnostic route adds `profile-selections`. It exposes
+exact input/revision/predecessor/control/role/profile identities, configured mode,
+rule disposition or original safe provider receipt state, original recovery and
+deadline, supersession, and ordinary operation/Build links. An accepted, unconsumed `pending_control` is
+reported separately from the executed choice. Retained packages are
+represented only by their content digest, when published. Eligible candidate
+references are computed using common current capability and control eligibility
+checks; expired, cancelled, superseded and committed occurrences expose no choices.
+Reads grant no reservation. These projections omit instructions, skill content,
+model parameters, input facts, provider questions/results, secrets and worker
+ownership. Dedicated authorized content reads remain the authoring boundary.
+`thinking_level` is the display text of the selected profile's explicitly declared
+`thinking_parameter`: strings remain text, numbers and booleans use their JSON
+scalar spelling. It is null without the annotation. The projection uses the
+retained exact profile, so catalog replacement or unavailability cannot change
+historical reasoning metadata; other model parameters are never traversed.

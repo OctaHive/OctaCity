@@ -424,6 +424,18 @@ fn validate_factory_profile_choice(
   Ok(())
 }
 
+/// Read-only eligibility using the same checks as atomic manual acceptance.
+/// The caller must authorize the owning Run/Project and qualify installed capabilities separately.
+#[must_use]
+pub fn factory_profile_choice_is_open(
+  snapshot: &crate::FactoryRunSnapshot,
+  input_digest: FactoryDigest,
+  profile: &octacity_server_factory::FactoryRoleProfileRef,
+  at: Timestamp,
+) -> bool {
+  validate_factory_profile_choice(snapshot, input_digest, profile, at).is_ok()
+}
+
 /// Canonical common control facts prepared before either backend mutates authority.
 pub struct FactoryRunControlChange {
   /// Successor technical Run version.

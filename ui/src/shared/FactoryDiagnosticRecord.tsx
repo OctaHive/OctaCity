@@ -6,6 +6,7 @@ import type { MessageKey } from '../app/presentation/messages';
 import { usePresentation } from '../app/presentation/PresentationProvider';
 import { useDraftRowKeys } from './useDraftRowKeys';
 export const DIAGNOSTIC_LABELS = {
+  'profile-selections': 'factory.diag.profiles',
   'flow-runs': 'factory.diag.flowRuns',
   'workflow-cycles': 'factory.diag.cycles',
   'node-attempts': 'factory.diag.nodes',
@@ -30,6 +31,34 @@ export const DIAGNOSTIC_LABELS = {
 } satisfies Record<FactoryDiagnosticCollection, MessageKey>;
 
 const RECORD_FIELDS = {
+  profile_selection: [
+    'id',
+    'input_digest',
+    'flow_run_id',
+    'cycle_id',
+    'node',
+    'generation',
+    'predecessor',
+    'control_id',
+    'pending_control',
+    'method',
+    'policy',
+    'rules',
+    'signal',
+    'role',
+    'candidate',
+    'profile',
+    'runtime',
+    'model',
+    'thinking_level',
+    'selector_error',
+    'recovery',
+    'started_at',
+    'deadline',
+    'superseded',
+    'eligible_candidates',
+    'builds',
+  ],
   flow_run: ['id', 'definition', 'parent'],
   workflow_cycle: ['id', 'flow_run_id', 'number', 'predecessor', 'source_attempt_id'],
   node_attempt: [
@@ -136,6 +165,14 @@ const FACT_FIELDS = {
 >;
 // Only published metadata fields are traversed. Payloads, commands, prompts and transfer URLs have no renderer.
 const NESTED_FIELDS = new Set([
+  'candidate',
+  'profile',
+  'package_digest',
+  'executions',
+  'recorded_at',
+  'unobservable',
+  'rule',
+  'reason',
   'id',
   'kind',
   'node',
@@ -173,6 +210,7 @@ const NESTED_FIELDS = new Set([
   'recommendation',
   'final_disposition',
   'Route',
+  'Profile',
   'question',
   'value',
   'FiniteChoice',

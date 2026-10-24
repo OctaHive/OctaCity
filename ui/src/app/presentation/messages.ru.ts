@@ -988,6 +988,7 @@ export const ruMessages = {
   'factory.diag.work': 'Сводка работы',
   'factory.diag.completions': 'Принятые завершения узлов',
   'factory.diag.stops': 'Записи остановки узлов',
+  'factory.diag.profiles': 'Выбор профилей',
   'factory.diag.signals': 'Сигналы решений',
   'factory.diag.changesets': 'Наборы изменений',
   'factory.diag.evidence': 'Детерминированные доказательства',

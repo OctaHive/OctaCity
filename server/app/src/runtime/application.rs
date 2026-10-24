@@ -217,7 +217,8 @@ pub(super) fn management_application(
     &management_policy,
     Arc::new(
       octacity_server_application::FactoryDiscoveryHandlers::with_policy(store.clone(), management_policy.clone())
-        .with_issue_associations(store.clone()),
+        .with_issue_associations(store.clone())
+        .with_profile_diagnostics(store.clone()),
     ),
   );
   let factory_commands = authorized_commands(&management_policy, factory.clone());
@@ -239,6 +240,24 @@ pub(super) fn management_application(
       )
       .with_issue_associations(store.clone()),
     ),
+  );
+  let roles = Arc::new(octacity_server_application::FactoryRoleProfileHandlers::with_policy(
+    store.clone(),
+    management_policy.clone(),
+  ));
+  let skills = Arc::new(octacity_server_application::ProjectSkillImport::new(
+    store.clone(),
+    object_storage.clone(),
+    management_policy.clone(),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+  ));
+  let role_management = octacity_server_api_rest::v1::FactoryRoleManagementApplication::new(
+    authorized_commands(&management_policy, roles.clone()),
+    authorized_queries(&management_policy, roles),
+  )
+  .with_skills(
+    authorized_commands(&management_policy, skills.clone()),
+    authorized_queries(&management_policy, skills),
   );
   let issues = Arc::new(octacity_server_application::IssueHandlers::new(
     store.clone(),
@@ -337,7 +356,7 @@ pub(super) fn management_application(
           flow_queries,
           factory_admission,
           factory_discovery,
-          factory_control,
+          factory_control.clone(),
         ),
       ),
       AgentManagementApplication::new(
@@ -362,6 +381,8 @@ pub(super) fn management_application(
     ),
   )
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?
+  .with_factory_roles(role_management)
+  .with_factory_profile_selection(factory_control)
   .with_factory_actions(
     octacity_server_api_rest::v1::FactoryActionManagementApplication::new(factory_actions.clone())
       .with_observations(factory_actions),

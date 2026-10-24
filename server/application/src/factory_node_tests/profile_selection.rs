@@ -6,52 +6,8 @@ use octacity_server_domain::Timestamp;
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
+pub(crate) use crate::factory_test_support::{NoProfileExecution as NoExecution, start_profile_run as start};
 use octacity_server_store::testing::factory_profile_selection_contract_fixture as fixture;
-pub(crate) struct NoExecution;
-#[async_trait]
-impl FactoryNodeExecutor for NoExecution {
-  async fn observe(&self, _: FactoryNodeExecutionRequest<'_>) -> Result<FactoryNodeExecutionStep, ApplicationError> {
-    panic!("profile selection cannot call a Build or provider")
-  }
-  async fn cancel(
-    &self,
-    _: FactoryNodeExecutionRequest<'_>,
-    _: Timestamp,
-  ) -> Result<FactoryNodeCancellationStep, ApplicationError> {
-    panic!("profile selection owns no external execution")
-  }
-}
-pub(crate) async fn start(
-  admission: PublishedFactoryAdmission,
-  ownership: FactoryClaimOwnership,
-) -> (Arc<testing::InMemoryFactoryConfigurationStore>, FactoryRunClaimRecord) {
-  let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
-  let audit = testing::management_mutation_with_request((), "profile-owner")
-    .audit()
-    .clone();
-  store
-    .seed_factory_run(admission.clone(), FactoryDigest::from_bytes([1; 32]), &audit)
-    .unwrap();
-  let claim = FactoryRunClaimRecord::new(admission.run.id(), ownership.owner().clone(), ownership.claim());
-  store
-    .claim_factory_run(ClaimFactoryRun {
-      run_id: admission.run.id(),
-      expected_version: admission.run.version(),
-      record: claim.clone(),
-      audit: FactoryAuditFact::new(
-        admission.run.id(),
-        AuditActorKind::Worker,
-        None,
-        key("factory.claimed"),
-        FactoryDigest::from_bytes([1; 32]),
-        key("accepted"),
-        claim.claim.claimed_at(),
-      ),
-    })
-    .await
-    .unwrap();
-  (store, claim)
-}
 #[test]
 fn manual_selection_waits_without_execution_attempts_builds_or_provider_calls() {
   crate::factory_admission_tests::run_ready(async {

@@ -145,6 +145,10 @@ pub struct FactoryRoleProfileDefinition {
   pub execution: crate::FactoryRoleProfileExecution,
   /// Bounded scalar parameters, including any reasoning setting; supported keys/values come from installed capabilities.
   pub model_parameters: BTreeMap<FactoryKey, serde_json::Value>,
+  /// Installed, safe reasoning-setting key in `model_parameters`; never a copied value.
+  /// Omitted on legacy profiles, which publish no inferred reasoning metadata.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub thinking_parameter: Option<crate::FactoryKey>,
   /// Named exact immutable skill bundles, including their retained supporting-file closure.
   pub skills: BTreeMap<FactoryKey, ImmutableReference>,
   /// Named requirements satisfied only by authorized stage Context projections.
@@ -285,6 +289,13 @@ impl FactoryRoleProfileDefinition {
       )
     }) {
       return Err(invalid("profile model parameters"));
+    }
+    if definition
+      .thinking_parameter
+      .as_ref()
+      .is_some_and(|key| !definition.model_parameters.contains_key(key))
+    {
+      return Err(invalid("profile thinking parameter"));
     }
     definition_digest("octacity.factory.role-profile-definition.v1", self)?;
     Ok(())

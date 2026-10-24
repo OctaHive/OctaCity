@@ -980,6 +980,7 @@ export const enMessages = {
   'factory.diag.work': 'Work summary',
   'factory.diag.completions': 'Accepted node completions',
   'factory.diag.stops': 'Node stop receipts',
+  'factory.diag.profiles': 'Profile selections',
   'factory.diag.signals': 'Decision Signals',
   'factory.diag.changesets': 'ChangeSets',
   'factory.diag.evidence': 'Deterministic evidence',

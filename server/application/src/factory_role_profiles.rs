@@ -167,3 +167,99 @@ pub(super) fn require_project_visibility(
   }
   Ok(())
 }
+
+/// Side-effect-free normalization of a complete custom role draft.
+#[derive(Clone, Debug)]
+pub struct ValidateFactoryRoleQuery {
+  /// Visible owning Project.
+  pub project_id: ProjectId,
+  /// Caller-owned stable role identity.
+  pub id: FactoryRoleId,
+  /// Reviewed metadata and instruction entries.
+  pub definition: octacity_server_factory::FactoryRoleDefinition,
+}
+impl Query for ValidateFactoryRoleQuery {
+  type Outcome = FactoryRole;
+}
+impl ManagementAuthorizationTarget for ValidateFactoryRoleQuery {
+  const AUTHORIZATION: ManagementAuthorizationMapping = GetFactoryRoleQuery::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    crate::management_security::instance_resource(ManagementResourceKind::Project, self.project_id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: FactoryRoleProfileStore> ManagementQueryUseCase<ValidateFactoryRoleQuery> for FactoryRoleProfileHandlers<S> {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    query: ValidateFactoryRoleQuery,
+  ) -> Result<FactoryRole, ApplicationError> {
+    require_project_visibility(grant, query.project_id)?;
+    FactoryRole::publish(query.id, query.project_id, query.definition).map_err(|_| ApplicationError::invalid())
+  }
+}
+/// Explicit independent copy, published by the ordinary atomic Role/Profile operation.
+#[derive(Clone, Debug)]
+pub struct CopyFactoryRoleTemplateCommand {
+  /// Owning Project.
+  pub project_id: ProjectId,
+  /// Exact release template, never a mutable alias.
+  pub template: octacity_server_factory::ImmutableReference,
+  /// Caller-owned new role identity.
+  pub role_id: FactoryRoleId,
+  /// Complete reviewed shared content.
+  pub role: octacity_server_factory::FactoryRoleDefinition,
+  /// Explicit complete profile settings for each template seed.
+  pub profiles: std::collections::BTreeMap<
+    octacity_server_factory::FactoryKey,
+    octacity_server_factory::FactoryRoleTemplateBinding,
+  >,
+  /// Scoped stable transport identity.
+  pub idempotency_key: IdempotencyKey,
+  /// Trusted publication time.
+  pub published_at: Timestamp,
+}
+impl Command for CopyFactoryRoleTemplateCommand {
+  type Outcome = FactoryRoleProfilesOutcome;
+}
+impl ManagementAuthorizationTarget for CopyFactoryRoleTemplateCommand {
+  const AUTHORIZATION: ManagementAuthorizationMapping = PublishFactoryRoleProfilesCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    crate::management_security::instance_resource(ManagementResourceKind::Project, self.project_id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: FactoryRoleProfileStore> ManagementCommandUseCase<CopyFactoryRoleTemplateCommand>
+  for FactoryRoleProfileHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    command: CopyFactoryRoleTemplateCommand,
+  ) -> Result<FactoryRoleProfilesOutcome, ApplicationError> {
+    require_project_visibility(grant, command.project_id)?;
+    let template = octacity_server_factory::factory_role_templates()
+      .map_err(|_| ApplicationError::invalid())?
+      .into_iter()
+      .find(|t| t.reference().is_ok_and(|r| r == command.template))
+      .ok_or_else(ApplicationError::capability_unavailable)?;
+    let instance = template
+      .instantiate(command.project_id, command.role_id, command.role, command.profiles)
+      .map_err(|_| ApplicationError::invalid())?;
+    self
+      .execute_management_command(
+        context,
+        grant,
+        PublishFactoryRoleProfilesCommand {
+          intent: instance.into(),
+          idempotency_key: command.idempotency_key,
+          published_at: command.published_at,
+        },
+      )
+      .await
+  }
+}

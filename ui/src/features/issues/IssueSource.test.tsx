@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
-import { cleanup, screen, within, waitFor } from '@testing-library/react';
+import { act, cleanup, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import {
   issue,
   workflow,
@@ -10,7 +10,10 @@ import {
 } from '../../../tests/fixtures/issueTestSupport';
 import { issueSourceChoice, issueSourceReview } from '../../../tests/fixtures/issueSources';
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 it('shows a local manual task without a Source prerequisite and keeps task editing available', async () => {
   const sources = fakeIssueSourcesApi();
   setup('/projects/delivery/issues/' + issue.id, undefined, { issueSourcesApi: sources });
@@ -412,12 +415,26 @@ it('labels expired retained observations without silently refreshing the provide
 it('marks a displayed observation expired at its original deadline without provider I/O', async () => {
   const sources = fakeIssueSourcesApi();
   const review = issueSourceReview(true);
-  review.observation!.accepted.expires_at = Date.now() + 300;
-  sources.review.mockResolvedValue(review);
+  let resolveReview!: (value: typeof review) => void;
+  sources.review.mockReturnValue(
+    new Promise((resolve) => {
+      resolveReview = resolve;
+    }),
+  );
   setup('/projects/delivery/issues/' + issue.id, undefined, { issueSourcesApi: sources });
-  await screen.findByText('opaque-7');
+  await waitFor(() => expect(sources.review).toHaveBeenCalled());
+
+  vi.useFakeTimers();
+  review.observation!.accepted.expires_at = Date.now() + 300;
+  await act(async () => {
+    resolveReview(review);
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  expect(screen.getByText('opaque-7')).toBeTruthy();
+  await act(() => vi.advanceTimersByTimeAsync(299));
   expect(screen.queryByText('Observation expired · refresh explicitly')).toBeNull();
-  expect(await screen.findByText('Observation expired · refresh explicitly')).toBeTruthy();
+  await act(() => vi.advanceTimersByTimeAsync(1));
+  expect(screen.getByText('Observation expired · refresh explicitly')).toBeTruthy();
   expect(sources.refresh).not.toHaveBeenCalled();
 });
 

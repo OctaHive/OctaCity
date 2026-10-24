@@ -566,6 +566,14 @@ impl CacheManagementApplication {
 
 /// Authorization-decorated Factory management queries supplied by the composition root.
 pub struct FactoryManagementApplication {
+  pub(super) select_profile: Option<
+    Arc<
+      dyn AuthorizedManagementCommandHandler<
+          octacity_server_application::SelectFactoryProfileCommand,
+          Error = ApplicationError,
+        >,
+    >,
+  >,
   pub(super) validate_schema: Arc<
     dyn AuthorizedManagementQueryHandler<
         octacity_server_application::ValidateFactoryFlowDataSchemaQuery,
@@ -767,6 +775,7 @@ impl FactoryManagementApplication {
       > + 'static,
   {
     Self {
+      select_profile: None,
       respond_node: control.clone(),
       confirm_node: control.clone(),
       retry_node: control.clone(),

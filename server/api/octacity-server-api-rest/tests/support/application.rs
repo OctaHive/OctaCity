@@ -105,6 +105,8 @@ where
   let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), application.clone()));
   let job_event_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), job_events));
   let retention_commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), retention.clone()));
+  let role_commands = commands.clone();
+  let role_queries = queries.clone();
   let review_commands = commands.clone();
   let review_queries = queries.clone();
   let execution_commands = commands.clone();
@@ -162,6 +164,11 @@ where
     ),
   )
   .unwrap()
+  .with_factory_roles(
+    octacity_server_api_rest::v1::FactoryRoleManagementApplication::new(role_commands.clone(), role_queries.clone())
+      .with_skills(role_commands.clone(), role_queries),
+  )
+  .with_factory_profile_selection(role_commands)
   .with_factory_actions(
     octacity_server_api_rest::v1::FactoryActionManagementApplication::new(action_queries.clone())
       .with_observations(action_queries),

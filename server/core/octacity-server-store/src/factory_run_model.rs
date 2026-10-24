@@ -805,6 +805,8 @@ impl TryFrom<&octacity_server_factory::FlowBuildIntent> for FactoryCallProfileDi
 /// One append-only Factory Run diagnostic collection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FactoryRunDiagnosticKind {
+  /// Retained pre-dispatch profile-selection revisions.
+  ProfileSelection,
   /// Confirmed technical stops without configured business outcomes.
   NodeStop,
 
@@ -850,6 +852,8 @@ impl FactoryRunDiagnosticKind {
 /// Typed immutable row returned by a common execution diagnostic collection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FactoryRunDiagnosticRecord {
+  /// Exact retained revision identity; management restores its safe fields from the verified journal.
+  ProfileSelection(FactoryDigest),
   /// Confirmed stopped execution, including its technical cause.
   NodeStop(Box<octacity_server_factory::FlowNodeStop>),
 
@@ -887,6 +891,7 @@ impl FactoryRunDiagnosticRecord {
   #[must_use]
   pub fn cursor(&self) -> FactoryKey {
     let value = match self {
+      Self::ProfileSelection(value) => value.to_string(),
       Self::NodeStop(value) => value
         .digest()
         .expect("verified stops have canonical identities")
@@ -961,7 +966,8 @@ impl ListFactoryRunDiagnostics {
           .as_str()
           .parse::<uuid::Uuid>()
           .is_ok_and(|id| id.to_string() == key.as_str()),
-        FactoryRunDiagnosticKind::Claim
+        FactoryRunDiagnosticKind::ProfileSelection
+        | FactoryRunDiagnosticKind::Claim
         | FactoryRunDiagnosticKind::Audit
         | FactoryRunDiagnosticKind::Budget
         | FactoryRunDiagnosticKind::BuildExecution

@@ -57,12 +57,19 @@ mod project_text_intake_tests;
 pub use issue_execution::*;
 pub use project_text_intake::*;
 #[cfg(any(test, feature = "test-support"))]
+mod factory_test_support;
+#[cfg(any(test, feature = "test-support"))]
 pub mod issue_test_support;
 #[cfg(test)]
 mod issue_tests;
 pub use issue::*;
+/// Shared memory ports and fixtures for public transport conformance; excluded from production builds.
 #[cfg(feature = "test-support")]
-pub use issue_test_support as testing;
+pub mod testing {
+  pub use crate::factory_test_support::*;
+  pub use crate::issue_test_support::*;
+  pub use octacity_server_store::testing::{InMemoryFactoryConfigurationStore, role_profile_contract_intent};
+}
 mod issue_workflow;
 pub use issue_workflow::*;
 mod external_trigger;
@@ -719,8 +726,10 @@ mod factory_discovery;
 pub use factory_discovery::{
   FactoryAuditProjection, FactoryCallProjection, FactoryDiagnosticCollection, FactoryDiagnosticPage,
   FactoryDiagnosticRecord, FactoryDiscoveryHandlers, FactoryNodeAttemptProjection, FactoryNodeCompletionProjection,
-  FactoryNodeStopProjection, FactoryWorkProjection, GetFactoryRunQuery, ListFactoryDiagnosticsQuery,
-  ListFactoryRunsQuery, MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
+  FactoryNodeStopProjection, FactoryProfileBuildProjection, FactoryProfileCandidateProjection,
+  FactoryProfileControlProjection, FactoryProfileSelectionProjection, FactoryProfileSignalProjection,
+  FactoryWorkProjection, GetFactoryRunQuery, ListFactoryDiagnosticsQuery, ListFactoryRunsQuery,
+  MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE,
 };
 pub use management_input::factory::{FactoryNodeControlInput, FactoryRunListInput};
 pub use octacity_server_factory::{
@@ -838,3 +847,6 @@ mod factory_role_materialization_tests;
 
 mod factory_role_invocation;
 pub use factory_role_invocation::*;
+
+#[cfg(test)]
+mod factory_profile_diagnostics_tests;

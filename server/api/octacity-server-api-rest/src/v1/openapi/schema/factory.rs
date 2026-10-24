@@ -8,6 +8,7 @@ mod data;
 mod diagnostics;
 mod flow;
 mod permissions;
+mod roles;
 
 pub(super) fn key() -> Value {
   json!({"type":"string","minLength":1,"maxLength":octacity_server_application::factory_configuration_document_bounds().key_bytes,"pattern":"^[a-z0-9][a-z0-9._-]*$"})
@@ -43,6 +44,7 @@ pub(super) fn tagged<const N: usize>(
 pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   let bounds = octacity_server_application::factory_configuration_document_bounds();
   diagnostics::insert(schemas);
+  roles::insert(schemas);
   schemas.insert(
     "FactoryFlowHumanGateBinding".to_owned(),
     json!({"oneOf":[
@@ -175,6 +177,10 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
         ("source", schema_ref("ManualSource")),
         ("artifacts", schema_ref("FactoryWorkArtifacts")),
         ("classification", schema_ref("FactoryWorkClassification")),
+        (
+          "profile_overrides",
+          bounded_array(schema_ref("FactoryProfileAdmissionOverride"), bounds.profile_overrides),
+        ),
       ],
       &[
         "configuration_id",

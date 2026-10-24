@@ -544,3 +544,24 @@ mod tests {
     .unwrap()
   }
 }
+
+// These catalogs are entirely scoped by the already-authorized owning Project.
+// The handlers use the same Project visibility before any content/store read.
+macro_rules! project_catalog_visibility {
+  ($($query:ty),+ $(,)?) => {$(
+    impl ManagementVisibilityTarget for $query {
+      type Visibility = ProjectListVisibility;
+      const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Project];
+      fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+        <ListProjectsQuery as ManagementVisibilityTarget>::visibility_from(grant)
+      }
+    }
+  )+};
+}
+project_catalog_visibility!(
+  crate::ListFactoryRolesQuery,
+  crate::ListFactoryRoleProfilesQuery,
+  crate::ListFactoryRoleTemplatesQuery,
+  crate::ListFactoryRoleProfileCapabilitiesQuery,
+  crate::ListProjectSkillsQuery,
+);

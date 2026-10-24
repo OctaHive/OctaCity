@@ -470,7 +470,7 @@ pub(super) async fn validate_factory_flow_definition(
   let diagnostics = octacity_server_application::FactoryValidationDiagnostics::for_flow(&flow);
   let mut document = encode(flow, &request_id)?;
   document["diagnostics"] = encode(diagnostics, &request_id)?;
-  Ok(Json(document))
+  Ok(([("cache-control", "no-store")], Json(document)))
 }
 
 fn flow_details(
@@ -524,7 +524,11 @@ pub(super) async fn create_factory_flow_definition(
     .handle_authorized_command(&context, command)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok((StatusCode::CREATED, Json(flow_mutation(outcome, &request_id)?)))
+  Ok((
+    StatusCode::CREATED,
+    [("cache-control", "no-store")],
+    Json(flow_mutation(outcome, &request_id)?),
+  ))
 }
 pub(super) async fn replace_factory_flow_definition(
   State(application): State<Arc<ManagementApplication>>,
@@ -552,7 +556,11 @@ pub(super) async fn replace_factory_flow_definition(
     .handle_authorized_command(&context, command)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok((StatusCode::CREATED, Json(flow_mutation(outcome, &request_id)?)))
+  Ok((
+    StatusCode::CREATED,
+    [("cache-control", "no-store")],
+    Json(flow_mutation(outcome, &request_id)?),
+  ))
 }
 pub(super) async fn get_current_factory_flow_definition(
   State(application): State<Arc<ManagementApplication>>,
@@ -574,7 +582,7 @@ async fn get_flow(
   request_id: &RequestId,
   id: &str,
   version: Option<u64>,
-) -> Result<Json<FactoryFlowDefinitionDetails>, ApiError> {
+) -> Result<impl IntoResponse + use<>, ApiError> {
   let query = application
     .inputs
     .get_factory_flow_definition(id, version)
@@ -585,7 +593,10 @@ async fn get_flow(
     .handle_authorized_query(context, query)
     .await
     .map_err(|error| authorized_handler_error(error, request_id))?;
-  Ok(Json(flow_details(outcome, request_id)?))
+  Ok((
+    [("cache-control", "no-store")],
+    Json(flow_details(outcome, request_id)?),
+  ))
 }
 pub(super) async fn list_project_factory_flow_definitions(
   State(application): State<Arc<ManagementApplication>>,
@@ -618,11 +629,14 @@ pub(super) async fn list_project_factory_flow_definitions(
     .map(|p| Cursor::new(format!("1:{}:{}", p.created_at.unix_millis(), p.id)))
     .transpose()
     .map_err(|_| internal_conversion(&request_id))?;
-  Ok(Json(FactoryFlowDefinitionPage {
-    total: page.total,
-    items,
-    next_cursor: cursor,
-  }))
+  Ok((
+    [("cache-control", "no-store")],
+    Json(FactoryFlowDefinitionPage {
+      total: page.total,
+      items,
+      next_cursor: cursor,
+    }),
+  ))
 }
 
 pub(super) async fn admit_manual_factory_work(
@@ -647,6 +661,7 @@ pub(super) async fn admit_manual_factory_work(
         source: body.source,
         artifacts: body.artifacts,
         classification: body.classification,
+        profile_overrides: body.profile_overrides,
       },
       key.as_str(),
       now_unix_ms(&request_id)?,
@@ -901,4 +916,61 @@ pub(super) async fn list_factory_diagnostics(
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok(Json(encode(page, &request_id)?))
+}
+
+impl ManagementApplication {
+  /// Installs the common authorized diagnostic reader independently of optional execution providers.
+  pub fn with_factory_diagnostic_reader<Q>(mut self, reader: Arc<Q>) -> Self
+  where
+    Q: octacity_server_application::AuthorizedManagementQueryHandler<
+        octacity_server_application::ListFactoryDiagnosticsQuery,
+        Error = octacity_server_application::ApplicationError,
+      > + 'static,
+  {
+    self.factory.diagnostics = reader;
+    self
+  }
+  /// Adds the shared exact profile control independently of role authoring or provider installation.
+  pub fn with_factory_profile_selection<C>(mut self, control: Arc<C>) -> Self
+  where
+    C: octacity_server_application::AuthorizedManagementCommandHandler<
+        octacity_server_application::SelectFactoryProfileCommand,
+        Error = octacity_server_application::ApplicationError,
+      > + 'static,
+  {
+    self.factory.select_profile = Some(control);
+    self
+  }
+}
+pub(super) async fn select_factory_profile(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((run, input)): Path<(String, String)>,
+  headers: HeaderMap,
+  payload: Result<Json<crate::v1::SelectFactoryProfileRequest>, JsonRejection>,
+) -> Result<impl IntoResponse, ApiError> {
+  let body = body(payload, &id)?;
+  let key = idempotency_key(&headers, &id)?;
+  let expected = precondition(&headers, &id)?;
+  let command = app
+    .inputs
+    .select_factory_profile(
+      &run,
+      &input,
+      body.profile,
+      expected.version(),
+      key.as_str(),
+      now_unix_ms(&id)?,
+    )
+    .map_err(|e| invalid_input(e, &id))?;
+  let control = app
+    .factory
+    .select_profile
+    .as_ref()
+    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?;
+  let outcome = control
+    .handle_authorized_command(&context, command)
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(([("cache-control", "no-store")], factory_control_response(outcome, &id)?))
 }

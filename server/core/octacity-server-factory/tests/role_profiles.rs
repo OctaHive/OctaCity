@@ -18,6 +18,7 @@ fn exact(name: &str) -> ImmutableReference {
 
 fn profile(project: ProjectId, effort: &str) -> FactoryRoleProfileDefinition {
   FactoryRoleProfileDefinition {
+    thinking_parameter: None,
     template: None,
     execution: Default::default(),
     name: FactoryText::new("UI specialist").unwrap(),
@@ -56,6 +57,31 @@ fn role(project: ProjectId, instructions: &str) -> FactoryRole {
     },
   )
   .unwrap()
+}
+
+#[test]
+fn thinking_metadata_references_one_existing_model_parameter_without_copying_its_value() {
+  let project = ProjectId::generate();
+  let role = role(project, "Review changes.");
+  let mut wire = serde_json::to_value(profile(project, "medium")).unwrap();
+  wire["thinking_parameter"] = serde_json::json!("analysis_budget");
+  wire["model_parameters"] = serde_json::json!({"analysis_budget": 1024, "private_option": "private-value"});
+  let definition: FactoryRoleProfileDefinition = serde_json::from_value(wire).unwrap();
+  let original = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, definition).unwrap();
+  let retained = serde_json::to_value(&original).unwrap();
+  assert_eq!(retained["definition"]["thinking_parameter"], "analysis_budget");
+  assert_eq!(retained["definition"]["model_parameters"]["analysis_budget"], 1024);
+  assert_eq!(
+    serde_json::from_value::<FactoryRoleProfile>(retained.clone()).unwrap(),
+    original
+  );
+  let mut changed = retained;
+  changed["definition"]["thinking_parameter"] = serde_json::json!("private_option");
+  assert!(serde_json::from_value::<FactoryRoleProfile>(changed).is_err());
+  let mut missing = serde_json::to_value(original.definition()).unwrap();
+  missing["thinking_parameter"] = serde_json::json!("undeclared");
+  let missing = serde_json::from_value(missing).unwrap();
+  assert!(FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, missing).is_err());
 }
 
 #[test]
@@ -812,6 +838,27 @@ fn installed_role_profile_capabilities_use_existing_catalog_and_parameter_schema
 }
 
 #[test]
+fn installed_thinking_metadata_preserves_unannotated_profiles() {
+  use octacity_server_factory::*;
+  let project = ProjectId::generate();
+  let role = role(project, "Project rules");
+  let definition = profile(project, "medium");
+  let legacy =
+    FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, definition.clone()).unwrap();
+  let mut annotated = definition;
+  annotated.thinking_parameter = Some(FactoryKey::new("reasoning_effort").unwrap());
+  let capability = FactoryRoleProfileCapability {
+    ceiling: annotated.clone(),
+    parameters: role_parameter_schema(),
+    public_environment: Default::default(),
+    local_permissions: LocalPermissionCeiling::fully_enforced(annotated.permissions.clone()),
+  };
+  assert_eq!(capability.validate(&legacy), Ok(()));
+  let explicit = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, annotated).unwrap();
+  assert_eq!(capability.validate(&explicit), Ok(()));
+}
+
+#[test]
 fn installed_profile_validation_rejects_unsupported_execution_and_authority_without_silent_narrowing() {
   use octacity_server_factory::*;
   let project = ProjectId::generate();
@@ -825,6 +872,9 @@ fn installed_profile_validation_rejects_unsupported_execution_and_authority_with
   };
   let role = role(project, "Project rules");
   let mut cases = vec![];
+  let mut changed = definition.clone();
+  changed.thinking_parameter = Some(FactoryKey::new("reasoning_effort").unwrap());
+  cases.push((changed, FactoryRoleProfileIncompatibility::ModelParameters));
   let mut changed = definition.clone();
   changed.toolchain.model = exact("other.model");
   cases.push((changed, FactoryRoleProfileIncompatibility::Toolchain));

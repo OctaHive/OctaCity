@@ -24,7 +24,7 @@ impl ManagementAuthorizationTarget for ListFactoryRoleProfileCapabilitiesQuery {
   }
 }
 /// Safe installed selections. Instructions, environment values, secret locators and argv are absent.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleProfileChoice {
   /// Authorized runtime/profile alias from the existing Factory choice catalog.
   pub alias: FactoryKey,
@@ -52,7 +52,7 @@ pub struct FactoryRoleProfileChoice {
   pub budget: BudgetLimit,
 }
 /// Total visible entries and bounded alias-ordered results.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleProfileChoicePage {
   /// Visible count before continuation.
   pub total: u64,
@@ -85,7 +85,7 @@ impl ManagementAuthorizationTarget for ValidateFactoryRoleProfileQuery {
   }
 }
 /// Normalized exact content or a bounded safe incompatibility category.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleProfileValidation {
   /// Candidate with canonical digest; not a persisted publication or execution grant.
   pub profile: Option<FactoryRoleProfile>,
@@ -301,7 +301,7 @@ impl ManagementAuthorizationTarget for GetFactoryRoleProfileCapabilityQuery {
   }
 }
 /// Complete installed authoring settings; not a credential resolution or execution grant.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleProfileCapabilityDetails {
   /// Shared ordinary profile shape, including approved argv and logical secret references.
   pub definition: FactoryRoleProfileDefinition,

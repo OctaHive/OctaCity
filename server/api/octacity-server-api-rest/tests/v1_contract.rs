@@ -23,7 +23,18 @@ fn signal_diagnostics_publish_bounded_typed_answers_without_provider_input() {
     .iter()
     .find(|schema| schema["properties"]["kind"]["const"] == "decision_signal")
     .unwrap();
-  assert_eq!(signal["properties"]["purpose"]["enum"], json!(["routing", "tool_risk"]));
+  assert_eq!(
+    signal["properties"]["purpose"]["enum"],
+    json!(["routing", "tool_risk", "profile_selection"])
+  );
+  let dispositions = signal["properties"]["consumption"]["properties"]["final_disposition"]["oneOf"]
+    .as_array()
+    .unwrap();
+  assert!(
+    dispositions
+      .iter()
+      .any(|schema| schema["properties"]["Profile"].is_object())
+  );
   assert_eq!(signal["properties"]["answers"]["maxItems"], 32);
   assert_eq!(
     signal["properties"]["answers"]["items"]["$ref"],
@@ -562,4 +573,82 @@ where
   let actual = serde_json::to_value(decoded).unwrap();
   let expected: Value = serde_json::from_str(document).unwrap();
   assert_eq!(actual, expected);
+}
+
+#[test]
+fn role_profile_authoring_and_selection_contracts_are_bounded_and_backward_compatible() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let schemas = &document["components"]["schemas"];
+  for name in [
+    "FactoryRoleDefinition",
+    "FactoryRoleProfileDefinition",
+    "FactoryProfileSelectionBinding",
+    "PublishFactoryRoleProfilesRequest",
+    "ImportProjectSkillRequest",
+    "SelectFactoryProfileRequest",
+    "FactoryProfileSelectionProjection",
+  ] {
+    assert!(schemas[name].is_object(), "missing {name}");
+    assert_eq!(schemas[name]["additionalProperties"], false, "open {name}");
+  }
+  let role = &schemas["FactoryRoleDefinition"];
+  assert!(role["properties"]["instructions"].is_object());
+  for field in ["name", "icon", "description", "concurrency_limit"] {
+    assert!(role["properties"][field].is_object(), "missing {field}");
+  }
+  let admission = &schemas["AdmitManualFactoryWorkRequest"];
+  assert!(
+    !admission["required"]
+      .as_array()
+      .unwrap()
+      .contains(&json!("profile_overrides"))
+  );
+  assert_eq!(admission["properties"]["profile_overrides"]["maxItems"], 256);
+  assert!(schemas["FactoryFlowNodeDefinition"]["properties"]["profile_selection"].is_object());
+  assert_eq!(
+    schemas["FactoryRoleProfileExecution"]["properties"]["cli_arguments"]["maxItems"],
+    64
+  );
+  let profile = &schemas["FactoryProfileSelectionProjection"];
+  for forbidden in [
+    "instructions",
+    "input",
+    "provider_payload",
+    "skills",
+    "environment",
+    "request",
+  ] {
+    assert!(profile["properties"].get(forbidden).is_none());
+  }
+  assert_eq!(
+    schemas["FactoryFlowPredicate"]["oneOf"][0]["properties"]["operation"]["const"],
+    "absent"
+  );
+  let choice = &document["paths"]["/api/v1/factory-runs/{factory_run_id}/profile-selections/{input_digest}"]["post"];
+  let parameters = choice["parameters"].as_array().unwrap();
+  for required in ["factory_run_id", "input_digest", "If-Match", "Idempotency-Key"] {
+    assert!(
+      parameters
+        .iter()
+        .any(|p| p["name"] == required && p["required"] == true),
+      "missing {required}"
+    );
+  }
+  assert!(choice["responses"]["409"].is_object());
+  assert!(choice["responses"]["428"].is_object());
+  let publication = &document["paths"]["/api/v1/projects/{project_id}/factory-role-publications"]["post"];
+  assert!(publication["responses"]["412"].is_object());
+  let template =
+    &document["paths"]["/api/v1/projects/{project_id}/factory-role-templates/{identity}/versions/{version}"]["get"];
+  let parameters = template["parameters"].as_array().unwrap();
+  assert!(
+    parameters
+      .iter()
+      .any(|p| p["name"] == "version" && p["schema"]["type"] == "string")
+  );
+  assert!(
+    parameters
+      .iter()
+      .any(|p| p["name"] == "digest" && p["required"] == true)
+  );
 }

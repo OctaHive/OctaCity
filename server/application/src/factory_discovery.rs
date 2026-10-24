@@ -1,4 +1,5 @@
 mod diagnostics;
+mod profile_selections;
 use crate::{
   ApplicationError, ManagementAction, ManagementAuthorizationMapping, ManagementAuthorizationTarget,
   ManagementResourceKind, ManagementResourceResult, Query, management_security::owned_collection_resource,
@@ -12,6 +13,10 @@ pub use diagnostics::{
 use octacity_server_domain::ProjectId;
 use octacity_server_store::{
   FactoryDiscoveryStore, FactoryRunFilter, FactoryRunListVisibility, FactoryRunPagePosition, ListFactoryRuns,
+};
+pub use profile_selections::{
+  FactoryProfileBuildProjection, FactoryProfileCandidateProjection, FactoryProfileControlProjection,
+  FactoryProfileSelectionProjection, FactoryProfileSignalProjection,
 };
 use std::sync::Arc;
 /// Bounded Project-scoped or global Factory Run collection.
@@ -59,6 +64,8 @@ impl ManagementAuthorizationTarget for ListFactoryRunsQuery {
 }
 /// Authorization-aware discovery over the same authoritative store used by admission.
 pub struct FactoryDiscoveryHandlers<S> {
+  profile_catalog: Option<Arc<dyn octacity_server_store::FactoryConfigurationStore>>,
+  profile_packages: Option<Arc<dyn octacity_server_store::FactoryRoleInvocationStore>>,
   issue_associations: Option<Arc<dyn octacity_server_store::IssueExecutionStore>>,
   store: Arc<S>,
   policy: Arc<dyn crate::ManagementAuthorizationPolicy>,
@@ -75,7 +82,18 @@ impl<S> FactoryDiscoveryHandlers<S> {
       store,
       policy,
       issue_associations: None,
+      profile_catalog: None,
+      profile_packages: None,
     }
+  }
+  /// Uses existing capability and retained-input readers for safe profile diagnostics.
+  pub fn with_profile_diagnostics<P>(mut self, store: Arc<P>) -> Self
+  where
+    P: octacity_server_store::FactoryConfigurationStore + octacity_server_store::FactoryRoleInvocationStore + 'static,
+  {
+    self.profile_catalog = Some(store.clone());
+    self.profile_packages = Some(store);
+    self
   }
   /// Adds optional task navigation without making Run discovery depend on Issue availability.
   pub fn with_issue_associations(mut self, store: Arc<dyn octacity_server_store::IssueExecutionStore>) -> Self {

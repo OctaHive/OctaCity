@@ -28,6 +28,10 @@ pub(crate) async fn list_diagnostics(
   }
   let limit = i64::from(request.limit.get()) + 1;
   let records = match request.kind {
+    FactoryRunDiagnosticKind::ProfileSelection => digest_rows(pool,
+      "SELECT to_jsonb(encode(id,'hex')) FROM factory_flow_profile_selections WHERE run_id=$1 AND ($2::bytea IS NULL OR id>$2) ORDER BY id LIMIT $3",
+      &request, limit, FactoryRunDiagnosticRecord::ProfileSelection,
+    ).await?,
     FactoryRunDiagnosticKind::NodeStop => digest_rows(pool,
       "SELECT convert_from(document,'UTF8')::jsonb FROM factory_node_stops WHERE run_id = $1 AND ($2::bytea IS NULL OR id > $2) ORDER BY id LIMIT $3",
       &request, limit, |value| FactoryRunDiagnosticRecord::NodeStop(Box::new(value)),

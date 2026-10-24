@@ -280,3 +280,91 @@ fn object(input: &PublishedExecutionInput) -> Result<ArtifactObject, Application
   )
   .map_err(|_| ApplicationError::invalid())
 }
+
+/// Safe original import receipt; private bytes and staging upload bookkeeping are absent.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ProjectSkillImportReceipt {
+  /// Exact immutable bundle reference; file inventories remain in retained storage.
+  pub bundle: octacity_server_factory::ImmutableReference,
+  /// Original publication time, preserved on replay.
+  pub published_at: octacity_server_domain::Timestamp,
+}
+impl Command for ImportProjectSkill {
+  type Outcome = ProjectSkillImportReceipt;
+}
+impl ManagementAuthorizationTarget for ImportProjectSkill {
+  const AUTHORIZATION: ManagementAuthorizationMapping = PublishFactoryRoleProfilesCommand::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    management_security::instance_resource(ManagementResourceKind::Project, self.project_id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: ProjectSkillImportStore, B: ArtifactByteReader + ArtifactBytePublisher>
+  ManagementCommandUseCase<ImportProjectSkill> for ProjectSkillImport<S, B>
+{
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    context: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    command: ImportProjectSkill,
+  ) -> Result<ProjectSkillImportReceipt, ApplicationError> {
+    let record = self.import(context, command).await?;
+    Ok(ProjectSkillImportReceipt {
+      bundle: record.intent.bundle.reference().clone(),
+      published_at: record.published_at.ok_or_else(ApplicationError::unavailable)?,
+    })
+  }
+}
+/// Authorized Project skill catalog using the same imported/retained identities.
+#[derive(Clone, Debug)]
+pub struct ListProjectSkillsQuery {
+  /// Existing visible Project.
+  pub project_id: ProjectId,
+  /// Exact exclusive bundle continuation.
+  pub after: Option<octacity_server_factory::ImmutableReference>,
+  /// Shared current-definition page bound.
+  pub limit: u16,
+}
+/// Safe skill references and a Project-bound continuation, without file inventories or content.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct ProjectSkillCatalogPage {
+  /// Visible count before continuation.
+  pub total: u64,
+  /// Exact version/digest choices, without private file paths.
+  pub items: Vec<octacity_server_factory::ImmutableReference>,
+  /// Opaque original Project-bound continuation.
+  pub next_cursor: Option<String>,
+}
+impl Query for ListProjectSkillsQuery {
+  type Outcome = ProjectSkillCatalogPage;
+}
+impl ManagementAuthorizationTarget for ListProjectSkillsQuery {
+  const AUTHORIZATION: ManagementAuthorizationMapping = GetFactoryRoleQuery::AUTHORIZATION;
+  fn management_resource(&self) -> ManagementResourceResult {
+    management_security::instance_resource(ManagementResourceKind::Project, self.project_id)
+  }
+}
+#[async_trait::async_trait]
+impl<S: ProjectSkillImportStore, B: ArtifactByteReader> ManagementQueryUseCase<ListProjectSkillsQuery>
+  for ProjectSkillImport<S, B>
+{
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    context: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    query: ListProjectSkillsQuery,
+  ) -> Result<ProjectSkillCatalogPage, ApplicationError> {
+    let page = self
+      .catalog(context, query.project_id, query.after, query.limit)
+      .await?;
+    Ok(ProjectSkillCatalogPage {
+      total: page.total,
+      items: page.items,
+      next_cursor: page
+        .next_cursor
+        .map(|r| format!("1:{}:{}:{}:{}", query.project_id, r.identity(), r.version(), r.digest())),
+    })
+  }
+}

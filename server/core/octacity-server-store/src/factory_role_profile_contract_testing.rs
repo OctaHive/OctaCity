@@ -13,6 +13,7 @@ pub fn role_profile_contract_definition(project: ProjectId) -> FactoryRoleProfil
     )
   };
   FactoryRoleProfileDefinition {
+    thinking_parameter: None,
     template: None,
     execution: FactoryRoleProfileExecution {
       environment: [

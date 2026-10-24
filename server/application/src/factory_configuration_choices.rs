@@ -46,6 +46,28 @@ pub fn factory_permission_categories() -> impl Iterator<Item = &'static str> {
 /// Domain-owned cardinality and budget bounds used by management schemas.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct FactoryConfigurationDocumentBounds {
+  /// Maximum complete immutable journal records, bounding linked diagnostic histories.
+  pub journal_records: usize,
+  /// Maximum combined argv bytes.
+  pub argument_bytes: usize,
+  /// Maximum role/profile collection entries.
+  pub role_entries: usize,
+  /// Combined instruction bytes in one role or profile.
+  pub instruction_bytes: usize,
+  /// Encoded role/profile definition bytes.
+  pub role_definition_bytes: usize,
+  /// Bounded UTF-8 display/environment value bytes.
+  pub text_bytes: usize,
+  /// Imported skill file count.
+  pub skill_files: usize,
+  /// Normalized imported path bytes.
+  pub skill_path_bytes: usize,
+  /// Maximum bytes of one imported file.
+  pub skill_file_bytes: u64,
+  /// Maximum aggregate imported file bytes.
+  pub skill_total_bytes: u64,
+  /// Maximum admitted per-stage override entries.
+  pub profile_overrides: usize,
   /// Maximum typed questions and answers retained by one Decision Signal.
   pub signal_questions: usize,
   /// Fixed-point denominator for probability and confidence values.
@@ -124,6 +146,17 @@ pub struct FactoryConfigurationDocumentBounds {
 pub const fn factory_configuration_document_bounds() -> FactoryConfigurationDocumentBounds {
   use octacity_server_factory as factory;
   FactoryConfigurationDocumentBounds {
+    journal_records: octacity_server_store::MAX_FACTORY_RUN_SNAPSHOT_RECORDS,
+    argument_bytes: factory::MAX_COMMAND_ARGUMENT_BYTES,
+    role_entries: factory::MAX_FACTORY_ROLE_PROFILE_ENTRIES,
+    instruction_bytes: factory::MAX_FACTORY_ROLE_INSTRUCTION_BYTES,
+    role_definition_bytes: factory::MAX_FACTORY_ROLE_DEFINITION_BYTES,
+    text_bytes: factory::MAX_FACTORY_TEXT_BYTES,
+    skill_files: factory::MAX_CONTEXT_MANIFEST_ENTRIES,
+    skill_path_bytes: factory::MAX_FACTORY_REPOSITORY_PATH_BYTES,
+    skill_file_bytes: factory::MAX_CONTEXT_ENTRY_BYTES,
+    skill_total_bytes: factory::MAX_CONTEXT_MANIFEST_BYTES,
+    profile_overrides: factory::MAX_FLOW_DEFINITION_NODES,
     signal_questions: factory::MAX_DECISION_SIGNAL_QUESTIONS,
     signal_probability_scale: factory::DECISION_SIGNAL_PROBABILITY_SCALE,
     choice_entries: factory::MAX_CONFIGURATION_CHOICES_PER_KIND,

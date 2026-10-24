@@ -118,7 +118,7 @@ pub(crate) async fn validate_candidate(
     .map_err(|_| ApplicationError::capability_unavailable())
 }
 
-async fn current_choices(
+pub(crate) async fn current_choices(
   snapshot: &FactoryRunSnapshot,
   catalog: Option<&dyn octacity_server_store::FactoryConfigurationStore>,
 ) -> Result<Option<octacity_server_factory::FactoryConfigurationChoices>, ApplicationError> {

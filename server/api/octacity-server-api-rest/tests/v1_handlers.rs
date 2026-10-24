@@ -59,6 +59,8 @@ mod build_discovery;
 mod definition_discovery;
 #[path = "v1_handlers/factory.rs"]
 mod factory;
+#[path = "v1_handlers/factory_roles.rs"]
+mod factory_roles;
 #[path = "v1_handlers/integration_contracts.rs"]
 mod integration_contracts;
 #[path = "v1_handlers/issue_workflows.rs"]
@@ -110,6 +112,7 @@ struct RecordingApplication {
   agent_queries: Mutex<Vec<GetAgentQuery>>,
   agent_list_queries: Mutex<Vec<ListAgentsQuery>>,
   agent_pool_queries: Mutex<Vec<GetAgentPoolQuery>>,
+  factory_admission_overrides: Mutex<Vec<serde_json::Value>>,
   build_summary_states: Option<(BuildState, AttemptState)>,
   successful_workflow: bool,
   capability_unavailable_for_managed: bool,
@@ -127,6 +130,7 @@ impl RecordingApplication {
       agent_queries: Mutex::default(),
       agent_list_queries: Mutex::default(),
       agent_pool_queries: Mutex::default(),
+      factory_admission_overrides: Mutex::default(),
       build_summary_states: Some((BuildState::Succeeded, AttemptState::Succeeded)),
       successful_workflow: true,
       capability_unavailable_for_managed: false,
@@ -1195,7 +1199,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   let pin = |id: &str| serde_json::json!({"identity":id,"version":"v1","digest":"01".repeat(32)});
   let source = serde_json::json!({"installation":pin("installed-source"),"capability":pin("read"),"configuration":pin("scope"),"resource":pin("board")});
   let source_path = format!("/api/v1/projects/{project_id}/issues/{pipeline_id}");
-  vec![
+  let mut requests = vec![
     empty_request("GET",&format!("{source_path}/source-link"),None),
     empty_request("GET",&format!("{source_path}/synchronization"),None),
     empty_request("GET",&format!("{source_path}/synchronization/projections?limit=1"),None),
@@ -1622,7 +1626,9 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET", &format!("/api/v1/projects/{project_id}/issues/{job_id}/content-retention/requirements"), None),
     json_request("POST", &format!("/api/v1/projects/{project_id}/issues/{job_id}/content-retention/discussion"), "retention", None, r#"{"expected_version":0,"plan":{"scope":{"kind":"discussion","through":1},"expires_at":100,"hold":null}}"#),
     empty_request("GET", &format!("/api/v1/factory-runs/{build_id}/nodes/{job_id}/action"), None),
-  ]
+  ];
+  requests.extend(factory_roles::management_requests());
+  requests
 }
 
 #[tokio::test]
@@ -1810,6 +1816,23 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "get_issue_content_retention",
       "set_issue_content_retention",
       "get_factory_node_action",
+      "publish_factory_role_profiles",
+      "list_factory_roles",
+      "get_factory_role",
+      "get_factory_role",
+      "list_factory_role_profiles",
+      "get_factory_role_profile",
+      "get_factory_role_profile",
+      "list_factory_role_templates",
+      "get_factory_role_template",
+      "copy_factory_role_template",
+      "validate_factory_role",
+      "list_factory_profile_capabilities",
+      "get_factory_profile_capability",
+      "validate_factory_role_profile",
+      "import_project_skill",
+      "list_project_skills",
+      "select_factory_profile",
     ]
   );
 }

@@ -16,6 +16,258 @@ pub struct FactoryNodeControlInput<'a> {
 }
 
 impl ManagementInputFactory {
+  /// Retains an exact pre-dispatch choice using ordinary Run preconditions and replay identity.
+  pub fn select_factory_profile(
+    &self,
+    run: &str,
+    input: &str,
+    profile: Value,
+    expected: u64,
+    key: &str,
+    now: i64,
+  ) -> Result<crate::SelectFactoryProfileCommand, ManagementInputError> {
+    Ok(crate::SelectFactoryProfileCommand {
+      run_id: parse(run, "factory run id")?,
+      input_digest: parse(input, "input digest")?,
+      profile: factory_decode(profile)?,
+      expected_version: version(expected, "factory run version")?,
+      idempotency_key: parse(key, "idempotency key")?,
+      requested_at: timestamp(now)?,
+    })
+  }
+
+  /// Selects one authorized installed authoring capability by its stable Project alias.
+  pub fn get_factory_role_profile_capability(
+    &self,
+    project: &str,
+    alias: &str,
+  ) -> Result<crate::GetFactoryRoleProfileCapabilityQuery, ManagementInputError> {
+    Ok(crate::GetFactoryRoleProfileCapabilityQuery {
+      project_id: parse(project, "project id")?,
+      capability: parse(alias, "profile capability")?,
+    })
+  }
+  /// Preserves complete submitted settings; the application qualifies them without side effects.
+  pub fn validate_factory_role_profile(
+    &self,
+    project: &str,
+    id: &str,
+    role: Value,
+    capability: &str,
+    definition: Value,
+  ) -> Result<crate::ValidateFactoryRoleProfileQuery, ManagementInputError> {
+    Ok(crate::ValidateFactoryRoleProfileQuery {
+      project_id: parse(project, "project id")?,
+      id: parse(id, "profile id")?,
+      role: factory_decode(role)?,
+      capability: parse(capability, "profile capability")?,
+      definition: factory_decode(definition)?,
+    })
+  }
+
+  /// Decodes regular reviewed bytes; shared import owns all path/tree/digest checks.
+  pub fn import_project_skill(
+    &self,
+    project: &str,
+    identity: &str,
+    files: Value,
+    key: &str,
+  ) -> Result<crate::ImportProjectSkill, ManagementInputError> {
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct File {
+      path: String,
+      sha256: octacity_server_factory::FactoryDigest,
+      bytes: Vec<u8>,
+    }
+    let files: Vec<File> = factory_decode(files)?;
+    Ok(crate::ImportProjectSkill {
+      project_id: parse(project, "project id")?,
+      identity: parse(identity, "skill identity")?,
+      idempotency_key: parse(key, "idempotency key")?,
+      entries: files
+        .into_iter()
+        .map(|f| crate::ReviewedSkillEntry::File {
+          path: f.path,
+          sha256: f.sha256,
+          bytes: f.bytes,
+        })
+        .collect(),
+    })
+  }
+  /// Parses a bounded Project-bound skill continuation; it conveys no content or authority.
+  pub fn list_project_skills(
+    &self,
+    project: &str,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<crate::ListProjectSkillsQuery, ManagementInputError> {
+    let page: crate::CurrentDefinitionPageInput<String> = self.factory_role_page(project, None, limit)?;
+    let after = after
+      .map(|cursor| {
+        let mut parts = cursor.split(':');
+        let invalid = || ManagementInputError::Invalid("skill cursor");
+        if parts.next() != Some("1") || parts.next() != Some(project) {
+          return Err(invalid());
+        }
+        let identity = parse(parts.next().ok_or_else(invalid)?, "skill identity")?;
+        let version = parse(parts.next().ok_or_else(invalid)?, "skill version")?;
+        let digest = parse(parts.next().ok_or_else(invalid)?, "skill digest")?;
+        if parts.next().is_some() {
+          return Err(invalid());
+        }
+        Ok(octacity_server_factory::ImmutableReference::new(
+          identity, version, digest,
+        ))
+      })
+      .transpose()?;
+    Ok(crate::ListProjectSkillsQuery {
+      project_id: page.project_id(),
+      after,
+      limit: page.limit(),
+    })
+  }
+
+  /// Parses a complete role draft; normalization itself remains an authorized query.
+  pub fn validate_factory_role(
+    &self,
+    project: &str,
+    id: &str,
+    definition: Value,
+  ) -> Result<crate::ValidateFactoryRoleQuery, ManagementInputError> {
+    Ok(crate::ValidateFactoryRoleQuery {
+      project_id: parse(project, "project id")?,
+      id: parse(id, "role id")?,
+      definition: factory_decode(definition)?,
+    })
+  }
+  /// Reads one exact release template after Project authorization.
+  pub fn get_factory_role_template(
+    &self,
+    project: &str,
+    identity: &str,
+    version: &str,
+    digest: &str,
+  ) -> Result<crate::GetFactoryRoleTemplateQuery, ManagementInputError> {
+    Ok(crate::GetFactoryRoleTemplateQuery {
+      project_id: parse(project, "project id")?,
+      reference: octacity_server_factory::ImmutableReference::new(
+        parse(identity, "template identity")?,
+        parse(version, "template version")?,
+        parse(digest, "template digest")?,
+      ),
+    })
+  }
+  /// Preserves reviewed copy settings for the common atomic publisher.
+  pub fn copy_factory_role_template(
+    &self,
+    project: &str,
+    value: Value,
+    key: &str,
+    now: i64,
+  ) -> Result<crate::CopyFactoryRoleTemplateCommand, ManagementInputError> {
+    use octacity_server_factory::*;
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Binding {
+      id: FactoryRoleProfileId,
+      definition: FactoryRoleProfileDefinition,
+    }
+    #[derive(serde::Deserialize)]
+    #[serde(deny_unknown_fields)]
+    struct Draft {
+      template: ImmutableReference,
+      role_id: FactoryRoleId,
+      role: FactoryRoleDefinition,
+      profiles: std::collections::BTreeMap<FactoryKey, Binding>,
+    }
+    let draft: Draft = factory_decode(value)?;
+    Ok(crate::CopyFactoryRoleTemplateCommand {
+      project_id: parse(project, "project id")?,
+      template: draft.template,
+      role_id: draft.role_id,
+      role: draft.role,
+      profiles: draft
+        .profiles
+        .into_iter()
+        .map(|(key, b)| {
+          (
+            key,
+            FactoryRoleTemplateBinding {
+              id: b.id,
+              definition: b.definition,
+            },
+          )
+        })
+        .collect(),
+      idempotency_key: parse(key, "idempotency key")?,
+      published_at: timestamp(now)?,
+    })
+  }
+
+  /// Reuses Project-owned catalog bounds and typed exclusive continuation identities.
+  pub fn factory_role_page<I: std::str::FromStr>(
+    &self,
+    project: &str,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<crate::CurrentDefinitionPageInput<I>, ManagementInputError> {
+    crate::CurrentDefinitionPageInput::try_new(
+      parse(project, "project id")?,
+      optional_parse(after, "role catalog cursor")?,
+      limit,
+    )
+    .map_err(|_| ManagementInputError::Invalid("role catalog page"))
+  }
+  /// Dedicated profile content read with an optional exact retained version.
+  pub fn get_factory_role_profile(
+    &self,
+    project: &str,
+    id: &str,
+    exact: Option<u64>,
+  ) -> Result<crate::GetFactoryRoleProfileQuery, ManagementInputError> {
+    Ok(crate::GetFactoryRoleProfileQuery {
+      project_id: parse(project, "project id")?,
+      id: parse(id, "profile id")?,
+      version: exact.map(|v| version(v, "profile version")).transpose()?,
+    })
+  }
+
+  /// Parses one reviewed atomic role/profile publication; item versions fence independent heads.
+  pub fn publish_factory_role_profiles(
+    &self,
+    project: &str,
+    role: Option<Value>,
+    profiles: Vec<Value>,
+    key: &str,
+    now: i64,
+  ) -> Result<crate::PublishFactoryRoleProfilesCommand, ManagementInputError> {
+    let intent: crate::FactoryRoleProfilesIntent = factory_decode(serde_json::json!({
+      "project_id": project, "role": role, "profiles": profiles
+    }))?;
+    intent
+      .validate()
+      .map_err(|_| ManagementInputError::Invalid("role/profile publication"))?;
+    Ok(crate::PublishFactoryRoleProfilesCommand {
+      intent,
+      idempotency_key: parse(key, "idempotency key")?,
+      published_at: timestamp(now)?,
+    })
+  }
+  /// Dedicated role content lookup, current or pinned; ownership is authorized by the query.
+  pub fn get_factory_role(
+    &self,
+    project: &str,
+    id: &str,
+    exact: Option<u64>,
+  ) -> Result<crate::GetFactoryRoleQuery, ManagementInputError> {
+    Ok(crate::GetFactoryRoleQuery {
+      project_id: parse(project, "project id")?,
+      id: parse(id, "role id")?,
+      version: exact.map(|v| version(v, "role version")).transpose()?,
+    })
+  }
+
   /// Decodes a Project-owned schema shape while leaving its content identity to the core.
   pub fn validate_factory_flow_data_schema(
     &self,
@@ -368,6 +620,8 @@ pub struct ManualFactoryWorkInput {
   pub artifacts: Value,
   /// Bounded admission classification.
   pub classification: Value,
+  /// Complete optional exact stage/profile overrides, normalized by the shared core contract.
+  pub profile_overrides: Vec<Value>,
 }
 impl ManagementInputFactory {
   /// Builds a validated manual intent without resolving any mutable source.
@@ -394,7 +648,7 @@ impl ManagementInputFactory {
     )
     .map_err(|_| ManagementInputError::Invalid("work metadata"))?;
     Ok(crate::AdmitManualFactoryWorkCommand {
-      profile_overrides: Default::default(),
+      profile_overrides: factory_decode(Value::Array(input.profile_overrides))?,
       project_id: parse(&input.project_id, "project id")?,
       configuration_id: parse(&input.configuration_id, "factory configuration id")?,
       configuration_version: version(input.configuration_version, "factory configuration version")?,

@@ -529,6 +529,65 @@ fn registered_routes() -> ManagementRoutes {
     .post::<SubmitFactoryNodeResponseCommand, _, _>("submitFactoryNodeResponse", submit_factory_node_response)
     .post::<RetryFactoryNodeCommand, _, _>("retryFactoryNode", retry_factory_node)
     .post::<ConfirmFactoryNodeOperationCommand, _, _>("confirmFactoryNodeOperation", confirm_factory_node_operation)
+    .get::<octacity_server_application::ListFactoryRoleProfileCapabilitiesQuery, _, _>(
+      "listFactoryProfileCapabilities",
+      super::factory_roles::capabilities,
+    )
+    .get::<octacity_server_application::GetFactoryRoleProfileCapabilityQuery, _, _>(
+      "getFactoryProfileCapability",
+      super::factory_roles::capability,
+    )
+    .post::<octacity_server_application::ValidateFactoryRoleProfileQuery, _, _>(
+      "validateFactoryRoleProfile",
+      super::factory_roles::validate_profile,
+    )
+    .post::<octacity_server_application::SelectFactoryProfileCommand, _, _>(
+      "selectFactoryProfile",
+      super::factory::select_factory_profile,
+    )
+    .post::<octacity_server_application::ImportProjectSkill, _, _>(
+      "importProjectSkill",
+      super::factory_roles::import_skill,
+    )
+    .get::<octacity_server_application::ListProjectSkillsQuery, _, _>("listProjectSkills", super::factory_roles::skills)
+    .get::<octacity_server_application::ListFactoryRoleTemplatesQuery, _, _>(
+      "listFactoryRoleTemplates",
+      super::factory_roles::templates,
+    )
+    .get::<octacity_server_application::GetFactoryRoleTemplateQuery, _, _>(
+      "getFactoryRoleTemplate",
+      super::factory_roles::template,
+    )
+    .post::<octacity_server_application::ValidateFactoryRoleQuery, _, _>(
+      "validateFactoryRole",
+      super::factory_roles::validate_role,
+    )
+    .post::<octacity_server_application::CopyFactoryRoleTemplateCommand, _, _>(
+      "copyFactoryRoleTemplate",
+      super::factory_roles::copy_template,
+    )
+    .get::<octacity_server_application::ListFactoryRolesQuery, _, _>("listFactoryRoles", super::factory_roles::roles)
+    .get::<octacity_server_application::ListFactoryRoleProfilesQuery, _, _>(
+      "listFactoryRoleProfiles",
+      super::factory_roles::profiles,
+    )
+    .get::<octacity_server_application::GetFactoryRoleQuery, _, _>(
+      "getFactoryRoleVersion",
+      super::factory_roles::role_version,
+    )
+    .get::<octacity_server_application::GetFactoryRoleProfileQuery, _, _>(
+      "getFactoryRoleProfile",
+      super::factory_roles::profile,
+    )
+    .get::<octacity_server_application::GetFactoryRoleProfileQuery, _, _>(
+      "getFactoryRoleProfileVersion",
+      super::factory_roles::profile_version,
+    )
+    .post::<octacity_server_application::PublishFactoryRoleProfilesCommand, _, _>(
+      "publishFactoryRoleProfiles",
+      super::factory_roles::publish,
+    )
+    .get::<octacity_server_application::GetFactoryRoleQuery, _, _>("getFactoryRole", super::factory_roles::role)
     .get::<GetFactoryNodeActionQuery, _, _>("getFactoryNodeAction", super::factory_actions::observe)
     .get::<ListFactoryActionsQuery, _, _>("listFactoryActions", super::factory_actions::global)
     .get::<ListFactoryActionsQuery, _, _>("listProjectFactoryActions", super::factory_actions::project)

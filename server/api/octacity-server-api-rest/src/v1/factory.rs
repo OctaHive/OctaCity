@@ -222,6 +222,9 @@ pub struct AdmitManualFactoryWorkRequest {
   pub artifacts: serde_json::Value,
   /// Bounded priority, risk and safe metadata.
   pub classification: serde_json::Value,
+  /// Optional exact stage/profile overrides; omitted on retained static-client requests.
+  #[serde(default, skip_serializing_if = "Vec::is_empty")]
+  pub profile_overrides: Vec<serde_json::Value>,
 }
 
 /// Exact immutable root publication and its complete validated closure.
@@ -351,4 +354,80 @@ pub struct FactoryPhaseReadyPage {
   pub items: Vec<FactoryPhaseReadyResource>,
   /// Complete exclusive order tuple without an anchor lookup.
   pub next_cursor: Option<Cursor>,
+}
+
+/// Reviewed atomic role/profile publication. Each replacement supplies its exact current version.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct PublishFactoryRoleProfilesRequest {
+  /// Optional role creation or replacement, including its independent precondition.
+  pub role: Option<serde_json::Value>,
+  /// Independent complete profile publications in the same transaction.
+  pub profiles: Vec<serde_json::Value>,
+}
+
+/// Side-effect-free role normalization with a stable client identity.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidateFactoryRoleRequest {
+  /// Caller-owned role identity.
+  pub id: String,
+  /// Complete role metadata and instruction entries.
+  pub definition: serde_json::Value,
+}
+/// Exact template copy with complete independently editable role/profile content.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CopyFactoryRoleTemplateRequest {
+  /// Exact release template identity/version/digest.
+  pub template: FactoryImmutableReferenceResource,
+  /// New stable role identity.
+  pub role_id: String,
+  /// Reviewed shared responsibility and presentation.
+  pub role: serde_json::Value,
+  /// Complete profile bindings, keyed by template alias.
+  pub profiles: std::collections::BTreeMap<String, serde_json::Value>,
+}
+
+/// Complete reviewed folder upload, bounded by the shared management body ceiling.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportProjectSkillRequest {
+  /// Logical skill identity; imports create immutable versions.
+  pub identity: String,
+  /// Relative regular-file paths, reviewed SHA-256 and exact byte arrays.
+  pub files: Vec<ImportProjectSkillFile>,
+}
+/// Regular file only; the server never opens a client host path or follows a link.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ImportProjectSkillFile {
+  /// Safe portable path relative to the selected folder.
+  pub path: String,
+  /// Reviewed lowercase SHA-256.
+  pub sha256: String,
+  /// Exact reviewed bytes, never echoed in responses.
+  pub bytes: Vec<u8>,
+}
+
+/// Side-effect-free qualification of a complete profile against one authorized installed ceiling.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValidateFactoryRoleProfileRequest {
+  /// Stable caller-owned candidate identity.
+  pub id: String,
+  /// Exact published shared role version.
+  pub role: serde_json::Value,
+  /// Authorized installed runtime/profile alias.
+  pub capability: String,
+  /// Complete explicit settings; unsupported fields are rejected, never silently removed.
+  pub definition: serde_json::Value,
+}
+
+/// One exact declared profile for the frozen occurrence addressed by the route.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectFactoryProfileRequest {
+  /// Immutable Project/profile/version/digest; never an executable field patch.
+  pub profile: serde_json::Value,
 }

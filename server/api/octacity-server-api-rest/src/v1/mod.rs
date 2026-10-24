@@ -74,3 +74,5 @@ pub use trigger::*;
 pub const API_PREFIX: &str = "/api/v1";
 
 pub use adapter::FactoryActionManagementApplication;
+
+pub use adapter::FactoryRoleManagementApplication;
