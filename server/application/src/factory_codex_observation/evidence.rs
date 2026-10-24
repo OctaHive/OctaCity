@@ -92,6 +92,7 @@ pub(super) fn valid_provenance<T>(
       plugin: envelope.plugin(),
       executable: envelope.executable(),
       model: envelope.model(),
+      model_identifier: None,
       prompt_digest: envelope.digests().prompt_provenance,
       source_revision: expected_revision(envelope),
     },
@@ -104,6 +105,7 @@ pub(super) struct CodexProvenanceExpectation<'a> {
   pub(super) plugin: &'a octacity_server_factory::ImmutableReference,
   pub(super) executable: &'a octacity_server_factory::ImmutableReference,
   pub(super) model: &'a octacity_server_factory::ImmutableReference,
+  pub(super) model_identifier: Option<&'a str>,
   pub(super) prompt_digest: FactoryDigest,
   pub(super) source_revision: &'a str,
 }
@@ -123,7 +125,8 @@ pub(super) fn valid_provenance_for<T>(
     && provenance.plugin.version == expected.plugin.version().as_str()
     && provenance.codex.name == CODEX_EXECUTABLE_IDENTITY
     && provenance.codex.version == expected.executable.version().as_str()
-    && provenance.settings.model.as_deref() == Some(expected.model.identity().as_str())
+    && provenance.settings.model.as_deref()
+      == Some(expected.model_identifier.unwrap_or(expected.model.identity().as_str()))
     && provenance
       .settings
       .reasoning_effort

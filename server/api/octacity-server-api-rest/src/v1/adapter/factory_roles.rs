@@ -9,7 +9,8 @@ use octacity_server_application::{
   CopyFactoryRoleTemplateCommand, GetFactoryRoleTemplateQuery, ListFactoryRoleTemplatesQuery, ValidateFactoryRoleQuery,
 };
 use octacity_server_application::{
-  GetFactoryRoleProfileCapabilityQuery, ListFactoryRoleProfileCapabilitiesQuery, ValidateFactoryRoleProfileQuery,
+  GetFactoryRoleProfileCapabilityQuery, ListFactoryRoleProfileCapabilitiesQuery,
+  RefreshFactoryRoleProfileCapabilityQuery, ValidateFactoryRoleProfileQuery,
 };
 use octacity_server_application::{GetProjectSkillQuery, ImportProjectSkill, ListProjectSkillsQuery};
 /// Optional AI-agent authoring, independent of worker enrollment and execution providers.
@@ -18,6 +19,8 @@ pub struct FactoryRoleManagementApplication {
   capabilities:
     Arc<dyn AuthorizedManagementQueryHandler<ListFactoryRoleProfileCapabilitiesQuery, Error = ApplicationError>>,
   capability: Arc<dyn AuthorizedManagementQueryHandler<GetFactoryRoleProfileCapabilityQuery, Error = ApplicationError>>,
+  refresh_capability:
+    Arc<dyn AuthorizedManagementQueryHandler<RefreshFactoryRoleProfileCapabilityQuery, Error = ApplicationError>>,
   validate_profile:
     Arc<dyn AuthorizedManagementQueryHandler<ValidateFactoryRoleProfileQuery, Error = ApplicationError>>,
   import_skill: Option<Arc<dyn AuthorizedManagementCommandHandler<ImportProjectSkill, Error = ApplicationError>>>,
@@ -63,6 +66,7 @@ impl FactoryRoleManagementApplication {
       + AuthorizedManagementQueryHandler<GetFactoryRoleTemplateQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ListFactoryRoleProfileCapabilitiesQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<GetFactoryRoleProfileCapabilityQuery, Error = ApplicationError>
+      + AuthorizedManagementQueryHandler<RefreshFactoryRoleProfileCapabilityQuery, Error = ApplicationError>
       + AuthorizedManagementQueryHandler<ValidateFactoryRoleProfileQuery, Error = ApplicationError>
       + 'static,
   {
@@ -70,6 +74,7 @@ impl FactoryRoleManagementApplication {
       delete: commands.clone(),
       capabilities: queries.clone(),
       capability: queries.clone(),
+      refresh_capability: queries.clone(),
       validate_profile: queries.clone(),
       import_skill: None,
       skills: None,
@@ -408,6 +413,27 @@ pub(super) async fn capability(
     .map_err(|e| invalid_input(e, &id))?;
   read(&endpoints(&app, &id)?.capability, &context, query, &id).await
 }
+pub(super) async fn refresh_capability(
+  State(app): State<Arc<ManagementApplication>>,
+  Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,
+  Path((project, alias)): Path<(String, String)>,
+) -> Result<axum::response::Response, ApiError> {
+  let query = app
+    .inputs
+    .get_factory_role_profile_capability(&project, &alias)
+    .map_err(|e| invalid_input(e, &id))?;
+  read(
+    &endpoints(&app, &id)?.refresh_capability,
+    &context,
+    RefreshFactoryRoleProfileCapabilityQuery {
+      project_id: query.project_id,
+      capability: query.capability,
+    },
+    &id,
+  )
+  .await
+}
+
 pub(super) async fn validate_profile(
   State(app): State<Arc<ManagementApplication>>,
   Extension(crate::ManagementRequest(id, context)): Extension<crate::ManagementRequest>,

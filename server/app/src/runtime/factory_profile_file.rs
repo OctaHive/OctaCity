@@ -650,6 +650,7 @@ impl FactoryRuntimeProfileCatalog {
             .with_role_profile_capability(
               alias,
               FactoryRoleProfileCapability {
+                model_catalog: None,
                 ceiling: declaration.ceiling,
                 parameters: declaration.parameters,
                 public_environment: declaration.public_environment,

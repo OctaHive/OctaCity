@@ -50,6 +50,7 @@ fn selected_fixture(project: ProjectId) -> Fixture {
     build.result_tool = Some(verifier.clone());
     build.model_or_tool = exact(name, "v1", byte);
     let definition = FactoryRoleProfileDefinition {
+      model_identifier: None,
       thinking_parameter: None,
       name: FactoryText::new(name).unwrap(),
       instructions: "Private profile instructions".into(),
@@ -83,6 +84,7 @@ fn selected_fixture(project: ProjectId) -> Fixture {
     caps.push((
       key(name),
       FactoryRoleProfileCapability {
+        model_catalog: None,
         ceiling: definition.clone(),
         parameters: FlowDataSchema::new(
           key("parameters"),

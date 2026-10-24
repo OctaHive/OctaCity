@@ -9,6 +9,8 @@ use octacity_server_factory::{
 /// Expectations established from the frozen executed Job and protected input manifest.
 /// Provider records cannot establish or replace these facts.
 pub struct FactoryCodexNodeRunContract<'a> {
+  /// Exact opaque model identifier from the retained Role Profile, absent for legacy tasks.
+  pub model_identifier: Option<&'a str>,
   /// Executed immutable plugin, executable and model selection.
   pub profile: &'a FlowBuildProfile,
   /// Exact result contract declared by the admitted node.
@@ -160,6 +162,12 @@ fn verified_records(
     CODEX_EXECUTABLE_IDENTITY, CODEX_PLUGIN_IDENTITY, CODEX_RUN_PROVENANCE, CODEX_RUN_RESULT, CODEX_RUN_TRACE,
   };
   let invalid = ApplicationError::invalid;
+  if !expected
+    .usage_policy
+    .matches_selection(&expected.profile.model_or_tool, expected.model_identifier)
+  {
+    return Err(invalid());
+  }
   if documents.len() != 3
     || expected.profile.plugin.identity().as_str() != CODEX_PLUGIN_IDENTITY
     || expected.profile.tool.identity().as_str() != CODEX_EXECUTABLE_IDENTITY
@@ -211,6 +219,7 @@ fn verified_records(
       plugin: &expected.profile.plugin,
       executable: &expected.profile.tool,
       model: &expected.profile.model_or_tool,
+      model_identifier: expected.model_identifier,
       prompt_digest: expected.prompt_digest,
       source_revision: expected.source_revision.as_str(),
     },

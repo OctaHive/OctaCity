@@ -125,6 +125,7 @@ pub fn factory_profile_selection_capabilities(admitted: &AdmittedFlow) -> Factor
       .with_role_profile_capability(
         key(&format!("profile.{index}")),
         FactoryRoleProfileCapability {
+          model_catalog: None,
           ceiling: candidate.profile.definition().clone(),
           parameters: FlowDataSchema::new(
             key("parameters"),
@@ -219,6 +220,7 @@ fn configured_selection_fixture(
     .into_iter()
     .map(|name| {
       let mut definition = FactoryRoleProfileDefinition {
+        model_identifier: None,
         thinking_parameter: None,
         name: FactoryText::new(name).unwrap(),
         instructions: "Private instructions".into(),

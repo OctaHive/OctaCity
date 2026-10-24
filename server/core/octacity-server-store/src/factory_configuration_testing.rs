@@ -34,6 +34,7 @@ use crate::{CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary}
 #[derive(Default)]
 pub struct InMemoryFactoryConfigurationStore {
   state: Mutex<FactoryConfigurationMemoryState>,
+  capabilities: Option<std::sync::Arc<dyn crate::FactoryCapabilitySource>>,
 }
 
 impl InMemoryFactoryConfigurationStore {
@@ -41,6 +42,12 @@ impl InMemoryFactoryConfigurationStore {
   #[must_use]
   pub fn new() -> Self {
     Self::default()
+  }
+
+  /// Installs the same runtime inventory port used by persistent composition.
+  pub fn with_factory_capabilities(mut self, source: std::sync::Arc<dyn crate::FactoryCapabilitySource>) -> Self {
+    self.capabilities = Some(source);
+    self
   }
 
   /// Seeds one Project without enabling Factory mode.
@@ -260,20 +267,40 @@ impl FactoryConfigurationStore for InMemoryFactoryConfigurationStore {
     &self,
     project_id: ProjectId,
   ) -> Result<FactoryConfigurationAvailability, StoreError> {
-    let state = self.lock()?;
-    if !state.projects.contains(&project_id) {
+    {
+      let state = self.lock()?;
+      if !state.projects.contains(&project_id) {
+        return Err(not_found(EntityKind::Project));
+      }
+    }
+    let mut availability = if let Some(source) = &self.capabilities {
+      source.availability(project_id).await?
+    } else {
+      self.lock()?.choices.get(&project_id).cloned().map_or(
+        FactoryConfigurationAvailability::Disabled,
+        FactoryConfigurationAvailability::Available,
+      )
+    };
+    if let FactoryConfigurationAvailability::Available(choices) = &mut availability {
+      self.lock()?.role_profiles.exclude_deleted(choices);
+    }
+    Ok(availability)
+  }
+
+  async fn refresh_factory_role_models(
+    &self,
+    project: ProjectId,
+    alias: &octacity_server_factory::FactoryKey,
+  ) -> Result<(), StoreError> {
+    if !self.lock()?.projects.contains(&project) {
       return Err(not_found(EntityKind::Project));
     }
-    Ok(
-      state
-        .choices
-        .get(&project_id)
-        .cloned()
-        .map_or(FactoryConfigurationAvailability::Disabled, |mut choices| {
-          state.role_profiles.exclude_deleted(&mut choices);
-          FactoryConfigurationAvailability::Available(choices)
-        }),
-    )
+    self
+      .capabilities
+      .as_ref()
+      .ok_or(StoreError::Unavailable)?
+      .refresh_role_models(project, alias)
+      .await
   }
 
   async fn create_factory_configuration(

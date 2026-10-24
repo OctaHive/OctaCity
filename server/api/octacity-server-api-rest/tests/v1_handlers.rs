@@ -1816,6 +1816,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "get_issue_content_retention",
       "set_issue_content_retention",
       "get_factory_node_action",
+      "refresh_factory_profile_capability",
       "publish_factory_role_profiles",
       "delete_factory_role",
       "list_factory_roles",

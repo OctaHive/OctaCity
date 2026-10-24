@@ -965,3 +965,6 @@ fn relative_wire_path(name: &str, value: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests;
+
+// Shared plugin metadata; vendor-specific runtime discovery stays in Octa plugins.
+pub use octa_runner_protocol::{MAX_MODEL_CATALOG_BYTES, ModelCatalog, ModelChoice};

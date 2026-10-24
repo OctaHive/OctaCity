@@ -25,6 +25,12 @@ pub enum FactoryCodexUsagePolicy {
   },
 }
 impl FactoryCodexUsagePolicy {
+  /// A manually selected model must not inherit another model's exact tariff.
+  pub(crate) fn matches_selection(&self, model: &ImmutableReference, identifier: Option<&str>) -> bool {
+    self.matches_model(model)
+      && (matches!(self, Self::ReportedCost) || identifier.is_none_or(|id| id == model.identity().as_str()))
+  }
+
   pub(crate) fn matches_model(&self, model: &ImmutableReference) -> bool {
     match self {
       Self::ReportedCost => true,

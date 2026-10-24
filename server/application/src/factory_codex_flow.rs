@@ -298,7 +298,12 @@ fn compile_flow_task(
     return Err(CodexCompilationError::NodeBindings);
   }
   if profile.plugin.identity().as_str() != CODEX_PLUGIN_IDENTITY
-    || !usage_policy.matches_model(&profile.model_or_tool)
+    || !usage_policy.matches_selection(
+      &profile.model_or_tool,
+      options
+        .role
+        .and_then(|role| role.package().inputs().profile.definition().model_identifier.as_deref()),
+    )
     || profile.tool.identity().as_str() != CODEX_EXECUTABLE_IDENTITY
   {
     return Err(CodexCompilationError::UnsupportedToolchain);
@@ -561,7 +566,9 @@ fn compile_flow_task(
                 .cli_arguments
                 .clone()
             }),
-            model: profile.model_or_tool.identity().as_str(),
+            model: options.role.map_or(profile.model_or_tool.identity().as_str(), |role| {
+              role.package().inputs().profile.definition().runtime_model()
+            }),
             result_schema: &result_schema,
             run_records: "output/codex-runs",
             environment: CodexEnvironment {

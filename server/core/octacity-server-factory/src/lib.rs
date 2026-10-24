@@ -285,4 +285,6 @@ pub use role_template::{
   factory_role_templates,
 };
 
-pub use role_profile_capability::{FactoryRoleProfileCapability, FactoryRoleProfileIncompatibility};
+pub use role_profile_capability::{
+  FactoryRoleModelCatalog, FactoryRoleModelChoice, FactoryRoleProfileCapability, FactoryRoleProfileIncompatibility,
+};

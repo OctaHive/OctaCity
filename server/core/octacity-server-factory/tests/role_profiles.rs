@@ -18,6 +18,7 @@ fn exact(name: &str) -> ImmutableReference {
 
 fn profile(project: ProjectId, effort: &str) -> FactoryRoleProfileDefinition {
   FactoryRoleProfileDefinition {
+    model_identifier: None,
     thinking_parameter: None,
     template: None,
     execution: Default::default(),
@@ -808,6 +809,7 @@ fn installed_role_profile_capabilities_use_existing_catalog_and_parameter_schema
   let project = ProjectId::generate();
   let definition = profile(project, "medium");
   let capability = FactoryRoleProfileCapability {
+    model_catalog: None,
     ceiling: definition.clone(),
     parameters: role_parameter_schema(),
     public_environment: Default::default(),
@@ -854,6 +856,7 @@ fn installed_thinking_metadata_preserves_unannotated_profiles() {
   let mut annotated = definition;
   annotated.thinking_parameter = Some(FactoryKey::new("reasoning_effort").unwrap());
   let capability = FactoryRoleProfileCapability {
+    model_catalog: None,
     ceiling: annotated.clone(),
     parameters: role_parameter_schema(),
     public_environment: Default::default(),
@@ -871,6 +874,7 @@ fn installed_profile_validation_rejects_unsupported_execution_and_authority_with
   let definition = profile(project, "medium");
   let empty_environment = Default::default();
   let capability = FactoryRoleProfileCapability {
+    model_catalog: None,
     ceiling: definition.clone(),
     parameters: role_parameter_schema(),
     public_environment: empty_environment,
@@ -941,6 +945,7 @@ fn installed_profile_declarations_share_definition_bounds() {
   let definition = profile(project, "medium");
   let alias = FactoryKey::new("runtime").unwrap();
   let capability = FactoryRoleProfileCapability {
+    model_catalog: None,
     ceiling: definition.clone(),
     parameters: role_parameter_schema(),
     public_environment: Default::default(),
@@ -1742,3 +1747,115 @@ fn execution_package_diagnostics_do_not_expose_private_content() {
 
 #[path = "role_profiles/stage_selection.rs"]
 mod stage_selection;
+
+#[test]
+fn profiles_retain_opaque_plugin_model_identifiers_without_a_global_model_enum() {
+  let project = ProjectId::generate();
+  let agent = role(project, "Shared instructions.");
+  let mut wire = serde_json::to_value(profile(project, "medium")).unwrap();
+  wire["model_identifier"] = serde_json::json!("Vendor/new-model:preview");
+  let definition: FactoryRoleProfileDefinition =
+    serde_json::from_value(wire).expect("model identifiers belong to the plugin");
+  let saved = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &agent, definition).unwrap();
+  assert_eq!(
+    serde_json::to_value(&saved).unwrap()["definition"]["model_identifier"],
+    "Vendor/new-model:preview"
+  );
+  assert_eq!(
+    serde_json::from_value::<FactoryRoleProfile>(serde_json::to_value(&saved).unwrap()).unwrap(),
+    saved
+  );
+  for name in ["", " bad", "bad\nmodel"] {
+    let mut invalid = serde_json::to_value(saved.definition()).unwrap();
+    invalid["model_identifier"] = serde_json::json!(name);
+    let definition = serde_json::from_value(invalid).unwrap();
+    assert!(FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &agent, definition).is_err());
+  }
+}
+
+#[test]
+fn installed_runtime_catalog_allows_manual_models_without_changing_execution_authority() {
+  use octacity_server_factory::*;
+  let project = ProjectId::generate();
+  let mut definition = profile(project, "medium");
+  definition.model_identifier = Some("Vendor/future:preview".into());
+  let agent = role(project, "Project rules.");
+  let candidate =
+    FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &agent, definition.clone()).unwrap();
+  let cap = FactoryRoleProfileCapability {
+    model_catalog: Some(FactoryRoleModelCatalog {
+      available: true,
+      manual_model: true,
+      models: vec![],
+    }),
+    ceiling: profile(project, "medium"),
+    parameters: role_parameter_schema(),
+    public_environment: Default::default(),
+    local_permissions: LocalPermissionCeiling::fully_enforced(definition.permissions.clone()),
+  };
+  // The ordinary Build binding is independently installed, not derived from model text.
+  let mut cap = cap;
+  cap.ceiling.build_configuration = definition.build_configuration.clone();
+  assert_eq!(cap.validate(&candidate), Ok(()));
+  cap.model_catalog.as_mut().unwrap().manual_model = false;
+  assert_eq!(
+    cap.validate(&candidate),
+    Err(FactoryRoleProfileIncompatibility::Toolchain)
+  );
+  cap.model_catalog.as_mut().unwrap().manual_model = true;
+  let mut substituted = definition;
+  substituted.toolchain.plugin = exact("uninstalled.plugin");
+  let substituted =
+    FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &agent, substituted).unwrap();
+  assert_eq!(
+    cap.validate(&substituted),
+    Err(FactoryRoleProfileIncompatibility::Toolchain)
+  );
+}
+
+#[test]
+fn legacy_profiles_use_the_effective_models_parameter_contract_without_rewriting_the_pin() {
+  use octacity_server_factory::*;
+  let project = ProjectId::generate();
+  let definition = profile(project, "medium");
+  let agent = role(project, "Project rules.");
+  let candidate =
+    FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &agent, definition.clone()).unwrap();
+  let original = serde_json::to_vec(&candidate).unwrap();
+  let mut capability = FactoryRoleProfileCapability {
+    model_catalog: Some(FactoryRoleModelCatalog {
+      available: true,
+      manual_model: false,
+      models: vec![FactoryRoleModelChoice {
+        identifier: "open.model".into(),
+        label: "Installed model".into(),
+        parameters: FlowDataSchema::new(
+          FactoryKey::new("parameters").unwrap(),
+          FactoryKey::new("v1").unwrap(),
+          FlowValueSchema::Object {
+            fields: [(
+              FactoryKey::new("reasoning_effort").unwrap(),
+              FlowFieldSchema::required(FlowValueSchema::Enum {
+                values: vec![serde_json::json!("high")],
+              }),
+            )]
+            .into(),
+          },
+        )
+        .unwrap(),
+      }],
+    }),
+    ceiling: definition.clone(),
+    parameters: role_parameter_schema(),
+    public_environment: Default::default(),
+    local_permissions: LocalPermissionCeiling::fully_enforced(definition.permissions.clone()),
+  };
+  assert_eq!(
+    capability.validate(&candidate),
+    Err(FactoryRoleProfileIncompatibility::ModelParameters)
+  );
+  capability.model_catalog.as_mut().unwrap().models[0].parameters = role_parameter_schema();
+  assert_eq!(capability.validate(&candidate), Ok(()));
+  assert_eq!(serde_json::to_vec(&candidate).unwrap(), original);
+  assert!(candidate.definition().model_identifier.is_none());
+}

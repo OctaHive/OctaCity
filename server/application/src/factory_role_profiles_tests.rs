@@ -885,3 +885,110 @@ fn factory_role_profile_empty_dependency_scope_is_an_empty_page() {
     assert_eq!(page.next_cursor, None);
   });
 }
+
+#[test]
+fn plugin_catalog_refresh_is_explicit_authorized_and_preserves_cached_choices_on_failure() {
+  use octacity_server_factory::*;
+  use octacity_server_store::{FactoryCapabilitySource, FactoryConfigurationAvailability};
+  use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+  struct Runtime {
+    choices: std::sync::Mutex<FactoryConfigurationChoices>,
+    fail: AtomicBool,
+    requests: AtomicUsize,
+  }
+  #[async_trait]
+  impl FactoryCapabilitySource for Runtime {
+    async fn availability(
+      &self,
+      _: ProjectId,
+    ) -> Result<FactoryConfigurationAvailability, octacity_server_store::StoreError> {
+      Ok(FactoryConfigurationAvailability::Available(
+        self.choices.lock().unwrap().clone(),
+      ))
+    }
+    async fn refresh_role_models(
+      &self,
+      _: ProjectId,
+      alias: &FactoryKey,
+    ) -> Result<(), octacity_server_store::StoreError> {
+      self.requests.fetch_add(1, Ordering::SeqCst);
+      if self.fail.load(Ordering::SeqCst) {
+        return Err(octacity_server_store::StoreError::Unavailable);
+      }
+      let mut choices = self.choices.lock().unwrap();
+      let mut cap = choices.role_profile_capabilities()[alias].clone();
+      cap.model_catalog = Some(FactoryRoleModelCatalog {
+        available: true,
+        manual_model: true,
+        models: vec![FactoryRoleModelChoice {
+          identifier: "Vendor/future:preview".into(),
+          label: "Future preview".into(),
+          parameters: cap.parameters.clone(),
+        }],
+      });
+      *choices = choices
+        .clone()
+        .with_role_profile_capability(alias.clone(), cap)
+        .unwrap();
+      Ok(())
+    }
+  }
+  run_ready(async {
+    let project = ProjectId::generate();
+    let (choices, _) = installed_role_choices(project);
+    let alias = choices.role_profile_capabilities().keys().next().unwrap().clone();
+    let source = Arc::new(Runtime {
+      choices: std::sync::Mutex::new(choices),
+      fail: AtomicBool::new(false),
+      requests: AtomicUsize::new(0),
+    });
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new().with_factory_capabilities(source.clone()));
+    store.seed_project(project).unwrap();
+    let handlers = Arc::new(FactoryRoleProfileHandlers::new(store.clone()));
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers.clone());
+    let get = || GetFactoryRoleProfileCapabilityQuery {
+      project_id: project,
+      capability: alias.clone(),
+    };
+    assert!(
+      queries
+        .handle_query(&context(), get())
+        .await
+        .unwrap()
+        .model_catalog
+        .is_none()
+    );
+    assert_eq!(source.requests.load(Ordering::SeqCst), 0);
+    let refresh = || RefreshFactoryRoleProfileCapabilityQuery {
+      project_id: project,
+      capability: alias.clone(),
+    };
+    let updated = queries.handle_query(&context(), refresh()).await.unwrap();
+    assert_eq!(
+      updated.model_catalog.as_ref().unwrap().models[0].identifier,
+      "Vendor/future:preview"
+    );
+    let page = queries
+      .handle_query(
+        &context(),
+        ListFactoryRoleProfileCapabilitiesQuery {
+          page: CurrentDefinitionPageInput::try_new(project, None, 1).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    assert!(
+      serde_json::to_value(&page.items[0])
+        .unwrap()
+        .get("model_catalog")
+        .is_none(),
+      "bounded runtime choices must not duplicate the dedicated model catalog"
+    );
+    let readonly = AuthorizedQueryHandler::new(Arc::new(ReadOnly), handlers);
+    assert!(readonly.handle_query(&context(), refresh()).await.is_err());
+    assert_eq!(source.requests.load(Ordering::SeqCst), 1);
+    source.fail.store(true, Ordering::SeqCst);
+    assert!(queries.handle_query(&context(), refresh()).await.is_err());
+    assert_eq!(queries.handle_query(&context(), get()).await.unwrap(), updated);
+  });
+}

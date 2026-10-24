@@ -951,9 +951,7 @@ fn role_package_rejects_settings_the_pinned_adapter_cannot_enforce() {
       profile.model_parameters.insert(key("unknown_parameter"), json!(true));
     },
     |profile| {
-      profile
-        .model_parameters
-        .insert(key("reasoning_effort"), json!("unqualified-effort"));
+      profile.model_parameters.insert(key("reasoning_effort"), json!(true));
     },
     |profile| {
       profile.execution.cli_arguments = vec!["--arbitrary-option".into()];
@@ -1743,4 +1741,41 @@ fn retained_role_package_rechecks_access_without_reloading_its_catalog() {
       "authoring catalog is not consulted again"
     );
   });
+}
+
+#[test]
+fn role_package_passes_a_manual_plugin_model_without_substituting_installed_defaults() {
+  let compiled = compile_profile(|profile| profile.model_identifier = Some("Vendor/future:preview".into())).unwrap();
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  assert_eq!(
+    octafile["tasks"]["observe"]["cmds"][0]["codex"]["model"],
+    "Vendor/future:preview"
+  );
+  let package: Value = serde_json::from_slice(
+    compiled
+      .document(FactoryProtectedDocumentKind::RoleExecutionPackage)
+      .bytes(),
+  )
+  .unwrap();
+  assert_eq!(
+    package["inputs"]["profile"]["definition"]["model_identifier"],
+    "Vendor/future:preview"
+  );
+}
+
+#[test]
+fn role_compiler_preserves_plugin_declared_thinking_without_a_second_value_enum() {
+  let compiled = compile_profile(|profile| {
+    profile
+      .model_parameters
+      .insert(key("reasoning_effort"), json!("future-effort"));
+  })
+  .unwrap();
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  assert_eq!(
+    octafile["tasks"]["observe"]["cmds"][0]["codex"]["reasoning_effort"],
+    "future-effort"
+  );
 }

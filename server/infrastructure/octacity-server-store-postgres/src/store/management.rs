@@ -33,6 +33,15 @@ impl FactoryConfigurationStore for PostgresStore {
     Ok(availability)
   }
 
+  async fn refresh_factory_role_models(
+    &self,
+    project: ProjectId,
+    alias: &octacity_server_factory::FactoryKey,
+  ) -> Result<(), StoreError> {
+    crate::discovery::require_project(&self.pool, project).await?;
+    self.factory_capabilities().refresh_role_models(project, alias).await
+  }
+
   async fn create_factory_configuration(
     &self,
     request: ManagementMutation<CreateFactoryConfiguration>,

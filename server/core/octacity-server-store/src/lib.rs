@@ -338,7 +338,7 @@ pub use factory_configuration_model::{
   FactoryConfigurationMutationOutcome, PublishedFactoryConfiguration, ReplaceFactoryConfiguration,
   ReplaceFactoryConfigurationError, ReplayFactoryConfigurationMutation,
 };
-pub use factory_configuration_port::FactoryConfigurationStore;
+pub use factory_configuration_port::{FactoryCapabilitySource, FactoryConfigurationStore};
 pub use factory_discovery_model::{
   CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary, FactoryConfigurationPagePosition,
   FactoryRunBudgetSummary, FactoryRunDecisionSummary, FactoryRunDeliverySummary, FactoryRunFilter,

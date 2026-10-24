@@ -8,6 +8,26 @@ use crate::{
   ReplayFactoryConfigurationMutation, StoreError,
 };
 
+/// Deployment-owned source of exact Factory Configuration choices.
+///
+/// PostgreSQL owns immutable published definitions, while selectable adapter,
+/// model, policy, and enforcement capabilities are runtime inventory. Keeping
+/// this source explicit prevents stale capability snapshots from becoming
+/// durable authority.
+#[async_trait]
+pub trait FactoryCapabilitySource: Send + Sync {
+  /// Reads the current trusted availability for one existing Project.
+  async fn availability(&self, project_id: ProjectId) -> Result<FactoryConfigurationAvailability, StoreError>;
+  /// Explicit inventory refresh; ordinary availability reads never perform discovery.
+  async fn refresh_role_models(
+    &self,
+    _project_id: ProjectId,
+    _alias: &octacity_server_factory::FactoryKey,
+  ) -> Result<(), StoreError> {
+    Err(StoreError::Unavailable)
+  }
+}
+
 /// Backend-neutral append-only Factory Configuration operations.
 ///
 /// Mutations atomically commit the immutable version, idempotency result,
@@ -26,6 +46,15 @@ pub trait FactoryConfigurationStore: Send + Sync {
     &self,
     project_id: ProjectId,
   ) -> Result<FactoryConfigurationAvailability, StoreError>;
+
+  /// Refreshes one installed plugin's advisory catalog, without publishing a definition.
+  async fn refresh_factory_role_models(
+    &self,
+    _project: ProjectId,
+    _alias: &octacity_server_factory::FactoryKey,
+  ) -> Result<(), StoreError> {
+    Err(StoreError::Unavailable)
+  }
 
   /// Creates one Factory Configuration identity together with version one.
   async fn create_factory_configuration(

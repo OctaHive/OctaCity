@@ -167,6 +167,10 @@ pub struct FactoryRoleProfileDefinition {
   pub instructions: crate::FactoryInstructions,
   /// Exact installed model, harness executable, and plugin references.
   pub toolchain: FactoryTaskToolchain,
+  /// Opaque plugin model identifier; omitted legacy profiles use the installed model identity.
+  /// This is retained content, never an executable path or a model-list allowlist entry.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub model_identifier: Option<String>,
   /// Explicit environment/argv, installed MCP and managed integration selections.
   #[serde(default, skip_serializing_if = "crate::FactoryRoleProfileExecution::is_empty")]
   pub execution: crate::FactoryRoleProfileExecution,
@@ -294,6 +298,15 @@ impl FactoryRoleProfile {
 }
 
 impl FactoryRoleProfileDefinition {
+  /// Exact plugin identifier frozen in this profile; legacy definitions retain their installed selection.
+  #[must_use]
+  pub fn runtime_model(&self) -> &str {
+    self
+      .model_identifier
+      .as_deref()
+      .unwrap_or(self.toolchain.model.identity().as_str())
+  }
+
   /// Validates the common bounded definition contract for one owning Project.
   /// Installed declarations and published profiles use these same shape rules.
   pub fn validate(&self, project: ProjectId) -> Result<(), FactoryError> {
@@ -302,6 +315,11 @@ impl FactoryRoleProfileDefinition {
       return Err(invalid("profile Build project"));
     }
     definition.instructions.validate()?;
+    if definition.model_identifier.as_ref().is_some_and(|name| {
+      name.is_empty() || name.len() > 256 || name.trim() != name || name.chars().any(char::is_control)
+    }) {
+      return Err(invalid("profile model identifier"));
+    }
     definition.execution.validate(project)?;
     if definition.skills.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES
       || definition.model_parameters.len() > MAX_FACTORY_ROLE_PROFILE_ENTRIES

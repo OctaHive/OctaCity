@@ -160,6 +160,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       ("execution", schema_ref("FactoryRoleProfileExecution")),
       ("thinking_parameter", nullable(key())),
       (
+        "model_identifier",
+        nullable(json!({"type":"string","minLength":1,"maxLength":256})),
+      ),
+      (
         "model_parameters",
         bounded_map(
           json!({"type":["string","number","boolean","null"],"maxLength":b.text_bytes}),
@@ -369,9 +373,34 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ),
   );
   schemas.insert(
+    "FactoryRoleModelCatalog".into(),
+    object(
+      [
+        ("available", json!({"type":"boolean"})),
+        ("manual_model", json!({"type":"boolean"})),
+        (
+          "models",
+          bounded_array(
+            object(
+              [
+                ("identifier", json!({"type":"string","minLength":1,"maxLength":256})),
+                ("label", json!({"type":"string","minLength":1,"maxLength":512})),
+                ("parameters", schema_ref("FactoryFlowDataSchema")),
+              ],
+              &["identifier", "label", "parameters"],
+            ),
+            256,
+          ),
+        ),
+      ],
+      &["available", "manual_model", "models"],
+    ),
+  );
+  schemas.insert(
     "FactoryRoleProfileCapabilityDetails".into(),
     object(
       [
+        ("model_catalog", nullable(schema_ref("FactoryRoleModelCatalog"))),
         ("definition", schema_ref("FactoryRoleProfileDefinition")),
         ("parameters", schema_ref("FactoryFlowDataSchema")),
         ("public_environment", environment_schemas(b.role_entries)),

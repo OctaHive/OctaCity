@@ -268,6 +268,8 @@ impl ManagementAuthorizationTarget for GetFactoryRoleProfileCapabilityQuery {
 /// Complete installed authoring settings; not a credential resolution or execution grant.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleProfileCapabilityDetails {
+  /// Cached plugin model choices; no discovery is performed by this content read.
+  pub model_catalog: Option<FactoryRoleModelCatalog>,
   /// Shared ordinary profile shape, including approved argv and logical secret references.
   pub definition: FactoryRoleProfileDefinition,
   /// Supported model parameter contract.
@@ -296,6 +298,7 @@ impl<
       .profile_capability(context, query.project_id, &query.capability)
       .await?;
     Ok(FactoryRoleProfileCapabilityDetails {
+      model_catalog: cap.model_catalog,
       definition: cap.ceiling,
       parameters: cap.parameters,
       public_environment: cap.public_environment,
@@ -372,4 +375,59 @@ pub(crate) async fn factory_role_integration_available<
     Err(error) => return Err(error),
   }
   Ok(true)
+}
+
+/// Explicit authorized discovery, separate from ordinary cached capability reads.
+#[derive(Clone, Debug)]
+pub struct RefreshFactoryRoleProfileCapabilityQuery {
+  /// Visible owning Project.
+  pub project_id: ProjectId,
+  /// Installed runtime alias; clients cannot submit executable paths or endpoints.
+  pub capability: FactoryKey,
+}
+impl Query for RefreshFactoryRoleProfileCapabilityQuery {
+  type Outcome = FactoryRoleProfileCapabilityDetails;
+}
+impl ManagementAuthorizationTarget for RefreshFactoryRoleProfileCapabilityQuery {
+  const AUTHORIZATION: ManagementAuthorizationMapping =
+    ManagementAuthorizationMapping::instance(ManagementAction::Administer, ManagementResourceKind::Project);
+  fn management_resource(&self) -> ManagementResourceResult {
+    management_security::instance_resource(ManagementResourceKind::Project, self.project_id)
+  }
+}
+#[async_trait::async_trait]
+impl<
+  S: FactoryConfigurationStore
+    + IntegrationProjectAccessStore
+    + IntegrationConnectionStore
+    + IntegrationAdministrationStore
+    + 'static,
+> ManagementQueryUseCase<RefreshFactoryRoleProfileCapabilityQuery> for FactoryRoleProfileHandlers<S>
+{
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
+    query: RefreshFactoryRoleProfileCapabilityQuery,
+  ) -> Result<FactoryRoleProfileCapabilityDetails, ApplicationError> {
+    super::factory_role_profiles::require_project_visibility(grant, query.project_id)?;
+    self
+      .profile_capability(context, query.project_id, &query.capability)
+      .await?;
+    self
+      .store
+      .refresh_factory_role_models(query.project_id, &query.capability)
+      .await?;
+    <Self as ManagementQueryUseCase<GetFactoryRoleProfileCapabilityQuery>>::execute_management_query(
+      self,
+      context,
+      grant,
+      GetFactoryRoleProfileCapabilityQuery {
+        project_id: query.project_id,
+        capability: query.capability,
+      },
+    )
+    .await
+  }
 }

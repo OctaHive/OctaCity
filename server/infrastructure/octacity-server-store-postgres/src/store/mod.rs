@@ -18,17 +18,7 @@ pub struct PostgresStore {
   factory_capabilities: Arc<dyn FactoryCapabilitySource>,
 }
 
-/// Deployment-owned source of exact Factory Configuration choices.
-///
-/// PostgreSQL owns immutable published definitions, while selectable adapter,
-/// model, policy, and enforcement capabilities are runtime inventory. Keeping
-/// this source explicit prevents stale capability snapshots from becoming
-/// durable authority.
-#[async_trait]
-pub trait FactoryCapabilitySource: Send + Sync {
-  /// Reads the current trusted availability for one existing Project.
-  async fn availability(&self, project_id: ProjectId) -> Result<FactoryConfigurationAvailability, StoreError>;
-}
+pub use octacity_server_store::FactoryCapabilitySource;
 
 struct DisabledFactoryCapabilities;
 

@@ -97,6 +97,7 @@ pub fn installed_role_choices(
     .unwrap()
   };
   let capability = FactoryRoleProfileCapability {
+    model_catalog: None,
     ceiling: definition.clone(),
     parameters: schema(
       "parameters",

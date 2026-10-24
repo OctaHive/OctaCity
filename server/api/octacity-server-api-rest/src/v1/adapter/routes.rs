@@ -537,6 +537,10 @@ fn registered_routes() -> ManagementRoutes {
       "getFactoryProfileCapability",
       super::factory_roles::capability,
     )
+    .post::<octacity_server_application::RefreshFactoryRoleProfileCapabilityQuery, _, _>(
+      "refreshFactoryProfileCapability",
+      super::factory_roles::refresh_capability,
+    )
     .post::<octacity_server_application::ValidateFactoryRoleProfileQuery, _, _>(
       "validateFactoryRoleProfile",
       super::factory_roles::validate_profile,

@@ -720,6 +720,7 @@ unavailable_role_use_cases!(query:
   ListFactoryRolesQuery=>"list_factory_roles", ListFactoryRoleProfilesQuery=>"list_factory_role_profiles",
   ValidateFactoryRoleQuery=>"validate_factory_role", ListFactoryRoleTemplatesQuery=>"list_factory_role_templates",
   GetFactoryRoleTemplateQuery=>"get_factory_role_template", ListFactoryRoleProfileCapabilitiesQuery=>"list_factory_profile_capabilities",
+  RefreshFactoryRoleProfileCapabilityQuery=>"refresh_factory_profile_capability",
   GetFactoryRoleProfileCapabilityQuery=>"get_factory_profile_capability", ValidateFactoryRoleProfileQuery=>"validate_factory_role_profile",
   ListProjectSkillsQuery=>"list_project_skills",
   GetProjectSkillQuery=>"get_project_skill",
@@ -739,6 +740,7 @@ pub(super) fn management_requests() -> Vec<Request<Body>> {
   let reference = &intent["profiles"][0]["role"];
   let template = serde_json::json!({"identity":"starter","version":"v1","digest":"01".repeat(32)});
   vec![
+    empty_request("POST", &format!("{prefix}/factory-profile-capabilities/runtime/refresh"), None),
     json_request("POST",&format!("{prefix}/factory-role-publications"),"publish",None,&intent.to_string()),
     empty_request("DELETE", &format!("{prefix}/factory-roles/{role}"), Some(("delete-role", "\"1\""))),
     empty_request("GET",&format!("{prefix}/factory-roles?limit=1"),None),
@@ -897,4 +899,57 @@ async fn factory_roles_http_deletion_fences_replays_and_keeps_exact_history() {
     .await
     .unwrap();
   assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn plugin_model_catalog_http_uses_explicit_refresh_and_the_existing_capability_response() {
+  let project = ProjectId::generate();
+  let (choices, definition) = testing::installed_role_choices(project);
+  let (alias, mut cap) = choices
+    .role_profile_capabilities()
+    .iter()
+    .next()
+    .map(|(a, c)| (a.clone(), c.clone()))
+    .unwrap();
+  cap.model_catalog = Some(serde_json::from_value(serde_json::json!({"available":true,"manual_model":true,"models":[{"identifier":"Vendor/future:preview","label":"Future preview","parameters":cap.parameters}]})).unwrap());
+  let choices = choices.with_role_profile_capability(alias.clone(), cap).unwrap();
+  let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
+  store.seed_project(project).unwrap();
+  store.enable_project(project, choices).unwrap();
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let handlers = Arc::new(FactoryRoleProfileHandlers::with_policy(store, policy.clone()));
+  let peer = Arc::new(RecordingApplication::default());
+  let app =
+    recording_management_application(peer.clone(), peer).with_factory_roles(FactoryRoleManagementApplication::new(
+      Arc::new(AuthorizedCommandHandler::new(policy.clone(), handlers.clone())),
+      Arc::new(AuthorizedQueryHandler::new(policy, handlers)),
+    ));
+  let router = management_router_with_application(|| true, app);
+  let path = format!("/api/v1/projects/{project}/factory-profile-capabilities/{alias}");
+  for (method, path) in [("GET", path.clone()), ("POST", format!("{path}/refresh"))] {
+    let response = router
+      .clone()
+      .oneshot(empty_request(method, &path, None))
+      .await
+      .unwrap();
+    if method == "POST" {
+      assert_eq!(
+        response.status(),
+        StatusCode::SERVICE_UNAVAILABLE,
+        "an installed discovery source is required"
+      );
+      continue;
+    }
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()["cache-control"], "no-store");
+    let body = json_response(response).await;
+    assert_eq!(
+      body["model_catalog"]["models"][0]["identifier"],
+      "Vendor/future:preview"
+    );
+    assert_json_matches_component(&openapi_document(), "FactoryRoleProfileCapabilityDetails", &body);
+  }
+  let mut manual = serde_json::to_value(definition).unwrap();
+  manual["model_identifier"] = serde_json::json!("unlisted/model:next");
+  assert_json_matches_component(&openapi_document(), "FactoryRoleProfileDefinition", &manual);
 }

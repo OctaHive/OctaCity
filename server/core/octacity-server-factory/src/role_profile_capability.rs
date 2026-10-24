@@ -2,10 +2,35 @@
 use crate::*;
 use serde_json::Value;
 
+/// Advisory plugin-owned model suggestions; refresh does not mutate published profiles.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRoleModelCatalog {
+  /// Whether the latest discovery produced runtime metadata.
+  pub available: bool,
+  /// Whether identifiers absent from suggestions can be entered explicitly.
+  pub manual_model: bool,
+  /// Bounded runtime-provided suggestions, without credentials or execution grants.
+  pub models: Vec<FactoryRoleModelChoice>,
+}
+/// One opaque runtime model name and its plugin-defined parameter contract.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRoleModelChoice {
+  /// Exact identifier passed unchanged to the installed plugin.
+  pub identifier: String,
+  /// Presentation label from the runtime.
+  pub label: String,
+  /// Existing shared shape, normalized from the plugin's supported schema.
+  pub parameters: FlowDataSchema,
+}
+
 /// Installed ceiling and supported settings for one exact technical profile.
 /// This declaration is read-only validation input, never dispatch or credential authority.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryRoleProfileCapability {
+  /// Optional plugin runtime metadata. Absence preserves the exact legacy model binding.
+  pub model_catalog: Option<FactoryRoleModelCatalog>,
   /// Reuses ordinary profile settings as the installed ceiling; name/instructions are authoring content.
   pub ceiling: FactoryRoleProfileDefinition,
   /// Existing closed schema for model parameters, including provider-declared thinking values.
@@ -39,11 +64,23 @@ pub enum FactoryRoleProfileIncompatibility {
 impl FactoryRoleProfileCapability {
   /// Checks settings against exact installed contracts without executing or resolving secrets.
   pub fn validate(&self, profile: &FactoryRoleProfile) -> Result<(), FactoryRoleProfileIncompatibility> {
-    let parameters = serde_json::to_value(&profile.definition().model_parameters)
-      .map_err(|_| FactoryRoleProfileIncompatibility::ModelParameters)?;
-    FlowPayload::new(&self.parameters, parameters).map_err(|_| FactoryRoleProfileIncompatibility::ModelParameters)?;
-    use FactoryRoleProfileIncompatibility as Failure;
     let definition = profile.definition();
+    let model = definition.model_identifier.as_deref();
+    let selected = self.model_catalog.as_ref().and_then(|catalog| {
+      catalog
+        .models
+        .iter()
+        .find(|item| item.identifier == definition.runtime_model())
+    });
+    if model.is_some() && selected.is_none() && !self.model_catalog.as_ref().is_some_and(|catalog| catalog.manual_model)
+    {
+      return Err(FactoryRoleProfileIncompatibility::Toolchain);
+    }
+    let schema = selected.map_or(&self.parameters, |choice| &choice.parameters);
+    let parameters = serde_json::to_value(&definition.model_parameters)
+      .map_err(|_| FactoryRoleProfileIncompatibility::ModelParameters)?;
+    FlowPayload::new(schema, parameters).map_err(|_| FactoryRoleProfileIncompatibility::ModelParameters)?;
+    use FactoryRoleProfileIncompatibility as Failure;
     let ceiling = &self.ceiling;
     if definition.thinking_parameter.is_some() && definition.thinking_parameter != ceiling.thinking_parameter {
       return Err(Failure::ModelParameters);

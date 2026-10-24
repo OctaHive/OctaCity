@@ -62,6 +62,7 @@ fn codex_node_usage_prices_reported_tokens_under_the_frozen_exact_model_policy()
   };
   let observed = verify_codex_node_run(
     FactoryCodexNodeRunContract {
+      model_identifier: None,
       profile: &profile,
       schema: &schema,
       prompt_digest: fixture.envelope.digests().prompt_provenance,
@@ -82,6 +83,7 @@ fn codex_node_observation_verifies_exact_execution_provenance_and_projects_only_
   use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
   let (fixture, profile, schema) = node_observation_fixture();
   let expected = || FactoryCodexNodeRunContract {
+    model_identifier: None,
     usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
     profile: &profile,
     schema: &schema,
@@ -119,6 +121,7 @@ fn codex_node_execution_failure_keeps_measured_usage_without_a_semantic_result()
   fixture.replace_document("codex-run-provenance", provenance);
   let observed = verify_codex_node_run(
     FactoryCodexNodeRunContract {
+      model_identifier: None,
       usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
       profile: &profile,
       schema: &schema,
@@ -913,6 +916,7 @@ fn codex_node_accepts_the_released_report_media_without_weakening_its_record_con
   let (mut fixture, profile, schema) = node_observation_fixture();
   let envelope = fixture.envelope.clone();
   let expected = || FactoryCodexNodeRunContract {
+    model_identifier: None,
     usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
     profile: &profile,
     schema: &schema,
@@ -999,6 +1003,7 @@ fn qualified_common_reviewer_records_produce_server_owned_assessment_and_reject_
       .and_then(|o| admitted.data_schema(o.schema()))
       .unwrap();
     let expected = || crate::FactoryCodexNodeRunContract {
+      model_identifier: None,
       profile: intent.profile(),
       schema,
       prompt_digest: crate::codex_prompt_provenance_digest(prompt),
@@ -1043,4 +1048,55 @@ fn qualified_common_reviewer_records_produce_server_owned_assessment_and_reject_
       "a provider-authored Assessment must never establish its own plan/model/provenance"
     );
   });
+}
+
+#[test]
+fn manual_model_provenance_must_match_the_retained_plugin_identifier() {
+  use crate::{FactoryCodexNodeRunContract, verify_codex_node_run};
+  let (mut fixture, profile, schema) = node_observation_fixture();
+  let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+  provenance["settings"]["model"] = json!("Vendor/future:preview");
+  fixture.replace_document("codex-run-provenance", provenance);
+  let expected = || FactoryCodexNodeRunContract {
+    model_identifier: Some("Vendor/future:preview"),
+    profile: &profile,
+    schema: &schema,
+    prompt_digest: fixture.envelope.digests().prompt_provenance,
+    source_revision: fixture.envelope.subject().exact().base_revision(),
+    budget: fixture.envelope.budget(),
+    usage_policy: &crate::FactoryCodexUsagePolicy::ReportedCost,
+    execution_window: Timestamp::from_unix_millis(0).unwrap()..=Timestamp::from_unix_millis(10_000).unwrap(),
+  };
+  assert!(verify_codex_node_run(expected(), &fixture.documents).is_ok());
+  let mut different = expected();
+  different.model_identifier = Some("different-model");
+  assert!(verify_codex_node_run(different, &fixture.documents).is_err());
+}
+
+#[test]
+fn manual_model_cannot_reuse_another_models_exact_token_prices() {
+  use crate::{FactoryCodexNodeRunContract, FactoryCodexUsagePolicy, verify_codex_node_run};
+  let (mut fixture, profile, schema) = node_observation_fixture();
+  let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+  provenance["settings"]["model"] = json!("Vendor/future:preview");
+  fixture.replace_document("codex-run-provenance", provenance);
+  // Seven reported output tokens price to the same two units in the fixture.
+  // Reject the wrong model binding even though the arithmetic would agree.
+  let pricing = FactoryCodexUsagePolicy::TokenRates {
+    model: profile.model_or_tool.clone(),
+    input_micro_units_per_million: 0,
+    cached_input_micro_units_per_million: 0,
+    output_micro_units_per_million: 250_000,
+  };
+  let expected = FactoryCodexNodeRunContract {
+    model_identifier: Some("Vendor/future:preview"),
+    profile: &profile,
+    schema: &schema,
+    prompt_digest: fixture.envelope.digests().prompt_provenance,
+    source_revision: fixture.envelope.subject().exact().base_revision(),
+    budget: fixture.envelope.budget(),
+    usage_policy: &pricing,
+    execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+  };
+  assert!(verify_codex_node_run(expected, &fixture.documents).is_err());
 }

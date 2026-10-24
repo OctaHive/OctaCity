@@ -53,12 +53,7 @@ pub(super) fn apply<'a>(
     .model_parameters
     .values()
     .next()
-    .map(|value| {
-      value
-        .as_str()
-        .filter(|value| matches!(*value, "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"))
-        .ok_or(unsupported)
-    })
+    .map(|value| value.as_str().ok_or(unsupported))
     .transpose()?;
   let mut names: BTreeSet<_> = public
     .keys()

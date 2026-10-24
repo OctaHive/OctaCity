@@ -70,6 +70,20 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_no_store_response(),
   operation!(
+    octacity_server_application::RefreshFactoryRoleProfileCapabilityQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-profile-capabilities/{alias}/refresh",
+    "refreshFactoryProfileCapability",
+    "Factory",
+    "Explicitly refresh advisory plugin models without changing published profiles or invoking a model",
+    None,
+    "FactoryRoleProfileCapabilityDetails",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ValidateFactoryRoleProfileQuery,
     "POST",
     "/api/v1/projects/{project_id}/factory-role-profiles/validate",

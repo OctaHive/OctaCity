@@ -470,6 +470,9 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
     let prompt =
       std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).map_err(|_| Invalid)?;
     let contract = FactoryCodexNodeRunContract {
+      model_identifier: role
+        .as_ref()
+        .and_then(|role| role.package().inputs().profile.definition().model_identifier.as_deref()),
       usage_policy: &profile.usage_policy,
       profile: intent.profile(),
       schema,

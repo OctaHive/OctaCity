@@ -1049,8 +1049,16 @@ fail common candidate qualification, and live manual controls reject a deleted r
 under the same Project fence. Existing Run history and accepted Builds are unchanged.
 
 Installed compatibility and executable support are separate from publication.
-`factory-profile-capabilities` exposes installed schemas and approved choices;
-validation rejects unsupported settings without contacting a provider. Importing
+`factory-profile-capabilities` exposes installed schemas and approved runtime choices.
+An exact capability read also returns optional plugin-owned `model_catalog` metadata
+with availability, manual-entry support and per-model parameter schemas. Suggestions
+are advisory; `model_identifier` retains an explicitly selected opaque model name.
+`POST /api/v1/projects/{project_id}/factory-profile-capabilities/{alias}/refresh`
+requires Project Administer authority and returns the same no-store capability detail.
+It performs bounded discovery only, preserves a previous usable catalog on failure,
+and never publishes profiles or starts a workload. Ordinary reads and validation
+perform no discovery; validation rejects settings outside the installed contract
+without contacting a provider. Importing
 a folder through `factory-skills` retains its reviewed regular files as one bundle
 and returns an exact reference. Reimport and profile adoption are separate explicit
 commands. The Console preserves the open in-memory AI-agent draft during import.
