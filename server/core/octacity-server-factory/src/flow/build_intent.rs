@@ -11,6 +11,8 @@ struct SelectedProfile {
   digest: FactoryDigest,
   profile: crate::FactoryRoleProfileRef,
   budget: BudgetLimit,
+  #[serde(default, skip_serializing_if = "no_usage")]
+  signal_usage: BudgetUsage,
 }
 
 /// Frozen ordinary Build intent for any configured command or reasoning node.
@@ -74,6 +76,7 @@ impl FlowBuildIntent {
       digest: selection.digest()?,
       profile: candidate.profile.reference().clone(),
       budget: candidate.profile.definition().budget,
+      signal_usage: selection.signal_usage(),
     };
     Self::with_selection(input, admitted, node, usage_before, priority, Some(selected))
   }
@@ -121,6 +124,16 @@ impl FlowBuildIntent {
         if selected.budget != candidate.profile.definition().budget {
           return Err(invalid());
         }
+        if selected.signal_usage.attempts != 0
+          || declared
+            .profile_selection()
+            .ok_or_else(invalid)?
+            .selection_budget
+            .checked_sub(selected.signal_usage)
+            .is_none()
+        {
+          return Err(invalid());
+        }
         Some(&candidate.build)
       }
     }
@@ -154,7 +167,11 @@ impl FlowBuildIntent {
     }
     let budget = node.budget();
     usage_before
-      .checked_add(reservation(budget))
+      .checked_add(
+        reservation(budget)
+          .checked_sub(selection.as_ref().map_or(BudgetUsage::default(), |s| s.signal_usage))
+          .ok_or_else(invalid)?,
+      )
       .ok_or_else(invalid)?
       .validate(admitted.limits().budget())?;
     let profile = FlowBuildProfile::from_binding(definition.reference(), declared.key().clone(), binding);
@@ -183,6 +200,17 @@ impl FlowBuildIntent {
     }
     Ok(intent)
   }
+  /// Remaining ordinary stage reservation, excluding already charged selection resources.
+  pub fn stage_reservation(&self) -> Result<BudgetUsage, FactoryError> {
+    reservation(self.node.budget())
+      .checked_sub(
+        self
+          .selection
+          .as_ref()
+          .map_or(BudgetUsage::default(), |s| s.signal_usage),
+      )
+      .ok_or_else(invalid)
+  }
   /// Checks the local ceiling at intent publication, using owner-retained history.
   /// The prospective attempt may already be present in the append; it is counted
   /// exactly once. This is not an observation/replay check against later history.
@@ -190,8 +218,29 @@ impl FlowBuildIntent {
     &self,
     admitted: &AdmittedFlow,
     history: crate::FlowRuntimeHistory<'_>,
+    data: &crate::FlowDataHistory,
   ) -> Result<(), FactoryError> {
-    Self::verify_budget(&self.input, admitted, history, self.usage_before, Some(self.node.id()))
+    let usage = self
+      .usage_before
+      .checked_sub(
+        self
+          .selection
+          .as_ref()
+          .map_or(BudgetUsage::default(), |s| s.signal_usage),
+      )
+      .ok_or_else(invalid)?;
+    Self::verify_budget(
+      &self.input,
+      admitted,
+      history,
+      data,
+      usage,
+      self
+        .selection
+        .as_ref()
+        .map_or(BudgetUsage::default(), |s| s.signal_usage),
+      Some(self.node.id()),
+    )
   }
   /// Checks the ordinary stage reservation before selection or intent publication.
   /// Waiting allocates no attempt and must leave capacity for the ordinary stage reservation.
@@ -199,16 +248,28 @@ impl FlowBuildIntent {
     input: &FlowNodeInput,
     admitted: &AdmittedFlow,
     history: crate::FlowRuntimeHistory<'_>,
+    data: &crate::FlowDataHistory,
     usage_before: BudgetUsage,
   ) -> Result<(), FactoryError> {
-    Self::verify_budget(input, admitted, history, usage_before, None)
+    let selection_usage =
+      data
+        .current_profile_selection(input.digest()?)
+        .map_or(Ok(BudgetUsage::default()), |selection| {
+          selection
+            .signal_usage()
+            .checked_add(selection.pending_signal_usage())
+            .ok_or_else(invalid)
+        })?;
+    Self::verify_budget(input, admitted, history, data, usage_before, selection_usage, None)
   }
 
   fn verify_budget(
     input: &FlowNodeInput,
     admitted: &AdmittedFlow,
     history: crate::FlowRuntimeHistory<'_>,
+    data: &crate::FlowDataHistory,
     usage_before: BudgetUsage,
+    selection_usage: BudgetUsage,
     prospective_attempt: Option<crate::NodeAttemptId>,
   ) -> Result<(), FactoryError> {
     input.verify_admission(admitted)?;
@@ -218,11 +279,13 @@ impl FlowBuildIntent {
       .checked_add(reservation(budget))
       .ok_or_else(invalid)?
       .validate(admitted.limits().budget())?;
-    let mut usage = history
-      .observed_usage_by_flow()?
+    let mut usage = data
+      .budget_usage_by_flow(history)?
       .get(&input.flow_run_id())
       .copied()
-      .unwrap_or_default();
+      .unwrap_or_default()
+      .checked_sub(selection_usage)
+      .ok_or_else(invalid)?;
     usage.attempts = u32::try_from(
       history
         .attempts
@@ -371,4 +434,8 @@ fn invalid() -> FactoryError {
   FactoryError::InvalidConfiguration {
     field: "Flow Build intent",
   }
+}
+
+fn no_usage(value: &BudgetUsage) -> bool {
+  *value == BudgetUsage::default()
 }

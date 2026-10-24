@@ -56,6 +56,22 @@ pub(crate) async fn prepare(
       append.flow.data.profile_selections.push(chosen);
       return Ok(Some(append));
     }
+    if selection.needs_recovery() {
+      let choices = if matches!(
+        binding.failure,
+        octacity_server_factory::FlowProfileSelectionFailure::ReserveProfile { .. }
+      ) {
+        current_choices(snapshot, catalog).await?
+      } else {
+        None
+      };
+      let recovered = selection
+        .recover_pending(&input, &snapshot.admitted_flow, choices.as_ref(), at)
+        .map_err(|_| ApplicationError::invalid())?;
+      let mut append = FactoryRunHistoryAppend::default();
+      append.flow.data.profile_selections.push(recovered);
+      return Ok(Some(append));
+    }
     if let Some(candidate) = selection.candidate() {
       let candidate = binding
         .candidates

@@ -179,12 +179,14 @@ pub fn prepare_factory_flow_input(
   .map_err(invalid)
 }
 
-/// Common owner for any configured node. Each call performs at most one fenced append.
+/// Common owner for any configured node. Ordinary execution appends one fenced step;
+/// pre-dispatch Signal reservations and receipts are separately fenced around provider I/O.
 pub struct FactoryNodeRunner<S, E> {
   store: Arc<S>,
   executor: Arc<E>,
   clock: Arc<dyn FactoryExecutionClock>,
   profile_catalog: Option<Arc<dyn FactoryConfigurationStore>>,
+  profile_selectors: Option<Arc<dyn crate::FactoryProfileSelectionDriver>>,
 }
 impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
   /// Connects persistence and installed execution adapters.
@@ -194,12 +196,18 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       executor,
       clock,
       profile_catalog: None,
+      profile_selectors: None,
     }
   }
   /// Qualifies reserve choices and revalidates retained profiles before execution.
   /// Static execution and unselected manual waits need no catalog; selected profiles fail closed without one.
   pub fn with_profile_catalog(mut self, catalog: Arc<dyn FactoryConfigurationStore>) -> Self {
     self.profile_catalog = Some(catalog);
+    self
+  }
+  /// Installs the separate pre-dispatch consumer; static/manual/rules execution bypasses it.
+  pub fn with_profile_selectors(mut self, selectors: Arc<dyn crate::FactoryProfileSelectionDriver>) -> Self {
+    self.profile_selectors = Some(selectors);
     self
   }
   fn current_time(&self, at: Timestamp) -> Result<Timestamp, ApplicationError> {
@@ -321,6 +329,24 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
         .current_profile_selection(frozen.digest().map_err(invalid)?)
         .ok_or_else(ApplicationError::invalid)?;
       if selection.candidate().is_none() {
+        if matches!(
+          &node.profile_selection().ok_or_else(ApplicationError::invalid)?.policy,
+          FlowProfileSelectionPolicy::DecisionApi { .. }
+        ) && selection.manual_control().is_none()
+          && selection.recovery().is_none()
+        {
+          if let Some(selectors) = &self.profile_selectors {
+            selectors.advance(&snapshot, frozen, selection, at).await?;
+          } else {
+            let next = selection
+              .unavailable_selector(frozen, &snapshot.admitted_flow, at)
+              .map_err(invalid)?;
+            let mut append = FactoryRunHistoryAppend::default();
+            append.flow.data.profile_selections.push(next);
+            self.commit(&snapshot, append, at).await?;
+          }
+          return Ok(FactoryNodeStep::Advanced);
+        }
         return Ok(FactoryNodeStep::Waiting);
       }
       input = Some(frozen.clone());
@@ -616,7 +642,7 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
       }
       .map_err(invalid)?;
       intent
-        .verify_reservation(&snapshot.admitted_flow, runtime(&snapshot))
+        .verify_reservation(&snapshot.admitted_flow, runtime(&snapshot), &snapshot.flow.data)
         .map_err(invalid)?;
       append.flow.data.build_intents.push(intent);
     }
@@ -797,6 +823,15 @@ impl<S: FactoryRunStore, E: FactoryNodeExecutor> FactoryNodeRunner<S, E> {
     for completion in &append.flow.completions {
       usage = usage
         .checked_add(completion.usage())
+        .ok_or_else(ApplicationError::invalid)?;
+    }
+    for selection in &append.flow.data.profile_selections {
+      usage = usage
+        .checked_add(
+          selection
+            .additional_signal_usage(snapshot.flow.data.current_profile_selection(selection.input_digest()))
+            .map_err(invalid)?,
+        )
         .ok_or_else(ApplicationError::invalid)?;
     }
     for receipt in &append.flow.data.stops {

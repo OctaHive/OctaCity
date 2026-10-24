@@ -78,6 +78,18 @@ pub fn validate_factory_transition(
   {
     return Err(invalid());
   }
+  let signal_usage = request
+    .append
+    .flow
+    .data
+    .profile_selections
+    .iter()
+    .map(|selection| {
+      selection
+        .additional_signal_usage(baseline.data.current_profile_selection(selection.input_digest()))
+        .map_err(|_| invalid())
+    })
+    .collect::<Result<Vec<_>, _>>()?;
   let added = request
     .append
     .record_count()
@@ -238,6 +250,7 @@ pub fn validate_factory_transition(
         .completions
         .iter()
         .map(NodeAttemptCompletion::usage)
+        .chain(signal_usage)
         .chain(
           request
             .append
@@ -554,6 +567,25 @@ fn validate_node_journal(
     return Err(invalid());
   }
   for selection in &request.append.flow.data.profile_selections {
+    let input = data
+      .inputs
+      .iter()
+      .find(|input| input.digest().ok() == Some(selection.input_digest()))
+      .ok_or_else(invalid)?;
+    let before = baseline.data.current_profile_selection(selection.input_digest());
+    let usage = baseline
+      .budget
+      .usage
+      .checked_sub(before.map_or(BudgetUsage::default(), |s| s.signal_usage()))
+      .ok_or_else(invalid)?;
+    octacity_server_factory::FlowBuildIntent::verify_available_budget(
+      input,
+      baseline.admitted_flow,
+      history,
+      &data,
+      usage,
+    )
+    .map_err(|_| invalid())?;
     let latest = crate::latest_factory_profile_control(baseline.controls, selection.input_digest());
     if latest.is_some_and(|c| selection.manual_control() != Some(c.id))
       || baseline
@@ -571,6 +603,14 @@ fn validate_node_journal(
     baseline.controls,
   )
   .map_err(|_| invalid())?;
+  let pending_signal_usage = data.pending_profile_signal_usage().map_err(|_| invalid())?;
+  request
+    .budget
+    .usage
+    .checked_add(pending_signal_usage)
+    .ok_or_else(invalid)?
+    .validate(baseline.admitted_flow.limits().budget())
+    .map_err(|_| invalid())?;
   for intent in &request.append.flow.data.build_intents {
     if let Some(control) =
       crate::latest_factory_profile_control(baseline.controls, intent.input().digest().map_err(|_| invalid())?)
@@ -582,7 +622,15 @@ fn validate_node_journal(
     }
 
     intent
-      .verify_reservation(baseline.admitted_flow, history)
+      .verify_reservation(baseline.admitted_flow, history, &data)
+      .map_err(|_| invalid())?;
+    let stage_reservation = intent.stage_reservation().map_err(|_| invalid())?;
+    intent
+      .usage_before()
+      .checked_add(pending_signal_usage)
+      .and_then(|usage| usage.checked_add(stage_reservation))
+      .ok_or_else(invalid)?
+      .validate(baseline.admitted_flow.limits().budget())
       .map_err(|_| invalid())?;
     if intent.priority() != i64::from(baseline.work.priority().get()) || intent.usage_before() != baseline.budget.usage
     {

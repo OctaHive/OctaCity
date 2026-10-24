@@ -769,6 +769,34 @@ fn shadow_never_changes_execution() {
 }
 
 #[test]
+fn profile_selection_uses_the_same_bridge_and_preserves_the_baseline_in_shadow() {
+  run_ready(async {
+    for (mode, expected) in [
+      (DecisionSignalMode::Shadow, "left"),
+      (DecisionSignalMode::Advisory, "left"),
+      (DecisionSignalMode::BoundedControl, "right"),
+    ] {
+      let request = provider_request(DecisionSignalPurpose::ProfileSelection, mode);
+      let provider = Arc::new(CountingProvider::successful(&request, "right"));
+      let receipts = Arc::new(MemoryReceipts::default());
+      let service = service(provider.clone(), receipts.clone());
+      let receipt_id = DecisionSignalReceiptId::generate();
+      let receipt = service.select_profile(receipt_id, &request, key("left")).await.unwrap();
+      assert_eq!(
+        receipt.consumption().final_disposition(),
+        &DecisionSignalDisposition::Profile(key(expected))
+      );
+      assert_eq!(
+        service.select_profile(receipt_id, &request, key("left")).await.unwrap(),
+        receipt
+      );
+      assert_eq!(provider.dispatches(), 1);
+      assert_eq!(receipts.len(), 1);
+    }
+  });
+}
+
+#[test]
 fn expired_requests_publish_a_timeout_without_contacting_the_provider() {
   run_ready(async {
     let request = provider_request(DecisionSignalPurpose::Routing, DecisionSignalMode::BoundedControl);
@@ -915,6 +943,9 @@ impl CountingProvider {
 }
 
 impl DecisionSignalProvider for CountingProvider {
+  fn network_destinations(&self) -> Option<&[octacity_server_factory::NetworkHost]> {
+    Some(&[])
+  }
   fn capability(&self) -> &DecisionSignalProviderCapability {
     &self.capability
   }
@@ -1021,19 +1052,25 @@ fn provider_request(purpose: DecisionSignalPurpose, mode: DecisionSignalMode) ->
     budget(),
   )
   .expect("fixture signal request");
+  let threshold = DecisionSignalThreshold::new(
+    purpose,
+    capability.probability_semantics().clone(),
+    exact("calibration", "v1", 10),
+    DecisionSignalProbability::new(600_000).unwrap(),
+    DecisionSignalProbability::new(100_000).unwrap(),
+  )
+  .unwrap();
+  let threshold = if purpose == DecisionSignalPurpose::ProfileSelection {
+    threshold.qualify_profile_selection(&profile, &input).unwrap()
+  } else {
+    threshold
+  };
   DecisionSignalProviderRequest::new(
     request,
     &profile,
     &capability,
     input,
-    DecisionSignalThreshold::new(
-      purpose,
-      capability.probability_semantics().clone(),
-      exact("calibration", "v1", 10),
-      DecisionSignalProbability::new(600_000).unwrap(),
-      DecisionSignalProbability::new(100_000).unwrap(),
-    )
-    .unwrap(),
+    threshold,
     Timestamp::from_unix_millis(10_000).unwrap(),
   )
   .unwrap()
@@ -1175,3 +1212,6 @@ impl crate::DecisionSignalDispatchAuthorization for MemoryReceipts {
     Ok(FactoryDecisionSignalRequestDisposition::Reserved)
   }
 }
+
+#[path = "factory_profile_signal_tests.rs"]
+mod profile_selection;

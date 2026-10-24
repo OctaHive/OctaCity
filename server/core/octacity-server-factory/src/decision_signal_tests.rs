@@ -193,19 +193,25 @@ pub(crate) fn provider_request_for_node(
     profile.budget(),
   )
   .expect("fixture signal request");
+  let threshold = DecisionSignalThreshold::new(
+    purpose,
+    semantics,
+    exact("calibration", "v5", 9),
+    DecisionSignalProbability::new(minimum_probability).expect("fixture probability"),
+    DecisionSignalProbability::new(minimum_margin).expect("fixture margin"),
+  )
+  .expect("fixture threshold");
+  let threshold = if purpose == DecisionSignalPurpose::ProfileSelection {
+    threshold.qualify_profile_selection(&profile, &input).unwrap()
+  } else {
+    threshold
+  };
   DecisionSignalProviderRequest::new(
     request,
     &profile,
     &capability,
     input,
-    DecisionSignalThreshold::new(
-      purpose,
-      semantics,
-      exact("calibration", "v5", 9),
-      DecisionSignalProbability::new(minimum_probability).expect("fixture probability"),
-      DecisionSignalProbability::new(minimum_margin).expect("fixture margin"),
-    )
-    .expect("fixture threshold"),
+    threshold,
     Timestamp::from_unix_millis(10_000).expect("fixture deadline"),
   )
   .expect("fixture provider request")
@@ -280,6 +286,176 @@ fn an_unobserved_provider_outcome_cannot_be_consumed_as_a_free_receipt() {
     )
     .is_err()
   );
+}
+
+#[test]
+fn profile_selection_has_a_distinct_provider_request_purpose() {
+  let purpose: DecisionSignalPurpose =
+    serde_json::from_str("\"profile_selection\"").expect("profile selection is an explicit provider purpose");
+  let request = provider_request(
+    purpose,
+    DecisionSignalMode::BoundedControl,
+    DecisionSignalFallback::Escalate,
+    &["implementer", "reviewer"],
+    800_000,
+    100_000,
+  );
+  request.validate_integrity().expect("restorable request");
+  let restored: DecisionSignalProviderRequest =
+    serde_json::from_value(serde_json::to_value(&request).unwrap()).unwrap();
+  assert_eq!(restored, request);
+  assert!(
+    consume_routing_signal(
+      DecisionSignalReceiptId::generate(),
+      &request,
+      observation(&request, "reviewer", 900_000, 50_000),
+      key("implementer"),
+    )
+    .is_err()
+  );
+}
+
+#[test]
+fn profile_consumer_selects_only_a_calibrated_declared_candidate() {
+  use crate::{DecisionSignalReceipt, consume_profile_selection_signal};
+  let request = provider_request(
+    DecisionSignalPurpose::ProfileSelection,
+    DecisionSignalMode::BoundedControl,
+    DecisionSignalFallback::Escalate,
+    &["implementer", "reviewer"],
+    800_000,
+    100_000,
+  );
+  for (choice, probability, runner_up, expected) in [
+    (
+      "reviewer",
+      900_000,
+      50_000,
+      DecisionSignalDisposition::Profile(key("reviewer")),
+    ),
+    ("reviewer", 700_000, 50_000, DecisionSignalDisposition::Escalate),
+    ("reviewer", 800_000, 750_000, DecisionSignalDisposition::Escalate),
+    ("unregistered", 900_000, 50_000, DecisionSignalDisposition::Escalate),
+  ] {
+    let receipt = consume_profile_selection_signal(
+      DecisionSignalReceiptId::generate(),
+      &request,
+      observation(&request, choice, probability, runner_up),
+      key("implementer"),
+    )
+    .unwrap();
+    assert_eq!(receipt.consumption().final_disposition(), &expected);
+    assert_eq!(
+      receipt.usage().tokens,
+      10,
+      "invalid profile answers retain measured operation cost"
+    );
+    let restored: DecisionSignalReceipt = serde_json::from_value(serde_json::to_value(&receipt).unwrap()).unwrap();
+    restored.replay(&request).unwrap();
+    assert_eq!(
+      restored.request().request().frozen_input_digest(),
+      request.request().frozen_input_digest()
+    );
+    assert_eq!(restored.policy(), request.policy());
+    assert_eq!(restored.question_set(), request.question_set());
+  }
+  assert!(
+    consume_profile_selection_signal(
+      DecisionSignalReceiptId::generate(),
+      &request,
+      observation(&request, "reviewer", 900_000, 50_000),
+      key("unregistered"),
+    )
+    .is_err()
+  );
+  let other = provider_request(
+    DecisionSignalPurpose::ProfileSelection,
+    DecisionSignalMode::BoundedControl,
+    DecisionSignalFallback::Escalate,
+    &["implementer", "reviewer"],
+    800_000,
+    100_000,
+  );
+  assert!(
+    consume_profile_selection_signal(
+      DecisionSignalReceiptId::generate(),
+      &request,
+      observation(&other, "reviewer", 900_000, 50_000),
+      key("implementer")
+    )
+    .is_err(),
+    "a foreign outcome cannot become a free terminal receipt for this operation"
+  );
+}
+
+#[test]
+fn profile_control_requires_qualification_for_the_exact_model_questions_and_policy() {
+  let request = provider_request(
+    DecisionSignalPurpose::ProfileSelection,
+    DecisionSignalMode::BoundedControl,
+    DecisionSignalFallback::Escalate,
+    &["implementer", "reviewer"],
+    800_000,
+    100_000,
+  );
+  let profile = profile(
+    DecisionSignalPurpose::ProfileSelection,
+    DecisionSignalMode::BoundedControl,
+    DecisionSignalFallback::Escalate,
+    &["implementer", "reviewer"],
+  );
+  let capability = serde_json::from_value(serde_json::json!({
+    "provider": request.provider(), "adapter": request.adapter(), "model": request.model(),
+    "probability_semantics": request.probability_semantics(), "data_handling": request.data_handling(),
+    "supported_purposes": ["profile_selection"], "supported_input_media": ["CanonicalJson"],
+    "supported_question_kinds": ["FiniteChoice"],
+    "limits": {"max_input_bytes": 1024, "max_questions": 4, "max_choices": 32},
+    "budget_ceiling": budget(),
+  }))
+  .unwrap();
+  let unqualified = DecisionSignalThreshold::new(
+    DecisionSignalPurpose::ProfileSelection,
+    request.probability_semantics().clone(),
+    exact("calibration", "v5", 9),
+    DecisionSignalProbability::new(800_000).unwrap(),
+    DecisionSignalProbability::new(100_000).unwrap(),
+  )
+  .unwrap();
+  assert!(
+    DecisionSignalProviderRequest::new(
+      request.request().clone(),
+      &profile,
+      &capability,
+      request.input().clone(),
+      unqualified,
+      request.deadline()
+    )
+    .is_err(),
+    "a purpose label alone cannot qualify control for a model and question/policy pair"
+  );
+  for (field, replacement) in [
+    (
+      "calibration",
+      serde_json::to_value(exact("routing-calibration", "v1", 41)).unwrap(),
+    ),
+    ("minimum_probability", serde_json::json!(1)),
+    ("minimum_margin", serde_json::json!(0)),
+  ] {
+    let mut changed = serde_json::to_value(request.threshold()).unwrap();
+    changed[field] = replacement;
+    assert!(
+      DecisionSignalProviderRequest::new(
+        request.request().clone(),
+        &profile,
+        &capability,
+        request.input().clone(),
+        serde_json::from_value(changed).unwrap(),
+        request.deadline()
+      )
+      .is_err(),
+      "qualified control cannot inherit a changed {field}"
+    );
+  }
 }
 
 #[test]

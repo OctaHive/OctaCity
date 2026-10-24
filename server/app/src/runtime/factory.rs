@@ -20,6 +20,25 @@ pub struct FactoryRuntimeResources {
 }
 
 impl FactoryRuntimeResources {
+  /// Reuses bounded connector timing and the native Flow journal for pre-dispatch profile selection.
+  pub fn profile_selectors(
+    &self,
+    mut profiles: Vec<octacity_server_application::FactoryProfileSelector>,
+  ) -> Result<Arc<dyn octacity_server_application::FactoryProfileSelectionDriver>, FactoryRuntimeInstallationError> {
+    let clock = Arc::new(octacity_server_application::SystemFactoryExecutionClock);
+    for profile in &mut profiles {
+      profile
+        .validate()
+        .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+      profile.provider = Arc::new(super::factory_signal_provider::BoundedFactorySignalProvider::new(
+        profile.provider.clone(),
+        clock.clone(),
+      ));
+    }
+    let selectors = octacity_server_application::FactoryProfileSelectors::new(self.runs.clone(), profiles, clock)
+      .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+    Ok(Arc::new(selectors))
+  }
   /// Installs local Issue effects over the common action executor and transition command.
   /// The host supplies accepted attribution, current policy and the shared execution clock;
   /// neither provider configuration nor a Reporter is required.
@@ -521,6 +540,8 @@ pub struct FactoryRuntimeInstallation {
   pub output_finalizer: Option<Arc<dyn octacity_server_application::AgentOutputFinalizer>>,
   /// Optional Source polling, isolated from manual admission and capability readiness.
   pub work_sources: Option<Arc<dyn super::FactorySourceRuntime>>,
+  /// Optional purpose-specific consumer over the shared provider bridge.
+  pub profile_selectors: Option<Arc<dyn octacity_server_application::FactoryProfileSelectionDriver>>,
 }
 
 /// Secret-safe deployment installation failure.
@@ -672,15 +693,17 @@ pub(super) async fn assemble(
         octacity_server_application::FactoryNodeExecutorRegistry::new(installed.executors)
           .map_err(|_| ServerRuntimeError::InvalidFactoryInstallation)?,
       );
-      let flow = Arc::new(
-        octacity_server_application::FactoryFlowRunner::new(
-          registration_store.clone(),
-          executors,
-          installed.inputs,
-          Arc::new(octacity_server_application::SystemFactoryExecutionClock),
-        )
-        .with_profile_catalog(registration_store.clone()),
-      );
+      let mut flow = octacity_server_application::FactoryFlowRunner::new(
+        registration_store.clone(),
+        executors,
+        installed.inputs,
+        Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      )
+      .with_profile_catalog(registration_store.clone());
+      if let Some(selectors) = installed.profile_selectors {
+        flow = flow.with_profile_selectors(selectors);
+      }
+      let flow = Arc::new(flow);
       let worker = octacity_server_application::FactoryReconciler::new(
         registration_store.clone(),
         octacity_server_factory::FactoryKey::new(format!("factory-owner.{}", uuid::Uuid::new_v4()))

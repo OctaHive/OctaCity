@@ -347,6 +347,64 @@ REST/Console authoring remains in sections 7–8; admission cannot replace an
 already dispatched invocation or authorize
 an otherwise forbidden restart, cycle or retry.
 
+### Decision API profile selection
+
+The private deployment catalog accepts `profile_selectors` entries with
+`selection_policy`, `project_id`, `plan`, `baseline`, `credential_profile`,
+`project_permissions` and `local_permissions`. They resolve the exact capability and credential through
+the existing Signal connector catalog; metadata cannot construct a transport.
+The optional consumer is installed on the common Flow owner. Static, manual and
+rules stages do not require it. Project, Flow, node and deployment permissions
+must permit the selected transport and its dedicated credential.
+
+The loader content-addresses the complete installed plan and narrowed authority
+under `selection_policy`, using the same pinning approach as installed actions.
+The Flow references that exact compiled identity; Rust installers use
+`pin_policy` before registration. Changing rollout, questions, model, projection,
+budget or authority creates another reference. Earlier Runs keep their original
+policy or reach its configured unavailable recovery if that version is retired.
+This installation identity is distinct from `plan.profile.policy`, the consuming
+policy retained in the Signal request/receipt.
+
+The capability and request explicitly declare `profile_selection`. The JEV
+adapter can advertise this purpose after its finite-choice conformance checks;
+the current OpenAI adapter rejects it. Profile keys are separate from routing
+dispositions and cannot select Flow edges or complete execution gates. The
+request must enumerate exactly the stage's pinned candidates and use its explicit
+input projection. Role instructions, skills, transcripts and ambient context are not
+added to that projection.
+
+The installed threshold uses `qualify_profile_selection` to retain an
+operator-owned qualification fingerprint over the exact provider, adapter, model,
+question set, consuming policy, question/criteria content, probability semantics,
+calibration and threshold/margin. A purpose label or
+routing calibration alone cannot qualify profile control. This records trusted
+installation metadata; it does not measure model quality or authorize automatic
+promotion. Shadow and advisory modes retain the explicit baseline, including
+when an external outcome is unobservable. Bounded control accepts only a declared
+answer meeting the qualified probability and margin.
+
+The existing private `factory_flow_profile_selections` journal retains prepared
+requests, one dispatch reservation, receipts and recovery as fenced generations.
+Request identity, projected input and deadlines survive restart. A reservation
+permits observation, never another evaluation. If the original outcome cannot be
+observed, the journal retains uncertainty and charges the full reserved ceiling
+without fabricating a measured receipt. A required unusable signal reaches the
+stage's existing reserve/manual policy once, retaining its request and original
+receipt or uncertainty. A late result cannot replace an accepted manual choice;
+cancellation, exhausted hard budgets and the original deadline remain controlling.
+
+Calls must fit `selection_budget`; measured or unresolved provider resources are
+charged once to the ordinary Run budget without allocating execution attempts or
+agent quota. Unsettled ceilings remain reserved across all Run transitions and
+cannot be spent by another intent or budget observation. Both settled usage and
+unsettled ceilings also count against the budget of their owning Flow. Only the
+latest selection revision for each frozen input contributes to these totals.
+Build admission excludes
+the already charged selection resources from the stage reservation and retains
+the exact selection digest. Candidate
+capability checks and ordinary Build compilation remain the shared execution path.
+
 ### Live profile choices before dispatch
 
 `SelectFactoryProfileCommand` uses the existing authorized Run control handler.

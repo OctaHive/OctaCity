@@ -169,6 +169,7 @@ impl octacity_server::FactoryRuntimeInstaller for Installation {
       tool_authorizer: Some(Arc::new(Installation)),
       output_finalizer: None,
       work_sources: None,
+      profile_selectors: None,
       executors: vec![
         (
           FlowNodeKind::TrustedAction,

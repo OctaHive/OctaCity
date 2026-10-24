@@ -342,6 +342,13 @@ pub fn factory_profile_wait_is_open(
   let Some(budget) = snapshot.budgets.iter().find(|row| row.id == snapshot.current.budget_id) else {
     return false;
   };
+  let selection = snapshot.flow.data.current_profile_selection(digest);
+  let Some(unspent_usage) = budget
+    .usage
+    .checked_sub(selection.map_or(Default::default(), |selection| selection.signal_usage()))
+  else {
+    return false;
+  };
   snapshot
     .flow
     .data
@@ -351,7 +358,8 @@ pub fn factory_profile_wait_is_open(
       input,
       &snapshot.admitted_flow,
       snapshot.flow.runtime(),
-      budget.usage,
+      &snapshot.flow.data,
+      unspent_usage,
     )
     .is_ok()
 }

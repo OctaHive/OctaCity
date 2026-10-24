@@ -294,4 +294,4 @@ fn an_async_executor_cannot_publish_or_acknowledge_progress_after_its_observer_c
   });
 }
 
-mod profile_selection;
+pub(crate) mod profile_selection;

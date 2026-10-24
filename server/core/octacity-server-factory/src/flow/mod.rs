@@ -12,12 +12,16 @@ pub use template::{
 mod profile_override;
 mod profile_selection;
 mod profile_selection_record;
+mod profile_signal;
 pub use profile_override::{FlowProfileAdmissionOverride, FlowProfileAdmissionOverrides, FlowStageAddress};
 pub use profile_selection::{
   FlowProfileCandidate, FlowProfileSelectionBinding, FlowProfileSelectionFailure, FlowProfileSelectionPolicy,
   FlowProfileSelectionRule,
 };
-pub use profile_selection_record::{FlowProfileRuleOutcome, FlowProfileSelectionRecord, FlowProfileSelectionRecovery};
+pub use profile_selection_record::{
+  FlowProfileRuleOutcome, FlowProfileSelectionError, FlowProfileSelectionRecord, FlowProfileSelectionRecovery,
+};
+pub use profile_signal::FlowProfileSelectionSignal;
 mod build;
 mod build_execution;
 mod build_intent;

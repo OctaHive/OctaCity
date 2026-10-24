@@ -35,10 +35,20 @@ pub enum FlowProfileSelectionRecovery {
   ReserveUnavailable,
 }
 
+/// Safe pre-call selector failure; no provider request or observation is invented.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FlowProfileSelectionError {
+  /// The exact installed policy/connector is unavailable.
+  Unavailable,
+  /// The pinned projection or request contract cannot consume the frozen stage input.
+  InvalidInput,
+}
+
 /// Immutable predecessor, publication time and optional operator authority for one revision.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
-struct SelectionRevision {
+pub(super) struct SelectionRevision {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   control_id: Option<FactoryDigest>,
   pending_digest: FactoryDigest,
@@ -57,8 +67,8 @@ fn is_first_generation(value: &u32) -> bool {
 /// Its input digest binds the Run, nested Flow, cycle, generation, schemas and candidate closure.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct FlowProfileSelectionRecord {
-  input_digest: FactoryDigest,
-  candidate: Option<FactoryKey>,
+  pub(super) input_digest: FactoryDigest,
+  pub(super) candidate: Option<FactoryKey>,
   started_at: Timestamp,
   deadline: Timestamp,
   #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -68,7 +78,11 @@ pub struct FlowProfileSelectionRecord {
   #[serde(default, skip_serializing_if = "Option::is_none")]
   manual: Option<SelectionRevision>,
   #[serde(default, skip_serializing_if = "Option::is_none")]
-  automatic: Option<SelectionRevision>,
+  pub(super) automatic: Option<SelectionRevision>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub(super) signal: Option<super::profile_signal::FlowProfileSelectionSignal>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  selector_error: Option<FlowProfileSelectionError>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -85,6 +99,10 @@ struct SelectionWire {
   manual: Option<SelectionRevision>,
   #[serde(default)]
   automatic: Option<SelectionRevision>,
+  #[serde(default)]
+  signal: Option<super::profile_signal::FlowProfileSelectionSignal>,
+  #[serde(default)]
+  selector_error: Option<FlowProfileSelectionError>,
 }
 impl FlowProfileSelectionRecord {
   /// Freezes the manual policy's choice or pending state without executing a capability.
@@ -150,7 +168,7 @@ impl FlowProfileSelectionRecord {
           }
           result
         }
-        FlowProfileSelectionPolicy::DecisionApi { .. } => return Err(invalid()),
+        FlowProfileSelectionPolicy::DecisionApi { .. } => (None, None),
       }
     };
     let deadline = at
@@ -163,6 +181,8 @@ impl FlowProfileSelectionRecord {
       recovery: None,
       manual: None,
       automatic: None,
+      signal: None,
+      selector_error: None,
       candidate,
       rules,
       started_at: at,
@@ -196,6 +216,9 @@ impl FlowProfileSelectionRecord {
       .map(|(key, _)| key.clone())
       .ok_or_else(invalid)?;
     let mut chosen = self.clone();
+    if let Some(signal) = chosen.signal.as_mut() {
+      signal.supersede();
+    }
     chosen.candidate = Some(candidate);
     chosen.manual = Some(self.next_revision(Some(control_id), at)?);
     chosen.automatic = None;
@@ -224,7 +247,11 @@ impl FlowProfileSelectionRecord {
   fn revision(&self) -> Option<&SelectionRevision> {
     self.manual.as_ref().or(self.automatic.as_ref())
   }
-  fn next_revision(&self, control_id: Option<FactoryDigest>, at: Timestamp) -> Result<SelectionRevision, FactoryError> {
+  pub(super) fn next_revision(
+    &self,
+    control_id: Option<FactoryDigest>,
+    at: Timestamp,
+  ) -> Result<SelectionRevision, FactoryError> {
     if at < self.recorded_at() || at > self.deadline {
       return Err(invalid());
     }
@@ -244,12 +271,48 @@ impl FlowProfileSelectionRecord {
     choices: Option<&crate::FactoryConfigurationChoices>,
     at: Timestamp,
   ) -> Result<Self, FactoryError> {
-    if !self.needs_recovery() || self.revision().is_some() {
+    if !self.needs_recovery() {
       return Err(invalid());
     }
     let mut recovered = self.recover(input, admitted, choices)?;
     recovered.automatic = Some(self.next_revision(None, at)?);
     Ok(recovered)
+  }
+  /// Retains a pre-call failure under the original stage policy, without provider I/O.
+  pub fn fail_selector(
+    &self,
+    input: &FlowNodeInput,
+    admitted: &AdmittedFlow,
+    error: FlowProfileSelectionError,
+    at: Timestamp,
+  ) -> Result<Self, FactoryError> {
+    input.verify_admission(admitted)?;
+    if self.input_digest != input.digest()?
+      || self.generation() != 0
+      || self.candidate.is_some()
+      || self.signal.is_some()
+      || self.selector_error.is_some()
+      || !matches!(
+        admitted
+          .closure()
+          .definition(input.definition())
+          .and_then(|d| d.node(input.node()))
+          .and_then(|n| n.profile_selection())
+          .map(|s| &s.policy),
+        Some(FlowProfileSelectionPolicy::DecisionApi { .. })
+      )
+    {
+      return Err(invalid());
+    }
+    let mut next = self.clone();
+    next.selector_error = Some(error);
+    next.automatic = Some(self.next_revision(None, at)?);
+    Ok(next)
+  }
+  /// Original pre-call failure, retained through reserve/manual recovery.
+  #[must_use]
+  pub const fn selector_error(&self) -> Option<FlowProfileSelectionError> {
+    self.selector_error
   }
   pub(super) fn verify_predecessor(
     &self,
@@ -257,8 +320,17 @@ impl FlowProfileSelectionRecord {
     input: &FlowNodeInput,
     admitted: &AdmittedFlow,
   ) -> Result<(), FactoryError> {
-    let expected = if self.automatic.is_some() {
-      if !previous.needs_recovery() || previous.revision().is_some() {
+    let expected = if self.manual_control().is_none() && self.selector_error != previous.selector_error {
+      previous.fail_selector(
+        input,
+        admitted,
+        self.selector_error.ok_or_else(invalid)?,
+        self.recorded_at(),
+      )?
+    } else if self.manual_control().is_none() && self.signal != previous.signal {
+      return self.verify_signal_predecessor(previous, input, admitted);
+    } else if self.automatic.is_some() {
+      if !previous.needs_recovery() {
         return Err(invalid());
       }
       let mut expected = previous
@@ -292,10 +364,12 @@ impl FlowProfileSelectionRecord {
   pub fn needs_recovery(&self) -> bool {
     self.manual.is_none()
       && self.recovery.is_none()
-      && matches!(
-        self.rules,
-        Some(FlowProfileRuleOutcome::Failed { .. } | FlowProfileRuleOutcome::NoMatch)
-      )
+      && (self.selector_error.is_some()
+        || matches!(
+          self.rules,
+          Some(FlowProfileRuleOutcome::Failed { .. } | FlowProfileRuleOutcome::NoMatch)
+        )
+        || self.signal.as_ref().is_some_and(|signal| signal.failed()))
   }
   /// Retained failure disposition, absent for ordinary selections and older raw failures.
   #[must_use]
@@ -410,6 +484,18 @@ impl FlowProfileSelectionRecord {
   ) -> Result<Self, FactoryError> {
     let wire: SelectionWire = serde_json::from_slice(bytes).map_err(|_| invalid())?;
     let mut value = Self::select(input, admitted, wire.started_at)?;
+    if let Some(error) = wire.selector_error {
+      if wire.signal.is_some() {
+        return Err(invalid());
+      }
+      value = value.fail_selector(input, admitted, error, wire.started_at)?;
+      value.automatic = None;
+    }
+    if let Some(signal) = &wire.signal {
+      signal.validate(input, admitted, &value)?;
+      value.candidate = signal.candidate().cloned();
+      value.signal = Some(signal.clone());
+    }
     if let Some(recovery) = wire.recovery {
       value = value.apply_recovery(input, admitted, recovery)?;
     }
@@ -442,16 +528,18 @@ impl FlowProfileSelectionRecord {
     }
     if let Some(automatic) = &wire.automatic {
       if automatic.control_id.is_some()
-        || automatic.generation != 1
+        || automatic.generation == 0
         || automatic.chosen_at < value.started_at
         || automatic.chosen_at > value.deadline
-        || value.recovery.is_none()
+        || (value.recovery.is_none() && value.signal.is_none() && value.selector_error.is_none())
       {
         return Err(invalid());
       }
       value.automatic = Some(automatic.clone());
     }
-    if wire.automatic != value.automatic
+    if wire.selector_error != value.selector_error
+      || wire.signal != value.signal
+      || wire.automatic != value.automatic
       || wire.manual != value.manual
       || wire.input_digest != value.input_digest
       || wire.candidate != value.candidate

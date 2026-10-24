@@ -108,6 +108,17 @@ impl FlowProfileCandidate {
 }
 
 impl FlowProfileSelectionBinding {
+  /// Checks the pre-admitted provider allowance; a selector call is not an execution attempt.
+  pub fn validate_signal_budget(&self, budget: crate::BudgetLimit) -> Result<(), crate::FactoryError> {
+    if budget.max_elapsed_millis() > self.selection_budget.elapsed_millis
+      || budget.max_tokens() > self.selection_budget.tokens
+      || budget.max_cost_micro_units() > self.selection_budget.cost_micro_units
+      || budget.max_output_bytes() > self.selection_budget.output_bytes
+    {
+      return Err(invalid());
+    }
+    Ok(())
+  }
   /// Qualifies every complete profile against the shared installed, authorized catalog.
   /// Static stages need no role catalog; retained admission does not resolve new versions.
   pub fn validate_capabilities(&self, choices: &crate::FactoryConfigurationChoices) -> Result<(), crate::FactoryError> {

@@ -1200,7 +1200,9 @@ fn build_reservation_keeps_the_owning_flow_attempt_ceiling_even_with_spare_aggre
     completions: &[],
     stops: &[],
   };
-  intent.verify_reservation(&admitted, history).unwrap();
+  intent
+    .verify_reservation(&admitted, history, &FlowDataHistory::default())
+    .unwrap();
   for number in 1..=definition.execution().budget().max_attempts() {
     prior.push(
       NodeAttempt::new(
@@ -1226,7 +1228,7 @@ fn build_reservation_keeps_the_owning_flow_attempt_ceiling_even_with_spare_aggre
   history.attempts = &prior;
   assert!(
     matches!(
-      intent.verify_reservation(&admitted, history),
+      intent.verify_reservation(&admitted, history, &FlowDataHistory::default()),
       Err(FactoryError::BudgetExceeded { .. })
     ),
     "a local attempt limit is enforced independently of aggregate capacity"

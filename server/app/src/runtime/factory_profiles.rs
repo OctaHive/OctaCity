@@ -25,6 +25,8 @@ pub struct FactoryRuntimeProfileCatalog {
   pub codex: Vec<FactoryCodexBuildProfile>,
   /// Separate installed routing providers; tool-risk uses its own authorization seam.
   pub signals: Vec<FactoryRuntimeSignalProfile>,
+  /// Separate pre-dispatch policies using the same installed connector registry.
+  pub profile_selectors: Vec<FactoryProfileSelector>,
   /// Exact workload-bound tool-risk connectors; credentials stay server-owned.
   pub tool_risk: Vec<FactoryToolRiskNodeProfile>,
   /// Exact installed review policies, executed against the native fenced journal.
@@ -73,6 +75,7 @@ impl FactoryRuntimeProfileCatalog {
       || catalog.projects.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || catalog.codex.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || catalog.signals.len() > MAX_FACTORY_EXECUTOR_BINDINGS
+      || catalog.profile_selectors.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || catalog.tool_risk.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || catalog.review_planning.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || catalog.executors.len() > MAX_FACTORY_EXECUTOR_BINDINGS
@@ -121,6 +124,16 @@ impl FactoryRuntimeProfileCatalog {
       })
     {
       return Err(Invalid);
+    }
+    for profile in &catalog.profile_selectors {
+      profile.validate().map_err(|_| Invalid)?;
+      if !catalog
+        .projects
+        .iter()
+        .any(|(project, _)| *project == profile.project_id)
+      {
+        return Err(Invalid);
+      }
     }
     if catalog.tool_risk.iter().any(|profile| {
       !catalog.projects.iter().any(|(project, choices)| {
@@ -226,6 +239,11 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
       Some(resources.tool_risk_authorizer(self.catalog.tool_risk.clone())?)
     };
     let reader = resources.retained_artifact_reader();
+    let profile_selectors = if self.catalog.profile_selectors.is_empty() {
+      None
+    } else {
+      Some(resources.profile_selectors(self.catalog.profile_selectors.clone())?)
+    };
     Ok(FactoryRuntimeInstallation {
       capabilities: Arc::new(ProjectCatalog(self.catalog.projects.clone())),
       executors,
@@ -238,6 +256,7 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
       tool_authorizer,
       output_finalizer: None,
       work_sources: self.work_sources.clone(),
+      profile_selectors,
     })
   }
 }

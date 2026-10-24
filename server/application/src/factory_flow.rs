@@ -40,6 +40,11 @@ impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: Fact
     self.nodes = self.nodes.with_profile_catalog(catalog);
     self
   }
+  /// Supplies the optional separate provider consumer; manual and static stages remain independent.
+  pub fn with_profile_selectors(mut self, selectors: Arc<dyn FactoryProfileSelectionDriver>) -> Self {
+    self.nodes = self.nodes.with_profile_selectors(selectors);
+    self
+  }
 }
 #[async_trait]
 impl<S: FactoryRunStore + FactoryPhasePoolStore, E: FactoryNodeExecutor, I: FactoryFlowInputPreparer + ?Sized>

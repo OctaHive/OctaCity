@@ -148,6 +148,32 @@ async fn jev_and_fake_adapters_satisfy_one_provider_neutral_contract() {
 }
 
 #[tokio::test]
+async fn jev_profile_selection_preserves_the_finite_contract_and_measured_usage() {
+  let request = request_for_purpose(
+    "jev-1.13-20260917",
+    DecisionSignalMode::BoundedControl,
+    DecisionSignalPurpose::ProfileSelection,
+  );
+  let transport = Arc::new(StubTransport::new(jev_response()));
+  let provider = JevDecisionSignalProvider::for_test(
+    "https://jev-ai.org/api/v1/systemone/",
+    capability(&request),
+    transport.clone(),
+  )
+  .unwrap();
+  let result = assert_provider_conformance(&provider, &request).await;
+  assert_eq!(result.usage().tokens, 10);
+  assert_eq!(result.usage().elapsed_millis, 7);
+  assert_eq!(result.usage().cost_micro_units, 0);
+  let captured = transport.captured();
+  assert_eq!(captured.idempotency_key, request.id().as_uuid().to_string());
+  let body: serde_json::Value = serde_json::from_slice(&captured.body).unwrap();
+  assert_eq!(body["state"], serde_json::json!({"state": "redacted"}));
+  assert_eq!(body["questions"]["route"]["criteria"].as_object().unwrap().len(), 2);
+  assert!(!String::from_utf8(captured.body).unwrap().contains("sk-glm5-"));
+}
+
+#[tokio::test]
 async fn jev_rejects_probability_keys_that_do_not_exactly_match_the_declared_domain() {
   let request = request("jev-1.13-20260917", DecisionSignalMode::Shadow);
   let response = jev_response().replace("\"left\":0.1", "\"other\":0.1");
@@ -227,7 +253,10 @@ async fn jev_conflict_observation_rejects_a_result_for_another_provider_request(
   assert_eq!(transport.posts(), 1);
 }
 
-async fn assert_provider_conformance(provider: &dyn DecisionSignalProvider, request: &DecisionSignalProviderRequest) {
+async fn assert_provider_conformance(
+  provider: &dyn DecisionSignalProvider,
+  request: &DecisionSignalProviderRequest,
+) -> DecisionSignalProviderResult {
   let capability = provider.capability();
   assert_eq!(capability.provider(), request.provider());
   assert_eq!(capability.adapter(), request.adapter());
@@ -241,6 +270,7 @@ async fn assert_provider_conformance(provider: &dyn DecisionSignalProvider, requ
   assert_eq!(result.model(), request.model());
   assert_eq!(result.probability_semantics(), request.probability_semantics());
   assert_eq!(result.answers().len(), request.input().questions().len());
+  result
 }
 
 struct FakeProvider {
@@ -373,10 +403,18 @@ fn jev_response() -> String {
 }
 
 fn request(model_version: &str, mode: DecisionSignalMode) -> DecisionSignalProviderRequest {
+  request_for_purpose(model_version, mode, DecisionSignalPurpose::Routing)
+}
+
+fn request_for_purpose(
+  model_version: &str,
+  mode: DecisionSignalMode,
+  purpose: DecisionSignalPurpose,
+) -> DecisionSignalProviderRequest {
   let node = node_fixture();
   let choices = DecisionSignalChoices::try_new(vec![key("left"), key("right")]).unwrap();
   let profile = DecisionSignalProfile::new(DecisionSignalProfileDefinition {
-    purpose: DecisionSignalPurpose::Routing,
+    purpose,
     provider: exact("jev", "v1", 3),
     adapter: exact("jev-http", "v1", 4),
     model: ImmutableReference::new(key("jev-1.13"), key(model_version), digest(5)),
@@ -385,7 +423,8 @@ fn request(model_version: &str, mode: DecisionSignalMode) -> DecisionSignalProvi
     mode,
     fallback: DecisionSignalFallback::Escalate,
     budget: budget(),
-    routes: Some(DecisionSignalRouteSet::new(key("current-state"), choices.clone())),
+    routes: (purpose == DecisionSignalPurpose::Routing)
+      .then(|| DecisionSignalRouteSet::new(key("current-state"), choices.clone())),
   })
   .unwrap();
   let input = DecisionSignalProviderInput::new(
@@ -410,7 +449,7 @@ fn request(model_version: &str, mode: DecisionSignalMode) -> DecisionSignalProvi
       .unwrap(),
     ],
     key("route"),
-    Some(key("current-state")),
+    (purpose == DecisionSignalPurpose::Routing).then(|| key("current-state")),
   )
   .unwrap();
   let capability = capability_for_profile(&profile);
@@ -418,24 +457,30 @@ fn request(model_version: &str, mode: DecisionSignalMode) -> DecisionSignalProvi
     DecisionSignalRequestId::generate(),
     &node.0,
     &node.1,
-    DecisionSignalPurpose::Routing,
+    purpose,
     DecisionSignalDigests::new(input.digest(), profile.policy().digest()),
     budget(),
   )
   .expect("fixture signal request");
+  let threshold = DecisionSignalThreshold::new(
+    purpose,
+    capability.probability_semantics().clone(),
+    exact("calibration", "v1", 10),
+    DecisionSignalProbability::new(600_000).unwrap(),
+    DecisionSignalProbability::new(100_000).unwrap(),
+  )
+  .unwrap();
+  let threshold = if purpose == DecisionSignalPurpose::ProfileSelection {
+    threshold.qualify_profile_selection(&profile, &input).unwrap()
+  } else {
+    threshold
+  };
   DecisionSignalProviderRequest::new(
     request,
     &profile,
     &capability,
     input,
-    DecisionSignalThreshold::new(
-      DecisionSignalPurpose::Routing,
-      capability.probability_semantics().clone(),
-      exact("calibration", "v1", 10),
-      DecisionSignalProbability::new(600_000).unwrap(),
-      DecisionSignalProbability::new(100_000).unwrap(),
-    )
-    .unwrap(),
+    threshold,
     Timestamp::from_unix_millis(10_000).unwrap(),
   )
   .unwrap()
@@ -448,7 +493,7 @@ fn capability(request: &DecisionSignalProviderRequest) -> DecisionSignalProvider
     request.model().clone(),
     request.probability_semantics().clone(),
     request.data_handling().clone(),
-    vec![DecisionSignalPurpose::Routing],
+    vec![request.request().purpose()],
     vec![DecisionSignalInputMedia::CanonicalJson],
     vec![DecisionSignalQuestionKind::FiniteChoice],
     DecisionSignalProviderLimits::new(4_096, 20, 24).unwrap(),
@@ -464,7 +509,7 @@ fn capability_for_profile(profile: &DecisionSignalProfile) -> DecisionSignalProv
     profile.model().clone(),
     exact("jev-choice-probability", "v1", 9),
     exact("provider-private", "v1", 11),
-    vec![DecisionSignalPurpose::Routing],
+    vec![profile.purpose()],
     vec![DecisionSignalInputMedia::CanonicalJson],
     vec![DecisionSignalQuestionKind::FiniteChoice],
     DecisionSignalProviderLimits::new(4_096, 20, 24).unwrap(),

@@ -70,6 +70,7 @@ impl OpenAiDecisionSignalProvider {
       || capability.probability_semantics().version().as_str() != "v1"
       || capability.supported_input_media() != [DecisionSignalInputMedia::CanonicalJson]
       || capability.supported_question_kinds() != [DecisionSignalQuestionKind::FiniteChoice]
+      || capability.supports(octacity_server_factory::DecisionSignalPurpose::ProfileSelection)
       || DecisionSignalProviderLimits::new(limits.max_input_bytes(), limits.max_questions(), limits.max_choices())
         .is_err()
       || endpoint.scheme() != "https"

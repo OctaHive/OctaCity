@@ -122,7 +122,9 @@ impl ToolRiskSignalEvaluator for DecisionSignalService {
       DecisionSignalDisposition::Allow => FactoryToolActionDispositionV3::Allow,
       DecisionSignalDisposition::Deny => FactoryToolActionDispositionV3::Deny,
       DecisionSignalDisposition::Escalate => FactoryToolActionDispositionV3::Escalate,
-      DecisionSignalDisposition::Route(_) => FactoryToolActionDispositionV3::Deny,
+      DecisionSignalDisposition::Route(_) | DecisionSignalDisposition::Profile(_) => {
+        FactoryToolActionDispositionV3::Deny
+      }
     };
     Ok(ToolRiskSignalEvaluation::new(disposition, receipt.receipt_digest()))
   }

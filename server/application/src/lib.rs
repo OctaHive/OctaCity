@@ -169,6 +169,8 @@ pub use factory_decision_signal_node::{
 mod factory_decision_signal_plan;
 pub use factory_decision_signal_plan::FactoryDecisionSignalRequestPlan;
 mod factory_decision_signal_receipts;
+mod factory_profile_signal;
+pub use factory_profile_signal::{FactoryProfileSelectionDriver, FactoryProfileSelector, FactoryProfileSelectors};
 #[cfg(test)]
 mod factory_decision_signal_tests;
 mod factory_evaluation;

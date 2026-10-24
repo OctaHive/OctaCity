@@ -843,6 +843,7 @@ mod profile_selection;
 pub use profile_selection::{
   factory_profile_selection_capabilities, factory_profile_selection_contract_fixture,
   factory_profile_selection_failure_contract_fixture, factory_profile_selection_policy_contract_fixture,
+  factory_profile_signal_contract_fixture,
 };
 
 mod profile_control;

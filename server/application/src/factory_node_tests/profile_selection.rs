@@ -7,7 +7,7 @@ fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
 use octacity_server_store::testing::factory_profile_selection_contract_fixture as fixture;
-struct NoExecution;
+pub(crate) struct NoExecution;
 #[async_trait]
 impl FactoryNodeExecutor for NoExecution {
   async fn observe(&self, _: FactoryNodeExecutionRequest<'_>) -> Result<FactoryNodeExecutionStep, ApplicationError> {
@@ -21,7 +21,7 @@ impl FactoryNodeExecutor for NoExecution {
     panic!("profile selection owns no external execution")
   }
 }
-async fn start(
+pub(crate) async fn start(
   admission: PublishedFactoryAdmission,
   ownership: FactoryClaimOwnership,
 ) -> (Arc<testing::InMemoryFactoryConfigurationStore>, FactoryRunClaimRecord) {

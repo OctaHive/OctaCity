@@ -178,6 +178,7 @@ factory_enum!(
   {
     Routing => "routing",
     ToolRisk => "tool_risk",
+    ProfileSelection => "profile_selection",
   }
 );
 factory_enum!(

@@ -47,6 +47,19 @@ fn configuration() -> serde_json::Value {
 }
 
 #[test]
+fn routing_qualification_cannot_enable_unqualified_profile_selection() {
+  let mut config = configuration();
+  config["capability"]["supported_purposes"] = serde_json::json!(["routing", "profile_selection"]);
+  assert!(
+    install_openai(
+      &serde_json::to_vec(&config).unwrap(),
+      "sk-private-credential-canary".to_owned()
+    )
+    .is_err()
+  );
+}
+
+#[test]
 fn installed_openai_connector_exposes_its_neutral_capability_without_a_remote_call() {
   let provider = install_openai(
     &serde_json::to_vec(&configuration()).unwrap(),

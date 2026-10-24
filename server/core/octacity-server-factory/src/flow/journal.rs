@@ -27,6 +27,51 @@ pub struct FlowDataHistory {
   pub build_executions: Vec<crate::FlowBuildExecution>,
 }
 impl FlowDataHistory {
+  /// Holds each unresolved provider ceiling once, regardless of retained revision count.
+  pub fn pending_profile_signal_usage(&self) -> Result<crate::BudgetUsage, FactoryError> {
+    self
+      .latest_profile_selections()
+      .values()
+      .try_fold(crate::BudgetUsage::default(), |usage, record| {
+        usage.checked_add(record.pending_signal_usage()).ok_or_else(invalid)
+      })
+  }
+  fn latest_profile_selections(&self) -> BTreeMap<crate::FactoryDigest, &crate::FlowProfileSelectionRecord> {
+    let mut latest = BTreeMap::<crate::FactoryDigest, &crate::FlowProfileSelectionRecord>::new();
+    for record in &self.profile_selections {
+      if latest
+        .get(&record.input_digest())
+        .is_none_or(|previous| previous.generation() < record.generation())
+      {
+        latest.insert(record.input_digest(), record);
+      }
+    }
+    latest
+  }
+  /// Combines ordinary execution consumption and each selection's settled or held resources once.
+  pub(super) fn budget_usage_by_flow(
+    &self,
+    history: FlowRuntimeHistory<'_>,
+  ) -> Result<BTreeMap<crate::FlowRunId, crate::BudgetUsage>, FactoryError> {
+    let mut usage = history.observed_usage_by_flow()?;
+    for selection in self.latest_profile_selections().values() {
+      let signal = selection
+        .signal_usage()
+        .checked_add(selection.pending_signal_usage())
+        .ok_or_else(invalid)?;
+      if signal == crate::BudgetUsage::default() {
+        continue;
+      }
+      let input = self
+        .inputs
+        .iter()
+        .find(|input| input.digest().ok() == Some(selection.input_digest()))
+        .ok_or_else(invalid)?;
+      let total = usage.entry(input.flow_run_id()).or_default();
+      *total = total.checked_add(signal).ok_or_else(invalid)?;
+    }
+    Ok(usage)
+  }
   /// Highest retained selection generation; eligibility still requires current controls and fencing.
   #[must_use]
   pub fn current_profile_selection(&self, input: crate::FactoryDigest) -> Option<&crate::FlowProfileSelectionRecord> {
@@ -99,6 +144,7 @@ impl FlowDataHistory {
       ..history
     };
     validate_flow_runtime_history(admitted, history)?;
+    super::history::validate_flow_budgets(admitted, history.flow_runs, &self.budget_usage_by_flow(history)?)?;
     if self.incoming.len() > 1 {
       return Err(invalid());
     }

@@ -167,6 +167,17 @@ pub struct BudgetUsage {
 }
 
 impl BudgetUsage {
+  /// Removes already charged resources from a reservation or computes a monotonic journal delta.
+  #[must_use]
+  pub fn checked_sub(self, other: Self) -> Option<Self> {
+    Some(Self {
+      attempts: self.attempts.checked_sub(other.attempts)?,
+      elapsed_millis: self.elapsed_millis.checked_sub(other.elapsed_millis)?,
+      tokens: self.tokens.checked_sub(other.tokens)?,
+      cost_micro_units: self.cost_micro_units.checked_sub(other.cost_micro_units)?,
+      output_bytes: self.output_bytes.checked_sub(other.output_bytes)?,
+    })
+  }
   /// Adds all resource counters, rejecting overflow before any budget check.
   #[must_use]
   pub fn checked_add(self, other: Self) -> Option<Self> {

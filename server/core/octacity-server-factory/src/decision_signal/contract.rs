@@ -49,7 +49,10 @@ impl DecisionSignalProviderCapability {
     let purpose_count = supported_purposes.len();
     supported_purposes.sort_unstable();
     supported_purposes.dedup();
-    if supported_purposes.is_empty() || supported_purposes.len() > 2 || supported_purposes.len() != purpose_count {
+    if supported_purposes.is_empty()
+      || supported_purposes.len() > DecisionSignalPurpose::VALUES.len()
+      || supported_purposes.len() != purpose_count
+    {
       return Err(FactoryError::InvalidDecisionSignal {
         field: "supported purposes",
       });
@@ -166,6 +169,8 @@ pub struct DecisionSignalThreshold {
   calibration: ImmutableReference,
   minimum_probability: DecisionSignalProbability,
   minimum_margin: DecisionSignalProbability,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  profile_qualification: Option<FactoryDigest>,
 }
 
 impl DecisionSignalThreshold {
@@ -188,7 +193,32 @@ impl DecisionSignalThreshold {
       calibration,
       minimum_probability,
       minimum_margin,
+      profile_qualification: None,
     })
+  }
+
+  /// Pins operator-qualified profile criteria to the exact provider/model and consuming policy.
+  /// This records a trusted installation decision, not an assertion supplied by the provider.
+  pub fn qualify_profile_selection(
+    mut self,
+    profile: &crate::DecisionSignalProfile,
+    input: &DecisionSignalProviderInput,
+  ) -> Result<Self, FactoryError> {
+    if self.purpose != DecisionSignalPurpose::ProfileSelection || profile.purpose() != self.purpose {
+      return Err(FactoryError::InvalidDecisionSignal {
+        field: "profile qualification purpose",
+      });
+    }
+    self.profile_qualification = Some(profile_qualification_digest(
+      profile.provider(),
+      profile.adapter(),
+      profile.model(),
+      profile.question_set(),
+      profile.policy(),
+      input,
+      &self,
+    ));
+    Ok(self)
   }
 
   /// Returns the purpose whose calibration corpus produced this threshold.
@@ -308,6 +338,7 @@ impl DecisionSignalProviderRequest {
       digest: FactoryDigest::from_bytes([0; 32]),
     };
     provider_request.digest = digest_provider_request(&provider_request);
+    provider_request.validate_integrity()?;
     Ok(provider_request)
   }
 
@@ -417,6 +448,17 @@ impl DecisionSignalProviderRequest {
   pub fn validate_integrity(&self) -> Result<(), FactoryError> {
     if self.request.input_digest() != self.input.digest()
       || self.request.policy_digest() != self.policy.digest()
+      || (self.request.purpose() == DecisionSignalPurpose::ProfileSelection
+        && self.threshold.profile_qualification
+          != Some(profile_qualification_digest(
+            &self.provider,
+            &self.adapter,
+            &self.model,
+            &self.question_set,
+            &self.policy,
+            &self.input,
+            &self.threshold,
+          )))
       || self.digest != digest_provider_request(self)
     {
       return Err(FactoryError::InvalidDecisionSignal {
@@ -436,7 +478,7 @@ fn routing_input_matches_profile(
     (DecisionSignalPurpose::Routing, Some(routes), Some(state)) => {
       routes.state() == state && routes.choices() == input.choices()
     }
-    (DecisionSignalPurpose::ToolRisk, None, None) => true,
+    (DecisionSignalPurpose::ToolRisk | DecisionSignalPurpose::ProfileSelection, None, None) => true,
     _ => false,
   }
 }
@@ -457,11 +499,15 @@ fn digest_provider_request(request: &DecisionSignalProviderRequest) -> FactoryDi
   let data_handling = encode_reference(request.data_handling());
   let calibration = encode_reference(request.threshold().calibration());
   let budget = encode_budget_limit(request.request().budget());
-  let threshold = format!(
+  let mut threshold = format!(
     "{}\0{}",
     request.threshold().minimum_probability().parts_per_million(),
     request.threshold().minimum_margin().parts_per_million()
   );
+  if let Some(qualification) = request.threshold.profile_qualification {
+    threshold.push('\0');
+    threshold.push_str(&qualification.to_string());
+  }
   let deadline = request.deadline().unix_millis().to_be_bytes();
   FactoryDigest::sha256(
     "octacity.decision-signal.request.v2",
@@ -486,6 +532,38 @@ fn digest_provider_request(request: &DecisionSignalProviderRequest) -> FactoryDi
       request.mode().as_str().as_bytes(),
       request.fallback().as_str().as_bytes(),
       deadline.as_slice(),
+    ],
+  )
+}
+
+fn profile_qualification_digest(
+  provider: &ImmutableReference,
+  adapter: &ImmutableReference,
+  model: &ImmutableReference,
+  questions: &ImmutableReference,
+  policy: &ImmutableReference,
+  input: &DecisionSignalProviderInput,
+  threshold: &DecisionSignalThreshold,
+) -> FactoryDigest {
+  let criteria = serde_json::to_vec(&(
+    input.questions(),
+    input.consuming_question(),
+    threshold.purpose(),
+    threshold.probability_semantics(),
+    threshold.calibration(),
+    threshold.minimum_probability(),
+    threshold.minimum_margin(),
+  ))
+  .expect("typed signal criteria serialize");
+  FactoryDigest::sha256(
+    "octacity.decision-signal.profile-qualification.v1",
+    &[
+      &encode_reference(provider),
+      &encode_reference(adapter),
+      &encode_reference(model),
+      &encode_reference(questions),
+      &encode_reference(policy),
+      &criteria,
     ],
   )
 }
@@ -674,14 +752,18 @@ impl DecisionSignalProviderResult {
     self.usage.elapsed_millis
   }
 
-  pub(super) fn is_valid_for(&self, request: &DecisionSignalProviderRequest) -> bool {
+  /// Verifies measured usage belongs to this exact operation, independently of answer validity.
+  pub fn has_measured_usage_for(&self, request: &DecisionSignalProviderRequest) -> bool {
     self.request_id == request.id()
       && &self.provider == request.provider()
       && &self.adapter == request.adapter()
       && &self.model == request.model()
       && &self.probability_semantics == request.probability_semantics()
-      && answers_match_questions(&self.answers, request.input().questions())
       && self.usage.validate(request.request().budget()).is_ok()
+  }
+
+  pub(super) fn is_valid_for(&self, request: &DecisionSignalProviderRequest) -> bool {
+    self.has_measured_usage_for(request) && answers_match_questions(&self.answers, request.input().questions())
   }
 
   pub(super) fn consuming_choice(

@@ -186,6 +186,8 @@ struct CatalogFile {
   #[serde(default)]
   signals: Vec<RoutingProfile>,
   #[serde(default)]
+  profile_selectors: Vec<ProfileSelector>,
+  #[serde(default)]
   tool_risk: Vec<ToolRiskProfile>,
   #[serde(default)]
   review_planning: Vec<ReviewPlanningEntry>,
@@ -436,6 +438,17 @@ struct RoutingProfile {
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
+struct ProfileSelector {
+  selection_policy: ImmutableReference,
+  project_id: ProjectId,
+  plan: FactoryDecisionSignalRequestPlan,
+  baseline: FactoryKey,
+  credential_profile: FactoryKey,
+  project_permissions: FactoryPermissionSet,
+  local_permissions: LocalPermissions,
+}
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct RoutingOutput {
   disposition: DecisionSignalDisposition,
   outcome: FactoryKey,
@@ -584,6 +597,7 @@ impl FactoryRuntimeProfileCatalog {
       return Err(Invalid);
     }
     if file.signals.len() > MAX_FACTORY_EXECUTOR_BINDINGS
+      || file.profile_selectors.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.tool_risk.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.review_planning.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.evaluation_decisions.len() > MAX_FACTORY_EXECUTOR_BINDINGS
@@ -737,6 +751,37 @@ impl FactoryRuntimeProfileCatalog {
         })
       })
       .collect::<Result<_, FactoryRuntimeInstallationError>>()?;
+    let profile_selectors = file
+      .profile_selectors
+      .into_iter()
+      .map(|profile| {
+        let provider = providers
+          .iter()
+          .find(|provider| {
+            provider.capability() == &profile.plan.capability
+              && provider.credential_profile() == &profile.credential_profile
+          })
+          .ok_or(Invalid)?
+          .provider()
+          .clone();
+        octacity_server_application::FactoryProfileSelector {
+          selection_policy: profile.selection_policy,
+          project_id: profile.project_id,
+          plan: profile.plan,
+          baseline: profile.baseline,
+          provider,
+          credential_profile: Some(profile.credential_profile),
+          project_permissions: profile.project_permissions,
+          local_permissions: LocalPermissionCeiling::try_new(
+            profile.local_permissions.grants,
+            profile.local_permissions.enforceable,
+          )
+          .map_err(|_| Invalid)?,
+        }
+        .pin_policy()
+        .map_err(|_| Invalid)
+      })
+      .collect::<Result<Vec<_>, FactoryRuntimeInstallationError>>()?;
     let tool_risk: Vec<FactoryToolRiskNodeProfile> = file
       .tool_risk
       .into_iter()
@@ -795,6 +840,7 @@ impl FactoryRuntimeProfileCatalog {
       projects,
       codex,
       signals,
+      profile_selectors,
       tool_risk,
       review_planning: file
         .review_planning

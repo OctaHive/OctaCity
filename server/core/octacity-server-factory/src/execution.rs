@@ -102,13 +102,44 @@ impl DecisionSignalRequest {
     })
   }
 
+  /// Constructs a pre-dispatch profile operation without allocating an execution attempt.
+  /// The legacy owner field retains a purpose-scoped logical identity, not an execution row;
+  /// ownership and recovery for this purpose are verified by the frozen input's Flow journal.
+  pub fn profile_selection(
+    id: DecisionSignalRequestId,
+    input: &crate::FlowNodeInput,
+    digests: DecisionSignalDigests,
+    budget: BudgetLimit,
+  ) -> Result<Self, FactoryError> {
+    let frozen_input_digest = input.digest()?;
+    let identity = FactoryDigest::sha256(
+      "octacity.factory.profile-signal-owner.v1",
+      &[&frozen_input_digest.as_bytes()],
+    );
+    let node_attempt_id = crate::NodeAttemptId::from_uuid(uuid::Uuid::from_bytes(
+      identity.as_bytes()[..16].try_into().expect("digest contains a UUID"),
+    ))?;
+    Ok(Self {
+      id,
+      node_attempt_id,
+      frozen_input_digest,
+      run_id: input.factory_run_id(),
+      subject: input.subject().clone(),
+      purpose: DecisionSignalPurpose::ProfileSelection,
+      input_digest: digests.input,
+      policy_digest: digests.policy,
+      budget,
+    })
+  }
+
   /// Returns the stable logical request identity.
   #[must_use]
   pub const fn id(&self) -> DecisionSignalRequestId {
     self.id
   }
 
-  /// Returns the common execution owner.
+  /// Returns the common owner identity. For profile selection this is a logical
+  /// pre-dispatch identity, not a persisted execution attempt or dispatch authority.
   #[must_use]
   pub const fn node_attempt_id(&self) -> crate::NodeAttemptId {
     self.node_attempt_id

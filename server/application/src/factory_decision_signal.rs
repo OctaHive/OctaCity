@@ -8,8 +8,8 @@ use octacity_server_domain::Timestamp;
 use octacity_server_factory::{
   BudgetUsage, DecisionSignalProvider, DecisionSignalProviderCapability, DecisionSignalProviderFailure,
   DecisionSignalProviderObservation, DecisionSignalProviderRequest, DecisionSignalReceipt, DecisionSignalReceiptId,
-  DecisionSignalState, FactoryError, FactoryKey, ToolRiskChoiceMapping, consume_routing_signal,
-  consume_tool_risk_signal,
+  DecisionSignalState, FactoryError, FactoryKey, ToolRiskChoiceMapping, consume_profile_selection_signal,
+  consume_routing_signal, consume_tool_risk_signal,
 };
 use octacity_server_store::FactoryDecisionSignalRequestDisposition;
 use thiserror::Error;
@@ -269,6 +269,20 @@ impl DecisionSignalService {
       .await
   }
 
+  /// Obtains and consumes a finite profile recommendation under its separate purpose and baseline.
+  pub async fn select_profile(
+    &self,
+    receipt_id: DecisionSignalReceiptId,
+    request: &DecisionSignalProviderRequest,
+    baseline_candidate: FactoryKey,
+  ) -> Result<DecisionSignalReceipt, DecisionSignalApplicationError> {
+    self
+      .execute(request, |observation| {
+        consume_profile_selection_signal(receipt_id, request, observation, baseline_candidate)
+      })
+      .await
+  }
+
   /// Obtains and consumes a tool-risk signal after deterministic authorization.
   pub async fn assess_tool_risk(
     &self,
@@ -371,7 +385,10 @@ impl DecisionSignalService {
     request: &DecisionSignalProviderRequest,
     observation: DecisionSignalProviderObservation,
   ) -> Result<DecisionSignalProviderObservation, DecisionSignalApplicationError> {
-    if !observation.is_valid_for(request) {
+    if !observation.is_valid_for(request)
+      && !(request.request().purpose() == octacity_server_factory::DecisionSignalPurpose::ProfileSelection
+        && matches!(&observation, DecisionSignalProviderObservation::Result(result) if result.has_measured_usage_for(request)))
+    {
       return Err(DecisionSignalApplicationError::AwaitingProviderObservation);
     }
     if self.now()? >= request.deadline() {

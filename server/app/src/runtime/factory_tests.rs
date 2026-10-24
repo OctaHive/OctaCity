@@ -103,6 +103,7 @@ async fn native_catalog_installs_review_planning_by_exact_profile_identity_witho
     projects: vec![(project, choices)],
     codex: vec![],
     signals: vec![],
+    profile_selectors: vec![],
     tool_risk: vec![],
     review_planning: vec![(identity.clone(), profile)],
     executors: vec![],
@@ -196,6 +197,7 @@ async fn native_review_installation_rejects_substituted_profiles_and_foreign_cri
       projects: vec![(project, choices)],
       codex: vec![],
       signals: vec![],
+      profile_selectors: vec![],
       tool_risk: vec![],
       review_planning: vec![(identity, profile)],
       executors: vec![],
@@ -498,6 +500,7 @@ async fn installed_tool_risk_catalog_retains_the_project_policy_for_agent_ingres
     projects: vec![(profile.binding.project_id, choices)],
     codex: vec![],
     signals: vec![],
+    profile_selectors: vec![],
     tool_risk: vec![profile],
     review_planning: vec![],
     executors: vec![],
@@ -623,17 +626,43 @@ async fn private_signal_connector_catalog_installs_only_bounded_operator_owned_f
 }
 
 #[tokio::test]
-async fn deployment_routing_profiles_resolve_only_an_exact_installed_connector() {
+async fn deployment_routing_and_profile_policies_share_an_exact_installed_connector() {
   struct Provider(DecisionSignalProviderCapability);
   impl DecisionSignalProvider for Provider {
+    fn network_destinations(&self) -> Option<&[NetworkHost]> {
+      Some(&[])
+    }
     fn capability(&self) -> &DecisionSignalProviderCapability {
       &self.0
     }
-    fn evaluate<'a>(&'a self, _: &'a DecisionSignalProviderRequest) -> DecisionSignalProviderFuture<'a> {
-      panic!("parsing a deployment must not contact a connector");
+    fn evaluate<'a>(&'a self, request: &'a DecisionSignalProviderRequest) -> DecisionSignalProviderFuture<'a> {
+      Box::pin(async move { Ok(signal_response_fixture(request, request.id())) })
     }
   }
-  let binding = signal_binding_fixture();
+  let mut binding = signal_binding_fixture();
+  let mut capability = serde_json::to_value(&binding.plan.capability).unwrap();
+  capability["supported_purposes"] = serde_json::json!(["routing", "profile_selection"]);
+  binding.plan.capability = serde_json::from_value(capability).unwrap();
+  binding = binding.pin_policy().unwrap();
+  let mut selection = serde_json::to_value(&binding.plan).unwrap();
+  selection["profile"]["purpose"] = serde_json::json!("profile_selection");
+  selection["profile"]["routes"] = serde_json::Value::Null;
+  selection["profile"]["policy"]["identity"] = serde_json::json!("profile-policy");
+  selection["profile"]["question_set"]["identity"] = serde_json::json!("profile-questions");
+  selection["threshold"]["purpose"] = serde_json::json!("profile_selection");
+  let mut selection: FactoryDecisionSignalRequestPlan = serde_json::from_value(selection).unwrap();
+  let criteria = DecisionSignalProviderInput::new(
+    DecisionSignalInputMedia::CanonicalJson,
+    FactoryText::new("true").unwrap(),
+    selection.questions.clone(),
+    selection.consuming_question.clone(),
+    None,
+  )
+  .unwrap();
+  selection.threshold = selection
+    .threshold
+    .qualify_profile_selection(&selection.profile, &criteria)
+    .unwrap();
   let outputs = binding
     .outputs
     .iter()
@@ -652,6 +681,12 @@ async fn deployment_routing_profiles_resolve_only_an_exact_installed_connector()
       "local_permissions":{"grants":binding.local_permissions.grants(),"enforceable":PermissionCategory::ALL},
       "outputs":outputs,
     }],
+    "profile_selectors":[{
+      "selection_policy":selection.profile.policy(),
+      "project_id":binding.project_id,"plan":selection,"baseline":"stay",
+      "credential_profile":binding.credential_profile,"project_permissions":binding.project_permissions,
+      "local_permissions":{"grants":binding.local_permissions.grants(),"enforceable":PermissionCategory::ALL},
+    }],
   });
   let bytes = serde_json::to_vec(&document).unwrap();
   let provider = FactoryRuntimeSignalConnector::new(
@@ -663,6 +698,66 @@ async fn deployment_routing_profiles_resolve_only_an_exact_installed_connector()
   assert_eq!(parsed.signals.len(), 1);
   assert_eq!(parsed.signals[0].provider.capability(), &binding.plan.capability);
   assert_eq!(parsed.signals[0].bindings[0].action, binding.action);
+  assert_eq!(parsed.profile_selectors.len(), 1);
+  struct Ready;
+  #[async_trait::async_trait]
+  impl FactoryRuntimeReadiness for Ready {
+    async fn available(&self) -> bool {
+      true
+    }
+  }
+  let installation = FactoryProfileRuntimeInstaller::new(parsed.clone(), Arc::new(Ready), vec![])
+    .unwrap()
+    .install(resources())
+    .await
+    .unwrap();
+  assert!(
+    installation.profile_selectors.is_some(),
+    "the native Flow owner receives the installed consumer"
+  );
+  assert!(Arc::ptr_eq(
+    &parsed.signals[0].provider,
+    &parsed.profile_selectors[0].provider
+  ));
+  let node = octacity_server_store::testing::factory_node_journal_contract_fixture();
+  let routing = binding.plan.prepare(&node.input, &node.attempt).unwrap();
+  let profiles = selection.prepare(&node.input, &node.attempt).unwrap();
+  assert_ne!(routing.id(), profiles.id());
+  let installed = &parsed.signals[0].provider;
+  let route_receipt = consume_routing_signal(
+    DecisionSignalReceiptId::generate(),
+    &routing,
+    DecisionSignalProviderObservation::Result(installed.evaluate(&routing).await.unwrap()),
+    binding.baseline_route.clone(),
+  )
+  .unwrap();
+  let profile_receipt = consume_profile_selection_signal(
+    DecisionSignalReceiptId::generate(),
+    &profiles,
+    DecisionSignalProviderObservation::Result(installed.evaluate(&profiles).await.unwrap()),
+    binding.baseline_route.clone(),
+  )
+  .unwrap();
+  assert!(matches!(
+    route_receipt.consumption().final_disposition(),
+    DecisionSignalDisposition::Route(_)
+  ));
+  assert!(matches!(
+    profile_receipt.consumption().final_disposition(),
+    DecisionSignalDisposition::Profile(_)
+  ));
+  assert!(route_receipt.replay(&profiles).is_err());
+  assert!(profile_receipt.replay(&routing).is_err());
+  let mut foreign_profile_key = document.clone();
+  foreign_profile_key["profile_selectors"][0]["credential_profile"] = serde_json::json!("other-profile-key");
+  assert!(
+    FactoryRuntimeProfileCatalog::parse_json_with_signal_providers(
+      &serde_json::to_vec(&foreign_profile_key).unwrap(),
+      std::slice::from_ref(&provider)
+    )
+    .is_err()
+  );
+
   let mut crossed_credentials = document.clone();
   crossed_credentials["signals"][0]["credential_profile"] = serde_json::json!("another-routing-key");
   assert!(
@@ -1485,6 +1580,7 @@ async fn native_profile_installation_exposes_only_its_project_catalog_without_de
     projects: vec![(project, choices.clone())],
     codex: vec![profile.clone()],
     signals: vec![],
+    profile_selectors: vec![],
     tool_risk: vec![],
     review_planning: vec![],
     executors: vec![],

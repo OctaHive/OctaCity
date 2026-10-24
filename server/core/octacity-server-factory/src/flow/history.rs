@@ -186,9 +186,17 @@ pub fn validate_flow_runtime_history(
   }
 
   let usage = history.observed_usage_by_flow()?;
-  sum_usage(usage.values().copied())?.validate(limits.budget())?;
-  for flow_run in flow_runs.values() {
-    let definition = validated
+  validate_flow_budgets(admitted, history.flow_runs, &usage)
+}
+
+pub(super) fn validate_flow_budgets(
+  admitted: &AdmittedFlow,
+  flow_runs: &[FlowRun],
+  usage: &BTreeMap<FlowRunId, BudgetUsage>,
+) -> Result<(), FactoryError> {
+  sum_usage(usage.values().copied())?.validate(admitted.limits().budget())?;
+  for flow_run in flow_runs {
+    let definition = admitted
       .closure()
       .definition(flow_run.definition())
       .ok_or_else(|| invalid("Flow Run definition"))?;

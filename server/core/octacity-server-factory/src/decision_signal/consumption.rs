@@ -17,6 +17,8 @@ use super::{
 pub enum DecisionSignalDisposition {
   /// Follow one finite route declared by the immutable request.
   Route(FactoryKey),
+  /// Select one candidate from the stage's immutable profile choices; never a Flow edge.
+  Profile(FactoryKey),
   /// Preserve the unchanged, already-authorized tool action.
   Allow,
   /// Deny routing or the proposed tool action.
@@ -291,9 +293,52 @@ pub fn consume_routing_signal(
   observation: DecisionSignalProviderObservation,
   baseline_route: FactoryKey,
 ) -> Result<DecisionSignalReceipt, FactoryError> {
-  if request.request().purpose() != DecisionSignalPurpose::Routing || !request.choices().contains(&baseline_route) {
+  consume_finite_signal(
+    id,
+    request,
+    observation,
+    baseline_route,
+    DecisionSignalPurpose::Routing,
+    DecisionSignalDisposition::Route,
+  )
+}
+
+/// Consumes only a declared profile key. The stage owner maps that key to its pinned profile.
+/// This receipt grants no permission to create profiles, traverse edges, or complete a gate.
+pub fn consume_profile_selection_signal(
+  id: DecisionSignalReceiptId,
+  request: &DecisionSignalProviderRequest,
+  observation: DecisionSignalProviderObservation,
+  baseline_candidate: FactoryKey,
+) -> Result<DecisionSignalReceipt, FactoryError> {
+  if !observation.is_valid_for(request)
+    && !matches!(&observation, DecisionSignalProviderObservation::Result(result) if result.has_measured_usage_for(request))
+  {
     return Err(FactoryError::InvalidDecisionSignal {
-      field: "routing baseline",
+      field: "unobserved profile outcome",
+    });
+  }
+  consume_finite_signal(
+    id,
+    request,
+    observation,
+    baseline_candidate,
+    DecisionSignalPurpose::ProfileSelection,
+    DecisionSignalDisposition::Profile,
+  )
+}
+
+fn consume_finite_signal(
+  id: DecisionSignalReceiptId,
+  request: &DecisionSignalProviderRequest,
+  observation: DecisionSignalProviderObservation,
+  baseline: FactoryKey,
+  purpose: DecisionSignalPurpose,
+  disposition: fn(FactoryKey) -> DecisionSignalDisposition,
+) -> Result<DecisionSignalReceipt, FactoryError> {
+  if request.request().purpose() != purpose || !request.choices().contains(&baseline) {
+    return Err(FactoryError::InvalidDecisionSignal {
+      field: "finite signal baseline",
     });
   }
   ensure_observed_failure(&observation)?;
@@ -303,12 +348,12 @@ pub fn consume_routing_signal(
     .as_ref()
     .and_then(|result| result.consuming_choice(request))
     .filter(|(_, selected, runner_up)| request.threshold().accepts(*selected, *runner_up))
-    .map(|(selected, _, _)| DecisionSignalDisposition::Route(selected.clone()));
+    .map(|(selected, _, _)| disposition(selected.clone()));
   Ok(build_receipt(
     id,
     request,
     normalized,
-    DecisionSignalDisposition::Route(baseline_route),
+    disposition(baseline),
     recommendation,
   ))
 }
@@ -368,6 +413,16 @@ fn normalize_observation(
         state: DecisionSignalState::Completed,
         usage,
         result: Some(result),
+      }
+    }
+    DecisionSignalProviderObservation::Result(result)
+      if request.request().purpose() == DecisionSignalPurpose::ProfileSelection
+        && result.has_measured_usage_for(request) =>
+    {
+      NormalizedObservation {
+        state: DecisionSignalState::Invalid,
+        usage: result.usage(),
+        result: None,
       }
     }
     DecisionSignalProviderObservation::Failure(failure) if failure.is_valid_for(request) => NormalizedObservation {
@@ -483,6 +538,7 @@ fn encode_consumption(consumption: &DecisionSignalConsumption) -> Vec<u8> {
 fn encode_disposition(disposition: &DecisionSignalDisposition) -> Vec<u8> {
   match disposition {
     DecisionSignalDisposition::Route(route) => format!("route\0{route}").into_bytes(),
+    DecisionSignalDisposition::Profile(candidate) => format!("profile\0{candidate}").into_bytes(),
     DecisionSignalDisposition::Allow => b"allow".to_vec(),
     DecisionSignalDisposition::Deny => b"deny".to_vec(),
     DecisionSignalDisposition::Escalate => b"escalate".to_vec(),

@@ -135,6 +135,24 @@ fn selection_fixture(
   failure: FlowProfileSelectionFailure,
   data: Option<(FlowDataSchema, serde_json::Value)>,
 ) -> (PublishedFactoryAdmission, FlowNodeInput, FactoryClaimOwnership) {
+  selection_fixture_with_budget(policy, failure, data, BudgetUsage::default())
+}
+
+/// Reuses the ordinary stage fixture with explicitly reserved provider-selection resources.
+pub fn factory_profile_signal_contract_fixture(
+  policy: FlowProfileSelectionPolicy,
+  failure: FlowProfileSelectionFailure,
+  allowance: BudgetUsage,
+) -> (PublishedFactoryAdmission, FlowNodeInput, FactoryClaimOwnership) {
+  selection_fixture_with_budget(policy, failure, None, allowance)
+}
+
+fn selection_fixture_with_budget(
+  policy: FlowProfileSelectionPolicy,
+  failure: FlowProfileSelectionFailure,
+  data: Option<(FlowDataSchema, serde_json::Value)>,
+  allowance: BudgetUsage,
+) -> (PublishedFactoryAdmission, FlowNodeInput, FactoryClaimOwnership) {
   let prior = factory_node_journal_contract_fixture();
   let work = prior.admission.work.clone();
   let project: ProjectId = work.subject().project_id();
@@ -178,7 +196,14 @@ fn selection_fixture(
         build_configuration: build.build_configuration.clone(),
         credential_purpose: FactoryCredentialPurpose::Model,
         permissions: original.permissions().clone(),
-        budget: original.budget(),
+        budget: BudgetLimit::new(
+          original.budget().max_attempts() - allowance.attempts,
+          original.budget().max_elapsed_millis() - allowance.elapsed_millis,
+          original.budget().max_tokens() - allowance.tokens,
+          original.budget().max_cost_micro_units() - allowance.cost_micro_units,
+          original.budget().max_output_bytes() - allowance.output_bytes,
+        )
+        .unwrap(),
       };
       (
         key(name),
@@ -197,7 +222,7 @@ fn selection_fixture(
   node["kind"] = serde_json::json!("reasoning");
   node["profile_selection"] = serde_json::json!({"role":role.reference(),"candidates":candidates,
     "policy": policy,
-    "failure":failure,"selection_budget":BudgetUsage::default()});
+    "failure":failure,"selection_budget":allowance});
   let node: FlowNodeDefinition = serde_json::from_value(node).unwrap();
   let definition = FlowDefinition::new(FlowDefinitionInput {
     id: root.reference().id(),
@@ -500,6 +525,27 @@ mod tests {
       json!({"mode":"rules", "rules":[{"when":when,"candidate":"advanced"}],"otherwise":"baseline"}),
     )
     .unwrap()
+  }
+  #[test]
+  fn decision_api_freezes_a_pending_selection_before_provider_io() {
+    let (admission, input, _) =
+      factory_profile_selection_policy_contract_fixture(FlowProfileSelectionPolicy::DecisionApi {
+        policy: ImmutableReference::new(key("selection-policy"), key("v1"), digest(44)),
+        input: FlowDataMapping::new(FlowValueMapping::Constant { value: json!(true) }).unwrap(),
+      });
+    let pending = FlowProfileSelectionRecord::select(&input, &admission.flow, time(11)).unwrap();
+    assert_eq!(pending.candidate(), None);
+    assert!(!pending.needs_recovery());
+    assert_eq!(
+      FlowProfileSelectionRecord::restore(
+        &serde_json::to_vec(&pending).unwrap(),
+        &input,
+        &admission.flow,
+        pending.digest().unwrap()
+      )
+      .unwrap(),
+      pending
+    );
   }
   fn compare(path: &str, value: serde_json::Value) -> serde_json::Value {
     json!({"operation":"compare","left":{"source":"path","path":path},"comparison":"greater","right":{"source":"literal","value":value}})
