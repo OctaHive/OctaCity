@@ -323,7 +323,8 @@ executable. Each optional grant can be removed and restored within its own set.
 **Import skill folder** stays inside the AI-agent draft. Choose a folder with root
 `SKILL.md`, review its relative file inventory, then confirm import. Cancellation,
 read/import failure and lost-response retry preserve the other draft fields.
-The receipt adds an exact skill version to the choices; selecting it on the agent is explicit.
+A successful import selects its exact skill version in the current AI-agent draft,
+preserving other selected skills. Saving the agent remains a separate reviewed publication.
 Use **View skill** to inspect its retained relative files and open a bounded plain-text
 preview. Markdown, HTML and scripts are shown as text. Binary/large files retain
 metadata without an inline text preview. Browsing preserves all draft fields.

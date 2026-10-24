@@ -26,7 +26,7 @@ export const ruMessages = {
   'factory.reviewImport': 'Проверить импорт skill',
   'factory.confirmImport': 'Подтвердить импорт',
   'factory.noSkills': 'Нет импортированных skills.',
-  'factory.skillImported': 'Папка skill импортирована. Выберите её точную версию в черновике.',
+  'factory.skillImported': 'Папка skill импортирована и добавлена в черновик AI-агента.',
   'factory.templates': 'Стартовые шаблоны',
   'factory.noTemplates': 'Нет стартовых шаблонов.',
   'factory.copyTemplate': 'Копировать шаблон AI-агента',

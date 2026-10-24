@@ -24,7 +24,7 @@ export const enMessages = {
   'factory.reviewImport': 'Review skill import',
   'factory.confirmImport': 'Confirm import',
   'factory.noSkills': 'No imported skills.',
-  'factory.skillImported': 'Skill folder imported. Select its exact version in this draft.',
+  'factory.skillImported': 'Skill folder imported and added to the AI-agent draft.',
   'factory.templates': 'Starter templates',
   'factory.noTemplates': 'No starter templates.',
   'factory.copyTemplate': 'Copy AI-agent template',

@@ -277,8 +277,11 @@ async function openProfile() {
 }
 it('imports a reviewed shared skill folder inline, replays a lost response and keeps the agent draft on cancel and failure', async () => {
   const { roles, role } = setup();
+  const existing = { identity: 'existing', version: 'v2', digest: 'b'.repeat(64) };
+  roles.listSkills.mockResolvedValue({ items: [existing], total: 1, next_cursor: null });
   await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
+  await userEvent.click(await screen.findByRole('checkbox', { name: /existing.*v2/ }));
   const name = screen.getByRole('textbox', { name: 'Agent name' });
   await userEvent.type(name, 'private local draft');
   const file = new File(['# Skill\nInstructions'], 'SKILL.md', { type: 'text/markdown' });
@@ -290,6 +293,8 @@ it('imports a reviewed shared skill folder inline, replays a lost response and k
     within(await screen.findByRole('dialog')).getByRole('button', { name: 'Abandon' }),
   );
   expect(name).toHaveProperty('value', 'private local draft');
+  expect(roles.importSkill).not.toHaveBeenCalled();
+  expect(screen.queryByRole('checkbox', { name: /review.*v1/ })).toBeNull();
   const bundle = { identity: 'review', version: 'v1', digest: 'a'.repeat(64) };
   roles.importSkill
     .mockRejectedValueOnce(
@@ -305,8 +310,10 @@ it('imports a reviewed shared skill folder inline, replays a lost response and k
   await userEvent.click(screen.getByRole('button', { name: 'Review skill import' }));
   const dialog = await screen.findByRole('dialog');
   await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm import' }));
-  await userEvent.click(await within(dialog).findByRole('button', { name: 'Retry same command' }));
-  await within(dialog).findByText('Skill folder imported. Select its exact version in this draft.');
+  const retry = await within(dialog).findByRole('button', { name: 'Retry same command' });
+  expect(screen.queryByRole('checkbox', { name: /review.*v1/ })).toBeNull();
+  await userEvent.click(retry);
+  await within(dialog).findByText('Skill folder imported and added to the AI-agent draft.');
   expect(roles.importSkill.mock.calls[0]).toEqual(roles.importSkill.mock.calls[1]);
   expect(roles.importSkill.mock.calls[0]?.[1]).toEqual({
     identity: 'review',
@@ -320,12 +327,16 @@ it('imports a reviewed shared skill folder inline, replays a lost response and k
   });
   await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
   expect(name).toHaveProperty('value', 'private local draft');
-  await userEvent.click(await screen.findByRole('checkbox', { name: /review.*v1/ }));
+  expect(await screen.findByRole('checkbox', { name: /review.*v1/ })).toHaveProperty(
+    'checked',
+    true,
+  );
+  expect(screen.getByRole('checkbox', { name: /existing.*v2/ })).toHaveProperty('checked', true);
   await userEvent.click(screen.getByRole('button', { name: 'Review AI agent' }));
   expect(roles.validateRole).toHaveBeenLastCalledWith(
     role.reference.project_id,
     expect.objectContaining({
-      definition: expect.objectContaining({ skills: { review: bundle } }),
+      definition: expect.objectContaining({ skills: { existing, review: bundle } }),
     }),
   );
 });

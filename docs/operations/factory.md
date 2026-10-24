@@ -844,9 +844,10 @@ readable; conflicting shared/legacy aliases are rejected. As with instructions,
 changes publish a new Role version and profiles adopt it explicitly; retained Runs
 keep their original content.
 
-Import a folder with root `SKILL.md` in the agent editor. After import, select the
-exact version and use View skill to inspect its retained files without discarding
-the draft. Dedicated Project-authorized inventory/file reads reuse the import
+Import a folder with root `SKILL.md` in the agent editor. Successful import adds
+its exact version to the draft’s selected skills; saving the agent still requires
+a separate reviewed publication. Use View skill to inspect retained files without
+discarding the draft. Dedicated Project-authorized inventory/file reads reuse the import
 record and object reader, verify file integrity, and require Artifact download
 authority for content. Only bounded UTF-8 is shown inline as inert text.
 

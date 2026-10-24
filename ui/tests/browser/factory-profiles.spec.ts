@@ -102,6 +102,7 @@ for (const language of ['en', 'ru'] as const) {
     const owner = role.reference.project_id;
     const base = `/api/v1/projects/${owner}`;
     let published: unknown;
+    let retainedRole = role;
     const pageOf = (items: unknown[]) => ({ items, total: items.length, next_cursor: null });
     await page.route('**/api/v1/projects/*/factory-**', async (route) => {
       const path = new URL(route.request().url()).pathname;
@@ -109,8 +110,8 @@ for (const language of ['en', 'ru'] as const) {
       if (path === `${base}/factory-roles`)
         body = pageOf([
           {
-            reference: role.reference,
-            name: role.definition.name,
+            reference: retainedRole.reference,
+            name: retainedRole.definition.name,
             icon: 'bot',
             concurrency_limit: 2,
             template: null,
@@ -131,7 +132,8 @@ for (const language of ['en', 'ru'] as const) {
             template: null,
           },
         ]);
-      else if (path.startsWith(`${base}/factory-roles/${role.reference.id}/versions/`)) body = role;
+      else if (path.startsWith(`${base}/factory-roles/${role.reference.id}/versions/`))
+        body = retainedRole;
       else if (path.includes('/factory-role-profiles/') && path.includes('/versions/'))
         body = profile;
       else if (path === `${base}/factory-profile-capabilities`) body = pageOf([choice]);
@@ -146,8 +148,14 @@ for (const language of ['en', 'ru'] as const) {
           published_at: 100,
         };
       } else if (path === `${base}/factory-role-publications`) {
-        published = route.request().postDataJSON();
-        body = { disposition: 'applied', role, profiles: [], published_at: 100 };
+        const request = route.request().postDataJSON();
+        published = request;
+        retainedRole = {
+          ...role,
+          reference: { ...role.reference, version: 2 },
+          definition: request.role.definition,
+        };
+        body = { disposition: 'applied', role: retainedRole, profiles: [], published_at: 100 };
       } else return route.fallback();
       await route.fulfill({ json: body });
     });
@@ -174,7 +182,7 @@ for (const language of ['en', 'ru'] as const) {
     await page.keyboard.press('Enter');
     await expect(dialog.getByText(m['factory.skillImported'])).toBeVisible();
     await dialog.getByRole('button', { name: m['common.close'], exact: true }).click();
-    await page.getByRole('checkbox', { name: /skill-folder.*v1/ }).check();
+    await expect(page.getByRole('checkbox', { name: /skill-folder.*v1/ })).toBeChecked();
     await page.getByRole('button', { name: m['factory.reviewAgent'] }).click();
     await dialog.getByRole('button', { name: m['factory.confirmPublish'] }).click();
     await expect(dialog.getByText(m['factory.published'])).toBeVisible();
@@ -191,6 +199,15 @@ for (const language of ['en', 'ru'] as const) {
       },
       profiles: [],
     });
+    await dialog.getByRole('button', { name: m['common.close'], exact: true }).click();
+    await page.reload();
+    await page.getByRole('button', { name: m['factory.agents'], exact: true }).click();
+    await page.getByRole('button', { name: 'private agent draft', exact: true }).click();
+    await expect(
+      page.getByRole('button', {
+        name: m['factory.viewSkill'].replace('{name}', 'skill-folder · v1'),
+      }),
+    ).toBeVisible();
     expect(page.url()).not.toContain('private');
     expect(
       await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage)),

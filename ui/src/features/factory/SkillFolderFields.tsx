@@ -223,6 +223,7 @@ export function SkillFolderFields({
               structuredClone(attempt.request) as Request,
               attempt.headers,
             );
+            onChange({ ...value, [receipt.bundle.identity]: receipt.bundle });
             setImported((current) => [
               ...current.filter((item) => !same(item, receipt.bundle)),
               receipt.bundle,
