@@ -125,7 +125,23 @@ impl FlowProfileSelectionBinding {
     for candidate in self.candidates.values() {
       candidate.validate_capabilities(choices)?;
     }
+    if let FlowProfileSelectionPolicy::DecisionApi { policy, .. } = &self.policy
+      && let Some(selector) = choices.profile_selector_metadata(policy)
+      && !self.matches_signal_answers(&selector.candidates, &selector.baseline)
+    {
+      return Err(invalid());
+    }
     Ok(())
+  }
+
+  /// Publication and retained runtime operations must agree on the same finite answer domain.
+  pub(super) fn matches_signal_answers(&self, answers: &crate::DecisionSignalChoices, baseline: &FactoryKey) -> bool {
+    self.candidates.contains_key(baseline)
+      && answers.as_slice().len() == self.candidates.len()
+      && answers
+        .as_slice()
+        .iter()
+        .all(|answer| self.candidates.contains_key(answer))
   }
 
   pub(super) fn validate_node(&self, node: &crate::FlowNodeDefinition) -> Result<(), crate::FactoryError> {

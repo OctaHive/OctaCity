@@ -1,6 +1,12 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factoryRoleCatalog: (project: string, kind: string, owner = '') =>
+    ['factory', 'roles', project, kind, owner] as const,
+  factoryRole: (reference: { project_id: string; id: string; version: number }) =>
+    ['factory', 'role', reference.project_id, reference.id, reference.version] as const,
+  factoryRoleProfile: (reference: { project_id: string; id: string; version: number }) =>
+    ['factory', 'profile', reference.project_id, reference.id, reference.version] as const,
   issueLegacyHistory: (project: string, issue: string, after: string | null) =>
     ['issues', project, issue, 'legacy-work', after] as const,
   issueLegacyWork: (project: string, issue: string, work: string | null) =>

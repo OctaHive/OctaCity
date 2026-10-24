@@ -327,3 +327,107 @@ impl FactoryFlowDefinitionStore for PublicationChoices {
     unreachable!("validation cannot list definitions")
   }
 }
+
+#[test]
+fn decision_profile_answers_are_checked_before_flow_publication() {
+  run_ready(async {
+    let project = ProjectId::generate();
+    let fixture = selected_fixture(project);
+    let flow = fixture.draft.flow.unwrap();
+    let root = flow.closure.definition(flow.closure.root()).unwrap();
+    let selector = exact("installed-selector", "v1", 91);
+    let mut entries = fixture.choices.entries();
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::DecisionSignalPolicy,
+      alias: key("selector"),
+      reference: selector.clone(),
+    });
+    let mut choices = FactoryConfigurationChoices::try_new(entries).unwrap();
+    for (alias, capability) in fixture.choices.role_profile_capabilities() {
+      choices = choices
+        .with_role_profile_capability(alias.clone(), capability.clone())
+        .unwrap();
+    }
+    choices = choices
+      .with_choice_metadata(
+        FactoryChoiceKind::DecisionSignalPolicy,
+        key("selector"),
+        FactoryChoiceMetadata {
+          profile_selection: Some(FactoryProfileSelectorMetadata {
+            provider: exact("provider", "v1", 92),
+            adapter: exact("adapter", "v1", 93),
+            model: exact("model", "v1", 94),
+            question_set: exact("criteria", "v1", 95),
+            calibration: exact("calibration", "v1", 96),
+            probability_semantics: exact("semantics", "v1", 97),
+            mode: DecisionSignalMode::Shadow,
+            baseline: key("default"),
+            candidates: DecisionSignalChoices::try_new(vec![key("default"), key("pro"), key("specialized")]).unwrap(),
+            minimum_probability: DecisionSignalProbability::new(800_000).unwrap(),
+            minimum_margin: DecisionSignalProbability::new(100_000).unwrap(),
+          }),
+          ..Default::default()
+        },
+      )
+      .unwrap();
+    let store = Arc::new(PublicationChoices(std::sync::Mutex::new(choices)));
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let handlers = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(crate::FactoryFlowDefinitionHandlers::new(store, policy)),
+    );
+    let draft = crate::FactoryFlowDefinitionDraft {
+      root: crate::FactoryFlowRootDraft {
+        input_schema: root.input_schema().cloned(),
+        entry: root.entry().clone(),
+        nodes: root.nodes().to_vec(),
+        transitions: root.transitions().to_vec(),
+        terminals: root.terminals().to_vec(),
+        context_projections: root.context_projections().to_vec(),
+        data_projections: root.data_projections().to_vec(),
+        execution: root.execution().clone(),
+      },
+      limits: flow.limits.clone(),
+      data_schemas: flow.data_schemas.clone(),
+      pools: flow.pools.clone(),
+    };
+    let mut input = crate::ValidateFactoryFlowDefinitionQuery {
+      id: FlowDefinitionId::generate(),
+      project_id: project,
+      draft,
+    };
+    let at = input
+      .draft
+      .root
+      .nodes
+      .iter()
+      .position(|node| node.profile_selection().is_some())
+      .unwrap();
+    let node = input.draft.root.nodes[at].clone();
+    let mut selection = node.profile_selection().unwrap().clone();
+    selection.policy = FlowProfileSelectionPolicy::DecisionApi {
+      policy: selector,
+      input: FlowDataMapping::new(FlowValueMapping::Object {
+        fields: BTreeMap::new(),
+      })
+      .unwrap(),
+    };
+    input.draft.root.nodes[at] = node.clone().with_profile_selection(selection.clone()).unwrap();
+    assert!(handlers.handle_query(&context(), input.clone()).await.is_ok());
+    let candidate = selection.candidates.remove(&key("default")).unwrap();
+    selection
+      .candidates
+      .insert(key("62000000-0000-4000-8000-000000000001"), candidate);
+    input.draft.root.nodes[at] = node.clone().with_profile_selection(selection.clone()).unwrap();
+    assert!(
+      handlers.handle_query(&context(), input.clone()).await.is_err(),
+      "a profile UUID is not the installed selector answer default"
+    );
+    selection.policy = FlowProfileSelectionPolicy::Manual { candidate: None };
+    input.draft.root.nodes[at] = node.with_profile_selection(selection).unwrap();
+    assert!(
+      handlers.handle_query(&context(), input).await.is_ok(),
+      "manual selection keeps arbitrary candidate keys and needs no provider"
+    );
+  });
+}

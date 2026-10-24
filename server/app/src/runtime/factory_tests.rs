@@ -693,12 +693,21 @@ async fn deployment_routing_and_profile_policies_share_an_exact_installed_connec
     binding.credential_profile.clone(),
     Arc::new(Provider(binding.plan.capability.clone())),
   );
-  let parsed =
+  let mut parsed =
     FactoryRuntimeProfileCatalog::parse_json_with_signal_providers(&bytes, std::slice::from_ref(&provider)).unwrap();
   assert_eq!(parsed.signals.len(), 1);
   assert_eq!(parsed.signals[0].provider.capability(), &binding.plan.capability);
   assert_eq!(parsed.signals[0].bindings[0].action, binding.action);
   assert_eq!(parsed.profile_selectors.len(), 1);
+  let selector = &parsed.profile_selectors[0];
+  let mut entries = parsed.projects[0].1.entries();
+  entries.references.push(FactoryReferenceChoice {
+    kind: FactoryChoiceKind::DecisionSignalPolicy,
+    alias: FactoryKey::new("profile-selector").unwrap(),
+    reference: selector.selection_policy.clone(),
+  });
+  parsed.projects[0].1 = FactoryConfigurationChoices::try_new(entries).unwrap();
+
   struct Ready;
   #[async_trait::async_trait]
   impl FactoryRuntimeReadiness for Ready {
@@ -715,6 +724,33 @@ async fn deployment_routing_and_profile_policies_share_an_exact_installed_connec
     installation.profile_selectors.is_some(),
     "the native Flow owner receives the installed consumer"
   );
+  let octacity_server_store::FactoryConfigurationAvailability::Available(choices) = installation
+    .capabilities
+    .availability(binding.project_id)
+    .await
+    .unwrap()
+  else {
+    panic!("installed choices");
+  };
+  let metadata = serde_json::to_value(choices.choice_metadata(
+    FactoryChoiceKind::DecisionSignalPolicy,
+    &FactoryKey::new("profile-selector").unwrap(),
+  ))
+  .unwrap();
+  assert_eq!(metadata["profile_selection"]["mode"], "shadow");
+  assert_eq!(
+    metadata["profile_selection"]["candidates"],
+    serde_json::json!(["stay", "redirect"])
+  );
+  assert_eq!(
+    metadata["profile_selection"]["minimum_probability"],
+    serde_json::to_value(selection.threshold.minimum_probability()).unwrap()
+  );
+  assert_eq!(
+    metadata["profile_selection"]["provider"],
+    serde_json::to_value(selection.profile.provider()).unwrap()
+  );
+  assert!(!metadata.to_string().contains("instructions"));
   assert!(Arc::ptr_eq(
     &parsed.signals[0].provider,
     &parsed.profile_selectors[0].provider

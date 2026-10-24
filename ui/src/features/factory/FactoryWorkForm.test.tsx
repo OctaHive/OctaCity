@@ -12,6 +12,7 @@ import { App } from '../../App';
 import { createConsoleRoutes } from '../../app/router';
 import { fakeProjectsApi, project } from '../projects/ProjectTestSupport';
 import { buildDiagnosticsApi } from '../builds/api';
+import { factoryProfileConfigurationFixture } from '../../../tests/fixtures/factoryRoles';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 
 afterEach(cleanup);
@@ -108,6 +109,7 @@ function renderWork(specificationCount = 1, composed = false, allowExactRevision
       total: 1,
       next_cursor: null,
     })),
+    getConfiguration: vi.fn(async () => factoryProfileConfigurationFixture()),
     admitWork,
   };
   const router = createMemoryRouter(
@@ -264,3 +266,42 @@ it.each(['revision-one', 'revision-two'])(
     });
   },
 );
+
+it('admits an exact optional stage override from the pinned configuration without changing the stage defaults', async () => {
+  const { admitWork } = renderWork();
+  await userEvent.type(
+    await screen.findByRole('textbox', { name: 'Work label' }),
+    'Reviewed override',
+  );
+  await userEvent.click(await screen.findByRole('combobox', { name: 'Task Artifact' }));
+  await userEvent.click(await screen.findByRole('option', { name: 'Requested task' }));
+  await userEvent.click(screen.getByRole('combobox', { name: 'Acceptance Artifact' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Acceptance criteria' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Override stage profiles' }));
+  const configuration = factoryProfileConfigurationFixture().configuration;
+  const root = configuration.flow.closure.definitions[0]!;
+  const node = root.nodes[0]!;
+  await userEvent.click(
+    await screen.findByRole('combobox', { name: `Profile override · ${node.key}` }),
+  );
+  await userEvent.click(await screen.findByRole('option', { name: 'default · default v1' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review Work admission' }));
+  await userEvent.click(
+    within(await screen.findByRole('dialog')).getByRole('button', {
+      name: 'Confirm Work admission',
+    }),
+  );
+  await screen.findByText('Admitted Run');
+  expect(admitWork).toHaveBeenCalledWith(
+    configuration.reference.project_id,
+    expect.objectContaining({
+      profile_overrides: [
+        {
+          stage: { root: configuration.flow.closure.root, calls: [], node: node.key },
+          profile: node.profile_selection!.candidates.default!.profile.reference,
+        },
+      ],
+    }),
+    expect.anything(),
+  );
+});

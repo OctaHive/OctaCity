@@ -70,6 +70,8 @@ pub struct FactoryConfigurationDocumentBounds {
   pub profile_overrides: usize,
   /// Maximum typed questions and answers retained by one Decision Signal.
   pub signal_questions: usize,
+  /// Maximum finite answers consumed by one profile selector.
+  pub signal_choices: usize,
   /// Fixed-point denominator for probability and confidence values.
   pub signal_probability_scale: u32,
   /// Maximum aliases or compatibility relationships in one technical category.
@@ -158,6 +160,7 @@ pub const fn factory_configuration_document_bounds() -> FactoryConfigurationDocu
     skill_total_bytes: factory::MAX_CONTEXT_MANIFEST_BYTES,
     profile_overrides: factory::MAX_FLOW_DEFINITION_NODES,
     signal_questions: factory::MAX_DECISION_SIGNAL_QUESTIONS,
+    signal_choices: factory::MAX_DECISION_SIGNAL_CHOICES,
     signal_probability_scale: factory::DECISION_SIGNAL_PROBABILITY_SCALE,
     choice_entries: factory::MAX_CONFIGURATION_CHOICES_PER_KIND,
     work_metadata_entries: factory::MAX_FACTORY_METADATA_ENTRIES,
@@ -362,6 +365,25 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
     if let Some(cap) = visible.available_role_profile_capability(alias, cap) {
       visible = visible
         .with_role_profile_capability(alias.clone(), cap)
+        .map_err(|_| ApplicationError::invalid())?;
+    }
+  }
+  // Retain selector constraints for validation of visible policies. This is not a
+  // discovery response; its separate projection still filters private dependencies.
+  for entry in visible.entries().references {
+    if let Some(selector) = choices
+      .choice_metadata(entry.kind, &entry.alias)
+      .and_then(|metadata| metadata.profile_selection.as_ref())
+    {
+      visible = visible
+        .with_choice_metadata(
+          entry.kind,
+          entry.alias,
+          octacity_server_factory::FactoryChoiceMetadata {
+            profile_selection: Some(selector.clone()),
+            ..Default::default()
+          },
+        )
         .map_err(|_| ApplicationError::invalid())?;
     }
   }

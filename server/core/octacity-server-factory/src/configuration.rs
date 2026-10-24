@@ -199,6 +199,38 @@ pub struct FactoryChoiceMetadata {
   /// still validate exact references and intersect authoritative policy.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub permission_declarations: Option<crate::FactoryPermissionSet>,
+  /// Read-only facts projected from an installed profile selector, never provider input or credentials.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub profile_selection: Option<FactoryProfileSelectorMetadata>,
+}
+
+/// Safe installation facts for Console profile-selection authoring.
+/// The complete private plan remains in its existing installed owner.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryProfileSelectorMetadata {
+  /// Exact installed provider identity.
+  pub provider: ImmutableReference,
+  /// Exact installed protocol adapter.
+  pub adapter: ImmutableReference,
+  /// Exact installed model.
+  pub model: ImmutableReference,
+  /// Semantic criteria version; question text remains private plan content.
+  pub question_set: ImmutableReference,
+  /// Applicable calibration identity.
+  pub calibration: ImmutableReference,
+  /// Meaning of provider probabilities.
+  pub probability_semantics: ImmutableReference,
+  /// Installed rollout authority, independent of Flow authoring.
+  pub mode: crate::DecisionSignalMode,
+  /// Explicit candidate used by shadow/advisory.
+  pub baseline: FactoryKey,
+  /// Complete finite answer keys; Flow candidates bind profiles to these exact keys.
+  pub candidates: crate::DecisionSignalChoices,
+  /// Minimum selected-answer probability in millionths.
+  pub minimum_probability: crate::DecisionSignalProbability,
+  /// Minimum lead over the next answer in millionths.
+  pub minimum_margin: crate::DecisionSignalProbability,
 }
 
 /// One typed compatibility relationship within a Project choice catalog.
@@ -391,6 +423,20 @@ impl FactoryConfigurationChoices {
   #[must_use]
   pub fn choice_metadata(&self, kind: FactoryChoiceKind, alias: &FactoryKey) -> Option<&FactoryChoiceMetadata> {
     self.metadata.get(&(kind, alias.clone()))
+  }
+
+  /// Borrows declared selector facts only for the same exact installed policy.
+  pub(crate) fn profile_selector_metadata(
+    &self,
+    policy: &ImmutableReference,
+  ) -> Option<&FactoryProfileSelectorMetadata> {
+    self.references.iter().find_map(|((kind, alias), reference)| {
+      if *kind == FactoryChoiceKind::DecisionSignalPolicy && reference == policy {
+        self.choice_metadata(*kind, alias)?.profile_selection.as_ref()
+      } else {
+        None
+      }
+    })
   }
 
   /// Returns the bounded exact catalog in deterministic category/alias order.

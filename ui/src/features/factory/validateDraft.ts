@@ -75,7 +75,11 @@ export function validateFlowDraft(value: Draft): DraftIssue[] {
         add(`${field}/budget/${key}`, 'budget_exceeded');
     if (node.kind === 'subflow_call' && !node.subflow)
       add(`${field}/subflow`, 'unavailable_reference');
-    if ((node.kind === 'build_command' || node.kind === 'reasoning') && !node.build)
+    if (
+      (node.kind === 'build_command' || node.kind === 'reasoning') &&
+      !node.build &&
+      !(node.kind === 'reasoning' && node.profile_selection)
+    )
       add(`${field}/build`, 'unavailable_reference');
     if (node.kind === 'trusted_action' && !node.action && !node.build)
       add(`${field}/action`, 'unavailable_reference');

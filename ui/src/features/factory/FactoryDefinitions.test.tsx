@@ -54,6 +54,8 @@ it('blocks draft creation when the server has no Factory capabilities while keep
     true,
   );
   expect(screen.getByRole('button', { name: 'Admit Work' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'AI agents' })).toHaveProperty('disabled', false);
+  expect(screen.queryByRole('button', { name: 'Enroll agent' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Create configuration draft' }));
   expect(screen.queryByRole('button', { name: 'Discard draft' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Inspect Flow Definition · v1' }));

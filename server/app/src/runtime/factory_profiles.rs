@@ -3,7 +3,7 @@ use super::factory::*;
 use async_trait::async_trait;
 use octacity_server_application::*;
 use octacity_server_domain::ProjectId;
-use octacity_server_factory::{DecisionSignalProvider, FactoryConfigurationChoices};
+use octacity_server_factory::{DecisionSignalProvider, FactoryChoiceKind, FactoryConfigurationChoices};
 use octacity_server_store::{FactoryConfigurationAvailability, StoreError};
 use octacity_server_store_postgres::FactoryCapabilitySource;
 use std::sync::Arc;
@@ -244,8 +244,34 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
     } else {
       Some(resources.profile_selectors(self.catalog.profile_selectors.clone())?)
     };
+    let mut projects = self.catalog.projects.clone();
+    for selector in &self.catalog.profile_selectors {
+      for (project, choices) in &mut projects {
+        if *project != selector.project_id {
+          continue;
+        }
+        for entry in choices.entries().references {
+          if entry.kind == FactoryChoiceKind::DecisionSignalPolicy && entry.reference == selector.selection_policy {
+            let mut metadata = choices
+              .choice_metadata(entry.kind, &entry.alias)
+              .cloned()
+              .unwrap_or_default();
+            let installed = selector
+              .choice_metadata()
+              .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+            metadata.node_kinds.extend(installed.node_kinds);
+            metadata.signal_purposes.extend(installed.signal_purposes);
+            metadata.profile_selection = installed.profile_selection;
+            *choices = choices
+              .clone()
+              .with_choice_metadata(entry.kind, entry.alias, metadata)
+              .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+          }
+        }
+      }
+    }
     Ok(FactoryRuntimeInstallation {
-      capabilities: Arc::new(ProjectCatalog(self.catalog.projects.clone())),
+      capabilities: Arc::new(ProjectCatalog(projects)),
       executors,
       inputs: Arc::new(FactoryArtifactFlowInputs::new(
         reader,

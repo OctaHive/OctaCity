@@ -40,6 +40,28 @@ pub struct FactoryProfileSelector {
   pub local_permissions: LocalPermissionCeiling,
 }
 impl FactoryProfileSelector {
+  /// Projects safe authoring facts from the existing validated installation, without another policy store.
+  pub fn choice_metadata(&self) -> Result<FactoryChoiceMetadata, ApplicationError> {
+    let input = self.validated_input()?;
+    Ok(FactoryChoiceMetadata {
+      node_kinds: vec![FlowNodeKind::Reasoning],
+      signal_purposes: vec![DecisionSignalPurpose::ProfileSelection],
+      profile_selection: Some(FactoryProfileSelectorMetadata {
+        provider: self.plan.profile.provider().clone(),
+        adapter: self.plan.profile.adapter().clone(),
+        model: self.plan.profile.model().clone(),
+        question_set: self.plan.profile.question_set().clone(),
+        calibration: self.plan.threshold.calibration().clone(),
+        probability_semantics: self.plan.threshold.probability_semantics().clone(),
+        mode: self.plan.profile.mode(),
+        baseline: self.baseline.clone(),
+        candidates: input.choices().clone(),
+        minimum_probability: self.plan.threshold.minimum_probability(),
+        minimum_margin: self.plan.threshold.minimum_margin(),
+      }),
+      ..Default::default()
+    })
+  }
   /// Pins complete installed metadata, as ordinary action bindings do.
   /// A changed plan gets a new reference rather than retargeting earlier Runs.
   pub fn pin_policy(mut self) -> Result<Self, ApplicationError> {
@@ -88,6 +110,9 @@ impl FactoryProfileSelector {
   }
   /// Qualifies exact capability, criteria and transport authority without I/O.
   pub fn validate(&self) -> Result<(), ApplicationError> {
+    self.validated_input().map(|_| ())
+  }
+  fn validated_input(&self) -> Result<DecisionSignalProviderInput, ApplicationError> {
     let input = DecisionSignalProviderInput::new(
       DecisionSignalInputMedia::CanonicalJson,
       FactoryText::new("null").map_err(|_| ApplicationError::invalid())?,
@@ -135,7 +160,7 @@ impl FactoryProfileSelector {
     {
       return Err(ApplicationError::invalid());
     }
-    Ok(())
+    Ok(input)
   }
 }
 /// Installed selection policies, using the existing journal rather than another request store.

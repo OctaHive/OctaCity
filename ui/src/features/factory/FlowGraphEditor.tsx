@@ -7,6 +7,7 @@ import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
 import type { MessageKey } from '../../app/presentation/messages';
 import styles from './Factory.module.css';
+import { StageProfiles, type RoleServices } from './StageProfiles';
 import { ExecutionProfiles } from './ExecutionProfiles';
 import { FlowSettings } from './FlowSettings';
 import { FlowBindings } from './FlowBindings';
@@ -23,6 +24,7 @@ interface Props {
   subflows: readonly components['schemas']['FactoryFlowDefinitionDetails'][];
   onChange: (value: Draft) => void;
   sources?: FlowSourceServices;
+  roles?: RoleServices | undefined;
   issueStatus?: FlowIssueServices | undefined;
 }
 
@@ -46,6 +48,7 @@ export function FlowGraphEditor({
   subflows,
   sources,
   issueStatus,
+  roles,
 }: Props) {
   const { t } = usePresentation();
   const [selected, setSelected] = useState(() =>
@@ -234,6 +237,7 @@ export function FlowGraphEditor({
               const target = next.root.nodes[selected];
               if (target === undefined || !Object.hasOwn(NODE_KINDS, kind)) return;
               target.kind = kind as keyof typeof NODE_KINDS;
+              target.profile_selection = null;
               target.build = null;
               target.action = null;
               target.gate = null;
@@ -252,6 +256,13 @@ export function FlowGraphEditor({
               setBindingRevision((revision) => revision + 1);
               onChange(next);
             }}
+          />
+          <StageProfiles
+            key={`${selected}:${bindingRevision}`}
+            node={node}
+            choices={choices}
+            services={roles}
+            onChange={updateNode}
           />
           <FlowBindings
             key={bindingRevision}

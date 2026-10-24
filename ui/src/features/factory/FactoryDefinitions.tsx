@@ -16,6 +16,8 @@ import { FactoryPools } from './FactoryPools';
 import { ManagementApiError } from '../../api/client';
 import { useFactoryChoices } from './useFactoryChoices';
 import styles from './Factory.module.css';
+import { AiAgents } from './AiAgents';
+import { factoryRolesApi, type FactoryRolesApi } from './roleApi';
 
 /** Published identities are selected from visible bounded pages; edits use separate drafts. */
 export function FactoryDefinitions({
@@ -23,13 +25,16 @@ export function FactoryDefinitions({
   workflows,
   projectId,
   workSources,
+  rolesApi = factoryRolesApi,
 }: {
   api: FactoryApi;
+  rolesApi?: FactoryRolesApi;
   workflows?: IssueWorkflowsApi | undefined;
   projectId: string;
   workSources?: FactoryWorkSources | undefined;
 }) {
   const { t } = usePresentation();
+  const [agentsOpen, setAgentsOpen] = useState(false);
   const [authoring, setAuthoring] = useState<{
     kind: 'flow' | 'configuration' | 'work';
     id: string | null;
@@ -99,6 +104,10 @@ export function FactoryDefinitions({
   };
   return (
     <section className={styles.definitions}>
+      <button type="button" aria-expanded={agentsOpen} onClick={() => setAgentsOpen(!agentsOpen)}>
+        {t('factory.agents')}
+      </button>
+      {agentsOpen ? <AiAgents key={projectId} api={rolesApi} projectId={projectId} /> : null}
       {choices.isPending ? <QueryLoadingNotice label={t('factory.choices')} /> : null}
       {choices.error !== null ? (
         <QueryFailureNotice

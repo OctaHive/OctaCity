@@ -14,6 +14,7 @@ import {
   type ConfirmedMutationAttempt,
   type QueryInvalidation,
 } from './confirmedIntent';
+import { useDeadline } from './useDeadline';
 import { useOverlayFocus } from './useOverlayFocus';
 import styles from './ConfirmedCommand.module.css';
 
@@ -24,6 +25,7 @@ interface ConfirmedCommandProps<Request, Result> {
     resumeLabel: string;
   };
   confirmLabel: string;
+  deadline?: number;
   ready?: boolean;
   consequence: string;
   execute: (attempt: ConfirmedMutationAttempt<Request>) => Promise<Result>;
@@ -49,6 +51,7 @@ type CommandPhase<Result> =
 export function ConfirmedCommand<Request, Result>({
   continuation,
   confirmLabel,
+  deadline,
   ready = true,
   consequence,
   execute,
@@ -64,6 +67,8 @@ export function ConfirmedCommand<Request, Result>({
   title,
   version,
 }: ConfirmedCommandProps<Request, Result>) {
+  const expired = useDeadline(deadline ?? null);
+  const eligible = ready && !expired;
   const { t } = usePresentation();
   const { reportCommandIndeterminate, reportCommandOutcome } = useNotifications();
   const notificationIntentRef = useRef(Symbol('confirmed-command'));
@@ -97,7 +102,11 @@ export function ConfirmedCommand<Request, Result>({
   });
 
   const submit = async () => {
-    if (!ready && intentRef.current === null) return;
+    if (
+      (!eligible || (deadline !== undefined && Date.now() >= deadline)) &&
+      intentRef.current === null
+    )
+      return;
     const intent =
       intentRef.current ??
       createConfirmedMutationIntent({
@@ -207,7 +216,7 @@ export function ConfirmedCommand<Request, Result>({
           {phase.kind === 'succeeded' || (phase.kind === 'error' && !retryable) ? null : (
             <button
               className={styles.primary}
-              disabled={phase.kind === 'pending' || (!ready && intentRef.current === null)}
+              disabled={phase.kind === 'pending' || (!eligible && intentRef.current === null)}
               onClick={() => void submit()}
               ref={primaryButtonRef}
               type="button"

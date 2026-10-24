@@ -11,6 +11,7 @@ import { SchemaEditor } from './SchemaEditor';
 import { FlowGraphEditor } from './FlowGraphEditor';
 import { useFactoryChoices } from './useFactoryChoices';
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
+import { factoryRolesApi } from './roleApi';
 import { factorySourcesApi } from './sourceApi';
 
 type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
@@ -126,6 +127,7 @@ export function FactoryAuthoring({
           <>
             <FlowGraphEditor
               issueStatus={workflows ? { api: workflows, projectId } : undefined}
+              roles={{ api: factoryRolesApi, projectId }}
               sources={{ api: factorySourcesApi, projectId }}
               value={draft}
               choices={choices.data.pages.flatMap((page) => page.items)}

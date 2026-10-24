@@ -273,3 +273,14 @@
 .recordCard dl > div:has(> dd > ul) {
   display: block;
 }
+
+/* Long immutable names must wrap without collapsing adjacent selection controls. */
+.workspace label {
+  overflow-wrap: anywhere;
+}
+.workspace input[type='checkbox'] {
+  flex: none;
+  width: 1rem;
+  height: 1rem;
+  padding: 0;
+}

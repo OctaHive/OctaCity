@@ -671,6 +671,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   );
   schemas.insert("FactoryChoiceMetadata".to_owned(), object([
     ("permission_declarations", schema_ref("FactoryPermissions")),
+    ("profile_selection", schema_ref("FactoryProfileSelectorMetadata")),
     ("node_kinds", bounded_array(schema_ref("FactoryFlowNodeKind"),octacity_server_application::factory_flow_node_kinds().count())),
     ("signal_purposes", bounded_array(json!({"type":"string","enum":octacity_server_application::factory_signal_purposes().collect::<Vec<_>>()}),octacity_server_application::factory_signal_purposes().count())),
     ("enforcement", bounded_array(json!({"type":"string","enum":octacity_server_application::factory_permission_categories().collect::<Vec<_>>()}),octacity_server_application::factory_permission_categories().count())),
@@ -678,6 +679,49 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
       ("kind",schema_ref("FactoryChoiceKind")),("alias",non_empty_string())
     ], &["kind","alias"]), bounds.choice_entries)),
   ], &["node_kinds","signal_purposes","enforcement","compatible_choices"]));
+  schemas.insert(
+    "FactoryProfileSelectorMetadata".to_owned(),
+    object(
+      [
+        ("provider", schema_ref("FactoryImmutableReferenceResource")),
+        ("adapter", schema_ref("FactoryImmutableReferenceResource")),
+        ("model", schema_ref("FactoryImmutableReferenceResource")),
+        ("question_set", schema_ref("FactoryImmutableReferenceResource")),
+        ("calibration", schema_ref("FactoryImmutableReferenceResource")),
+        ("probability_semantics", schema_ref("FactoryImmutableReferenceResource")),
+        (
+          "mode",
+          json!({"type":"string","enum":octacity_server_application::factory_signal_modes().collect::<Vec<_>>()}),
+        ),
+        ("baseline", non_empty_string()),
+        (
+          "candidates",
+          json!({"type":"array","items":key(),"minItems":2,"maxItems":bounds.signal_choices,"uniqueItems":true}),
+        ),
+        (
+          "minimum_probability",
+          bounded_integer(0, u64::from(bounds.signal_probability_scale)),
+        ),
+        (
+          "minimum_margin",
+          bounded_integer(0, u64::from(bounds.signal_probability_scale)),
+        ),
+      ],
+      &[
+        "provider",
+        "adapter",
+        "model",
+        "question_set",
+        "calibration",
+        "probability_semantics",
+        "mode",
+        "baseline",
+        "candidates",
+        "minimum_probability",
+        "minimum_margin",
+      ],
+    ),
+  );
   schemas.insert(
     "FactoryConfigurationChoicePage".to_owned(),
     object(

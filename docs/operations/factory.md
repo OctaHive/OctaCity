@@ -702,6 +702,23 @@ a provider. Profile validation also requires the exact role and installed
 Flow detail, validation, publication and current-page responses also use `no-store`,
 because their definitions may embed retained profile instructions.
 
+Installed profile selectors also project safe authoring facts into the existing
+Factory choice `metadata.profile_selection`: exact provider/adapter/model,
+question-set/calibration/probability-semantics references, rollout, baseline, finite
+answer keys and probability/margin thresholds in millionths. Native installation
+derives these facts from its validated selector plan; there is no second policy
+definition or provider call. Restricted choice reads omit this projection when any required
+provider/adapter/model/question-set identity is hidden. Instructions, question
+text, credentials and provider payloads are not included. Authoring hints do not
+replace publication/admission qualification.
+
+Console explicitly maps each pinned profile to one installed answer key; profile
+IDs and names are not selector answers. Flow/configuration validation checks the
+complete answer domain and baseline when the exact installed policy declares them.
+The runtime still checks the retained plan, input projection, call budget and
+current authority before a provider call. Older catalogs without selector metadata
+do not gain qualification from its absence; static/manual selection is unchanged.
+
 `POST factory-skills` receives one logical identity and explicit regular files,
 each with a relative `path`, SHA-256 and a JSON byte array. It opens no server-side
 path and accepts no links or archives. The shared reviewed-tree/import owner

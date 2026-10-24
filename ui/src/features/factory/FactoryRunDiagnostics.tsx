@@ -80,6 +80,7 @@ export function FactoryRunDiagnostics({ api, run }: { api: FactoryApi; run: Fact
   const nodes = useFactoryDiagnostics(api, run.id, 'node-attempts');
   const flows = useFactoryDiagnostics(api, run.id, 'flow-runs');
   const completions = useFactoryDiagnostics(api, run.id, 'node-completions');
+  const selections = useFactoryDiagnostics(api, run.id, 'profile-selections');
   const stops = useFactoryDiagnostics(api, run.id, 'node-stops');
   const configuration = useQuery({
     queryKey: queryKeys.factoryConfiguration(run.configuration_id, run.configuration_version),
@@ -128,6 +129,7 @@ export function FactoryRunDiagnostics({ api, run }: { api: FactoryApi; run: Fact
           ['node-attempts', nodes],
           ['node-completions', completions],
           ['node-stops', stops],
+          ['profile-selections', selections],
         ] as const
       )
         .filter(([kind]) => kind !== collection)
@@ -138,6 +140,12 @@ export function FactoryRunDiagnostics({ api, run }: { api: FactoryApi; run: Fact
         api={api}
         run={run}
         configuration={configuration.data}
+        profileSelections={
+          (collection === 'profile-selections' ? records : selections).data?.pages
+            .flatMap((page) => page.items)
+            .filter((item) => item.kind === 'profile_selection')
+            .map((item) => item.record) ?? []
+        }
         attempts={
           (collection === 'node-attempts' ? records : nodes).data?.pages
             .flatMap((page) => page.items)

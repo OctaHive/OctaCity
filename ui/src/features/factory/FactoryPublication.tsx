@@ -235,6 +235,21 @@ function actionEffectsSummary(
 ) {
   return definitions.flatMap((definition) =>
     definition.nodes.flatMap((node) => {
+      if (node.profile_selection) {
+        const selection = node.profile_selection;
+        return [
+          `${node.key} · ${t('factory.stageProfiles')} · ${selection.role.id} v${selection.role.version} · ${selection.policy.mode} · ${Object.entries(
+            selection.candidates,
+          )
+            .map(
+              ([alias, candidate]) =>
+                `${alias}: ${candidate.profile.definition.name} · ${candidate.profile.reference.id} v${candidate.profile.reference.version}`,
+            )
+            .join(
+              '; ',
+            )} · ${selection.failure.kind}${selection.failure.kind === 'reserve_profile' ? `: ${selection.failure.candidate}` : ''}`,
+        ];
+      }
       if (node.action?.action === 'transition_issue') {
         const selected = node.action
           .parameters as components['schemas']['FactoryIssueStatusActionParameters'];

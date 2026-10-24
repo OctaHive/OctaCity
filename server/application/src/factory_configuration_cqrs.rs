@@ -581,6 +581,26 @@ where
           metadata.permission_declarations = None;
         }
 
+        if visibility.kind() == octacity_server_store::ReadVisibilityKind::Restricted
+          && metadata.profile_selection.as_ref().is_some_and(|selector| {
+            use octacity_server_factory::FactoryChoiceKind as Kind;
+            [
+              (Kind::DecisionSignalProvider, &selector.provider),
+              (Kind::DecisionSignalAdapter, &selector.adapter),
+              (Kind::DecisionSignalModel, &selector.model),
+              (Kind::DecisionSignalQuestionSet, &selector.question_set),
+            ]
+            .iter()
+            .any(|(kind, reference)| {
+              !visible_references
+                .iter()
+                .any(|entry| entry.kind == *kind && &entry.reference == *reference)
+            })
+          })
+        {
+          metadata.profile_selection = None;
+        }
+
         metadata.compatible_choices.retain(|choice| {
           (choice.kind != octacity_server_factory::FactoryChoiceKind::BuildConfiguration
             || choices

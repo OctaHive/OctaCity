@@ -19,6 +19,12 @@ export type FactoryFilters = Omit<
   'after' | 'limit'
 >;
 export interface FactoryApi extends FactoryNodeControlApi {
+  selectProfile(
+    runId: string,
+    inputDigest: string,
+    body: components['schemas']['SelectFactoryProfileRequest'],
+    headers: VersionedMutationHeaders,
+  ): Promise<components['schemas']['FactoryRunControlResponse']>;
   cancelRun(
     runId: string,
     headers: VersionedMutationHeaders,
@@ -104,6 +110,16 @@ export interface FactoryApi extends FactoryNodeControlApi {
 
 /** Authorization-filtered, bounded same-origin Factory reads. */
 export const factoryApi: FactoryApi = {
+  async selectProfile(runId, inputDigest, body, headers) {
+    const { data } = await managementApi.POST(
+      '/api/v1/factory-runs/{factory_run_id}/profile-selections/{input_digest}',
+      {
+        body,
+        params: { path: { factory_run_id: runId, input_digest: inputDigest }, header: headers },
+      },
+    );
+    return requireManagementResponse(data);
+  },
   async cancelRun(runId, headers) {
     const { data } = await managementApi.POST(
       '/api/v1/factory-runs/{factory_run_id}/cancellations',

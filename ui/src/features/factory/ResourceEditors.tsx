@@ -6,6 +6,9 @@ import styles from './Factory.module.css';
 type Budget = components['schemas']['FactoryBudget'];
 type Permissions = components['schemas']['FactoryPermissions'];
 type Choice = components['schemas']['FactoryConfigurationChoiceResource'];
+type ReferenceField = 'plugins' | 'executables' | 'tools';
+type LogicalField = 'secret_profiles' | 'workload_identity_profiles';
+type PermissionChoices = readonly Choice[] | Pick<Permissions, ReferenceField | LogicalField>;
 
 const BUDGET_LABELS = {
   max_attempts: 'factory.maxAttempts',
@@ -57,14 +60,16 @@ export function PermissionEditor({
 }: {
   value: Permissions;
   ceiling?: Permissions;
-  choices: readonly Choice[];
+  choices: PermissionChoices;
   onChange: (value: Permissions) => void;
   label: string;
 }) {
   const { t } = usePresentation();
-  const toggle = (field: 'plugins' | 'executables' | 'tools', choice: Choice, enabled: boolean) => {
-    if (choice.reference.kind !== 'immutable') return;
-    const reference = choice.reference.reference;
+  const toggle = (
+    field: ReferenceField,
+    reference: Permissions['tools'][number],
+    enabled: boolean,
+  ) => {
     const remaining = value[field].filter(
       (item) =>
         item.digest !== reference.digest ||
@@ -73,9 +78,26 @@ export function PermissionEditor({
     );
     onChange({ ...value, [field]: enabled ? [...remaining, reference] : remaining });
   };
-  const referenceChoices = choices.filter(
-    (choice) => choice.kind === 'node_capability' && choice.reference.kind === 'immutable',
-  );
+  // Profile capabilities already separate permission categories; ordinary Flow catalogs
+  // retain their existing generic node-capability choices.
+  const referenceChoices = (field: ReferenceField) =>
+    'plugins' in choices
+      ? choices[field].map((reference) => ({ alias: reference.identity, reference }))
+      : choices.flatMap((choice) =>
+          choice.kind === 'node_capability' && choice.reference.kind === 'immutable'
+            ? [{ alias: choice.alias, reference: choice.reference.reference }]
+            : [],
+        );
+  const logicalChoices = (field: LogicalField) =>
+    'plugins' in choices
+      ? choices[field]
+      : choices
+          .filter(
+            (choice) =>
+              choice.kind ===
+              (field === 'secret_profiles' ? 'secret_profile' : 'workload_identity_profile'),
+          )
+          .map((choice) => choice.alias);
   return (
     <fieldset>
       <legend>{label}</legend>
@@ -90,11 +112,11 @@ export function PermissionEditor({
                   : 'factory.executable',
             )}
           </legend>
-          {referenceChoices.map((choice) => {
-            if (choice.reference.kind !== 'immutable') return null;
-            const reference = choice.reference.reference;
+          {referenceChoices(field).map(({ alias, reference }) => {
             return (
-              <label key={choice.alias}>
+              <label
+                key={`${alias}:${reference.identity}:${reference.version}:${reference.digest}`}
+              >
                 <input
                   type="checkbox"
                   checked={value[field].some(
@@ -103,7 +125,7 @@ export function PermissionEditor({
                       item.identity === reference.identity &&
                       item.version === reference.version,
                   )}
-                  onChange={(event) => toggle(field, choice, event.target.checked)}
+                  onChange={(event) => toggle(field, reference, event.target.checked)}
                 />
                 {t(
                   field === 'plugins'
@@ -112,7 +134,7 @@ export function PermissionEditor({
                       ? 'factory.tool'
                       : 'factory.executable',
                 )}{' '}
-                · {choice.alias} · {reference.version}
+                · {alias} · {reference.version}
               </label>
             );
           })}
@@ -123,29 +145,23 @@ export function PermissionEditor({
           <legend>
             {t(field === 'secret_profiles' ? 'factory.secretProfiles' : 'factory.identityProfiles')}
           </legend>
-          {choices
-            .filter(
-              (choice) =>
-                choice.kind ===
-                (field === 'secret_profiles' ? 'secret_profile' : 'workload_identity_profile'),
-            )
-            .map((choice) => (
-              <label key={choice.alias}>
-                <input
-                  type="checkbox"
-                  checked={value[field].includes(choice.alias)}
-                  onChange={(event) =>
-                    onChange({
-                      ...value,
-                      [field]: event.target.checked
-                        ? [...value[field], choice.alias]
-                        : value[field].filter((alias) => alias !== choice.alias),
-                    })
-                  }
-                />
-                {choice.alias}
-              </label>
-            ))}
+          {logicalChoices(field).map((alias) => (
+            <label key={alias}>
+              <input
+                type="checkbox"
+                checked={value[field].includes(alias)}
+                onChange={(event) =>
+                  onChange({
+                    ...value,
+                    [field]: event.target.checked
+                      ? [...value[field], alias]
+                      : value[field].filter((item) => item !== alias),
+                  })
+                }
+              />
+              {alias}
+            </label>
+          ))}
         </fieldset>
       ))}
       {ceiling ? (

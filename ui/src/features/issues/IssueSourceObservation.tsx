@@ -1,4 +1,5 @@
-import { useEffect, useState, type RefObject } from 'react';
+import { useDeadline } from '../../shared/useDeadline';
+import { useState, type RefObject } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -176,18 +177,6 @@ export function IssueSourceObservation({
 /** Receipt replacement resets only the expiry badge, preserving any frozen command intent. */
 function ObservationExpiry({ expiresAt }: { expiresAt: number }) {
   const { t } = usePresentation();
-  const [expired, setExpired] = useState(() => Date.now() >= expiresAt);
-  useEffect(() => {
-    if (expired) return;
-    let timer: ReturnType<typeof setTimeout>;
-    function schedule() {
-      const remaining = expiresAt - Date.now();
-      if (remaining <= 0) setExpired(true);
-      // Browser timers have a signed 32-bit ceiling; keep the original receipt deadline.
-      else timer = setTimeout(schedule, Math.min(remaining, 2_147_483_647));
-    }
-    timer = setTimeout(schedule, Math.min(Math.max(0, expiresAt - Date.now()), 2_147_483_647));
-    return () => clearTimeout(timer);
-  }, [expiresAt, expired]);
+  const expired = useDeadline(expiresAt);
   return expired ? <p>{t('issueSource.expired')}</p> : null;
 }

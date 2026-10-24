@@ -535,6 +535,20 @@ fn configuration_choices_apply_reference_visibility_before_filter_count_and_curs
         key("criteria"),
         octacity_server_factory::FactoryChoiceMetadata {
           permission_declarations: None,
+          profile_selection: Some(octacity_server_factory::FactoryProfileSelectorMetadata {
+            provider: exact("private-provider", "v1", 42),
+            adapter: exact("private-adapter", "v1", 43),
+            model: exact("private-model", "v1", 44),
+            question_set: exact("private-criteria", "v1", 45),
+            calibration: exact("calibration", "v1", 46),
+            probability_semantics: exact("semantics", "v1", 47),
+            mode: octacity_server_factory::DecisionSignalMode::Shadow,
+            baseline: key("default"),
+            candidates: octacity_server_factory::DecisionSignalChoices::try_new(vec![key("default"), key("pro")])
+              .unwrap(),
+            minimum_probability: octacity_server_factory::DecisionSignalProbability::new(800_000).unwrap(),
+            minimum_margin: octacity_server_factory::DecisionSignalProbability::new(100_000).unwrap(),
+          }),
           node_kinds: vec![octacity_server_factory::FlowNodeKind::Reasoning],
           signal_purposes: vec![],
           enforcement: vec![],
@@ -595,6 +609,10 @@ fn configuration_choices_apply_reference_visibility_before_filter_count_and_curs
     );
     let metadata = first.items[0].metadata.as_ref().expect("declared safe metadata");
     assert_eq!(metadata.node_kinds, [octacity_server_factory::FlowNodeKind::Reasoning]);
+    assert!(
+      metadata.profile_selection.is_none(),
+      "hidden selector dependencies must not be disclosed"
+    );
     assert_eq!(metadata.compatible_choices.len(), 1);
     assert_eq!(metadata.compatible_choices[0].kind, FactoryChoiceKind::Evaluator);
     assert_eq!(metadata.compatible_choices[0].alias, key("evaluator"));

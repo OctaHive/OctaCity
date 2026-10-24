@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { useState } from 'react';
 import { QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen, within } from '@testing-library/react';
+import { cleanup, render, screen, within, fireEvent, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -391,4 +391,137 @@ it('does not offer delivery for a candidate accepted by a different exact Decisi
   expect(
     (screen.getByRole('button', { name: 'Review delivery request' }) as HTMLButtonElement).disabled,
   ).toBe(true);
+});
+
+it('confirms one exact pending profile intent, prevents duplicate choice and distinguishes the recorded command from execution', async () => {
+  const { pendingProfileFixture } = await import('../../../tests/fixtures/factoryRoles');
+  const selection = pendingProfileFixture();
+  selection.selector_error = 'unavailable';
+  const run = runFixture();
+  const selectProfile = vi.fn(async () => ({
+    run_id: run.id,
+    version: 3,
+    state: 'waiting' as const,
+    cancellation_requested: false,
+    disposition: 'applied' as const,
+  }));
+  const router = createMemoryRouter([
+    {
+      path: '*',
+      element: (
+        <FactoryRunCommands
+          api={{ ...factoryApi, selectProfile }}
+          run={run}
+          attempts={[]}
+          flowRuns={[]}
+          profileSelections={[selection]}
+          onRefresh={vi.fn()}
+        />
+      ),
+    },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByText('unavailable')).toBeTruthy();
+  const open = await screen.findByRole('button', { name: 'Review profile choice' });
+  await userEvent.click(open);
+  expect(selectProfile).not.toHaveBeenCalled();
+  const dialog = await screen.findByRole('dialog');
+  expect(within(dialog).getByText(new RegExp(selection.input_digest))).toBeTruthy();
+  await userEvent.dblClick(within(dialog).getByRole('button', { name: 'Confirm command' }));
+  await within(dialog).findByText('Command recorded.');
+  expect(selectProfile).toHaveBeenCalledTimes(1);
+  expect(selectProfile).toHaveBeenCalledWith(
+    run.id,
+    selection.input_digest,
+    { profile: selection.eligible_candidates[0]!.profile },
+    { 'If-Match': '"2"', 'Idempotency-Key': expect.any(String) },
+  );
+  expect(screen.queryByText('Execution started.')).toBeNull();
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('button', { name: 'Review profile choice' })).toBeNull();
+});
+it.each(['expired', 'cancelled', 'superseded', 'accepted', 'committed'] as const)(
+  'does not offer a profile choice for %s input',
+  async (kind) => {
+    const { pendingProfileFixture } = await import('../../../tests/fixtures/factoryRoles');
+    const selection = pendingProfileFixture();
+    const run = runFixture();
+    if (kind === 'expired') selection.deadline = 1;
+    if (kind === 'cancelled') run.state = 'cancelled';
+    if (kind === 'superseded') selection.superseded = true;
+    if (kind === 'accepted')
+      selection.pending_control = {
+        id: '4'.repeat(64),
+        profile: selection.eligible_candidates[0]!.profile,
+        version: 3,
+        recorded_at: 2,
+      };
+    if (kind === 'committed') selection.profile = selection.eligible_candidates[0]!.profile;
+    const router = createMemoryRouter([
+      {
+        path: '*',
+        element: (
+          <FactoryRunCommands
+            api={factoryApi}
+            run={run}
+            attempts={[]}
+            flowRuns={[]}
+            profileSelections={[selection]}
+            onRefresh={vi.fn()}
+          />
+        ),
+      },
+    ]);
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    expect(screen.queryByRole('button', { name: 'Review profile choice' })).toBeNull();
+  },
+);
+
+it('expires an open profile confirmation at its original deadline before sending a new command', async () => {
+  const { pendingProfileFixture } = await import('../../../tests/fixtures/factoryRoles');
+  vi.useFakeTimers();
+  try {
+    const selection = pendingProfileFixture();
+    selection.deadline = Date.now() + 1_000;
+    const selectProfile = vi.fn();
+    const run = runFixture();
+    const router = createMemoryRouter([
+      {
+        path: '*',
+        element: (
+          <FactoryRunCommands
+            api={{ ...factoryApi, selectProfile }}
+            run={run}
+            attempts={[]}
+            flowRuns={[]}
+            profileSelections={[selection]}
+            onRefresh={vi.fn()}
+          />
+        ),
+      },
+    ]);
+    render(
+      <QueryClientProvider client={createConsoleQueryClient()}>
+        <RouterProvider router={router} />
+      </QueryClientProvider>,
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Review profile choice' }));
+    await act(async () => {
+      vi.advanceTimersByTime(1_000);
+    });
+    expect(
+      within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm command' }),
+    ).toHaveProperty('disabled', true);
+    expect(selectProfile).not.toHaveBeenCalled();
+  } finally {
+    vi.useRealTimers();
+  }
 });

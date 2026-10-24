@@ -118,3 +118,73 @@ it('does not offer a published profile whose evidence tool is missing from the v
   ).toBeNull();
   expect(screen.queryByText('private.evidence-tool')).toBeNull();
 });
+
+it('reuses a complete published role selection and clears it when an operator switches to a static binding', async () => {
+  const { factoryProfileConfigurationFixture } =
+    await import('../../../tests/fixtures/factoryRoles');
+  const config = factoryProfileConfigurationFixture().configuration;
+  const roleNode = config.flow.closure.definitions[0]!.nodes[0]!;
+  roleNode.key = 'role_binding';
+  const binding = roleNode.profile_selection!.candidates.default!.build;
+  const staticFlow = structuredClone(config.flow);
+  const staticNode = staticFlow.closure.definitions[0]!.nodes[0]!;
+  staticNode.key = 'static_binding';
+  staticNode.profile_selection = null;
+  staticNode.build = binding;
+  const { reference: _reference, ...root } = config.flow.closure.definitions[0]!;
+  void _reference;
+  const node = { ...roleNode, profile_selection: null };
+  const draft = {
+    root: { ...root, nodes: [node] },
+    data_schemas: config.flow.data_schemas,
+    limits: config.flow.limits,
+  };
+  const choices: import('../../../.generated/api/schema').components['schemas']['FactoryConfigurationChoiceResource'][] =
+    [binding.plugin, binding.tool, binding.model_or_tool].map((reference) => ({
+      alias: reference.identity,
+      identity: reference.identity,
+      kind: 'node_capability',
+      reference: { kind: 'immutable', reference },
+    }));
+  choices.push({
+    alias: 'build',
+    identity: 'build',
+    kind: 'build_configuration',
+    reference: { kind: 'build_configuration', reference: binding.build_configuration },
+  });
+  const flows = [config.flow, staticFlow].map((flow) => ({
+    flow,
+    project_id: config.reference.project_id,
+    published_at_unix_ms: 1,
+  }));
+  const onChange = vi.fn();
+  const { rerender } = render(
+    <ExecutionProfiles
+      value={draft}
+      node={node}
+      flows={flows}
+      choices={choices}
+      onChange={onChange}
+    />,
+  );
+  await userEvent.click(screen.getByRole('combobox', { name: 'Execution profile' }));
+  await userEvent.click(screen.getByRole('option', { name: `${root.entry} · role_binding · v1` }));
+  const selected = onChange.mock.lastCall?.[0];
+  expect(selected.root.nodes[0].profile_selection).toEqual(roleNode.profile_selection);
+  expect(selected.root.nodes[0].build).toBeNull();
+  rerender(
+    <ExecutionProfiles
+      value={selected}
+      node={selected.root.nodes[0]}
+      flows={flows}
+      choices={choices}
+      onChange={onChange}
+    />,
+  );
+  await userEvent.click(screen.getByRole('combobox', { name: 'Execution profile' }));
+  await userEvent.click(
+    screen.getByRole('option', { name: `${root.entry} · static_binding · v1` }),
+  );
+  expect(onChange.mock.lastCall?.[0].root.nodes[0].profile_selection).toBeNull();
+  expect(onChange.mock.lastCall?.[0].root.nodes[0].build).toEqual(binding);
+});

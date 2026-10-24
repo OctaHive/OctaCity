@@ -26,7 +26,11 @@ export function ExecutionProfiles({
     .flatMap((flow) =>
       flow.flow.closure.definitions.flatMap((definition) =>
         definition.nodes
-          .filter((item) => item.kind === node.kind && (item.build || item.action || item.gate))
+          .filter(
+            (item) =>
+              item.kind === node.kind &&
+              (item.build || item.action || item.gate || item.profile_selection),
+          )
           .map((item) => ({ flow, definition, node: item })),
       ),
     )
@@ -96,7 +100,7 @@ export function ExecutionProfiles({
             onValueChange={(index) => {
               const profile = profiles[Number(index)];
               if (!profile) {
-                update({ build: null, action: null, gate: null });
+                update({ build: null, action: null, gate: null, profile_selection: null });
                 return;
               }
               onChange({
@@ -109,6 +113,9 @@ export function ExecutionProfiles({
                       ? {
                           ...item,
                           build: structuredClone(profile.node.build ?? null),
+                          profile_selection: structuredClone(
+                            profile.node.profile_selection ?? null,
+                          ),
                           action: structuredClone(profile.node.action ?? null),
                           gate: structuredClone(profile.node.gate ?? null),
                           input_schema: profile.node.input_schema,
@@ -153,15 +160,23 @@ function mergeSchemas(current: Draft['data_schemas'], incoming: Draft['data_sche
 }
 function sameBinding(left: Node, right: Node) {
   return (
-    JSON.stringify([left.build, left.action, left.gate]) ===
-    JSON.stringify([right.build, right.action, right.gate])
+    JSON.stringify([left.build, left.action, left.gate, left.profile_selection ?? null]) ===
+    JSON.stringify([right.build, right.action, right.gate, right.profile_selection ?? null])
   );
 }
 function available(
   node: Node,
   choices: readonly Choice[],
   nativeGatePolicies: readonly components['schemas']['FactoryImmutableReferenceResource'][],
-) {
+): boolean {
+  if (node.profile_selection)
+    return Object.values(node.profile_selection.candidates).every((candidate) =>
+      available(
+        { ...node, profile_selection: null, build: candidate.build },
+        choices,
+        nativeGatePolicies,
+      ),
+    );
   const nativeGate =
     node.gate &&
     nativeGatePolicies.some(

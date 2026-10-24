@@ -121,14 +121,7 @@ impl FlowProfileSelectionSignal {
       || self.request.deadline() > selection.deadline()
       || self.request.deadline().unix_millis() > call_end
       || self.request.deadline() <= selection.started_at()
-      || !binding.candidates.contains_key(&self.baseline)
-      || self.request.choices().as_slice().len() != binding.candidates.len()
-      || self
-        .request
-        .choices()
-        .as_slice()
-        .iter()
-        .any(|key| !binding.candidates.contains_key(key))
+      || !binding.matches_signal_answers(self.request.choices(), &self.baseline)
     {
       return Err(invalid());
     }

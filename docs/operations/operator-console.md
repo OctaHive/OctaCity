@@ -284,6 +284,62 @@ frozen adapter parameters and task provenance instead of asking for provider
 payloads, digests, scripts or mutable model aliases. Data-schema normalization
 returns a server-computed exact reference without publishing a document.
 
+The Project workbench also has **AI agents** (**AI-агенты**). These are ordinary
+Factory Roles with immutable profiles, separate from the enrolled CI/CD Agents
+and Agent Pools. Their catalog remains available without an execution installation.
+Create a custom role, then add profiles, or copy a release template into independent
+role/profile identities. Name, icon, description, ordered shared instructions and
+concurrency belong to the role. A profile shows its exact shared-instruction pin
+and additional instructions; adopting a newer role version is explicit.
+
+Profile Runtime/Model choices come from the authorized capability catalog. Thinking
+uses the installed parameter schema, without provider-specific field names.
+Environment entries, logical secret references, MCP/integrations, tools and budgets
+stay within installed declarations. CLI arguments are shown as the exact approved
+vector; changing it requires an installation change. Validation reports unsupported
+settings before a reviewed independent profile publication.
+Permission controls use the capability's separate plugin, executable, tool,
+secret-profile and workload-identity sets; a tool is not offered as a plugin or
+executable. Each optional grant can be removed and restored within its own set.
+
+**Import skill folder** stays inside the profile draft. Choose a folder with root
+`SKILL.md`, review its relative file inventory, then confirm import. Cancellation,
+read/import failure and lost-response retry preserve the other draft fields.
+The receipt adds an exact skill version to the choices; selecting it is explicit.
+Import alone grants no execution compatibility: profile validation still checks
+its installed dependency ceiling. Folder contents, settings and instructions never
+enter navigation or browser persistence, and local edits require explicit reimport.
+
+Reasoning stages can replace an existing static Build binding with role-backed
+candidates while retaining its result contract and task provenance. Manual selection
+can wait for an operator. Ordered rules use the common typed predicate grammar;
+Decision API uses an installed profile-purpose policy and an explicit input mapping.
+Its safe catalog metadata shows the provider/model, semantic criteria version,
+rollout, calibration, baseline and probability/margin thresholds in millionths.
+For each candidate, explicitly choose its **Selector answer** from the installed
+finite domain. These keys are independent of profile names/IDs; remapping a
+candidate preserves its selected reserve recovery. Every installed answer must
+have one pinned candidate, and Flow/configuration validation rejects missing or
+mismatched keys before publication when that exact policy declares the domain.
+These facts are derived from the validated installed selector, not another editable
+policy. Restricted catalogs omit details whose dependencies are hidden. Missing
+metadata does not establish qualification. Runtime also checks the exact installed
+input projection, call budget and authority before selection; publication is not
+a guarantee that the capability will remain available at execution time.
+Choose an explicit reserve or manual recovery, and review exact candidate pins and
+failure policy before publishing. Rules and semantic criteria are never executed
+by the browser.
+
+**Override stage profiles** in manual Work admission reads the selected immutable
+configuration and offers only its pinned candidates, including nested stage paths.
+Omitting overrides preserves existing static/manual admission. A Run awaiting a
+choice shows its exact input, eligible profiles, safe failure reason and original
+deadline. Confirmation fixes the target, profile and Run version. A recorded intent
+is not a consumed choice or a Build; use the existing profile-selection journal for
+rule/provider/reserve history, supersession and Build links. New commands are blocked
+at the deadline; a transport replay retains its original idempotency key. Stale
+commands require refresh and another review.
+
 Admission permission presets come from visible `permission_ceiling` choices with
 deployment-declared `metadata.permission_declarations`. Selecting a preset only
 offers bounded hosts, mounts, exact command patterns and output kinds; it does

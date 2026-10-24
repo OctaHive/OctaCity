@@ -8,6 +8,7 @@ import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import type { FactoryApi, FactoryRun, FactoryConfigurationDetails, FactoryDiagnostic } from './api';
 import type { components } from '../../../.generated/api/schema';
+import { PendingProfileChoice } from './PendingProfileChoice';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { HumanGateResponse, OperatorRequest } from '../../shared/FactoryNodeResponseFields';
 
@@ -17,6 +18,7 @@ type Props = {
   api: FactoryApi;
   run: FactoryRun;
   configuration?: FactoryConfigurationDetails | undefined;
+  profileSelections?: readonly components['schemas']['FactoryProfileSelectionProjection'][];
   attempts: readonly FactoryAttempt[];
   flowRuns: readonly FactoryFlowRun[];
   onRefresh: () => Promise<unknown>;
@@ -35,7 +37,14 @@ type Intent =
       nodeId: string;
       body: components['schemas']['FactoryNodeOperationRequest'];
     }
-  | { kind: 'retry'; runId: string; nodeId: string };
+  | { kind: 'retry'; runId: string; nodeId: string }
+  | {
+      kind: 'profile';
+      deadline: number;
+      runId: string;
+      inputDigest: string;
+      body: components['schemas']['SelectFactoryProfileRequest'];
+    };
 type Review = { request: Intent; version: number; returnFocus: HTMLElement; consequence: string };
 
 /** Commands capture exact targets and versions once; only REST can accept a disposition. */
@@ -46,9 +55,11 @@ export function FactoryRunCommands({
   configuration,
   attempts,
   flowRuns,
+  profileSelections = [],
 }: Props) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
+  const [recordedProfiles, setRecordedProfiles] = useState<string[]>([]);
   const [review, setReview] = useState<Review | null>(null);
   const [params, setParams] = useSearchParams();
   const selectedId = params.get('node_attempt_id');
@@ -95,6 +106,28 @@ export function FactoryRunCommands({
       >
         {t('factory.requestCancellation')}
       </button>
+      {profileSelections
+        .filter((item) => !terminal && !recordedProfiles.includes(item.input_digest))
+        .map((item) => (
+          <PendingProfileChoice
+            key={`${item.id}:${item.deadline}`}
+            selection={item}
+            disabled={terminal || !!review}
+            onReview={(profile, target) =>
+              openReview(
+                {
+                  kind: 'profile',
+                  deadline: item.deadline,
+                  runId: run.id,
+                  inputDigest: item.input_digest,
+                  body: { profile },
+                },
+                target,
+                `${item.node} · ${item.flow_run_id} · ${item.cycle_id} · ${item.input_digest} · ${profile.id} v${profile.version} · v${run.version}`,
+              )
+            }
+          />
+        ))}
       {current.length > 0 ? (
         <fieldset disabled={terminal || review !== null}>
           <SelectMenu
@@ -175,6 +208,9 @@ export function FactoryRunCommands({
           confirmLabel={t('factory.confirmCommand')}
           request={review.request}
           version={review.version}
+          ready={!terminal}
+          {...(review.request.kind === 'profile' ? { deadline: review.request.deadline } : {})}
+
           returnFocus={review.returnFocus}
           queryClient={queryClient}
           invalidations={[
@@ -189,6 +225,13 @@ export function FactoryRunCommands({
             const request = structuredClone(attempt.request) as Intent;
             const headers = requireVersionedMutationHeaders(attempt.headers);
             switch (request.kind) {
+              case 'profile':
+                return api
+                  .selectProfile(request.runId, request.inputDigest, request.body, headers)
+                  .then((result) => {
+                    setRecordedProfiles((current) => [...current, request.inputDigest]);
+                    return result;
+                  });
               case 'cancel':
                 return api.cancelRun(request.runId, headers);
               case 'response':

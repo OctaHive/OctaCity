@@ -652,3 +652,23 @@ fn role_profile_authoring_and_selection_contracts_are_bounded_and_backward_compa
       .any(|p| p["name"] == "digest" && p["required"] == true)
   );
 }
+
+#[test]
+fn profile_selector_choices_expose_bounded_installation_facts_without_private_plan_content() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let schemas = &document["components"]["schemas"];
+  assert_eq!(
+    schemas["FactoryChoiceMetadata"]["properties"]["profile_selection"]["$ref"],
+    "#/components/schemas/FactoryProfileSelectorMetadata"
+  );
+  let metadata = &schemas["FactoryProfileSelectorMetadata"];
+  assert_eq!(metadata["additionalProperties"], false);
+  assert_eq!(metadata["properties"]["candidates"]["minItems"], 2);
+  assert_eq!(metadata["properties"]["candidates"]["maxItems"], 32);
+  assert_eq!(metadata["properties"]["candidates"]["uniqueItems"], true);
+  assert!(metadata["required"].as_array().unwrap().contains(&json!("candidates")));
+  assert_eq!(metadata["properties"]["minimum_probability"]["maximum"], 1_000_000);
+  assert_eq!(metadata["properties"]["minimum_margin"]["maximum"], 1_000_000);
+  assert!(metadata["properties"].get("questions").is_none());
+  assert!(metadata["properties"].get("credentials").is_none());
+}

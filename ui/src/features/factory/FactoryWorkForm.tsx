@@ -1,3 +1,4 @@
+import { WorkProfileOverrides } from './WorkProfileOverrides';
 import { useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Navigate } from 'react-router-dom';
@@ -61,6 +62,10 @@ export function FactoryWorkForm({
 }) {
   const { t, locale } = usePresentation();
   const queryClient = useQueryClient();
+  const [overrides, setOverrides] = useState<{
+    configuration: string;
+    value: NonNullable<Request['profile_overrides']>;
+  }>({ configuration: '', value: [] });
   const [buildId, setBuildId] = useState('');
   const [label, setLabel] = useState('');
   const [taskId, setTaskId] = useState('');
@@ -82,6 +87,8 @@ export function FactoryWorkForm({
     listConfigurations: api.listConfigurations,
   });
   const { configuration, repository, details: repositoryDetails } = targetSelection;
+  const configurationKey = configuration ? `${configuration.id}:${configuration.version}` : '';
+  const profileOverrides = overrides.configuration === configurationKey ? overrides.value : [];
   const source = targetSelection.target?.source ?? null;
   const builds = useCursorPage(
     queryKeys.factoryWorkSources(projectId, 'builds'),
@@ -163,6 +170,15 @@ export function FactoryWorkForm({
           />
         </label>
         <PipelineTargetFields selection={targetSelection} />
+        {configuration ? (
+          <WorkProfileOverrides
+            key={configurationKey}
+            api={api}
+            configuration={configuration}
+            value={profileOverrides}
+            onChange={(value) => setOverrides({ configuration: configurationKey, value })}
+          />
+        ) : null}
         <PagedExplorerBranch
           query={builds}
           empty={t('factory.noInputBuilds')}
@@ -255,6 +271,9 @@ export function FactoryWorkForm({
           onClick={(event) => {
             if (!valid || !configuration || !repository || !task || !acceptance || !source) return;
             const request: Request = {
+              ...(profileOverrides.length
+                ? { profile_overrides: structuredClone(profileOverrides) }
+                : {}),
               configuration_id: configuration.id,
               configuration_version: configuration.version,
               repository_id: repository.id,
@@ -274,7 +293,7 @@ export function FactoryWorkForm({
                 : request.source.value;
             setReview({
               returnFocus: event.currentTarget,
-              consequence: `${t('factory.workConsequence')} · ${t('factory.configurationVersion', { version: request.configuration_version })} · ${request.configuration_id} · ${repository.name} · v${request.repository_version} · ${reviewedSource} · ${task.name} · ${acceptance.name} · ${specifications.map((item) => item.name).join(' · ')}`,
+              consequence: `${t('factory.workConsequence')} · ${t('factory.configurationVersion', { version: request.configuration_version })} · ${request.configuration_id} · ${repository.name} · v${request.repository_version} · ${reviewedSource} · ${task.name} · ${acceptance.name} · ${specifications.map((item) => item.name).join(' · ')} · ${profileOverrides.map((item) => `${[...item.stage.calls, item.stage.node].join('/')} → ${item.profile.id} v${item.profile.version}`).join(' · ')}`,
               request,
             });
           }}

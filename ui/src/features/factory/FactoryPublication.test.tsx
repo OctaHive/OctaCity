@@ -402,3 +402,59 @@ it('reviews local Issue pins separately and requires fresh review after a stale 
   expect(within(dialog).queryByRole('button', { name: 'Retry same command' })).toBeNull();
   expect(await within(dialog).findByRole('button', { name: /Refresh/ })).toBeTruthy();
 });
+
+it('validates a role-backed reasoning stage through the server and reviews exact candidates and failure policy before publication', async () => {
+  const { factoryProfileConfigurationFixture } =
+    await import('../../../tests/fixtures/factoryRoles');
+  const config = factoryProfileConfigurationFixture().configuration;
+  const { reference, ...root } = config.flow.closure.definitions[0]!;
+  const request = {
+    id: reference.id,
+    project_id: config.reference.project_id,
+    definition: { root, limits: config.flow.limits, data_schemas: config.flow.data_schemas },
+  };
+  const validateFlow = vi
+    .fn<FactoryApi['validateFlow']>()
+    .mockRejectedValueOnce(
+      new ManagementApiError({
+        code: 'invalid_request',
+        message: 'Incompatible selection',
+        requestId: null,
+        status: 400,
+        retryAfterMilliseconds: null,
+      }),
+    )
+    .mockResolvedValue(config.flow);
+  const createFlow = vi.fn<FactoryApi['createFlow']>();
+  const router = createMemoryRouter([
+    {
+      path: '*',
+      element: (
+        <FactoryPublication
+          api={{ ...factoryApi, validateFlow, createFlow }}
+          subject={{ kind: 'flow', request }}
+        />
+      ),
+    },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  const validate = screen.getByRole('button', { name: 'Validate draft' });
+  expect(validate).toHaveProperty('disabled', false);
+  await userEvent.click(validate);
+  await screen.findByText('Incompatible selection');
+  expect(screen.getByRole('button', { name: 'Review publication' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await userEvent.click(validate);
+  await userEvent.click(await screen.findByRole('button', { name: 'Review publication' }));
+  const dialog = await screen.findByRole('dialog');
+  const candidate = root.nodes[0]!.profile_selection!.candidates.default!.profile;
+  expect(dialog.textContent).toContain(candidate.reference.id);
+  expect(dialog.textContent).toContain('manual_selection');
+  expect(createFlow).not.toHaveBeenCalled();
+});
