@@ -300,7 +300,7 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
         )
         self.assertEqual(set(entries), set(VERIFY.STAGING_POLICY))
         self.assertEqual(entries["microsandbox"]["filename"], "microsandbox-darwin-aarch64.tar.gz")
-        self.assertEqual(entries["octa"]["filename"], "octa-linux-arm64-v0.6.0.tar.gz")
+        self.assertEqual(entries["octa"]["filename"], "octa-linux-arm64-v0.7.0.tar.gz")
         self.assertEqual(
             entries["octacity_release_harness"]["filename"],
             "octacity-release-harness-macos-arm64",

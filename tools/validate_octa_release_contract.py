@@ -24,6 +24,7 @@ EXPECTED_CONTRACT = {
 SUPPORTED_CODEX_CLI_VERSIONS = ["0.161.0"]
 CODEX_TOOL_AUTHORIZATION_CAPABILITY = "codex.blocking-pre-tool-authorization.v1"
 PUBLIC_OPERATION_OBSERVATIONS_CAPABILITY = "public-command-file-observations.v1"
+CODEX_RUNTIME_SETTINGS_CAPABILITY = "codex.task-runtime-settings.v1"
 CODEX_TOOL_AUTHORIZER_ENVIRONMENT = "OCTA_CODEX_TOOL_AUTHORIZER"
 MAX_RELEASE_METADATA_BYTES = 1024 * 1024
 
@@ -41,6 +42,7 @@ def expected_codex_compatibility(octa_version: str) -> dict[str, object]:
             "capabilities": [
                 CODEX_TOOL_AUTHORIZATION_CAPABILITY,
                 PUBLIC_OPERATION_OBSERVATIONS_CAPABILITY,
+                CODEX_RUNTIME_SETTINGS_CAPABILITY,
             ],
         },
         "executable": {
