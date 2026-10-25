@@ -1,30 +1,31 @@
 ## Why
 
-The released Factory stand can save a provider connection and Project grants, but automatic-input discovery and choices return `503` because their handlers are not composed. Source polling and Reporter components have isolated tests without a qualified browser-to-runtime path, so an operator cannot turn a configured integration into observable Factory execution.
+Source discovery, canonical Issue import, field/status synchronization and Factory intake already have application contracts and tests, but normal server startup does not compose their complete installed runtime. Operators need a supported path from an external task to a visible internal Issue and authorized outbound status updates, with optional Factory execution rather than a mandatory Run.
 
 ## What Changes
 
-- Complete released server composition for input/group discovery, choices, validation, immutable publication, preview, retained dependencies and Source/Reporter diagnostics through the existing protected API.
-- Connect trusted installed Source/preparation/Reporter profiles to Project-authorized connection resources and the existing runtime workers. Reuse durable polling, snapshot preparation, admission, supervised cancellation and reporting recovery; no second execution engine or provider-specific Factory logic.
-- Make the existing pipeline-input UI usable against that real composition: select the saved connection, configure predicates and mappings, preview, explicitly enable an input, and follow its Work/Run and reporting results. Return actionable missing-capability/grant/profile and provider-deferred states instead of undifferentiated management errors.
-- Qualify the complete packaged `tools/factory-stand` journey through browser, gateway, real server, PostgreSQL, object storage and the installed adapter process. Prove restart/replay, revocation, read-only operation, optional reporting and independent manual intake. Mocked UI success alone is insufficient.
-- Preserve already installed connections, credentials, grants, inputs and accepted history. Include the recent dependency-route, outbound-network and retained-volume restart fixes as regression prerequisites, whether they are committed before this change or land with it.
+- Complete normal deployment composition for existing Source management, bounded observations, canonical Issue import/refresh, compatible field/status choices and Source/Reporter diagnostics. Reuse the finished Issue domain, REST conventions and workflow editor rather than implementing another task or workflow system.
+- Make explicitly enabled Project Source import/refresh usable without a Factory Configuration, code Repository, execution profile or write credential. Repeated observations resolve one canonical Issue in the Project/security/native namespace; import alone creates no Work/Run. Add only missing protected management/Console controls needed to reach these existing consumers.
+- Separately complete explicitly enabled Factory input/group polling, bounded preparation and ordinary admission through the existing supervised worker. Correlate accepted Work/Run with canonical Issues through the existing association/recovery boundary, retaining independent identities and immutable input snapshots. Keep execution-only/no-card intake supported.
+- Compose optional Reporter delivery for both existing accepted Issue-status projections and configured Work-backed source-update actions. Reuse exact versioned mappings, current grants, producer-conflict checks and the durable ordered outbox; neither status spelling, workflow publication nor Run completion implies an external write.
+- Complete the deployed Console journey: Project task import and synchronization, optional pipeline inputs, actionable localized failures and separate Issue/Run/reporting progress. Use the existing canvas to configure business transitions, with separate publication and default selection; native state/label mapping remains its own reviewed operation.
+- Qualify these paths through the packaged browser/gateway/server, PostgreSQL, object storage and verified adapter process against a hermetic provider fixture. Prove import without execution, authorized status push, optional execution, restart/replay, revocation and provider-independent manual operation. Preserve installed connections, immutable profiles, credentials and retained history.
 
 ## Capabilities
 
 ### New Capabilities
 
-None; complete and qualify existing source-management and execution capabilities.
+None; finish released composition and qualification of existing task/source capabilities.
 
 ### Modified Capabilities
 
-- `server/rest-control-plane`: released composition and safe operational readiness for the existing automatic-input API family.
-- `server/github-work-source`: installed Source/Reporter profiles are usable by managed inputs in the released supervised runtime, with exact authorization and recovery.
-- `ui/operator-console`: an operational automatic-intake journey with actionable runtime feedback and truthful execution/reporting progress.
-- `deployment/local-compose-stack`: reproducible source-runtime installation, scoped readiness, restart safety and packaged end-to-end qualification.
+- `server/rest-control-plane`: operational Source/input APIs plus reachable Project-scoped import controls and existing Issue mapping/synchronization operations, without a fabricated Issue or execution target.
+- `server/github-work-source`: shared installed observations consumed independently by Issue import/refresh and optional Factory admission; exact authorized Issue/Work reporting and recovery.
+- `ui/operator-console`: external-task import, separate workflow/native mapping review, optional automatic execution and truthful synchronization feedback against the deployed runtime.
+- `deployment/local-compose-stack`: compatible Source/Reporter installation and scoped readiness, with packaged external-task-to-Issue/status qualification.
 
 ## Impact
 
-Server composition and deployment-owned profile loading, existing Source/Reporter supervisors and handlers, protected management routes, Console input authoring/progress, Factory stand installation/readiness and regression evidence. Extend typed deployment or safe public contracts only where the existing seams cannot express the necessary settings; retain existing API and identity compatibility.
+Normal server composition, deployment-owned Source/Reporter profile loading, existing Issue Source consumers, supervised polling/outbox installation, protected management routes, Console task/source settings, Factory stand setup/readiness and packaged qualification. Extend safe typed contracts only for missing operational controls; retain canonical identities, API compatibility and ordinary Issue/workflow semantics.
 
-This change is independent of the one-form connection setup and archive/delete UX in `simplify-integration-setup`: it consumes their connection/resource/grant contracts without duplicating enrollment or secret storage. It must work with current installed connections first and remain compatible with subsequently enrolled resources. `add-factory-work-card` retains ownership of internal Issues, workflow transitions and field synchronization; its completed tasks and artifacts remain untouched. Manual Factory intake and future manual Issue creation remain provider-independent. No new GitLab/Jira adapter, pipeline canvas, role-profile system or implicit external write is included. This proposal authorizes planning only, not implementation or live-provider mutations.
+The archived `add-factory-work-card`, `configure-factory-runtimes` and `add-visual-issue-workflow-editor` changes are implemented prerequisites, not future owners that exclude task import or status delivery from this change. Their domain rules, Runtime/Profile installation and canvas remain authoritative; completed artifacts/tasks are not reopened. `server/factory-work-collaboration` is consumed unchanged. `simplify-integration-setup` still owns new enrollment and one-form connection/archive/delete UX; this change must work with current installed connections. `enable-local-stand-runtime-mcp` remains a separate execution-installation enhancement and is not required for Source-only import/status push. No new GitLab/Jira adapter, workflow engine, automatic migration, implicit field ownership or live-provider mutation is included. This update revises planning only.

@@ -1,28 +1,32 @@
 ## ADDED Requirements
 
 ### Requirement: Factory stand advertises only composed automatic-intake capability
-The documented `tools/factory-stand` path SHALL install and compose the trusted profiles, protected routes and Source/optional Reporter lifecycle needed for its advertised automatic-intake features. Runtime/profile selections SHALL derive from explicit installed policy, selected connection resources and Project configuration, not fixed real repository names, credential bytes or Project UUIDs in production code. Existing installations SHALL be adopted compatibly without replacing referenced immutable bundles or resetting state. Connection setup and Project grants SHALL not start intake; explicit enabled input publication SHALL remain necessary. Readiness SHALL distinguish optional absence from advertised-but-broken composition and SHALL NOT require a live provider call or remote write during startup. Provider outages SHALL not block ordinary CI/manual readiness.
+The supported `tools/factory-stand` path SHALL load compatible trusted Source observation/Issue consumer, optional Factory preparation and optional Reporter/Issue-delivery settings into normal released startup. Selections SHALL derive from explicit installed policy, managed resources and Project configuration, not fixed repositories/Project IDs, credential bytes or browser-supplied private settings. Existing immutable bundles, credentials, Issue workflow pins/mappings, Runtime/Profile choices and retained history SHALL be adopted compatibly without reset. Connection setup/grants SHALL not activate import, execution or synchronization. Scoped readiness SHALL distinguish optional absence from advertised-but-omitted protected routes/consumers and SHALL require no live provider call/write at startup. Source-only task import/status push SHALL not require a Factory execution target or unrelated MCP execution setup; provider outage SHALL not block manual task/CI readiness.
 
-#### Scenario: Supported stand starts before an input is enabled
-- **WHEN** a stand with installed Source support starts without enabled inputs while GitHub is unreachable
-- **THEN** the protected authoring/catalog/history routes work, supervised intake support is reported truthfully, no real Issue is admitted, and provider availability remains a separate check/deferred condition
+#### Scenario: Supported Source-only stand starts with provider unavailable
+- **WHEN** installed Source support starts without an enabled import/input and the provider is unreachable
+- **THEN** protected choices/catalog/history and retained task/synchronization reads work, consumer installation is reported truthfully and no task, Work or remote effect is created implicitly
 
-#### Scenario: Advertised source handler or worker is omitted
-- **WHEN** the stand advertises installed automatic intake but lacks required composition
-- **THEN** scoped readiness/qualification fails with an actionable diagnostic instead of declaring that feature ready based only on server health or connection checks
+#### Scenario: Advertised source handler or consumer is omitted
+- **WHEN** an advertised import, Factory input or Issue/Work Reporter installation lacks required composition
+- **THEN** its scoped readiness/qualification fails with actionable state instead of relying on health or connection checks
 
 #### Scenario: Retained stand restarts
-- **WHEN** a stand with configured credentials, grants, inputs, accepted Work/Run and pending reporting restarts without reset
-- **THEN** private directory initialization succeeds, worker ownership recovers, exact retained state is reused and eligible progress resumes without duplicate Work or extra agents
+- **WHEN** the stand restarts with credentials, independent import/input controls, canonical Issues, workflow/mapping pins, Work/Run and pending effects
+- **THEN** private initialization succeeds, existing ownership recovers and exact retained state resumes without duplicate tasks/execution or replacement of operator Runtime/Profile settings
 
-### Requirement: Packaged automatic intake has end-to-end qualification
-Qualification SHALL exercise the released browser/gateway/server, actual PostgreSQL and object storage, installed adapter host/process and supervised worker lifecycle with a hermetic approved provider fixture. It SHALL configure a connection and separate Project grant through the supported UI, preview and publish an input, observe one eligible native task become actual Work/Run with retained results, apply an explicitly configured effect only to the fixture, and verify restart/replay and revocation. The native ticket source and code Repository SHALL be independently selectable. Read-only/no-Reporter, manual-intake and no-card variants SHALL be proven. Browser API stubs or direct internal use-case calls alone SHALL NOT satisfy this gate. Optional live GitHub read qualification SHALL be recorded separately; live mutation qualification SHALL require an explicitly authorized disposable target and SHALL NOT be run against an ordinary user repository implicitly.
+### Requirement: Packaged external-task import and reporting have end-to-end qualification
+Qualification SHALL exercise the real browser/gateway/normal server startup, PostgreSQL/object storage, verified adapter process and supervised consumers against a hermetic approved provider fixture. It SHALL first import one native task into a visible canonical Issue without Factory configuration or execution, then review an installed status mapping and deliver an authorized manual Issue-status effect through the existing ordered projection. Independently enabled Factory inputs or explicit execution SHALL retain canonical association and original input-scoped Work/Run/results and configured action provenance. Restart/replay, separate consumer/grant disablement, read-only/no-card variants and manual independence SHALL be verified with reused fixtures and controlled boundaries. Browser REST interception or direct use-case/alternate-startup demonstrations alone SHALL NOT qualify the packaged path. Optional live reads SHALL be separate evidence and live writes SHALL require an explicitly authorized disposable target.
 
-#### Scenario: Full packaged journey passes
-- **WHEN** the real Console selects an approved fixture resource, previews it and confirms its enabled input using valid mapped task/acceptance content and a qualified target
-- **THEN** the supervised server creates and exposes exactly one native-correlated Work/Run with observable retained execution results, and an accepted configured reporting action produces its exact fixture effect
-- **AND** repeating the scan and restarting preserve that same admission and bounded reporting history
+#### Scenario: Source-only import and manual status delivery pass
+- **WHEN** the actual Console selects the approved fixture resource, previews/enables Project import and reviews a supported push mapping for a permitted manual transition
+- **THEN** one native-linked Issue is visible and the exact fixture status effect is delivered without a Factory Configuration, Work or Run
+- **AND** repeated reads and a controlled restart preserve canonical identity, workflow/mapping pins and bounded effect history
 
-#### Scenario: Real browser requests reach an omitted runtime service
-- **WHEN** UI components would pass with mocked responses but the deployed source API returns unavailable due to missing composition
-- **THEN** the packaged qualification fails and cannot be reported as completed by substituting fixtures at the browser REST boundary
+#### Scenario: Optional execution follows the same native task
+- **WHEN** independently enabled Factory inputs process the imported task with valid preparation and qualified execution settings
+- **THEN** their distinct original Work/Run and retained results correlate to the same Issue, with no import-triggered execution or duplicate/overlapping status producer
+
+#### Scenario: Browser requests reach omitted composition
+- **WHEN** mocked component tests would pass but normal deployed Source/import/delivery composition is missing
+- **THEN** packaged qualification fails rather than substituting browser responses, constructing an Issue through an internal test call or reporting a checked connection as completion
