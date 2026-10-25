@@ -233,6 +233,36 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         stop.assert_not_called()
         self.assertEqual(stand._read_json(profiles),new)
 
+    def test_runtime_support_upgrade_preserves_operator_state_and_the_same_postgres_path(self):
+        import copy
+        import factory_local_stand as stand
+        profiles = self.root / "factory-demo/factory-profiles.json"
+        old = {"version":1,"projects":[{"project_id":"project","role_profiles":{"codex":{"ceiling":{"model_identifier":"Vendor/future"}}}}],"codex":[]}
+        stand._private_json(profiles,old)
+        original = CONFIGURATOR.generate_server_configuration(self.root,self.installation,repository=REPOSITORY,
+            home=Path.home(),openssl=self.openssl,factory_profiles=profiles)
+        postgres = Path(original['postgres_url']).read_bytes()
+        runtime = self.root.parent / "runtime"
+        runtime.mkdir(mode=0o700)
+        (runtime/"plugin").write_text("#!/bin/sh\nexit 0\n"); (runtime/"plugin").chmod(0o700)
+        history = self.root / "evidence/operator-history.json"
+        stand._private_json(history,{"run":"retained-operator-run"})
+        current = copy.deepcopy(old)
+        current['projects'][0]['role_profiles']['codex']['settings_support'] = {'mcp_transports':['http'],'mcp_executables':{}}
+        legacy = {"version":1,"projects":[],"codex":[]}
+        with patch.object(stand.launcher,"run") as stop:
+            stand.publish_runtime_profiles(self.root,self.installation,profiles,current,runtime,previous=legacy)
+            stand.publish_runtime_profiles(self.root,self.installation,profiles,current,runtime,previous=legacy)
+        self.assertEqual(stop.call_count,1)
+        self.assertEqual(stand._read_json(profiles),current)
+        self.assertEqual(stand._read_json(self.root/"config/server/factory-profiles.json"),current)
+        self.assertEqual(Path(original['postgres_url']).read_bytes(),postgres)
+        self.assertEqual(stand._read_json(history),{"run":"retained-operator-run"})
+        with patch.object(stand.launcher,"run") as stop:
+            with self.assertRaisesRegex(ValueError,"customized"):
+                stand.publish_runtime_profiles(self.root,self.installation,profiles,old,runtime,previous=legacy)
+        stop.assert_not_called()
+
     def test_runtime_programs_use_the_bounded_installation_without_changing_profile_content(self):
         profiles = self.root.parent / "runtime-profiles.json"
         profiles.write_bytes(b'{"version":1,"projects":[],"codex":[]}\n')

@@ -64,6 +64,12 @@ Each declaration contains:
 | `parameters` | An existing content-addressed `FlowDataSchema` declaring supported model parameters and thinking values |
 | `public_environment` | A bounded map from exact environment names to `FlowDataSchema` value contracts |
 | `enforcement` | The existing backend permission categories that this installation can enforce |
+| `settings_support` (optional) | The shared `FactoryRuntimeSettingsSupport` contract: qualified `mcp_transports` and exact installed `mcp_executables`; no endpoints, grants or model names |
+
+Support is attached through the same `with_runtime_settings_support` contract as
+programmatic installers. Executable pins must already be installed node capabilities.
+Omitting support preserves static profiles and advertises no additional Runtime
+configuration authority. Model discovery remains independent of these settings.
 
 The optional `ceiling.thinking_parameter` names the one entry in
 `model_parameters` whose scalar value is safe reasoning metadata. A profile may
@@ -234,7 +240,7 @@ Review first calls the read-only validation contract, then the ordinary confirme
 dialog publishes that frozen request. On conflict, explicitly refresh the current version
 and review again; the MCP, integration and permission draft remains in component memory.
 Transport retries use the same scoped key through the common command helper. Draft contents
-are not written to URLs or browser storage. Local-stand installation wiring remains task 4.1.
+are not written to URLs or browser storage. Local-stand Runtime settings use the same persistent PostgreSQL journal.
 
 In the profile editor, **Configure Runtime / Настроить Runtime** opens the Runtimes
 view under the same Project. Return through **AI agents** (or browser Back) to refresh
@@ -1037,8 +1043,22 @@ catalog use. This metadata installation creates no Role, profile, task or Build
 and grants no execution authority. An executable reasoning stage still requires
 its separately installed Codex executor, Agent credentials and policy through the
 [ordinary Factory installation](local-stand.md#optional-factory-installation).
-An empty Runtime list therefore still indicates missing or unavailable installed
-compatibility for that Project.
+The released plugin's Runtime-settings capability also exposes its HTTP/stdio
+transport families. The stand installs no MCP executable, connection, Project grant,
+endpoint or sample binding. Its default deny-all permission ceiling remains unchanged;
+transport support alone does not authorize an endpoint or executable. Operators must
+qualify the corresponding installation/backend permissions independently.
+
+On restart, the cached executable/authentication bundle is retained and its existing
+Project catalog gains only derived support metadata. The launcher upgrades a generated
+catalog missing that metadata through the existing private bundle publication, retains
+the same PostgreSQL URL/volume, and refuses to replace customized installation files.
+Reviewed Runtime settings, retained transport versions and mutation receipts stay in
+PostgreSQL, outside the generated `factory-runtime/project.json` and profile files.
+Normal `down`/`up` preserves that state; an explicit destructive stand reset does not.
+Model discovery still belongs to the plugin, and restarting does not create profiles,
+replay operator Work or publish MCP/grants. An empty Runtime list therefore still
+indicates missing or unavailable installed compatibility for that Project.
 
 An installed role-profile declaration may attach `model_discovery` with an absolute
 `executable`, its `executable_sha256`, and an installation-owned `environment` map.

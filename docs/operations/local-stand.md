@@ -211,6 +211,14 @@ Artifacts. The resulting Factory Runs demonstrate:
 - automatic completion through a nested Flow and a deterministic risk rule;
 - a higher-risk Work item waiting at a human gate for an operator response.
 
+AI settings reuse the installed plugin's model catalog and qualified Runtime transport
+support. Reviewed MCP, integration and permission settings are stored in the existing
+PostgreSQL journal, separately from generated installation files. Normal restart
+preserves operator settings and execution history; the generated catalog upgrade adds
+only support metadata and refuses to overwrite customized files. No MCP server, grant,
+model preset or execution permission is enabled automatically. See
+[Runtime setup and persistence](factory.md#project-ai-agent-compatibility-declarations).
+
 No external model or decision-service credentials are needed. This demonstration
 uses native control nodes; it does not run model authoring, repository changes,
 or delivery. The graphs, risk condition, budgets, and cases are declared in

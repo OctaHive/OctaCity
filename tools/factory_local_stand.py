@@ -36,11 +36,15 @@ def _private_json(path: Path, value: dict) -> None:
 
 def publish_runtime_profiles(root: Path, native: Path, path: Path, document: dict,
                              bundle: Path, *, previous: dict) -> None:
-    """Upgrade only the generated pre-Runtime installation; durable state is untouched."""
+    """Upgrade recognized generated metadata only; PostgreSQL and operator state are untouched."""
     if not path.exists() or _read_json(path) == document:
         _private_json(path, document)
         return
-    if _read_json(path) != previous:
+    before_support = copy.deepcopy(document)
+    for project in before_support.get("projects", []):
+        for declaration in project.get("role_profiles", {}).values():
+            declaration.pop("settings_support", None)
+    if _read_json(path) not in (previous, before_support):
         raise ValueError("Factory profiles were customized; refusing to replace them")
     # Prove ownership/content before preparing or stopping anything.
     destination = root / "config/server"

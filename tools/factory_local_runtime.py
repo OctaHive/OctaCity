@@ -12,12 +12,18 @@ import tempfile
 import local_stand_state as state
 from local_stand_launcher import SERVER_IMAGE
 from pinned_source_archive import download, extract_tar_archive
+from validate_octa_release_contract import CODEX_RUNTIME_SETTINGS_CAPABILITY
 
 POLICY = Path(__file__).resolve().parents[1] / 'deployment/local-stand/factory-runtime.json'
 DISCOVERY_PROGRAM = '/usr/local/bin/octa_plugin_codex'
 
 def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+def _settings_support(compatibility: dict) -> dict:
+    # The released adapter owns these transport families; no MCP program or grant is installed.
+    qualified = CODEX_RUNTIME_SETTINGS_CAPABILITY in compatibility.get('plugin', {}).get('capabilities', [])
+    return {'mcp_transports':['http','stdio'] if qualified else [], 'mcp_executables':{}}
 
 def install_runtime(root: Path, native: Path, resources: dict, client, *, home: Path | None = None, octa_root: Path | None = None) -> dict:
     """Install bytes and compatibility, never creating a Role, task or execution grant."""
@@ -69,6 +75,7 @@ def install_runtime(root: Path, native: Path, resources: dict, client, *, home: 
         project = json.loads(state.read_regular_file(cached, 'Runtime project', max_bytes=131072, modes=frozenset({0o600})))
         if project['project_id'] != resources['project']:
             raise ValueError('installed Runtime belongs to another Project')
+        project['role_profiles']['codex']['settings_support'] = _settings_support(compatibility)
         return {'bundle':bundle,'project':project}
     # The server image builds this native discovery plugin from the same pinned Octa source.
     result = subprocess.run(['docker','run','--rm','--network','none','--read-only',
@@ -89,6 +96,7 @@ def install_runtime(root: Path, native: Path, resources: dict, client, *, home: 
         'model_parameters':{},'skills':{},'context_requirements':[], 'build_configuration':build,'credential_purpose':'model',
         'permissions':copy.deepcopy(policy['permissions']),'budget':copy.deepcopy(policy['budget'])},
         'parameters':parameters,'public_environment':{},'enforcement':copy.deepcopy(policy['enforcement']),
+        'settings_support':_settings_support(compatibility),
         'model_discovery':{'executable':DISCOVERY_PROGRAM,'executable_sha256':discovery_digest,
             'environment':{compatibility['executable']['selection_environment']:'/run/octacity-runtime/codex','HOME':'/run/octacity-runtime/home'}}}
     references = [{'kind':'node_capability','alias':'codex','reference':executable}]

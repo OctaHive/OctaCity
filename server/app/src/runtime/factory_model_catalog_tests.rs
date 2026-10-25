@@ -231,3 +231,35 @@ async fn model_refresh_is_independent_and_rejects_overlapping_requests_without_q
     "an independent source waited behind the stalled refresh"
   );
 }
+
+#[tokio::test]
+async fn file_runtime_installs_qualified_settings_support_without_changing_model_discovery() {
+  use super::FactoryRuntimeInstaller;
+  let (_directory, program, reference) = plugin_fixture();
+  let (mut document, project, definition, alias) = runtime_catalog_document(&program, &reference);
+  let support =
+    json!({"mcp_transports":["http","stdio"],"mcp_executables":{"/runtime/reader":definition.toolchain.executable}});
+  document["projects"][0]["role_profiles"][alias.as_str()]["settings_support"] = support.clone();
+  let installer =
+    super::factory_profile_file::FileProfileInstaller::parse_json(&serde_json::to_vec(&document).unwrap(), &[])
+      .expect("file installation accepts the shared Runtime support contract");
+  let installed = installer.install(super::factory_tests::resources()).await.unwrap();
+  let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
+    installed.capabilities.availability(project).await.unwrap()
+  else {
+    panic!("missing installed choices")
+  };
+  assert_eq!(
+    serde_json::to_value(choices.runtime_settings_support(&alias).unwrap()).unwrap(),
+    support
+  );
+  let capability = &choices.role_profile_capabilities()[&alias];
+  assert_eq!(
+    capability.ceiling, definition,
+    "support does not create MCP bindings or permissions"
+  );
+  assert_eq!(
+    capability.model_catalog.as_ref().unwrap().models[0].identifier,
+    "Vendor/future:preview"
+  );
+}

@@ -1,4 +1,5 @@
 """Local Runtime installation preserves provider metadata and isolates login files."""
+import copy
 import hashlib
 import io
 import json
@@ -28,7 +29,7 @@ class FactoryLocalRuntimeTests(unittest.TestCase):
             policy['archive'].update(sha256=hashlib.sha256(source.read_bytes()).hexdigest(), executable='codex-test')
             policy_path = base / 'runtime.json'; policy_path.write_text(json.dumps(policy))
             native = base / 'native/oct a'; native.mkdir(parents=True)
-            (native / 'codex-compatibility.json').write_text(json.dumps({'executable':{'supported_versions':['0.161.0'], 'selection_environment':'OCTA_CODEX_EXECUTABLE'}}))
+            (native / 'codex-compatibility.json').write_text(json.dumps({'plugin':{'capabilities':['codex.task-runtime-settings.v1']},'executable':{'supported_versions':['0.161.0'], 'selection_environment':'OCTA_CODEX_EXECUTABLE'}}))
             (native.parent / 'job-spec-policy.json').write_text(json.dumps({'octa':{'version':'0.7.2', 'plugin_digests':{'codex':'a'*64}}}))
             home = base / 'operator'; home.mkdir(mode=0o700)
             (home / 'auth.json').write_text('{"auth_mode":"chatgpt","tokens":{"private":"login-canary"}}'); (home / 'auth.json').chmod(0o600)
@@ -38,8 +39,15 @@ class FactoryLocalRuntimeTests(unittest.TestCase):
             with patch.object(runtime, 'POLICY', policy_path), patch.object(runtime, 'download', side_effect=lambda _, target: shutil.copyfile(source,target)), \
                     patch.object(runtime.subprocess, 'run', return_value=types.SimpleNamespace(stdout='c'*64+'  plugin\n')):
                 installed = runtime.install_runtime(base/'stand', native.parent, {'project':'project','configuration':'cfg'}, api, home=home, octa_root=native)
+                legacy = copy.deepcopy(installed['project'])
+                legacy['role_profiles']['codex'].pop('settings_support', None)
+                cached = installed['bundle']/'project.json'
+                cached.write_text(json.dumps(legacy))
+                retained_catalog = cached.read_bytes()
                 again = runtime.install_runtime(base/'stand', native.parent, {'project':'project','configuration':'cfg'}, None, home=base/'no-login', octa_root=native)
                 self.assertEqual(again['project'],installed['project'])
+                self.assertEqual(cached.read_bytes(),retained_catalog)
+                self.assertEqual(again['project']['role_profiles']['codex']['settings_support'], {'mcp_transports':['http','stdio'],'mcp_executables':{}})
                 anonymous = runtime.install_runtime(base/'anonymous', native.parent, {'project':'project','configuration':'cfg'}, api, home=base/'no-login', octa_root=native)
                 self.assertFalse((anonymous['bundle']/'home/.codex/auth.json').exists())
             bundle = installed['bundle']

@@ -498,6 +498,8 @@ struct RoleProfileDeclaration {
   enforcement: Vec<PermissionCategory>,
   #[serde(default)]
   model_discovery: Option<ModelDiscoveryDeclaration>,
+  #[serde(default)]
+  settings_support: Option<FactoryRuntimeSettingsSupport>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -688,7 +690,7 @@ impl FactoryRuntimeProfileCatalog {
               .map_err(|_| Invalid)?;
           choices = choices
             .with_role_profile_capability(
-              alias,
+              alias.clone(),
               FactoryRoleProfileCapability {
                 mcp_required_environment: Default::default(),
                 model_catalog: None,
@@ -699,6 +701,11 @@ impl FactoryRuntimeProfileCatalog {
               },
             )
             .map_err(|_| Invalid)?;
+          if let Some(support) = declaration.settings_support {
+            choices = choices
+              .with_runtime_settings_support(alias, support)
+              .map_err(|_| Invalid)?;
+          }
         }
         Ok((project.project_id, choices))
       })
