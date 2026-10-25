@@ -6,6 +6,8 @@ use std::collections::BTreeMap;
 pub(super) struct RolePilot {
   role: FactoryRole,
   profile: FactoryRoleProfile,
+  default: FactoryRoleProfile,
+  settings: FactoryRuntimeSettingsDefinition,
   model_discovery: Value,
 }
 impl RolePilot {
@@ -59,19 +61,12 @@ impl RolePilot {
       ]})).await;
     let skill: ImmutableReference = serde_json::from_value(imported["bundle"].clone()).unwrap();
     let integration = managed_reader(postgres, project).await;
-    let mcp = octacity_server_application::FactoryCodexMcpConfiguration::new(
-      FactoryKey::new("pilot-mcp").unwrap(),
-      FactoryKey::new("v1").unwrap(),
-      octacity_server_application::FactoryCodexMcpServer::Stdio {
-        command: "/usr/local/bin/node".into(),
-        args: vec!["/octacity/protected/skills/review/server.mjs".into()],
-        env_vars: vec!["LANGUAGE".into()],
-        enabled_tools: Some(vec!["facts".into()]),
-      },
-      Some(integration.clone()),
-    )
-    .unwrap();
-    model.profile.mcp_configurations = vec![mcp.clone()];
+    let server = FactoryMcpServer::Stdio {
+      command: MCP_EXECUTABLE.into(),
+      args: vec!["--mcp".into(), "/octacity/protected/skills/review/server.mjs".into()],
+      env_vars: vec!["LANGUAGE".into()],
+      enabled_tools: Some(vec!["facts".into()]),
+    };
     let role = FactoryRole::publish(
       FactoryRoleId::generate(),
       project,
@@ -84,7 +79,7 @@ impl RolePilot {
     let prefix = "Controlling Project rules (additions cannot waive these rules):\n{\"accepted\":true}\n\nReview the public contract.\n\nReport only evidence.\n\nKeep the result bounded.\n\nSelected retained skill (read only): /octacity/protected/skills/review/SKILL.md\n";
     model.profile.instructions = FactoryText::new(json!({"fixture_version":1,"result":{"$input":"/payload/value"},
       "invocation":{"model":"finite-json-model-pro","prefix":prefix,"options":["--config=model_reasoning_effort=\"high\"","--ephemeral","--ignore-user-config",MCP_OPTION],"environment":{"LANGUAGE":"ru","HOME":"/workspace/scratch"}},
-      "mcp":{"command":"/usr/local/bin/node","args":["/octacity/protected/skills/review/server.mjs"],"env_vars":["LANGUAGE"],"tool":"facts","expected_text":"ru:Retained supporting facts.\n"},
+      "mcp":{"command":MCP_EXECUTABLE,"args":["--mcp","/octacity/protected/skills/review/server.mjs"],"env_vars":["LANGUAGE"],"tool":"facts","expected_text":"ru:Retained supporting facts.\n"},
       "checks":[
         {"path":"/octacity/protected/skills/review/SKILL.md","readable":true,"expected_text":"# Review contract\nRead supporting.txt.\n"},
         {"path":"/octacity/protected/skills/review/supporting.txt","readable":true,"expected_text":"Retained supporting facts.\n"},
@@ -110,8 +105,41 @@ impl RolePilot {
     for option in ["--ephemeral", "--ignore-user-config", MCP_OPTION].into_iter().rev() {
       arguments.insert(last, json!({"kind":"exact","value":option}));
     }
+    grants["commands"].as_array_mut().unwrap().push(json!({
+      "executable":model.profile.toolchain.executable,
+      "arguments":[{"kind":"exact","value":"--mcp"},{"kind":"exact","value":"/octacity/protected/skills/review/server.mjs"}]
+    }));
     model.profile.project_permissions = serde_json::from_value(grants).unwrap();
     model.profile.local_permissions = LocalPermissionCeiling::fully_enforced(model.profile.project_permissions.clone());
+    let settings = FactoryRuntimeSettingsDefinition {
+      toolchain: model.profile.toolchain.clone(),
+      mcp_servers: [(
+        FactoryKey::new("reader").unwrap(),
+        FactoryRuntimeMcpEntry {
+          server,
+          integration: Some(FactoryKey::new("reader").unwrap()),
+        },
+      )]
+      .into(),
+      integrations: [(FactoryKey::new("reader").unwrap(), integration.clone())].into(),
+      permissions: model.profile.project_permissions.clone(),
+    };
+    let retained = octacity_server_store::FactoryRuntimeSettingsIntent {
+      project_id: project,
+      runtime: FactoryKey::new("pilot-selected").unwrap(),
+      expected_version: None,
+      definition: settings.clone(),
+    }
+    .settings()
+    .unwrap();
+    let mcp = retained
+      .mcp_configuration(&FactoryKey::new("reader").unwrap())
+      .unwrap()
+      .unwrap();
+    assert!(
+      model.profile.mcp_configurations.is_empty(),
+      "configured transports must not be copied into installation files"
+    );
     let profile = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, serde_json::from_value(json!({
       "name":"pro","model_identifier":"finite-json-model-pro","instructions":["Keep the result bounded."],"toolchain":model.profile.toolchain,
       "model_parameters":{"reasoning_effort":"high"},"thinking_parameter":"reasoning_effort",
@@ -127,22 +155,116 @@ impl RolePilot {
       .insert(FactoryKey::new("reasoning_effort").unwrap(), json!("low"));
     let default =
       FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, default_definition).unwrap();
-    let publication = post_management(client, origin, &format!("/api/v1/projects/{project}/factory-role-publications"), "pilot-role-publish", json!({
-      "role":{"id":role.reference().id,"expected_current_version":null,"definition":role.definition()},
-      "profiles":[{"id":profile.reference().id,"expected_current_version":null,"role":role.reference(),"definition":profile.definition()},
-        {"id":default.reference().id,"expected_current_version":null,"role":role.reference(),"definition":default.definition()}]
-    })).await;
-    assert_eq!(publication["role"], json!(role));
-    assert_eq!(publication["profiles"][0], json!(profile));
-    assert_eq!(publication["profiles"][1], json!(default));
     Self {
       role,
       profile,
+      default,
+      settings,
       model_discovery,
     }
   }
-  pub(super) async fn check_model_catalog(&self, client: &Client, origin: &str, project: &str) {
+  pub(super) async fn configure_and_check_catalog(&self, client: &Client, origin: &str, project: &str) {
+    let builds_path = format!("{origin}/api/v1/projects/{project}/builds?limit=25");
+    let builds_before = get_json(client, builds_path.clone()).await;
     let path = format!("/api/v1/projects/{project}/factory-profile-capabilities/pilot-selected");
+    let runtime_path = format!("/api/v1/projects/{project}/factory-runtimes/pilot-selected");
+    let choices_path =
+      format!("{origin}/api/v1/projects/{project}/factory-configuration-choices?kind=node_capability&limit=100");
+    let configuration =
+      json!(self.profile.definition().execution.mcp_servers[&FactoryKey::new("reader").unwrap()].configuration);
+    let has_mcp = |page: Value| {
+      assert!(
+        page["next_cursor"].is_null(),
+        "the fixture catalog must fit on one page"
+      );
+      page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["reference"]["reference"] == configuration)
+    };
+    assert!(
+      !has_mcp(get_json(client, choices_path.clone()).await),
+      "MCP configuration must not be preinstalled before Runtime settings publication"
+    );
+    let request = json!({"expected_version":null,"definition":self.settings});
+    let reviewed = post_management(
+      client,
+      origin,
+      &format!("{runtime_path}/validate"),
+      "pilot-runtime-review",
+      request.clone(),
+    )
+    .await;
+    assert_eq!(reviewed["settings"]["definition"], request["definition"]);
+    post_management(client, origin, &runtime_path, "pilot-runtime-publish", request).await;
+    assert!(
+      has_mcp(get_json(client, choices_path).await),
+      "Runtime settings publication must expose the exact configured MCP reference"
+    );
+    let role = &self.role;
+    let profile = &self.profile;
+    let default = &self.default;
+    post_management(
+      client,
+      origin,
+      &format!("/api/v1/projects/{project}/factory-role-publications"),
+      "pilot-role-create",
+      json!({
+        "role":{"id":role.reference().id,"expected_current_version":null,"definition":role.definition()},"profiles":[]
+      }),
+    )
+    .await;
+    let available = get_json(client, format!("{origin}{path}")).await;
+    assert_eq!(
+      available["definition"]["execution"]["mcp_servers"]["reader"],
+      json!(profile.definition().execution.mcp_servers[&FactoryKey::new("reader").unwrap()])
+    );
+    let available_execution: FactoryRoleProfileExecution =
+      serde_json::from_value(available["definition"]["execution"].clone()).unwrap();
+    let reader = FactoryKey::new("reader").unwrap();
+    for selected in [profile, default] {
+      let mut definition = selected.definition().clone();
+      definition.execution.mcp_servers = [(reader.clone(), available_execution.mcp_servers[&reader].clone())].into();
+      definition.execution.integrations = [(reader.clone(), available_execution.integrations[&reader].clone())].into();
+      let checked = post_management(
+        client,
+        origin,
+        &format!("/api/v1/projects/{project}/factory-role-profiles/validate"),
+        "pilot-selected-profile-review",
+        json!({
+          "id":selected.reference().id,"role":role.reference(),"capability":"pilot-selected","definition":definition
+        }),
+      )
+      .await;
+      assert!(
+        checked["incompatibility"].is_null(),
+        "selected configured MCP must qualify: {checked}"
+      );
+      assert_eq!(checked["profile"], json!(selected));
+    }
+    let publication = post_management(client, origin, &format!("/api/v1/projects/{project}/factory-role-publications"), "pilot-role-publish", json!({
+      "profiles":[{"id":profile.reference().id,"expected_current_version":null,"role":role.reference(),"definition":profile.definition()},
+        {"id":default.reference().id,"expected_current_version":null,"role":role.reference(),"definition":default.definition()}]
+    })).await;
+    assert!(publication["role"].is_null());
+    assert_eq!(publication["profiles"][0], json!(profile));
+    assert_eq!(publication["profiles"][1], json!(default));
+
+    assert_eq!(
+      get_json(client, builds_path).await,
+      builds_before,
+      "Runtime and profile publication must start no Build"
+    );
+    let runtime = get_json(
+      client,
+      format!("{origin}/api/v1/projects/{project}/factory-runtimes/pilot-selected"),
+    )
+    .await;
+    assert!(
+      runtime["settings"].is_object(),
+      "MCP must be published through Runtime settings before selecting the profile"
+    );
     let capability = get_json(client, format!("{origin}{path}")).await;
     assert_eq!(
       capability["model_catalog"]["manual_model"], true,
@@ -244,21 +366,17 @@ impl RolePilot {
     serde_json::to_vec(&retained).unwrap()
   }
   pub(super) fn catalog(&self, catalog: &mut Value) {
+    let mut ceiling = self.profile.definition().clone();
+    ceiling.execution.mcp_servers.clear();
+    ceiling.execution.integrations.clear();
     catalog["projects"][0]["role_profiles"] = json!({"pilot-selected":{
+      "settings_support":{"mcp_transports":["stdio"],"mcp_executables":{MCP_EXECUTABLE:self.profile.definition().toolchain.executable}},
       "model_discovery":self.model_discovery,
-      "ceiling":self.profile.definition(),"parameters":FlowDataSchema::new(FactoryKey::new("pilot.parameters").unwrap(),FactoryKey::new("v1").unwrap(),FlowValueSchema::Object{fields:BTreeMap::from([(FactoryKey::new("reasoning_effort").unwrap(),FlowFieldSchema::required(FlowValueSchema::Enum{values:vec!["high".into()]}))])}).unwrap(),
+      "ceiling":ceiling,"parameters":FlowDataSchema::new(FactoryKey::new("pilot.parameters").unwrap(),FactoryKey::new("v1").unwrap(),FlowValueSchema::Object{fields:BTreeMap::from([(FactoryKey::new("reasoning_effort").unwrap(),FlowFieldSchema::required(FlowValueSchema::Enum{values:vec!["high".into()]}))])}).unwrap(),
       "public_environment":{"LANGUAGE":FlowDataSchema::new(FactoryKey::new("pilot.language").unwrap(),FactoryKey::new("v1").unwrap(),FlowValueSchema::Enum{values:vec!["ru".into()]}).unwrap()},"enforcement":PermissionCategory::ALL
     }});
     catalog["projects"][0]["references"].as_array_mut().unwrap().push(json!({"kind":"node_capability","alias":"pilot-selected","reference":self.profile.definition().toolchain.executable}));
-    for reference in self.profile.definition().skills.values().chain(
-      self
-        .profile
-        .definition()
-        .execution
-        .mcp_servers
-        .values()
-        .map(|binding| &binding.configuration),
-    ) {
+    for reference in self.profile.definition().skills.values() {
       catalog["projects"][0]["references"]
         .as_array_mut()
         .unwrap()
@@ -306,7 +424,8 @@ impl RolePilot {
   }
 }
 
-const MCP_OPTION: &str = "--config=mcp_servers={ reader = { args = [\"/octacity/protected/skills/review/server.mjs\"], command = \"/usr/local/bin/node\", enabled_tools = [\"facts\"], env_vars = [\"LANGUAGE\"], required = true } }";
+const MCP_EXECUTABLE: &str = "/opt/octacity/tools/tool-0";
+const MCP_OPTION: &str = "--config=mcp_servers={ reader = { args = [\"--mcp\", \"/octacity/protected/skills/review/server.mjs\"], command = \"/opt/octacity/tools/tool-0\", enabled_tools = [\"facts\"], env_vars = [\"LANGUAGE\"], required = true } }";
 
 async fn managed_reader(postgres: &str, project: octacity_server_domain::ProjectId) -> FactoryRoleIntegrationBinding {
   use octacity_server_domain::{IntegrationId, IntegrationVersion, Timestamp};

@@ -264,6 +264,11 @@ confirmation, its keyboard capture is suspended. Returning to AI agents restores
 same reviewed confirmation; it is not published or discarded by switching views. Setup
 neither publishes the profile draft nor changes historical profiles.
 
+The [packaged Runtime-to-MCP qualification](../testing/backend-contracts.md#packaged-nested-model-execution-and-restart)
+uses these same REST settings and profile contracts, the ordinary compiler and a
+finite MCP process in Microsandbox. Its English/Russian Console checks also cover
+the setup-to-profile handoff and explicit adoption of the configured binding.
+
 ### Reproducible AI-agent execution packages
 
 `FactoryRoleExecutionPackage` assembles an explicit core snapshot from the existing

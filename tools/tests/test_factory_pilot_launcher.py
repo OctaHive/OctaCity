@@ -26,6 +26,30 @@ class FactoryPilotLauncherTests(unittest.TestCase):
             self.assertEqual(probe.stdout, "")
             self.assertEqual(probe.stderr, "finite model fixture runtime is unavailable\n")
 
+    def test_native_cli_runs_an_explicit_retained_mcp_without_model_credentials(self):
+        compiler = shutil.which("rustc")
+        node = shutil.which("node")
+        self.assertIsNotNone(compiler)
+        self.assertIsNotNone(node)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            binary = root / "finite-cli"
+            server = root / "server.mjs"
+            server.write_bytes(SOURCE.with_name("role-mcp.mjs").read_bytes())
+            (root / "supporting.txt").write_text("retained facts")
+            compiled = subprocess.run([compiler, "--edition=2024", str(SOURCE), "-o", str(binary)],
+                text=True, capture_output=True, timeout=30,
+                env={**os.environ, "OCTACITY_FACTORY_PILOT_NODE": node})
+            self.assertEqual(compiled.returncode, 0, compiled.stderr)
+            messages = [{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}},
+                        {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"facts","arguments":{}}}]
+            completed = subprocess.run([str(binary), "--mcp", str(server)], input=''.join(json.dumps(item)+'\n' for item in messages),
+                text=True, capture_output=True, timeout=5, env={"LANGUAGE":"ru"})
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            replies = [json.loads(line) for line in completed.stdout.splitlines()]
+            self.assertEqual(replies[1]['result']['content'], [{"type":"text","text":"ru:retained facts"}])
+            self.assertEqual(completed.stderr, "")
+
     def test_native_cli_preserves_version_and_frozen_result_without_shell_expansion(self):
         compiler = shutil.which("rustc")
         self.assertIsNotNone(compiler, "restore the repository Rust toolchain")

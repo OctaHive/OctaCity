@@ -16,4 +16,4 @@
 ## 4. Local stand and focused qualification
 
 - [x] 4.1 Connect local-stand Runtime installation to its qualified supported contracts and the persistent settings path without hardcoded models or automatic MCP/grant creation; verify installer/restart preserves operator settings, existing model discovery and manual Factory intake using the current stand fixtures.
-- [ ] 4.2 Complete one shared end-to-end setup → profile → compiler/finite MCP process journey, reuse its browser assertions for English/Russian and narrow keyboard operation, update operator docs and run relevant existing regression/format/lint/build checks. Record observed Red/Green commands and check free space before builds; add no release pipeline, external LLM dependency or duplicate test matrix.
+- [x] 4.2 Complete one shared end-to-end setup → profile → compiler/finite MCP process journey, reuse its browser assertions for English/Russian and narrow keyboard operation, update operator docs and run relevant existing regression/format/lint/build checks. Record observed Red/Green commands and check free space before builds; add no release pipeline, external LLM dependency or duplicate test matrix.

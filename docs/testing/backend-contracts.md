@@ -1291,10 +1291,26 @@ The composed role/profile slice also requires `OCTACITY_MODEL_DISCOVERY_PLUGIN`
 executable built from the matching Octa sources). Discovery runs on the Server
 host, separately from the Linux fixture executed inside Microsandbox. Its native
 program digest is pinned independently from the guest plugin digest. The test
-publishes ordinary default/pro profiles, selects an unlisted model, changes the
-runtime's suggestions and refreshes through REST without changing the profiles.
-The existing real Job and restart assertions verify the selected model, parameters
-and retained role/skill package; no provider credentials or paid calls are needed.
+reviews and publishes Project Runtime settings through REST, then explicitly
+selects the returned exact MCP/integration bindings in ordinary default/pro
+profiles. Setup itself must create no Build. The installation declares only the
+qualified stdio executable and permission ceiling; it contains no copied MCP
+configuration or preinstalled reference to it. The public configuration-choice
+read must omit that reference before Runtime settings publication and expose its
+exact pin afterward. The ordinary compiler resolves the retained transport from
+PostgreSQL and the released plugin executes the selected MCP in Microsandbox.
+The pinned finite CLI's `--mcp` mode runs the retained skill's `server.mjs` with
+the image's installed Node executable, reusing the same approved executable
+identity with explicit command arguments. The MCP receives only mapped public
+`LANGUAGE`, and rejects model credentials.
+
+The same journey selects an unlisted model, changes the runtime's suggestions
+and refreshes through REST without changing the profiles. Existing real Job and
+restart assertions verify the selected model, parameters and original retained
+role/skill package after catalog replacement; no provider credentials or paid
+calls are needed. `ui/tests/browser/runtime-settings.spec.ts` covers the Console
+setup-to-profile handoff in English and Russian, including narrow keyboard
+operation, draft retention and explicit selection of the refreshed MCP pin.
 
 The shell CLI fixtures and `requirements-author.mjs` are qualified on Unix.
 Their Python process contracts run on Linux/macOS and explicitly skip Windows,

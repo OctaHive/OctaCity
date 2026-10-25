@@ -103,7 +103,9 @@ pub(super) async fn run_model(
   );
   wait_for_server_ready(&client, &origin, &mut server, &server_log).await;
   if let Some(role) = role {
-    role.check_model_catalog(&client, &origin, &resources.project).await;
+    role
+      .configure_and_check_catalog(&client, &origin, &resources.project)
+      .await;
   }
 
   let installation = directory.join("observer");
