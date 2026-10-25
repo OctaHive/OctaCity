@@ -179,6 +179,7 @@ pub struct FactoryConfigurationChoices {
   build_configurations: BTreeMap<FactoryKey, BuildConfigurationRef>,
   metadata: BTreeMap<(FactoryChoiceKind, FactoryKey), FactoryChoiceMetadata>,
   role_profiles: BTreeMap<FactoryKey, crate::FactoryRoleProfileCapability>,
+  runtime_settings: BTreeMap<FactoryKey, crate::FactoryRuntimeSettingsSupport>,
   excluded_roles: std::collections::BTreeSet<crate::FactoryRoleId>,
 }
 
@@ -252,6 +253,7 @@ impl FactoryConfigurationChoices {
       build_configurations: choice_map(entries.build_configurations, FactoryChoiceKind::BuildConfiguration)?,
       metadata: BTreeMap::new(),
       role_profiles: BTreeMap::new(),
+      runtime_settings: BTreeMap::new(),
       excluded_roles: Default::default(),
     })
   }
@@ -300,6 +302,35 @@ impl FactoryConfigurationChoices {
     metadata.compatible_choices.dedup();
     self.metadata.insert((kind, alias), metadata);
     Ok(self)
+  }
+
+  /// Declares private configuration support on an existing installed Runtime alias.
+  /// Transport paths stay out of generic choice metadata and discovery responses.
+  pub fn with_runtime_settings_support(
+    mut self,
+    alias: FactoryKey,
+    support: crate::FactoryRuntimeSettingsSupport,
+  ) -> Result<Self, FactoryError> {
+    if !self.role_profiles.contains_key(&alias)
+      || support.mcp_executables.len() > crate::MAX_FACTORY_ROLE_PROFILE_ENTRIES
+      || support.mcp_executables.iter().any(|(path, reference)| {
+        crate::FactoryPath::new(path).is_err()
+          || !self
+            .references
+            .iter()
+            .any(|((kind, _), value)| *kind == FactoryChoiceKind::NodeCapability && value == reference)
+      })
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Runtime settings support",
+      });
+    }
+    self.runtime_settings.insert(alias, support);
+    Ok(self)
+  }
+  /// Dedicated installed support used by authorized Runtime configuration.
+  pub fn runtime_settings_support(&self, alias: &FactoryKey) -> Option<&crate::FactoryRuntimeSettingsSupport> {
+    self.runtime_settings.get(alias)
   }
 
   /// Attaches a trusted role-profile declaration to an already installed runtime alias.

@@ -93,6 +93,7 @@ pub use crate::factory_role_deletion_contract_testing::{
   verify_factory_role_deletion, verify_factory_role_deletion_blocks_automatic_selection,
   verify_factory_role_deletion_blocks_live_selection,
 };
+pub use crate::factory_runtime_settings_contract_testing::verify_factory_runtime_settings_publication;
 
 pub use crate::factory_role_profile_contract_testing::{
   role_profile_contract_definition, role_profile_contract_intent, verify_factory_role_profile_atomicity,

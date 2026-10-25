@@ -888,3 +888,11 @@ mod project_skill_import_testing;
 
 #[cfg(any(test, feature = "test-support"))]
 mod factory_role_package_testing;
+
+mod factory_runtime_settings;
+pub use factory_runtime_settings::*;
+#[cfg(any(test, feature = "test-support"))]
+mod factory_runtime_settings_testing;
+
+#[cfg(any(test, feature = "test-support"))]
+mod factory_runtime_settings_contract_testing;

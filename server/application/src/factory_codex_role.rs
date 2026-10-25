@@ -3,7 +3,6 @@ use super::*;
 use octacity_server_factory::{FactoryRoleEnvironmentValue, FactoryTaskMode};
 
 // The pinned native task limits MCP aliases more narrowly than FactoryKey.
-const MAX_MCP_SERVER_NAME_BYTES: usize = 64;
 
 pub(super) fn apply<'a>(
   role: &'a crate::FactoryRoleInvocation,
@@ -123,14 +122,7 @@ pub(super) fn mcp(
   let mut used = BTreeSet::new();
   let mut servers = BTreeMap::new();
   for (name, binding) in &execution.mcp_servers {
-    if name.as_str().len() > MAX_MCP_SERVER_NAME_BYTES
-      || name
-        .as_str()
-        .bytes()
-        .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'_' | b'-'))
-    {
-      return Err(invalid);
-    }
+    octacity_server_factory::validate_factory_mcp_server_name(name.as_str()).map_err(|_| invalid)?;
     let installed = configurations
       .iter()
       .find(|config| config.reference() == &binding.configuration)
@@ -145,7 +137,7 @@ pub(super) fn mcp(
       .transpose()?;
     servers.insert(
       name.as_str().to_owned(),
-      installed.resolve(integration, &execution.environment, public, secret)?,
+      crate::factory_codex_mcp::resolve(installed, integration, &execution.environment, public, secret)?,
     );
   }
   if used.len() != execution.integrations.len() {

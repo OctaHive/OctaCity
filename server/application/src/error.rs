@@ -133,3 +133,12 @@ impl From<octacity_server_store::FactoryRoleProfilePublicationError> for Applica
     }
   }
 }
+
+impl From<octacity_server_store::FactoryRuntimeSettingsPublicationError> for ApplicationError {
+  fn from(error: octacity_server_store::FactoryRuntimeSettingsPublicationError) -> Self {
+    match error {
+      octacity_server_store::FactoryRuntimeSettingsPublicationError::PreconditionFailed => Self::PreconditionFailed,
+      octacity_server_store::FactoryRuntimeSettingsPublicationError::Store(error) => error.into(),
+    }
+  }
+}

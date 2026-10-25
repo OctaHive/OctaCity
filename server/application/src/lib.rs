@@ -857,3 +857,11 @@ mod factory_codex_mcp;
 pub use factory_codex_mcp::{FactoryCodexMcpConfiguration, FactoryCodexMcpServer};
 
 mod raster_preview;
+
+#[cfg(test)]
+mod factory_runtime_settings_tests;
+
+mod factory_runtime_settings;
+pub use factory_runtime_settings::*;
+
+mod factory_mcp;

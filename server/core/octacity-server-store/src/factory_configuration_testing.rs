@@ -182,6 +182,7 @@ impl InMemoryFactoryConfigurationStore {
 
 #[derive(Default)]
 pub(super) struct FactoryConfigurationMemoryState {
+  pub(super) runtime_settings: crate::factory_runtime_settings_testing::RuntimeSettingsMemoryState,
   pub(super) role_invocations: BTreeMap<FactoryDigest, crate::RetainedFactoryRoleInvocation>,
   pub(super) skill_imports: BTreeMap<(ProjectId, ManagementIdempotencyKey), crate::ProjectSkillImportRecord>,
   pub(super) role_profiles: crate::factory_role_profile_testing::RoleProfileMemoryState,

@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Publish a reviewed Project Runtime configuration.
+  PublishFactoryRuntimeSettings,
   /// Reserve the complete cleanup inventory of a Project skill folder.
   ReserveProjectSkillImport,
   /// Reserve or atomically publish a Project skill folder.
@@ -365,6 +367,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Runtime configuration or revision exceeds the common contract.
+  #[error("invalid Runtime settings")]
+  InvalidFactoryRuntimeSettings,
   /// Invalid or incomplete Project skill import metadata.
   #[error("invalid project skill import")]
   InvalidProjectSkillImport,

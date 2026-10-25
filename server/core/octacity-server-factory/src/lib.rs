@@ -253,9 +253,9 @@ pub use task_contract::{
 };
 pub use value::{
   DecisionPolicyVersion, DeliveryAttemptNumber, ExternalWorkIdentity, FactoryConfigurationVersion, FactoryDigest,
-  FactoryKey, FactoryMetadata, FactoryRoleProfileVersion, FactoryRoleVersion, FactoryRunVersion, FactorySafeText,
-  FactoryText, FlowDefinitionVersion, MAX_EXTERNAL_WORK_IDENTITY_BYTES, MAX_FACTORY_KEY_BYTES,
-  MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES, MAX_FACTORY_METADATA_KEY_BYTES,
+  FactoryKey, FactoryMetadata, FactoryRoleProfileVersion, FactoryRoleVersion, FactoryRunVersion,
+  FactoryRuntimeSettingsVersion, FactorySafeText, FactoryText, FlowDefinitionVersion, MAX_EXTERNAL_WORK_IDENTITY_BYTES,
+  MAX_FACTORY_KEY_BYTES, MAX_FACTORY_METADATA_BYTES, MAX_FACTORY_METADATA_ENTRIES, MAX_FACTORY_METADATA_KEY_BYTES,
   MAX_FACTORY_METADATA_VALUE_BYTES, MAX_FACTORY_SAFE_TEXT_BYTES, MAX_FACTORY_TEXT_BYTES, MAX_WORK_PRIORITY,
   NodeAttemptNumber, ReportingAttemptNumber, WorkPriority, WorkSourceGroupVersion, WorkSourceInputVersion,
   WorkflowCycleNumber, contains_sensitive_material,
@@ -288,3 +288,12 @@ pub use role_template::{
 pub use role_profile_capability::{
   FactoryRoleModelCatalog, FactoryRoleModelChoice, FactoryRoleProfileCapability, FactoryRoleProfileIncompatibility,
 };
+
+mod mcp;
+pub use mcp::{
+  FactoryMcpConfiguration, FactoryMcpServer, FactoryMcpTransport, MAX_FACTORY_MCP_ARGUMENT_BYTES,
+  MAX_FACTORY_MCP_CONFIGURATION_BYTES, MAX_FACTORY_MCP_SELECTION_ENTRIES, MAX_FACTORY_MCP_SERVER_NAME_BYTES,
+  MAX_FACTORY_MCP_TOOL_NAME_BYTES, validate_factory_mcp_server_name,
+};
+mod runtime_settings;
+pub use runtime_settings::*;

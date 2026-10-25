@@ -112,6 +112,38 @@ exact role and candidate digest without publishing a version, reserving a mutati
 key, or starting a Build. Executable admission and dispatch still require their
 ordinary installed compiler, Project and backend authority.
 
+### Reviewed Project Runtime settings
+
+`PublishFactoryRuntimeSettingsCommand` and `GetFactoryRuntimeSettingsQuery` use
+existing Project administration/content authorization and the ordinary role/profile
+handlers. Their operation-shaped store port has a memory adapter;
+REST routes and the Console setup view are not installed yet. Publishing these
+records does not change installation inventory or start execution.
+
+Settings belong to an existing Project/Runtime alias and retain exact toolchain
+pins, named structured MCP entries, existing integration selections and a finite
+permission set. They do not copy a whole profile or the model-discovery cache.
+Programmatic installers attach `FactoryRuntimeSettingsSupport` to the existing
+choice catalog, declaring supported MCP transport families and qualified stdio
+paths/executable pins. These private paths are not generic discovery metadata.
+Without that declaration, new MCP transports cannot be configured. Installation
+file and local-stand wiring remain separate from these application contracts.
+
+Qualification reuses the existing permission intersection and managed integration
+checks. HTTP endpoints require an explicitly permitted canonical host; embedded
+URL userinfo and undeclared bearer environment mappings are rejected. Stdio
+requires an installed exact path, permitted executable/argv and declared environment
+names. Configuration does not resolve credential values, launch commands or contact
+MCP/model/provider endpoints. The common MCP transport/pinning contract and server-name
+validation are also used by the existing Codex adapter, preserving its wire format.
+
+Publication retains immutable positive revisions and verified content digests, with
+current-version replacement, scoped idempotency and shared audit/outbox evidence.
+An exact retry returns its original receipt before mutable capability lookup while
+still requiring current Project authorization. Historical reads retain original
+transport content after replacements; no latest defaults are substituted. The
+shared adapter journal test contract covers these persistence semantics.
+
 ### Reproducible AI-agent execution packages
 
 `FactoryRoleExecutionPackage` assembles an explicit core snapshot from the existing

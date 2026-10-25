@@ -223,7 +223,7 @@ impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + Integration
   }
   // Reuses the existing protected-use owner: current grants, exact revisions,
   // configured credentials and resource purpose, with no remote/secret reads.
-  async fn profile_integration_available(
+  pub(crate) async fn profile_integration_available(
     &self,
     context: &ManagementRequestContext,
     project: ProjectId,

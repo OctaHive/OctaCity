@@ -180,6 +180,10 @@ sequence!(
 sequence!(DecisionPolicyVersion, "Positive immutable Decision policy version.");
 sequence!(FactoryRoleVersion, "Positive immutable Factory Role version.");
 sequence!(FactoryRoleProfileVersion, "Positive immutable Role Profile version.");
+sequence!(
+  FactoryRuntimeSettingsVersion,
+  "Positive immutable Runtime settings revision."
+);
 sequence!(FactoryRunVersion, "Positive optimistic Factory Run version.");
 sequence!(WorkSourceInputVersion, "Positive immutable Work Source input version.");
 sequence!(

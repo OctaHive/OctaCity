@@ -370,6 +370,17 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
       visible = visible
         .with_role_profile_capability(alias.clone(), cap)
         .map_err(|_| ApplicationError::invalid())?;
+      if let Some(mut support) = choices.runtime_settings_support(alias).cloned() {
+        let references = visible.entries().references;
+        support.mcp_executables.retain(|_, reference| {
+          references
+            .iter()
+            .any(|r| r.kind == octacity_server_factory::FactoryChoiceKind::NodeCapability && &r.reference == reference)
+        });
+        visible = visible
+          .with_runtime_settings_support(alias.clone(), support)
+          .map_err(|_| ApplicationError::invalid())?;
+      }
     }
   }
   // Retain selector constraints for validation of visible policies. This is not a
