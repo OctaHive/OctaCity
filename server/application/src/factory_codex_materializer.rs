@@ -350,6 +350,7 @@ pub struct FactoryCodexBuildMaterializer<C, S, B> {
   candidate_context: Option<Arc<dyn FactoryNodeCandidateContextSource>>,
   review: Option<Arc<dyn crate::FactoryReviewInvocationSource>>,
   role: Option<Arc<dyn crate::FactoryRoleInvocationSource>>,
+  runtime_settings: Option<Arc<dyn octacity_server_store::FactoryRuntimeSettingsStore>>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
 impl<C, S, B> FactoryCodexBuildMaterializer<C, S, B> {
@@ -381,6 +382,7 @@ impl<C, S, B> FactoryCodexBuildMaterializer<C, S, B> {
       candidate_context: None,
       review: None,
       role: None,
+      runtime_settings: None,
       clock,
     })
   }
@@ -389,6 +391,16 @@ impl<C, S, B> FactoryCodexBuildMaterializer<C, S, B> {
   #[must_use]
   pub fn with_role_invocation_source(mut self, source: Arc<dyn crate::FactoryRoleInvocationSource>) -> Self {
     self.role = Some(source);
+    self
+  }
+
+  /// Resolves selected immutable MCP content alongside installation-owned transports.
+  #[must_use]
+  pub fn with_runtime_settings_store(
+    mut self,
+    store: Arc<dyn octacity_server_store::FactoryRuntimeSettingsStore>,
+  ) -> Self {
+    self.runtime_settings = Some(store);
     self
   }
 
@@ -561,6 +573,13 @@ impl<
       .as_ref()
       .zip(review.as_ref())
       .map(|(policy, invocation)| crate::FactoryCodexReviewCompilation { policy, invocation });
+    let mcp_configurations = crate::factory_codex_mcp::configurations(
+      &profile.mcp_configurations,
+      role.as_ref(),
+      self.runtime_settings.as_deref(),
+    )
+    .await
+    .map_err(|_| Unavailable)?;
     let compiled = compile_codex_flow_task_with_options(
       intent,
       admitted,
@@ -569,7 +588,7 @@ impl<
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
-        mcp_configurations: Some(&profile.mcp_configurations),
+        mcp_configurations: Some(&mcp_configurations),
         role: role.as_ref(),
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),

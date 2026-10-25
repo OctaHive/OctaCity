@@ -47,6 +47,15 @@ pub trait FactoryConfigurationStore: Send + Sync {
     project_id: ProjectId,
   ) -> Result<FactoryConfigurationAvailability, StoreError>;
 
+  /// Independent installed authority for Runtime administration, before Project settings narrow choices.
+  /// Adapters without configurable Runtime settings preserve their existing inventory contract.
+  async fn factory_configuration_installation(
+    &self,
+    project_id: ProjectId,
+  ) -> Result<FactoryConfigurationAvailability, StoreError> {
+    self.factory_configuration_availability(project_id).await
+  }
+
   /// Refreshes one installed plugin's advisory catalog, without publishing a definition.
   async fn refresh_factory_role_models(
     &self,

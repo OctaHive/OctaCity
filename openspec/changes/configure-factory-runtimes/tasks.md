@@ -5,7 +5,7 @@
 
 ## 2. Shared consumption and REST
 
-- [ ] 2.1 Through TDD, feed configured choices into the existing capability source and profile qualification, and resolve exact retained MCP content in the ordinary compiler/materializer; verify configured selection, explicit environment mapping, current integration revocation and recovery without latest-default substitution while preserving independent execution ceilings.
+- [x] 2.1 Through TDD, feed configured choices into the existing capability source and profile qualification, and resolve exact retained MCP content in the ordinary compiler/materializer; verify configured selection, explicit environment mapping, current integration revocation and recovery without latest-default substitution while preserving independent execution ceilings.
 - [ ] 2.2 Add authorized Runtime settings read/validate/publication and bounded setup-choice REST contracts with OpenAPI/generated client integration; verify one HTTP journey for read, reviewed save, lost-response replay and stale/forbidden rejection using existing contract/handler fixtures, with no remote/model I/O.
 
 ## 3. AI settings and profile selection

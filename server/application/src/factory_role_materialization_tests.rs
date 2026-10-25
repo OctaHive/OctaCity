@@ -1779,3 +1779,131 @@ fn role_compiler_preserves_plugin_declared_thinking_without_a_second_value_enum(
     "future-effort"
   );
 }
+
+#[test]
+fn configured_mcp_materialization_recovers_exact_transport_after_runtime_replacement() {
+  crate::factory_admission_tests::run_ready(async {
+    use octacity_server_store::{
+      FactoryRuntimeSettingsIntent, FactoryRuntimeSettingsStore, PublishFactoryRuntimeSettings,
+      testing::management_mutation,
+    };
+    let work = fixtures::work();
+    let (_, _, template, _, _) =
+      fixture_for_work_mode(work.clone(), |_| {}, BTreeMap::new(), factory_role_task_digest, true);
+    let settings_intent = FactoryRuntimeSettingsIntent {
+      project_id: work.subject().project_id(),
+      runtime: key("codex-runtime"),
+      expected_version: None,
+      definition: FactoryRuntimeSettingsDefinition {
+        toolchain: template.toolchain,
+        mcp_servers: [(
+          key("reader"),
+          FactoryRuntimeMcpEntry {
+            server: FactoryMcpServer::Stdio {
+              command: "/usr/bin/true".into(),
+              args: vec![],
+              env_vars: vec!["LANGUAGE".into()],
+              enabled_tools: Some(vec!["read".into()]),
+            },
+            integration: None,
+          },
+        )]
+        .into(),
+        integrations: Default::default(),
+        permissions: template.project_permissions,
+      },
+    };
+    let pin = settings_intent
+      .settings()
+      .unwrap()
+      .mcp_configuration(&key("reader"))
+      .unwrap()
+      .unwrap()
+      .reference()
+      .clone();
+    let (intent, admitted, installed, package, bytes) = fixture_for_work_mode(
+      work,
+      |profile| {
+        profile.execution.mcp_servers.insert(
+          key("reader"),
+          FactoryRoleMcpBinding {
+            configuration: pin,
+            integration: None,
+          },
+        );
+      },
+      BTreeMap::new(),
+      factory_role_task_digest,
+      true,
+    );
+    let store = publish_package_roles(&package).await;
+    let saved = store
+      .publish_factory_runtime_settings(management_mutation(PublishFactoryRuntimeSettings {
+        intent: settings_intent.clone(),
+        idempotency_key: "first-mcp".parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(1).unwrap(),
+      }))
+      .await
+      .unwrap();
+    let source = Arc::new(FactoryStoredCodexRoleInvocationSource::new(
+      store.clone(),
+      Arc::new(crate::factory_skill_import_tests::Bytes::default()),
+      Arc::new(ContextBytes(bytes.clone())),
+      vec![installed.clone()],
+    ));
+    let (materializer, inputs) = materializer_fixture(&intent, &installed, bytes.clone());
+    let materializer = materializer
+      .with_role_invocation_source(source)
+      .with_runtime_settings_store(store.clone());
+    let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
+    let at = Timestamp::from_unix_millis(41).unwrap();
+    let first = materializer
+      .materialize(&intent, &admitted, owner.clone(), at)
+      .await
+      .expect("configured retained MCP must compile without an installation-file copy");
+    let first_inputs = first.jobs[0]
+      .job_spec_template
+      .managed_intent()
+      .unwrap()
+      .protected_inputs()
+      .inputs
+      .clone();
+    let mut replacement = settings_intent;
+    replacement.expected_version = Some(saved.settings.version());
+    replacement
+      .definition
+      .mcp_servers
+      .get_mut(&key("reader"))
+      .unwrap()
+      .server = FactoryMcpServer::Stdio {
+      command: "/usr/bin/false".into(),
+      args: vec![],
+      env_vars: vec![],
+      enabled_tools: None,
+    };
+    store
+      .publish_factory_runtime_settings(management_mutation(PublishFactoryRuntimeSettings {
+        intent: replacement,
+        idempotency_key: "later-mcp".parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(2).unwrap(),
+      }))
+      .await
+      .unwrap();
+    let restarted = materializer_with_inputs(&intent, &installed, bytes, inputs)
+      .with_role_invocation_source(Arc::new(UnavailableRoleSource(std::sync::atomic::AtomicUsize::new(0))))
+      .with_runtime_settings_store(store);
+    let recovered = restarted
+      .materialize(&intent, &admitted, owner, at)
+      .await
+      .expect("recovery must resolve the original MCP pin without reading current profile defaults");
+    assert_eq!(
+      recovered.jobs[0]
+        .job_spec_template
+        .managed_intent()
+        .unwrap()
+        .protected_inputs()
+        .inputs,
+      first_inputs
+    );
+  });
+}

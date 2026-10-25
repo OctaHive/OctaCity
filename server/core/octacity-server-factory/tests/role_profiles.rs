@@ -809,6 +809,7 @@ fn installed_role_profile_capabilities_use_existing_catalog_and_parameter_schema
   let project = ProjectId::generate();
   let definition = profile(project, "medium");
   let capability = FactoryRoleProfileCapability {
+    mcp_required_environment: Default::default(),
     model_catalog: None,
     ceiling: definition.clone(),
     parameters: role_parameter_schema(),
@@ -856,6 +857,7 @@ fn installed_thinking_metadata_preserves_unannotated_profiles() {
   let mut annotated = definition;
   annotated.thinking_parameter = Some(FactoryKey::new("reasoning_effort").unwrap());
   let capability = FactoryRoleProfileCapability {
+    mcp_required_environment: Default::default(),
     model_catalog: None,
     ceiling: annotated.clone(),
     parameters: role_parameter_schema(),
@@ -874,6 +876,7 @@ fn installed_profile_validation_rejects_unsupported_execution_and_authority_with
   let definition = profile(project, "medium");
   let empty_environment = Default::default();
   let capability = FactoryRoleProfileCapability {
+    mcp_required_environment: Default::default(),
     model_catalog: None,
     ceiling: definition.clone(),
     parameters: role_parameter_schema(),
@@ -945,6 +948,7 @@ fn installed_profile_declarations_share_definition_bounds() {
   let definition = profile(project, "medium");
   let alias = FactoryKey::new("runtime").unwrap();
   let capability = FactoryRoleProfileCapability {
+    mcp_required_environment: Default::default(),
     model_catalog: None,
     ceiling: definition.clone(),
     parameters: role_parameter_schema(),
@@ -1783,6 +1787,7 @@ fn installed_runtime_catalog_allows_manual_models_without_changing_execution_aut
   let candidate =
     FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &agent, definition.clone()).unwrap();
   let cap = FactoryRoleProfileCapability {
+    mcp_required_environment: Default::default(),
     model_catalog: Some(FactoryRoleModelCatalog {
       available: true,
       manual_model: true,
@@ -1823,6 +1828,7 @@ fn legacy_profiles_use_the_effective_models_parameter_contract_without_rewriting
     FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &agent, definition.clone()).unwrap();
   let original = serde_json::to_vec(&candidate).unwrap();
   let mut capability = FactoryRoleProfileCapability {
+    mcp_required_environment: Default::default(),
     model_catalog: Some(FactoryRoleModelCatalog {
       available: true,
       manual_model: false,

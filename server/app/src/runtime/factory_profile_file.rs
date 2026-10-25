@@ -690,6 +690,7 @@ impl FactoryRuntimeProfileCatalog {
             .with_role_profile_capability(
               alias,
               FactoryRoleProfileCapability {
+                mcp_required_environment: Default::default(),
                 model_catalog: None,
                 ceiling: declaration.ceiling,
                 parameters: declaration.parameters,

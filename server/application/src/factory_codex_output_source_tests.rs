@@ -352,6 +352,15 @@ async fn prepared_role_source(
   observation_override: Option<serde_json::Value>,
   selected_role: bool,
 ) -> SourceFixture {
+  prepared_role_source_with_mcp(capture, capture_paths, observation_override, selected_role, None).await
+}
+async fn prepared_role_source_with_mcp(
+  capture: Option<FactoryCodexCapturePolicy>,
+  capture_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
+  observation_override: Option<serde_json::Value>,
+  selected_role: bool,
+  mcp: Option<FactoryMcpServer>,
+) -> SourceFixture {
   let capture_schema = capture
     .as_ref()
     .and_then(|capture| capture.instruction().observation.as_ref())
@@ -488,6 +497,31 @@ async fn prepared_role_source(
   binding.task_digest = profile.task_digest();
   let (_, admitted, schema, input, _) =
     fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work.clone(), binding, None, grants.clone());
+  let runtime_settings = mcp.map(|server| {
+    FactoryRuntimeSettings::new(
+      work.subject().project_id(),
+      fixtures::key("profile.0"),
+      FactoryRuntimeSettingsVersion::INITIAL,
+      FactoryRuntimeSettingsDefinition {
+        toolchain: profile.toolchain.clone(),
+        mcp_servers: [(
+          fixtures::key("reader"),
+          FactoryRuntimeMcpEntry {
+            server,
+            integration: None,
+          },
+        )]
+        .into(),
+        integrations: Default::default(),
+        permissions: grants.clone(),
+      },
+    )
+    .unwrap()
+  });
+  let mcp_configuration = runtime_settings.as_ref().map(|settings| {
+    FactoryCodexMcpConfiguration::try_from(settings.mcp_configuration(&fixtures::key("reader")).unwrap().unwrap())
+      .unwrap()
+  });
   let role_content = selected_role.then(|| {
     let role = FactoryRole::publish(
       FactoryRoleId::generate(),
@@ -510,6 +544,15 @@ async fn prepared_role_source(
     definition.permissions = grants.clone();
     definition.budget = admitted.closure().definitions()[0].nodes()[0].budget();
     definition.execution = Default::default();
+    if let Some(configuration) = &mcp_configuration {
+      definition.execution.mcp_servers.insert(
+        fixtures::key("reader"),
+        FactoryRoleMcpBinding {
+          configuration: configuration.reference().clone(),
+          integration: None,
+        },
+      );
+    }
     definition.model_parameters.clear();
     definition.skills.clear();
     definition.context_requirements.clear();
@@ -593,11 +636,38 @@ async fn prepared_role_source(
   };
   if selected_role {
     runs.seed_project(work.subject().project_id()).unwrap();
+    let mut choices = factory_profile_selection_capabilities(&admitted);
+    if let Some(settings) = &runtime_settings {
+      choices = choices
+        .with_runtime_settings_support(
+          settings.runtime().clone(),
+          FactoryRuntimeSettingsSupport {
+            mcp_transports: settings
+              .definition()
+              .mcp_servers
+              .values()
+              .map(|entry| entry.server.transport())
+              .collect(),
+            mcp_executables: Default::default(),
+          },
+        )
+        .unwrap();
+    }
+    runs.enable_project(work.subject().project_id(), choices).unwrap();
+  }
+  if let Some(settings) = runtime_settings {
     runs
-      .enable_project(
-        work.subject().project_id(),
-        factory_profile_selection_capabilities(&admitted),
-      )
+      .publish_factory_runtime_settings(management_mutation(PublishFactoryRuntimeSettings {
+        intent: FactoryRuntimeSettingsIntent {
+          project_id: settings.project_id(),
+          runtime: settings.runtime().clone(),
+          expected_version: None,
+          definition: settings.definition().clone(),
+        },
+        idempotency_key: "output-runtime".parse().unwrap(),
+        published_at: at(1),
+      }))
+      .await
       .unwrap();
   }
   let owner =
@@ -695,6 +765,7 @@ async fn prepared_role_source(
     profile.consumer,
     &profile.usage_policy,
     FactoryCodexFlowCompilationOptions {
+      mcp_configurations: mcp_configuration.as_ref().map(std::slice::from_ref),
       role: role.as_ref(),
       context: Some(&context_map),
       capture: profile.capture.as_ref(),
@@ -1838,5 +1909,67 @@ fn selected_role_outputs_recover_the_original_package_and_verify_the_ordinary_jo
         &serde_json::json!({"count":9})
       );
     }
+  });
+}
+
+#[test]
+fn configured_mcp_outputs_verify_original_transport_after_settings_replacement() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = prepared_role_source_with_mcp(
+      None,
+      vec![],
+      None,
+      true,
+      Some(FactoryMcpServer::Http {
+        url: "https://reader.example.test/original".into(),
+        bearer_token_env_var: None,
+        enabled_tools: None,
+      }),
+    )
+    .await;
+    let old = fixture
+      .runs
+      .factory_runtime_settings(
+        fixture.intent.input().subject().project_id(),
+        &fixtures::key("profile.0"),
+        None,
+      )
+      .await
+      .unwrap()
+      .unwrap();
+    let mut definition = old.definition().clone();
+    definition.mcp_servers.clear();
+    fixture
+      .runs
+      .publish_factory_runtime_settings(management_mutation(PublishFactoryRuntimeSettings {
+        intent: FactoryRuntimeSettingsIntent {
+          project_id: old.project_id(),
+          runtime: old.runtime().clone(),
+          expected_version: Some(old.version()),
+          definition,
+        },
+        idempotency_key: "remove-output-mcp".parse().unwrap(),
+        published_at: at(1003),
+      }))
+      .await
+      .unwrap();
+    let source = fixture
+      .source(fixture.query.clone())
+      .with_runtime_settings_store(fixture.runs.clone());
+    let FactoryNodeBuildOutputObservation::Verified(outputs) = source
+      .published_outputs(
+        fixture.query.build.build.id,
+        fixture.query.attempt.id,
+        fixture.intent.budget().max_output_bytes(),
+      )
+      .await
+      .unwrap()
+    else {
+      panic!("output verification must resolve the retained transport rather than current defaults");
+    };
+    assert_eq!(
+      outputs.documents[0].data.as_ref().unwrap().payload().value(),
+      &serde_json::json!({"count":9})
+    );
   });
 }

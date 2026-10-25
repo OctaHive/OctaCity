@@ -100,7 +100,7 @@ impl<
       return Ok(prior);
     }
     command.intent.settings()?;
-    let choices = crate::factory_configuration_choices::visible_factory_choices(
+    let choices = crate::factory_configuration_choices::visible_installed_factory_choices(
       self.store.as_ref(),
       self.policy.as_ref(),
       context,

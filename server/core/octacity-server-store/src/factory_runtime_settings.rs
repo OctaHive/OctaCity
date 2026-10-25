@@ -3,6 +3,7 @@ use crate::*;
 use octacity_server_domain::{ProjectId, Timestamp};
 use octacity_server_factory::*;
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 /// Original administrator intent; mutable installation resolution is deliberately absent.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -76,6 +77,25 @@ pub enum FactoryRuntimeSettingsPublicationError {
 /// Backend-neutral append-only settings, reusing management audit and scoped replay.
 #[async_trait::async_trait]
 pub trait FactoryRuntimeSettingsStore: Send + Sync {
+  /// Resolves selected exact pins together, returning each matching transport once without current-head substitution.
+  async fn factory_runtime_mcp_configurations(
+    &self,
+    project: ProjectId,
+    references: &[ImmutableReference],
+  ) -> Result<BTreeMap<ImmutableReference, FactoryMcpConfiguration>, StoreError>;
+  /// Resolves only an exact retained Project transport pin; never substitutes current settings.
+  async fn factory_runtime_mcp_configuration(
+    &self,
+    project: ProjectId,
+    reference: &ImmutableReference,
+  ) -> Result<Option<FactoryMcpConfiguration>, StoreError> {
+    Ok(
+      self
+        .factory_runtime_mcp_configurations(project, std::slice::from_ref(reference))
+        .await?
+        .remove(reference),
+    )
+  }
   /// Current or exact historical settings; absence preserves installation behavior.
   async fn factory_runtime_settings(
     &self,
@@ -94,9 +114,59 @@ pub trait FactoryRuntimeSettingsStore: Send + Sync {
     request: ManagementMutation<PublishFactoryRuntimeSettings>,
   ) -> Result<FactoryRuntimeSettingsOutcome, FactoryRuntimeSettingsPublicationError>;
 }
+
+/// Shared exact selection over verified settings; adapters load each candidate document at most once per batch.
+pub fn resolve_factory_runtime_mcp_configurations<'a>(
+  references: &[ImmutableReference],
+  settings: impl IntoIterator<Item = &'a FactoryRuntimeSettings>,
+) -> Result<BTreeMap<ImmutableReference, FactoryMcpConfiguration>, StoreError> {
+  let mut configurations = BTreeMap::new();
+  for settings in settings {
+    for reference in references
+      .iter()
+      .filter(|reference| factory_runtime_mcp_revision(reference) == Some(settings.version()))
+    {
+      if configurations.contains_key(reference) {
+        continue;
+      }
+      if let Some(configuration) = settings
+        .mcp_configuration(reference.identity())
+        .map_err(|_| StoreError::Unavailable)?
+        && configuration.reference() == reference
+      {
+        configurations.insert(reference.clone(), configuration);
+      }
+    }
+  }
+  Ok(configurations)
+}
+
+/// Settings revision encoded by the shared transport pin. Installed references may use other schemes.
+pub fn factory_runtime_mcp_revision(reference: &ImmutableReference) -> Option<FactoryRuntimeSettingsVersion> {
+  let value = reference.version().as_str().strip_prefix('v')?.parse::<u64>().ok()?;
+  if value > i64::MAX as u64 || reference.version().as_str() != format!("v{value}") {
+    return None;
+  }
+  FactoryRuntimeSettingsVersion::new(value).ok()
+}
 pub(crate) fn invalid_runtime_settings() -> StoreError {
   StoreError::invalid(
     StoreOperation::PublishFactoryRuntimeSettings,
     StoreInputError::InvalidFactoryRuntimeSettings,
   )
+}
+
+/// Shared pure projection, also checked under the publication owner's Project lock.
+/// Reading maps malformed retained state to unavailability; publication rejects an oversized candidate.
+pub fn configured_factory_catalog(
+  availability: FactoryConfigurationAvailability,
+  settings: impl IntoIterator<Item = FactoryRuntimeSettings>,
+) -> Result<FactoryConfigurationAvailability, FactoryError> {
+  let FactoryConfigurationAvailability::Available(mut choices) = availability else {
+    return Ok(availability);
+  };
+  for value in settings {
+    choices = choices.with_runtime_settings(&value)?;
+  }
+  Ok(FactoryConfigurationAvailability::Available(choices))
 }

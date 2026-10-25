@@ -17,6 +17,14 @@ impl FactoryConfigurationStore for PostgresStore {
     &self,
     project_id: ProjectId,
   ) -> Result<FactoryConfigurationAvailability, StoreError> {
+    let installed = self.factory_configuration_installation(project_id).await?;
+    crate::factory_runtime_settings::configured_availability(self.pool(), project_id, installed).await
+  }
+
+  async fn factory_configuration_installation(
+    &self,
+    project_id: ProjectId,
+  ) -> Result<FactoryConfigurationAvailability, StoreError> {
     crate::discovery::require_project(&self.pool, project_id).await?;
     let mut availability = self.factory_capabilities().availability(project_id).await?;
     if let FactoryConfigurationAvailability::Available(choices) = &mut availability {

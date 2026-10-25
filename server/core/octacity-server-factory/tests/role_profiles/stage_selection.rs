@@ -377,6 +377,7 @@ fn choices(flow: &FactoryFlowConfiguration, omit: Option<&str>) -> FactoryConfig
       .with_role_profile_capability(
         name.clone(),
         FactoryRoleProfileCapability {
+          mcp_required_environment: Default::default(),
           model_catalog: None,
           ceiling: candidate.profile.definition().clone(),
           parameters: FlowDataSchema::new(

@@ -10,8 +10,13 @@ pub async fn verify_factory_runtime_settings_publication<
 >(
   store: &S,
   evidence: &P,
-  intent: FactoryRuntimeSettingsIntent,
+  mut intent: FactoryRuntimeSettingsIntent,
 ) {
+  let entry = intent.definition.mcp_servers.values().next().unwrap().clone();
+  intent
+    .definition
+    .mcp_servers
+    .insert(octacity_server_factory::FactoryKey::new("batch-reader").unwrap(), entry);
   let time = |value| octacity_server_domain::Timestamp::from_unix_millis(value).unwrap();
   assert!(
     store
@@ -54,6 +59,58 @@ pub async fn verify_factory_runtime_settings_publication<
     .await
     .unwrap();
   assert_eq!(second.settings.version().get(), 2);
+  let originals = first
+    .settings
+    .definition()
+    .mcp_servers
+    .keys()
+    .map(|alias| first.settings.mcp_configuration(alias).unwrap().unwrap())
+    .collect::<Vec<_>>();
+  let mut requested = originals
+    .iter()
+    .map(|config| config.reference().clone())
+    .collect::<Vec<_>>();
+  requested.push(requested[0].clone()); // Repeated selections do not duplicate retained content.
+  requested.push(octacity_server_factory::ImmutableReference::new(
+    requested[0].identity().clone(),
+    requested[0].version().clone(),
+    octacity_server_factory::FactoryDigest::from_bytes([238; 32]),
+  ));
+  let restored = store
+    .factory_runtime_mcp_configurations(intent.project_id, &requested)
+    .await
+    .unwrap();
+  assert_eq!(
+    restored.len(),
+    originals.len(),
+    "only exact requested pins are restored together after replacement"
+  );
+  for original in &originals {
+    assert_eq!(restored.get(original.reference()), Some(original));
+  }
+  for alias in first.settings.definition().mcp_servers.keys() {
+    let original = first.settings.mcp_configuration(alias).unwrap().unwrap();
+    assert_eq!(
+      store
+        .factory_runtime_mcp_configuration(intent.project_id, original.reference())
+        .await
+        .unwrap(),
+      Some(original.clone()),
+      "exact transport remains resolvable after removal from current settings",
+    );
+    let substituted = octacity_server_factory::ImmutableReference::new(
+      original.reference().identity().clone(),
+      original.reference().version().clone(),
+      octacity_server_factory::FactoryDigest::from_bytes([238; 32]),
+    );
+    assert!(
+      store
+        .factory_runtime_mcp_configuration(intent.project_id, &substituted)
+        .await
+        .unwrap()
+        .is_none()
+    );
+  }
   replacement.idempotency_key = IdempotencyKey::new("runtime-stale").unwrap();
   assert!(matches!(
     store

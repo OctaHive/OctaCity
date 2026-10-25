@@ -153,6 +153,35 @@ transport content. An interrupted transaction leaves no settings or replay reser
 a replacement retry through a new connection returns the original historical result,
 even after later settings changes.
 
+The common capability read overlays reviewed settings before authorization filtering.
+Profile discovery, details, validation and admission therefore use the same configured
+MCP/integration pins and narrowed permission choices. Runtime administration reads the
+independent installation ceiling, allowing a later reviewed update to restore choices
+within that ceiling. Publication checks the complete derived catalog under the same
+Project lock, so competing Runtime saves cannot overflow its shared choice limit.
+
+Changed toolchain pins require a new review before that Runtime is selectable again.
+Withdrawing transport support or the authority required by its reviewed settings removes
+configured MCP choices from new selection; ordinary profile reads also filter current
+integration access. These checks do not delete the original settings or change retained
+profiles. Dedicated authorized settings reads continue to expose their historical content.
+
+Changing an integration alias removes installed MCP choices pinned to its previous exact
+binding; it never rebinds those transports implicitly. Configured replacements retain their
+own reviewed pins. Shared profile qualification requires every environment name declared
+by a selected configured stdio transport or HTTP bearer mapping. Unselected transports add
+no environment requirements, and missing mappings are rejected before execution rather
+than inherited from the host.
+
+The native materializer and output verifier share one batched exact MCP lookup alongside installed
+transports. PostgreSQL reads candidate settings once per batch, filtered by the selected
+revisions and server names. The lookup checks Project, revision and complete immutable reference, including
+the content digest; it never substitutes the current settings. Replacing or removing an
+entry leaves prior transport content available for retained invocation recovery. Only
+profile-selected servers and explicitly mapped environment names reach the plugin;
+dispatch still rechecks managed integration access and independent execution grants.
+Static profiles and manual Factory intake keep their existing path when no settings apply.
+
 ### Reproducible AI-agent execution packages
 
 `FactoryRoleExecutionPackage` assembles an explicit core snapshot from the existing

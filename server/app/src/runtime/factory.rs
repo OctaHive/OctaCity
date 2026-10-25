@@ -396,6 +396,7 @@ impl FactoryRuntimeResources {
     )
     .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
     .with_role_invocation_store(self.runs.clone())
+    .with_runtime_settings_store(self.runs.clone())
     .with_review_invocation_source(review_invocations.clone());
     let role_invocations = Arc::new(FactoryStoredCodexRoleInvocationSource::new(
       self.runs.clone(),
@@ -406,6 +407,7 @@ impl FactoryRuntimeResources {
     let mut compiler = FactoryCodexBuildMaterializer::new(contexts, publisher, profiles.clone(), reader, clock.clone())
       .map_err(|_| FactoryRuntimeInstallationError::Invalid)?
       .with_review_invocation_source(review_invocations.clone())
+      .with_runtime_settings_store(self.runs.clone())
       .with_role_invocation_source(role_invocations);
     if let Some(candidate_contexts) = candidate_contexts {
       outputs = outputs.with_retained_candidate_context_source(candidate_contexts.clone());

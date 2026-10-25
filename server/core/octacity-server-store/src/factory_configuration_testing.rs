@@ -34,7 +34,7 @@ use crate::{CurrentFactoryConfigurationPage, CurrentFactoryConfigurationSummary}
 #[derive(Default)]
 pub struct InMemoryFactoryConfigurationStore {
   state: Mutex<FactoryConfigurationMemoryState>,
-  capabilities: Option<std::sync::Arc<dyn crate::FactoryCapabilitySource>>,
+  pub(super) capabilities: Option<std::sync::Arc<dyn crate::FactoryCapabilitySource>>,
 }
 
 impl InMemoryFactoryConfigurationStore {
@@ -190,7 +190,7 @@ pub(super) struct FactoryConfigurationMemoryState {
   pub(super) integrations: crate::integration_connection_testing::IntegrationMemoryState,
   pub(super) sources: crate::factory_source_testing::SourceMemoryState,
   pub(super) projects: BTreeSet<ProjectId>,
-  choices: BTreeMap<ProjectId, FactoryConfigurationChoices>,
+  pub(super) choices: BTreeMap<ProjectId, FactoryConfigurationChoices>,
   current_versions: BTreeMap<FactoryConfigurationId, FactoryConfigurationVersion>,
   pub(super) versions: BTreeMap<(FactoryConfigurationId, FactoryConfigurationVersion), PublishedFactoryConfiguration>,
   pub(super) repositories: BTreeMap<
@@ -265,6 +265,20 @@ impl FactoryConfigurationStore for InMemoryFactoryConfigurationStore {
   }
 
   async fn factory_configuration_availability(
+    &self,
+    project_id: ProjectId,
+  ) -> Result<FactoryConfigurationAvailability, StoreError> {
+    let installed = self.factory_configuration_installation(project_id).await?;
+    let settings = self
+      .lock()?
+      .runtime_settings
+      .current(project_id)
+      .cloned()
+      .collect::<Vec<_>>();
+    crate::configured_factory_catalog(installed, settings).map_err(|_| StoreError::Unavailable)
+  }
+
+  async fn factory_configuration_installation(
     &self,
     project_id: ProjectId,
   ) -> Result<FactoryConfigurationAvailability, StoreError> {

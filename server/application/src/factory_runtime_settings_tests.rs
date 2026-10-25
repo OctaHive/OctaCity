@@ -81,7 +81,7 @@ fn runtime_settings_publish_and_read_through_project_authorization_without_chang
     let commands = AuthorizedCommandHandler::new(policy.clone(), handlers.clone());
     let queries = AuthorizedQueryHandler::new(policy, handlers);
     let before = store
-      .factory_configuration_availability(intent.project_id)
+      .factory_configuration_installation(intent.project_id)
       .await
       .unwrap();
     let command = PublishFactoryRuntimeSettingsCommand {
@@ -114,7 +114,7 @@ fn runtime_settings_publish_and_read_through_project_authorization_without_chang
     );
     assert_eq!(
       store
-        .factory_configuration_availability(intent.project_id)
+        .factory_configuration_installation(intent.project_id)
         .await
         .unwrap(),
       before
@@ -518,6 +518,45 @@ fn runtime_settings_reuse_managed_integration_grants_and_exact_installed_stdio_c
         .is_err()
     );
     assert_eq!(store.mutation_evidence_counts().await, before);
+    let queries = AuthorizedQueryHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
+    );
+    let query = GetFactoryRoleProfileCapabilityQuery {
+      project_id: binding.project_id,
+      capability: key("dependency-1"),
+    };
+    let selectable = queries.handle_query(&context(), query.clone()).await.unwrap();
+    assert_eq!(selectable.definition.execution.mcp_servers.len(), 2);
+    store
+      .publish_integration_project_access(management_mutation(PublishIntegrationProjectAccess {
+        intent: IntegrationProjectAccessIntent {
+          connection_id: binding.connection_id,
+          project_id: binding.project_id,
+          connection_version: IntegrationVersion::INITIAL,
+          expected_current_version: Some(IntegrationVersion::INITIAL),
+          resources: vec![],
+        },
+        idempotency_key: "revoke-runtime-integration".parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(3).unwrap(),
+      }))
+      .await
+      .unwrap();
+    let available = queries.handle_query(&context(), query).await.unwrap();
+    assert!(available.definition.execution.integrations.is_empty());
+    assert!(!available.definition.execution.mcp_servers.contains_key(&key("review")));
+    assert!(available.definition.execution.mcp_servers.contains_key(&key("local")));
+    assert_eq!(
+      store
+        .factory_runtime_settings(
+          binding.project_id,
+          original.settings.runtime(),
+          Some(original.settings.version())
+        )
+        .await
+        .unwrap(),
+      Some(original.settings)
+    );
   });
 }
 
@@ -576,5 +615,414 @@ fn runtime_settings_http_hosts_use_canonical_network_permission_identities() {
         "explicitly allowed canonical host {host} was rejected"
       );
     }
+  });
+}
+
+#[test]
+fn runtime_integration_replacement_does_not_rebind_installed_mcp() {
+  run_ready(async {
+    let (store, mut intent) = fixture();
+    let FactoryConfigurationAvailability::Available(installed) = store
+      .factory_configuration_installation(intent.project_id)
+      .await
+      .unwrap()
+    else {
+      panic!("installed Runtime");
+    };
+    let mut cap = installed.role_profile_capabilities()[&intent.runtime].clone();
+    let original = octacity_server_store::testing::role_profile_contract_definition(intent.project_id)
+      .execution
+      .integrations
+      .remove(&key("tracker"))
+      .unwrap();
+    cap
+      .ceiling
+      .execution
+      .integrations
+      .insert(key("tracker"), original.clone());
+    for name in ["bound-reader", "independent-reader"] {
+      cap.ceiling.execution.mcp_servers.insert(
+        key(name),
+        FactoryRoleMcpBinding {
+          configuration: intent.definition.toolchain.plugin.clone(),
+          integration: (name == "bound-reader").then(|| key("tracker")),
+        },
+      );
+    }
+    let mut replacement = original.clone();
+    replacement.access_version = octacity_server_domain::IntegrationVersion::new(2).unwrap();
+    intent
+      .definition
+      .integrations
+      .insert(key("tracker"), replacement.clone());
+    intent
+      .definition
+      .mcp_servers
+      .get_mut(&key("review"))
+      .unwrap()
+      .integration = Some(key("tracker"));
+    let installed = installed
+      .with_role_profile_capability(intent.runtime.clone(), cap)
+      .unwrap();
+    let settings = intent.settings().unwrap();
+    let choices = installed.clone().with_runtime_settings(&settings).unwrap();
+    let execution = &choices.role_profile_capabilities()[&intent.runtime].ceiling.execution;
+    assert_eq!(execution.integrations[&key("tracker")], replacement);
+    assert!(
+      !execution.mcp_servers.contains_key(&key("bound-reader")),
+      "an installed transport cannot silently adopt a different exact integration"
+    );
+    assert!(execution.mcp_servers.contains_key(&key("independent-reader")));
+    assert_eq!(
+      execution.mcp_servers[&key("review")].configuration,
+      *settings.mcp_configuration(&key("review")).unwrap().unwrap().reference()
+    );
+    // The retained installation still carries its original dependency.
+    assert_eq!(
+      installed.role_profile_capabilities()[&intent.runtime]
+        .ceiling
+        .execution
+        .integrations[&key("tracker")],
+      original
+    );
+  });
+}
+
+#[test]
+fn configured_runtime_choices_are_shared_by_profile_details_and_validation() {
+  run_ready(async {
+    let (store, mut intent) = fixture();
+    let FactoryConfigurationAvailability::Available(installed) = store
+      .factory_configuration_installation(intent.project_id)
+      .await
+      .unwrap()
+    else {
+      panic!("installed Runtime");
+    };
+    let executable = intent.definition.toolchain.executable.clone();
+    let mut cap = installed.role_profile_capabilities()[&intent.runtime].clone();
+    let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      network_hosts: vec![NetworkHost::new("mcp.example").unwrap()],
+      executables: vec![executable.clone()],
+      commands: vec![CommandPermission::try_new(executable.clone(), vec![]).unwrap()],
+      ..Default::default()
+    })
+    .unwrap();
+    cap.ceiling.permissions = permissions.clone();
+    cap.local_permissions = LocalPermissionCeiling::fully_enforced(permissions.clone());
+    store
+      .enable_project(
+        intent.project_id,
+        installed
+          .with_role_profile_capability(intent.runtime.clone(), cap)
+          .unwrap()
+          .with_runtime_settings_support(
+            intent.runtime.clone(),
+            FactoryRuntimeSettingsSupport {
+              mcp_transports: [FactoryMcpTransport::Http, FactoryMcpTransport::Stdio].into(),
+              mcp_executables: [("/runtime/mcp-reader".into(), executable)].into(),
+            },
+          )
+          .unwrap(),
+      )
+      .unwrap();
+    intent.definition.permissions = permissions;
+    intent.definition.mcp_servers.insert(
+      key("local"),
+      FactoryRuntimeMcpEntry {
+        server: FactoryMcpServer::Stdio {
+          command: "/runtime/mcp-reader".into(),
+          args: vec![],
+          env_vars: vec!["LANGUAGE".into()],
+          enabled_tools: None,
+        },
+        integration: None,
+      },
+    );
+    intent.definition.mcp_servers.insert(
+      key("authenticated"),
+      FactoryRuntimeMcpEntry {
+        server: FactoryMcpServer::Http {
+          url: "https://mcp.example/authenticated".into(),
+          bearer_token_env_var: Some("MODEL_AUTH".into()),
+          enabled_tools: None,
+        },
+        integration: None,
+      },
+    );
+    let handlers = Arc::new(FactoryRoleProfileHandlers::new(store.clone()));
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let commands = AuthorizedCommandHandler::new(policy.clone(), handlers.clone());
+    let queries = AuthorizedQueryHandler::new(policy, handlers);
+    let saved = commands
+      .handle_command(
+        &context(),
+        PublishFactoryRuntimeSettingsCommand {
+          intent: intent.clone(),
+          idempotency_key: IdempotencyKey::new("profile-runtime-choices").unwrap(),
+          published_at: Timestamp::from_unix_millis(1).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    let details = queries
+      .handle_query(
+        &context(),
+        GetFactoryRoleProfileCapabilityQuery {
+          project_id: intent.project_id,
+          capability: intent.runtime.clone(),
+        },
+      )
+      .await
+      .unwrap();
+    let selected = details.definition.execution.mcp_servers.get(&key("review"));
+    assert!(
+      selected.is_some(),
+      "published Runtime MCP must be selectable in the ordinary profile catalog"
+    );
+    assert_eq!(
+      selected.unwrap().configuration,
+      *saved
+        .settings
+        .mcp_configuration(&key("review"))
+        .unwrap()
+        .unwrap()
+        .reference()
+    );
+    assert_eq!(details.definition.permissions, intent.definition.permissions);
+    let page = queries
+      .handle_query(
+        &context(),
+        ListFactoryRoleProfileCapabilitiesQuery {
+          page: CurrentDefinitionPageInput::try_new(intent.project_id, None, 10).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(page.total, 1);
+    assert_eq!(page.items[0].mcp_servers, details.definition.execution.mcp_servers);
+    let mut role = octacity_server_store::testing::role_profile_contract_intent(intent.project_id);
+    role.profiles.clear();
+    let published = commands
+      .handle_command(
+        &context(),
+        PublishFactoryRoleProfilesCommand {
+          intent: role,
+          idempotency_key: "configured-profile-role".parse().unwrap(),
+          published_at: Timestamp::from_unix_millis(2).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    let candidate = ValidateFactoryRoleProfileQuery {
+      project_id: intent.project_id,
+      id: FactoryRoleProfileId::generate(),
+      role: published.role.unwrap().reference().clone(),
+      capability: intent.runtime,
+      definition: details.definition.clone(),
+    };
+    let validation = queries.handle_query(&context(), candidate.clone()).await.unwrap();
+    assert_eq!(validation.incompatibility, None);
+    assert_eq!(validation.profile.unwrap().definition(), &details.definition);
+    for required in ["LANGUAGE", "MODEL_AUTH"] {
+      let mut incomplete = candidate.clone();
+      incomplete.definition.execution.environment.remove(required);
+      let rejected = queries.handle_query(&context(), incomplete.clone()).await.unwrap();
+      assert_eq!(
+        rejected.incompatibility,
+        Some(FactoryRoleProfileIncompatibility::Environment),
+        "selected MCP requires explicit mapping of {required}"
+      );
+      assert!(rejected.profile.is_none());
+      // An unselected transport must not require or inherit its environment mapping.
+      incomplete
+        .definition
+        .execution
+        .mcp_servers
+        .remove(&key(if required == "LANGUAGE" {
+          "local"
+        } else {
+          "authenticated"
+        }));
+      assert_eq!(
+        queries
+          .handle_query(&context(), incomplete)
+          .await
+          .unwrap()
+          .incompatibility,
+        None
+      );
+    }
+    let foreign = ProjectId::generate();
+    store.seed_project(foreign).unwrap();
+    assert!(
+      store
+        .factory_runtime_mcp_configuration(foreign, &selected.unwrap().configuration)
+        .await
+        .unwrap()
+        .is_none()
+    );
+  });
+}
+
+#[test]
+fn runtime_administration_can_restore_choices_within_the_independent_installed_ceiling() {
+  run_ready(async {
+    let (store, intent) = fixture();
+    let handlers = Arc::new(FactoryRoleProfileHandlers::new(store.clone()));
+    let commands = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers);
+    let mut narrowed = intent.clone();
+    narrowed.definition.mcp_servers.clear();
+    narrowed.definition.permissions = FactoryPermissionSet::deny_all();
+    let first = commands
+      .handle_command(
+        &context(),
+        PublishFactoryRuntimeSettingsCommand {
+          intent: narrowed,
+          idempotency_key: IdempotencyKey::new("narrow-runtime").unwrap(),
+          published_at: Timestamp::from_unix_millis(1).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    let mut restored = intent;
+    restored.expected_version = Some(first.settings.version());
+    let second = commands
+      .handle_command(
+        &context(),
+        PublishFactoryRuntimeSettingsCommand {
+          intent: restored.clone(),
+          idempotency_key: IdempotencyKey::new("restore-runtime").unwrap(),
+          published_at: Timestamp::from_unix_millis(2).unwrap(),
+        },
+      )
+      .await
+      .expect("Project settings must not overwrite the independent installed administration ceiling");
+    assert_eq!(second.settings.definition(), &restored.definition);
+    assert_eq!(second.settings.version().get(), 2);
+  });
+}
+
+#[test]
+fn configured_mcp_is_not_selectable_after_installation_withdraws_transport_support() {
+  run_ready(async {
+    let (store, intent) = fixture();
+    let FactoryConfigurationAvailability::Available(installed) = store
+      .factory_configuration_installation(intent.project_id)
+      .await
+      .unwrap()
+    else {
+      panic!("installed Runtime");
+    };
+    let handlers = Arc::new(FactoryRoleProfileHandlers::new(store.clone()));
+    AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers.clone())
+      .handle_command(
+        &context(),
+        PublishFactoryRuntimeSettingsCommand {
+          intent: intent.clone(),
+          idempotency_key: "supported-mcp".parse().unwrap(),
+          published_at: Timestamp::from_unix_millis(1).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    store
+      .enable_project(
+        intent.project_id,
+        installed
+          .with_runtime_settings_support(intent.runtime.clone(), FactoryRuntimeSettingsSupport::default())
+          .unwrap(),
+      )
+      .unwrap();
+    let details = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers)
+      .handle_query(
+        &context(),
+        GetFactoryRoleProfileCapabilityQuery {
+          project_id: intent.project_id,
+          capability: intent.runtime,
+        },
+      )
+      .await
+      .unwrap();
+    assert!(
+      details.definition.execution.mcp_servers.is_empty(),
+      "retained authoring content cannot override withdrawn installation support"
+    );
+  });
+}
+
+#[test]
+fn runtime_publication_rejects_choices_that_would_overflow_the_shared_catalog() {
+  run_ready(async {
+    let (store, intent) = fixture();
+    let FactoryConfigurationAvailability::Available(original) = store
+      .factory_configuration_installation(intent.project_id)
+      .await
+      .unwrap()
+    else {
+      panic!("installed Runtime");
+    };
+    let mut entries = original.entries();
+    while entries.references.len() < MAX_CONFIGURATION_CHOICES_PER_KIND {
+      let name = key(&format!("installed-{}", entries.references.len()));
+      entries.references.push(FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: name.clone(),
+        reference: ImmutableReference::new(name, key("v1"), FactoryDigest::from_bytes([44; 32])),
+      });
+    }
+    let installed = FactoryConfigurationChoices::try_new(entries)
+      .unwrap()
+      .with_role_profile_capability(
+        intent.runtime.clone(),
+        original.role_profile_capabilities()[&intent.runtime].clone(),
+      )
+      .unwrap()
+      .with_runtime_settings_support(
+        intent.runtime.clone(),
+        original.runtime_settings_support(&intent.runtime).unwrap().clone(),
+      )
+      .unwrap();
+    store.enable_project(intent.project_id, installed).unwrap();
+    let before = store.mutation_evidence_counts().await;
+    let result = AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
+    )
+    .handle_command(
+      &context(),
+      PublishFactoryRuntimeSettingsCommand {
+        intent: intent.clone(),
+        idempotency_key: "catalog-overflow".parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(1).unwrap(),
+      },
+    )
+    .await;
+    assert!(
+      result.is_err(),
+      "a valid installed catalog must not become unreadable after settings publication"
+    );
+    assert!(
+      store
+        .factory_runtime_settings(intent.project_id, &intent.runtime, None)
+        .await
+        .unwrap()
+        .is_none()
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
+    let direct = store
+      .publish_factory_runtime_settings(octacity_server_store::testing::management_mutation(
+        octacity_server_store::PublishFactoryRuntimeSettings {
+          intent,
+          idempotency_key: "atomic-catalog-bound".parse().unwrap(),
+          published_at: Timestamp::from_unix_millis(2).unwrap(),
+        },
+      ))
+      .await;
+    assert!(
+      direct.is_err(),
+      "the bound must be enforced by the atomic publication owner, including competing Runtime saves"
+    );
+    assert_eq!(store.mutation_evidence_counts().await, before);
   });
 }

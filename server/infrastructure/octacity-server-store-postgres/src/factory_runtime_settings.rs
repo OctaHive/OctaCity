@@ -5,13 +5,47 @@ use crate::{
   mutation::{MutationFacts, MutationIdentity, MutationKind, MutationStart, decode_outcome, encode_outcome},
 };
 use octacity_server_domain::{EntityKind, ProjectId, Timestamp};
-use octacity_server_factory::{FactoryKey, FactoryRuntimeSettings, FactoryRuntimeSettingsVersion};
+use octacity_server_factory::{
+  FactoryKey, FactoryMcpConfiguration, FactoryRuntimeSettings, FactoryRuntimeSettingsVersion, ImmutableReference,
+};
 use octacity_server_store::*;
 use serde_json::{Value, json};
 use sqlx::types::Json;
 
 #[async_trait::async_trait]
 impl FactoryRuntimeSettingsStore for PostgresStore {
+  async fn factory_runtime_mcp_configurations(
+    &self,
+    project: ProjectId,
+    references: &[ImmutableReference],
+  ) -> Result<std::collections::BTreeMap<ImmutableReference, FactoryMcpConfiguration>, StoreError> {
+    crate::discovery::require_project(self.pool(), project).await?;
+    let versions = references
+      .iter()
+      .filter_map(factory_runtime_mcp_revision)
+      .map(|version| version.get() as i64)
+      .collect::<std::collections::BTreeSet<_>>();
+    if versions.is_empty() {
+      return Ok(Default::default());
+    }
+    let names = references
+      .iter()
+      .map(|reference| reference.identity().as_str().to_owned())
+      .collect::<Vec<_>>();
+    let rows: Vec<(String, i64, Json<FactoryRuntimeSettings>)> =
+      sqlx::query_as("SELECT runtime, version, settings FROM factory_runtime_settings WHERE project_id=$1 AND version=ANY($2) AND settings->'definition'->'mcp_servers' ?| $3::text[]")
+        .bind(project.as_uuid())
+        .bind(versions.into_iter().collect::<Vec<_>>())
+        .bind(names)
+        .fetch_all(self.pool())
+        .await
+        .map_err(unavailable)?;
+    let settings = rows
+      .into_iter()
+      .map(|(runtime, version, Json(settings))| checked_settings(project, &runtime, version as u64, settings))
+      .collect::<Result<Vec<_>, _>>()?;
+    resolve_factory_runtime_mcp_configurations(references, &settings)
+  }
   async fn factory_runtime_settings(
     &self,
     project: ProjectId,
@@ -27,15 +61,7 @@ impl FactoryRuntimeSettingsStore for PostgresStore {
     ).bind(project.as_uuid()).bind(runtime.as_str()).bind(version.map(|v|v.get() as i64))
       .fetch_optional(self.pool()).await.map_err(unavailable)?;
     row
-      .map(|(stored_version, Json(settings))| {
-        if settings.project_id() != project
-          || settings.runtime() != runtime
-          || settings.version().get() != stored_version as u64
-        {
-          return Err(StoreError::Unavailable);
-        }
-        Ok(settings)
-      })
+      .map(|(version, Json(settings))| checked_settings(project, runtime.as_str(), version as u64, settings))
       .transpose()
   }
   async fn replay_factory_runtime_settings(
@@ -72,6 +98,7 @@ impl FactoryRuntimeSettingsStore for PostgresStore {
       MutationStart::Replay(value) => return Ok(replay(value)?),
     };
     let settings = request.intent.settings()?;
+    let installed = self.factory_capabilities().availability(settings.project_id()).await?;
     // Existing Project publication lock also covers creation before any settings row exists.
     sqlx::query_scalar::<_, uuid::Uuid>("SELECT id FROM projects WHERE id=$1 FOR UPDATE")
       .bind(settings.project_id().as_uuid())
@@ -91,6 +118,20 @@ impl FactoryRuntimeSettingsStore for PostgresStore {
     .map_err(unavailable)?;
     if current.map(|v| v as u64) != request.intent.expected_version.map(FactoryRuntimeSettingsVersion::get) {
       return Err(FactoryRuntimeSettingsPublicationError::PreconditionFailed);
+    }
+    if let FactoryConfigurationAvailability::Available(choices) = &installed {
+      let aliases: Vec<_> = choices
+        .role_profile_capabilities()
+        .keys()
+        .map(FactoryKey::as_str)
+        .collect();
+      let mut retained = current_settings(&mut *tx, settings.project_id(), aliases).await?;
+      retained.retain(|value| value.runtime() != settings.runtime());
+      retained.push(settings.clone());
+      configured_factory_catalog(installed, retained).map_err(|_| StoreError::InvalidInput {
+        operation: StoreOperation::PublishFactoryRuntimeSettings,
+        source: StoreInputError::InvalidFactoryRuntimeSettings,
+      })?;
     }
     sqlx::query("INSERT INTO factory_runtime_settings (project_id,runtime,version,settings) VALUES ($1,$2,$3,$4)")
       .bind(settings.project_id().as_uuid())
@@ -136,4 +177,51 @@ fn replay(value: Value) -> Result<FactoryRuntimeSettingsOutcome, StoreError> {
   let mut outcome: FactoryRuntimeSettingsOutcome = decode_outcome(value)?;
   outcome.disposition = MutationDisposition::Replayed;
   Ok(outcome)
+}
+
+// One bounded current-head read shared by discovery and publication under its Project lock.
+async fn current_settings<'e>(
+  executor: impl sqlx::PgExecutor<'e>,
+  project: ProjectId,
+  aliases: Vec<&str>,
+) -> Result<Vec<FactoryRuntimeSettings>, StoreError> {
+  let rows: Vec<(String, i64, Json<FactoryRuntimeSettings>)> = sqlx::query_as(
+    "SELECT DISTINCT ON (runtime) runtime,version,settings FROM factory_runtime_settings WHERE project_id=$1 AND runtime=ANY($2) ORDER BY runtime,version DESC",
+  ).bind(project.as_uuid()).bind(aliases).fetch_all(executor).await.map_err(unavailable)?;
+  rows
+    .into_iter()
+    .map(|(runtime, version, Json(settings))| checked_settings(project, &runtime, version as u64, settings))
+    .collect()
+}
+
+pub(crate) async fn configured_availability(
+  pool: &sqlx::PgPool,
+  project: ProjectId,
+  installed: FactoryConfigurationAvailability,
+) -> Result<FactoryConfigurationAvailability, StoreError> {
+  let FactoryConfigurationAvailability::Available(choices) = &installed else {
+    return Ok(installed);
+  };
+  if choices.role_profile_capabilities().is_empty() {
+    return Ok(installed);
+  }
+  let aliases = choices
+    .role_profile_capabilities()
+    .keys()
+    .map(FactoryKey::as_str)
+    .collect();
+  let settings = current_settings(pool, project, aliases).await?;
+  configured_factory_catalog(installed, settings).map_err(|_| StoreError::Unavailable)
+}
+
+fn checked_settings(
+  project: ProjectId,
+  runtime: &str,
+  version: u64,
+  settings: FactoryRuntimeSettings,
+) -> Result<FactoryRuntimeSettings, StoreError> {
+  if settings.project_id() != project || settings.runtime().as_str() != runtime || settings.version().get() != version {
+    return Err(StoreError::Unavailable);
+  }
+  Ok(settings)
 }

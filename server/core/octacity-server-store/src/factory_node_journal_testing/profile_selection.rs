@@ -125,6 +125,7 @@ pub fn factory_profile_selection_capabilities(admitted: &AdmittedFlow) -> Factor
       .with_role_profile_capability(
         key(&format!("profile.{index}")),
         FactoryRoleProfileCapability {
+          mcp_required_environment: Default::default(),
           model_catalog: None,
           ceiling: candidate.profile.definition().clone(),
           parameters: FlowDataSchema::new(

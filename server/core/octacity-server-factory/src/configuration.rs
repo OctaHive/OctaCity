@@ -333,6 +333,89 @@ impl FactoryConfigurationChoices {
     self.runtime_settings.get(alias)
   }
 
+  /// Applies reviewed Project choices without changing independently installed/local authority.
+  /// Stale toolchain pins make this Runtime unavailable until explicitly reviewed again.
+  pub fn with_runtime_settings(mut self, settings: &crate::FactoryRuntimeSettings) -> Result<Self, FactoryError> {
+    let Some(mut cap) = self.role_profiles.get(settings.runtime()).cloned() else {
+      return Ok(self);
+    };
+    if cap.ceiling.toolchain != settings.definition().toolchain {
+      self.role_profiles.remove(settings.runtime());
+      return Ok(self);
+    }
+    let mut execution = settings.execution()?;
+    let authority_preserved = crate::resolve_factory_permissions(
+      &cap.ceiling.permissions,
+      &cap.ceiling.permissions,
+      &settings.definition().permissions,
+      &cap.local_permissions,
+    )
+    .is_ok_and(|effective| effective == settings.definition().permissions);
+    execution.mcp_servers.retain(|name, _| {
+      let server = &settings.definition().mcp_servers[name].server;
+      authority_preserved
+        && self.runtime_settings.get(settings.runtime()).is_some_and(|support| {
+          support.mcp_transports.contains(&server.transport())
+            && match server {
+              crate::FactoryMcpServer::Http { .. } => true,
+              crate::FactoryMcpServer::Stdio { command, .. } => {
+                support.mcp_executables.get(command).is_some_and(|reference| {
+                  settings
+                    .definition()
+                    .permissions
+                    .executables()
+                    .any(|allowed| allowed == reference)
+                })
+              }
+            }
+        })
+    });
+    for (name, binding) in &execution.mcp_servers {
+      let required_environment = match &settings.definition().mcp_servers[name].server {
+        crate::FactoryMcpServer::Http {
+          bearer_token_env_var, ..
+        } => bearer_token_env_var.iter().cloned().collect(),
+        crate::FactoryMcpServer::Stdio { env_vars, .. } => env_vars.iter().cloned().collect(),
+      };
+      cap.mcp_required_environment.insert(name.clone(), required_environment);
+      // Stable per-Runtime choice identity, bounded even when both authoring names are long.
+      let digest = FactoryDigest::sha256(
+        "octacity.factory.runtime-mcp-choice.v1",
+        &[settings.runtime().as_str().as_bytes(), name.as_str().as_bytes()],
+      );
+      let alias = FactoryKey::new(format!("runtime-mcp-{digest}"))?;
+      self.references.insert(
+        (FactoryChoiceKind::NodeCapability, alias),
+        binding.configuration.clone(),
+      );
+    }
+    if self
+      .references
+      .keys()
+      .filter(|(kind, _)| *kind == FactoryChoiceKind::NodeCapability)
+      .count()
+      > MAX_CONFIGURATION_CHOICES_PER_KIND
+    {
+      return Err(FactoryError::CollectionLimitExceeded {
+        collection: "configuration choices",
+      });
+    }
+    // Installed transports retain their exact integration pin when a configured alias changes.
+    cap.ceiling.execution.mcp_servers.retain(|_, binding| {
+      binding.integration.as_ref().is_none_or(|alias| {
+        execution
+          .integrations
+          .get(alias)
+          .is_none_or(|replacement| cap.ceiling.execution.integrations.get(alias) == Some(replacement))
+      })
+    });
+    cap.ceiling.execution.mcp_servers.extend(execution.mcp_servers);
+    cap.ceiling.execution.integrations.extend(execution.integrations);
+    cap.ceiling.permissions = cap.ceiling.permissions.intersection(&settings.definition().permissions);
+    self.role_profiles.insert(settings.runtime().clone(), cap);
+    Ok(self)
+  }
+
   /// Attaches a trusted role-profile declaration to an already installed runtime alias.
   /// This extends the same catalog; it cannot install an executable or grant credentials.
   pub fn with_role_profile_capability(

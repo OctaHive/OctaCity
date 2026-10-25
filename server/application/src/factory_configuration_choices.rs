@@ -315,6 +315,30 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
   context: &crate::ManagementRequestContext,
   project: ProjectId,
 ) -> Result<octacity_server_factory::FactoryConfigurationChoices, ApplicationError> {
+  visible_factory_choices_from(store, policy, context, project, ChoiceSource::Configured).await
+}
+
+pub(super) async fn visible_installed_factory_choices<S: octacity_server_store::FactoryConfigurationStore>(
+  store: &S,
+  policy: &dyn crate::ManagementAuthorizationPolicy,
+  context: &crate::ManagementRequestContext,
+  project: ProjectId,
+) -> Result<octacity_server_factory::FactoryConfigurationChoices, ApplicationError> {
+  visible_factory_choices_from(store, policy, context, project, ChoiceSource::Installation).await
+}
+
+enum ChoiceSource {
+  Installation,
+  Configured,
+}
+
+async fn visible_factory_choices_from<S: octacity_server_store::FactoryConfigurationStore>(
+  store: &S,
+  policy: &dyn crate::ManagementAuthorizationPolicy,
+  context: &crate::ManagementRequestContext,
+  project: ProjectId,
+  source: ChoiceSource,
+) -> Result<octacity_server_factory::FactoryConfigurationChoices, ApplicationError> {
   let resource = crate::management_security::owned_collection_resource(
     ManagementResourceKind::FactoryChoice,
     ManagementResourceKind::Project,
@@ -332,9 +356,11 @@ pub(super) async fn visible_factory_choices<S: octacity_server_store::FactoryCon
     return octacity_server_factory::FactoryConfigurationChoices::try_new(Default::default())
       .map_err(|_| ApplicationError::invalid());
   }
-  let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
-    store.factory_configuration_availability(project).await?
-  else {
+  let availability = match source {
+    ChoiceSource::Installation => store.factory_configuration_installation(project).await?,
+    ChoiceSource::Configured => store.factory_configuration_availability(project).await?,
+  };
+  let octacity_server_store::FactoryConfigurationAvailability::Available(choices) = availability else {
     return Err(ApplicationError::capability_unavailable());
   };
   let entries = choices.entries();

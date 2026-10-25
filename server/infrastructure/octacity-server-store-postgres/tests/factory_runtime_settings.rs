@@ -234,3 +234,161 @@ async fn independent_pool(pool: &sqlx::PgPool) -> sqlx::PgPool {
     .await
     .unwrap()
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn configured_catalog_keeps_installation_separate_and_serializes_aggregate_capacity() {
+  use octacity_server_store::{
+    FactoryConfigurationAvailability, FactoryConfigurationStore, FactoryRuntimeSettingsPublicationError, StoreError,
+    testing::{MutationEvidenceProbe, management_mutation_with_request},
+  };
+  use octacity_server_store_postgres::FactoryCapabilitySource;
+  use std::sync::Arc;
+  struct Installed(FactoryConfigurationChoices);
+  #[async_trait::async_trait]
+  impl FactoryCapabilitySource for Installed {
+    async fn availability(&self, _: ProjectId) -> Result<FactoryConfigurationAvailability, StoreError> {
+      Ok(FactoryConfigurationAvailability::Available(self.0.clone()))
+    }
+  }
+  let database = TestDatabase::migrated().await;
+  let project = seed_project(&database.pool).await;
+  let mut left = fixture(project);
+  left.runtime = key("left-runtime");
+  let mut right = left.clone();
+  right.runtime = key("right-runtime");
+  let mut definition = role_profile_contract_definition(project);
+  definition.execution = Default::default();
+  definition.skills.clear();
+  definition.permissions = left.definition.permissions.clone();
+  let mut entries = FactoryConfigurationChoiceEntries {
+    references: vec![
+      FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: left.runtime.clone(),
+        reference: definition.toolchain.executable.clone(),
+      },
+      FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: right.runtime.clone(),
+        reference: definition.toolchain.executable.clone(),
+      },
+      FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: key("plugin"),
+        reference: definition.toolchain.plugin.clone(),
+      },
+      FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: key("model"),
+        reference: definition.toolchain.model.clone(),
+      },
+    ],
+    build_configurations: vec![(key("build"), definition.build_configuration.clone())],
+  };
+  while entries.references.len() < MAX_CONFIGURATION_CHOICES_PER_KIND - 1 {
+    let name = key(&format!("installed-{}", entries.references.len()));
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::NodeCapability,
+      alias: name.clone(),
+      reference: ImmutableReference::new(name, key("v1"), FactoryDigest::from_bytes([44; 32])),
+    });
+  }
+  let cap = FactoryRoleProfileCapability {
+    mcp_required_environment: Default::default(),
+    model_catalog: None,
+    public_environment: Default::default(),
+    parameters: FlowDataSchema::new(
+      key("parameters"),
+      key("v1"),
+      FlowValueSchema::Object {
+        fields: Default::default(),
+      },
+    )
+    .unwrap(),
+    local_permissions: LocalPermissionCeiling::fully_enforced(definition.permissions.clone()),
+    ceiling: definition,
+  };
+  let mut choices = FactoryConfigurationChoices::try_new(entries).unwrap();
+  for alias in [&left.runtime, &right.runtime] {
+    choices = choices
+      .with_role_profile_capability(alias.clone(), cap.clone())
+      .unwrap()
+      .with_runtime_settings_support(
+        alias.clone(),
+        FactoryRuntimeSettingsSupport {
+          mcp_transports: [FactoryMcpTransport::Http].into(),
+          mcp_executables: Default::default(),
+        },
+      )
+      .unwrap();
+  }
+  let source = Arc::new(Installed(choices.clone()));
+  let first_pool = independent_pool(&database.pool).await;
+  let second_pool = independent_pool(&database.pool).await;
+  let first = PostgresStore::with_factory_capabilities(first_pool.clone(), source.clone());
+  let second = PostgresStore::with_factory_capabilities(second_pool.clone(), source.clone());
+  let publication = |intent, name: &str| {
+    management_mutation_with_request(
+      PublishFactoryRuntimeSettings {
+        intent,
+        idempotency_key: name.parse().unwrap(),
+        published_at: Timestamp::from_unix_millis(1).unwrap(),
+      },
+      name,
+    )
+  };
+  let evidence = PostgresEvidenceProbe(database.pool.clone());
+  let before = evidence.mutation_evidence_counts().await;
+  let (a, b) = tokio::join!(
+    first.publish_factory_runtime_settings(publication(left, "left-capacity")),
+    second.publish_factory_runtime_settings(publication(right, "right-capacity"))
+  );
+  let winner = match (a, b) {
+    (Ok(value), Err(FactoryRuntimeSettingsPublicationError::Store(StoreError::InvalidInput { .. })))
+    | (Err(FactoryRuntimeSettingsPublicationError::Store(StoreError::InvalidInput { .. })), Ok(value)) => value,
+    other => panic!("one remaining catalog slot permits one publication: {other:?}"),
+  };
+  first_pool.close().await;
+  second_pool.close().await;
+  let reopened = PostgresStore::with_factory_capabilities(database.pool.clone(), source);
+  assert_eq!(
+    reopened.factory_configuration_installation(project).await.unwrap(),
+    FactoryConfigurationAvailability::Available(choices)
+  );
+  let FactoryConfigurationAvailability::Available(configured) =
+    reopened.factory_configuration_availability(project).await.unwrap()
+  else {
+    panic!("configured catalog");
+  };
+  assert_eq!(
+    configured.entries().references.len(),
+    MAX_CONFIGURATION_CHOICES_PER_KIND
+  );
+  assert_eq!(
+    configured.role_profile_capabilities()[winner.settings.runtime()]
+      .ceiling
+      .execution
+      .mcp_servers,
+    winner.settings.execution().unwrap().mcp_servers
+  );
+  let foreign = seed_project(&database.pool).await;
+  let pin = winner.settings.mcp_configuration(&key("reader")).unwrap().unwrap();
+  assert!(
+    reopened
+      .factory_runtime_mcp_configuration(foreign, pin.reference())
+      .await
+      .unwrap()
+      .is_none()
+  );
+  let after = evidence.mutation_evidence_counts().await;
+  assert_eq!(
+    (
+      after.audit - before.audit,
+      after.idempotency - before.idempotency,
+      after.outbox - before.outbox
+    ),
+    (1, 1, 1)
+  );
+  database.cleanup().await;
+}

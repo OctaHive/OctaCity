@@ -84,6 +84,7 @@ fn selected_fixture(project: ProjectId) -> Fixture {
     caps.push((
       key(name),
       FactoryRoleProfileCapability {
+        mcp_required_environment: Default::default(),
         model_catalog: None,
         ceiling: definition.clone(),
         parameters: FlowDataSchema::new(

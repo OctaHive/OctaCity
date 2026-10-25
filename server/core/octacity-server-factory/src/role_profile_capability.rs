@@ -37,6 +37,8 @@ pub struct FactoryRoleProfileCapability {
   pub parameters: FlowDataSchema,
   /// Existing closed schema for explicit public environment names and values.
   pub public_environment: std::collections::BTreeMap<String, FlowDataSchema>,
+  /// Explicit environment names required by each configured MCP; values remain in profile mappings.
+  pub mcp_required_environment: std::collections::BTreeMap<FactoryKey, std::collections::BTreeSet<String>>,
   /// Qualified backend enforcement and local grants, independent of instructional text.
   pub local_permissions: LocalPermissionCeiling,
 }
@@ -109,6 +111,15 @@ impl FactoryRoleProfileCapability {
         FactoryRoleEnvironmentValue::Secret { .. } if ceiling.execution.environment.get(name) == Some(value) => {}
         FactoryRoleEnvironmentValue::Secret { .. } => return Err(Failure::Environment),
       }
+    }
+    if definition.execution.mcp_servers.keys().any(|alias| {
+      self.mcp_required_environment.get(alias).is_some_and(|names| {
+        names
+          .iter()
+          .any(|name| !definition.execution.environment.contains_key(name))
+      })
+    }) {
+      return Err(Failure::Environment);
     }
     if definition
       .skills

@@ -7,6 +7,56 @@ use octacity_server_factory::{FactoryKey, FactoryMcpConfiguration, ImmutableRefe
 #[derive(Clone, serde::Deserialize, serde::Serialize)]
 #[serde(transparent)]
 pub struct FactoryCodexMcpConfiguration(FactoryMcpConfiguration);
+impl TryFrom<FactoryMcpConfiguration> for FactoryCodexMcpConfiguration {
+  type Error = CodexCompilationError;
+  fn try_from(value: FactoryMcpConfiguration) -> Result<Self, Self::Error> {
+    value
+      .validate()
+      .map_err(|_| CodexCompilationError::UnsupportedToolchain)?;
+    Ok(Self(value))
+  }
+}
+
+// Both preparation and retained observation reconstruct the same exact compiler document.
+pub(crate) async fn configurations(
+  installed: &[FactoryCodexMcpConfiguration],
+  role: Option<&crate::FactoryRoleInvocation>,
+  store: Option<&dyn octacity_server_store::FactoryRuntimeSettingsStore>,
+) -> Result<Vec<FactoryCodexMcpConfiguration>, crate::ApplicationError> {
+  let mut configurations = installed.to_vec();
+  if let Some(role) = role {
+    let profile = &role.package().inputs().profile;
+    let missing = profile
+      .definition()
+      .execution
+      .mcp_servers
+      .values()
+      .map(|binding| &binding.configuration)
+      .filter(|reference| !configurations.iter().any(|value| value.reference() == *reference))
+      .cloned()
+      .collect::<std::collections::BTreeSet<_>>()
+      .into_iter()
+      .collect::<Vec<_>>();
+    if !missing.is_empty() {
+      let mut restored = store
+        .ok_or_else(crate::ApplicationError::capability_unavailable)?
+        .factory_runtime_mcp_configurations(profile.reference().project_id, &missing)
+        .await?;
+      for reference in missing {
+        let configuration = restored
+          .remove(&reference)
+          .filter(|value| value.reference() == &reference)
+          .ok_or_else(crate::ApplicationError::capability_unavailable)?;
+        configurations.push(
+          configuration
+            .try_into()
+            .map_err(|_| crate::ApplicationError::invalid())?,
+        );
+      }
+    }
+  }
+  Ok(configurations)
+}
 impl FactoryCodexMcpConfiguration {
   /// Reuses common transport pinning without a provider-specific content format.
   pub fn new(

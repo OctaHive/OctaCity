@@ -22,6 +22,7 @@ pub struct FactoryCodexBuildOutputSource<R, Q, A, B> {
   candidate_context: Option<Arc<dyn FactoryRetainedCandidateContextSource>>,
   review: Option<Arc<dyn FactoryReviewInvocationSource>>,
   role: Option<Arc<dyn FactoryRoleInvocationStore>>,
+  runtime_settings: Option<Arc<dyn FactoryRuntimeSettingsStore>>,
   clock: Arc<dyn FactoryExecutionClock>,
 }
 impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> FactoryCodexBuildOutputSource<R, Q, A, B> {
@@ -48,6 +49,7 @@ impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> Facto
       candidate_context: None,
       review: None,
       role: None,
+      runtime_settings: None,
       clock,
     })
   }
@@ -57,6 +59,13 @@ impl<R, Q: BuildQueryStore, A: ArtifactRecordStore, B: ArtifactByteReader> Facto
   #[must_use]
   pub fn with_role_invocation_store(mut self, store: Arc<dyn FactoryRoleInvocationStore>) -> Self {
     self.role = Some(store);
+    self
+  }
+
+  /// Reconstructs original compiler documents from exact retained Project MCP pins.
+  #[must_use]
+  pub fn with_runtime_settings_store(mut self, store: Arc<dyn FactoryRuntimeSettingsStore>) -> Self {
+    self.runtime_settings = Some(store);
     self
   }
 
@@ -320,6 +329,13 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       .as_ref()
       .zip(review.as_ref())
       .map(|(policy, invocation)| FactoryCodexReviewCompilation { policy, invocation });
+    let mcp_configurations = crate::factory_codex_mcp::configurations(
+      &profile.mcp_configurations,
+      role.as_ref(),
+      self.runtime_settings.as_deref(),
+    )
+    .await
+    .map_err(|_| Invalid)?;
     let compiled = compile_codex_flow_task_with_options(
       intent,
       &snapshot.admitted_flow,
@@ -328,7 +344,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       profile.consumer,
       &profile.usage_policy,
       FactoryCodexFlowCompilationOptions {
-        mcp_configurations: Some(&profile.mcp_configurations),
+        mcp_configurations: Some(&mcp_configurations),
         role: role.as_ref(),
         context: selected.as_ref(),
         candidate_context: candidate.as_ref(),

@@ -12,6 +12,13 @@ pub(super) struct RuntimeSettingsMemoryState {
   mutations: BTreeMap<ManagementIdempotencyKey, (FactoryRuntimeSettingsIntent, FactoryRuntimeSettingsOutcome)>,
 }
 impl RuntimeSettingsMemoryState {
+  pub(super) fn current(&self, project: ProjectId) -> impl Iterator<Item = &FactoryRuntimeSettings> {
+    self
+      .versions
+      .iter()
+      .filter(move |((owner, _), _)| *owner == project)
+      .filter_map(|(_, versions)| versions.last_key_value().map(|(_, settings)| settings))
+  }
   fn replay(
     &self,
     key: &ManagementIdempotencyKey,
@@ -32,6 +39,27 @@ impl RuntimeSettingsMemoryState {
 }
 #[async_trait::async_trait]
 impl FactoryRuntimeSettingsStore for InMemoryFactoryConfigurationStore {
+  async fn factory_runtime_mcp_configurations(
+    &self,
+    project: ProjectId,
+    references: &[ImmutableReference],
+  ) -> Result<BTreeMap<ImmutableReference, FactoryMcpConfiguration>, StoreError> {
+    let state = self.lock()?;
+    if !state.projects.contains(&project) {
+      return Err(StoreError::NotFound {
+        entity: EntityKind::Project,
+      });
+    }
+    resolve_factory_runtime_mcp_configurations(
+      references,
+      state
+        .runtime_settings
+        .versions
+        .iter()
+        .filter(|((owner, _), _)| *owner == project)
+        .flat_map(|(_, versions)| versions.values()),
+    )
+  }
   async fn factory_runtime_settings(
     &self,
     project: ProjectId,
@@ -72,6 +100,13 @@ impl FactoryRuntimeSettingsStore for InMemoryFactoryConfigurationStore {
   ) -> Result<FactoryRuntimeSettingsOutcome, FactoryRuntimeSettingsPublicationError> {
     let (request, audit) = request.into_parts();
     let key = audit.scoped_idempotency_key(&request.idempotency_key);
+    if let Some(prior) = self.lock()?.runtime_settings.replay(&key, &request.intent)? {
+      return Ok(prior);
+    }
+    let external = match &self.capabilities {
+      Some(source) => Some(source.availability(request.intent.project_id).await?),
+      None => None,
+    };
     let mut state = self.lock()?;
     if let Some(prior) = state.runtime_settings.replay(&key, &request.intent)? {
       return Ok(prior);
@@ -85,15 +120,27 @@ impl FactoryRuntimeSettingsStore for InMemoryFactoryConfigurationStore {
         .into(),
       );
     }
-    let current = state
+    let current_version = state
       .runtime_settings
       .versions
       .get(&(intent.project_id, intent.runtime.clone()))
-      .and_then(|rows| rows.last_key_value().map(|(v, _)| *v));
-    if current != intent.expected_version {
+      .and_then(|versions| versions.last_key_value().map(|(version, _)| *version));
+    if current_version != intent.expected_version {
       return Err(FactoryRuntimeSettingsPublicationError::PreconditionFailed);
     }
     let settings = intent.settings()?;
+    let installed = external.unwrap_or_else(|| {
+      state.choices.get(&intent.project_id).cloned().map_or(
+        FactoryConfigurationAvailability::Disabled,
+        FactoryConfigurationAvailability::Available,
+      )
+    });
+    let current = state
+      .runtime_settings
+      .current(intent.project_id)
+      .filter(|settings| settings.runtime() != &intent.runtime)
+      .cloned();
+    configured_factory_catalog(installed, current.chain([settings.clone()])).map_err(|_| invalid_runtime_settings())?;
     let outcome = FactoryRuntimeSettingsOutcome {
       disposition: MutationDisposition::Applied,
       settings: settings.clone(),

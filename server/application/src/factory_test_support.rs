@@ -97,6 +97,7 @@ pub fn installed_role_choices(
     .unwrap()
   };
   let capability = FactoryRoleProfileCapability {
+    mcp_required_environment: Default::default(),
     model_catalog: None,
     ceiling: definition.clone(),
     parameters: schema(
