@@ -6,6 +6,10 @@ const commandSchemas = {
   AdmitManualFactoryWorkRequest: {},
   FactoryNodeOperationRequest: {},
   FactoryNodeResponseRequest: {},
+  ImportProjectSkillRequest: {
+    type: 'object',
+    properties: { identity: { pattern: '^[a-z]+$', maxLength: 29 } },
+  },
 };
 test('exports only reachable authoring schemas and retains exact server-owned bounds', () => {
   const schemas = {

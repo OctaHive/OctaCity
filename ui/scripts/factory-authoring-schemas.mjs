@@ -7,6 +7,7 @@ export function factoryAuthoringSchemas(document) {
     'AdmitManualFactoryWorkRequest',
     'FactoryNodeOperationRequest',
     'FactoryNodeResponseRequest',
+    'ImportProjectSkillRequest',
   ];
   const result = {};
   function references(value) {

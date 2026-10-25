@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import type { components } from '../../../.generated/api/schema';
+import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
@@ -11,6 +12,9 @@ import { SkillContents } from './SkillContents';
 
 type Ref = components['schemas']['FactoryImmutableReferenceResource'];
 type Request = components['schemas']['ImportProjectSkillRequest'];
+type Folder = { path: string; request: Request };
+const identitySchema = FACTORY_AUTHORING_SCHEMAS.ImportProjectSkillRequest.properties.identity;
+const identityPattern = new RegExp(identitySchema.pattern);
 const same = (a: Ref, b: Ref) =>
   a.identity === b.identity && a.version === b.version && a.digest === b.digest;
 function readFile(file: File): Promise<ArrayBuffer> {
@@ -40,7 +44,8 @@ export function SkillFolderFields({
 }) {
   const { t } = usePresentation();
   const client = useQueryClient();
-  const [request, setRequest] = useState<Request | null>(null);
+  const [folders, setFolders] = useState<Folder[]>([]);
+  const pickerRef = useRef<HTMLInputElement>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Error | null>(null);
   const [missingRoot, setMissingRoot] = useState(false);
@@ -83,32 +88,49 @@ export function SkillFolderFields({
     setBusy(true);
     setError(null);
     setMissingRoot(false);
-    setRequest(null);
+    setFolders([]);
     try {
       const root = files[0]!.webkitRelativePath.split('/')[0];
       if (!root || files.some((file) => !file.webkitRelativePath.startsWith(`${root}/`)))
         throw new Error('Choose one folder');
-      if (!files.some((file) => file.webkitRelativePath === `${root}/SKILL.md`)) {
+      // A skill owns its complete subtree, including SKILL.md files used as examples.
+      const candidates = [
+        ...new Set(
+          files
+            .filter((file) => file.name === 'SKILL.md')
+            .map((file) => file.webkitRelativePath.slice(0, -'/SKILL.md'.length)),
+        ),
+      ];
+      const roots = candidates
+        .filter((path) => !candidates.some((parent) => path.startsWith(`${parent}/`)))
+        .sort();
+      if (!roots.length) {
         setMissingRoot(true);
         return;
       }
       // The wire limit includes JSON encoding. This preliminary bound avoids reading oversized folders.
       if (files.reduce((size, file) => size + file.size, 0) > 8 * 1024 * 1024)
         throw new Error('Folder exceeds request limit');
-      const entries: Request['files'] = [];
-      for (const file of files) {
-        const bytes = new Uint8Array(await readFile(file));
-        const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
-        entries.push({
-          path: file.webkitRelativePath.slice(root.length + 1),
-          bytes: Array.from(bytes),
-          sha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''),
-        });
+      const selected: Folder[] = [];
+      for (const path of roots) {
+        const entries: Request['files'] = [];
+        for (const file of files
+          .filter((file) => file.webkitRelativePath.startsWith(`${path}/`))
+          .sort((a, b) => a.webkitRelativePath.localeCompare(b.webkitRelativePath))) {
+          const bytes = new Uint8Array(await readFile(file));
+          const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+          entries.push({
+            path: file.webkitRelativePath.slice(path.length + 1),
+            bytes: Array.from(bytes),
+            sha256: Array.from(digest, (byte) => byte.toString(16).padStart(2, '0')).join(''),
+          });
+        }
+        const request = { identity: path.split('/').at(-1)!.toLowerCase(), files: entries };
+        if (new TextEncoder().encode(JSON.stringify(request)).length > 8 * 1024 * 1024)
+          throw new Error('Folder exceeds request limit');
+        selected.push({ path, request });
       }
-      const next = { identity: root, files: entries };
-      if (new TextEncoder().encode(JSON.stringify(next)).length > 8 * 1024 * 1024)
-        throw new Error('Folder exceeds request limit');
-      setRequest(next);
+      setFolders(selected);
     } catch (failure) {
       setError(failure instanceof Error ? failure : new Error());
     } finally {
@@ -124,7 +146,10 @@ export function SkillFolderFields({
         <label>
           {t('factory.importFolder')}
           <input
-            ref={(element) => element?.setAttribute('webkitdirectory', '')}
+            ref={(element) => {
+              pickerRef.current = element;
+              element?.setAttribute('webkitdirectory', '');
+            }}
             type="file"
             multiple
             disabled={busy || !!review}
@@ -186,32 +211,51 @@ export function SkillFolderFields({
             reference={viewing}
           />
         ) : null}
-        {request ? (
-          <section>
-            <label>
-              {t('factory.skillIdentity')}
-              <input
-                value={request.identity}
-                onChange={(event) => setRequest({ ...request, identity: event.target.value })}
-              />
-            </label>
-            <ul>
-              {request.files.map((file) => (
-                <li key={file.path}>
-                  {file.path} · {file.bytes.length} bytes
-                </li>
-              ))}
-            </ul>
-            <button
-              type="button"
-              onClick={(event) =>
-                setReview({ target: event.currentTarget, request: structuredClone(request) })
-              }
-            >
-              {t('factory.reviewImport')}
-            </button>
-          </section>
-        ) : null}
+        {folders.map(({ path, request }) => {
+          const validIdentity =
+            identityPattern.test(request.identity) &&
+            request.identity.length <= identitySchema.maxLength &&
+            folders.filter((folder) => folder.request.identity === request.identity).length === 1;
+          return (
+            <section key={path} aria-label={path}>
+              <h4>{path}</h4>
+              <label>
+                {t('factory.skillIdentity')}
+                <input
+                  value={request.identity}
+                  maxLength={identitySchema.maxLength}
+                  aria-invalid={!validIdentity}
+                  onChange={(event) =>
+                    setFolders((current) =>
+                      current.map((folder) =>
+                        folder.path === path
+                          ? { ...folder, request: { ...request, identity: event.target.value } }
+                          : folder,
+                      ),
+                    )
+                  }
+                />
+              </label>
+              {!validIdentity ? <p role="alert">{t('factory.skillIdentityInvalid')}</p> : null}
+              <ul>
+                {request.files.map((file) => (
+                  <li key={file.path}>
+                    {file.path} · {file.bytes.length} bytes
+                  </li>
+                ))}
+              </ul>
+              <button
+                type="button"
+                disabled={!validIdentity}
+                onClick={(event) =>
+                  setReview({ target: event.currentTarget, request: structuredClone(request) })
+                }
+              >
+                {t('factory.reviewImport')}
+              </button>
+            </section>
+          );
+        })}
       </fieldset>
       {review ? (
         <ConfirmedCommand
@@ -220,6 +264,7 @@ export function SkillFolderFields({
           request={review.request}
           consequence={`${review.request.identity} · ${review.request.files.map((file) => file.path).join(' · ')}`}
           returnFocus={review.target}
+          fallbackFocusRef={pickerRef}
           queryClient={client}
           invalidations={[
             { queryKey: queryKeys.factoryRoleCatalog(project, 'skills') },
@@ -232,6 +277,9 @@ export function SkillFolderFields({
               attempt.headers,
             );
             onChange({ ...value, [receipt.bundle.identity]: receipt.bundle });
+            setFolders((current) =>
+              current.filter((folder) => folder.request.identity !== attempt.request.identity),
+            );
             setImported((current) => [
               ...current.filter((item) => !same(item, receipt.bundle)),
               receipt.bundle,

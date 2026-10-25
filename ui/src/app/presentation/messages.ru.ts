@@ -29,10 +29,13 @@ export const ruMessages = {
   'factory.skills': 'Skills',
   'factory.importFolder': 'Импортировать папку skill',
   'factory.readingFolder': 'Чтение выбранной папки…',
-  'factory.skillFolderHint': 'В корне папки skill нужен файл SKILL.md.',
+  'factory.skillFolderHint':
+    'Выберите папку одного skill или общую папку со skills. Проверьте и импортируйте каждый skill отдельно.',
   'factory.skillRootRequired':
-    'Нет SKILL.md в корне (регистр важен). Переименуйте файл и повторите выбор.',
+    'Нет SKILL.md в выбранной папке или вложенных папках (регистр важен). Переименуйте файл и повторите выбор.',
   'factory.skillIdentity': 'Имя skill',
+  'factory.skillIdentityInvalid':
+    'Используйте строчные латинские буквы, цифры, точки, дефисы или подчёркивания. Начните с буквы или цифры; идентификаторы skills не должны повторяться.',
   'factory.reviewImport': 'Проверить импорт skill',
   'factory.confirmImport': 'Подтвердить импорт',
   'factory.noSkills': 'Нет импортированных skills.',

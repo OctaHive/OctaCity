@@ -293,7 +293,7 @@ it('explains a missing root SKILL.md before import and lets the operator correct
   await userEvent.upload(input, wrong);
   expect(await screen.findByRole('alert')).toHaveProperty(
     'textContent',
-    'Missing SKILL.md at folder root (case-sensitive). Rename the file and retry.',
+    'No SKILL.md found in the selected folder or its subfolders (case-sensitive). Rename the file and retry.',
   );
   expect(screen.queryByRole('button', { name: 'Review skill import' })).toBeNull();
   expect(roles.importSkill).not.toHaveBeenCalled();
@@ -962,4 +962,145 @@ it('keeps model-specific parameters while an identifier is being edited and rest
       }),
     }),
   );
+});
+
+it('imports a skill from an uppercase folder with a canonical identity and preserves the agent draft', async () => {
+  const { roles } = setup();
+  const bundle = { identity: 'skill2', version: 'v1', digest: 'a'.repeat(64) };
+  roles.importSkill.mockResolvedValue({ bundle, published_at: 100 });
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'My agent');
+  const file = new File(['# Skill'], 'SKILL.md', { type: 'text/markdown' });
+  Object.defineProperty(file, 'webkitRelativePath', { value: 'Skill2/SKILL.md' });
+  await userEvent.upload(screen.getByLabelText('Import skill folder'), file);
+  await userEvent.click(await screen.findByRole('button', { name: 'Review skill import' }));
+  const dialog = await screen.findByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm import' }));
+  await within(dialog).findByText('Skill folder imported and added to the AI-agent draft.');
+  expect(roles.importSkill).toHaveBeenCalledWith(
+    expect.anything(),
+    expect.objectContaining({ identity: 'skill2' }),
+    expect.anything(),
+  );
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(screen.getByRole('textbox', { name: 'Agent name' })).toHaveProperty('value', 'My agent');
+  expect(await screen.findByRole('checkbox', { name: /skill2.*v1/ })).toHaveProperty(
+    'checked',
+    true,
+  );
+});
+
+it('discovers separate skills in a collection folder and imports them independently without losing successful imports', async () => {
+  const { roles } = setup();
+  const first = { identity: 'alpha', version: 'v1', digest: 'a'.repeat(64) };
+  const second = { identity: 'beta', version: 'v1', digest: 'b'.repeat(64) };
+  roles.importSkill
+    .mockResolvedValueOnce({ bundle: first, published_at: 100 })
+    .mockRejectedValueOnce(
+      new ManagementApiError({
+        code: 'transport_failure',
+        message: 'Lost response',
+        requestId: null,
+        status: null,
+        retryAfterMilliseconds: null,
+      }),
+    )
+    .mockResolvedValueOnce({ bundle: second, published_at: 100 });
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'Collection agent');
+  const files = [
+    ['skills/README.md', 'Collection index'],
+    ['skills/Alpha/SKILL.md', '# Alpha'],
+    ['skills/Alpha/examples/nested/SKILL.md', '# Example, not a separate skill'],
+    ['skills/Alpha/scripts/run.py', 'print(1)'],
+    ['skills/group/Beta/SKILL.md', '# Beta'],
+  ].map(([path, contents]) => {
+    const file = new File([contents!], path!.split('/').at(-1)!);
+    Object.defineProperty(file, 'webkitRelativePath', { value: path });
+    return file;
+  });
+  await userEvent.upload(screen.getByLabelText('Import skill folder'), files);
+  const alpha = await screen.findByRole('region', { name: 'skills/Alpha' });
+  const beta = screen.getByRole('region', { name: 'skills/group/Beta' });
+  expect(screen.getAllByRole('button', { name: 'Review skill import' })).toHaveLength(2);
+  expect(roles.importSkill).not.toHaveBeenCalled();
+  await userEvent.click(within(alpha).getByRole('button', { name: 'Review skill import' }));
+  let dialog = await screen.findByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm import' }));
+  await within(dialog).findByText('Skill folder imported and added to the AI-agent draft.');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(roles.importSkill.mock.calls[0]?.[1]).toMatchObject({
+    identity: 'alpha',
+    files: expect.arrayContaining([
+      expect.objectContaining({ path: 'SKILL.md' }),
+      expect.objectContaining({ path: 'examples/nested/SKILL.md' }),
+      expect.objectContaining({ path: 'scripts/run.py' }),
+    ]),
+  });
+  expect(roles.importSkill.mock.calls[0]?.[1].files).toHaveLength(3);
+  await userEvent.click(within(beta).getByRole('button', { name: 'Review skill import' }));
+  dialog = await screen.findByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm import' }));
+  await userEvent.click(await within(dialog).findByRole('button', { name: 'Retry same command' }));
+  await within(dialog).findByText('Skill folder imported and added to the AI-agent draft.');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(roles.importSkill.mock.calls[1]).toEqual(roles.importSkill.mock.calls[2]);
+  expect(roles.importSkill.mock.calls[1]?.[1]).toMatchObject({
+    identity: 'beta',
+    files: [{ path: 'SKILL.md' }],
+  });
+  expect(roles.importSkill.mock.calls[0]?.[2]).not.toEqual(roles.importSkill.mock.calls[1]?.[2]);
+  expect(screen.getByRole('checkbox', { name: /alpha.*v1/ })).toHaveProperty('checked', true);
+  expect(screen.getByRole('checkbox', { name: /beta.*v1/ })).toHaveProperty('checked', true);
+  expect(screen.getByRole('textbox', { name: 'Agent name' })).toHaveProperty(
+    'value',
+    'Collection agent',
+  );
+});
+
+it('validates skill identities before import and requires distinct identifiers within a collection', async () => {
+  const { roles } = setup();
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
+  const files = ['skills/Review/SKILL.md', 'skills/review/SKILL.md'].map((path) => {
+    const file = new File(['# Instructions'], 'SKILL.md');
+    Object.defineProperty(file, 'webkitRelativePath', { value: path });
+    return file;
+  });
+  await userEvent.upload(screen.getByLabelText('Import skill folder'), files);
+  const upper = await screen.findByRole('region', { name: 'skills/Review' });
+  const lower = screen.getByRole('region', { name: 'skills/review' });
+  expect(within(upper).getByRole('button', { name: 'Review skill import' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  expect(within(lower).getByRole('button', { name: 'Review skill import' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  const identity = within(upper).getByRole('textbox', { name: 'Skill name' });
+  await userEvent.clear(identity);
+  await userEvent.type(identity, 'My Skill');
+  expect(within(upper).getByRole('button', { name: 'Review skill import' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await screen.findByText(
+    'Use lowercase letters, numbers, dots, hyphens or underscores. Start with a letter or number; each skill needs a unique identifier.',
+  );
+  await userEvent.clear(identity);
+  await userEvent.type(identity, 'review-2');
+  expect(within(upper).getByRole('button', { name: 'Review skill import' })).toHaveProperty(
+    'disabled',
+    false,
+  );
+  expect(within(lower).getByRole('button', { name: 'Review skill import' })).toHaveProperty(
+    'disabled',
+    false,
+  );
+  await userEvent.click(within(upper).getByRole('button', { name: 'Review skill import' }));
+  await screen.findByRole('dialog');
+  expect(roles.importSkill).not.toHaveBeenCalled();
 });

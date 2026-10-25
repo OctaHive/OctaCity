@@ -333,9 +333,15 @@ versions remain readable; deleting an agent does not cancel accepted Builds.
 After success the card closes, the catalog refreshes and keyboard focus returns to
 **Create AI agent**. Transport retry uses the same reviewed command and replay key.
 
-**Import skill folder** stays inside the AI-agent draft. Choose a folder with root
-`SKILL.md` (case-sensitive), review its relative file inventory, then confirm import.
-Console explains a missing root `SKILL.md` before sending an import request;
+**Import skill folder** stays inside the AI-agent draft. Choose one skill folder
+with root `SKILL.md` (case-sensitive), or a collection folder containing several
+such folders. Console lists each outermost skill folder separately; a skill owns
+its full subtree, including nested examples containing `SKILL.md`. Files outside
+the discovered skill folders are not uploaded. Review and confirm each skill
+independently through the existing import contract. Folder names initially become
+lowercase identifiers (`Skill2` becomes `skill2`); edit an identifier before import
+if needed. Invalid or duplicate pending identifiers block confirmation using the
+server-owned key constraints. Console explains when no `SKILL.md` is found;
 selecting a corrected folder keeps the agent draft. Cancellation,
 read/import failure and lost-response retry preserve the other draft fields.
 A successful import selects its exact skill version in the current AI-agent draft,

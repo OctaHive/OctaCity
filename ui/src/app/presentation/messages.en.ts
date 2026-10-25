@@ -27,10 +27,13 @@ export const enMessages = {
   'factory.skills': 'Skills',
   'factory.importFolder': 'Import skill folder',
   'factory.readingFolder': 'Reading selected folder…',
-  'factory.skillFolderHint': 'Select one skill folder containing SKILL.md.',
+  'factory.skillFolderHint':
+    'Select a skill folder or a collection of skill folders. Review and import each skill separately.',
   'factory.skillRootRequired':
-    'Missing SKILL.md at folder root (case-sensitive). Rename the file and retry.',
+    'No SKILL.md found in the selected folder or its subfolders (case-sensitive). Rename the file and retry.',
   'factory.skillIdentity': 'Skill name',
+  'factory.skillIdentityInvalid':
+    'Use lowercase letters, numbers, dots, hyphens or underscores. Start with a letter or number; each skill needs a unique identifier.',
   'factory.reviewImport': 'Review skill import',
   'factory.confirmImport': 'Confirm import',
   'factory.noSkills': 'No imported skills.',

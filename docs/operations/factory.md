@@ -855,7 +855,10 @@ same fence. Deletion does not cancel accepted Builds
 or rewrite Run history. The Console and DELETE endpoint share the ordinary reviewed,
 version-fenced, audited and idempotent management mechanism.
 
-Import a folder with root `SKILL.md` in the agent editor. Successful import adds
+Import a folder with root `SKILL.md`, or a collection of such folders, in the
+agent editor. Each outermost skill folder is reviewed and imported separately;
+its supporting subtree is retained unchanged. Console defaults identifiers to
+lowercase and validates edited identifiers before import. Successful import adds
 its exact version to the draft’s selected skills; saving the agent still requires
 a separate reviewed publication. Use View skill to inspect retained files without
 discarding the draft. Dedicated Project-authorized inventory/file reads reuse the import

@@ -228,6 +228,7 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
   AdmitManualFactoryWorkRequest: {type: 'object'},
   FactoryNodeOperationRequest: {type: 'object'},
   FactoryNodeResponseRequest: {type: 'object'},
+  ImportProjectSkillRequest: {type: 'object'},
 }}})));
 """],
                 cwd=root, capture_output=True, text=True, timeout=15,
@@ -239,6 +240,7 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
                 "AdmitManualFactoryWorkRequest": {"type": "object"},
                 "FactoryNodeOperationRequest": {"type": "object"},
                 "FactoryNodeResponseRequest": {"type": "object"},
+                "ImportProjectSkillRequest": {"type": "object"},
             })
 
     def test_console_proxy_contract_is_included_in_the_build_context(self):
