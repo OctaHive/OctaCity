@@ -41,7 +41,7 @@ fn plugin_fixture_with_script(
   let directory = tempfile::tempdir().unwrap();
   let program = directory.path().join("plugin");
   let body = format!(
-    "#!/bin/sh\n[ \"$1\" = '--describe-models' ] || exit 64\nread request\n{before_reply}\nprintf '%s\\n' '{}'\n",
+    "#!/bin/sh\n[ \"$1\" = '--describe-models' ] || exit 64\nread request\n{before_reply}\nprintf '%s\\n' '{}'\nif IFS= read -r extra; then exit 65; fi\n",
     payload
   );
   std::fs::write(&program, body).unwrap();

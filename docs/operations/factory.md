@@ -878,7 +878,9 @@ model or provider meaning.
 An installed role-profile declaration may attach `model_discovery` with an absolute
 `executable`, its `executable_sha256`, and an installation-owned `environment` map.
 The verified native plugin runs `--describe-models` through the existing bounded
-process host. This executable has its own digest: a native Server discovery binary
+process host. The caller supplies one JSON frame without a line terminator; the
+shared host appends the single newline and closes standard input. This executable
+has its own digest: a native Server discovery binary
 can differ from the Linux plugin retained for Agent/Microsandbox execution. Neither
 path nor environment is supplied by a Role or exposed as credential metadata.
 Without this attachment, existing static capability declarations remain valid.

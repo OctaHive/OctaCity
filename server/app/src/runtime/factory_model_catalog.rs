@@ -43,7 +43,7 @@ impl PluginModelDiscovery {
     let request = ProcessRequest::new(
       &self.executable,
       "model-catalog",
-      b"{}\n".to_vec(),
+      b"{}".to_vec(),
       None,
       octacity_protocol::MAX_MODEL_CATALOG_BYTES,
     )

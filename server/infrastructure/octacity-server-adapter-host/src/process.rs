@@ -721,7 +721,7 @@ mod installed_launch_tests {
     let arguments = vec!["--describe-models".to_owned()];
     let environment = std::collections::BTreeMap::from([("PLUGIN_RUNTIME".into(), "installed".into())]);
     let request =
-      ProcessRequest::new(&executable, "discovery", b"{}\n".to_vec(), None, 1024).with_launch(&arguments, &environment);
+      ProcessRequest::new(&executable, "discovery", b"{}".to_vec(), None, 1024).with_launch(&arguments, &environment);
     let value = execute_process(
       request,
       Duration::from_secs(2),
