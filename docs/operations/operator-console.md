@@ -93,6 +93,21 @@ initial. These edits affect only the draft until reviewed publication. Published
 versions and existing tasks' workflow pins remain unchanged; selecting a default
 for new tasks is a separate action.
 
+Choose **Validate draft**, then **Review publication** to check the named statuses,
+initial/terminal selections, transition endpoints, origins and evidence requirements
+before **Publish version**. Changing policy fields requires validation again;
+moving nodes or changing the camera preserves it. If a publication response is lost,
+**Retry same command** resends the frozen reviewed definition with the same
+idempotency key and, for an existing workflow, the same version precondition.
+After publication, open the workflow in the catalog and choose **Use for new tasks**
+to review and confirm that exact version as the Project default.
+
+If publication reports a version conflict, choose **Refresh current data**. The
+local draft is retained, but publication stays blocked until **Validate draft** and
+a fresh **Review publication** against the refreshed version. Nothing is resubmitted
+automatically. A conflict while selecting the default similarly requires refreshing
+and reviewing that separate selection again.
+
 ## Supported topology
 
 Terminate TLS and serve the static console at one reverse proxy. Route only

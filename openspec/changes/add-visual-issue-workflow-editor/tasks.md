@@ -11,4 +11,4 @@
 
 ## 3. Existing publication flow and completion
 
-- [ ] 3.1 Integrate the canvas with the existing validation, confirmed publication and separate default-selection controls; adapt the current workflow tests and one focused browser authoring journey to verify frozen requests and stale-version review. Update workflow guidance, run the relevant workflow tests plus existing UI format/lint/typecheck/build gates, and update only affected visual baselines. No new verification infrastructure or cross-product matrix.
+- [x] 3.1 Integrate the canvas with the existing validation, confirmed publication and separate default-selection controls; adapt the current workflow tests and one focused browser authoring journey to verify frozen requests and stale-version review. Update workflow guidance, run the relevant workflow tests plus existing UI format/lint/typecheck/build gates, and update only affected visual baselines. No new verification infrastructure or cross-product matrix.

@@ -7,7 +7,7 @@ import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { App } from '../../App';
 import type { IssueWorkflowsApi, WorkflowResource } from '../../api/issueWorkflows';
-import { createConsoleQueryClient } from '../../app/query';
+import { createConsoleQueryClient, queryKeys } from '../../app/query';
 import { createConsoleRoutes } from '../../app/router';
 import { fakeProjectsApi, project } from '../projects/ProjectTestSupport';
 
@@ -967,8 +967,8 @@ it('requires fresh default-selection review after a conflict without publishing 
   expect(api.publish).not.toHaveBeenCalled();
 });
 
-it('replays the frozen publication after transport failure and does not store drafts in preferences', async () => {
-  const { api } = setup();
+it('replays the frozen canvas publication through transport failure and a background default refresh', async () => {
+  const { api, queryClient } = setup();
   const { ManagementApiError } = await import('../../api/client');
   api.publish.mockRejectedValueOnce(
     new ManagementApiError({
@@ -981,14 +981,31 @@ it('replays the frozen publication after transport failure and does not store dr
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Workflow name' }), ' private draft');
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  await userEvent.click(within(draft).getByRole('button', { name: 'Select status New' }));
+  await userEvent.clear(screen.getByRole('textbox', { name: 'Status name' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Status name' }), 'Inbox');
+  within(draft).getByRole('button', { name: 'Connect from Inbox' }).focus();
+  await userEvent.keyboard('{Enter}');
+  await userEvent.click(screen.getByRole('button', { name: 'Connect statuses' }));
+  await userEvent.clear(screen.getByRole('textbox', { name: 'Transition name' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Transition name' }), 'Resolve');
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
   await userEvent.click(
     within(screen.getByRole('dialog')).getByRole('button', { name: 'Publish version' }),
   );
+  await screen.findByRole('button', { name: 'Retry same command' });
+  api.getDefault.mockResolvedValue({ version: 11, workflow: { ...resource, version: 9 } });
+  await queryClient.invalidateQueries({ queryKey: queryKeys.issueWorkflowDefault('delivery') });
+  expect(api.getDefault).toHaveBeenCalledTimes(2);
+  expect(screen.getByRole('dialog').textContent).toContain('Resolve: Inbox → Done');
   await userEvent.click(await screen.findByRole('button', { name: 'Retry same command' }));
   await screen.findByText('Published version 4.');
+  expect(api.publish).toHaveBeenCalledTimes(2);
   expect(api.publish.mock.calls[1]).toEqual(api.publish.mock.calls[0]);
+  expect(api.publish.mock.calls[0]![2]).toEqual(api.validate.mock.calls[0]![1]);
+  expect(api.publish.mock.calls[0]![3]['If-Match']).toBe('"3"');
   expect(JSON.stringify(localStorage)).not.toContain('private draft');
   expect(JSON.stringify(sessionStorage)).not.toContain('private draft');
 });

@@ -1,6 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { installOperatorFixture, FIXTURE_IDS } from './operatorFixture';
-import type { WorkflowDefinition } from '../../src/api/issueWorkflows';
+import type { WorkflowDefinition, WorkflowResource } from '../../src/api/issueWorkflows';
 import { workflowFixture } from '../fixtures/issueWorkflows';
 
 test('keeps the line centered through the arrowhead on a curved workflow transition', async ({
@@ -78,14 +78,18 @@ test('keeps the line centered through the arrowhead on a curved workflow transit
   await expect(arrow).toHaveCSS('outline-style', 'solid');
 });
 
-test('publishes a reviewed workflow over HTTP without provider or Factory requests and restores keyboard focus', async ({
+test('authors an empty canvas, retries the frozen publication and separately selects the default over HTTP', async ({
   page,
 }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
   await installOperatorFixture(page);
   const workflow = workflowFixture(FIXTURE_IDS.project);
+  let created: WorkflowResource | undefined;
+  let selected = { version: 7, workflow };
   const commands: {
     path: string;
     body: unknown;
+    raw: string | null;
     precondition: string | undefined;
     key: string | undefined;
   }[] = [];
@@ -94,41 +98,71 @@ test('publishes a reviewed workflow over HTTP without provider or Factory reques
     if (/\/api\/v1\/(?:integrations|factory)/u.test(request.url()))
       forbiddenRequests.push(request.url());
   });
-  await page.route('**/api/v1/projects/*/issue-workflows/**', async (route) => {
+  await page.route('**/api/v1/projects/*/issue-workflow**', async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
     if (request.method() !== 'POST') {
-      await route.fulfill({ json: workflow });
+      await route.fulfill({
+        json: path.endsWith('/issue-workflow-default')
+          ? selected
+          : path.endsWith('/issue-workflows')
+            ? {
+                items: [workflow, ...(created ? [created] : [])].map((resource) => ({
+                  ...resource,
+                  name: resource.definition.name,
+                })),
+                next_cursor: null,
+              }
+            : created,
+      });
       return;
     }
     const body = request.postDataJSON();
     commands.push({
       path,
       body,
+      raw: request.postData(),
       precondition: request.headers()['if-match'],
       key: request.headers()['idempotency-key'],
     });
-    await route.fulfill({
-      json: path.endsWith('/validate')
-        ? body.definition
-        : {
-            disposition: 'applied',
-            resource: { ...workflow, version: 4, definition: body.definition },
-          },
-    });
+    if (path.endsWith('/validate')) {
+      await route.fulfill({ json: body.definition });
+    } else if (path.endsWith('/issue-workflow-default')) {
+      selected = { version: 8, workflow: created! };
+      await route.fulfill({ json: { disposition: 'applied', resource: selected } });
+    } else if (!created) {
+      // The server applied the command, but its response did not reach the browser.
+      created = { ...workflow, id: body.id, version: 1, definition: body.definition };
+      await route.abort('failed');
+    } else {
+      await route.fulfill({ json: { disposition: 'replayed', resource: created } });
+    }
   });
   await page.goto(`/projects/${FIXTURE_IDS.project}`);
   await page.getByRole('link', { name: 'Task workflow' }).click();
-  await page.getByRole('button', { name: 'Edit default workflow' }).click();
+  await page.getByRole('button', { name: 'Create workflow' }).click();
   const draft = page.getByRole('region', { name: 'Workflow draft' });
-  await draft.getByRole('button', { name: 'Select status New' }).click();
-  await page.getByRole('textbox', { name: 'Status name' }).fill('Inbox');
-  await draft.getByRole('button', { name: 'Select status Done' }).click();
-  const initial = draft.getByRole('radio', { name: 'Initial status' });
-  await initial.focus();
-  await page.keyboard.press('Space');
-  await expect(initial).toBeChecked();
-  await expect(initial).toBeFocused();
+  const inspector = draft.getByRole('complementary', { name: 'Workflow properties' });
+  await expect(draft.getByRole('article')).toHaveCount(0);
+  await inspector.getByRole('textbox', { name: 'Workflow name' }).fill('Support workflow');
+  await draft.getByRole('button', { name: 'Add status', exact: true }).click();
+  await inspector.getByRole('textbox', { name: 'Status name' }).fill('Received');
+  await draft.getByRole('button', { name: 'Add status', exact: true }).click();
+  await inspector.getByRole('textbox', { name: 'Status name' }).fill('Answered');
+  await inspector.getByRole('checkbox', { name: 'Terminal status' }).check();
+  await draft.getByRole('group', { name: 'Workflow graph' }).scrollIntoViewIfNeeded();
+  const source = (await draft
+    .getByRole('button', { name: 'Connect from Received', exact: true })
+    .boundingBox())!;
+  const target = (await draft.getByRole('article', { name: 'Answered' }).boundingBox())!;
+  await page.mouse.move(source.x + source.width / 2, source.y + source.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(target.x + target.width / 2, target.y + target.height / 2, { steps: 6 });
+  await page.mouse.up();
+  await inspector.getByRole('textbox', { name: 'Transition name' }).fill('Answer');
+  await inspector.getByRole('checkbox', { name: 'Pipeline action' }).check();
+  await inspector.getByRole('checkbox', { name: 'Required checks passed' }).check();
+  expect(commands).toEqual([]);
   await page.getByRole('button', { name: 'Validate draft' }).click();
   const review = page.getByRole('button', { name: 'Review publication' });
   await expect(review).toBeEnabled();
@@ -137,21 +171,67 @@ test('publishes a reviewed workflow over HTTP without provider or Factory reques
   const dialog = page.getByRole('dialog');
   const publish = dialog.getByRole('button', { name: 'Publish version' });
   await expect(publish).toBeFocused();
-  await expect(dialog).toContainText('Initial status: Done');
+  await expect(dialog).toContainText('Statuses: Received, Answered');
+  await expect(dialog).toContainText('Initial status: Received');
+  await expect(dialog).toContainText('Terminal statuses: Answered');
+  await expect(dialog).toContainText('Answer: Received → Answered');
+  await expect(dialog).toContainText('Allowed origins: Manual move, Pipeline action');
+  await expect(dialog).toContainText('Required evidence: Required checks passed');
   await page.keyboard.press('Escape');
   await expect(review).toBeFocused();
   await review.click();
   await publish.click();
-  await expect(dialog).toContainText('Published version 4.');
+  await dialog.getByRole('button', { name: 'Retry same command' }).click();
+  await expect(dialog).toContainText('Published version 1.');
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();
   await expect(review).toBeFocused();
-  expect(commands).toHaveLength(2);
+  expect(commands).toHaveLength(3);
   expect(commands[0]?.precondition).toBeUndefined();
-  expect(commands[1]?.precondition).toBe('"3"');
+  expect(commands[0]?.key).toBeUndefined();
+  expect(commands[0]?.body).toEqual({ definition: created!.definition });
+  expect(commands[1]?.precondition).toBeUndefined();
+  expect(commands[1]?.path).toBe(`/api/v1/projects/${FIXTURE_IDS.project}/issue-workflows`);
   expect(commands[1]?.key).toMatch(/^[0-9a-f-]{36}$/u);
-  expect(commands[1]?.body).toMatchObject({
-    definition: { initial_status_id: workflow.definition.statuses[1]!.id },
+  expect(commands[2]).toEqual(commands[1]);
+  const [received, answered] = created!.definition.statuses;
+  expect(created!.id).not.toBe(workflow.id);
+  expect(commands[1]?.body).toEqual({
+    id: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+    definition: {
+      name: 'Support workflow',
+      statuses: [
+        { id: expect.stringMatching(/^[0-9a-f-]{36}$/u), name: 'Received' },
+        { id: expect.stringMatching(/^[0-9a-f-]{36}$/u), name: 'Answered' },
+      ],
+      initial_status_id: received!.id,
+      terminal_status_ids: [answered!.id],
+      transitions: [
+        {
+          id: expect.stringMatching(/^[0-9a-f-]{36}$/u),
+          name: 'Answer',
+          from: received!.id,
+          to: answered!.id,
+          origins: ['manual', 'pipeline'],
+          evidence: ['passed_required_checks'],
+        },
+      ],
+    },
   });
+  const current = page.getByRole('region', { name: 'Default for new tasks' });
+  await expect(current).toContainText('Local workflow');
+  await page.getByRole('button', { name: 'Open Support workflow' }).click();
+  await page.getByRole('button', { name: 'Use for new tasks' }).click();
+  await expect(dialog).toContainText('Support workflow · Version 1');
+  await expect(dialog).toContainText('Existing tasks keep their pinned workflow.');
+  expect(commands).toHaveLength(3);
+  await dialog.getByRole('button', { name: 'Select default', exact: true }).click();
+  await expect(dialog).toContainText('Default selected for new tasks.');
+  await expect(current).toContainText('Support workflow');
+  expect(commands).toHaveLength(4);
+  expect(commands[3]?.body).toEqual({ workflow_id: created!.id, workflow_version: 1 });
+  expect(commands[3]?.precondition).toBe('"7"');
+  expect(commands[3]?.key).toMatch(/^[0-9a-f-]{36}$/u);
+  expect(commands[3]?.key).not.toBe(commands[1]?.key);
   expect(forbiddenRequests).toEqual([]);
 });
 
@@ -272,27 +352,74 @@ test('keeps visible policies editable when the selected default is hidden', asyn
   await expect(page.getByRole('textbox', { name: 'Workflow name' })).toHaveValue('Visible policy');
 });
 
-test('returns keyboard focus to validation after refreshing a publication conflict', async ({
+test('retains canvas edits after a publication conflict and requires validation and fresh review', async ({
   page,
 }) => {
   await installOperatorFixture(page);
   const workflow = workflowFixture(FIXTURE_IDS.project);
+  workflow.definition.transitions = [
+    {
+      id: '30000000-0000-4000-8000-000000000001',
+      name: 'Complete',
+      from: workflow.definition.statuses[0]!.id,
+      to: workflow.definition.statuses[1]!.id,
+      origins: ['manual'],
+      evidence: [],
+    },
+  ];
+  await page.route('**/api/v1/projects/*/issue-workflow-default', (route) =>
+    route.fulfill({ json: { version: 7, workflow } }),
+  );
+  const validated: WorkflowDefinition[] = [];
+  const publications: {
+    body: string | null;
+    precondition: string | undefined;
+    key: string | undefined;
+  }[] = [];
   await page.route('**/api/v1/projects/*/issue-workflows/**', async (route) => {
     const request = route.request();
     if (request.method() === 'GET') {
       await route.fulfill({ json: { ...workflow, version: 5 } });
     } else if (request.url().endsWith('/validate')) {
+      validated.push(request.postDataJSON().definition);
       await route.fulfill({ json: request.postDataJSON().definition });
     } else {
-      await route.fulfill({
-        status: 409,
-        json: { code: 'conflict', message: 'Workflow changed.', request_id: 'workflow-stale' },
+      publications.push({
+        body: request.postData(),
+        precondition: request.headers()['if-match'],
+        key: request.headers()['idempotency-key'],
       });
+      await route.fulfill(
+        publications.length === 1
+          ? {
+              status: 409,
+              json: {
+                code: 'conflict',
+                message: 'Workflow changed.',
+                request_id: 'workflow-stale',
+              },
+            }
+          : {
+              json: {
+                disposition: 'applied',
+                resource: {
+                  ...workflow,
+                  version: 6,
+                  definition: request.postDataJSON().definition,
+                },
+              },
+            },
+      );
     }
   });
   await page.goto(`/projects/${FIXTURE_IDS.project}/issue-workflows`);
   await page.getByRole('button', { name: 'Edit default workflow' }).click();
+  const draft = page.getByRole('region', { name: 'Workflow draft' });
   await page.getByRole('textbox', { name: 'Workflow name' }).fill('Retained draft');
+  await draft.getByRole('button', { name: 'Select status Done', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Status name' }).fill('Answered');
+  await draft.getByRole('button', { name: 'Complete: New → Answered' }).click();
+  await page.getByRole('textbox', { name: 'Transition name' }).fill('Answer');
   await page.getByRole('button', { name: 'Validate draft' }).click();
   await page.getByRole('button', { name: 'Review publication' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Publish version' }).click();
@@ -303,6 +430,27 @@ test('returns keyboard focus to validation after refreshing a publication confli
   await expect(page.getByRole('textbox', { name: 'Workflow name' })).toHaveValue('Retained draft');
   await expect(page.getByRole('button', { name: 'Review publication' })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Validate draft' })).toBeFocused();
+  await expect(draft.getByRole('article', { name: 'Answered', exact: true })).toBeVisible();
+  await expect(draft.getByRole('button', { name: 'Answer: New → Answered' })).toBeVisible();
+  expect(validated).toHaveLength(1);
+  expect(publications).toHaveLength(1);
+  await page.keyboard.press('Enter');
+  await page.getByRole('button', { name: 'Review publication' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toContainText('Based on version 5');
+  await expect(dialog).toContainText('Answer: New → Answered');
+  expect(publications).toHaveLength(1);
+  await dialog.getByRole('button', { name: 'Publish version' }).click();
+  await expect(dialog).toContainText('Published version 6.');
+  expect(validated).toHaveLength(2);
+  expect(validated[1]).toEqual(validated[0]);
+  expect(publications).toHaveLength(2);
+  expect(publications[0]?.precondition).toBe('"3"');
+  expect(publications[1]?.precondition).toBe('"5"');
+  expect(publications[1]?.body).toBe(publications[0]?.body);
+  expect(publications[0]?.key).toMatch(/^[0-9a-f-]{36}$/u);
+  expect(publications[1]?.key).toMatch(/^[0-9a-f-]{36}$/u);
+  expect(publications[1]?.key).not.toBe(publications[0]?.key);
 });
 
 test('connects nodes by dragging and keyboard controls into the same workflow DTO', async ({
