@@ -52,14 +52,15 @@ external fonts, icon fonts, analytics integrations, and copied template assets. 
 `architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
 the build reports any measured value that exceeds them. Task Source ownership authoring reuses
 shared Source references, row identities and Reporter effects, adding no runtime dependencies.
-The measured AI-agent authoring and stage-selection workspace is approximately
-1,239,195 bytes JavaScript and 1,327,168 bytes total static output. The aggregate
-ceilings are 1,216 KiB JavaScript and 1,302.5 KiB static output, allowing 70 KiB
-more for this feature. Entry (450 KiB), CSS (85.5 KiB) and asset-count (57) limits
-stay in force. Role/Profile controls reuse existing forms, the confirmed command,
-closed value schemas and server validation, with no new runtime dependency.
-The architecture contract admits the measured footprint and rejects another
-unplanned 16 KiB of JavaScript. Networking and persistence boundaries stay enforced.
+The measured console with AI-agent Runtime settings is 1,255,234 bytes of JavaScript
+and 1,343,322 bytes of total static output. The aggregate ceilings are 1,227 KiB
+JavaScript and 1,313 KiB static output. Runtime selection explanations add about
+2.8 KiB of JavaScript, including both translations, with no new dependency.
+Entry (450 KiB), CSS (85.5 KiB) and asset-count (57) limits stay in force.
+Role/Profile controls reuse existing forms, the confirmed command, closed value
+schemas and server validation. The architecture contract admits the measured
+footprint and rejects another unplanned 16 KiB of JavaScript. Networking and
+persistence boundaries stay enforced.
 
 Release packaging consumes this exact `dist/` directory without rebuilding the application:
 

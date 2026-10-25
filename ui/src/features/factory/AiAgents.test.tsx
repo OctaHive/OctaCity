@@ -1137,3 +1137,110 @@ it('requires an explicit plugin model for a new profile instead of submitting th
   expect(screen.getByRole('button', { name: 'Review profile' })).toHaveProperty('disabled', false);
   expect(roles.validateProfile).not.toHaveBeenCalled();
 });
+
+it('explains unavailable Runtime settings without empty selection frames and keeps the profile editable', async () => {
+  const { roles } = setup();
+  const { capability, profile } = factoryRoleFixture();
+  const definition = structuredClone(profile.definition);
+  delete definition.execution;
+  roles.getCapability.mockResolvedValue({ ...capability, definition, public_environment: {} });
+  roles.getProfile.mockResolvedValue({ ...profile, definition });
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'default' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
+  expect(
+    await screen.findByText(
+      'No MCP servers are configured for this Runtime. An administrator must add them before you can select them here.',
+    ),
+  ).toBeTruthy();
+  expect(
+    screen.getByText(
+      'No external integrations are configured for this Runtime. An administrator must authorize them for this Project before you can select them here.',
+    ),
+  ).toBeTruthy();
+  for (const name of [
+    'MCP servers',
+    'External integrations',
+    'Environment variables',
+    'CLI arguments',
+  ]) {
+    expect(screen.queryByRole('group', { name })).toBeNull();
+  }
+  expect(
+    screen.getByText(
+      'This Runtime does not expose environment variables or additional CLI arguments.',
+    ),
+  ).toBeTruthy();
+  expect(screen.getByRole('textbox', { name: 'Profile name' })).toHaveProperty('value', 'default');
+});
+
+it('selects installed MCP and Project integrations without changing their pins or the profile draft', async () => {
+  const { roles, profile } = setup();
+  const { capability } = factoryRoleFixture();
+  const exact = (identity: string) => ({ identity, version: 'v1', digest: 'a'.repeat(64) });
+  const integration = {
+    connection_id: '71000000-0000-4000-8000-000000000001',
+    connection_version: 3,
+    project_id: profile.role.project_id,
+    access_version: 2,
+    resource: exact('repository'),
+    capability: exact('repository-read'),
+  };
+  const mcp = { configuration: exact('review-mcp'), integration: 'source' };
+  roles.getCapability.mockResolvedValue({
+    ...capability,
+    definition: {
+      ...capability.definition,
+      execution: {
+        ...capability.definition.execution,
+        mcp_servers: { reviewer: mcp },
+        integrations: { source: integration },
+      },
+    },
+  });
+  roles.validateProfile.mockImplementation(async (_project, request) => ({
+    profile: { ...profile, definition: request.definition },
+    incompatibility: null,
+  }));
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'default' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
+  expect(
+    await screen.findByText(
+      'Select from the capabilities installed for this Runtime. Profile choices can restrict permissions, but cannot grant additional access.',
+    ),
+  ).toBeTruthy();
+  const reviewer = screen.getByRole('checkbox', { name: /reviewer/ });
+  expect(reviewer).toHaveProperty('checked', false);
+  expect(screen.getByText('Requires integration: source')).toBeTruthy();
+  await userEvent.click(reviewer);
+  await userEvent.click(screen.getByRole('checkbox', { name: 'source' }));
+  await userEvent.clear(screen.getByRole('textbox', { name: 'Profile name' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'Profile name' }), 'pro');
+  await userEvent.click(screen.getByRole('button', { name: 'Review profile' }));
+  expect(roles.validateProfile).toHaveBeenLastCalledWith(
+    profile.role.project_id,
+    expect.objectContaining({
+      definition: expect.objectContaining({
+        name: 'pro',
+        execution: {
+          ...profile.definition.execution,
+          mcp_servers: { reviewer: mcp },
+          integrations: { source: integration },
+        },
+      }),
+    }),
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Abandon' }));
+  await userEvent.click(screen.getByRole('checkbox', { name: /reviewer/ }));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'source' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review profile' }));
+  expect(roles.validateProfile).toHaveBeenLastCalledWith(
+    profile.role.project_id,
+    expect.objectContaining({
+      definition: expect.objectContaining({ name: 'pro', execution: profile.definition.execution }),
+    }),
+  );
+});

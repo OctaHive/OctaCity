@@ -81,6 +81,16 @@ These declarations install no executor and confer no execution or credential gra
 Names and instructions remain editable Project content rather than installed
 compiler instructions.
 
+In Console, the profile editor selects the installed MCP servers, Project integration
+bindings and permission categories from this filtered ceiling. MCP entries identify
+the integration they require; select that integration as well. Review validates the
+exact selected pins through the ordinary profile contract. These checkboxes do not
+register a new MCP transport or authorize a connection. When a category has no
+available entries, the editor explains the missing configuration instead of showing
+an empty selection frame. A deny-all Runtime displays one permission explanation
+instead of zero-only controls. CLI arguments remain the installed fixed vector;
+public environment fields and logical secret selections appear only when declared.
+
 Application catalogs require visible runtime/model and Build dependencies before
 visible counts and cursors. Unavailable optional skills, MCP servers, integrations
 and permission selections are removed from the available ceiling, without hiding

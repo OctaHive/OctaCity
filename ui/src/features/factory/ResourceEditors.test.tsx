@@ -43,3 +43,47 @@ it('narrows visible declared network, mount and output permissions without enter
   );
   expect(observed.network_hosts).toEqual(ceiling.network_hosts);
 });
+
+it('explains an empty Runtime permission ceiling without showing empty groups or zero-only controls', () => {
+  const ceiling = structuredClone(configurationFixture().configuration.flow.limits.permissions);
+  for (const field of [
+    'plugins',
+    'executables',
+    'tools',
+    'commands',
+    'mounts',
+    'network_hosts',
+    'secret_profiles',
+    'workload_identity_profiles',
+  ] as const)
+    ceiling[field] = [];
+  ceiling.max_descendants = 0;
+  for (const key of Object.keys(ceiling.resources) as (keyof typeof ceiling.resources)[])
+    ceiling.resources[key] = 0;
+  ceiling.outputs = {
+    kinds: [],
+    max_artifact_count: 0,
+    max_artifact_bytes: 0,
+    max_report_count: 0,
+    max_report_bytes: 0,
+  };
+  render(
+    <PermissionEditor
+      value={ceiling}
+      ceiling={ceiling}
+      choices={ceiling}
+      label="Requested node permissions"
+      onChange={() => {}}
+    />,
+  );
+  expect(
+    screen.getByText(
+      'This Runtime has no configurable permissions. Configure its allowed capabilities before selecting them in a profile.',
+    ),
+  ).toBeTruthy();
+  expect(screen.queryByRole('group', { name: 'Plugin' })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Executable' })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Secret profiles' })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Declared network hosts' })).toBeNull();
+  expect(screen.queryByRole('spinbutton')).toBeNull();
+});

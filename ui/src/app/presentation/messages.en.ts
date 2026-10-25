@@ -21,8 +21,19 @@ export const enMessages = {
   'factory.environment': 'Environment variables',
   'factory.secretReference': 'Logical secret reference',
   'factory.cliArguments': 'CLI arguments',
+  'factory.runtimeSelectionHelp':
+    'Select from the capabilities installed for this Runtime. Profile choices can restrict permissions, but cannot grant additional access.',
+  'factory.mcpIntegration': 'Requires integration: {integration}',
+  'factory.noRuntimeMcp':
+    'No MCP servers are configured for this Runtime. An administrator must add them before you can select them here.',
+  'factory.noRuntimeIntegrations':
+    'No external integrations are configured for this Runtime. An administrator must authorize them for this Project before you can select them here.',
+  'factory.noRuntimeOverrides':
+    'This Runtime does not expose environment variables or additional CLI arguments.',
   'factory.mcp': 'MCP servers',
   'factory.integrations': 'External integrations',
+  'factory.noRuntimePermissions':
+    'This Runtime has no configurable permissions. Configure its allowed capabilities before selecting them in a profile.',
   'factory.profileBudget': 'Profile budget',
   'factory.skills': 'Skills',
   'factory.importFolder': 'Import skill folder',

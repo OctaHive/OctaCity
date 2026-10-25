@@ -23,8 +23,19 @@ export const ruMessages = {
   'factory.environment': 'Переменные окружения',
   'factory.secretReference': 'Логическая ссылка на секрет',
   'factory.cliArguments': 'Аргументы CLI',
+  'factory.runtimeSelectionHelp':
+    'Выбирайте из возможностей, установленных для этого Runtime. Профиль может ограничить разрешения, но не может предоставить дополнительный доступ.',
+  'factory.mcpIntegration': 'Требуется интеграция: {integration}',
+  'factory.noRuntimeMcp':
+    'Для этого Runtime не настроены серверы MCP. Администратор должен добавить их, после чего их можно будет выбрать здесь.',
+  'factory.noRuntimeIntegrations':
+    'Для этого Runtime не настроены внешние интеграции. Администратор должен разрешить их для проекта, после чего их можно будет выбрать здесь.',
+  'factory.noRuntimeOverrides':
+    'Этот Runtime не предоставляет переменные окружения или дополнительные аргументы CLI.',
   'factory.mcp': 'Серверы MCP',
   'factory.integrations': 'Внешние интеграции',
+  'factory.noRuntimePermissions':
+    'У этого Runtime нет доступных для настройки разрешений. Сначала настройте его возможности, затем выбирайте их в профиле.',
   'factory.profileBudget': 'Бюджет профиля',
   'factory.skills': 'Skills',
   'factory.importFolder': 'Импортировать папку skill',

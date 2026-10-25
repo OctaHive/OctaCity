@@ -98,190 +98,237 @@ export function PermissionEditor({
               (field === 'secret_profiles' ? 'secret_profile' : 'workload_identity_profile'),
           )
           .map((choice) => choice.alias);
+  const resourceFields = (
+    Object.keys(value.resources) as (keyof Permissions['resources'])[]
+  ).filter((key) => !ceiling || ceiling.resources[key] > 0 || value.resources[key] > 0);
+  const outputFields = (Object.keys(value.outputs) as (keyof Permissions['outputs'])[]).filter(
+    (key) =>
+      key !== 'kinds' &&
+      (!ceiling || Number(ceiling.outputs[key]) > 0 || Number(value.outputs[key]) > 0),
+  );
+  const descendantsEditable = !ceiling || ceiling.max_descendants > 0 || value.max_descendants > 0;
+  const hasSelections =
+    (['plugins', 'executables', 'tools'] as const).some(
+      (field) => referenceChoices(field).length > 0,
+    ) ||
+    (['secret_profiles', 'workload_identity_profiles'] as const).some(
+      (field) => logicalChoices(field).length > 0,
+    ) ||
+    (!!ceiling &&
+      (ceiling.network_hosts.length > 0 ||
+        ceiling.mounts.length > 0 ||
+        ceiling.commands.length > 0 ||
+        ceiling.outputs.kinds.length > 0));
+  if (!hasSelections && !resourceFields.length && !outputFields.length && !descendantsEditable) {
+    return (
+      <fieldset>
+        <legend>{label}</legend>
+        <p>{t('factory.noRuntimePermissions')}</p>
+      </fieldset>
+    );
+  }
   return (
     <fieldset>
       <legend>{label}</legend>
-      {(['plugins', 'executables', 'tools'] as const).map((field) => (
-        <fieldset key={field}>
-          <legend>
-            {t(
-              field === 'plugins'
-                ? 'factory.plugin'
-                : field === 'tools'
-                  ? 'factory.tool'
-                  : 'factory.executable',
-            )}
-          </legend>
-          {referenceChoices(field).map(({ alias, reference }) => {
-            return (
-              <label
-                key={`${alias}:${reference.identity}:${reference.version}:${reference.digest}`}
-              >
+      {(['plugins', 'executables', 'tools'] as const).map((field) =>
+        referenceChoices(field).length ? (
+          <fieldset key={field}>
+            <legend>
+              {t(
+                field === 'plugins'
+                  ? 'factory.plugin'
+                  : field === 'tools'
+                    ? 'factory.tool'
+                    : 'factory.executable',
+              )}
+            </legend>
+            {referenceChoices(field).map(({ alias, reference }) => {
+              return (
+                <label
+                  key={`${alias}:${reference.identity}:${reference.version}:${reference.digest}`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={value[field].some(
+                      (item) =>
+                        item.digest === reference.digest &&
+                        item.identity === reference.identity &&
+                        item.version === reference.version,
+                    )}
+                    onChange={(event) => toggle(field, reference, event.target.checked)}
+                  />
+                  {t(
+                    field === 'plugins'
+                      ? 'factory.plugin'
+                      : field === 'tools'
+                        ? 'factory.tool'
+                        : 'factory.executable',
+                  )}{' '}
+                  · {alias} · {reference.version}
+                </label>
+              );
+            })}
+          </fieldset>
+        ) : null,
+      )}
+      {(['secret_profiles', 'workload_identity_profiles'] as const).map((field) =>
+        logicalChoices(field).length ? (
+          <fieldset key={field}>
+            <legend>
+              {t(
+                field === 'secret_profiles' ? 'factory.secretProfiles' : 'factory.identityProfiles',
+              )}
+            </legend>
+            {logicalChoices(field).map((alias) => (
+              <label key={alias}>
                 <input
                   type="checkbox"
-                  checked={value[field].some(
-                    (item) =>
-                      item.digest === reference.digest &&
-                      item.identity === reference.identity &&
-                      item.version === reference.version,
-                  )}
-                  onChange={(event) => toggle(field, reference, event.target.checked)}
+                  checked={value[field].includes(alias)}
+                  onChange={(event) =>
+                    onChange({
+                      ...value,
+                      [field]: event.target.checked
+                        ? [...value[field], alias]
+                        : value[field].filter((item) => item !== alias),
+                    })
+                  }
                 />
-                {t(
-                  field === 'plugins'
-                    ? 'factory.plugin'
-                    : field === 'tools'
-                      ? 'factory.tool'
-                      : 'factory.executable',
-                )}{' '}
-                · {alias} · {reference.version}
+                {alias}
               </label>
-            );
-          })}
-        </fieldset>
-      ))}
-      {(['secret_profiles', 'workload_identity_profiles'] as const).map((field) => (
-        <fieldset key={field}>
-          <legend>
-            {t(field === 'secret_profiles' ? 'factory.secretProfiles' : 'factory.identityProfiles')}
-          </legend>
-          {logicalChoices(field).map((alias) => (
-            <label key={alias}>
-              <input
-                type="checkbox"
-                checked={value[field].includes(alias)}
-                onChange={(event) =>
-                  onChange({
-                    ...value,
-                    [field]: event.target.checked
-                      ? [...value[field], alias]
-                      : value[field].filter((item) => item !== alias),
-                  })
-                }
-              />
-              {alias}
-            </label>
-          ))}
-        </fieldset>
-      ))}
+            ))}
+          </fieldset>
+        ) : null,
+      )}
       {ceiling ? (
         <>
-          <fieldset>
-            <legend>{t('factory.networkHosts')}</legend>
-            {ceiling.network_hosts.map((host) => (
-              <label key={host}>
-                <input
-                  type="checkbox"
-                  checked={value.network_hosts.includes(host)}
-                  onChange={(event) =>
-                    onChange({
-                      ...value,
-                      network_hosts: event.target.checked
-                        ? [...value.network_hosts, host]
-                        : value.network_hosts.filter((item) => item !== host),
-                    })
-                  }
-                />
-                {t('factory.networkHost')} · {host}
-              </label>
-            ))}
-          </fieldset>
-          <fieldset>
-            <legend>{t('factory.mounts')}</legend>
-            {ceiling.mounts.map((mount) => (
-              <label key={`${mount.root}:${mount.mode}`}>
-                <input
-                  type="checkbox"
-                  checked={value.mounts.some(
-                    (item) => item.root === mount.root && item.mode === mount.mode,
-                  )}
-                  onChange={(event) =>
-                    onChange({
-                      ...value,
-                      mounts: event.target.checked
-                        ? [...value.mounts, mount]
-                        : value.mounts.filter(
-                            (item) => item.root !== mount.root || item.mode !== mount.mode,
-                          ),
-                    })
-                  }
-                />
-                {t('factory.mount')} · {mount.root} · {mount.mode}
-              </label>
-            ))}
-          </fieldset>
-          <fieldset>
-            <legend>{t('factory.commandPermissions')}</legend>
-            {ceiling.commands.map((command) => (
-              <label key={JSON.stringify(command)}>
-                <input
-                  type="checkbox"
-                  checked={value.commands.some(
-                    (item) => JSON.stringify(item) === JSON.stringify(command),
-                  )}
-                  onChange={(event) =>
-                    onChange({
-                      ...value,
-                      executables:
-                        event.target.checked &&
-                        !value.executables.some(
-                          (reference) =>
-                            reference.identity === command.executable.identity &&
-                            reference.version === command.executable.version &&
-                            reference.digest === command.executable.digest,
-                        )
-                          ? [...value.executables, command.executable]
-                          : value.executables,
-                      commands: event.target.checked
-                        ? [...value.commands, command]
-                        : value.commands.filter(
-                            (item) => JSON.stringify(item) !== JSON.stringify(command),
-                          ),
-                    })
-                  }
-                />
-                {t('factory.commandPermission')} · {command.executable.identity} ·{' '}
-                {command.executable.version}
-              </label>
-            ))}
-          </fieldset>
-          <fieldset>
-            <legend>{t('factory.outputKinds')}</legend>
-            {ceiling.outputs.kinds.map((kind) => (
-              <label key={kind}>
-                <input
-                  type="checkbox"
-                  checked={value.outputs.kinds.includes(kind)}
-                  onChange={(event) =>
-                    onChange({
-                      ...value,
-                      outputs: {
-                        ...value.outputs,
-                        kinds: event.target.checked
-                          ? [...value.outputs.kinds, kind]
-                          : value.outputs.kinds.filter((item) => item !== kind),
-                      },
-                    })
-                  }
-                />
-                {t('factory.outputKind')} · {kind}
-              </label>
-            ))}
-          </fieldset>
+          {ceiling.network_hosts.length ? (
+            <fieldset>
+              <legend>{t('factory.networkHosts')}</legend>
+              {ceiling.network_hosts.map((host) => (
+                <label key={host}>
+                  <input
+                    type="checkbox"
+                    checked={value.network_hosts.includes(host)}
+                    onChange={(event) =>
+                      onChange({
+                        ...value,
+                        network_hosts: event.target.checked
+                          ? [...value.network_hosts, host]
+                          : value.network_hosts.filter((item) => item !== host),
+                      })
+                    }
+                  />
+                  {t('factory.networkHost')} · {host}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
+          {ceiling.mounts.length ? (
+            <fieldset>
+              <legend>{t('factory.mounts')}</legend>
+              {ceiling.mounts.map((mount) => (
+                <label key={`${mount.root}:${mount.mode}`}>
+                  <input
+                    type="checkbox"
+                    checked={value.mounts.some(
+                      (item) => item.root === mount.root && item.mode === mount.mode,
+                    )}
+                    onChange={(event) =>
+                      onChange({
+                        ...value,
+                        mounts: event.target.checked
+                          ? [...value.mounts, mount]
+                          : value.mounts.filter(
+                              (item) => item.root !== mount.root || item.mode !== mount.mode,
+                            ),
+                      })
+                    }
+                  />
+                  {t('factory.mount')} · {mount.root} · {mount.mode}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
+          {ceiling.commands.length ? (
+            <fieldset>
+              <legend>{t('factory.commandPermissions')}</legend>
+              {ceiling.commands.map((command) => (
+                <label key={JSON.stringify(command)}>
+                  <input
+                    type="checkbox"
+                    checked={value.commands.some(
+                      (item) => JSON.stringify(item) === JSON.stringify(command),
+                    )}
+                    onChange={(event) =>
+                      onChange({
+                        ...value,
+                        executables:
+                          event.target.checked &&
+                          !value.executables.some(
+                            (reference) =>
+                              reference.identity === command.executable.identity &&
+                              reference.version === command.executable.version &&
+                              reference.digest === command.executable.digest,
+                          )
+                            ? [...value.executables, command.executable]
+                            : value.executables,
+                        commands: event.target.checked
+                          ? [...value.commands, command]
+                          : value.commands.filter(
+                              (item) => JSON.stringify(item) !== JSON.stringify(command),
+                            ),
+                      })
+                    }
+                  />
+                  {t('factory.commandPermission')} · {command.executable.identity} ·{' '}
+                  {command.executable.version}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
+          {ceiling.outputs.kinds.length ? (
+            <fieldset>
+              <legend>{t('factory.outputKinds')}</legend>
+              {ceiling.outputs.kinds.map((kind) => (
+                <label key={kind}>
+                  <input
+                    type="checkbox"
+                    checked={value.outputs.kinds.includes(kind)}
+                    onChange={(event) =>
+                      onChange({
+                        ...value,
+                        outputs: {
+                          ...value.outputs,
+                          kinds: event.target.checked
+                            ? [...value.outputs.kinds, kind]
+                            : value.outputs.kinds.filter((item) => item !== kind),
+                        },
+                      })
+                    }
+                  />
+                  {t('factory.outputKind')} · {kind}
+                </label>
+              ))}
+            </fieldset>
+          ) : null}
         </>
       ) : null}
-      <label>
-        {t('factory.descendants')}
-        <input
-          type="number"
-          min={0}
-          max={Number.MAX_SAFE_INTEGER}
-          value={value.max_descendants}
-          onChange={(event) => onChange({ ...value, max_descendants: Number(event.target.value) })}
-        />
-      </label>
+      {descendantsEditable ? (
+        <label>
+          {t('factory.descendants')}
+          <input
+            type="number"
+            min={0}
+            max={Number.MAX_SAFE_INTEGER}
+            value={value.max_descendants}
+            onChange={(event) =>
+              onChange({ ...value, max_descendants: Number(event.target.value) })
+            }
+          />
+        </label>
+      ) : null}
       <div className={styles.numericGrid}>
-        {(Object.keys(value.resources) as (keyof Permissions['resources'])[]).map((key) => (
+        {resourceFields.map((key) => (
           <label key={key}>
             {t('factory.resource')} · {key}
             <input
@@ -300,25 +347,23 @@ export function PermissionEditor({
         ))}
       </div>
       <div className={styles.numericGrid}>
-        {(Object.keys(value.outputs) as (keyof Permissions['outputs'])[])
-          .filter((key) => key !== 'kinds')
-          .map((key) => (
-            <label key={key}>
-              {t('factory.outputLimit')} · {key}
-              <input
-                type="number"
-                min={0}
-                max={Number.MAX_SAFE_INTEGER}
-                value={Number(value.outputs[key])}
-                onChange={(event) =>
-                  onChange({
-                    ...value,
-                    outputs: { ...value.outputs, [key]: Number(event.target.value) },
-                  })
-                }
-              />
-            </label>
-          ))}
+        {outputFields.map((key) => (
+          <label key={key}>
+            {t('factory.outputLimit')} · {key}
+            <input
+              type="number"
+              min={0}
+              max={Number.MAX_SAFE_INTEGER}
+              value={Number(value.outputs[key])}
+              onChange={(event) =>
+                onChange({
+                  ...value,
+                  outputs: { ...value.outputs, [key]: Number(event.target.value) },
+                })
+              }
+            />
+          </label>
+        ))}
       </div>
     </fieldset>
   );

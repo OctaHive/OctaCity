@@ -418,80 +418,108 @@ function ProfileSettings({
   const argumentKeys = useDraftRowKeys(ceiling.execution?.cli_arguments ?? []);
   const setExecution = (patch: Partial<Schema['FactoryRoleProfileExecution']>) =>
     onChange({ ...value, execution: { ...execution, ...patch } });
+  const hasEnvironment =
+    Object.keys(environment).length > 0 ||
+    Object.values(ceiling.execution?.environment ?? {}).some((entry) => entry.kind === 'secret');
   return (
     <>
-      <fieldset>
-        <legend>{t('factory.environment')}</legend>
-        {Object.entries(environment).map(([name, schema]) => (
-          <FactoryValueInput
-            key={name}
-            schema={schema.shape}
-            label={name}
-            value={
-              execution.environment?.[name]?.kind === 'public'
-                ? execution.environment[name].value
-                : ''
-            }
-            onChange={(next) =>
-              setExecution({
-                environment: {
-                  ...execution.environment,
-                  [name]: { kind: 'public', value: String(next) },
-                },
-              })
-            }
-          />
-        ))}
-        {Object.entries(ceiling.execution?.environment ?? {})
-          .filter(([, entry]) => entry.kind === 'secret')
-          .map(([name, entry]) => (
-            <label key={name}>
-              <input
-                type="checkbox"
-                checked={!!execution.environment?.[name]}
-                onChange={(event) => {
-                  const next = { ...execution.environment };
-                  if (event.target.checked) next[name] = entry;
-                  else delete next[name];
-                  setExecution({ environment: next });
-                }}
-              />
-              {name} · {t('factory.secretReference')}
-            </label>
+      <p>{t('factory.runtimeSelectionHelp')}</p>
+      {hasEnvironment ? (
+        <fieldset>
+          <legend>{t('factory.environment')}</legend>
+          {Object.entries(environment).map(([name, schema]) => (
+            <FactoryValueInput
+              key={name}
+              schema={schema.shape}
+              label={name}
+              value={
+                execution.environment?.[name]?.kind === 'public'
+                  ? execution.environment[name].value
+                  : ''
+              }
+              onChange={(next) =>
+                setExecution({
+                  environment: {
+                    ...execution.environment,
+                    [name]: { kind: 'public', value: String(next) },
+                  },
+                })
+              }
+            />
           ))}
-      </fieldset>
-      <fieldset>
-        <legend>{t('factory.cliArguments')}</legend>
-        <p>{t('factory.installedArguments')}</p>
-        <ol>
-          {(value.execution?.cli_arguments ?? []).map((argument, index) => (
-            <li key={argumentKeys[index]}>{argument}</li>
-          ))}
-        </ol>
-      </fieldset>
-      {(['mcp_servers', 'integrations'] as const).map((field) => (
-        <fieldset key={field}>
-          <legend>{t(field === 'mcp_servers' ? 'factory.mcp' : 'factory.integrations')}</legend>
-          {Object.entries(ceiling.execution?.[field] ?? {}).map(([name, entry]) => (
-            <label key={name}>
-              <input
-                type="checkbox"
-                checked={!!execution[field]?.[name]}
-                onChange={(event) => {
-                  const next: Record<
-                    string,
-                    Schema['FactoryRoleMcpBinding'] | Schema['FactoryRoleIntegrationBinding']
-                  > = { ...execution[field] };
-                  if (event.target.checked) next[name] = entry;
-                  else delete next[name];
-                  setExecution({ [field]: next });
-                }}
-              />
-              {name}
-            </label>
-          ))}
+          {Object.entries(ceiling.execution?.environment ?? {})
+            .filter(([, entry]) => entry.kind === 'secret')
+            .map(([name, entry]) => (
+              <label key={name}>
+                <input
+                  type="checkbox"
+                  checked={!!execution.environment?.[name]}
+                  onChange={(event) => {
+                    const next = { ...execution.environment };
+                    if (event.target.checked) next[name] = entry;
+                    else delete next[name];
+                    setExecution({ environment: next });
+                  }}
+                />
+                {name} · {t('factory.secretReference')}
+              </label>
+            ))}
         </fieldset>
-      ))}
+      ) : null}
+      {(value.execution?.cli_arguments?.length ?? 0) > 0 ? (
+        <fieldset>
+          <legend>{t('factory.cliArguments')}</legend>
+          <p>{t('factory.installedArguments')}</p>
+          <ol>
+            {(value.execution?.cli_arguments ?? []).map((argument, index) => (
+              <li key={argumentKeys[index]}>{argument}</li>
+            ))}
+          </ol>
+        </fieldset>
+      ) : null}
+      {!hasEnvironment && !value.execution?.cli_arguments?.length ? (
+        <p>{t('factory.noRuntimeOverrides')}</p>
+      ) : null}
+      {(['mcp_servers', 'integrations'] as const).map((field) =>
+        Object.keys(ceiling.execution?.[field] ?? {}).length ? (
+          <fieldset key={field}>
+            <legend>{t(field === 'mcp_servers' ? 'factory.mcp' : 'factory.integrations')}</legend>
+            {Object.entries(ceiling.execution?.[field] ?? {}).map(([name, entry]) => (
+              <label key={name}>
+                <input
+                  type="checkbox"
+                  checked={!!execution[field]?.[name]}
+                  onChange={(event) => {
+                    const next: Record<
+                      string,
+                      Schema['FactoryRoleMcpBinding'] | Schema['FactoryRoleIntegrationBinding']
+                    > = { ...execution[field] };
+                    if (event.target.checked) next[name] = entry;
+                    else delete next[name];
+                    setExecution({ [field]: next });
+                  }}
+                />
+                {name}
+                {'configuration' in entry && entry.integration ? (
+                  <>
+                    {' '}
+                    · <span>{t('factory.mcpIntegration', { integration: entry.integration })}</span>
+                  </>
+                ) : null}
+              </label>
+            ))}
+          </fieldset>
+        ) : (
+          <section key={field}>
+            <h4>{t(field === 'mcp_servers' ? 'factory.mcp' : 'factory.integrations')}</h4>
+            <p>
+              {t(
+                field === 'mcp_servers' ? 'factory.noRuntimeMcp' : 'factory.noRuntimeIntegrations',
+              )}
+            </p>
+          </section>
+        ),
+      )}
       <BudgetEditor
         label={t('factory.profileBudget')}
         value={value.budget}
