@@ -86,6 +86,19 @@ class LocalStandServerBuildTests(unittest.TestCase):
         self.assertNotIn("target-feature=+crt-static", dockerfile)
         self.assertNotIn("docker/dockerfile:", dockerfile)
 
+    def test_reuse_rejects_an_image_without_the_model_catalog_plugin(self):
+        import subprocess
+        results = [
+            subprocess.CompletedProcess([], 0, json.dumps({"User":"65532:65532", "Labels":{
+                "org.opencontainers.image.version":"0.1.0", "org.opencontainers.image.revision":"a"*40}})),
+            subprocess.CompletedProcess([], 0, "octacity-server 0.1.0"),
+            subprocess.CompletedProcess([], 0, "server configuration is valid"),
+            subprocess.CalledProcessError(127, ["docker", "run"]),
+        ]
+        with mock.patch.object(BUILDER.subprocess, "run", side_effect=results):
+            with self.assertRaises(subprocess.CalledProcessError):
+                BUILDER.verify_image("local:test",Path("fixture.toml"),"0.1.0","a"*40)
+
     def test_runtime_user_must_be_an_explicit_non_root_numeric_identity(self):
         self.assertEqual(BUILDER.validate_runtime_user("65532:65532"), (65532, 65532))
         for value in ("", "root", "0", "0:0", "65532:0", "app:app"):

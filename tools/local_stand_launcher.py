@@ -332,7 +332,7 @@ def _stop_halves(
 
 
 def _up(arguments: argparse.Namespace) -> dict[str, object]:
-    if (arguments.factory_signal_connectors is not None or arguments.factory_delivery_bundle is not None) and arguments.factory_profiles is None:
+    if (arguments.factory_signal_connectors is not None or arguments.factory_delivery_bundle is not None or arguments.factory_runtime_bundle is not None) and arguments.factory_profiles is None:
         raise LocalStandError("Factory connectors require an explicit Factory profile")
     root = state.resolve_safe_root(arguments.root, REPOSITORY, Path.home())
     origin = _resolved_origin(arguments)
@@ -360,6 +360,7 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
             factory_profiles=arguments.factory_profiles,
             factory_signal_connectors=arguments.factory_signal_connectors,
             factory_delivery_bundle=arguments.factory_delivery_bundle,
+            factory_runtime_bundle=arguments.factory_runtime_bundle,
         )
         _build_images(native)
         _run_compose(root, arguments.https_port, ("config", "--quiet"))
@@ -721,6 +722,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         "--factory-profiles", type=Path,
         help="explicit private native Factory profile catalog; omitted disables Factory",
     )
+    up.add_argument("--factory-runtime-bundle", type=Path, help="separate private installed model runtime directory")
     up.add_argument("--factory-agent-profile", type=Path, help="separate private local Factory Agent policy")
     up.add_argument("--factory-signal-connectors", type=Path, help="separate private installed Decision Signal connector catalog")
     up.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")

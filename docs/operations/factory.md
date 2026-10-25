@@ -870,13 +870,19 @@ normalizes PNG/JPEG/WebP uploads; publication decodes the complete raster throug
 the shared safe-preview mechanism. No remote image URL, extra file store,
 provider call or execution grant is introduced.
 
-The demonstration `tools/factory-stand` currently declares neither Codex execution
-profiles nor Project role-profile capabilities. An empty Runtime/Model list means
-missing execution configuration. Agent identity/instructions/shared skills remain
-authorable. Runtime installation and provider access remain operator-owned; Console
-uses the installed plugin's advisory model catalog and supports explicit refresh
-and manual model entry when declared. Names such as default/pro have no implicit
-model or provider meaning.
+The demonstration `tools/factory-stand` installs the compatible real Codex CLI
+and a Project role-profile authoring capability. Its plugin-owned advisory catalog
+provides model names and parameters, explicit refresh and manual entry; new
+profiles require an explicit model instead of using the technical contract alias.
+`default` and `pro` remain arbitrary profile names. Setup snapshots only existing
+Codex authentication into the private Runtime home, retaining no workstation
+instructions, MCP settings or skills. Missing login permits advisory/manual
+catalog use. This metadata installation creates no Role, profile, task or Build
+and grants no execution authority. An executable reasoning stage still requires
+its separately installed Codex executor, Agent credentials and policy through the
+[ordinary Factory installation](local-stand.md#optional-factory-installation).
+An empty Runtime list therefore still indicates missing or unavailable installed
+compatibility for that Project.
 
 An installed role-profile declaration may attach `model_discovery` with an absolute
 `executable`, its `executable_sha256`, and an installation-owned `environment` map.

@@ -17,6 +17,21 @@ from factory_integrations import configure_integrations
 
 class LocalStandEntrypointTests(unittest.TestCase):
     @unittest.skipUnless(shutil.which("docker"), "Docker is required for the container boundary")
+    def test_server_image_exposes_plugin_owned_model_metadata_without_task_or_credentials(self):
+        image = os.environ.get("OCTACITY_TEST_SERVER_IMAGE", "octacity/server:local")
+        if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode:
+            self.skipTest("build the local server image before checking Runtime discovery")
+        result = subprocess.run([
+            "docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
+            "--entrypoint", "/usr/local/bin/octa_plugin_codex", image, "--describe-models",
+        ], input="{}\n", capture_output=True, text=True, timeout=20)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        catalog = json.loads(result.stdout)
+        self.assertIs(catalog["manual_model"], True)
+        self.assertEqual(catalog["models"], [])
+        self.assertIs(catalog["available"], False)
+
+    @unittest.skipUnless(shutil.which("docker"), "Docker is required for the container boundary")
     def test_server_image_ships_an_independently_invocable_github_provider(self):
         image = os.environ.get("OCTACITY_TEST_SERVER_IMAGE", "octacity/server:local")
         if subprocess.run(["docker", "image", "inspect", image], capture_output=True).returncode:
@@ -150,6 +165,17 @@ fi
             credential = delivery / "credential"
             credential.write_text("private-delivery-canary\n")
             credential.chmod(0o600)
+            runtime = bundle / "factory-runtime"
+            runtime.mkdir(mode=0o700)
+            program = runtime / "plugin"
+            program.write_text('#!/bin/sh\nprintf runtime-catalog-ready\n')
+            program.chmod(0o700)
+            private_home = runtime / "home/.codex"
+            private_home.mkdir(parents=True, mode=0o700)
+            (runtime / "home").chmod(0o700)
+            auth = private_home / "auth.json"
+            auth.write_text("runtime-auth-canary")
+            auth.chmod(0o600)
             observer = root / "observe"
             observer.write_text(
                 '#!/bin/sh\nset -eu\ntest "$(id -u)" = 65532\n'
@@ -168,6 +194,9 @@ fi
                 'test "$(stat -c %a "$delivery/inputs")" = 700\n'
                 'test "$(cat "$delivery/credential")" = private-delivery-canary\n'
                 'test "$("$delivery/plugin")" = hermetic-adapter-ready\n'
+                'test "$(/run/octacity-runtime/plugin)" = runtime-catalog-ready\n'
+                'test "$(cat /run/octacity-runtime/home/.codex/auth.json)" = runtime-auth-canary\n'
+                'test "$(stat -c %a /run/octacity-runtime/home/.codex/auth.json)" = 600\n'
                 'echo private-connectors-ready\n'
             )
             observer.chmod(0o755)
@@ -175,6 +204,7 @@ fi
                 "docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                 "--user", "0:0", "--tmpfs", "/run/octacity-secrets:mode=0700,size=64k",
                 "--tmpfs", "/run/octacity-delivery:exec,mode=0700,size=1m",
+                "--tmpfs", "/run/octacity-runtime:exec,mode=0700,size=1m",
                 "--mount", f"type=bind,src={secrets},dst=/run/secrets,readonly",
                 "--mount", f"type=bind,src={bundle},dst=/run/octacity-factory-connectors,readonly",
                 "--mount", f"type=bind,src={observer},dst=/usr/local/bin/octacity-server,readonly",

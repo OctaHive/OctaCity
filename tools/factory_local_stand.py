@@ -22,6 +22,7 @@ import local_stand_launcher as launcher
 import local_stand_state as state
 import verify_local_stand_integration as integration
 from factory_integrations import configure_integrations, install_repository
+from factory_local_runtime import install_runtime
 
 
 def _private_json(path: Path, value: dict) -> None:
@@ -33,9 +34,50 @@ def _private_json(path: Path, value: dict) -> None:
             raise ValueError("existing Factory fixture receipt differs from the selected installation")
 
 
+def publish_runtime_profiles(root: Path, native: Path, path: Path, document: dict,
+                             bundle: Path, *, previous: dict) -> None:
+    """Upgrade only the generated pre-Runtime installation; durable state is untouched."""
+    if not path.exists() or _read_json(path) == document:
+        _private_json(path, document)
+        return
+    if _read_json(path) != previous:
+        raise ValueError("Factory profiles were customized; refusing to replace them")
+    # Prove ownership/content before preparing or stopping anything.
+    destination = root / "config/server"
+    if destination.exists():
+        server_config.generate_server_configuration(root, native, factory_profiles=path)
+    with tempfile.TemporaryDirectory(prefix=".runtime-upgrade-", dir=root) as temporary:
+        staging = Path(temporary)
+        for name in ("secrets", "pki"):
+            shutil.copytree(root / name, staging / name)
+        reviewed = staging / "profiles.json"
+        _private_json(reviewed, document)
+        server_config.generate_server_configuration(staging, native, factory_profiles=reviewed,
+                                                   factory_runtime_bundle=bundle)
+        backup = staging / "previous-server"
+        if destination.exists():
+            launcher.run(launcher.parse_arguments(["down", "--root", str(root)]))
+            destination.rename(backup)
+        try:
+            (staging / "config/server").rename(destination)
+            reviewed.replace(path)
+        except BaseException:
+            if destination.exists():
+                destination.rename(staging / "uncommitted-server")
+            if backup.exists():
+                backup.rename(destination)
+            raise
+
+
 def _read_json(path: Path) -> dict:
     return state.load_json_object(state.read_regular_file(path, "Factory fixture receipt", max_bytes=131072,
                                   modes=frozenset({0o600})), "Factory fixture receipt")
+
+
+def _prepare_bootstrap_services(root: Path) -> None:
+    launcher._run_compose(root, 8443, ("up", "--detach", "--wait", "postgres", "minio"), timeout_seconds=180)
+    launcher._run_compose(root, 8443, ("run", "--rm", "--no-deps", "minio-init"), timeout_seconds=60)
+    launcher._run_compose(root, 8443, ("run", "--rm", "--no-deps", "--entrypoint", "/bin/true", "gateway"), timeout_seconds=30)
 
 
 def run_stand(root: Path, source: str, revision: str | None, *, github_repository: str | None = None) -> dict:
@@ -63,26 +105,37 @@ def run_stand(root: Path, source: str, revision: str | None, *, github_repositor
     print("Preparing verified native installation and stand images", flush=True)
     native = launcher._prepare_native_installation(root)
     launcher._build_images(native)
+    runtime = None
     if not prepared_file.exists():
-        launcher._run_compose(root, 8443, ("up", "--detach", "--wait", "postgres", "minio"), timeout_seconds=180)
-        launcher._run_compose(root, 8443, ("run", "--rm", "--no-deps", "minio-init"), timeout_seconds=60)
-        launcher._run_compose(root, 8443, ("run", "--rm", "--no-deps", "--entrypoint", "/bin/true", "gateway"), timeout_seconds=30)
+        _prepare_bootstrap_services(root)
         print("Publishing ordinary prerequisite resources through the bootstrap API", flush=True)
         with bootstrap_server(root, native.path) as client:
             pool = client.post(bootstrap.POOL_PATH, bootstrap._stable_key(b"pool"), bootstrap.LOCAL_POOL_REQUEST)["resource"]["id"]
             resources = prepare_resources(client, pool, source, integration._guest_image(), str(namespace))
+            runtime = install_runtime(root, native.path, resources, client)
         _private_json(prepared_file, resources)
     resources = _read_json(prepared_file)
+    if runtime is None:
+        if (root / "factory-runtime/project.json").exists():
+            runtime = install_runtime(root, native.path, resources, None)
+        else:
+            _prepare_bootstrap_services(root)
+            with bootstrap_server(root, native.path) as client:
+                runtime = install_runtime(root, native.path, resources, client)
     profiles = root / "factory-demo/factory-profiles.json"
-    _private_json(profiles, {"version": 1, "projects": [{"project_id": resources["project"],
-        "references": fixture["references"], "build_configurations": []}], "codex": []})
+    project = {"project_id":resources["project"], **runtime["project"]}
+    project["references"] = [*fixture["references"], *project["references"]]
+    previous = {"version":1,"projects":[{"project_id":resources["project"],
+        "references":fixture["references"],"build_configurations":[]}],"codex":[]}
+    publish_runtime_profiles(root, native.path, profiles, {"version":1,"projects":[project],"codex":[]},
+                             runtime["bundle"], previous=previous)
     if github_repository is not None:
         # Install against the final profile before starting the worker: a later
         # server/gateway recreation would interrupt its outstanding lease poll.
-        server_config.generate_server_configuration(root, native.path, factory_profiles=profiles)
+        server_config.generate_server_configuration(root, native.path, factory_profiles=profiles, factory_runtime_bundle=runtime["bundle"])
         install_repository(root, github_repository)
     print("Starting the standard stand with Factory enabled", flush=True)
-    launcher.run(launcher.parse_arguments(["up", "--root", str(root), "--factory-profiles", str(profiles)]))
+    launcher.run(launcher.parse_arguments(["up", "--root", str(root), "--factory-profiles", str(profiles), "--factory-runtime-bundle", str(runtime["bundle"])]))
     if github_repository is not None or (root / "config/integrations/server.toml").exists():
         probe = integration.LocalStandClient(root, bootstrap.DEFAULT_ORIGIN)
         for endpoint in ("/api/v1/integration-installations", "/api/v1/integrations"):

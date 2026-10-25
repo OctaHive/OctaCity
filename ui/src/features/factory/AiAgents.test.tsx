@@ -1104,3 +1104,36 @@ it('validates skill identities before import and requires distinct identifiers w
   await screen.findByRole('dialog');
   expect(roles.importSkill).not.toHaveBeenCalled();
 });
+
+it('requires an explicit plugin model for a new profile instead of submitting the technical model contract name', async () => {
+  const { roles } = setup();
+  const { capability } = factoryRoleFixture();
+  roles.getCapability.mockResolvedValue({
+    ...capability,
+    model_catalog: {
+      available: true,
+      manual_model: true,
+      models: [
+        {
+          identifier: 'Vendor/future:preview',
+          label: 'Plugin suggested model',
+          parameters: capability.parameters,
+        },
+      ],
+    },
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Create profile' }));
+  await userEvent.click(await screen.findByRole('combobox', { name: 'Runtime / Model' }));
+  await userEvent.click(screen.getByRole('option', { name: /installed-runtime/ }));
+  const model = await screen.findByRole('textbox', { name: 'Model identifier' });
+  expect(model).toHaveProperty('value', '');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Profile name' }), 'default');
+  expect(screen.getByRole('button', { name: 'Review profile' })).toHaveProperty('disabled', true);
+  await userEvent.click(screen.getByRole('combobox', { name: 'Suggested models' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Plugin suggested model' }));
+  expect(model).toHaveProperty('value', 'Vendor/future:preview');
+  expect(screen.getByRole('button', { name: 'Review profile' })).toHaveProperty('disabled', false);
+  expect(roles.validateProfile).not.toHaveBeenCalled();
+});

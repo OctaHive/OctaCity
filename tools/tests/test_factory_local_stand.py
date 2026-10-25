@@ -1,5 +1,6 @@
 """Factory stand data is published through the existing management contracts."""
 import copy
+from contextlib import nullcontext
 import importlib.util
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import json
@@ -120,8 +121,12 @@ class FactoryLocalStandTests(unittest.TestCase):
             demo._private_json(root / "evidence/factory-demo-input.json", {"namespace":str(uuid.uuid4()), "source":source, "revision":"a"*40})
             retained = {"runs":{"manual":"retained-run"}}
             demo._private_json(root / "evidence/factory-demo.json", retained)
+            runtime_project = {"role_profiles":{"codex":{"model_discovery":{"executable":"/usr/local/bin/octa_plugin_codex"}}},"references":[],"build_configurations":[]}
+            runtime = {"bundle":root/"runtime", "project":runtime_project}
+            demo._private_json(root/"factory-runtime/project.json",runtime_project)
             startup = []
-            with patch.object(demo.initializer, "initialize"), \
+            with patch.object(demo, "install_runtime", return_value=runtime, create=True), \
+                    patch.object(demo.initializer, "initialize"), \
                     patch.object(demo.launcher, "_prepare_native_installation", return_value=types.SimpleNamespace(path=root / "native")), \
                     patch.object(demo.launcher, "_build_images"), \
                     patch.object(demo.server_config, "generate_server_configuration"), \
@@ -131,6 +136,8 @@ class FactoryLocalStandTests(unittest.TestCase):
                     patch.object(demo.integration, "LocalStandClient") as client:
                 result = demo.run_stand(root, source, None, github_repository="Example/Tickets")
             self.assertEqual(result, retained)
+            profiles = demo._read_json(root / "factory-demo/factory-profiles.json")
+            self.assertEqual(profiles["projects"][0]["role_profiles"], runtime_project["role_profiles"])
             install.assert_called_once_with(root, "Example/Tickets")
             # Recreating the coordinator after worker startup cuts its pending lease poll.
             self.assertEqual(startup, ["install integrations", "start stand and agent"])
@@ -138,6 +145,28 @@ class FactoryLocalStandTests(unittest.TestCase):
             self.assertEqual([call.args[0] for call in client.return_value.get.call_args_list],
                              ["/api/v1/integration-installations", "/api/v1/integrations"])
             client.return_value.post.assert_not_called()
+
+    @unittest.skipUnless(os.name == "posix", "private stand state requires POSIX ownership")
+    def test_stopped_legacy_stand_installs_runtime_through_bootstrap_without_replaying_runs(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root=Path(temporary).resolve()
+            source="https://github.com/OctaHive/OctaCity.git"
+            demo._private_json(root/"evidence/factory-demo-resources.json",{"project":"project","configuration":"cfg"})
+            demo._private_json(root/"evidence/factory-demo-input.json",{"namespace":str(uuid.uuid4()),"source":source,"revision":"a"*40})
+            retained={"runs":{"manual":"retained-run"}}
+            demo._private_json(root/"evidence/factory-demo.json",retained)
+            runtime={"bundle":root/"runtime","project":{"references":[],"build_configurations":[],"role_profiles":{"codex":{}}}}
+            with patch.object(demo.initializer,"initialize"), \
+                    patch.object(demo.launcher,"_prepare_native_installation",return_value=types.SimpleNamespace(path=root/"native")), \
+                    patch.object(demo.launcher,"_build_images"), patch.object(demo.launcher,"_run_compose"), \
+                    patch.object(demo.launcher,"run"), patch.object(demo,"bootstrap_server",return_value=nullcontext(object())) as bootstrap, \
+                    patch.object(demo,"install_runtime",return_value=runtime), \
+                    patch.object(demo.integration,"LocalStandClient",side_effect=AssertionError("the gateway is stopped")):
+                actual=demo.run_stand(root,source,None)
+            self.assertEqual(actual,retained)
+            bootstrap.assert_called_once_with(root,root/"native")
+            profiles=demo._read_json(root/"factory-demo/factory-profiles.json")
+            self.assertIn("codex",profiles["projects"][0]["role_profiles"])
 
     def test_command_accepts_an_explicit_issue_repository_independent_of_build_source(self):
         with patch.object(demo, "run_stand", return_value={}) as start:

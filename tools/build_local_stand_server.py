@@ -137,6 +137,13 @@ def verify_image(
     result = subprocess.run(validate, check=True, capture_output=True, text=True)
     if "server configuration is valid" not in result.stdout:
         raise LocalStandBuildError("server image did not validate the fixture configuration")
+    catalog = subprocess.run([
+        "docker", "run", "--rm", "--platform", CONTAINER_PLATFORM, "--network", "none", "--read-only",
+        "--entrypoint", "/usr/local/bin/octa_plugin_codex", image, "--describe-models",
+    ], input="{}\n", check=True, capture_output=True, text=True, timeout=20)
+    metadata = json.loads(catalog.stdout)
+    if metadata.get("manual_model") is not True or not isinstance(metadata.get("models"), list):
+        raise LocalStandBuildError("server image has invalid model-catalog metadata")
 
 
 def build(image: str, manifest: Path, fixture: Path, repository: Path) -> None:

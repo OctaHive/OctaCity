@@ -5,6 +5,7 @@ services:
     tmpfs:
       - /run/octacity-secrets:size=320m,mode=0700
       - /run/octacity-delivery:exec,size=512m,mode=0700
+      - /run/octacity-runtime:exec,size=512m,mode=0700
     volumes:
       - type: bind
         source: ${OCTACITY_LOCAL_STAND_ROOT:?set OCTACITY_LOCAL_STAND_ROOT}/config/server

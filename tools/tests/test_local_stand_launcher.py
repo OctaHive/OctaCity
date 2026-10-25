@@ -232,9 +232,11 @@ class LocalStandLauncherTests(unittest.TestCase):
         profiles = self.root.parent / "profiles.json"
         connectors = self.root.parent / "connectors.json"
         delivery = self.root.parent / "delivery-installation"
+        runtime = self.root.parent / "runtime-installation"
         arguments = self.arguments("up", "--factory-profiles", str(profiles),
                                    "--factory-signal-connectors", str(connectors),
-                                   "--factory-delivery-bundle", str(delivery))
+                                   "--factory-delivery-bundle", str(delivery),
+                                   "--factory-runtime-bundle", str(runtime))
         native = launcher.NativeInstallation(Path("/verified/native"), {"sources": {}})
         with (
             mock.patch.object(launcher.initializer, "initialize"),
@@ -250,6 +252,7 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertEqual(configure.call_args.kwargs["factory_profiles"], profiles)
         self.assertEqual(configure.call_args.kwargs["factory_signal_connectors"], connectors)
         self.assertEqual(configure.call_args.kwargs["factory_delivery_bundle"], delivery)
+        self.assertEqual(configure.call_args.kwargs["factory_runtime_bundle"], runtime)
 
     def test_running_default_stand_does_not_ignore_requested_factory_installation(self):
         profiles = self.root.parent / "profiles.json"

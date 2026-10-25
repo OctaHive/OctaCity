@@ -1,0 +1,75 @@
+{
+  "version": 1,
+  "archive": {
+    "version": "0.161.0",
+    "tag": "rust-v0.161.0",
+    "archive_url": "https://github.com/openai/codex/releases/download/rust-v0.161.0/codex-aarch64-unknown-linux-musl.tar.gz",
+    "sha256": "5c90bf4be3c97fc62fcafb28ec2335ee318e6ecb332e1e8ee3d2c63814a5a26a",
+    "archive_max_bytes": 110000000,
+    "executable": "codex-aarch64-unknown-linux-musl",
+    "expanded_max_bytes": 268435456,
+    "file_max_bytes": 268435456,
+    "member_max_count": 4
+  },
+  "permissions": {
+    "commands": [],
+    "executables": [],
+    "max_descendants": 0,
+    "mounts": [],
+    "network_hosts": [],
+    "outputs": {
+      "kinds": [],
+      "max_artifact_bytes": 0,
+      "max_artifact_count": 0,
+      "max_report_bytes": 0,
+      "max_report_count": 0
+    },
+    "plugins": [],
+    "resources": {
+      "cpu_millis": 0,
+      "disk_bytes": 0,
+      "elapsed_millis": 0,
+      "memory_bytes": 0,
+      "process_count": 0
+    },
+    "secret_profiles": [],
+    "tools": [],
+    "workload_identity_profiles": []
+  },
+  "budget": {
+    "max_attempts": 1,
+    "max_elapsed_millis": 300000,
+    "max_tokens": 100000,
+    "max_cost_micro_units": 1000000,
+    "max_output_bytes": 67108864
+  },
+  "parameters": {
+    "reference": {
+      "identity": "codex-runtime-parameters",
+      "version": "v1",
+      "digest": "e0723039c9f692c9439dca0df8b127378bc38537c033bf549148fcdc38a4c264"
+    },
+    "shape": {
+      "type": "object",
+      "fields": {}
+    }
+  },
+  "enforcement": [
+    "plugin_identity",
+    "executable_identity",
+    "tool_identity",
+    "command_arguments",
+    "descendant_processes",
+    "filesystem_paths",
+    "mount_modes",
+    "network_hosts",
+    "secret_profiles",
+    "workload_identity_profiles",
+    "cpu",
+    "memory",
+    "disk",
+    "process_count",
+    "elapsed_time",
+    "outputs"
+  ]
+}

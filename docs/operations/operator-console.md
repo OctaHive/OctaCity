@@ -333,6 +333,13 @@ versions remain readable; deleting an agent does not cancel accepted Builds.
 After success the card closes, the catalog refreshes and keyboard focus returns to
 **Create AI agent**. Transport retry uses the same reviewed command and replay key.
 
+For the local Factory stand, **Create profile** now offers its installed Codex
+Runtime and the model catalog supplied by the plugin. Select a suggested model or
+enter its identifier manually, then name and publish `default` or `pro` as separate
+profiles. A fresh profile requires a model choice; it never treats a technical
+contract alias as a suggested model. Catalog refresh preserves published pins.
+Runtime discovery and profile creation do not dispatch Builds or LLM tasks.
+
 **Import skill folder** stays inside the AI-agent draft. Choose one skill folder
 with root `SKILL.md` (case-sensitive), or a collection folder containing several
 such folders. Console lists each outermost skill folder separately; a skill owns

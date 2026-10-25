@@ -75,8 +75,8 @@ if [ -e "$bundle/factory-signal-connectors.json" ] || [ -L "$bundle/factory-sign
     chown octacity:octacity "$destination"
   done
 fi
-copy_delivery_directory() {
-  [ "$3" -le 4 ] || { echo "Factory Delivery installation is invalid" >&2; exit 1; }
+copy_factory_directory() {
+  [ "$3" -le 4 ] || { echo "Factory executable installation is invalid" >&2; exit 1; }
   mkdir -p "$2"
   chmod 0700 "$2"
   chown octacity:octacity "$2"
@@ -84,14 +84,14 @@ copy_delivery_directory() {
     [ -e "$source" ] || [ -L "$source" ] || continue
     name=${source##*/}
     case "$name" in
-      .*|-*|*[!A-Za-z0-9_.-]*) echo "Factory Delivery installation is invalid" >&2; exit 1 ;;
+      .|..|-*|*[!A-Za-z0-9_.-]*) echo "Factory executable installation is invalid" >&2; exit 1 ;;
     esac
     delivery_count=$((delivery_count + 1))
     if [ "$delivery_count" -gt 1024 ] || [ "${#name}" -gt 128 ] || [ -L "$source" ]; then
-      echo "Factory Delivery installation is invalid" >&2; exit 1
+      echo "Factory executable installation is invalid" >&2; exit 1
     fi
     if [ -d "$source" ]; then
-      copy_delivery_directory "$source" "$2/$name" "$(( $3 + 1 ))"
+      copy_factory_directory "$source" "$2/$name" "$(( $3 + 1 ))"
     elif [ -f "$source" ]; then
       mode=0600
       limit=4194304
@@ -101,23 +101,27 @@ copy_delivery_directory() {
       bytes=$(wc -c < "$destination")
       delivery_bytes=$((delivery_bytes + bytes))
       if [ "$bytes" -gt "$limit" ] || [ "$delivery_bytes" -gt 536870912 ]; then
-        echo "Factory Delivery installation exceeds its bound" >&2; exit 1
+        echo "Factory executable installation exceeds its bound" >&2; exit 1
       fi
       chmod "$mode" "$destination"
       chown octacity:octacity "$destination"
     else
-      echo "Factory Delivery installation is invalid" >&2; exit 1
+      echo "Factory executable installation is invalid" >&2; exit 1
     fi
   done
 }
-if [ -e "$bundle/factory-delivery" ] || [ -L "$bundle/factory-delivery" ]; then
-  if [ ! -d "$bundle/factory-delivery" ] || [ -L "$bundle/factory-delivery" ]; then
-    echo "Factory Delivery installation is invalid" >&2; exit 1
+for installation in delivery runtime; do
+  source=$bundle/factory-$installation
+  if [ -e "$source" ] || [ -L "$source" ]; then
+    if [ ! -d "$source" ] || [ -L "$source" ]; then
+      echo "Factory executable installation is invalid" >&2; exit 1
+    fi
+    delivery_count=0
+    delivery_bytes=0
+    copy_factory_directory "$source" "/run/octacity-$installation" 0
   fi
-  delivery_count=0
-  delivery_bytes=0
-  copy_delivery_directory "$bundle/factory-delivery" /run/octacity-delivery 0
-fi
+done
+
 integration_bundle=/run/octacity-integration-installation
 if [ -e "$integration_bundle" ] || [ -L "$integration_bundle" ]; then
   [ -d "$integration_bundle" ] && [ ! -L "$integration_bundle" ] || { echo "integration installation is invalid" >&2; exit 1; }

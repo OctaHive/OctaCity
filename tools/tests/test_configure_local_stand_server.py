@@ -13,6 +13,7 @@ import sys
 import tempfile
 import tomllib
 import unittest
+from unittest.mock import patch
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -205,6 +206,59 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         with self.assertRaises(CONFIGURATOR.ServerConfigurationError):
             CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments)
         self.assertEqual((installed / "arbitrary-provider/credential.json").read_bytes(), b"private-delivery-canary")
+
+    def test_runtime_upgrade_preserves_stand_data_and_replaces_only_the_recognized_generated_bundle(self):
+        import factory_local_stand as stand
+        profiles = self.root / "factory-demo/factory-profiles.json"
+        old = {"version":1,"projects":[],"codex":[]}
+        stand._private_json(profiles,old)
+        CONFIGURATOR.generate_server_configuration(self.root,self.installation,repository=REPOSITORY,
+            home=Path.home(),openssl=self.openssl,factory_profiles=profiles)
+        runtime = self.root.parent / "runtime"
+        runtime.mkdir(mode=0o700)
+        (runtime/"plugin").write_text("#!/bin/sh\nexit 0\n"); (runtime/"plugin").chmod(0o700)
+        history = self.root / "evidence/operator-history.json"
+        stand._private_json(history,{"run":"retained-operator-run"})
+        new = {**old,"projects":[{"project_id":"project","role_profiles":{"codex":{}}}]}
+        with patch.object(stand.launcher,"run") as restart:
+            stand.publish_runtime_profiles(self.root,self.installation,profiles,new,runtime,previous=old)
+        self.assertEqual(stand._read_json(profiles),new)
+        self.assertEqual(stand._read_json(self.root/"config/server/factory-profiles.json"),new)
+        self.assertEqual(stand._read_json(history),{"run":"retained-operator-run"})
+        self.assertTrue((self.root/"config/server/factory-runtime/plugin").is_file())
+        self.assertEqual(restart.call_count,1)
+        with patch.object(stand.launcher,"run") as stop:
+            with self.assertRaisesRegex(ValueError,"customized"):
+                stand.publish_runtime_profiles(self.root,self.installation,profiles,old,runtime,previous=old)
+        stop.assert_not_called()
+        self.assertEqual(stand._read_json(profiles),new)
+
+    def test_runtime_programs_use_the_bounded_installation_without_changing_profile_content(self):
+        profiles = self.root.parent / "runtime-profiles.json"
+        profiles.write_bytes(b'{"version":1,"projects":[],"codex":[]}\n')
+        profiles.chmod(0o600)
+        runtime = self.root.parent / "runtime"
+        runtime.mkdir(mode=0o700)
+        plugin = runtime / "plugin"
+        plugin.write_bytes(b"#!/bin/sh\nprintf catalog\n")
+        plugin.chmod(0o700)
+        private_home = runtime / "home/.codex"
+        private_home.mkdir(parents=True, mode=0o700)
+        (runtime / "home").chmod(0o700)
+        auth = private_home / "auth.json"
+        auth.write_text('{"auth_mode":"chatgpt","private":"canary"}')
+        auth.chmod(0o600)
+        receipt = CONFIGURATOR.generate_server_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(),
+            openssl=self.openssl, factory_profiles=profiles, factory_runtime_bundle=runtime,
+        )
+        installed = Path(receipt["config"]).parent / "factory-runtime/plugin"
+        self.assertEqual(installed.read_bytes(), plugin.read_bytes())
+        retained_auth = installed.parent / "home/.codex/auth.json"
+        self.assertEqual(retained_auth.read_bytes(), auth.read_bytes())
+        self.assertEqual(stat.S_IMODE(retained_auth.stat().st_mode), 0o600)
+        self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o700)
+        self.assertEqual(Path(receipt["factory_profiles"]).read_bytes(), profiles.read_bytes())
 
     def test_factory_is_explicit_and_copies_the_private_profile_without_interpreting_flow(self):
         profiles = Path(self.temporary.name) / "operator-profiles.json"

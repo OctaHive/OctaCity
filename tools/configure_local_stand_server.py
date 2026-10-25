@@ -229,12 +229,12 @@ def _connector_bundle(catalog: Path) -> dict[str, bytes]:
         raise ServerConfigurationError("Factory connector inputs are invalid") from None
 
 
-def _delivery_bundle(root: Path) -> tuple[dict[str, bytes | None], frozenset[str]]:
-    """Copy a bounded opaque provider installation, never interpreting its API."""
+def _executable_bundle(root: Path, name: str) -> tuple[dict[str, bytes | None], frozenset[str]]:
+    """Copy a bounded opaque executable installation, never interpreting its protocol."""
     try:
-        files: dict[str, bytes | None] = {"factory-delivery": None}
+        files: dict[str, bytes | None] = {name: None}
         executables = set()
-        pending = [(root, "factory-delivery", 0)]
+        pending = [(root, name, 0)]
         total = 0
         while pending:
             directory, relative, depth = pending.pop()
@@ -242,7 +242,7 @@ def _delivery_bundle(root: Path) -> tuple[dict[str, bytes | None], frozenset[str
             if depth > 4:
                 raise ValueError("depth")
             for path in directory.iterdir():
-                if len(files) >= 1024 or not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}", path.name):
+                if len(files) >= 1024 or path.name in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.][A-Za-z0-9_.-]{0,127}", path.name):
                     raise ValueError("entry")
                 name = f"{relative}/{path.name}"
                 metadata = path.lstat()
@@ -254,7 +254,7 @@ def _delivery_bundle(root: Path) -> tuple[dict[str, bytes | None], frozenset[str
                 else:
                     executable = bool(metadata.st_mode & 0o111)
                     contents = state.read_regular_file(
-                        path, "Factory Delivery input", max_bytes=256 * 1024 * 1024 if executable else 4 * 1024 * 1024,
+                        path, "Factory executable input", max_bytes=256 * 1024 * 1024 if executable else 4 * 1024 * 1024,
                         modes=frozenset({0o500, 0o700, 0o755}) if executable else frozenset({PRIVATE_FILE_MODE}),
                     )
                     total += len(contents)
@@ -265,7 +265,7 @@ def _delivery_bundle(root: Path) -> tuple[dict[str, bytes | None], frozenset[str
                         executables.add(name)
         return files, frozenset(executables)
     except (OSError, ValueError, state.StateError):
-        raise ServerConfigurationError("Factory Delivery installation is invalid") from None
+        raise ServerConfigurationError("Factory executable installation is invalid") from None
 
 
 def _validate_existing_bundle(destination: Path, expected: dict[str, bytes | None], executables: frozenset[str] = frozenset()) -> None:
@@ -336,10 +336,11 @@ def generate_server_configuration(
     factory_profiles: Path | None = None,
     factory_signal_connectors: Path | None = None,
     factory_delivery_bundle: Path | None = None,
+    factory_runtime_bundle: Path | None = None,
 ) -> dict[str, str]:
     """Validate inputs and atomically publish an idempotent server bundle."""
 
-    if (factory_signal_connectors is not None or factory_delivery_bundle is not None) and factory_profiles is None:
+    if (factory_signal_connectors is not None or factory_delivery_bundle is not None or factory_runtime_bundle is not None) and factory_profiles is None:
         raise ServerConfigurationError("Factory connectors require an explicit Factory profile")
     try:
         initialized = initializer.validate_initialized_state(
@@ -370,9 +371,11 @@ def generate_server_configuration(
     if connector_files is not None:
         expected.update(connector_files)
     executables = frozenset()
-    if factory_delivery_bundle is not None:
-        delivery_files, executables = _delivery_bundle(factory_delivery_bundle.expanduser())
-        expected.update(delivery_files)
+    for name, source in (("factory-delivery", factory_delivery_bundle), ("factory-runtime", factory_runtime_bundle)):
+        if source is not None:
+            files, programs = _executable_bundle(source.expanduser(), name)
+            expected.update(files)
+            executables |= programs
 
     root = Path(initialized["root"])
     with state.private_umask():
@@ -411,6 +414,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--factory-profiles", type=Path, help="explicit private native Factory profile catalog; omitted disables Factory")
     parser.add_argument("--factory-signal-connectors", type=Path, help="separate private Decision Signal connector catalog")
     parser.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")
+    parser.add_argument("--factory-runtime-bundle", type=Path, help="separate private installed model runtime directory")
     return parser.parse_args()
 
 
@@ -424,6 +428,7 @@ def main() -> int:
             factory_profiles=arguments.factory_profiles,
             factory_signal_connectors=arguments.factory_signal_connectors,
             factory_delivery_bundle=arguments.factory_delivery_bundle,
+            factory_runtime_bundle=arguments.factory_runtime_bundle,
         )
     except (OSError, UnicodeError, ValueError, ServerConfigurationError) as error:
         raise SystemExit(f"local stand server configuration failed: {error}") from error

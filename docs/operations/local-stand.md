@@ -218,6 +218,42 @@ or delivery. The graphs, risk condition, budgets, and cases are declared in
 The script binds server-generated references without dispatching by Flow or
 node name.
 
+The same command installs the compatible real Codex CLI declared in
+[`factory-runtime.json`](../../deployment/local-stand/factory-runtime.json), verifies
+its release archive checksum, and publishes a Project Runtime choice for AI-agent
+profile authoring. The server builds its discovery plugin from the pinned Octa
+source with the same system libraries as Server; the Linux execution plugin keeps
+its separate released identity. Model names and parameter choices come from the
+plugin's `--describe-models` contract. Use **Refresh models** for an explicit update,
+or enter a model identifier manually when the plugin allows it. A new profile
+requires an explicit model choice; the technical model-contract identity is never
+submitted as its default model.
+
+In **Factory → AI agents**, open or create an agent, choose **Create profile**,
+select the Codex Runtime and a model, and save a profile named `default`. Repeat
+with the desired model/settings and name `pro`. These names carry no built-in
+model, permission or performance meaning. The original Role/Profile REST
+publication and validation contracts own both profiles.
+
+When `CODEX_HOME/auth.json` (default `~/.codex/auth.json`) exists, setup takes a
+private authentication-only snapshot for the isolated discovery Runtime. It does
+not copy `config.toml`, instructions, MCP configuration or local skills. The
+snapshot stays under the owner-only stand root and is copied to an executable
+private tmpfs with mode `0600`. Existing snapshots are reused; absence of a login
+does not prevent advisory discovery or manual model entry. Neither creating a
+profile nor refreshing the catalog starts a model task or spends execution
+budget. This installation adds authoring compatibility, not execution authority:
+using a profile in a reasoning stage still requires the separately qualified
+Codex executor, Agent credential/policy installation and ordinary Build binding
+below. The demonstration itself continues to use only native control nodes.
+
+An older, unmodified Factory demonstration gains this catalog on its next launch.
+The launcher validates the previous generated bundle, prepares the replacement,
+stops the stand through its ordinary lifecycle, and switches only the generated
+server configuration. Database/object volumes, operator data and demonstration
+receipts are preserved. It refuses to replace customized profiles; an ordinary
+stand is still not converted implicitly.
+
 Open `https://octacity.localhost:8443/` and select **Factory**. The command prints
 the Project, Flow, configuration, and Run IDs and retains them in
 `evidence/factory-demo.json` under the private stand root. Local CA trust is

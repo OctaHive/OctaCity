@@ -201,6 +201,9 @@ export function ProfileEditor({
                       : {
                           ...structuredClone(installed.definition),
                           name: '',
+                          model_identifier: installed.model_catalog
+                            ? ''
+                            : (installed.definition.model_identifier ?? null),
                           instructions: [],
                           skills: {},
                         },
@@ -340,6 +343,7 @@ export function ProfileEditor({
               type="button"
               disabled={
                 !definition.name.trim() ||
+                (!!models && !model.trim()) ||
                 !capability.data ||
                 !!capability.error ||
                 !pinnedRole.data ||

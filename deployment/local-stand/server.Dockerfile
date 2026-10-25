@@ -15,7 +15,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
     --mount=type=cache,target=/workspace/octacity/target,sharing=locked \
     set -eu; \
     cargo build --locked --release -p octacity-server -p octacity-github --bins; \
-    for executable in octacity-server octacity-github; do \
+    cargo build --manifest-path /workspace/octa/Cargo.toml --target-dir /workspace/octacity/target --locked --release -p octa_plugin_codex --bin octa_plugin_codex; \
+    for executable in octacity-server octacity-github octa_plugin_codex; do \
       binary=target/release/$executable; \
       install -D -m 0755 "$binary" "/out/rootfs/usr/local/bin/$executable"; \
       ldd "$binary" | awk '{ for (field = 1; field <= NF; field++) if ($field ~ /^\//) print $field }' | \
