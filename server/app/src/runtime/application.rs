@@ -251,14 +251,15 @@ pub(super) fn management_application(
     management_policy.clone(),
     Arc::new(octacity_server_application::SystemFactoryExecutionClock),
   ));
-  let role_management = octacity_server_api_rest::v1::FactoryRoleManagementApplication::new(
-    authorized_commands(&management_policy, roles.clone()),
-    authorized_queries(&management_policy, roles),
-  )
-  .with_skills(
-    authorized_commands(&management_policy, skills.clone()),
-    authorized_queries(&management_policy, skills),
-  );
+  let role_commands = authorized_commands(&management_policy, roles.clone());
+  let role_queries = authorized_queries(&management_policy, roles);
+  let role_management =
+    octacity_server_api_rest::v1::FactoryRoleManagementApplication::new(role_commands.clone(), role_queries.clone())
+      .with_runtime_settings(role_commands, role_queries)
+      .with_skills(
+        authorized_commands(&management_policy, skills.clone()),
+        authorized_queries(&management_policy, skills),
+      );
   let issues = Arc::new(octacity_server_application::IssueHandlers::new(
     store.clone(),
     management_policy.clone(),

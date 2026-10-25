@@ -366,6 +366,16 @@ pub struct PublishFactoryRoleProfilesRequest {
   pub profiles: Vec<serde_json::Value>,
 }
 
+/// Reviewed Runtime replacement; absence of a version creates only when no settings exist.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryRuntimeSettingsRequest {
+  /// Exact displayed revision, or null for initial creation.
+  pub expected_version: Option<u64>,
+  /// Shared structured settings; decoded and qualified by the application owner.
+  pub definition: serde_json::Value,
+}
+
 /// Side-effect-free role normalization with a stable client identity.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]

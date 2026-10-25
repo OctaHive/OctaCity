@@ -1037,6 +1037,22 @@ CLI settings, authorized MCP/integration bindings, tools and resource ceilings.
 Dedicated detail reads expose editable content with no-store; generic catalogs
 and audit omit instructions, environment values, CLI contents and skill bytes.
 
+Runtime settings reuse the same Project handlers. The Admin-only bounded
+`GET /api/v1/projects/{project_id}/factory-runtime-choices` catalog exposes installed
+support and environment names, without values or secret locators. Integration
+selections reuse the existing authorized Connection/resource/Project-access APIs.
+`GET .../factory-runtimes/{alias}` returns optional current `settings` under Project
+View; `/versions/{version}` reads an exact retained revision. Admin-only
+`POST .../factory-runtimes/{alias}/validate` reviews a complete `definition` and
+`expected_version` without publication. `POST .../factory-runtimes/{alias}` saves
+that body with `Idempotency-Key`; the body revision is the precondition, with null
+or omission meaning create only. Stale revisions return 412 and conflicting key
+reuse returns 409. An original retry recovers its original receipt after later
+updates under current authorization. Content/setup responses use no-store; reads,
+validation and save perform no model discovery, MCP connection check or workload
+execution. See [Runtime operations](../operations/factory.md#reviewed-project-runtime-settings)
+for the shared bounded schema and independent execution limits.
+
 `DELETE /api/v1/projects/{project_id}/factory-roles/{role_id}` requires Project
 Delete authority, `Idempotency-Key` and a strong `If-Match` for the displayed role
 version. The no-store receipt contains `disposition`, the exact `role` reference

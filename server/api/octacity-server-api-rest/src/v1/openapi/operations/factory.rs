@@ -12,6 +12,83 @@ use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::GetFactoryRuntimeSettingsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-runtimes/{alias}/versions/{version}",
+    "getFactoryRuntimeSettingsVersion",
+    "Factory",
+    "Read an exact immutable Runtime settings revision without latest-default substitution",
+    None,
+    "FactoryRuntimeSettingsDetails",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryRuntimeChoicesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-runtime-choices",
+    "listFactoryRuntimeChoices",
+    "Factory",
+    "Read bounded installed administration choices; integration resources use the existing authorized catalog",
+    None,
+    "FactoryRuntimeChoicePage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<octacity_server_application::ListFactoryRuntimeChoicesQuery>()
+  .with_capability_unavailable_response()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ValidateFactoryRuntimeSettingsQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-runtimes/{alias}/validate",
+    "validateFactoryRuntimeSettings",
+    "Factory",
+    "Review installed limits and current dependencies without publication or remote I/O",
+    Some("FactoryRuntimeSettingsRequest"),
+    "FactoryRuntimeSettingsDetails",
+    "200",
+    false,
+    false
+  )
+  .with_precondition_failed_response()
+  .with_capability_unavailable_response()
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::GetFactoryRuntimeSettingsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-runtimes/{alias}",
+    "getFactoryRuntimeSettings",
+    "Factory",
+    "Read reviewed Runtime settings; null means unconfigured",
+    None,
+    "FactoryRuntimeSettingsRead",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::PublishFactoryRuntimeSettingsCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-runtimes/{alias}",
+    "publishFactoryRuntimeSettings",
+    "Factory",
+    "Publish exact reviewed settings using the body revision and scoped replay key",
+    Some("FactoryRuntimeSettingsRequest"),
+    "FactoryRuntimeSettingsPublication",
+    "200",
+    true,
+    false
+  )
+  .with_precondition_failed_response()
+  .with_capability_unavailable_response()
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::GetProjectSkillQuery,
     "GET",
     "/api/v1/projects/{project_id}/factory-skills/{identity}/versions/{version}",

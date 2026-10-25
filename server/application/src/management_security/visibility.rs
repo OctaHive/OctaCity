@@ -563,5 +563,6 @@ project_catalog_visibility!(
   crate::ListFactoryRoleProfilesQuery,
   crate::ListFactoryRoleTemplatesQuery,
   crate::ListFactoryRoleProfileCapabilitiesQuery,
+  crate::ListFactoryRuntimeChoicesQuery,
   crate::ListProjectSkillsQuery,
 );

@@ -116,8 +116,8 @@ ordinary installed compiler, Project and backend authority.
 
 `PublishFactoryRuntimeSettingsCommand` and `GetFactoryRuntimeSettingsQuery` use
 existing Project administration/content authorization and the ordinary role/profile
-handlers. Their operation-shaped store port has memory and PostgreSQL adapters;
-REST routes and the Console setup view are not installed yet. Publishing these
+handlers. Their operation-shaped store port has memory and PostgreSQL adapters.
+REST authoring is available; the Console setup view remains a later task. Publishing these
 records does not change installation inventory or start execution.
 
 Settings belong to an existing Project/Runtime alias and retain exact toolchain
@@ -181,6 +181,33 @@ entry leaves prior transport content available for retained invocation recovery.
 profile-selected servers and explicitly mapped environment names reach the plugin;
 dispatch still rechecks managed integration access and independent execution grants.
 Static profiles and manual Factory intake keep their existing path when no settings apply.
+
+Runtime HTTP authoring uses the existing optional role/profile facade:
+
+- `GET /api/v1/projects/{project_id}/factory-runtime-choices` requires Project
+  Administer authority and accepts the ordinary `limit`/`after` alias pagination.
+  It exposes qualified transports/executable choices, independent permission ceilings
+  and environment names, never environment values or logical secret locators.
+  Existing Integration Connection, resource and Project-access endpoints remain the
+  integration selection catalog; Runtime configuration creates no connections or grants.
+- `GET /api/v1/projects/{project_id}/factory-runtimes/{alias}` requires Project View
+  and returns `{ "settings": null }` when unconfigured. The `/versions/{version}`
+  read returns exact historical content, or 404 when that revision is absent.
+- `POST .../factory-runtimes/{alias}/validate` requires Project Administer and accepts
+  `{ "expected_version": null, "definition": { ... } }` for creation, or the displayed
+  positive revision for replacement. It returns normalized candidate `settings`
+  through the same installed-limit/integration qualification as save, without writing
+  a revision, reserving a replay key, refreshing models or contacting an MCP service.
+- `POST .../factory-runtimes/{alias}` saves that same reviewed body with
+  `Idempotency-Key`. A stale body revision returns 412; different intent under an
+  accepted key returns 409. Retrying the original body/key returns its original
+  receipt after later updates and still requires current authorization. Final version
+  and aggregate catalog-capacity checks remain atomic at publication, so review is
+  not a reservation. Every successful content/setup response uses `Cache-Control: no-store`.
+
+OpenAPI reuses the existing toolchain, Integration binding and permission schemas,
+and describes bounded HTTP/stdio MCP rows. The Console Runtime API client uses generated
+types from these contracts and adds no provider rules, fixed model list or implicit retry.
 
 ### Reproducible AI-agent execution packages
 

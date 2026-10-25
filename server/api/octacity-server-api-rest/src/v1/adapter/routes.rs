@@ -533,6 +533,26 @@ fn registered_routes() -> ManagementRoutes {
       "listFactoryProfileCapabilities",
       super::factory_roles::capabilities,
     )
+    .get::<octacity_server_application::GetFactoryRuntimeSettingsQuery, _, _>(
+      "getFactoryRuntimeSettings",
+      super::factory_roles::runtime_settings::current,
+    )
+    .get::<octacity_server_application::GetFactoryRuntimeSettingsQuery, _, _>(
+      "getFactoryRuntimeSettingsVersion",
+      super::factory_roles::runtime_settings::version,
+    )
+    .post::<octacity_server_application::PublishFactoryRuntimeSettingsCommand, _, _>(
+      "publishFactoryRuntimeSettings",
+      super::factory_roles::runtime_settings::publish,
+    )
+    .post::<octacity_server_application::ValidateFactoryRuntimeSettingsQuery, _, _>(
+      "validateFactoryRuntimeSettings",
+      super::factory_roles::runtime_settings::validate,
+    )
+    .get::<octacity_server_application::ListFactoryRuntimeChoicesQuery, _, _>(
+      "listFactoryRuntimeChoices",
+      super::factory_roles::runtime_settings::choices,
+    )
     .get::<octacity_server_application::GetFactoryRoleProfileCapabilityQuery, _, _>(
       "getFactoryProfileCapability",
       super::factory_roles::capability,

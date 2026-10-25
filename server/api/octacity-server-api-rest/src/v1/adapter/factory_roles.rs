@@ -13,8 +13,10 @@ use octacity_server_application::{
   RefreshFactoryRoleProfileCapabilityQuery, ValidateFactoryRoleProfileQuery,
 };
 use octacity_server_application::{GetProjectSkillQuery, ImportProjectSkill, ListProjectSkillsQuery};
+pub(super) mod runtime_settings;
 /// Optional AI-agent authoring, independent of worker enrollment and execution providers.
 pub struct FactoryRoleManagementApplication {
+  runtime_settings: Option<runtime_settings::RuntimeSettingsApplication>,
   delete: Arc<dyn AuthorizedManagementCommandHandler<DeleteFactoryRoleCommand, Error = ApplicationError>>,
   capabilities:
     Arc<dyn AuthorizedManagementQueryHandler<ListFactoryRoleProfileCapabilitiesQuery, Error = ApplicationError>>,
@@ -71,6 +73,7 @@ impl FactoryRoleManagementApplication {
       + 'static,
   {
     Self {
+      runtime_settings: None,
       delete: commands.clone(),
       capabilities: queries.clone(),
       capability: queries.clone(),

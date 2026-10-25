@@ -16,6 +16,63 @@ pub struct FactoryNodeControlInput<'a> {
 }
 
 impl ManagementInputFactory {
+  /// Reviews exactly the publication body without reserving a replay key or writing a revision.
+  pub fn validate_factory_runtime_settings(
+    &self,
+    project: &str,
+    runtime: &str,
+    expected: Option<u64>,
+    definition: Value,
+  ) -> Result<crate::ValidateFactoryRuntimeSettingsQuery, ManagementInputError> {
+    Ok(crate::ValidateFactoryRuntimeSettingsQuery {
+      intent: self.factory_runtime_settings_intent(project, runtime, expected, definition)?,
+    })
+  }
+  /// Project/Runtime identity stays in the route, outside the reviewed settings body.
+  pub fn factory_runtime_settings_intent(
+    &self,
+    project: &str,
+    runtime: &str,
+    expected: Option<u64>,
+    definition: Value,
+  ) -> Result<crate::FactoryRuntimeSettingsIntent, ManagementInputError> {
+    let intent: crate::FactoryRuntimeSettingsIntent = factory_decode(serde_json::json!({
+      "project_id":project,"runtime":runtime,"expected_version":expected,"definition":definition,
+    }))?;
+    intent
+      .settings()
+      .map_err(|_| ManagementInputError::Invalid("runtime settings"))?;
+    Ok(intent)
+  }
+  /// Current or exact retained content read through ordinary Project authorization.
+  pub fn get_factory_runtime_settings(
+    &self,
+    project: &str,
+    runtime: &str,
+    exact: Option<u64>,
+  ) -> Result<crate::GetFactoryRuntimeSettingsQuery, ManagementInputError> {
+    Ok(crate::GetFactoryRuntimeSettingsQuery {
+      project_id: parse(project, "project id")?,
+      runtime: parse(runtime, "runtime alias")?,
+      version: exact.map(|v| version(v, "runtime settings version")).transpose()?,
+    })
+  }
+  /// Preserves original review intent and trusted acceptance time for scoped replay.
+  pub fn publish_factory_runtime_settings(
+    &self,
+    project: &str,
+    runtime: &str,
+    expected: Option<u64>,
+    definition: Value,
+    key: &str,
+    now: i64,
+  ) -> Result<crate::PublishFactoryRuntimeSettingsCommand, ManagementInputError> {
+    Ok(crate::PublishFactoryRuntimeSettingsCommand {
+      intent: self.factory_runtime_settings_intent(project, runtime, expected, definition)?,
+      idempotency_key: parse(key, "idempotency key")?,
+      published_at: timestamp(now)?,
+    })
+  }
   /// Uses the ordinary strong version precondition and scoped idempotency key.
   pub fn delete_factory_role(
     &self,

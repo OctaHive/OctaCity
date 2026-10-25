@@ -61,6 +61,8 @@ mod definition_discovery;
 mod factory;
 #[path = "v1_handlers/factory_roles.rs"]
 mod factory_roles;
+#[path = "v1_handlers/factory_runtimes.rs"]
+mod factory_runtimes;
 #[path = "v1_handlers/integration_contracts.rs"]
 mod integration_contracts;
 #[path = "v1_handlers/issue_workflows.rs"]
@@ -1628,6 +1630,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET", &format!("/api/v1/factory-runs/{build_id}/nodes/{job_id}/action"), None),
   ];
   requests.extend(factory_roles::management_requests());
+  requests.extend(factory_runtimes::management_requests());
   requests
 }
 
@@ -1836,6 +1839,11 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "list_project_skills",
       "get_project_skill",
       "select_factory_profile",
+      "list_factory_runtime_choices",
+      "get_factory_runtime_settings",
+      "get_factory_runtime_settings",
+      "validate_factory_runtime_settings",
+      "publish_factory_runtime_settings",
     ]
   );
 }

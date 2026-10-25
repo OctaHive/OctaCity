@@ -722,12 +722,16 @@ unavailable_role_use_cases!(query:
   GetFactoryRoleTemplateQuery=>"get_factory_role_template", ListFactoryRoleProfileCapabilitiesQuery=>"list_factory_profile_capabilities",
   RefreshFactoryRoleProfileCapabilityQuery=>"refresh_factory_profile_capability",
   GetFactoryRoleProfileCapabilityQuery=>"get_factory_profile_capability", ValidateFactoryRoleProfileQuery=>"validate_factory_role_profile",
+  ListFactoryRuntimeChoicesQuery=>"list_factory_runtime_choices",
+  GetFactoryRuntimeSettingsQuery=>"get_factory_runtime_settings",
+  ValidateFactoryRuntimeSettingsQuery=>"validate_factory_runtime_settings",
   ListProjectSkillsQuery=>"list_project_skills",
   GetProjectSkillQuery=>"get_project_skill",
 );
 unavailable_role_use_cases!(command:
   DeleteFactoryRoleCommand=>"delete_factory_role", PublishFactoryRoleProfilesCommand=>"publish_factory_role_profiles", CopyFactoryRoleTemplateCommand=>"copy_factory_role_template",
   ImportProjectSkill=>"import_project_skill", SelectFactoryProfileCommand=>"select_factory_profile",
+  PublishFactoryRuntimeSettingsCommand=>"publish_factory_runtime_settings",
 );
 
 pub(super) fn management_requests() -> Vec<Request<Body>> {
