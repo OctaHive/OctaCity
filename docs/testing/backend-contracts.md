@@ -1286,7 +1286,7 @@ Flow names, node names or model roles. Changes to the embedded program require
 rebuilding the executable; its actual SHA-256 is pinned in the installed profile.
 
 The composed role/profile slice also requires `OCTACITY_MODEL_DISCOVERY_PLUGIN`
-(the native host's released Octa 0.7.1 Codex plugin) and
+(the native host's Codex plugin from the pinned Octa release) and
 `OCTACITY_MODEL_DISCOVERY_RUNTIME` (the credential-free `codex-test-fixture`
 executable built from the matching Octa sources). Discovery runs on the Server
 host, separately from the Linux fixture executed inside Microsandbox. Its native

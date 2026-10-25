@@ -882,6 +882,9 @@ process host. This executable has its own digest: a native Server discovery bina
 can differ from the Linux plugin retained for Agent/Microsandbox execution. Neither
 path nor environment is supplied by a Role or exposed as credential metadata.
 Without this attachment, existing static capability declarations remain valid.
+The [pinned Octa release](../../deployment/local-stand/inputs.json) includes the
+Codex discovery timer correction: executable qualification and app-server queries
+share one 10-second deadline, with runtime and stderr-drain cleanup on expiry.
 
 Octa 0.7.1 adds the optional `model-catalog.v1` contract. Catalogs are bounded to
 256 suggestions and 256 KiB; model identifiers are opaque UTF-8 up to 256 bytes.

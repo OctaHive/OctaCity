@@ -37,11 +37,11 @@ class LocalStandInputTests(unittest.TestCase):
 
     def test_pins_the_released_model_catalog_capable_octa(self):
         octa = self.document["native"]["octa"]
-        self.assertEqual(octa["version"], "0.7.1")
-        self.assertEqual(octa["source_revision"], "a25c08c4b04f309a7c6c5fd45be7432bf77cd237")
+        self.assertEqual(octa["version"], "0.7.2")
+        self.assertEqual(octa["source_revision"], "c60202e90eb8b99eaab9ba46b446a3cde7f846a8")
         self.assertEqual(
             octa["sha256"],
-            "7a170bc456c50e7c2f5534df16f4775994ca38707c95f38adce9be39ea881b09",
+            "aab5b8147741cf4081206e3f066b776273a77c1c3b3ad7afe925fa18abc6101c",
         )
         self.assertEqual(octa["codex"]["required_capabilities"], [
             "codex.blocking-pre-tool-authorization.v1",

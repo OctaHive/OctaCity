@@ -202,8 +202,12 @@ held through snapshot replacement. No extra model registry or parameter grammar
 was introduced. Octa's public process test separately reproduced a 14.25-second
 discovery and now completes within its single 10-second deadline, including
 qualification; all 20 Codex process integration tests pass and the runtime is reaped.
-That Octa source correction is a separate commit after the immutable v0.7.1 release;
-the pinned release is unchanged and does not yet include that correction.
+That correction was committed separately after the immutable v0.7.1 release and
+is now shipped in v0.7.2 at source `c60202e90eb8b99eaab9ba46b446a3cde7f846a8`.
+GitHub Tests/Coverage on three hosts, all five release builds, Security and Codecov
+passed before updating OctaCity's immutable native inputs and both Cargo locks.
+The existing staging verifier checked downloaded Linux/macOS checksum inventories
+and exact runner identities; no release tag or prior qualification was rewritten.
 
 ## 11. AI-agent deletion correction
 

@@ -78,7 +78,7 @@ class OctaReleaseContractTests(unittest.TestCase):
                 "format_version": 2,
                 "plugin": {
                     "name": "codex",
-                    "version": "0.7.1",
+                    "version": "0.7.2",
                     "protocol": 2,
                     "manifest": "plugins/codex.plugin.yml",
                     "capabilities": [
@@ -102,7 +102,7 @@ class OctaReleaseContractTests(unittest.TestCase):
             }
             path.write_text(json.dumps(released), encoding="utf-8")
 
-            VALIDATOR.validate_codex_compatibility(path, "0.7.1")
+            VALIDATOR.validate_codex_compatibility(path, "0.7.2")
 
     def test_rejects_oversized_release_metadata_before_parsing(self):
         with tempfile.TemporaryDirectory() as temporary:
