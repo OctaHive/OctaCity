@@ -1,7 +1,7 @@
 ## 1. Reviewed Runtime configuration
 
 - [x] 1.1 Through TDD at the authorized application/store boundary, add bounded Project settings for an existing installed Runtime using shared execution, MCP, integration and permission contracts; verify valid publication/read, installed-limit rejection and scoped replay with the memory adapter, without a second Runtime/connection registry.
-- [ ] 1.2 Persist immutable settings and exact transport versions in PostgreSQL through the common mutation transaction; run the same contract plus one disposable-database replacement/restart scenario proving one concurrent winner, original receipt recovery and unchanged historical content/audit/outbox effects.
+- [x] 1.2 Persist immutable settings and exact transport versions in PostgreSQL through the common mutation transaction; run the same contract plus one disposable-database replacement/restart scenario proving one concurrent winner, original receipt recovery and unchanged historical content/audit/outbox effects.
 
 ## 2. Shared consumption and REST
 

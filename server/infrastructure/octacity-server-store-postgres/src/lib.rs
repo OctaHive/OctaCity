@@ -44,6 +44,7 @@ mod factory_role_deletion;
 mod factory_role_package;
 mod factory_role_profiles;
 mod factory_run;
+mod factory_runtime_settings;
 mod factory_signal_receipt;
 mod factory_signal_request;
 mod factory_source;

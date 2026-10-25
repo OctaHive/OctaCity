@@ -63,6 +63,7 @@ impl ManagementAuditProbe for PostgresEvidenceProbe {
 fn management_store_operation(operation: &str) -> StoreOperation {
   match operation {
     "publish-factory-role-profiles" => StoreOperation::PublishFactoryRoleProfiles,
+    "publish-factory-runtime-settings" => StoreOperation::PublishFactoryRuntimeSettings,
     "create-factory-configuration" => StoreOperation::CreateFactoryConfiguration,
     "replace-factory-configuration" => StoreOperation::ReplaceFactoryConfiguration,
     "create-project" => StoreOperation::CreateProject,

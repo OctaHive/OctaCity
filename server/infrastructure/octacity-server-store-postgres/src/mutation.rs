@@ -341,6 +341,7 @@ pub(crate) enum MutationKind {
   PublishBuildConfigurationVersion,
   PublishFactoryFlowDefinition,
   PublishFactoryRoleProfiles,
+  PublishFactoryRuntimeSettings,
   DeleteFactoryRole,
   ReserveProjectSkillImport,
   PublishProjectSkillImport,
@@ -667,6 +668,12 @@ impl MutationKind {
         "delete-factory-role",
         "project",
         "factory.role-deleted"
+      ),
+      Self::PublishFactoryRuntimeSettings => metadata!(
+        b"octacity.publish-factory-runtime-settings.v1\0",
+        "publish-factory-runtime-settings",
+        "project",
+        "factory.runtime-settings-published"
       ),
       Self::PublishFactoryRoleProfiles => metadata!(
         b"octacity.publish-factory-role-profiles.v1\0",

@@ -116,7 +116,7 @@ ordinary installed compiler, Project and backend authority.
 
 `PublishFactoryRuntimeSettingsCommand` and `GetFactoryRuntimeSettingsQuery` use
 existing Project administration/content authorization and the ordinary role/profile
-handlers. Their operation-shaped store port has a memory adapter;
+handlers. Their operation-shaped store port has memory and PostgreSQL adapters;
 REST routes and the Console setup view are not installed yet. Publishing these
 records does not change installation inventory or start execution.
 
@@ -142,7 +142,16 @@ current-version replacement, scoped idempotency and shared audit/outbox evidence
 An exact retry returns its original receipt before mutable capability lookup while
 still requiring current Project authorization. Historical reads retain original
 transport content after replacements; no latest defaults are substituted. The
-shared adapter journal test contract covers these persistence semantics.
+shared memory/PostgreSQL journal test contract covers these persistence semantics.
+
+PostgreSQL migration 0104 adds one append-only `factory_runtime_settings` table,
+keyed by Project, Runtime alias and revision. Publication uses the existing Project
+row lock and scoped mutation transaction, committing the revision, original receipt,
+audit and outbox together. Reads verify the core content digest and its row identity.
+Audit/outbox payloads contain only Project/Runtime/version/digest metadata, not MCP
+transport content. An interrupted transaction leaves no settings or replay reservation;
+a replacement retry through a new connection returns the original historical result,
+even after later settings changes.
 
 ### Reproducible AI-agent execution packages
 
