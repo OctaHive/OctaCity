@@ -227,3 +227,32 @@ CredentialSetup and IssueExecutions; their unchanged files and the agent suite
 passed together in a separate focused run. Those unrelated features were not edited.
 Migration 0103 adds only the role-head tombstone; no dependency, provider call,
 CI/CD enrollment or manual Factory input contract was introduced or replaced.
+
+
+## 12. Skill-folder and discovery corrections
+
+- [x] 12.1 Through TDD, canonicalize initial skill identifiers and review independent outermost skill folders from a selected collection through the existing Project import and confirmed-command mechanism. Validate edited identifiers with exported server constraints, preserve nested supporting files and the agent draft, and retain independent retry keys without a bulk API or another store.
+- [x] 12.2 Through TDD, pass one model-discovery frame to the shared process host and reject a second frame in the installed-plugin fixture. Retain catalog caching, explicit refresh and profile pins; document the framing contract and synchronize the completed requirements before archiving.
+
+Correction evidence: the uppercase-folder import test first sent `Skill2`, then
+passed with the default identifier `skill2`. The collection journey first found
+no skill roots, then passed independent Alpha/Beta imports, retained nested
+examples and supporting scripts, excluded the collection index, and replayed only
+the failed Beta command with its original key. A separate Red accepted duplicate
+or invalid pending identifiers; the generated import schema now supplies the
+browser's key pattern and bound. All 24 AI-agent tests, 738 Console unit tests,
+five English/Russian browser journeys and 18 local-stand context tests pass.
+The ordinary UI build initially exceeded its JavaScript/static aggregate budgets;
+the measured collection UI and exported import constraints require 2 KiB more for
+each aggregate. Entry, CSS, asset-count and unplanned-growth checks remain intact,
+with no new dependency. Build, lint, types and formatting pass.
+
+The stricter discovery fixture reproduced the CI `None` catalog panic before the
+caller stopped supplying an extra newline. All five catalog tests and seven
+shared-host tests pass. The complete Server library run passes 189 tests with 30
+environment-dependent cases ignored under bounded parallelism; four unrelated
+short-deadline delivery cases failed in the initial unrestricted local run and
+passed together and in that complete rerun. All-target/all-feature Clippy with
+warnings denied and Rust formatting pass. The existing external Cargo target was
+reused; approximately 9 GiB remain free. No new Octa release is needed for the
+OctaCity caller framing correction.
