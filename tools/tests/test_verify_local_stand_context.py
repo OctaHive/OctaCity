@@ -223,6 +223,7 @@ assert.deepEqual(issueWorkflowConstraints({components: {schemas: {
   maximumTransitions: 16, origins: ['manual', 'pipeline'], evidence: ['reason'],
 });
 console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
+  FactoryRuntimeSettingsRequest: {type: 'object'},
   FactoryConfigurationDefinition: {type: 'object'},
   FactoryFlowDefinitionDraft: {type: 'object'},
   AdmitManualFactoryWorkRequest: {type: 'object'},
@@ -235,6 +236,7 @@ console.log(JSON.stringify(factoryAuthoringSchemas({components: {schemas: {
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(json.loads(result.stdout), {
+                "FactoryRuntimeSettingsRequest": {"type": "object"},
                 "FactoryConfigurationDefinition": {"type": "object"},
                 "FactoryFlowDefinitionDraft": {"type": "object"},
                 "AdmitManualFactoryWorkRequest": {"type": "object"},
