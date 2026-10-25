@@ -3,13 +3,18 @@ import { readFileSync } from 'node:fs';
 import { cleanup, render, screen, within, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter } from 'react-router-dom';
-import { afterEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, expect, it, vi } from 'vitest';
 import type { components } from '../../../.generated/api/schema';
 import { App } from '../../App';
 import type { IssueWorkflowsApi, WorkflowResource } from '../../api/issueWorkflows';
 import { createConsoleQueryClient } from '../../app/query';
 import { createConsoleRoutes } from '../../app/router';
 import { fakeProjectsApi, project } from '../projects/ProjectTestSupport';
+
+// jsdom has no pointer capture; actual capture and dragging are verified in Playwright.
+beforeAll(() => {
+  HTMLElement.prototype.setPointerCapture = () => {};
+});
 
 type Definition = components['schemas']['IssueWorkflowDefinition'];
 const definition: Definition = JSON.parse(
@@ -175,7 +180,9 @@ it('draws only declared branches and return paths, with separate named arrows fo
   const paths = arrows.map((arrow) => arrow.querySelector('path')!);
   expect(new Set(paths.map((path) => path.getAttribute('d'))).size).toBe(4);
   for (const [index, name] of ['Submit', 'Complete directly', 'Return', 'Escalate'].entries()) {
-    expect(within(arrows[index]!).getByText(name, { selector: 'text' })).toBeTruthy();
+    expect(
+      within(arrows[index]!).getByText(name, { selector: 'text, foreignObject > div' }),
+    ).toBeTruthy();
     const marker = paths[index]!.getAttribute('marker-end')!;
     const markerId = marker.slice(5, -1);
     expect(document.getElementById(markerId)?.tagName).toBe('marker');
@@ -221,8 +228,9 @@ it('selects statuses by stable ID and shows their current read-only properties a
   expect(within(inspector).getByRole('heading', { name: 'Shared name' })).toBeTruthy();
   const property = (label: string) =>
     within(inspector).getByText(label, { selector: 'dt' }).nextElementSibling?.textContent;
-  expect(property('Status ID')).toBe('10000000-0000-4000-8000-000000000002');
-  expect(property('Status order')).toBe('2');
+  expect(within(inspector).queryByText('Status ID')).toBeNull();
+  expect(within(inspector).queryByText('Status order')).toBeNull();
+  expect(inspector.textContent).not.toContain('10000000-0000-4000-8000-000000000002');
   expect(property('Initial status')).toBe('No');
   expect(property('Terminal status')).toBe('Yes');
   expect(nodes[1]!.getAttribute('aria-pressed')).toBe('true');
@@ -247,8 +255,7 @@ it('selects statuses by stable ID and shows their current read-only properties a
   const { queryKeys } = await import('../../app/query');
   await queryClient.refetchQueries({ queryKey: queryKeys.issueWorkflowDefault('delivery') });
   await within(inspector).findByRole('heading', { name: 'Renamed result' });
-  expect(property('Status ID')).toBe('10000000-0000-4000-8000-000000000002');
-  expect(property('Status order')).toBe('1');
+  expect(property('Terminal status')).toBe('Yes');
   const initial = within(graph).getByRole('button', { name: 'Select status New' });
   await userEvent.click(initial);
   expect(property('Initial status')).toBe('Yes');
@@ -289,9 +296,10 @@ it('inspects the exact parallel transition by stable ID with keyboard selection 
   const arrows = within(graph).getAllByRole('button', { name: 'Review: New → Done' });
   arrows[1]!.focus();
   await userEvent.keyboard('{Enter}');
-  expect(property('Transition ID')).toBe('30000000-0000-4000-8000-000000000002');
-  expect(property('From status')).toBe('New · 10000000-0000-4000-8000-000000000001');
-  expect(property('To status')).toBe('Done · 10000000-0000-4000-8000-000000000002');
+  expect(within(inspector).queryByText('Transition ID')).toBeNull();
+  expect(inspector.textContent).not.toContain('30000000-0000-4000-8000-000000000002');
+  expect(property('From status')).toBe('New');
+  expect(property('To status')).toBe('Done');
   expect(property('Allowed origins')).toBe('Pipeline action, Source synchronization');
   expect(property('Required evidence')).toBe('Accepted execution, Required checks passed');
   expect(arrows[1]!.getAttribute('aria-pressed')).toBe('true');
@@ -312,7 +320,7 @@ it('inspects the exact parallel transition by stable ID with keyboard selection 
   });
   await queryClient.refetchQueries({ queryKey: queryKeys.issueWorkflowDefault('delivery') });
   await within(inspector).findByRole('heading', { name: 'Qualified review' });
-  expect(property('Transition ID')).toBe('30000000-0000-4000-8000-000000000002');
+  expect(property('Allowed origins')).toBe('Pipeline action, Source synchronization');
   expect(
     within(graph)
       .getByRole('button', { name: 'Qualified review: New → Done' })
@@ -332,39 +340,88 @@ it('inspects the exact parallel transition by stable ID with keyboard selection 
   expect(api.selectDefault).not.toHaveBeenCalled();
 });
 
-it('edits ordered ID/name-only statuses and workflow-level selections before reviewed immutable publication', async () => {
+it('limits status editing to the selected node name and initial/terminal flags', async () => {
   const { api } = setup();
-  await screen.findByRole('heading', { name: 'Task workflow', level: 1 });
   await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
-  const first = screen.getByRole('textbox', { name: 'Status name 1' });
-  await userEvent.clear(first);
-  await userEvent.type(first, 'Inbox');
-  await userEvent.click(screen.getByRole('button', { name: 'Move status 2 up' }));
-  expect((screen.getByRole('textbox', { name: 'Status name 2' }) as HTMLInputElement).value).toBe(
-    'Inbox',
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  const graph = within(draft).getByRole('group', { name: 'Workflow graph' });
+  const inspector = within(draft).getByRole('complementary', { name: 'Workflow properties' });
+  expect(within(inspector).queryAllByRole('checkbox')).toHaveLength(0);
+  expect(within(inspector).queryAllByRole('radio')).toHaveLength(0);
+  expect(within(inspector).queryAllByRole('combobox')).toHaveLength(0);
+  await userEvent.click(within(graph).getByRole('button', { name: 'Select status New' }));
+  const name = within(inspector).getByRole('textbox', { name: 'Status name' });
+  await userEvent.clear(name);
+  await userEvent.type(name, 'Inbox');
+  expect(within(inspector).getAllByRole('checkbox')).toHaveLength(1);
+  expect(within(inspector).getAllByRole('radio')).toHaveLength(1);
+  expect(
+    (within(inspector).getByRole('radio', { name: 'Initial status' }) as HTMLInputElement).checked,
+  ).toBe(true);
+  expect(
+    (within(inspector).getByRole('checkbox', { name: 'Terminal status' }) as HTMLInputElement)
+      .checked,
+  ).toBe(false);
+  expect(inspector.textContent).not.toContain('Status ID');
+  expect(inspector.textContent).not.toContain('Status order');
+  expect(inspector.textContent).not.toContain(definition.statuses[0]!.id);
+  expect(within(inspector).queryByRole('button', { name: /Move status/ })).toBeNull();
+  expect(within(inspector).queryByRole('group', { name: 'Terminal statuses' })).toBeNull();
+  await userEvent.click(within(graph).getByRole('button', { name: 'Select status Done' }));
+  expect(
+    (within(inspector).getByRole('textbox', { name: 'Status name' }) as HTMLInputElement).value,
+  ).toBe('Done');
+  await userEvent.click(within(inspector).getByRole('radio', { name: 'Initial status' }));
+  expect(within(graph).getByRole('article', { name: 'Done' }).textContent).toContain(
+    'Initial status',
   );
-  expect(screen.getByRole('combobox', { name: 'Initial status' }).textContent).toContain('Inbox');
-  const terminals = screen.getByRole('group', { name: 'Terminal statuses' });
-  await userEvent.click(within(terminals).getByRole('checkbox', { name: 'Declined' }));
+  expect(within(graph).getByRole('article', { name: 'Inbox' }).textContent).not.toContain(
+    'Initial status',
+  );
+  await userEvent.click(within(graph).getByRole('button', { name: 'Select status Inbox' }));
+  await userEvent.click(within(inspector).getByRole('radio', { name: 'Initial status' }));
+  await userEvent.click(within(graph).getByRole('button', { name: 'Select status Declined' }));
+  await userEvent.click(within(inspector).getByRole('checkbox', { name: 'Terminal status' }));
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
-  expect(api.validate).toHaveBeenCalledWith(
-    'delivery',
-    expect.objectContaining({
-      initial_status_id: definition.initial_status_id,
-      terminal_status_ids: [definition.statuses[1]!.id],
-      statuses: [
-        { ...definition.statuses[1] },
-        { ...definition.statuses[0], name: 'Inbox' },
-        definition.statuses[2],
-      ],
-    }),
-  );
+  expect(api.validate).toHaveBeenCalledWith('delivery', {
+    ...definition,
+    statuses: [
+      { ...definition.statuses[0], name: 'Inbox' },
+      definition.statuses[1],
+      definition.statuses[2],
+    ],
+    terminal_status_ids: [definition.statuses[1]!.id],
+  });
+});
+
+it('reviews status names without implying transitions from the stored array order', async () => {
+  const { api } = setup();
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  const graph = within(draft).getByRole('group', { name: 'Workflow graph' });
+  const inspector = within(draft).getByRole('complementary', { name: 'Workflow properties' });
+  await userEvent.click(within(graph).getByRole('button', { name: 'Select status New' }));
+  const name = within(inspector).getByRole('textbox', { name: 'Status name' });
+  await userEvent.clear(name);
+  await userEvent.type(name, 'Inbox');
+  await userEvent.click(within(graph).getByRole('button', { name: 'Select status Declined' }));
+  await userEvent.click(within(inspector).getByRole('checkbox', { name: 'Terminal status' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  expect(api.validate).toHaveBeenCalledWith('delivery', {
+    ...definition,
+    statuses: [
+      { ...definition.statuses[0], name: 'Inbox' },
+      definition.statuses[1],
+      definition.statuses[2],
+    ],
+    terminal_status_ids: [definition.statuses[1]!.id],
+  });
   const review = screen.getByRole('button', { name: 'Review publication' });
   await userEvent.click(review);
   const dialog = screen.getByRole('dialog');
-  expect(dialog.textContent).toContain('Local workflow');
-  expect(dialog.textContent).toContain('Based on version 3');
-  expect(dialog.textContent).toContain('Done → Inbox → Declined');
+  expect(dialog.textContent).toContain('Statuses: Inbox, Done, Declined');
+  expect(dialog.textContent).not.toContain('Status order');
+  expect(dialog.textContent).not.toContain('Inbox → Done');
   expect(dialog.textContent).toContain('Initial status: Inbox');
   expect(dialog.textContent).toContain('Terminal statuses: Done');
   expect(dialog.textContent).toContain('Existing tasks keep their pinned workflow');
@@ -383,20 +440,36 @@ it('edits ordered ID/name-only statuses and workflow-level selections before rev
   expect(document.activeElement).toBe(review);
 });
 
-it('authors finite transitions and reviews origins and evidence separately from status rows', async () => {
+it('connects chosen endpoints with the keyboard and edits the same stable transition in the inspector', async () => {
   const { api } = setup();
   await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
   await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 4' }), 'In review');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Status name' }), 'In review');
   await userEvent.click(screen.getByRole('button', { name: 'Add transition' }));
-  const edge = screen.getByRole('group', { name: 'Transition 1' });
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  const inspector = within(draft).getByRole('complementary', { name: 'Workflow properties' });
+  const routes = within(draft).getByRole('group', { name: 'Permitted transitions' });
+  expect(within(routes).queryAllByRole('button')).toHaveLength(0);
+  const destination = within(inspector).getByRole('combobox', { name: 'To status' });
+  destination.focus();
+  await userEvent.keyboard('{ArrowDown}{End}{Enter}');
+  expect(destination.textContent).toContain('In review');
+  const connect = within(inspector).getByRole('button', { name: 'Connect statuses' });
+  connect.focus();
+  await userEvent.keyboard('{Enter}');
+  const unfinished = within(routes).getByRole('button', { name: 'Transition 1: New → In review' });
+  expect(unfinished.getAttribute('aria-pressed')).toBe('true');
+  const edge = within(inspector).getByRole('group', { name: 'Transition 1' });
+  expect(document.activeElement).toBe(
+    within(edge).getByRole('textbox', { name: 'Transition name' }),
+  );
   await userEvent.type(within(edge).getByRole('textbox', { name: 'Transition name' }), 'Accept');
-  await userEvent.click(within(edge).getByRole('combobox', { name: 'To status' }));
-  await userEvent.click(screen.getByRole('option', { name: 'In review' }));
   await userEvent.click(within(edge).getByRole('checkbox', { name: 'Pipeline action' }));
   await userEvent.click(within(edge).getByRole('checkbox', { name: 'Source synchronization' }));
   await userEvent.click(within(edge).getByRole('checkbox', { name: 'Accepted execution' }));
   await userEvent.click(within(edge).getByRole('checkbox', { name: 'Required checks passed' }));
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   const sent = api.validate.mock.calls[0]![1];
   expect(sent.statuses[3]).toEqual({ id: expect.any(String), name: 'In review' });
@@ -410,6 +483,16 @@ it('authors finite transitions and reviews origins and evidence separately from 
       evidence: ['accepted_execution', 'passed_required_checks'],
     },
   ]);
+  const transitionId = sent.transitions[0]!.id;
+  await userEvent.click(within(edge).getByRole('combobox', { name: 'To status' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Done' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  expect(api.validate.mock.calls[1]![1].transitions).toEqual([
+    { ...sent.transitions[0], id: transitionId, to: definition.statuses[1]!.id },
+  ]);
+  await userEvent.click(within(edge).getByRole('combobox', { name: 'To status' }));
+  await userEvent.click(screen.getByRole('option', { name: 'In review' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
   const review = screen.getByRole('dialog');
   expect(review.textContent).toContain('Accept: New → In review');
@@ -418,11 +501,117 @@ it('authors finite transitions and reviews origins and evidence separately from 
   await userEvent.keyboard('{Escape}');
   expect(screen.queryByRole('dialog')).toBeNull();
   await userEvent.click(within(edge).getByRole('button', { name: 'Remove transition' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Remove status 4' }));
-  expect(screen.queryByRole('textbox', { name: 'Status name 4' })).toBeNull();
+  await userEvent.click(within(draft).getByRole('button', { name: 'Select status In review' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Remove status' }));
+  expect(within(draft).queryByRole('article', { name: 'In review' })).toBeNull();
   expect(
     (screen.getByRole('button', { name: 'Review publication' }) as HTMLButtonElement).disabled,
   ).toBe(true);
+});
+
+it('deletes only the selected parallel arrow and returns focus to its source status', async () => {
+  const keep = {
+    id: '30000000-0000-4000-8000-000000000001',
+    name: 'Complete',
+    from: definition.statuses[0]!.id,
+    to: definition.statuses[1]!.id,
+    origins: ['pipeline'] as const,
+    evidence: ['accepted_execution'] as const,
+  };
+  const configured: WorkflowResource = {
+    ...resource,
+    definition: {
+      ...definition,
+      transitions: [
+        { ...keep, origins: ['pipeline'], evidence: ['accepted_execution'] },
+        {
+          ...keep,
+          id: '30000000-0000-4000-8000-000000000002',
+          name: 'Approve',
+          origins: ['manual'],
+          evidence: [],
+        },
+      ],
+    },
+  };
+  const { api } = setup({ defaultWorkflow: configured });
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  await userEvent.click(within(draft).getByRole('button', { name: 'Approve: New → Done' }));
+  const remove = within(draft).getByRole('button', { name: 'Remove transition' });
+  remove.focus();
+  await userEvent.keyboard('{Enter}');
+  expect(within(draft).queryByRole('button', { name: 'Approve: New → Done' })).toBeNull();
+  expect(within(draft).getByRole('button', { name: 'Complete: New → Done' })).toBeTruthy();
+  const source = within(draft).getByRole('button', { name: 'Select status New' });
+  expect(document.activeElement).toBe(source);
+  expect(source.getAttribute('aria-pressed')).toBe('true');
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  expect(api.validate).toHaveBeenCalledWith('delivery', { ...definition, transitions: [keep] });
+  expect(api.publish).not.toHaveBeenCalled();
+});
+
+it('focuses keyboard endpoint controls, blocks self connections and cancels without changing the draft', async () => {
+  const { api } = setup();
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  const inspector = within(draft).getByRole('complementary', { name: 'Workflow properties' });
+  const add = within(draft).getByRole('button', { name: 'Add transition' });
+  add.focus();
+  await userEvent.keyboard('{Enter}');
+  expect(document.activeElement).toBe(
+    within(inspector).getByRole('combobox', { name: 'From status' }),
+  );
+  const destination = within(inspector).getByRole('combobox', { name: 'To status' });
+  destination.focus();
+  await userEvent.keyboard('{ArrowDown}{Home}{Enter}');
+  expect(
+    (within(inspector).getByRole('button', { name: 'Connect statuses' }) as HTMLButtonElement)
+      .disabled,
+  ).toBe(true);
+  await userEvent.keyboard('{ArrowDown}{Escape}');
+  expect(within(inspector).getByRole('button', { name: 'Cancel connection' })).toBeTruthy();
+  expect(document.activeElement).toBe(destination);
+  await userEvent.keyboard('{Escape}');
+  expect(within(inspector).queryByRole('button', { name: 'Connect statuses' })).toBeNull();
+  expect(document.activeElement).toBe(add);
+  await userEvent.keyboard('{Enter}');
+  await userEvent.click(within(inspector).getByRole('button', { name: 'Cancel connection' }));
+  expect(document.activeElement).toBe(add);
+  expect(api.validate).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
+  expect(api.validate).toHaveBeenCalledWith('delivery', definition);
+});
+
+it('retains the generated 256-transition ceiling for both connection inputs', async () => {
+  const configured: WorkflowResource = {
+    ...resource,
+    definition: {
+      ...definition,
+      transitions: Array.from({ length: 256 }, (_, index) => ({
+        id: `30000000-0000-4000-8000-${String(index + 1).padStart(12, '0')}`,
+        name: `Move ${index + 1}`,
+        from: definition.statuses[0]!.id,
+        to: definition.statuses[1]!.id,
+        origins: ['manual'],
+        evidence: [],
+      })),
+    },
+  };
+  const { api } = setup({ defaultWorkflow: configured });
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  expect(
+    (within(draft).getByRole('button', { name: 'Add transition' }) as HTMLButtonElement).disabled,
+  ).toBe(true);
+  for (const status of ['New', 'Done', 'Declined']) {
+    expect(
+      (within(draft).getByRole('button', { name: `Connect from ${status}` }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  }
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
 });
 
 it('rejects a late validation receipt after editing and enforces the generated UTF-8 byte bound', async () => {
@@ -583,20 +772,38 @@ it('lists immutable workflows, reads an exact historical version and selects it 
   expect(api.publish).not.toHaveBeenCalled();
 });
 
-it('creates a workflow from empty fields with only operator-defined statuses', async () => {
+it('creates a workflow from an empty canvas using only the selected status inspector', async () => {
   const { api } = setup();
   await userEvent.click(await screen.findByRole('button', { name: 'Create workflow' }));
-  const name = screen.getByRole('textbox', { name: 'Workflow name' });
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  const graph = within(draft).getByRole('group', { name: 'Workflow graph' });
+  const inspector = within(draft).getByRole('complementary', { name: 'Workflow properties' });
+  const name = within(inspector).getByRole('textbox', { name: 'Workflow name' });
   expect((name as HTMLInputElement).value).toBe('');
-  expect(screen.queryByRole('textbox', { name: 'Status name 1' })).toBeNull();
+  expect(within(graph).queryAllByRole('article')).toHaveLength(0);
+  expect(
+    within(within(graph).getByRole('group', { name: 'Permitted transitions' })).queryAllByRole(
+      'button',
+    ),
+  ).toHaveLength(0);
+  expect(within(inspector).queryByText('Read only')).toBeNull();
+  expect(screen.queryByRole('textbox', { name: 'Status name' })).toBeNull();
   await userEvent.type(name, 'Support');
   await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 1' }), 'Received');
-  await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 2' }), 'Answered');
-  expect(screen.getByRole('combobox', { name: 'Initial status' }).textContent).toContain(
-    'Received',
+  await userEvent.type(within(inspector).getByRole('textbox', { name: 'Status name' }), 'Received');
+  expect(within(graph).getByRole('article', { name: 'Received' }).textContent).toContain(
+    'Initial status',
   );
+  await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
+  await userEvent.type(within(inspector).getByRole('textbox', { name: 'Status name' }), 'Answered');
+  expect(within(graph).getAllByRole('article')).toHaveLength(2);
+  expect(within(inspector).getAllByRole('textbox', { name: 'Status name' })).toHaveLength(1);
+  expect(
+    (within(inspector).getByRole('textbox', { name: 'Status name' }) as HTMLInputElement).value,
+  ).toBe('Answered');
+  expect(within(draft).getAllByRole('textbox')).toHaveLength(2);
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.create).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   await userEvent.click(screen.getByRole('button', { name: 'Review publication' }));
   await userEvent.click(
@@ -636,16 +843,22 @@ it('can clear every draft status and start over, but cannot validate an empty wo
   await userEvent.click(await screen.findByRole('button', { name: 'Create workflow' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Workflow name' }), 'Support');
   await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 1' }), 'Temporary');
-  await userEvent.click(screen.getByRole('button', { name: 'Remove status 1' }));
-  expect(screen.queryByRole('textbox', { name: 'Status name 1' })).toBeNull();
+  await userEvent.type(screen.getByRole('textbox', { name: 'Status name' }), 'Temporary');
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  const graph = within(draft).getByRole('group', { name: 'Workflow graph' });
+  await userEvent.click(screen.getByRole('button', { name: 'Remove status' }));
+  expect(within(graph).queryAllByRole('article')).toHaveLength(0);
+  expect(document.activeElement).toBe(within(draft).getByRole('button', { name: 'Add status' }));
+  expect(within(draft).queryAllByRole('radio', { name: 'Initial status' })).toHaveLength(0);
+  expect(screen.queryByRole('textbox', { name: 'Status name' })).toBeNull();
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   expect(api.validate).not.toHaveBeenCalled();
+  expect(api.create).not.toHaveBeenCalled();
   expect(
     (screen.getByRole('button', { name: 'Review publication' }) as HTMLButtonElement).disabled,
   ).toBe(true);
   await userEvent.click(screen.getByRole('button', { name: 'Add status' }));
-  await userEvent.type(screen.getByRole('textbox', { name: 'Status name 1' }), 'Received');
+  await userEvent.type(screen.getByRole('textbox', { name: 'Status name' }), 'Received');
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   expect(api.validate).toHaveBeenCalledWith('delivery', {
     name: 'Support',
@@ -692,12 +905,25 @@ it.each(['default', 'catalog'])(
       await userEvent.click(await screen.findByRole('button', { name: 'Open Local workflow' }));
       await userEvent.click(await screen.findByRole('button', { name: 'Edit this version' }));
     }
-    await userEvent.click(screen.getByRole('button', { name: 'Remove status 1' }));
+    const draft = screen.getByRole('region', { name: 'Workflow draft' });
+    const graph = within(draft).getByRole('group', { name: 'Workflow graph' });
+    await userEvent.click(within(graph).getByRole('button', { name: 'Select status New' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Remove status' }));
+    expect(within(graph).queryByRole('article', { name: 'New' })).toBeNull();
+    expect(document.activeElement).toBe(
+      within(graph).getByRole('button', { name: 'Select status Done' }),
+    );
     expect(screen.queryByDisplayValue('New')).toBeNull();
-    expect(screen.getByRole('combobox', { name: 'Initial status' }).textContent).toContain('Done');
-    expect(screen.queryByDisplayValue('Finish')).toBeNull();
-    expect(screen.getByDisplayValue('Decline')).toBeTruthy();
-    await userEvent.click(screen.getByRole('button', { name: 'Remove status 2' }));
+    expect(
+      (within(draft).getByRole('radio', { name: 'Initial status' }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(within(graph).queryByRole('button', { name: 'Finish: New → Done' })).toBeNull();
+    expect(within(graph).getByRole('button', { name: 'Decline: Done → Declined' })).toBeTruthy();
+    const published = screen.getByRole('region', { name: 'Default for new tasks' });
+    expect(within(published).getByRole('article', { name: 'New' })).toBeTruthy();
+    expect(within(published).getByRole('button', { name: 'Finish: New → Done' })).toBeTruthy();
+    await userEvent.click(within(graph).getByRole('button', { name: 'Select status Declined' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Remove status' }));
     await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
     expect(api.validate).toHaveBeenLastCalledWith('delivery', {
       name: definition.name,
@@ -770,9 +996,11 @@ it('replays the frozen publication after transport failure and does not store dr
 it('accepts an empty terminal selection and removes terminal references explicitly with a status', async () => {
   const { api } = setup();
   await userEvent.click(await screen.findByRole('button', { name: 'Edit default workflow' }));
-  const terminals = screen.getByRole('group', { name: 'Terminal statuses' });
-  await userEvent.click(within(terminals).getByRole('checkbox', { name: 'Done' }));
-  await userEvent.click(screen.getByRole('button', { name: 'Remove status 3' }));
+  const draft = screen.getByRole('region', { name: 'Workflow draft' });
+  await userEvent.click(within(draft).getByRole('button', { name: 'Select status Done' }));
+  await userEvent.click(within(draft).getByRole('checkbox', { name: 'Terminal status' }));
+  await userEvent.click(within(draft).getByRole('button', { name: 'Select status Declined' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Remove status' }));
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   expect(api.validate).toHaveBeenCalledWith('delivery', {
     ...definition,

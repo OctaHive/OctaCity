@@ -5,7 +5,7 @@ import { queryKeys } from '../../app/query';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { requireVersionedMutationHeaders } from '../../shared/confirmedIntent';
 import { QueryFailureNotice } from '../../shared/QueryStateNotice';
-import { WorkflowFields } from './WorkflowFields';
+import { WorkflowCanvas } from './WorkflowCanvas';
 import { useWorkflowSummary } from './workflowSummary';
 import { ISSUE_WORKFLOW_CONSTRAINTS as bounds } from '../../../.generated/api/issue-workflow';
 import type {
@@ -101,7 +101,7 @@ export function WorkflowEditor({
           ? t('workflow.newDefinition')
           : t('workflow.baseVersion', { version })}
       </p>
-      <WorkflowFields draft={draft} onChange={setDraft} />
+      <WorkflowCanvas definition={draft} onChange={setDraft} />
       {localError ? <p role="alert">{localError}</p> : null}
       {error ? (
         <QueryFailureNotice

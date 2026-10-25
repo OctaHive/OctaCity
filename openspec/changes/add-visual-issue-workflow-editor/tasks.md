@@ -5,9 +5,9 @@
 
 ## 2. Canvas authoring
 
-- [ ] 2.1 Through TDD, use the existing editor draft for empty-canvas creation and node add/delete, names/order and workflow initial/terminal settings in the inspector. Verify no default statuses are copied, removal cleans references, clearing is allowed and empty publication remains blocked; replace the all-rows form rather than retaining a second editor.
-- [ ] 2.2 Through TDD, create/delete arrows by pointer connection and equivalent keyboard endpoint controls, with transition name/origin/evidence editing in the same inspector. Verify both input methods produce the same existing workflow DTO and retain generated constraints and stable identities.
-- [ ] 2.3 Through TDD at the browser boundary, add node dragging, pan/zoom/fit controls and narrow-width inspector access with visible keyboard focus and English/Russian labels. Verify canvas movement changes neither status order nor the validation/publication body and creates no request or browser-persisted draft.
+- [x] 2.1 Through TDD, use the existing editor draft for empty-canvas creation and node add/delete, with selected-status names and initial/terminal settings in the inspector. Show no duplicate status list, technical IDs or manual order controls. Verify no default statuses are copied, removal cleans references, clearing is allowed and empty publication remains blocked; replace the all-rows form rather than retaining a second editor.
+- [x] 2.2 Through TDD, create/delete arrows by pointer connection and equivalent keyboard endpoint controls, with transition name/origin/evidence editing in the same inspector. Verify both input methods produce the same existing workflow DTO and retain generated constraints and stable identities.
+- [x] 2.3 Through TDD at the browser boundary, add node dragging, pan/zoom/fit controls and narrow-width inspector access with visible keyboard focus and English/Russian labels. Verify canvas movement changes neither status order nor the validation/publication body and creates no request or browser-persisted draft.
 
 ## 3. Existing publication flow and completion
 

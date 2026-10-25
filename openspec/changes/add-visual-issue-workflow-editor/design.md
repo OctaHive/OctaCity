@@ -45,11 +45,21 @@ The inspector reuses current inputs, selection controls and generated choices.
 Initial/terminal toggles update `initial_status_id` and `terminal_status_ids`,
 not status flags. Reuse the existing add/delete/reference-cleanup behavior and
 first-status initial selection rather than maintaining parallel form and graph
-mutation paths. Include workflow name and status display order in the inspector;
-moving a node must not reorder the statuses array.
+mutation paths. The inspector exposes the workflow name and only the selected
+status's name, initial radio selection and terminal checkbox, plus its delete
+action. Do not duplicate the canvas with a status list, display technical IDs or
+offer manual status-order controls. The existing array order remains a storage
+and initial-layout detail; connections alone define permitted transitions.
+Moving a node must not reorder the statuses array. Publication review lists names
+without arrows between adjacent statuses and describes declared transitions separately.
 
-Connecting two nodes creates one draft transition and selects its inspector for
-name/origin/evidence settings. Keyboard endpoint controls perform the same edit.
+Drag a connection point at the center of a node's right edge to another card.
+The permanent connection begins at that same point. Arrowheads keep a fixed size
+when selection thickens the line. A completed connection creates one draft
+transition and selects its inspector for name/origin/evidence settings.
+Add transition or keyboard activation of the point opens From/To controls with
+explicit Connect/Cancel actions in that same inspector. Both inputs use one
+creation operation; self-connections, invalid drops and Escape add no edge.
 Deletion removes incident edges/references in that same draft and moves focus to
 a remaining element or Add status. Blank drafts and unfinished fields remain
 editable; validation/publication keep the existing requirements.
@@ -57,12 +67,29 @@ editable; validation/publication keep the existing requirements.
 ### 3. Separate bounded presentation state from policy
 
 Hold positions keyed by status ID, viewport and selection only in mounted component
-memory. Use deterministic initial placement in status display order and simple
-directed paths that visibly distinguish return paths and parallel arrows. Render
+memory. Place compact cards in columns from the initial status by traversing declared
+connections, with branches in separate rows and ports centered on the side edges.
+Use direct horizontal lines between aligned cards and rounded orthogonal bends
+between rows. Route return paths and parallel arrows in separate exterior lanes.
+Bound transition labels by the available span and use visual ellipsis, retaining
+the full accessible name and tooltip.
+Visit each status once during placement so cycles remain supported, and retain
+the status array and stable IDs unchanged. Render
 every declared edge; do not run a DAG-only topology policy or invent edges between
 adjacent statuses. Start with simple placement rather than an automatic graph
 layout engine. Pointer dragging repositions nodes; canvas controls pan, zoom and
-fit the graph. Navigation must not change the policy signature, invalidate a
+fit the graph. Dragging uses world coordinates independent of viewport scale;
+Escape or pointer cancellation restores the previous automatic or manual placement.
+Background dragging and focused-canvas arrow keys pan; +/- controls zoom around
+the selected element through the same zoom command as toolbar buttons.
+Fit/Home use content bounds of nodes, routes and labels, independent of the empty
+surface minimum, together with current canvas dimensions. A bounded viewport
+keeps the stacked inspector reachable. Open properties and Back to canvas provide
+explicit focus transfer; focusing a clipped element pans it into view and reduces
+scale if needed. Pointer focus does not invoke automatic camera reveal, so it
+cannot shift a captured drag origin. Gesture completion and cancellation check the
+owning pointer ID. Labels use the existing English/Russian presentation catalog.
+Navigation must not change the policy signature, invalidate a
 validation receipt or send layout fields through REST. Reload reconstructs layout;
 this is deliberate because layout persistence is outside the existing contract.
 

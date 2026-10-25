@@ -33,11 +33,58 @@ publish the new optional host details.
 
 ## Task workflow authoring
 
-**Create workflow** opens an empty local draft: no name, statuses or transitions
+**Create workflow** opens an empty local canvas: no name, statuses or transitions
 are copied from the Project default. The first added status becomes the initial
 status; operators can select another initial status and configure terminal statuses
 and permitted transitions. A draft may be cleared completely, but validation and
 publication require at least one status.
+
+Use **Add status**, then select a status card to edit its name, mark it initial or
+terminal, or delete it in the properties inspector. Select another card and mark
+it initial to change the workflow's single starting status. The inspector does
+not duplicate the canvas with a status list or show technical IDs or manual order
+controls; the arrows define permitted transitions. Only the selected status or
+transition has editable fields; published default and catalog canvases remain read-only. Deleting
+a status selects and focuses the first remaining card, or **Add status** when the
+canvas is empty. Draft edits remain in component memory until reviewed publication.
+
+The canvas arranges compact status cards left to right from declared connections,
+with branches on separate rows. Connections enter on the left and leave on the
+right. Return paths and parallel transitions use separate exterior lanes;
+selecting an arrow keeps its head the same size. Transition labels fit the available
+space and show an ellipsis when needed; selection and the tooltip retain the full name.
+
+To add a transition, drag the connection point at the center of a status’s right edge
+to another card. For the
+keyboard equivalent, activate the handle with Enter, or choose **Add transition**,
+select **From status** and **To status**, then choose **Connect statuses**. No
+transition is added until the drop or confirmation. Escape, **Cancel connection**,
+or dropping on empty space, the source itself or another canvas cancels the connection.
+Select an arrow to edit its name, endpoints, allowed origins and required evidence
+in the same inspector. **Remove transition** removes only that arrow and returns
+focus to its source card. Editing retains its stable identity; parallel transitions
+remain distinct. Both connection methods obey the generated transition limit and
+use the existing workflow definition and validation/publication commands.
+
+Drag a card to rearrange it; attached arrows follow. Escape or pointer cancellation
+restores the card's position before the unfinished drag. Drag empty background to
+pan, or focus **Workflow graph** and use arrow keys. **Zoom in** / **Zoom out** and
+keyboard `+` / `-` change scale; **Fit graph** or `Home` fits the graph to the viewport.
+Both zoom buttons and keyboard shortcuts keep the selected element anchored when
+one is selected. Fit uses the content bounds, including exterior routes and labels,
+rather than the minimum surface size.
+
+On narrow screens, **Open properties** focuses the inspector below the canvas;
+**Back to canvas** returns to the selected card or arrow. Keyboard focus reveals
+clipped elements, reducing scale when the focused element is wider than the viewport.
+Pointer focus does not move the camera while dragging; only events from the owning
+pointer finish or cancel a gesture. These controls and status fields are labeled
+in English and Russian.
+
+Positions and camera settings remain in component memory, including when viewing
+published definitions. Navigation sends no request, preserves status order and a
+successful validation receipt, and adds no layout fields to publication. Reloading
+reconstructs the default layout; neither drafts nor layout are saved in browser storage.
 
 The supplied default uses the same editor and version-publication commands as
 custom workflows. Removing a draft status also removes its incident transitions

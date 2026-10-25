@@ -35,6 +35,11 @@ Creating a workflow SHALL open an empty canvas with no copied default statuses o
 - **WHEN** the operator deletes the initial node with incoming or outgoing transitions
 - **THEN** those transitions and its terminal reference disappear from the same draft, and the first remaining node becomes initial; a fully cleared draft remains unpublished
 
+#### Scenario: Operator edits only the selected status
+- **WHEN** an operator selects a status card on the canvas
+- **THEN** the inspector exposes that status's name, initial selection, terminal flag and delete action without another status list, technical IDs or manual order controls
+- **AND** the stored statuses array retains its order and identities, while only declared arrows define transitions
+
 #### Scenario: Publication is rejected as stale
 - **WHEN** the server rejects the reviewed workflow version precondition
 - **THEN** the existing conflict flow preserves the local draft and requires refresh, validation and fresh review without silently overwriting the newer publication

@@ -7,7 +7,7 @@ export function useWorkflowSummary(definition: WorkflowDefinition): string {
   const statusName = (id: string) =>
     definition.statuses.find((status) => status.id === id)?.name ?? id;
   const parts = [
-    `${t('workflow.order')}: ${definition.statuses.map((status) => status.name).join(' → ')}`,
+    `${t('workflow.statuses')}: ${definition.statuses.map((status) => status.name).join(', ')}`,
     `${t('workflow.initial')}: ${statusName(definition.initial_status_id)}`,
     `${t('workflow.terminals')}: ${definition.terminal_status_ids.map(statusName).join(', ') || t('workflow.none')}`,
   ];

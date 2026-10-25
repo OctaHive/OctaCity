@@ -52,16 +52,17 @@ external fonts, icon fonts, analytics integrations, and copied template assets. 
 `architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
 the build reports any measured value that exceeds them. Task Source ownership authoring reuses
 shared Source references, row identities and Reporter effects, adding no runtime dependencies.
-The measured console with Project-scoped AI settings and workflow inspection is
-1,289,979 bytes of JavaScript and 1,380,462 bytes of total static output. The
-aggregate ceilings are 1,260 KiB JavaScript and 1,349 KiB static output. The typed
+The measured console with Project-scoped AI settings and workflow canvas authoring
+is 1,299,504 bytes of JavaScript and 1,391,069 bytes of total static output. The
+aggregate ceilings are 1,270 KiB JavaScript and 1,359 KiB static output. The typed
 Runtime setup surface and both translations use a reviewed 32 KiB increase in
 aggregate budgets, with no new dependency.
-The Issue workflow canvas and properties inspector add 2.5 KiB to the CSS
-allowance (88 KiB total) for selectable status cards, initial/terminal markers,
-directed transitions and read-only properties. Workflow selection and inspection
-add 1 KiB to the JavaScript allowance and 4 KiB to the static-output allowance.
-Entry (450 KiB), CSS (88 KiB) and asset-count (57) limits stay in force.
+The Issue workflow canvas and properties inspector add 3.5 KiB to the CSS
+allowance (89 KiB total) for selectable status cards, initial/terminal markers,
+directed transitions and properties. Workflow selection, inspection, status
+authoring, connections, node dragging and viewport controls add 11 KiB to the
+JavaScript allowance and 14 KiB to the static-output allowance. Entry (450 KiB) and asset-count (57)
+limits stay in force.
 Role/Profile controls reuse existing forms, the confirmed command, closed value
 schemas and server validation. The architecture contract admits the measured
 footprint and rejects another unplanned 16 KiB of JavaScript. Networking and
