@@ -1,6 +1,62 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'runtime.unsupportedMcp':
+    'В установке Runtime нет квалифицированных транспортов MCP. Сначала администратору нужно настроить поддержку установки.',
+  'runtime.installationChanged':
+    'Закреплённые версии установки Runtime изменились. Примите их явно перед проверкой. Существующие профили и исполнения сохранят прежние версии.',
+  'runtime.adoptInstallation': 'Принять текущую установку Runtime',
+  'factory.permissionUnsupported':
+    'Среда исполнения не поддерживает это разрешение. Существующий выбор можно только снять.',
+  'runtime.integrationHelp':
+    'Выберите существующее подключение, доступ проекта и ресурс. Зависимость MCP закрепляет этот выбор; доступ и секреты здесь не создаются.',
+  'runtime.manageAccess': 'Настроить доступ интеграции',
+  'runtime.retainedBinding': 'Сохранённая точная привязка; повторная проверка при сохранении',
+  'runtime.removeIntegration': 'Удалить интеграцию {alias}',
+  'runtime.integrationAlias': 'Имя интеграции',
+  'runtime.connection': 'Подключение интеграции',
+  'runtime.chooseConnection': 'Выберите существующее подключение',
+  'runtime.resources': 'Разрешённый ресурс и capability',
+  'runtime.chooseResource': 'Выберите разрешённый ресурс и capability',
+  'runtime.addIntegration': 'Добавить привязку интеграции',
+  'runtime.noGrantedResources':
+    'У проекта нет доступных разрешённых ресурсов. Настройте доступ в разделе интеграций.',
+  'runtime.requiredIntegration': 'Требуемая интеграция',
+  'runtime.transport': 'Транспорт MCP',
+  'runtime.unavailable': 'Недоступно',
+  'runtime.stdioHelp':
+    'Выберите установленный файл. Каждый аргумент — отдельное значение без shell. Переменные также нужно явно задать в профиле.',
+  'runtime.argument': 'Аргумент {index}',
+  'runtime.addArgument': 'Добавить аргумент',
+  'runtime.removeArgument': 'Удалить аргумент {index}',
+  'runtime.selectTools': 'Выбрать отдельные инструменты MCP',
+  'runtime.toolName': 'Имя инструмента {index}',
+  'runtime.addTool': 'Добавить имя инструмента',
+  'runtime.removeTool': 'Удалить имя инструмента {index}',
+  'runtime.help':
+    'Настройте установленные Runtime для проекта. Сохранение не запускает Build, MCP или запрос к модели.',
+  'runtime.noInstalled':
+    'Нет доступных установленных Runtime. Попросите администратора настроить установку.',
+  'runtime.editor': 'Редактор настроек Runtime',
+  'runtime.permissionsHelp':
+    'Выбор ограничен установкой и средой исполнения. Он не выдаёт секреты и не меняет разрешения CI/CD-агентов.',
+  'runtime.mcpServer': 'Сервер MCP {index}',
+  'runtime.mcpName': 'Имя MCP',
+  'runtime.endpoint': 'Адрес HTTPS',
+  'runtime.bearer': 'Имя переменной токена',
+  'runtime.removeMcp': 'Удалить сервер MCP {index}',
+  'runtime.noMcp':
+    'Серверы MCP не настроены. Добавьте поддерживаемый транспорт для выбора в профилях.',
+  'runtime.addMcp': 'Добавить сервер MCP',
+  'runtime.uniqueNames': 'Имена MCP должны быть уникальны.',
+  'runtime.review': 'Проверить настройки Runtime',
+  'runtime.publish': 'Опубликовать проверенные настройки',
+  'runtime.publishConsequence':
+    'Опубликовать настройки {alias}. Существующие профили и сохранённые исполнения сохраняют точные привязки.',
+  'runtime.published': 'Настройки Runtime опубликованы.',
+  'section.aiSettings': 'Настройки AI',
+  'runtime.runtimes': 'Runtime',
+  'runtime.chooseProject': 'Выберите проект для настройки AI-агентов и Runtime.',
   'factory.modelSuggestions': 'Предлагаемые модели',
   'factory.modelIdentifier': 'Идентификатор модели',
   'factory.refreshModels': 'Обновить модели',
@@ -23,8 +79,15 @@ export const ruMessages = {
   'factory.environment': 'Переменные окружения',
   'factory.secretReference': 'Логическая ссылка на секрет',
   'factory.cliArguments': 'Аргументы CLI',
+  'factory.configureRuntime': 'Настроить Runtime',
   'factory.runtimeSelectionHelp':
     'Выбирайте из возможностей, установленных для этого Runtime. Профиль может ограничить разрешения, но не может предоставить дополнительный доступ.',
+  'factory.retainedPermission': 'Больше недоступно; удалите это сохранённое разрешение.',
+  'factory.retainedBinding':
+    'Сохранённый выбор больше недоступен. Удалите его или явно выберите замену.',
+  'factory.removeBinding': 'Удалить сохранённый {name}',
+  'factory.selectMcpIntegration':
+    'Выберите интеграцию {integration} отдельно. MCP не предоставляет доступ к интеграции.',
   'factory.mcpIntegration': 'Требуется интеграция: {integration}',
   'factory.noRuntimeMcp':
     'Для этого Runtime не настроены серверы MCP. Администратор должен добавить их, после чего их можно будет выбрать здесь.',

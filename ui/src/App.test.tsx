@@ -48,6 +48,16 @@ function renderConsole(path: string, readinessProbe: ReadinessProbe = async () =
 }
 
 describe('App', () => {
+  it('opens AI settings separately from worker management with explicit Project context', async () => {
+    renderConsole('/ai-settings');
+    expect(await screen.findByRole('heading', { level: 1, name: 'AI settings' })).toBeTruthy();
+    expect(screen.getByRole('link', { current: 'page', name: 'AI settings' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'AI agents' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Runtimes' })).toBeTruthy();
+    expect(screen.getByText('Choose a Project to configure AI agents and Runtimes.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Enroll agent' })).toBeNull();
+    expect(screen.queryByRole('complementary', { name: 'Agents explorer' })).toBeNull();
+  });
   it('opens the optional Factory activity with Favorites and URL-backed filters', async () => {
     renderConsole('/factory?state=waiting');
     expect(await screen.findByRole('heading', { level: 1, name: 'Factory' })).toBeTruthy();

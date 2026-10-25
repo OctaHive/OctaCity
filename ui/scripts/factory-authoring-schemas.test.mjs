@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { factoryAuthoringSchemas } from './factory-authoring-schemas.mjs';
 const commandSchemas = {
+  FactoryRuntimeSettingsRequest: {},
   AdmitManualFactoryWorkRequest: {},
   FactoryNodeOperationRequest: {},
   FactoryNodeResponseRequest: {},
@@ -11,6 +12,21 @@ const commandSchemas = {
     properties: { identity: { pattern: '^[a-z]+$', maxLength: 29 } },
   },
 };
+test('exports Runtime MCP authoring bounds from the REST contract', () => {
+  const result = factoryAuthoringSchemas({
+    components: {
+      schemas: {
+        ...commandSchemas,
+        FactoryConfigurationDefinition: {},
+        FactoryFlowDefinitionDraft: {},
+        FactoryRuntimeSettingsRequest: { $ref: '#/components/schemas/FactoryMcpServer' },
+        FactoryMcpServer: { type: 'array', maxItems: 23, items: { type: 'string', maxLength: 71 } },
+      },
+    },
+  });
+  assert.equal(result.FactoryMcpServer?.maxItems, 23);
+  assert.equal(result.FactoryMcpServer?.items.maxLength, 71);
+});
 test('exports only reachable authoring schemas and retains exact server-owned bounds', () => {
   const schemas = {
     ...commandSchemas,

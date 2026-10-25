@@ -4,6 +4,7 @@ export const CONSOLE_PATHS = {
   agentPool: '/agent-pools/:poolId',
   agentPools: '/agent-pools',
   agents: '/agents',
+  aiSettings: '/ai-settings',
   audit: '/audit',
   build: '/builds/:buildId',
   builds: '/builds',
@@ -74,4 +75,9 @@ export function issuesPath(projectId: string): string {
 }
 export function issuePath(projectId: string, issueId: string): string {
   return `${issuesPath(projectId)}/${encodeURIComponent(issueId)}`;
+}
+
+/** AI-agent and Runtime setup keep only Project identity and the selected view in the URL. */
+export function aiSettingsPath(projectId: string, view: 'agents' | 'runtimes' = 'agents'): string {
+  return `${CONSOLE_PATHS.aiSettings}?${new URLSearchParams({ project_id: projectId, view })}`;
 }

@@ -14,6 +14,7 @@ export const resourceKindMessageKeys = {
 } as const satisfies Record<ResourceSearchKind, MessageKey>;
 
 const sectionScopes = {
+  aiSettings: [],
   agents: ['agent', 'agent_pool'],
   audit: [],
   builds: ['build'],

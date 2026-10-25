@@ -10,8 +10,8 @@
 
 ## 3. AI settings and profile selection
 
-- [ ] 3.1 Through Console TDD, add the separate AI settings section with AI agents and Runtimes views under explicit Project context; reuse existing agent/profile editors and Factory shortcuts, and provide typed MCP rows, existing integration/resource choices and supported permission controls. Verify review/save, conflict draft retention and separation from worker Agent/Pool management.
-- [ ] 3.2 Through profile-editor TDD, select the configured exact MCP/integration/permission bindings, explain dependencies and unavailable categories, and replace empty frames/zero-only controls with setup guidance. Verify that opening/returning from Runtime setup preserves unsaved name/model/instructions and requires explicit adoption of refreshed choices.
+- [x] 3.1 Through Console TDD, add the separate AI settings section with AI agents and Runtimes views under explicit Project context; reuse existing agent/profile editors and Factory shortcuts, and provide typed MCP rows, existing integration/resource choices and supported permission controls. Verify review/save, conflict draft retention and separation from worker Agent/Pool management.
+- [x] 3.2 Through profile-editor TDD, select the configured exact MCP/integration/permission bindings, explain dependencies and unavailable categories, and replace empty frames/zero-only controls with setup guidance. Verify that opening/returning from Runtime setup preserves unsaved name/model/instructions and requires explicit adoption of refreshed choices.
 
 ## 4. Local stand and focused qualification
 

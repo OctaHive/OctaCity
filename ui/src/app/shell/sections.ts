@@ -2,7 +2,7 @@ import { CONSOLE_PATHS } from '../routes';
 import type { MessageKey } from '../presentation/messages';
 
 export type ConsoleSectionId =
-  'projects' | 'builds' | 'factory' | 'integrations' | 'agents' | 'audit';
+  'projects' | 'builds' | 'factory' | 'aiSettings' | 'integrations' | 'agents' | 'audit';
 export type ContextExplorerMode = 'navigation' | 'tools';
 
 export interface ConsoleSection {
@@ -29,6 +29,7 @@ export const consoleSections: readonly ConsoleSection[] = [
   projectsSection,
   { explorerMode: 'navigation', id: 'builds', label: 'Builds', path: CONSOLE_PATHS.builds },
   { explorerMode: 'navigation', id: 'factory', label: 'Factory', path: CONSOLE_PATHS.factory },
+  { explorerMode: null, id: 'aiSettings', label: 'AI settings', path: CONSOLE_PATHS.aiSettings },
   {
     explorerMode: null,
     id: 'integrations',
@@ -41,6 +42,9 @@ export const consoleSections: readonly ConsoleSection[] = [
 
 /** Maps every stable resource deep link to its contextual workbench section. */
 export function sectionForPath(pathname: string): ConsoleSection {
+  if (matchesPathSegment(pathname, CONSOLE_PATHS.aiSettings)) {
+    return consoleSections.find(({ id }) => id === 'aiSettings')!;
+  }
   if (matchesPathSegment(pathname, CONSOLE_PATHS.integrations)) {
     return consoleSections.find(({ id }) => id === 'integrations')!;
   }

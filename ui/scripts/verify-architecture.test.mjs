@@ -258,9 +258,9 @@ test('admits measured AI-agent Runtime settings and rejects unplanned aggregate 
   );
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
-  await write(root, 'dist/assets/index.js', 'x'.repeat(297_630));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(957_604));
-  await write(root, 'dist/assets/styles.css', 'x'.repeat(86_531));
+  await write(root, 'dist/assets/index.js', 'x'.repeat(302_342));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(982_774));
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(87_466));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
   assert.equal(policy.bundleBudgets.totalCssBytes, 87_552);

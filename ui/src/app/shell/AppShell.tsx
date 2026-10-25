@@ -1,5 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 import {
+  Bot,
   ClipboardList,
   Factory,
   FolderKanban,
@@ -42,6 +43,7 @@ const CommandCenter = lazy(async () => {
 });
 
 const sectionIcons = {
+  aiSettings: Bot,
   agents: ServerCog,
   audit: ClipboardList,
   builds: Hammer,

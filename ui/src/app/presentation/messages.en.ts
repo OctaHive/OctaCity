@@ -1,4 +1,60 @@
 export const enMessages = {
+  'runtime.unsupportedMcp':
+    'This Runtime installation has no qualified MCP transports. An administrator must configure installation support first.',
+  'runtime.installationChanged':
+    'The installed Runtime pins changed. Adopt them explicitly before review; existing profiles and executions keep their original pins.',
+  'runtime.adoptInstallation': 'Adopt current Runtime installation',
+  'factory.permissionUnsupported':
+    'This permission is not enforced by the backend. Existing selections can only be removed.',
+  'runtime.integrationHelp':
+    'Select an existing connection, Project grant and resource. An MCP dependency pins this selection; no access or credentials are created here.',
+  'runtime.manageAccess': 'Manage integration access',
+  'runtime.retainedBinding': 'Retained exact selection; reviewed again on save',
+  'runtime.removeIntegration': 'Remove integration {alias}',
+  'runtime.integrationAlias': 'Integration alias',
+  'runtime.connection': 'Integration connection',
+  'runtime.chooseConnection': 'Choose an existing connection',
+  'runtime.resources': 'Authorized resource and capability',
+  'runtime.chooseResource': 'Choose a granted resource and capability',
+  'runtime.addIntegration': 'Add integration binding',
+  'runtime.noGrantedResources':
+    'No currently usable resources are granted to this Project. Configure access through integration administration.',
+  'runtime.requiredIntegration': 'Required integration',
+  'runtime.transport': 'MCP transport',
+  'runtime.unavailable': 'Unavailable',
+  'runtime.stdioHelp':
+    'Choose an installed executable. Each argument is a separate value, without a shell. Environment names must also be explicitly mapped in the profile.',
+  'runtime.argument': 'Argument {index}',
+  'runtime.addArgument': 'Add argument',
+  'runtime.removeArgument': 'Remove argument {index}',
+  'runtime.selectTools': 'Select specific MCP tools',
+  'runtime.toolName': 'Tool name {index}',
+  'runtime.addTool': 'Add tool name',
+  'runtime.removeTool': 'Remove tool name {index}',
+  'runtime.help':
+    'Configure installed Runtime choices for this Project. Saving does not start a Build, MCP process or model request.',
+  'runtime.noInstalled':
+    'No installed Runtimes are available. Ask an administrator to configure installation support.',
+  'runtime.editor': 'Runtime settings editor',
+  'runtime.permissionsHelp':
+    'These choices remain within installation and backend limits. They do not grant credentials or change worker permissions.',
+  'runtime.mcpServer': 'MCP server {index}',
+  'runtime.mcpName': 'MCP name',
+  'runtime.endpoint': 'HTTPS endpoint',
+  'runtime.bearer': 'Bearer environment name',
+  'runtime.removeMcp': 'Remove MCP server {index}',
+  'runtime.noMcp':
+    'No MCP servers are configured. Add a supported transport to make it selectable in profiles.',
+  'runtime.addMcp': 'Add MCP server',
+  'runtime.uniqueNames': 'MCP names must be unique.',
+  'runtime.review': 'Review Runtime settings',
+  'runtime.publish': 'Publish reviewed settings',
+  'runtime.publishConsequence':
+    'Publish reviewed settings for {alias}. Existing profiles and retained executions keep their exact pins.',
+  'runtime.published': 'Runtime settings published.',
+  'section.aiSettings': 'AI settings',
+  'runtime.runtimes': 'Runtimes',
+  'runtime.chooseProject': 'Choose a Project to configure AI agents and Runtimes.',
   'factory.modelSuggestions': 'Suggested models',
   'factory.modelIdentifier': 'Model identifier',
   'factory.refreshModels': 'Refresh models',
@@ -21,8 +77,15 @@ export const enMessages = {
   'factory.environment': 'Environment variables',
   'factory.secretReference': 'Logical secret reference',
   'factory.cliArguments': 'CLI arguments',
+  'factory.configureRuntime': 'Configure Runtime',
   'factory.runtimeSelectionHelp':
     'Select from the capabilities installed for this Runtime. Profile choices can restrict permissions, but cannot grant additional access.',
+  'factory.retainedPermission': 'No longer available; remove this retained permission.',
+  'factory.retainedBinding':
+    'Retained selection is no longer available. Remove it or explicitly select its replacement.',
+  'factory.removeBinding': 'Remove retained {name}',
+  'factory.selectMcpIntegration':
+    'Select integration {integration} separately. MCP does not grant integration access.',
   'factory.mcpIntegration': 'Requires integration: {integration}',
   'factory.noRuntimeMcp':
     'No MCP servers are configured for this Runtime. An administrator must add them before you can select them here.',

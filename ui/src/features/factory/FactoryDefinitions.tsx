@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { FactoryAuthoring } from './FactoryAuthoring';
 import { FactoryWorkForm, type FactoryWorkSources } from './FactoryWorkForm';
 import { useQuery } from '@tanstack/react-query';
-import { useSearchParams } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
@@ -16,8 +16,7 @@ import { FactoryPools } from './FactoryPools';
 import { ManagementApiError } from '../../api/client';
 import { useFactoryChoices } from './useFactoryChoices';
 import styles from './Factory.module.css';
-import { AiAgents } from './AiAgents';
-import { factoryRolesApi, type FactoryRolesApi } from './roleApi';
+import { aiSettingsPath } from '../../app/routes';
 
 /** Published identities are selected from visible bounded pages; edits use separate drafts. */
 export function FactoryDefinitions({
@@ -25,16 +24,13 @@ export function FactoryDefinitions({
   workflows,
   projectId,
   workSources,
-  rolesApi = factoryRolesApi,
 }: {
   api: FactoryApi;
-  rolesApi?: FactoryRolesApi;
   workflows?: IssueWorkflowsApi | undefined;
   projectId: string;
   workSources?: FactoryWorkSources | undefined;
 }) {
   const { t } = usePresentation();
-  const [agentsOpen, setAgentsOpen] = useState(false);
   const [authoring, setAuthoring] = useState<{
     kind: 'flow' | 'configuration' | 'work';
     id: string | null;
@@ -104,10 +100,7 @@ export function FactoryDefinitions({
   };
   return (
     <section className={styles.definitions}>
-      <button type="button" aria-expanded={agentsOpen} onClick={() => setAgentsOpen(!agentsOpen)}>
-        {t('factory.agents')}
-      </button>
-      {agentsOpen ? <AiAgents key={projectId} api={rolesApi} projectId={projectId} /> : null}
+      <Link to={aiSettingsPath(projectId)}>{t('factory.agents')}</Link>
       {choices.isPending ? <QueryLoadingNotice label={t('factory.choices')} /> : null}
       {choices.error !== null ? (
         <QueryFailureNotice

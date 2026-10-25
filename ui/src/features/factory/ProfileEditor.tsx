@@ -1,5 +1,7 @@
 import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { aiSettingsPath } from '../../app/routes';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
@@ -12,6 +14,7 @@ import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { InstructionFields, InstructionText } from './InstructionFields';
 import { SkillReferences } from './SkillContents';
 import { catalogLabels } from './catalogLabels';
+import { ProfileBindings } from './ProfileBindings';
 import { BudgetEditor, PermissionEditor } from './ResourceEditors';
 import type { FactoryRolesApi } from './roleApi';
 
@@ -164,6 +167,7 @@ export function ProfileEditor({
     <section aria-label={t('factory.profileEditor')}>
       <h4>{t('factory.profileEditor')}</h4>
       <p>{t('factory.memoryDraft')}</p>
+      <Link to={aiSettingsPath(project, 'runtimes')}>{t('factory.configureRuntime')}</Link>
       <button type="button" disabled={pending || !!review} onClick={onDiscard}>
         {t('factory.discardDraft')}
       </button>
@@ -480,46 +484,11 @@ function ProfileSettings({
       {!hasEnvironment && !value.execution?.cli_arguments?.length ? (
         <p>{t('factory.noRuntimeOverrides')}</p>
       ) : null}
-      {(['mcp_servers', 'integrations'] as const).map((field) =>
-        Object.keys(ceiling.execution?.[field] ?? {}).length ? (
-          <fieldset key={field}>
-            <legend>{t(field === 'mcp_servers' ? 'factory.mcp' : 'factory.integrations')}</legend>
-            {Object.entries(ceiling.execution?.[field] ?? {}).map(([name, entry]) => (
-              <label key={name}>
-                <input
-                  type="checkbox"
-                  checked={!!execution[field]?.[name]}
-                  onChange={(event) => {
-                    const next: Record<
-                      string,
-                      Schema['FactoryRoleMcpBinding'] | Schema['FactoryRoleIntegrationBinding']
-                    > = { ...execution[field] };
-                    if (event.target.checked) next[name] = entry;
-                    else delete next[name];
-                    setExecution({ [field]: next });
-                  }}
-                />
-                {name}
-                {'configuration' in entry && entry.integration ? (
-                  <>
-                    {' '}
-                    · <span>{t('factory.mcpIntegration', { integration: entry.integration })}</span>
-                  </>
-                ) : null}
-              </label>
-            ))}
-          </fieldset>
-        ) : (
-          <section key={field}>
-            <h4>{t(field === 'mcp_servers' ? 'factory.mcp' : 'factory.integrations')}</h4>
-            <p>
-              {t(
-                field === 'mcp_servers' ? 'factory.noRuntimeMcp' : 'factory.noRuntimeIntegrations',
-              )}
-            </p>
-          </section>
-        ),
-      )}
+      <ProfileBindings
+        value={execution}
+        choices={ceiling.execution ?? {}}
+        onChange={setExecution}
+      />
       <BudgetEditor
         label={t('factory.profileBudget')}
         value={value.budget}

@@ -41,9 +41,12 @@ export function useOverlayFocus({
       return;
     }
 
-    initialFocusRef.current?.focus();
+    // Mounted drafts may be hidden while another settings view is active.
+    const hidden = () => container.closest('[hidden], [inert]') !== null;
+    if (!hidden()) initialFocusRef.current?.focus();
 
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (hidden()) return;
       if (priority && (event.key === 'Escape' || event.key === 'Tab')) {
         event.stopPropagation();
       }

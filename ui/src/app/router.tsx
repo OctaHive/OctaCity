@@ -15,6 +15,7 @@ import { fetchReadiness, type ReadinessProbe } from '../api/readiness';
 import { resourceSearchApi, type ResourceSearchApi } from '../api/resourceSearch';
 import { operatorAttentionApi, type OperatorAttentionApi } from '../api/operatorAttention';
 import { auditApi, type AuditApi } from '../features/audit/api';
+import { factoryRolesApi, type FactoryRolesApi } from '../features/factory/roleApi';
 import { factoryApi, type FactoryApi } from '../features/factory/api';
 import { integrationsApi, type IntegrationsApi } from '../features/integrations/api';
 import { buildDiagnosticsApi, type BuildDiagnosticsApi } from '../features/builds/api';
@@ -37,6 +38,10 @@ import { CONSOLE_PATHS, type ConsolePath } from './routes';
 import { AppShell } from './shell/AppShell';
 import { NotFoundView, RouteErrorBoundary } from './shell/RouteErrorBoundary';
 import styles from './shell/RouteView.module.css';
+
+const AiSettings = lazy(async () => ({
+  default: (await import('../features/factory/AiSettings')).AiSettings,
+}));
 
 const AuditView = lazy(async () => {
   const module = await import('../features/audit/AuditView');
@@ -137,6 +142,7 @@ function WorkspaceLandingView({
 
 export interface ConsoleRouteDependencies {
   readonly integrationsApi?: IntegrationsApi;
+  readonly factoryRolesApi: FactoryRolesApi;
   readonly factoryApi: FactoryApi;
   readonly factoryActionsApi: FactoryActionsApi;
   readonly attentionApi: OperatorAttentionApi;
@@ -159,6 +165,7 @@ export interface ConsoleRouteDependencies {
 
 const DEFAULT_ROUTE_DEPENDENCIES: ConsoleRouteDependencies = {
   issueActivityApi,
+  factoryRolesApi,
   issueResultPanelsApi,
   factoryApi,
   factoryActionsApi: createFactoryActionsApi(),
@@ -212,6 +219,16 @@ export function createConsoleRoutes(
       ),
       errorElement: <RouteErrorBoundary />,
       children: [
+        {
+          path: childPath(CONSOLE_PATHS.aiSettings),
+          element: defer(
+            <AiSettings
+              projects={dependencies.projectsApi}
+              roles={dependencies.factoryRolesApi}
+              integrations={dependencies.integrationsApi ?? integrationsApi}
+            />,
+          ),
+        },
         {
           path: childPath(CONSOLE_PATHS.integrations),
           element: defer(<IntegrationsView api={dependencies.integrationsApi} />),

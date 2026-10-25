@@ -6,6 +6,9 @@ import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createConsoleQueryClient } from '../../app/query';
 import { ManagementApiError } from '../../api/client';
+import { integrationsApi } from '../integrations/api';
+import { AiSettings } from './AiSettings';
+import { project as projectFixture } from '../projects/ProjectTestSupport';
 import { FactoryDefinitions } from './FactoryDefinitions';
 import { factoryApi } from './api';
 import { factoryRoleFixture } from '../../../tests/fixtures/factoryRoles';
@@ -80,12 +83,21 @@ function setup() {
     listConfigurations: vi.fn(async () => page([])),
     listFlows: vi.fn(async () => page([])),
   };
+  const projects = {
+    listProjects: vi.fn(async () => ({ items: [], next_cursor: null })),
+    getProject: vi.fn(async () => ({
+      project: projectFixture(role.reference.project_id, 'Delivery'),
+      ancestors: [],
+    })),
+  };
   const router = createMemoryRouter([
     {
-      path: '*',
-      element: (
-        <FactoryDefinitions api={api} rolesApi={roles} projectId={role.reference.project_id} />
-      ),
+      path: '/',
+      element: <FactoryDefinitions api={api} projectId={role.reference.project_id} />,
+    },
+    {
+      path: '/ai-settings',
+      element: <AiSettings projects={projects} roles={roles} integrations={integrationsApi} />,
     },
   ]);
   render(
@@ -98,7 +110,7 @@ function setup() {
 
 it('discovers role-backed AI agents separately from worker enrollment and reads pinned instructions and profiles', async () => {
   const { roles, role } = setup();
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   expect(await screen.findByText('Project implementation')).toBeTruthy();
   expect(await screen.findByText('Follow Project rules.')).toBeTruthy();
@@ -132,7 +144,7 @@ it('opens the retained skill tree and selected file as inert text without losing
     bundle,
     file: { path: 'SKILL.md', size_bytes: 24, text: '# Review\n<script>bad()</script>' },
   });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'Unsaved reviewer');
   await userEvent.click(await screen.findByRole('button', { name: 'View skill review · v1' }));
@@ -161,7 +173,7 @@ it('selects shared skills in the AI agent draft without needing an installed run
   const skill = { identity: 'review', version: 'v1', digest: 'a'.repeat(64) };
   roles.listSkills.mockResolvedValue({ items: [skill], total: 1, next_cursor: null });
   roles.listCapabilities.mockResolvedValue({ items: [], total: 0, next_cursor: null });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'Shared reviewer');
   await userEvent.click(
@@ -181,7 +193,7 @@ it('selects shared skills in the AI agent draft without needing an installed run
 
 it('creates an arbitrary role with ordered instructions and concurrency only after server validation and explicit review', async () => {
   const { roles, role, router } = setup();
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'Custom reviewer');
   await userEvent.type(screen.getByRole('textbox', { name: 'Description' }), 'private draft');
@@ -218,7 +230,7 @@ it('creates an arbitrary role with ordered instructions and concurrency only aft
     },
     expect.objectContaining({ 'Idempotency-Key': expect.any(String) }),
   );
-  expect(router.state.location.search).toBe('');
+  expect(router.state.location.search).toBe(`?project_id=${role.reference.project_id}&view=agents`);
   expect(JSON.stringify(localStorage) + JSON.stringify(sessionStorage)).not.toContain(
     'private draft',
   );
@@ -227,7 +239,7 @@ it('creates an arbitrary role with ordered instructions and concurrency only aft
 it('edits a profile independently using installed Runtime/Model/Thinking settings and authoritative validation', async () => {
   const { roles, role, profile } = setup();
   roles.validateProfile.mockResolvedValue({ profile, incompatibility: null });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
@@ -275,7 +287,7 @@ async function openProfile() {
     profile: { ...state.profile, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
@@ -283,7 +295,7 @@ async function openProfile() {
 }
 it('explains a missing root SKILL.md before import and lets the operator correct the folder without losing the agent draft', async () => {
   const { roles } = setup();
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
   const name = screen.getByRole('textbox', { name: 'Agent name' });
   await userEvent.type(name, 'my agent');
@@ -312,7 +324,7 @@ it('imports a reviewed shared skill folder inline, replays a lost response and k
   const { roles, role } = setup();
   const existing = { identity: 'existing', version: 'v2', digest: 'b'.repeat(64) };
   roles.listSkills.mockResolvedValue({ items: [existing], total: 1, next_cursor: null });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
   await userEvent.click(await screen.findByRole('checkbox', { name: /existing.*v2/ }));
   const name = screen.getByRole('textbox', { name: 'Agent name' });
@@ -449,7 +461,7 @@ it('copies a starter template into independent default/pro profiles using instal
     disposition: 'applied',
     published_at: 100,
   });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Copy Coder' }));
   const editor = await screen.findByRole('region', { name: 'Copy AI-agent template' });
   for (const alias of ['default', 'pro']) {
@@ -512,7 +524,7 @@ it('explains missing runtime configuration for default/pro instead of claiming n
     },
   });
   roles.listCapabilities.mockResolvedValue({ items: [], total: 0, next_cursor: null });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Copy Coder' }));
   expect(
     await screen.findByText(
@@ -553,7 +565,7 @@ it('keeps profile instructions pinned until the current role version is explicit
     profile: { ...profile, role: request.role, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   const detail = screen.getByRole('heading', { name: 'default · v1' }).parentElement!;
@@ -581,7 +593,7 @@ it('reconciles a stale role publication while preserving its own edited instruct
       retryAfterMilliseconds: null,
     }),
   );
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit AI agent' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Shared instruction 1' }), ' local');
@@ -635,7 +647,7 @@ it('matches installed Runtime choices by complete identities instead of borrowin
     profile: { ...profile, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
@@ -673,7 +685,7 @@ it('keeps retained legacy profile skills readable without offering a separate pr
     profile: { ...profile, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
@@ -714,7 +726,7 @@ it('edits distinct installed permission categories without offering tool referen
     profile: { ...profile, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
@@ -761,7 +773,7 @@ it('edits distinct installed permission categories without offering tool referen
 
 it('deletes an AI agent only after review and safely retries a lost response before clearing its card', async () => {
   const { roles, role } = setup();
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   const remove = screen.getByRole('button', { name: 'Delete AI agent' });
   await userEvent.click(remove);
@@ -829,7 +841,7 @@ it('selects plugin model suggestions and preserves a manual model and draft thro
     profile: { ...profile, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   expect(
@@ -893,7 +905,7 @@ it('removes unsupported thinking when explicitly selecting a model without param
     profile: { ...profile, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
@@ -943,7 +955,7 @@ it('keeps model-specific parameters while an identifier is being edited and rest
     profile: { ...profile, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
@@ -968,7 +980,7 @@ it('imports a skill from an uppercase folder with a canonical identity and prese
   const { roles } = setup();
   const bundle = { identity: 'skill2', version: 'v1', digest: 'a'.repeat(64) };
   roles.importSkill.mockResolvedValue({ bundle, published_at: 100 });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'My agent');
   const file = new File(['# Skill'], 'SKILL.md', { type: 'text/markdown' });
@@ -1007,7 +1019,7 @@ it('discovers separate skills in a collection folder and imports them independen
       }),
     )
     .mockResolvedValueOnce({ bundle: second, published_at: 100 });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'Agent name' }), 'Collection agent');
   const files = [
@@ -1062,7 +1074,7 @@ it('discovers separate skills in a collection folder and imports them independen
 
 it('validates skill identities before import and requires distinct identifiers within a collection', async () => {
   const { roles } = setup();
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Create AI agent' }));
   const files = ['skills/Review/SKILL.md', 'skills/review/SKILL.md'].map((path) => {
     const file = new File(['# Instructions'], 'SKILL.md');
@@ -1122,7 +1134,7 @@ it('requires an explicit plugin model for a new profile instead of submitting th
       ],
     },
   });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(screen.getByRole('button', { name: 'Create profile' }));
   await userEvent.click(await screen.findByRole('combobox', { name: 'Runtime / Model' }));
@@ -1145,7 +1157,7 @@ it('explains unavailable Runtime settings without empty selection frames and kee
   delete definition.execution;
   roles.getCapability.mockResolvedValue({ ...capability, definition, public_environment: {} });
   roles.getProfile.mockResolvedValue({ ...profile, definition });
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));
@@ -1203,7 +1215,7 @@ it('selects installed MCP and Project integrations without changing their pins o
     profile: { ...profile, definition: request.definition },
     incompatibility: null,
   }));
-  await userEvent.click(screen.getByRole('button', { name: 'AI agents' }));
+  await userEvent.click(screen.getByRole('link', { name: 'AI agents' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Code specialist' }));
   await userEvent.click(await screen.findByRole('button', { name: 'default' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Edit profile' }));

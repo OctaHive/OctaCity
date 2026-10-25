@@ -30,7 +30,7 @@ test('AI-agent avatar upload is previewed and retained with its identity and ins
     } else await route.fulfill({ json: { items: [], total: 0, next_cursor: null } });
   });
   await page.goto(`/factory?project_id=${owner}`);
-  await page.getByRole('button', { name: 'AI agents', exact: true }).click();
+  await page.getByRole('link', { name: 'AI agents', exact: true }).click();
   await page.getByRole('button', { name: 'Create AI agent', exact: true }).click();
   await page.getByRole('textbox', { name: 'Agent name', exact: true }).fill('Reviewer');
   await page
@@ -160,7 +160,7 @@ for (const language of ['en', 'ru'] as const) {
       await route.fulfill({ json: body });
     });
     await page.goto(`/factory?project_id=${owner}`);
-    await page.getByRole('button', { name: m['factory.agents'], exact: true }).click();
+    await page.getByRole('link', { name: m['factory.agents'], exact: true }).click();
     await expect(
       page.getByRole('button', { name: /Enroll agent|Зарегистрировать агента/ }),
     ).toHaveCount(0);
@@ -201,7 +201,9 @@ for (const language of ['en', 'ru'] as const) {
     });
     await dialog.getByRole('button', { name: m['common.close'], exact: true }).click();
     await page.reload();
-    await page.getByRole('button', { name: m['factory.agents'], exact: true }).click();
+    await expect(
+      page.getByRole('heading', { name: m['section.aiSettings'], exact: true }),
+    ).toBeVisible();
     await page.getByRole('button', { name: 'private agent draft', exact: true }).click();
     await expect(
       page.getByRole('button', {

@@ -1,6 +1,9 @@
 import { QueryClient } from '@tanstack/react-query';
 
 export const queryKeys = {
+  factoryRuntimeChoices: (project: string) => ['factory', 'runtime-choices', project] as const,
+  factoryRuntime: (project: string, alias: string) =>
+    ['factory', 'runtime', project, alias] as const,
   factorySkill: (
     project: string,
     reference: { identity: string; version: string; digest: string },

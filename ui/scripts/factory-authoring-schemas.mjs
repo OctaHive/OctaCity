@@ -2,6 +2,7 @@
 export function factoryAuthoringSchemas(document) {
   const source = document.components?.schemas ?? {};
   const pending = [
+    'FactoryRuntimeSettingsRequest',
     'FactoryConfigurationDefinition',
     'FactoryFlowDefinitionDraft',
     'AdmitManualFactoryWorkRequest',

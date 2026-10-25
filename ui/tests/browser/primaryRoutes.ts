@@ -18,6 +18,12 @@ export interface PrimaryRoute {
 }
 
 const routesByTemplate = {
+  [CONSOLE_PATHS.aiSettings]: {
+    heading: 'AI settings',
+    id: 'ai-settings',
+    path: CONSOLE_PATHS.aiSettings,
+    retainedText: 'Choose a Project to configure AI agents and Runtimes.',
+  },
   [CONSOLE_PATHS.integrations]: {
     heading: 'Integrations',
     id: 'integrations',

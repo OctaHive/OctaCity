@@ -117,7 +117,7 @@ ordinary installed compiler, Project and backend authority.
 `PublishFactoryRuntimeSettingsCommand` and `GetFactoryRuntimeSettingsQuery` use
 existing Project administration/content authorization and the ordinary role/profile
 handlers. Their operation-shaped store port has memory and PostgreSQL adapters.
-REST authoring is available; the Console setup view remains a later task. Publishing these
+REST authoring and the separate Console AI settings view are available. Publishing these
 records does not change installation inventory or start execution.
 
 Settings belong to an existing Project/Runtime alias and retain exact toolchain
@@ -208,6 +208,55 @@ Runtime HTTP authoring uses the existing optional role/profile facade:
 OpenAPI reuses the existing toolchain, Integration binding and permission schemas,
 and describes bounded HTTP/stdio MCP rows. The Console Runtime API client uses generated
 types from these contracts and adds no provider rules, fixed model list or implicit retry.
+
+Console **AI settings / Настройки AI** has **AI agents** and **Runtimes** views under
+an explicit selected Project. Its Project chooser supports hierarchy and pagination;
+the Project name links back to its ordinary workspace. The Factory AI-agent shortcut
+opens this same Role-backed catalog and profile editor. Worker Agent/Pool management
+remains in the Agents section.
+
+In Runtimes, select an installed alias and configure named HTTP/stdio MCP rows.
+Stdio selects an installed executable, separate argv entries and approved environment
+names; HTTP bearer authentication selects a logical secret environment name, never a
+credential value. Optional tool names remain a finite explicit list. Integration
+bindings select existing connection metadata and currently granted Project resource/
+capability pins, with a link to existing integration access administration. Removing a
+binding does not silently detach its dependent MCP: the server must qualify the edited
+configuration again. Permission controls reuse the common editor, display installed
+numeric maxima and prevent new selections in unenforceable backend categories; existing
+unsupported selections may be removed. Unsupported resource limits explain the backend
+restriction while a positive retained value remains; clearing it removes the zero-only
+control. Saving cannot widen independent execution grants.
+
+If installation pins change, explicitly adopt the current Runtime installation before
+review. This updates the settings draft, without rewriting existing profiles or executions.
+Review first calls the read-only validation contract, then the ordinary confirmed-command
+dialog publishes that frozen request. On conflict, explicitly refresh the current version
+and review again; the MCP, integration and permission draft remains in component memory.
+Transport retries use the same scoped key through the common command helper. Draft contents
+are not written to URLs or browser storage. Local-stand installation wiring remains task 4.1.
+
+In the profile editor, **Configure Runtime / Настроить Runtime** opens the Runtimes
+view under the same Project. Return through **AI agents** (or browser Back) to refresh
+the available capability choices. The mounted profile keeps its unsaved name, model,
+instructions and selections; newly configured bindings are not automatically adopted.
+An MCP dependency names the integration that must be selected separately. Checkboxes
+select exact configuration/integration pins, not whichever revision now has the same
+alias. Removed or changed selections remain in the draft with an explanation and an
+explicit removal action; selecting an available replacement replaces only that binding.
+The shared permission editor also retains removed tool/plugin/executable pins, logical
+profiles, network hosts, mounts, command permissions and output kinds as checked values
+marked unavailable. They can be removed individually; removed values cannot be newly
+selected without becoming available again. This does not reset the model, parameters or
+instructions. The ordinary profile validation/publication contract still checks current authority.
+Empty MCP/integration categories and deny-all permissions show guidance rather than
+empty frames or editable zero-only limits. The setup view explains installed support;
+capability/authorization failures use the shared error states rather than an empty-list
+message. Integration access/resource read failures do not also claim that the grant list
+is empty; that guidance requires successful reads. When browser Back hides a profile
+confirmation, its keyboard capture is suspended. Returning to AI agents restores the
+same reviewed confirmation; it is not published or discarded by switching views. Setup
+neither publishes the profile draft nor changes historical profiles.
 
 ### Reproducible AI-agent execution packages
 
