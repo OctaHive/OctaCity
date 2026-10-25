@@ -79,6 +79,259 @@ afterEach(() => {
   localStorage.clear();
 });
 
+it.each(['default', 'catalog'])(
+  'shows named status cards and explicit initial/terminal markers on the %s workflow canvas',
+  async (entry) => {
+    setup();
+    const section =
+      entry === 'default'
+        ? await screen.findByRole('region', { name: 'Default for new tasks' })
+        : screen.getByRole('region', { name: 'Published workflows' });
+    if (entry === 'catalog') {
+      await userEvent.click(await screen.findByRole('button', { name: 'Open Local workflow' }));
+    }
+    const graph = await within(section).findByRole('group', { name: 'Workflow graph' });
+    expect(within(graph).getAllByRole('article')).toHaveLength(3);
+    const initial = within(graph).getByRole('article', { name: 'New' });
+    expect(within(initial).getByRole('heading', { name: 'New' })).toBeTruthy();
+    expect(within(initial).getByText('Initial status')).toBeTruthy();
+    expect(within(initial).queryByText('Terminal status')).toBeNull();
+    for (const name of ['Done', 'Declined']) {
+      const terminal = within(graph).getByRole('article', { name });
+      expect(within(terminal).getByRole('heading', { name })).toBeTruthy();
+      expect(within(terminal).getByText('Terminal status')).toBeTruthy();
+      expect(within(terminal).queryByText('Initial status')).toBeNull();
+    }
+    expect(
+      within(within(graph).getByRole('group', { name: 'Permitted transitions' })).queryAllByRole(
+        'button',
+      ),
+    ).toHaveLength(0);
+  },
+);
+
+it('draws only declared branches and return paths, with separate named arrows for parallel transitions', async () => {
+  const configured: WorkflowResource = {
+    ...resource,
+    definition: {
+      name: 'Review policy',
+      statuses: [
+        { id: '10000000-0000-4000-8000-000000000001', name: 'Inbox' },
+        { id: '10000000-0000-4000-8000-000000000002', name: 'Review' },
+        { id: '10000000-0000-4000-8000-000000000003', name: 'Done' },
+        { id: '10000000-0000-4000-8000-000000000004', name: 'Archived' },
+      ],
+      initial_status_id: '10000000-0000-4000-8000-000000000001',
+      terminal_status_ids: ['10000000-0000-4000-8000-000000000003'],
+      transitions: [
+        {
+          id: '30000000-0000-4000-8000-000000000001',
+          name: 'Submit',
+          from: '10000000-0000-4000-8000-000000000001',
+          to: '10000000-0000-4000-8000-000000000002',
+          origins: ['manual'],
+          evidence: [],
+        },
+        {
+          id: '30000000-0000-4000-8000-000000000002',
+          name: 'Complete directly',
+          from: '10000000-0000-4000-8000-000000000001',
+          to: '10000000-0000-4000-8000-000000000003',
+          origins: ['manual'],
+          evidence: [],
+        },
+        {
+          id: '30000000-0000-4000-8000-000000000003',
+          name: 'Return',
+          from: '10000000-0000-4000-8000-000000000002',
+          to: '10000000-0000-4000-8000-000000000001',
+          origins: ['manual'],
+          evidence: [],
+        },
+        {
+          id: '30000000-0000-4000-8000-000000000004',
+          name: 'Escalate',
+          from: '10000000-0000-4000-8000-000000000001',
+          to: '10000000-0000-4000-8000-000000000002',
+          origins: ['pipeline'],
+          evidence: [],
+        },
+      ],
+    },
+  };
+  const { api } = setup({ defaultWorkflow: configured, listedWorkflow: configured });
+  const defaultSection = await screen.findByRole('region', { name: 'Default for new tasks' });
+  const graph = within(defaultSection).getByRole('group', { name: 'Workflow graph' });
+  expect(within(graph).getAllByRole('article')).toHaveLength(4);
+  const arrows = within(
+    within(graph).getByRole('group', { name: 'Permitted transitions' }),
+  ).getAllByRole('button');
+  expect(arrows.map((arrow) => arrow.getAttribute('aria-label'))).toEqual([
+    'Submit: Inbox → Review',
+    'Complete directly: Inbox → Done',
+    'Return: Review → Inbox',
+    'Escalate: Inbox → Review',
+  ]);
+  const paths = arrows.map((arrow) => arrow.querySelector('path')!);
+  expect(new Set(paths.map((path) => path.getAttribute('d'))).size).toBe(4);
+  for (const [index, name] of ['Submit', 'Complete directly', 'Return', 'Escalate'].entries()) {
+    expect(within(arrows[index]!).getByText(name, { selector: 'text' })).toBeTruthy();
+    const marker = paths[index]!.getAttribute('marker-end')!;
+    const markerId = marker.slice(5, -1);
+    expect(document.getElementById(markerId)?.tagName).toBe('marker');
+    expect(document.getElementById(markerId)?.getAttribute('orient')).toBe('auto');
+  }
+  await userEvent.click(screen.getByRole('button', { name: 'Open Review policy' }));
+  const catalog = screen.getByRole('region', { name: 'Published workflows' });
+  const catalogGraph = await within(catalog).findByRole('group', { name: 'Workflow graph' });
+  expect(
+    within(within(catalogGraph).getByRole('group', { name: 'Permitted transitions' }))
+      .getAllByRole('button')
+      .map((arrow) => arrow.getAttribute('aria-label')),
+  ).toEqual(arrows.map((arrow) => arrow.getAttribute('aria-label')));
+  const defaultMarker = paths[0]!.getAttribute('marker-end');
+  const catalogMarker = within(
+    within(catalogGraph).getByRole('group', { name: 'Permitted transitions' }),
+  )
+    .getAllByRole('button')[0]!
+    .querySelector('path')!
+    .getAttribute('marker-end');
+  expect(catalogMarker).not.toBe(defaultMarker);
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.create).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
+  expect(api.selectDefault).not.toHaveBeenCalled();
+});
+
+it('selects statuses by stable ID and shows their current read-only properties after reordering', async () => {
+  const configured = {
+    ...resource,
+    definition: {
+      ...definition,
+      statuses: definition.statuses.map((status) => ({ ...status, name: 'Shared name' })),
+    },
+  };
+  const { api, queryClient } = setup({ defaultWorkflow: configured });
+  const section = await screen.findByRole('region', { name: 'Default for new tasks' });
+  const graph = within(section).getByRole('group', { name: 'Workflow graph' });
+  const nodes = within(graph).getAllByRole('button', { name: 'Select status Shared name' });
+  await userEvent.click(nodes[1]!);
+  const inspector = within(section).getByRole('complementary', { name: 'Workflow properties' });
+  expect(within(inspector).getByText('Read only')).toBeTruthy();
+  expect(within(inspector).getByRole('heading', { name: 'Shared name' })).toBeTruthy();
+  const property = (label: string) =>
+    within(inspector).getByText(label, { selector: 'dt' }).nextElementSibling?.textContent;
+  expect(property('Status ID')).toBe('10000000-0000-4000-8000-000000000002');
+  expect(property('Status order')).toBe('2');
+  expect(property('Initial status')).toBe('No');
+  expect(property('Terminal status')).toBe('Yes');
+  expect(nodes[1]!.getAttribute('aria-pressed')).toBe('true');
+  expect(nodes[0]!.getAttribute('aria-pressed')).toBe('false');
+  expect(within(inspector).queryAllByRole('textbox')).toHaveLength(0);
+  expect(within(inspector).queryAllByRole('checkbox')).toHaveLength(0);
+
+  api.getDefault.mockResolvedValue({
+    version: 7,
+    workflow: {
+      ...configured,
+      definition: {
+        ...configured.definition,
+        statuses: [
+          { ...definition.statuses[1]!, name: 'Renamed result' },
+          definition.statuses[2]!,
+          definition.statuses[0]!,
+        ],
+      },
+    },
+  });
+  const { queryKeys } = await import('../../app/query');
+  await queryClient.refetchQueries({ queryKey: queryKeys.issueWorkflowDefault('delivery') });
+  await within(inspector).findByRole('heading', { name: 'Renamed result' });
+  expect(property('Status ID')).toBe('10000000-0000-4000-8000-000000000002');
+  expect(property('Status order')).toBe('1');
+  const initial = within(graph).getByRole('button', { name: 'Select status New' });
+  await userEvent.click(initial);
+  expect(property('Initial status')).toBe('Yes');
+  expect(property('Terminal status')).toBe('No');
+  expect(
+    within(graph)
+      .getByRole('button', { name: 'Select status Renamed result' })
+      .getAttribute('aria-pressed'),
+  ).toBe('false');
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.create).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
+  expect(api.selectDefault).not.toHaveBeenCalled();
+});
+
+it('inspects the exact parallel transition by stable ID with keyboard selection and no mutations', async () => {
+  const first: Definition['transitions'][number] = {
+    id: '30000000-0000-4000-8000-000000000001',
+    name: 'Review',
+    from: definition.statuses[0]!.id,
+    to: definition.statuses[1]!.id,
+    origins: ['manual'],
+    evidence: [],
+  };
+  const second: Definition['transitions'][number] = {
+    ...first,
+    id: '30000000-0000-4000-8000-000000000002',
+    origins: ['pipeline', 'source'],
+    evidence: ['accepted_execution', 'passed_required_checks'],
+  };
+  const configured = { ...resource, definition: { ...definition, transitions: [first, second] } };
+  const { api, queryClient } = setup({ defaultWorkflow: configured });
+  const section = await screen.findByRole('region', { name: 'Default for new tasks' });
+  const graph = within(section).getByRole('group', { name: 'Workflow graph' });
+  const inspector = within(section).getByRole('complementary', { name: 'Workflow properties' });
+  const property = (label: string) =>
+    within(inspector).getByText(label, { selector: 'dt' }).nextElementSibling?.textContent;
+  const arrows = within(graph).getAllByRole('button', { name: 'Review: New → Done' });
+  arrows[1]!.focus();
+  await userEvent.keyboard('{Enter}');
+  expect(property('Transition ID')).toBe('30000000-0000-4000-8000-000000000002');
+  expect(property('From status')).toBe('New · 10000000-0000-4000-8000-000000000001');
+  expect(property('To status')).toBe('Done · 10000000-0000-4000-8000-000000000002');
+  expect(property('Allowed origins')).toBe('Pipeline action, Source synchronization');
+  expect(property('Required evidence')).toBe('Accepted execution, Required checks passed');
+  expect(arrows[1]!.getAttribute('aria-pressed')).toBe('true');
+  expect(arrows[0]!.getAttribute('aria-pressed')).toBe('false');
+  expect(document.activeElement).toBe(arrows[1]);
+  expect(within(inspector).queryAllByRole('textbox')).toHaveLength(0);
+  expect(within(inspector).queryAllByRole('checkbox')).toHaveLength(0);
+  const { queryKeys } = await import('../../app/query');
+  api.getDefault.mockResolvedValue({
+    version: 7,
+    workflow: {
+      ...configured,
+      definition: {
+        ...configured.definition,
+        transitions: [{ ...second, name: 'Qualified review' }, first],
+      },
+    },
+  });
+  await queryClient.refetchQueries({ queryKey: queryKeys.issueWorkflowDefault('delivery') });
+  await within(inspector).findByRole('heading', { name: 'Qualified review' });
+  expect(property('Transition ID')).toBe('30000000-0000-4000-8000-000000000002');
+  expect(
+    within(graph)
+      .getByRole('button', { name: 'Qualified review: New → Done' })
+      .getAttribute('aria-pressed'),
+  ).toBe('true');
+  const manual = within(graph).getByRole('button', { name: 'Review: New → Done' });
+  manual.focus();
+  await userEvent.keyboard(' ');
+  expect(property('Allowed origins')).toBe('Manual move');
+  expect(property('Required evidence')).toBe('None');
+  await userEvent.click(within(graph).getByRole('button', { name: 'Select status New' }));
+  expect(within(inspector).queryByText('Transition ID')).toBeNull();
+  expect(manual.getAttribute('aria-pressed')).toBe('false');
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.create).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
+  expect(api.selectDefault).not.toHaveBeenCalled();
+});
+
 it('edits ordered ID/name-only statuses and workflow-level selections before reviewed immutable publication', async () => {
   const { api } = setup();
   await screen.findByRole('heading', { name: 'Task workflow', level: 1 });
@@ -254,11 +507,65 @@ it('lists immutable workflows, reads an exact historical version and selects it 
   api.get.mockResolvedValue({
     ...resource,
     version: 2,
-    definition: { ...definition, name: 'Historical policy' },
+    definition: {
+      name: 'Historical policy',
+      statuses: [
+        { id: definition.statuses[0]!.id, name: 'Earlier inbox' },
+        { id: definition.statuses[1]!.id, name: 'Earlier result' },
+      ],
+      initial_status_id: definition.statuses[0]!.id,
+      terminal_status_ids: [definition.statuses[1]!.id],
+      transitions: [
+        {
+          id: '30000000-0000-4000-8000-000000000001',
+          name: 'Earlier completion',
+          from: definition.statuses[0]!.id,
+          to: definition.statuses[1]!.id,
+          origins: ['manual'],
+          evidence: [],
+        },
+      ],
+    },
   });
   await userEvent.click(screen.getByRole('button', { name: 'Load version' }));
   await screen.findByText('Historical policy');
   expect(api.get).toHaveBeenLastCalledWith('delivery', resource.id, 2, expect.any(AbortSignal));
+  const catalog = screen.getByRole('region', { name: 'Published workflows' });
+  const historical = within(catalog).getByRole('group', { name: 'Workflow graph' });
+  expect(
+    within(historical)
+      .getAllByRole('article')
+      .map((node) => node.getAttribute('aria-label')),
+  ).toEqual(['Earlier inbox', 'Earlier result']);
+  expect(within(historical).getByRole('article', { name: 'Earlier inbox' }).textContent).toContain(
+    'Initial status',
+  );
+  expect(within(historical).getByRole('article', { name: 'Earlier result' }).textContent).toContain(
+    'Terminal status',
+  );
+  expect(
+    within(within(historical).getByRole('group', { name: 'Permitted transitions' })).getAllByRole(
+      'button',
+    ),
+  ).toHaveLength(1);
+  expect(
+    within(historical).getByRole('button', {
+      name: 'Earlier completion: Earlier inbox → Earlier result',
+    }),
+  ).toBeTruthy();
+  const current = within(screen.getByRole('region', { name: 'Default for new tasks' })).getByRole(
+    'group',
+    { name: 'Workflow graph' },
+  );
+  expect(within(current).getByRole('article', { name: 'New' })).toBeTruthy();
+  expect(
+    within(within(current).getByRole('group', { name: 'Permitted transitions' })).queryAllByRole(
+      'button',
+    ),
+  ).toHaveLength(0);
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.create).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
   await userEvent.click(screen.getByRole('button', { name: 'Use for new tasks' }));
   const dialog = screen.getByRole('dialog');
   expect(dialog.textContent).toContain('Historical policy');

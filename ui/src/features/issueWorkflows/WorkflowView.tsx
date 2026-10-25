@@ -11,6 +11,7 @@ import {
 } from '../../shared/QueryStateNotice';
 import { WorkflowEditor } from './WorkflowEditor';
 import { WorkflowCatalog } from './WorkflowCatalog';
+import { WorkflowCanvas } from './WorkflowCanvas';
 import type { IssueWorkflowsApi, WorkflowResource } from '../../api/issueWorkflows';
 import styles from './WorkflowView.module.css';
 
@@ -54,6 +55,7 @@ function ProjectWorkflow({ api, projectId }: { api: IssueWorkflowsApi; projectId
               {current.data.workflow.definition.name} ·{' '}
               {t('workflow.version', { version: current.data.workflow.version })}
             </p>
+            <WorkflowCanvas definition={current.data.workflow.definition} />
             <button
               type="button"
               onClick={() =>

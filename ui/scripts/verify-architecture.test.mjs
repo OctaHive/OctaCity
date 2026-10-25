@@ -252,18 +252,20 @@ test('retains a tight asset count for the complete console with Factory diagnost
   );
 });
 
-test('admits measured AI-agent Runtime settings and rejects unplanned aggregate growth', async (context) => {
+test('admits measured workflow selection and properties and rejects unplanned aggregate growth', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
   const root = await fixture(context, { bundleBudgets: policy.bundleBudgets });
   await write(root, 'dist/index.html', '<script type="module" src="./assets/index.js"></script>');
   await write(root, 'dist/assets/index.js', 'x'.repeat(302_342));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(982_774));
-  await write(root, 'dist/assets/styles.css', 'x'.repeat(87_466));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(987_637));
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(89_861));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
-  assert.equal(policy.bundleBudgets.totalCssBytes, 87_552);
+  assert.equal(policy.bundleBudgets.totalJavaScriptBytes, 1_290_240);
+  assert.equal(policy.bundleBudgets.totalCssBytes, 90_112);
+  assert.equal(policy.bundleBudgets.totalStaticBytes, 1_381_376);
   assert.equal(policy.bundleBudgets.assetCount, 57);
   await write(root, 'dist/assets/unplanned.js', 'x'.repeat(16_384));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });
@@ -281,7 +283,7 @@ test('admits bounded Agent diagnostics and retains the CSS ceiling', async (cont
   await write(root, 'dist/assets/features.js', 'x'.repeat(873_500));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(87_500));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
-  await write(root, 'dist/assets/styles.css', 'x'.repeat(87_553));
+  await write(root, 'dist/assets/styles.css', 'x'.repeat(90_113));
   assert.ok(
     (await verifyArchitecture(root, { distDirectory: 'dist' })).some((message) =>
       message.includes('total CSS'),

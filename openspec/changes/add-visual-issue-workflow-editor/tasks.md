@@ -1,7 +1,7 @@
 ## 1. Graph viewing
 
-- [ ] 1.1 Through TDD in the existing workflow component tests, render default/catalog/exact historical definitions as one feature-local canvas with named status nodes, directed transition arrows and initial/terminal markers. Verify a branching return-path example shows only declared edges, including distinct arrows between the same statuses.
-- [ ] 1.2 Through TDD, add stable-ID node/arrow selection and a right-side read-only properties inspector, shared with the forthcoming editing mode. Verify selection exposes the exact element's settings and sends no mutation.
+- [x] 1.1 Through TDD in the existing workflow component tests, render default/catalog/exact historical definitions as one feature-local canvas with named status nodes, directed transition arrows and initial/terminal markers. Verify a branching return-path example shows only declared edges, including distinct arrows between the same statuses.
+- [x] 1.2 Through TDD, add stable-ID node/arrow selection and a right-side read-only properties inspector, shared with the forthcoming editing mode. Verify selection exposes the exact element's settings and sends no mutation.
 
 ## 2. Canvas authoring
 

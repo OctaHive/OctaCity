@@ -15,6 +15,7 @@ import type {
   WorkflowDefault,
 } from '../../api/issueWorkflows';
 import { useWorkflowSummary } from './workflowSummary';
+import { WorkflowCanvas } from './WorkflowCanvas';
 import styles from './WorkflowView.module.css';
 
 type Props = {
@@ -172,7 +173,7 @@ function WorkflowSelection({
     <>
       <h3>{resource.definition.name}</h3>
       <p>{t('workflow.version', { version: resource.version })}</p>
-      <p>{summary}</p>
+      <WorkflowCanvas definition={resource.definition} />
       <div className={styles.actions}>
         <button type="button" disabled={!ready} onClick={() => onEdit(structuredClone(resource))}>
           {t('workflow.editVersion')}

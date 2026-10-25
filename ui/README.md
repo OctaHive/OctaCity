@@ -52,11 +52,16 @@ external fonts, icon fonts, analytics integrations, and copied template assets. 
 `architecture-policy.json` is the single source of truth for the raw-byte and asset-count limits;
 the build reports any measured value that exceeds them. Task Source ownership authoring reuses
 shared Source references, row identities and Reporter effects, adding no runtime dependencies.
-The measured console with Project-scoped AI settings is 1,285,116 bytes of JavaScript
-and 1,373,204 bytes of total static output. The aggregate ceilings are 1,259 KiB
-JavaScript and 1,345 KiB static output. The typed Runtime setup surface and both
-translations use a reviewed 32 KiB increase in aggregate budgets, with no new dependency.
-Entry (450 KiB), CSS (85.5 KiB) and asset-count (57) limits stay in force.
+The measured console with Project-scoped AI settings and workflow inspection is
+1,289,979 bytes of JavaScript and 1,380,462 bytes of total static output. The
+aggregate ceilings are 1,260 KiB JavaScript and 1,349 KiB static output. The typed
+Runtime setup surface and both translations use a reviewed 32 KiB increase in
+aggregate budgets, with no new dependency.
+The Issue workflow canvas and properties inspector add 2.5 KiB to the CSS
+allowance (88 KiB total) for selectable status cards, initial/terminal markers,
+directed transitions and read-only properties. Workflow selection and inspection
+add 1 KiB to the JavaScript allowance and 4 KiB to the static-output allowance.
+Entry (450 KiB), CSS (88 KiB) and asset-count (57) limits stay in force.
 Role/Profile controls reuse existing forms, the confirmed command, closed value
 schemas and server validation. The architecture contract admits the measured
 footprint and rejects another unplanned 16 KiB of JavaScript. Networking and

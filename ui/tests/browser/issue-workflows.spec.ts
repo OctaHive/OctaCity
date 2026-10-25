@@ -2,6 +2,54 @@ import { expect, test } from '@playwright/test';
 import { installOperatorFixture, FIXTURE_IDS } from './operatorFixture';
 import { workflowFixture } from '../fixtures/issueWorkflows';
 
+test('keeps the line centered through the arrowhead on a curved workflow transition', async ({
+  page,
+}) => {
+  await installOperatorFixture(page);
+  const workflow = workflowFixture(FIXTURE_IDS.project);
+  workflow.definition.statuses = workflow.definition.statuses.slice(0, 2);
+  workflow.definition.terminal_status_ids = [workflow.definition.statuses[1]!.id];
+  workflow.definition.transitions = [
+    {
+      id: '30000000-0000-4000-8000-000000000001',
+      name: 'Complete',
+      from: workflow.definition.statuses[0]!.id,
+      to: workflow.definition.statuses[1]!.id,
+      origins: ['manual'],
+      evidence: [],
+    },
+  ];
+  await page.route('**/api/v1/projects/*/issue-workflow-default', (route) =>
+    route.fulfill({ json: { version: 7, workflow } }),
+  );
+  await page.goto(`/projects/${FIXTURE_IDS.project}/issue-workflows`);
+  const arrow = page
+    .getByRole('region', { name: 'Default for new tasks' })
+    .getByRole('button', { name: 'Complete: New → Done' });
+  const offsets = await arrow
+    .locator('path')
+    .first()
+    .evaluate((element) => {
+      const path = element as SVGPathElement;
+      const length = path.getTotalLength();
+      const end = path.getPointAtLength(length);
+      const tangent = path.getPointAtLength(length - 0.1);
+      const dx = end.x - tangent.x;
+      const dy = end.y - tangent.y;
+      return [4, 8, 14].map((distance) => {
+        const point = path.getPointAtLength(length - distance);
+        return Math.abs((point.x - end.x) * dy - (point.y - end.y) * dx) / Math.hypot(dx, dy);
+      });
+    });
+  for (const offset of offsets) expect(offset).toBeLessThan(0.5);
+  await arrow.locator('text').click();
+  await expect(arrow).toBeFocused();
+  await expect(arrow).toHaveCSS('outline-style', 'none');
+  await page.keyboard.press('Space');
+  await expect(arrow).toBeFocused();
+  await expect(arrow).toHaveCSS('outline-style', 'solid');
+});
+
 test('publishes a reviewed workflow over HTTP without provider or Factory requests and restores keyboard focus', async ({
   page,
 }) => {

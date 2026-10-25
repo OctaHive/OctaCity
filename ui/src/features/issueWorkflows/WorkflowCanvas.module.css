@@ -1,0 +1,120 @@
+.canvas {
+  min-width: 0;
+  max-width: 100%;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background-color: var(--color-surface);
+  background-image: radial-gradient(var(--color-border) 1px, transparent 1px);
+  background-size: 24px 24px;
+}
+.surface {
+  position: relative;
+}
+.surface svg {
+  display: block;
+  color: var(--color-brand-action);
+}
+.surface text {
+  fill: var(--color-text-muted);
+  stroke: var(--color-surface);
+  stroke-width: 5px;
+  stroke-linejoin: round;
+  paint-order: stroke;
+  font-size: 0.75rem;
+}
+.node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: var(--space-md);
+  box-sizing: border-box;
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface);
+  color: var(--color-text-primary);
+}
+.node h4 {
+  margin: 0;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+.markers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  font-size: 0.75rem;
+}
+.markers span {
+  padding: var(--space-xs) var(--space-sm);
+  border-radius: var(--radius-small);
+}
+.initial {
+  color: var(--color-information-ink);
+  background: var(--color-information-soft);
+}
+.terminal {
+  color: var(--color-success-ink);
+  background: var(--color-brand-soft);
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18rem;
+  gap: var(--space-md);
+  min-width: 0;
+}
+.inspector {
+  min-width: 0;
+  padding: var(--space-lg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-medium);
+  background: var(--color-surface-subtle);
+}
+.inspector h4 {
+  margin-block: var(--space-md);
+}
+.inspector dl {
+  display: grid;
+  gap: var(--space-md);
+}
+.inspector dt {
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+}
+.inspector dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.node .nodeSelect {
+  position: absolute;
+  inset: 0;
+  border: 2px solid transparent;
+  border-radius: inherit;
+  background: transparent;
+}
+.node .nodeSelect[aria-pressed='true'] {
+  border-color: var(--color-brand-action);
+}
+.edge {
+  cursor: pointer;
+}
+.edge:focus:not(:focus-visible) {
+  outline: none;
+}
+.edge[aria-pressed='true'] > path:first-of-type {
+  stroke-width: 2.5;
+}
+.edge[aria-pressed='true'] text {
+  fill: var(--color-brand-action);
+  font-weight: 700;
+}
+@media (max-width: 1000px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
