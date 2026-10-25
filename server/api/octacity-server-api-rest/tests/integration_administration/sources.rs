@@ -132,6 +132,65 @@ fn router(peer: Arc<SourcePeer>) -> axum::Router {
     .with_source_reads(Arc::new(AuthorizedQueryHandler::new(policy, peer))),
   )
 }
+#[tokio::test]
+async fn source_management_readiness_distinguishes_optional_absence_and_incomplete_composition() {
+  for (configuration, reads, status, state) in [
+    (false, false, StatusCode::OK, "disabled"),
+    (true, false, StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+    (false, true, StatusCode::SERVICE_UNAVAILABLE, "unavailable"),
+    (true, true, StatusCode::OK, "ready"),
+  ] {
+    let policy = Arc::new(Policy);
+    let peer = Arc::new(SourcePeer::default());
+    let mut application = IntegrationManagementApplication::new(Arc::new(AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(Peer::default()),
+    )));
+    if configuration {
+      application = application.with_source_configuration(
+        Arc::new(AuthorizedCommandHandler::new(policy.clone(), peer.clone())),
+        Arc::new(AuthorizedQueryHandler::new(policy.clone(), peer.clone())),
+      );
+    }
+    if reads {
+      application = application.with_source_reads(Arc::new(AuthorizedQueryHandler::new(policy, peer)));
+    }
+    let readiness = application.source_management_readiness();
+    if configuration != reads {
+      let missing = if configuration {
+        format!("/api/v1/projects/{PROJECT}/factory-source-inputs/{INPUT}/versions/1/diagnostics")
+      } else {
+        format!("/api/v1/projects/{PROJECT}/factory-sources")
+      };
+      let (status, body) = request(
+        &integration_management_routes(application),
+        "GET",
+        &missing,
+        Value::Null,
+        &[],
+        true,
+      )
+      .await;
+      assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+      assert_eq!(body["code"], "unavailable");
+    }
+    let router = octacity_server_api_rest::management_router(|| true)
+      .merge(octacity_server_api_rest::factory_readiness_routes(move || readiness));
+    let response = router
+      .clone()
+      .oneshot(Request::builder().uri("/health/factory").body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(response.status(), status);
+    let body: Value = serde_json::from_slice(&to_bytes(response.into_body(), 1024).await.unwrap()).unwrap();
+    assert_eq!(body, json!({"status":state}));
+    let ordinary = router
+      .oneshot(Request::builder().uri("/health/ready").body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(ordinary.status(), StatusCode::OK);
+  }
+}
 async fn request(
   router: &axum::Router,
   method: &str,
@@ -330,6 +389,10 @@ fn source_configuration_openapi_has_closed_typed_contracts_and_authorization() {
   ] {
     let entry = &document["paths"][path][method];
     assert_eq!(entry["operationId"], operation);
+    assert!(
+      entry["responses"]["422"].is_object(),
+      "missing Source capability response for {operation}"
+    );
     assert_eq!(entry["security"], json!([{"ProtectedManagementIngress":[]}]));
     assert!(
       octacity_server_api_rest::v1::management_authorization_operations()

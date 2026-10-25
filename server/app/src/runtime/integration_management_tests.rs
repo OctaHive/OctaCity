@@ -188,6 +188,48 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     .unwrap();
   assert_eq!(access["access"]["project_id"], project_id);
   assert_eq!(access["access"]["resources"], grant["resources"]);
+  // A read/check installation alone does not install automatic Source execution.
+  let choices = format!("/api/v1/projects/{project_id}/factory-source-choices?connection_id={id}&connection_version=1");
+  for source_path in [
+    choices.clone(),
+    format!("/api/v1/projects/{project_id}/factory-sources"),
+    format!("/api/v1/projects/{project_id}/factory-source-inputs/{id}/versions/1/diagnostics"),
+  ] {
+    let unavailable = client
+      .get(format!("http://localhost{source_path}"))
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(
+      unavailable.status(),
+      reqwest::StatusCode::UNPROCESSABLE_ENTITY,
+      "{source_path}"
+    );
+    assert_eq!(
+      unavailable.json::<Value>().await.unwrap()["code"],
+      "capability_unavailable"
+    );
+  }
+  assert_eq!(
+    projects
+      .get(format!("http://{}{choices}", runtime.management_addr()))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    reqwest::StatusCode::FORBIDDEN
+  );
+  let manual = projects
+    .post(format!(
+      "http://{}/api/v1/projects/{project_id}/issues",
+      runtime.management_addr()
+    ))
+    .header("idempotency-key", "manual-without-source")
+    .json(&json!({"title":"Local task","description":"","acceptance":null,"priority":null}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(manual.status(), reqwest::StatusCode::CREATED);
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }

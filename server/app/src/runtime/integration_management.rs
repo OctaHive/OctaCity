@@ -10,6 +10,17 @@ use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 
 const MAX_CATALOG_BYTES: u64 = 4 * 1024 * 1024;
+// Handler composition is static; provider availability belongs to consumer diagnostics.
+struct SourceManagementReadiness(bool);
+#[async_trait::async_trait]
+impl crate::readiness::ReadinessCheck for SourceManagementReadiness {
+  fn name(&self) -> &'static str {
+    "factory-source-management"
+  }
+  async fn check(&self) -> bool {
+    self.0
+  }
+}
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Catalog {
@@ -149,6 +160,7 @@ pub(super) async fn install(
   config: &crate::ServerConfig,
   store: Arc<PostgresStore>,
   cancellation: tokio_util::sync::CancellationToken,
+  readiness: &mut crate::readiness::ReadinessChecks,
 ) -> Result<Option<IntegrationManagementApplication>, ServerRuntimeError> {
   let Some(local) = config.integration_management() else {
     return Ok(None);
@@ -212,16 +224,18 @@ pub(super) async fn install(
   let dependencies =
     Arc::new(FactorySourceConfigurationHandlers::new(store.clone(), policy.clone(), vec![]).map_err(|_| invalid())?);
   let access = Arc::new(IntegrationProjectAccessHandlers::new(store, policy.clone()));
-  Ok(Some(
-    IntegrationManagementApplication::new(admin_commands.clone())
-      .with_checks(Arc::new(AuthorizedQueryHandler::new(policy.clone(), checks)))
-      .with_metadata(commands, queries.clone())
-      .with_discovery(queries)
-      .with_administration(admin_commands, admin_queries)
-      .with_dependencies(Arc::new(AuthorizedQueryHandler::new(policy.clone(), dependencies)))
-      .with_project_access(
-        Arc::new(AuthorizedCommandHandler::new(policy.clone(), access.clone())),
-        Arc::new(AuthorizedQueryHandler::new(policy, access)),
-      ),
-  ))
+  let application = IntegrationManagementApplication::new(admin_commands.clone())
+    .with_checks(Arc::new(AuthorizedQueryHandler::new(policy.clone(), checks)))
+    .with_metadata(commands, queries.clone())
+    .with_discovery(queries)
+    .with_administration(admin_commands, admin_queries)
+    .with_dependencies(Arc::new(AuthorizedQueryHandler::new(policy.clone(), dependencies)))
+    .with_project_access(
+      Arc::new(AuthorizedCommandHandler::new(policy.clone(), access.clone())),
+      Arc::new(AuthorizedQueryHandler::new(policy, access)),
+    );
+  if let Some(ready) = application.source_management_readiness() {
+    readiness.push_factory(Arc::new(SourceManagementReadiness(ready)));
+  }
+  Ok(Some(application))
 }

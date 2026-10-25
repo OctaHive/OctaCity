@@ -13,6 +13,15 @@ pub(super) struct SourceConfigurationEndpoints {
   list: Arc<dyn AuthorizedManagementQueryHandler<ListWorkSourceConfigurationsQuery, Error = ApplicationError>>,
 }
 impl IntegrationManagementApplication {
+  /// Optional Source API installation health, independent of provider availability.
+  /// A partial handler family is an assembly failure rather than optional absence.
+  pub fn source_management_readiness(&self) -> Option<bool> {
+    match (&self.sources, &self.source_reads) {
+      (None, None) => None,
+      (Some(_), Some(_)) => Some(true),
+      _ => Some(false),
+    }
+  }
   /// Installs independently authorized input authoring; no credential or provider execution capability is added.
   pub fn with_source_configuration<C, Q>(mut self, commands: Arc<C>, queries: Arc<Q>) -> Self
   where
@@ -40,7 +49,16 @@ fn services<'a>(
   application
     .sources
     .as_ref()
-    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, request_id))
+    .ok_or_else(|| source_unavailable(application, request_id))
+}
+// Optional absence differs from an installation with only half its handlers composed.
+fn source_unavailable(application: &IntegrationManagementApplication, request_id: &RequestId) -> ApiError {
+  let failure = if application.source_management_readiness().is_none() {
+    ApplicationFailure::CapabilityUnavailable
+  } else {
+    ApplicationFailure::Unavailable
+  };
+  application_error(failure, request_id)
 }
 fn intent(body: SafeIntent, project: &str, request_id: &RequestId) -> Result<WorkSourceConfigurationIntent, ApiError> {
   let intent: WorkSourceConfigurationIntent =
@@ -314,7 +332,7 @@ pub(crate) async fn preview_sources(
   let result = app
     .source_reads
     .as_ref()
-    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
+    .ok_or_else(|| source_unavailable(&app, &id))?
     .preview
     .handle_authorized_query(&ctx, query)
     .await
@@ -372,7 +390,7 @@ async fn diagnostics(
   let result = app
     .source_reads
     .as_ref()
-    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
+    .ok_or_else(|| source_unavailable(&app, &id))?
     .diagnostics
     .handle_authorized_query(&ctx, query)
     .await

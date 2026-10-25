@@ -198,6 +198,7 @@ impl ServerRuntime {
         &config,
         registration_store.clone(),
         cancellation.child_token(),
+        &mut resources.readiness,
       )
       .await?,
       authoritative_store: placement_store.clone(),
