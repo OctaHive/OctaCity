@@ -166,6 +166,7 @@ async fn prepare_scoped(
 
 async fn imported(store: &PostgresStore, input: &WorkSourceInput, item: WorkSourceItem, replay: &str) -> IssueId {
   let selection = IssueSourceSelection {
+    connection: None,
     project_id: input.project_id(),
     source: input.definition().source.clone(),
     item,

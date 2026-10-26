@@ -130,6 +130,14 @@ pub fn issue_source_import_conflict() -> StoreError {
 /// Import metadata owns neither Source scans nor task creation; existing consumers own those journals.
 #[async_trait::async_trait]
 pub trait IssueSourceImportStore: Send + Sync {
+  /// Bounded enabled heads in the accepted installation-owner partition, across live Projects.
+  async fn active_issue_source_imports(
+    &self,
+    scope: &ManagementSecurityScope,
+    after: Option<(ProjectId, IssueSourceImportId)>,
+    limit: u16,
+  ) -> Result<Vec<PublishedIssueSourceImport>, StoreError>;
+
   /// Returns an exact original receipt without applying another publication.
   async fn replay_issue_source_import(
     &self,

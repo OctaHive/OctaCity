@@ -116,6 +116,11 @@ pub(super) async fn require_claim(
 ) -> Result<(), StoreError> {
   if claim.project_id != selection.project_id
     || claim.target.source != selection.source
+    || claim
+      .target
+      .import
+      .as_ref()
+      .is_some_and(|i| selection.connection.as_ref() != Some(&i.definition.connection))
     || claim.target.issue_id.is_some_and(|id| Some(id) != issue)
   {
     return Err(source_conflict());
@@ -134,6 +139,13 @@ async fn read_generation(
   target: &IssueSourceReadTarget,
 ) -> Result<Option<u64>, StoreError> {
   use sqlx::types::Json;
+  if let Some(import) = &target.import {
+    if target.issue_id.is_some() || import.project_id != project || import.definition.source != target.source {
+      return Err(source_conflict());
+    }
+    let current = crate::issue_source_import::read(connection, project, scope, import.id, None).await?;
+    return Ok((current == *import && current.definition.enabled).then_some(current.version.get()));
+  }
   let Some(issue) = target.issue_id else {
     return Ok(Some(0));
   };

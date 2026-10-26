@@ -56,17 +56,24 @@ impl Catalog {
 }
 
 pub(super) async fn validate_source_profiles(config: &crate::ServerConfig) -> Result<(), super::RuntimeAssemblyError> {
-  if let Some(path) = config
-    .integration_management()
-    .and_then(|local| local.catalog_file.as_ref())
-  {
+  let Some(local) = config.integration_management() else {
+    return Ok(());
+  };
+  if let Some(path) = &local.catalog_file {
     let catalog = Catalog::load(path)
       .await
       .map_err(|_| super::RuntimeAssemblyError::InvalidSourceProfiles)?;
     if let Some(path) = catalog.source_profiles_file {
       let registry = WorkAdapterRegistry::discover(&catalog.registry)
         .map_err(|_| super::RuntimeAssemblyError::InvalidSourceProfiles)?;
-      super::source_profiles_file::SourceProfiles::load(&path, &catalog.installations, &registry).await?;
+      super::source_profiles_file::SourceProfiles::load(
+        &path,
+        &catalog.installations,
+        &registry,
+        std::time::Duration::from_millis(local.operation_timeout_milliseconds),
+        std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
+      )
+      .await?;
     }
   }
   Ok(())
@@ -195,12 +202,21 @@ impl ProviderCredentialPublisher for InstalledPublishers {
     self.get(publication)?.discard(publication).await
   }
 }
+pub(super) struct ManagedIssueSources {
+  pub(super) handlers: Arc<IssueSourceHandlers<PostgresStore>>,
+  pub(super) policy: Arc<dyn ManagementAuthorizationPolicy>,
+}
+pub(super) struct InstalledIntegrationManagement {
+  pub(super) issues: Option<ManagedIssueSources>,
+  pub(super) application: IntegrationManagementApplication,
+  pub(super) imports: Option<super::source_import::SourceImportWorker>,
+}
 pub(super) async fn install(
   config: &crate::ServerConfig,
   store: Arc<PostgresStore>,
   cancellation: tokio_util::sync::CancellationToken,
   readiness: &mut crate::readiness::ReadinessChecks,
-) -> Result<Option<IntegrationManagementApplication>, ServerRuntimeError> {
+) -> Result<Option<InstalledIntegrationManagement>, ServerRuntimeError> {
   let Some(local) = config.integration_management() else {
     return Ok(None);
   };
@@ -267,51 +283,78 @@ pub(super) async fn install(
       Arc::new(AuthorizedCommandHandler::new(policy.clone(), access.clone())),
       Arc::new(AuthorizedQueryHandler::new(policy.clone(), access)),
     );
+  let mut imports = None;
+  let mut issues = None;
   if let Some(path) = &catalog.source_profiles_file {
     application = application.require_source_management();
-    match super::source_profiles_file::SourceProfiles::load(path, &catalog.installations, &registry).await {
-      Ok(profiles) => {
-        let sources = Arc::new(super::source_management::SourceManagement {
-          store: store.clone(),
-          policy: policy.clone(),
-          profiles,
-          registry,
-          timeout: std::time::Duration::from_millis(local.operation_timeout_milliseconds),
-          grace: std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
-          cancellation,
-        });
-        let project_sources = Arc::new(
-          IssueSourceHandlers::new(
-            store,
-            sources.clone(),
-            policy.clone(),
-            Arc::new(SystemFactoryExecutionClock),
-          )
-          .with_project_source_profiles(Arc::new(super::source_management::IssueSourceChoiceProvider(
-            sources.clone(),
-          ))),
-        );
-        let project_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), project_sources.clone()));
-        application = application
-          .with_project_source_choices(project_queries.clone())
-          .with_project_source_preview(project_queries.clone())
-          .with_project_source_imports(
-            Arc::new(AuthorizedCommandHandler::new(policy.clone(), project_sources)),
-            project_queries,
-          );
-        let sources = Arc::new(InstalledFactorySourceHandlers::new(sources));
-        application = application
-          .with_source_configuration(
-            Arc::new(AuthorizedCommandHandler::new(policy.clone(), sources.clone())),
-            Arc::new(AuthorizedQueryHandler::new(policy.clone(), sources.clone())),
-          )
-          .with_source_reads(Arc::new(AuthorizedQueryHandler::new(policy, sources)));
+    let sources = match super::source_profiles_file::SourceProfiles::load(
+      path,
+      &catalog.installations,
+      &registry,
+      std::time::Duration::from_millis(local.operation_timeout_milliseconds),
+      std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
+    )
+    .await
+    {
+      Ok(profiles) => Some(Arc::new(super::source_management::SourceManagement {
+        store: store.clone(),
+        policy: policy.clone(),
+        profiles,
+        registry,
+        timeout: std::time::Duration::from_millis(local.operation_timeout_milliseconds),
+        grace: std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
+        cancellation,
+      })),
+      Err(_) => {
+        tracing::warn!("installed Source profiles unavailable; Source management readiness failed");
+        None
       }
-      Err(_) => tracing::warn!("installed Source profiles unavailable; Source management readiness failed"),
+    };
+    // Trusted protected intent and retained metadata outlive an unavailable native reader.
+    let reader: Arc<dyn WorkSourceObservations> = match &sources {
+      Some(sources) => sources.clone(),
+      None => Arc::new(super::application::UnavailableIssueSource),
+    };
+    let mut project_sources =
+      IssueSourceHandlers::new(store, reader, policy.clone(), Arc::new(SystemFactoryExecutionClock));
+    if let Some(sources) = &sources {
+      project_sources = project_sources.with_project_source_profiles(Arc::new(
+        super::source_management::IssueSourceChoiceProvider(sources.clone()),
+      ));
+    }
+    let project_sources = Arc::new(project_sources);
+    issues = Some(ManagedIssueSources {
+      handlers: project_sources.clone(),
+      policy: policy.clone(),
+    });
+    let project_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), project_sources.clone()));
+    application = application.with_project_source_imports(
+      Arc::new(AuthorizedCommandHandler::new(policy.clone(), project_sources)),
+      project_queries.clone(),
+    );
+    if let Some(sources) = sources {
+      application = application
+        .with_project_source_choices(project_queries.clone())
+        .with_project_source_preview(project_queries);
+      imports = Some(super::source_import::SourceImportWorker::new(
+        sources.clone(),
+        &local.principal,
+      ));
+      let sources = Arc::new(InstalledFactorySourceHandlers::new(sources));
+      application = application
+        .with_source_configuration(
+          Arc::new(AuthorizedCommandHandler::new(policy.clone(), sources.clone())),
+          Arc::new(AuthorizedQueryHandler::new(policy.clone(), sources.clone())),
+        )
+        .with_source_reads(Arc::new(AuthorizedQueryHandler::new(policy, sources)));
     }
   }
   if let Some(ready) = application.source_management_readiness() {
     readiness.push_factory(Arc::new(SourceManagementReadiness(ready)));
   }
-  Ok(Some(application))
+  Ok(Some(InstalledIntegrationManagement {
+    application,
+    imports,
+    issues,
+  }))
 }

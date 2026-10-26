@@ -116,17 +116,7 @@ impl LocalListener {
         let config = config.clone();
         async move {
           if peer.0 == Some(config.peer_uid) {
-            let context = ManagementRequestContext::new(
-              ManagementActor::authenticated(&config.principal).expect("validated principal"),
-              ManagementSecurityScope::new(format!(
-                "local-proxy:{}",
-                octacity_server_factory::FactoryDigest::content_sha256(config.principal.as_bytes())
-              ))
-              .expect("bounded principal"),
-              ManagementRequestId::new(uuid::Uuid::new_v4()).expect("generated identity"),
-              ManagementRequestAttributes::new(ManagementIngress::VerifiedIdentity, None),
-            )
-            .expect("verified local proxy");
+            let context = request_context(&config.principal);
             request
               .extensions_mut()
               .insert(ProtectedIntegrationRequest::new(context).expect("verified local transport"));
@@ -144,6 +134,21 @@ impl LocalListener {
       Ok("local-integration-management")
     });
   }
+}
+
+// The worker and protected ingress share the same accepted installation-owner partition.
+pub(super) fn request_context(principal: &str) -> ManagementRequestContext {
+  ManagementRequestContext::new(
+    ManagementActor::authenticated(principal).expect("validated principal"),
+    ManagementSecurityScope::new(format!(
+      "local-proxy:{}",
+      octacity_server_factory::FactoryDigest::content_sha256(principal.as_bytes())
+    ))
+    .expect("bounded principal"),
+    ManagementRequestId::new(uuid::Uuid::new_v4()).expect("generated identity"),
+    ManagementRequestAttributes::new(ManagementIngress::VerifiedIdentity, None),
+  )
+  .expect("verified local proxy")
 }
 
 #[cfg(test)]

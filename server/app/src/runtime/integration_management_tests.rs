@@ -332,8 +332,33 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     &installed,
   )
   .await;
+  super::source_import_tests::assert_filtered_import_keeps_task_list(
+    &client,
+    &database.pool,
+    project_id,
+    &task_choices,
+    &registry.join("custom-provider"),
+  )
+  .await;
+  let imported =
+    super::source_import_tests::assert_normal_import_creates_task(&client, project_id, &task_choices).await;
+  assert!(imported["issue"]["id"].is_string());
+  assert_eq!(
+    reqwest::Client::new()
+      .get(format!(
+        "http://{}/api/v1/projects/{project_id}/issues/{}/source-link",
+        runtime.management_addr(),
+        imported["issue"]["id"].as_str().unwrap()
+      ))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    reqwest::StatusCode::FORBIDDEN
+  );
+
   let import_controls =
-    super::source_management_tests::assert_project_import_controls(&client, project_id, &task_choices).await;
+    super::source_import_tests::assert_project_import_controls(&client, project_id, &task_choices).await;
   super::source_management_tests::assert_project_preview(
     &client,
     project_id,
@@ -516,7 +541,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     .await
     .unwrap();
   assert_eq!(revoked["items"], json!([]));
-  super::source_management_tests::assert_import_disable_after_revocation(&client, project_id, &import_controls).await;
+  super::source_import_tests::assert_import_disable_after_revocation(&client, project_id, &import_controls).await;
   let response = client
     .post(format!(
       "http://localhost/api/v1/projects/{project_id}/issue-sources/preview"
@@ -556,7 +581,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   runtime.shutdown().await.unwrap();
   source_profiles["readers"][0]["polling"]["max_pages"] = json!(2);
   fs::write(&profiles, serde_json::to_vec(&source_profiles).unwrap()).unwrap();
-  let runtime = ServerRuntime::start(config).await.unwrap();
+  let runtime = ServerRuntime::start(config.clone()).await.unwrap();
   let replaced: Value = client
     .get(format!("http://localhost{choices}"))
     .send()
@@ -572,6 +597,54 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   );
   super::source_management_tests::assert_history_after_replacement(&client, project_id.parse().unwrap(), &published)
     .await;
+  runtime.shutdown().await.unwrap();
+  source_profiles["consumer"] = json!({"claim_lifetime_millis":1000});
+  fs::write(&profiles, serde_json::to_vec(&source_profiles).unwrap()).unwrap();
+  let runtime = ServerRuntime::start(config.clone())
+    .await
+    .expect("unavailable Source consumer must preserve normal server/manual task startup");
+  let source = client.get(format!("http://localhost{choices}")).send().await.unwrap();
+  assert_eq!(source.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+  let manual = reqwest::Client::new()
+    .post(format!(
+      "http://{}/api/v1/projects/{project_id}/issues",
+      runtime.management_addr()
+    ))
+    .header("idempotency-key", "manual-with-invalid-source-consumer")
+    .json(&json!({"title":"Independent manual task","description":"","acceptance":null,"priority":null}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(manual.status(), reqwest::StatusCode::CREATED);
+  assert_eq!(
+    reqwest::Client::new()
+      .get(format!(
+        "http://{}/api/v1/projects/{project_id}/issues/{}/source-link",
+        runtime.management_addr(),
+        imported["issue"]["id"].as_str().unwrap()
+      ))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    reqwest::StatusCode::FORBIDDEN,
+    "required protected Source intent survives profile/consumer failure"
+  );
+  let retained = client
+    .get(format!(
+      "http://localhost/api/v1/projects/{project_id}/issue-source-imports/{}",
+      import_controls["id"].as_str().unwrap()
+    ))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    retained.status(),
+    reqwest::StatusCode::OK,
+    "retained import controls do not need an available native reader"
+  );
+  super::source_import_tests::assert_unavailable_import_lifecycle(&client, project_id, &import_controls).await;
+
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }

@@ -84,6 +84,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(
       [
         ("project_id", id()),
+        ("connection", schema_ref("WorkSourceConnectionReference")),
         ("source", schema_ref("WorkSourceBinding")),
         ("item", schema_ref("IssueSourceItem")),
       ],

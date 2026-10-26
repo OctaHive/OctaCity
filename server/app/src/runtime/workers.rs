@@ -20,6 +20,7 @@ use tracing::{info, warn};
 use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, readiness::WorkerHealth};
 
 pub(super) struct DurableWorkers {
+  pub(super) source_imports: Option<super::source_import::SourceImportWorker>,
   pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
   pub(super) legacy_issues: Arc<PostgresStore>,
   pub(super) actions: octacity_server_application::FactoryActionProjectionWorker<PostgresStore>,
@@ -163,6 +164,27 @@ pub(super) fn spawn_durable_workers(
       cancellation.child_token(),
     )
   });
+  let source_imports = workers.source_imports.map(|worker| {
+    let settings = worker.settings();
+    let worker = Arc::new(worker);
+    let child = cancellation.child_token();
+    spawn_worker_loop(
+      WorkerIdentity::new("issue-source-import", WorkerKind::Factory),
+      Arc::new(WorkerHealth::new(
+        "issue-source-import",
+        settings.poll_interval().saturating_add(settings.claim_lifetime()),
+      )),
+      settings.poll_interval(),
+      settings.claim_lifetime(),
+      child.clone(),
+      move |_, _| {
+        let worker = worker.clone();
+        let cancellation = child.clone();
+        async move { worker.run_once(cancellation).await }
+      },
+      |_| {},
+    )
+  });
   let mut factory_outbox = vec![];
   let mut source_task = None;
   let factory = workers.factory.map(|installed| {
@@ -202,6 +224,9 @@ pub(super) fn spawn_durable_workers(
   ];
   if let Some(task) = factory {
     tasks.push((FACTORY_WORKER_NAME, task));
+  }
+  if let Some(task) = source_imports {
+    tasks.push(("issue-source-import", task));
   }
   if let Some(task) = source_task {
     tasks.push(("factory-source", task));

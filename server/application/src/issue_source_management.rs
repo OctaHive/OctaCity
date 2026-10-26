@@ -95,6 +95,7 @@ impl<S: IssueSourceMappingStore> ManagementCommandUseCase<PreviewIssueSourceComm
         return Err(ApplicationError::invalid());
       }
       let selection = IssueSourceSelection {
+        connection: None,
         project_id: command.project_id,
         source: command.source.clone(),
         item: observed.snapshot.item.clone(),

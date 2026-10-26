@@ -251,6 +251,7 @@ pub(crate) async fn install_push_mapping(
       .attach_issue_source(store_testing::management_mutation(AttachIssueSource {
         intent: AttachIssueSourceIntent {
           selection: IssueSourceSelection {
+            connection: None,
             project_id: issue.project_id,
             source: source.clone(),
             item: WorkSourceItem {

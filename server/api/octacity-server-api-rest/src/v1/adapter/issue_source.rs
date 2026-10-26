@@ -10,6 +10,7 @@ use octacity_server_application::{
 
 /// Installs task Source review independently of admission and provider availability.
 pub struct IssueSourceManagementApplication {
+  pub(super) protected_ingress: bool,
   projections:
     Option<Arc<dyn AuthorizedManagementQueryHandler<ListIssueSourceProjectionsQuery, Error = ApplicationError>>>,
   review: Arc<dyn AuthorizedManagementQueryHandler<GetIssueSynchronizationQuery, Error = ApplicationError>>,
@@ -36,6 +37,7 @@ impl IssueSourceManagementApplication {
       + 'static,
   {
     Self {
+      protected_ingress: false,
       projections: None,
       review: queries.clone(),
       choices: queries.clone(),
@@ -43,6 +45,11 @@ impl IssueSourceManagementApplication {
       commands: None,
       resolution: None,
     }
+  }
+  /// Requires the same authenticated transport proof as Project Source controls when installed.
+  pub fn with_protected_ingress(mut self, required: bool) -> Self {
+    self.protected_ingress = required;
+    self
   }
   /// Installs retained Reporter reads independently of provider and manual-task capabilities.
   pub fn with_projection_queries(
@@ -387,6 +394,7 @@ pub(super) async fn attach(
       AttachIssueSourceCommand {
         intent: AttachIssueSourceIntent {
           selection: IssueSourceSelection {
+            connection: None,
             project_id,
             source: request.source,
             item: request.item,

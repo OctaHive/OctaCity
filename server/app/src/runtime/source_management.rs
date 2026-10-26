@@ -85,7 +85,11 @@ impl SourceManagement {
       self.cancellation.clone(),
     )?
     .with_managed_connections(ManagedIntegrationConnections::new(self.store.clone()));
-    Ok(handler.with_preview(Arc::new(preview)))
+    Ok(
+      handler
+        .with_preview(Arc::new(preview))
+        .with_issue_links(Arc::new(IssueHandlers::new(self.store.clone(), self.policy.clone()))),
+    )
   }
 }
 
@@ -132,14 +136,14 @@ impl FactorySourceConfigurationProvider<PostgresStore> for IssueSourceChoiceProv
 }
 
 impl SourceManagement {
-  async fn observation_reader(
+  pub(super) async fn observation_profile(
     &self,
     context: &ManagementRequestContext,
     project: ProjectId,
     source: &octacity_server_factory::WorkSourceBinding,
     connection: &octacity_server_factory::WorkSourceConnectionRef,
     deadline: tokio::time::Instant,
-  ) -> Result<super::HostedWorkSourceObservations, ApplicationError> {
+  ) -> Result<super::WorkSourceReadProfile, ApplicationError> {
     use octacity_server_store::IntegrationConnectionStore;
     let dependency = |class| ApplicationError::SourceDependency {
       class,
@@ -174,10 +178,25 @@ impl SourceManagement {
         break;
       }
     }
-    let profile = selected.ok_or_else(ApplicationError::capability_unavailable)?;
+    selected.ok_or_else(ApplicationError::capability_unavailable)
+  }
+  async fn observation_reader(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    source: &octacity_server_factory::WorkSourceBinding,
+    connection: &octacity_server_factory::WorkSourceConnectionRef,
+    deadline: tokio::time::Instant,
+  ) -> Result<super::HostedWorkSourceObservations, ApplicationError> {
+    let profile = self
+      .observation_profile(context, project, source, connection, deadline)
+      .await?;
     let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
     if remaining.is_zero() {
-      return Err(dependency(WorkSourceFailure::Timeout));
+      return Err(ApplicationError::SourceDependency {
+        class: WorkSourceFailure::Timeout,
+        retry_after_millis: None,
+      });
     }
     Ok(
       super::HostedWorkSourceObservations::new(

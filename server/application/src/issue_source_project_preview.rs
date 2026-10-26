@@ -138,6 +138,7 @@ impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + Integration
       observation.validate_issue_read(
         context,
         &IssueSourceSelection {
+          connection: None,
           project_id: project,
           source: result.source.clone(),
           item: observation.snapshot.item.clone(),

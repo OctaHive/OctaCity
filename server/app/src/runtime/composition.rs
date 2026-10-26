@@ -184,6 +184,15 @@ impl ServerRuntime {
       retention_policy.retrying().maximum_retry_milliseconds(),
     )
     .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+    let installed_integrations = super::integration_management::install(
+      &config,
+      registration_store.clone(),
+      cancellation.child_token(),
+      &mut resources.readiness,
+    )
+    .await?;
+    let (integrations, source_imports, managed_issue_sources) =
+      installed_integrations.map_or((None, None, None), |i| (Some(i.application), i.imports, i.issues));
     let ApplicationComponents {
       management: management_application,
       trigger_service,
@@ -193,14 +202,9 @@ impl ServerRuntime {
       webhook_provider,
     } = management_application(ApplicationAssembly {
       issue_integrations,
+      managed_issue_sources,
       store: registration_store.clone(),
-      integrations: super::integration_management::install(
-        &config,
-        registration_store.clone(),
-        cancellation.child_token(),
-        &mut resources.readiness,
-      )
-      .await?,
+      integrations,
       authoritative_store: placement_store.clone(),
       toolchain: resources.job_spec_toolchain,
       supported_pipeline_capabilities: config.supported_pipeline_capabilities().to_vec(),
@@ -424,6 +428,7 @@ impl ServerRuntime {
         management_application: Some(management_application),
         webhook_router,
         workers: Some(DurableWorkers {
+          source_imports,
           factory,
           legacy_issues: registration_store.clone(),
           actions: octacity_server_application::FactoryActionProjectionWorker::new(registration_store.clone()),

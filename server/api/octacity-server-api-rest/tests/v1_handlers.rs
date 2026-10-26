@@ -1595,6 +1595,12 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-sources"), None),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-inputs/{integration_id}/versions/1"), None),
     empty_request("GET", &format!("/api/v1/projects/{project_id}/factory-source-groups/{integration_id}/versions/1"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-source-choices?connection_id={integration_id}&connection_version=1"), None),
+    empty_request("POST", &format!("/api/v1/projects/{project_id}/issue-sources/preview"), None),
+    empty_request("POST", &format!("/api/v1/projects/{project_id}/issue-source-imports/{integration_id}/versions"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-source-imports/{integration_id}"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-source-imports/{integration_id}/versions/1"), None),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/issue-source-imports?limit=1"), None),
     // Protected administration rejects even well-routed requests before body parsing/policy.
     empty_request("GET", "/api/v1/integrations", None),
     empty_request("GET", "/api/v1/integration-installations", None),
@@ -1651,6 +1657,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
         "/api/v1/integrations" | "/api/v1/integration-installations"
       )
       || request.uri().path().contains("/factory-source")
+      || request.uri().path().contains("/issue-source")
     {
       StatusCode::FORBIDDEN
     } else if request.uri().path() == "/api/v1/operations/metadata" {

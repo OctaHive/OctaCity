@@ -236,6 +236,7 @@ async fn manual_issue<S>(
     .attach_issue_source(management_mutation(AttachIssueSource {
       intent: AttachIssueSourceIntent {
         selection: IssueSourceSelection {
+          connection: None,
           project_id: project,
           source: source.clone(),
           item: WorkSourceItem {

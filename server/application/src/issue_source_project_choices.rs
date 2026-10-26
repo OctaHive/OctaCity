@@ -66,7 +66,7 @@ impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + Integration
     let mut choices = self
       .project_profiles
       .as_ref()
-      .ok_or_else(ApplicationError::capability_unavailable)?
+      .ok_or_else(ApplicationError::unavailable)?
       .for_project(project, context)?
       .execute_management_query(context, grant, query.selection)
       .await?;

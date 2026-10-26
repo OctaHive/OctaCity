@@ -47,6 +47,9 @@ mod integration_management_tests;
 mod issue_tests;
 #[cfg(test)]
 mod issue_workflow_tests;
+mod source_import;
+#[cfg(all(test, unix))]
+mod source_import_tests;
 mod source_management;
 #[cfg(all(test, unix))]
 mod source_management_tests;

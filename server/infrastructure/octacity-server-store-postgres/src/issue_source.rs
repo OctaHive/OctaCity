@@ -18,6 +18,17 @@ struct ExplicitRefreshReplay {
 
 #[async_trait::async_trait]
 impl IssueSourceStore for PostgresStore {
+  async fn native_issue_source_link(
+    &self,
+    project: ProjectId,
+    scope: &ManagementSecurityScope,
+    native: FactoryDigest,
+  ) -> Result<Option<IssueSourceLink>, StoreError> {
+    crate::discovery::require_project(self.pool(), project).await?;
+    let mut connection = self.pool().acquire().await.map_err(unavailable)?;
+    native_link(&mut connection, project, scope, native).await
+  }
+
   async fn issue_source_attachment_replay(
     &self,
     scope: &ManagementSecurityScope,

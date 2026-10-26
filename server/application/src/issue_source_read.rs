@@ -123,7 +123,12 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
       .read(
         self.context,
         ReadWorkSourceObservations {
-          connection: None,
+          connection: self
+            .claim
+            .target
+            .import
+            .as_ref()
+            .map(|i| i.definition.connection.clone()),
           project_id: self.claim.project_id,
           source: self.claim.target.source.clone(),
           scan_id: request.scan_id,
@@ -140,6 +145,12 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
     let mut candidates = Vec::new();
     for observation in page.observations {
       let selection = IssueSourceSelection {
+        connection: self
+          .claim
+          .target
+          .import
+          .as_ref()
+          .map(|i| i.definition.connection.clone()),
         project_id: self.claim.project_id,
         source: self.claim.target.source.clone(),
         item: observation.snapshot.item.clone(),
@@ -167,8 +178,27 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
   }
   async fn settle(&self, candidate: serde_json::Value) -> Result<(), ApplicationError> {
     let candidate: ObservedCandidate = serde_json::from_value(candidate).map_err(|_| ApplicationError::invalid())?;
+    if self
+      .claim
+      .target
+      .import
+      .as_ref()
+      .and_then(|i| i.definition.predicate.as_ref())
+      .is_some_and(|p| {
+        !p.mismatches(&candidate.snapshot.state, &candidate.snapshot.labels)
+          .is_empty()
+      })
+    {
+      return Ok(());
+    }
     // Project/profile come from the original fence; native identity is already in the snapshot.
     let selection = IssueSourceSelection {
+      connection: self
+        .claim
+        .target
+        .import
+        .as_ref()
+        .map(|i| i.definition.connection.clone()),
       project_id: self.claim.project_id,
       source: self.claim.target.source.clone(),
       item: candidate.snapshot.item.clone(),
@@ -176,7 +206,12 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
     let inner = &self.owner.inner;
     inner
       .reader
-      .authorize(self.context, self.claim.project_id, self.claim.target.source.clone())
+      .authorize_connection(
+        self.context,
+        self.claim.project_id,
+        self.claim.target.source.clone(),
+        self.claim.target.import.as_ref().map(|i| &i.definition.connection),
+      )
       .await?;
     let at = inner.clock.now()?;
     let scope = self.context.security_scope().to_store();
@@ -505,6 +540,7 @@ impl<S: IssueSourceReadStore> IssueSourceHandlers<S> {
         RunIssueSourceReadCommand {
           project_id: command.project_id,
           target: IssueSourceReadTarget {
+            import: None,
             pull_generation: 0,
             source: command.read.source.clone(),
             issue_id: Some(command.issue_id),

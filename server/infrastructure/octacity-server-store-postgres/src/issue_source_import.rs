@@ -31,6 +31,25 @@ pub(super) async fn read(
 }
 #[async_trait::async_trait]
 impl IssueSourceImportStore for PostgresStore {
+  async fn active_issue_source_imports(
+    &self,
+    scope: &ManagementSecurityScope,
+    after: Option<(ProjectId, IssueSourceImportId)>,
+    limit: u16,
+  ) -> Result<Vec<PublishedIssueSourceImport>, StoreError> {
+    if !(1..=MAX_INTEGRATION_DISCOVERY_PAGE_SIZE).contains(&limit) {
+      return Err(StoreError::InvalidInput {
+        operation: StoreOperation::PublishIssueSourceImport,
+        source: StoreInputError::InvalidIssueSourceImport,
+      });
+    }
+    let rows:Vec<(Json<PublishedIssueSourceImport>,)> = sqlx::query_as(
+      "SELECT document FROM (SELECT DISTINCT ON(project_id,id) project_id,id,document FROM issue_source_imports WHERE security_scope=$1 ORDER BY project_id,id,version DESC) heads WHERE (document->'definition'->>'enabled')::boolean AND ($2::uuid IS NULL OR (project_id,id)>($2,$3)) ORDER BY project_id,id LIMIT $4"
+    ).bind(scope.as_str()).bind(after.map(|v|v.0.as_uuid())).bind(after.map(|v|v.1.as_uuid())).bind(i64::from(limit))
+      .fetch_all(self.pool()).await.map_err(unavailable)?;
+    Ok(rows.into_iter().map(|(Json(v),)| v).collect())
+  }
+
   async fn replay_issue_source_import(
     &self,
     request: ManagementMutation<ReplayIssueSourceImport>,

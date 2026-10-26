@@ -128,6 +128,30 @@ impl IssueSourceMemoryState {
 }
 #[async_trait::async_trait]
 impl IssueSourceStore for crate::testing::InMemoryProjectStore {
+  async fn native_issue_source_link(
+    &self,
+    project: ProjectId,
+    scope: &ManagementSecurityScope,
+    native: octacity_server_factory::FactoryDigest,
+  ) -> Result<Option<IssueSourceLink>, StoreError> {
+    let state = self.lock()?;
+    if !state.projects.contains_key(&project) {
+      return Err(StoreError::NotFound {
+        entity: EntityKind::Project,
+      });
+    }
+    Ok(
+      state
+        .issues
+        .sources
+        .native
+        .get(&native)
+        .and_then(|id| state.issues.sources.links.get(id))
+        .filter(|(owner, link)| owner == scope && link.selection.project_id == project)
+        .map(|(_, link)| link.clone()),
+    )
+  }
+
   async fn issue_source_attachment_replay(
     &self,
     scope: &ManagementSecurityScope,

@@ -52,6 +52,7 @@ type WebhookHostConfiguration = (
 );
 
 pub(super) struct ApplicationAssembly {
+  pub(super) managed_issue_sources: Option<super::integration_management::ManagedIssueSources>,
   pub(super) issue_integrations: super::IssueRuntimeIntegrations,
   pub(super) store: Arc<PostgresStore>,
   pub(super) authoritative_store: Arc<PostgresAuthoritativeStore>,
@@ -76,6 +77,7 @@ pub(super) fn management_application(
   assembly: ApplicationAssembly,
 ) -> Result<ApplicationComponents, ServerRuntimeError> {
   let ApplicationAssembly {
+    managed_issue_sources,
     issue_integrations,
     store,
     authoritative_store,
@@ -311,32 +313,37 @@ pub(super) fn management_application(
     )
     .with_execution_reader(executions.clone()),
   );
-  let (reader, mappings, refresh_policy) = match issue_sources {
-    Some(super::IssueSourceRuntimeInstallation {
+  let (sources, source_policy, protected_sources) = if let Some(managed) = managed_issue_sources {
+    (managed.handlers, managed.policy, true)
+  } else {
+    let (reader, mappings, refresh_policy) = match issue_sources {
+      Some(super::IssueSourceRuntimeInstallation {
+        reader,
+        mappings,
+        refresh_policy,
+      }) => (reader, mappings, Some(refresh_policy)),
+      None => (
+        Arc::new(UnavailableIssueSource) as Arc<dyn octacity_server_application::WorkSourceObservations>,
+        vec![],
+        None,
+      ),
+    };
+    let sources = octacity_server_application::IssueSourceHandlers::new(
+      store.clone(),
       reader,
-      mappings,
-      refresh_policy,
-    }) => (reader, mappings, Some(refresh_policy)),
-    None => (
-      Arc::new(UnavailableIssueSource) as Arc<dyn octacity_server_application::WorkSourceObservations>,
-      vec![],
-      None,
-    ),
+      management_policy.clone(),
+      Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+    )
+    .with_source_mappings(mappings)
+    .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+    let sources = Arc::new(match refresh_policy {
+      Some(policy) => sources
+        .with_refresh_policy(policy)
+        .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?,
+      None => sources,
+    });
+    (sources, management_policy.clone(), false)
   };
-  let sources = octacity_server_application::IssueSourceHandlers::new(
-    store.clone(),
-    reader,
-    management_policy.clone(),
-    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
-  )
-  .with_source_mappings(mappings)
-  .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
-  let sources = Arc::new(match refresh_policy {
-    Some(policy) => sources
-      .with_refresh_policy(policy)
-      .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?,
-    None => sources,
-  });
   let application = ManagementApplication::new(
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
@@ -444,13 +451,14 @@ pub(super) fn management_application(
   )
   .with_issue_sources(
     octacity_server_api_rest::v1::IssueSourceManagementApplication::new(authorized_queries(
-      &management_policy,
+      &source_policy,
       sources.clone(),
     ))
-    .with_commands(authorized_commands(&management_policy, sources.clone()))
-    .with_resolution(authorized_commands(&management_policy, sources))
+    .with_protected_ingress(protected_sources)
+    .with_commands(authorized_commands(&source_policy, sources.clone()))
+    .with_resolution(authorized_commands(&source_policy, sources))
     .with_projection_queries(authorized_queries(
-      &management_policy,
+      &source_policy,
       Arc::new(octacity_server_application::IssueSynchronizationHandlers::new(
         store.clone(),
         Arc::new(octacity_server_application::SystemFactoryExecutionClock),
@@ -490,7 +498,7 @@ fn authorized_queries<H>(
 }
 
 // Default task composition retains metadata and local pull control without installing a provider.
-struct UnavailableIssueSource;
+pub(super) struct UnavailableIssueSource;
 #[async_trait::async_trait]
 impl octacity_server_application::WorkSourceObservations for UnavailableIssueSource {
   async fn read(

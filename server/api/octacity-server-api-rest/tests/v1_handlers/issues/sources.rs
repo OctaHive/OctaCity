@@ -492,6 +492,7 @@ impl WorkSourceObservations for NativeSource {
       "title":"Native requirements","body":"Native body","state":"Waiting for native review","labels":[],"fields":{},"selection_matches":[]
     })).unwrap();
     let selection = IssueSourceSelection {
+      connection: None,
       project_id: request.project_id,
       source: request.source.clone(),
       item: snapshot.item.clone(),

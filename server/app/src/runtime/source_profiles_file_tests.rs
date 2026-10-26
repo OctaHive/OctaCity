@@ -298,3 +298,17 @@ async fn offline_source_profiles_reject_repeated_network_authority() {
     "ambiguous network ceilings must fail before any dispatch"
   );
 }
+
+#[tokio::test]
+async fn offline_consumer_bounds_include_the_installed_provider_operation_window() {
+  let root = tempfile::tempdir().unwrap();
+  let (_, config) = source_profile_config(
+    root.path(),
+    &serde_json::json!({"version":1,"consumer":{"claim_lifetime_millis":1000}}),
+    &[],
+  );
+  assert!(
+    validate_runtime_files(&config).await.is_err(),
+    "a positive bounded claim must still cover timeout and process cleanup"
+  );
+}

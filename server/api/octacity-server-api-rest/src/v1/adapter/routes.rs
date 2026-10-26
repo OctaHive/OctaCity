@@ -140,6 +140,7 @@ impl<S: Clone + Send + Sync + 'static> ManagementRoutes<S> {
 impl ManagementRoutes<Arc<ManagementApplication>> {
   fn finish(self, mut application: ManagementApplication) -> Router {
     let protected = registered_integration_routes();
+    let sources = registered_issue_source_routes();
     let expected = MANAGEMENT_OPERATIONS
       .iter()
       .map(|operation| operation.operation_id)
@@ -148,15 +149,23 @@ impl ManagementRoutes<Arc<ManagementApplication>> {
       .operations
       .iter()
       .chain(protected.operations.iter())
+      .chain(sources.operations.iter())
       .map(|operation| operation.operation_id)
       .collect::<BTreeSet<_>>();
     assert_eq!(registered, expected, "management router inventory is incomplete");
     assert_eq!(
-      self.operations.len() + protected.operations.len(),
+      self.operations.len() + protected.operations.len() + sources.operations.len(),
       registered.len(),
       "management router inventory contains duplicate operations"
     );
 
+    let sources = if application.issue_sources.as_ref().is_some_and(|s| s.protected_ingress) {
+      sources
+        .router
+        .layer(axum::middleware::from_fn(super::integrations::protected_ingress))
+    } else {
+      sources.router
+    };
     let integration_application = application
       .integrations
       .take()
@@ -169,6 +178,7 @@ impl ManagementRoutes<Arc<ManagementApplication>> {
     self
       .router
       .merge(protected)
+      .merge(sources)
       .route(&format!("{API_PREFIX}/openapi.json"), get(openapi))
       .fallback(api_not_found)
       .layer(axum::extract::DefaultBodyLimit::max(MAX_MANAGEMENT_BODY_BYTES))
@@ -234,11 +244,12 @@ pub fn management_authorization_operations() -> Vec<ManagementAuthorizationOpera
   registered_routes()
     .operations
     .into_iter()
+    .chain(registered_issue_source_routes().operations)
     .chain(registered_integration_routes().operations)
     .collect()
 }
 
-fn registered_routes() -> ManagementRoutes {
+fn registered_issue_source_routes() -> ManagementRoutes {
   ManagementRoutes::new()
     .post::<octacity_server_application::SetIssueSourcePullCommand, _, _>(
       "setIssueSourcePull",
@@ -284,6 +295,10 @@ fn registered_routes() -> ManagementRoutes {
       "getIssueSourceLink",
       super::issue_source::link,
     )
+}
+
+fn registered_routes() -> ManagementRoutes {
+  ManagementRoutes::new()
     .post::<octacity_server_application::AppendIssueCommentCommand, _, _>(
       "appendIssueComment",
       super::issue_discussion::append,

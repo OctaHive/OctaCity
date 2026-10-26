@@ -45,6 +45,7 @@ fn issue_source_mapping_a_different_refresh_profile_does_not_exhaust_discovery()
       target: IssueSourceReadTarget {
         source: native.source.clone(),
         issue_id: None,
+        import: None,
         pull_generation: 0,
       },
       owner: "independent-discovery".parse().unwrap(),

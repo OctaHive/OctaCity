@@ -193,7 +193,16 @@ async fn assert_preview(client: &reqwest::Client, base: &str, intent: &Value, pr
   assert_eq!(preview["candidates"].as_array().unwrap().len(), 1);
   assert_eq!(preview["candidates"][0]["disposition"], "selected");
   assert_eq!(preview["candidates"][0]["summary"]["title"], "External task draft");
-  assert!(preview["candidates"][0]["issue"].is_null());
+  let canonical = issues["items"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|i| i["title"] == "External task draft")
+    .expect("the independently imported canonical Issue");
+  assert_eq!(
+    preview["candidates"][0]["issue"]["issue_id"], canonical["id"],
+    "preview must resolve the authoritative native Issue without a Factory admission"
+  );
   assert_eq!(preview["candidates"][0]["admissions"], json!([]));
   assert!(!preview.to_string().contains("reader"));
   let mut narrowed = intent.clone();
@@ -468,323 +477,6 @@ async fn assert_group_publication(client: &reqwest::Client, base: &str, original
   assert_eq!(identities.len(), 3);
 }
 
-pub(super) async fn assert_project_import_controls(client: &reqwest::Client, project: &str, choices: &Value) -> Value {
-  let id = uuid::Uuid::new_v4().to_string();
-  let base = format!("http://localhost/api/v1/projects/{project}/issue-source-imports");
-  let path = format!("{base}/{id}/versions");
-  let choice = &choices["items"][0];
-  let intent = json!({"id":id,"project_id":project,"expected_current_version":null,"definition":{
-    "source":choice["binding"],"connection":{"id":choices["connection_id"],"version":choices["connection_version"],
-      "access_version":choices["access_version"],"source_configuration":choice["connection_configuration"],"reporter_configuration":null},
-    "predicate":{"state":"native-state","all_of":["control-test-no-match"],"any_of":[],"none_of":[]},"enabled":true
-  }});
-  let response = client
-    .post(&path)
-    .header("idempotency-key", "enable-project-import")
-    .header("if-none-match", "*")
-    .json(&json!({"intent":intent}))
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(
-    response.status(),
-    reqwest::StatusCode::OK,
-    "reviewed import activation is independent of a Factory target"
-  );
-  let enabled: Value = response.json().await.unwrap();
-  assert_eq!(enabled["configuration"]["version"], 1);
-  assert_eq!(enabled["configuration"]["definition"]["enabled"], true);
-  let mut disabled = intent.clone();
-  disabled["expected_current_version"] = json!(1);
-  disabled["definition"]["enabled"] = json!(false);
-  let response = client
-    .post(&path)
-    .header("idempotency-key", "disable-project-import")
-    .header("if-match", "\"1\"")
-    .json(&json!({"intent":disabled}))
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(
-    response.status(),
-    reqwest::StatusCode::OK,
-    "{}",
-    response.text().await.unwrap()
-  );
-  let stopped: Value = response.json().await.unwrap();
-  assert_eq!(stopped["configuration"]["version"], 2);
-  assert_eq!(stopped["configuration"]["definition"]["enabled"], false);
-  let replay: Value = client
-    .post(&path)
-    .header("idempotency-key", "enable-project-import")
-    .header("if-none-match", "*")
-    .json(&json!({"intent":intent}))
-    .send()
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
-  assert_eq!(replay["disposition"], "replayed");
-  assert_eq!(replay["configuration"], enabled["configuration"]);
-  let current: Value = client
-    .get(format!("{base}/{id}"))
-    .send()
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
-  assert_eq!(
-    current["configuration"], stopped["configuration"],
-    "replaying an old enable cannot enable the current configuration"
-  );
-  let history: Value = client
-    .get(format!("{path}/1"))
-    .send()
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
-  assert_eq!(history["configuration"], enabled["configuration"]);
-  let conflict = client
-    .post(&path)
-    .header("idempotency-key", "stale-project-import")
-    .header("if-match", "\"1\"")
-    .json(&json!({"intent":disabled}))
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(conflict.status(), reqwest::StatusCode::CONFLICT);
-  let broken_id = uuid::Uuid::new_v4().to_string();
-  let mut broken = disabled.clone();
-  broken["id"] = json!(broken_id);
-  broken["expected_current_version"] = Value::Null;
-  broken["definition"]["connection"]["version"] = json!(u64::MAX);
-  let response = client
-    .post(format!("{base}/{broken_id}/versions"))
-    .header("idempotency-key", "invalid-import-version")
-    .header("if-none-match", "*")
-    .json(&json!({"intent":broken}))
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(
-    response.status(),
-    reqwest::StatusCode::BAD_REQUEST,
-    "out-of-range native versions are input errors even in disabled drafts"
-  );
-  let absent_id = uuid::Uuid::new_v4().to_string();
-  let mut absent = disabled.clone();
-  absent["id"] = json!(absent_id);
-  absent["expected_current_version"] = Value::Null;
-  absent["definition"]["connection"]["version"] = json!(999);
-  let response = client
-    .post(format!("{base}/{absent_id}/versions"))
-    .header("idempotency-key", "absent-import-version")
-    .header("if-none-match", "*")
-    .json(&json!({"intent":absent}))
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(
-    response.status(),
-    reqwest::StatusCode::NOT_FOUND,
-    "a disabled draft still requires a retained native metadata version"
-  );
-  json!({"id":id,"disabled":disabled,"configuration":stopped["configuration"]})
-}
-
-pub(super) async fn assert_import_disable_after_revocation(client: &reqwest::Client, project: &str, imports: &Value) {
-  let mut intent = imports["disabled"].clone();
-  intent["expected_current_version"] = json!(2);
-  let path = format!(
-    "http://localhost/api/v1/projects/{project}/issue-source-imports/{}/versions",
-    imports["id"].as_str().unwrap()
-  );
-  let response = client
-    .post(path)
-    .header("idempotency-key", "disable-import-with-revoked-read")
-    .header("if-match", "\"2\"")
-    .json(&json!({"intent":intent}))
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(
-    response.status(),
-    reqwest::StatusCode::OK,
-    "disablement requires no active read grant"
-  );
-  let response: Value = response.json().await.unwrap();
-  assert_eq!(response["configuration"]["version"], 3);
-  assert_eq!(response["configuration"]["definition"]["enabled"], false);
-}
-
-#[tokio::test]
-#[ignore = "requires OCTACITY_POSTGRES_URL pointing to disposable PostgreSQL"]
-async fn source_import_enable_requires_create_visibility_before_resolving_readers() {
-  use octacity_server_application as app;
-  use std::sync::{
-    Arc,
-    atomic::{AtomicUsize, Ordering},
-  };
-  struct RestrictedCreate;
-  #[async_trait::async_trait]
-  impl app::ManagementAuthorizationPolicy for RestrictedCreate {
-    async fn authorize(
-      &self,
-      _: &app::ManagementRequestContext,
-      action: app::ManagementAction,
-      _: &app::ManagementResource,
-    ) -> Result<app::ManagementAuthorizationGrant, app::ManagementAuthorizationDenial> {
-      Ok(app::ManagementAuthorizationGrant::new(
-        if action == app::ManagementAction::Create {
-          app::ManagementVisibility::none()
-        } else {
-          app::ManagementVisibility::all()
-        },
-      ))
-    }
-  }
-  struct ReaderChoices(
-    Arc<AtomicUsize>,
-    Arc<PostgresStore>,
-    Arc<dyn app::ManagementAuthorizationPolicy>,
-  );
-  impl app::FactorySourceConfigurationProvider<PostgresStore> for ReaderChoices {
-    fn for_project(
-      &self,
-      _: ProjectId,
-      _: &app::ManagementRequestContext,
-    ) -> Result<app::FactorySourceConfigurationHandlers<PostgresStore>, app::ApplicationError> {
-      self.0.fetch_add(1, Ordering::SeqCst);
-      app::FactorySourceConfigurationHandlers::new(self.1.clone(), self.2.clone(), vec![])
-    }
-  }
-  struct UnusedReader;
-  #[async_trait::async_trait]
-  impl app::WorkSourceObservations for UnusedReader {
-    async fn read(
-      &self,
-      _: &app::ManagementRequestContext,
-      _: app::ReadWorkSourceObservations,
-    ) -> Result<app::WorkSourceObservationPage, app::ApplicationError> {
-      panic!("enablement never reads tasks")
-    }
-  }
-  let database = super::postgres_test_support::TestDatabase::migrated().await;
-  let store = Arc::new(PostgresStore::new(database.pool.clone()));
-  let calls = Arc::new(AtomicUsize::new(0));
-  let policy: Arc<dyn app::ManagementAuthorizationPolicy> = Arc::new(RestrictedCreate);
-  let handler = Arc::new(
-    app::IssueSourceHandlers::new(
-      store.clone(),
-      Arc::new(UnusedReader),
-      policy.clone(),
-      Arc::new(app::SystemFactoryExecutionClock),
-    )
-    .with_project_source_profiles(Arc::new(ReaderChoices(calls.clone(), store, policy.clone()))),
-  );
-  let (_fixture, _connection, check) = super::integration_check_tests::fixture("custom-provider");
-  let context =
-    app::ManagementRequestContext::trusted_network(app::ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap());
-  let command = app::PublishIssueSourceImportCommand {
-    intent: app::IssueSourceImportIntent {
-      id: IssueSourceImportId::generate(),
-      project_id: ProjectId::generate(),
-      expected_current_version: None,
-      definition: app::IssueSourceImportDefinition {
-        enabled: true,
-        predicate: None,
-        source: WorkSourceBinding {
-          installation: check.installation,
-          capability: check.capability.capability,
-          configuration: check.capability.configuration.clone(),
-          resource: check.resource_reference,
-        },
-        connection: WorkSourceConnectionRef {
-          id: IntegrationId::generate(),
-          version: IntegrationVersion::INITIAL,
-          access_version: IntegrationVersion::INITIAL,
-          source_configuration: check.capability.configuration,
-          reporter_configuration: None,
-        },
-      },
-    },
-    idempotency_key: "restricted-create-import".parse().unwrap(),
-    published_at: Timestamp::from_unix_millis(1).unwrap(),
-  };
-  let result = app::AuthorizedCommandHandler::new(policy, handler)
-    .handle_command(&context, command.clone())
-    .await;
-  assert!(result.is_err());
-  assert_eq!(
-    calls.load(Ordering::SeqCst),
-    0,
-    "a grant excluding this Project cannot resolve readers or enable import"
-  );
-  struct HiddenProject;
-  #[async_trait::async_trait]
-  impl app::ManagementAuthorizationPolicy for HiddenProject {
-    async fn authorize(
-      &self,
-      _: &app::ManagementRequestContext,
-      _: app::ManagementAction,
-      resource: &app::ManagementResource,
-    ) -> Result<app::ManagementAuthorizationGrant, app::ManagementAuthorizationDenial> {
-      Ok(app::ManagementAuthorizationGrant::new(
-        if resource.kind() == app::ManagementResourceKind::Project {
-          app::ManagementVisibility::none()
-        } else {
-          app::ManagementVisibility::all()
-        },
-      ))
-    }
-  }
-  let policy: Arc<dyn app::ManagementAuthorizationPolicy> = Arc::new(HiddenProject);
-  let handler = Arc::new(app::IssueSourceHandlers::new(
-    Arc::new(PostgresStore::new(database.pool.clone())),
-    Arc::new(UnusedReader),
-    policy.clone(),
-    Arc::new(app::SystemFactoryExecutionClock),
-  ));
-  let query = app::GetIssueSourceImportQuery {
-    project_id: command.intent.project_id,
-    id: command.intent.id,
-    version: None,
-  };
-  let result = app::AuthorizedQueryHandler::new(policy.clone(), handler.clone())
-    .handle_query(&context, query)
-    .await;
-  assert!(
-    matches!(
-      result,
-      Err(app::ManagementHandlerError::Application(app::ApplicationError::Store(
-        StoreError::NotFound {
-          entity: EntityKind::Project
-        }
-      )))
-    ),
-    "hidden Project is rejected before looking up import identity: {result:?}"
-  );
-  let result = app::AuthorizedCommandHandler::new(policy, handler)
-    .handle_command(&context, command)
-    .await;
-  assert!(
-    matches!(
-      result,
-      Err(app::ManagementHandlerError::Application(app::ApplicationError::Store(
-        StoreError::NotFound {
-          entity: EntityKind::Project
-        }
-      )))
-    ),
-    "hidden Project is rejected before replay or publication: {result:?}"
-  );
-  database.cleanup().await;
-}
-
 pub(super) async fn assert_project_preview_retry_bound(
   pool: sqlx::PgPool,
   project: ProjectId,
@@ -810,10 +502,15 @@ pub(super) async fn assert_project_preview_retry_bound(
     }
   }
   let registry = Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(registry).unwrap());
-  let profiles =
-    super::source_profiles_file::SourceProfiles::load(profiles, std::slice::from_ref(installed), &registry)
-      .await
-      .unwrap();
+  let profiles = super::source_profiles_file::SourceProfiles::load(
+    profiles,
+    std::slice::from_ref(installed),
+    &registry,
+    std::time::Duration::from_secs(1),
+    std::time::Duration::from_millis(20),
+  )
+  .await
+  .unwrap();
   let store = Arc::new(PostgresStore::new(pool));
   let policy: Arc<dyn app::ManagementAuthorizationPolicy> = Arc::new(app::TrustedNetworkManagementPolicy);
   let provider = Arc::new(super::source_management::SourceManagement {

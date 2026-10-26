@@ -21,6 +21,8 @@ const MAX_SOURCE_PROFILE_BYTES: u64 = 4 * 1024 * 1024;
 pub(super) struct SourceProfiles {
   version: u16,
   #[serde(default)]
+  pub(super) consumer: SourceConsumerDeclaration,
+  #[serde(default)]
   pub(super) readers: Vec<SourceReadDeclaration>,
   #[serde(default)]
   pub(super) reporters: Vec<ReporterDeclaration>,
@@ -31,10 +33,18 @@ impl SourceProfiles {
     path: &Path,
     installations: &[InstalledIntegration],
     registry: &WorkAdapterRegistry,
+    operation_timeout: std::time::Duration,
+    cancellation_grace: std::time::Duration,
   ) -> Result<Self, RuntimeAssemblyError> {
     let bytes = super::assembly::read_private_bytes("Source profiles", path, MAX_SOURCE_PROFILE_BYTES).await?;
     let profiles: Self = serde_json::from_slice(&bytes).map_err(|_| RuntimeAssemblyError::InvalidSourceProfiles)?;
     if profiles.version != 1 || profiles.readers.len() + profiles.reporters.len() > MAX_FACTORY_EXECUTOR_BINDINGS {
+      return Err(RuntimeAssemblyError::InvalidSourceProfiles);
+    }
+    profiles.consumer.validate()?;
+    if operation_timeout.saturating_add(cancellation_grace.saturating_mul(2))
+      >= profiles.consumer.worker().claim_lifetime()
+    {
       return Err(RuntimeAssemblyError::InvalidSourceProfiles);
     }
     for (index, reader) in profiles.readers.iter().enumerate() {
@@ -373,5 +383,62 @@ impl PollingDeclaration {
       reconciliation_interval_millis: self.reconciliation_interval_millis,
       retention_millis: self.retention_millis,
     }
+  }
+}
+
+/// Independent finite Source consumer bounds; installing them activates no Project by itself.
+#[derive(Clone, Copy, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub(super) struct SourceConsumerDeclaration {
+  pub(super) poll_interval_millis: u64,
+  pub(super) claim_lifetime_millis: u64,
+  pub(super) batch_size: u16,
+  pub(super) max_attempts: u16,
+  pub(super) initial_retry_millis: u64,
+  pub(super) maximum_retry_millis: u64,
+}
+impl Default for SourceConsumerDeclaration {
+  fn default() -> Self {
+    Self {
+      poll_interval_millis: 1000,
+      claim_lifetime_millis: 60_000,
+      batch_size: 16,
+      max_attempts: 8,
+      initial_retry_millis: 1000,
+      maximum_retry_millis: 60_000,
+    }
+  }
+}
+impl SourceConsumerDeclaration {
+  pub(super) fn worker(self) -> crate::config::WorkerPolicy {
+    crate::config::WorkerPolicy::new(self.poll_interval_millis, self.claim_lifetime_millis, self.batch_size)
+  }
+  fn validate(self) -> Result<(), RuntimeAssemblyError> {
+    if !crate::config::RetryingWorkerPolicy::new(
+      self.worker(),
+      self.max_attempts,
+      self.initial_retry_millis,
+      self.maximum_retry_millis,
+    )
+    .is_bounded(std::time::Duration::from_secs(300), 64, 100)
+    {
+      return Err(RuntimeAssemblyError::InvalidSourceProfiles);
+    }
+    Ok(())
+  }
+  pub(super) fn read_policy(
+    self,
+    polling: SourcePollingPolicy,
+  ) -> Result<octacity_server_application::IssueSourceReadPolicy, octacity_server_application::ApplicationError> {
+    Ok(octacity_server_application::IssueSourceReadPolicy {
+      polling,
+      poll_interval_millis: self.poll_interval_millis,
+      retry: octacity_server_application::DurableRetryPolicy::new(
+        self.max_attempts,
+        self.initial_retry_millis,
+        self.maximum_retry_millis,
+      )
+      .map_err(|_| octacity_server_application::ApplicationError::invalid())?,
+    })
   }
 }
