@@ -106,3 +106,13 @@ All Rust commands below use `CARGO_INCREMENTAL=0 CARGO_PROFILE_DEV_DEBUG=0 CARGO
 - First normal-startup regression for uninstalled Source choices: Red observed HTTP 503 instead of specified `422 capability_unavailable`. This is a behavior failure, not an environment failure.
 
 Packaged Source/import/delivery qualification remains pending. Normal startup still lacks the Source configuration/read builders, Issue installation and supervised Source/Reporter profiles described above; no live-provider or packaged success is inferred from the baseline.
+
+### Section 1 classification and review
+
+- Normal-startup HTTP Red/Green: `cargo test -p octacity-server --lib runtime::integration_management_tests -- --ignored` first observed Source choices and then diagnostics returning 503 instead of 422 for optional absence; both now pass with `capability_unavailable`, direct TCP denial and manual Issue creation retained.
+- `cargo test -p octacity-server-api-rest --test integration_administration`: 18 passed, including public scoped readiness for absent/partial/complete Source API composition and the existing documented 422 response contract. The readiness API first failed to compile because the required public method did not exist, then passed after implementation.
+- Review found that handler presence could not identify a wholly omitted required installation. A normal-startup test first failed on the missing trusted `source_profiles_file` declaration; Green verifies required-but-unavailable Source API and actual `/health/factory` return 503 while a manual Issue can still be created. This path uses the existing optional readiness scope and no provider call.
+- Standards review: initial unused-adapter concern resolved by trusted installation intent and the normal-startup regression; no remaining actionable code smells. Spec review: the missing required-installation distinction is resolved; section 1 is a foundation, not successful installed Source qualification.
+- `cargo fmt --all -- --check`, scoped `cargo clippy -p octacity-server -p octacity-server-api-rest --all-targets -- -D warnings`, `python3 tools/check_architecture.py`, strict OpenSpec validation and `git diff --check` pass.
+
+`source_profiles_file` currently declares required installation intent. Full typed profile loading, working Source/Issue consumers and Reporter delivery remain pending in sections 2–6. Absence of that composition is intentionally unavailable, never a fabricated successful installation.

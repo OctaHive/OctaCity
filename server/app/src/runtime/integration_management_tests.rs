@@ -58,7 +58,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     &extra,
   ))
   .unwrap();
-  let runtime = ServerRuntime::start(config)
+  let runtime = ServerRuntime::start(config.clone())
     .await
     .expect("installed publishers must compose in the released runtime");
   let client = reqwest::Client::builder()
@@ -226,6 +226,29 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     ))
     .header("idempotency-key", "manual-without-source")
     .json(&json!({"title":"Local task","description":"","acceptance":null,"priority":null}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(manual.status(), reqwest::StatusCode::CREATED);
+  runtime.shutdown().await.unwrap();
+  // Trusted deployment intent is retained even when the advertised profile file is absent.
+  let mut declaration: Value = serde_json::from_slice(&fs::read(&catalog).unwrap()).unwrap();
+  declaration["source_profiles_file"] = json!(root.path().join("missing-source-profiles.json"));
+  fs::write(&catalog, serde_json::to_vec(&declaration).unwrap()).unwrap();
+  let runtime = ServerRuntime::start(config).await.unwrap();
+  let response = client.get(format!("http://localhost{choices}")).send().await.unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(response.json::<Value>().await.unwrap()["code"], "unavailable");
+  let health = client.get("http://localhost/health/factory").send().await.unwrap();
+  assert_eq!(health.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(health.json::<Value>().await.unwrap(), json!({"status":"unavailable"}));
+  let manual = projects
+    .post(format!(
+      "http://{}/api/v1/projects/{project_id}/issues",
+      runtime.management_addr()
+    ))
+    .header("idempotency-key", "manual-with-missing-advertised-source")
+    .json(&json!({"title":"Another local task","description":"","acceptance":null,"priority":null}))
     .send()
     .await
     .unwrap();

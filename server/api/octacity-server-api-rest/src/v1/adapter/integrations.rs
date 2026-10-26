@@ -33,6 +33,7 @@ pub(super) use sources::*;
 type Credentials = dyn AuthorizedManagementCommandHandler<ManageIntegrationCredentialCommand, Error = ApplicationError>;
 /// Endpoint capabilities are supplied by trusted composition, with application authorization.
 pub struct IntegrationManagementApplication {
+  source_management_required: bool,
   dependencies: Option<
     Arc<
       dyn AuthorizedManagementQueryHandler<
@@ -68,6 +69,7 @@ struct AdministrationEndpoints {
 impl IntegrationManagementApplication {
   pub(super) fn unavailable() -> Self {
     Self {
+      source_management_required: false,
       dependencies: None,
       credentials: None,
       metadata: None,
@@ -86,6 +88,7 @@ impl IntegrationManagementApplication {
     credentials: Arc<C>,
   ) -> Self {
     Self {
+      source_management_required: false,
       dependencies: None,
       credentials: Some(credentials),
       metadata: None,

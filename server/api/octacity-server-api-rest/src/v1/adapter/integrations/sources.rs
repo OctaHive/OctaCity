@@ -13,12 +13,18 @@ pub(super) struct SourceConfigurationEndpoints {
   list: Arc<dyn AuthorizedManagementQueryHandler<ListWorkSourceConfigurationsQuery, Error = ApplicationError>>,
 }
 impl IntegrationManagementApplication {
+  /// Declares trusted installation intent independently of supplied handlers.
+  /// Omitting required handlers must fail scoped readiness, even when both are absent.
+  pub fn require_source_management(mut self) -> Self {
+    self.source_management_required = true;
+    self
+  }
   /// Optional Source API installation health, independent of provider availability.
   /// A partial handler family is an assembly failure rather than optional absence.
   pub fn source_management_readiness(&self) -> Option<bool> {
-    match (&self.sources, &self.source_reads) {
-      (None, None) => None,
-      (Some(_), Some(_)) => Some(true),
+    match (self.source_management_required, &self.sources, &self.source_reads) {
+      (false, None, None) => None,
+      (_, Some(_), Some(_)) => Some(true),
       _ => Some(false),
     }
   }

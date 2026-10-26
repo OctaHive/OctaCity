@@ -62,6 +62,14 @@ advertised task purposes must exist in its manifest. Optional `checks` use
 private `ResourceAccess`, provider-configuration digest and allowed network hosts.
 These private fields are not accepted from browser connection metadata.
 
+Optional `source_profiles_file` is an absolute deployment-owned profile path that
+declares Source management as required. A declared installation whose handlers or
+profiles are unavailable returns `503 unavailable` and fails the existing scoped
+Factory readiness check, preserving ordinary manual task operations. With no Source
+installation declared or composed, Source operations return `422 capability_unavailable`.
+Connection metadata, read checks and grants alone do not declare this installation
+or enable import, execution or external status writes.
+
 Optional `credential_publishers` select a concrete storage adapter at the server
 composition root. The installed `github_private_files` publisher takes absolute
 `root`, confined relative `directory` and `targets`: logical `reference`, original

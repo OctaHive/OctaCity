@@ -31,6 +31,8 @@ struct Catalog {
   credential_publishers: Vec<CredentialPublisher>,
   #[serde(default)]
   checks: Vec<super::IntegrationCheckProfile>,
+  #[serde(default)]
+  source_profiles_file: Option<PathBuf>,
 }
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
@@ -173,7 +175,14 @@ pub(super) async fn install(
     .await
     .map_err(ServerRuntimeError::Assembly)?;
   let catalog: Catalog = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-  if catalog.version != 1 || !catalog.registry.is_absolute() || catalog.installations.len() > 128 {
+  if catalog.version != 1
+    || !catalog.registry.is_absolute()
+    || catalog.installations.len() > 128
+    || catalog
+      .source_profiles_file
+      .as_ref()
+      .is_some_and(|path| !path.is_absolute())
+  {
     return Err(invalid());
   }
   let registry = Arc::new(WorkAdapterRegistry::discover(&catalog.registry).map_err(|_| invalid())?);
@@ -224,7 +233,7 @@ pub(super) async fn install(
   let dependencies =
     Arc::new(FactorySourceConfigurationHandlers::new(store.clone(), policy.clone(), vec![]).map_err(|_| invalid())?);
   let access = Arc::new(IntegrationProjectAccessHandlers::new(store, policy.clone()));
-  let application = IntegrationManagementApplication::new(admin_commands.clone())
+  let mut application = IntegrationManagementApplication::new(admin_commands.clone())
     .with_checks(Arc::new(AuthorizedQueryHandler::new(policy.clone(), checks)))
     .with_metadata(commands, queries.clone())
     .with_discovery(queries)
@@ -234,6 +243,9 @@ pub(super) async fn install(
       Arc::new(AuthorizedCommandHandler::new(policy.clone(), access.clone())),
       Arc::new(AuthorizedQueryHandler::new(policy, access)),
     );
+  if catalog.source_profiles_file.is_some() {
+    application = application.require_source_management();
+  }
   if let Some(ready) = application.source_management_readiness() {
     readiness.push_factory(Arc::new(SourceManagementReadiness(ready)));
   }

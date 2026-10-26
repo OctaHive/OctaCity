@@ -1,7 +1,7 @@
 ## 1. Establish the current released-composition baseline
 
 - [x] 1.1 Run existing Source/Reporter, Issue import/refresh/mapping/projection, association/recovery, input-management and manual-admission behavioral tests before refactoring. Record normal-startup versus alternate-installer evidence against design.md, reusing dependency-history, activation, egress and retained-volume fixes. Keep completed card/workflow/Runtime changes intact; environment failures are not TDD Red.
-- [ ] 1.2 Through TDD at normal protected runtime startup, distinguish optional Source absence from advertised-but-omitted handlers/consumers. Verify safe unavailable capability, scoped readiness failure, unverified-ingress denial and provider-independent manual Issue/Factory operation without contacting a provider.
+- [x] 1.2 Through TDD at normal protected runtime startup, distinguish optional Source absence from advertised-but-omitted handlers/consumers. Verify safe unavailable capability, scoped readiness failure, unverified-ingress denial and provider-independent manual Issue/Factory operation without contacting a provider.
 
 ## 2. Share installed authority and expose missing controls
 
