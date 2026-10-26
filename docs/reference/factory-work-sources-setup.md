@@ -207,6 +207,14 @@ Input activation validates compatible pins across the full target closure. Repor
 keeps the original native target/mapping after input edits or later card association.
 See [typed stage effects](integration-management-contracts.md#stage-local-source-effects).
 
+Normal server startup dispatches these Work effects through the same installed
+Reporter inventory and ordered outbox as Issue push. A terminal status still needs
+its own configured action: finishing a Run creates no implicit update. Reporting
+diagnostics retain each action's definition, invocation, cycle and attempt, plus
+only its explicitly consumed predecessor records. Preserve one producer for a
+business decision: overlapping Issue push and adjacent Work source-update effects
+are rejected; unrelated native labels remain outside the reviewed effect scope.
+
 ## Versions, repeats and optional task cards
 
 | Operation | Resulting identity/behavior |

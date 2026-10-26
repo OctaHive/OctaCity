@@ -6,10 +6,24 @@ use std::os::unix::fs::PermissionsExt as _;
 
 #[path = "source_issue_writer_tests.rs"]
 mod issue_writer;
+#[path = "source_work_reporting_tests.rs"]
+mod work_reporting;
 
 async fn installed_reporter(
   fixture: &Fixture<PostgresStore>,
   database_url: &str,
+) -> (
+  tempfile::TempDir,
+  crate::ServerConfig,
+  Arc<crate::runtime::source_management::SourceManagement>,
+) {
+  installed_reporter_with_reporting(fixture, database_url, None).await
+}
+
+async fn installed_reporter_with_reporting(
+  fixture: &Fixture<PostgresStore>,
+  database_url: &str,
+  reporting: Option<WorkSourceReportingChoice>,
 ) -> (
   tempfile::TempDir,
   crate::ServerConfig,
@@ -48,7 +62,8 @@ async fn installed_reporter(
       "reporters":[{"identity":"reporter-settings","version":"v1", "write":{
         "installation":draft.installation,"resource_reference":draft.resource,"capability":writer,
         "plugin":draft.plugin,"provider_configuration":draft.provider_configuration,"resource":draft.access,
-        "network_hosts":draft.network_hosts},"mapping":draft.mapping,"credential_profile":draft.credential_profile}]
+        "network_hosts":draft.network_hosts},"mapping":draft.mapping,"credential_profile":draft.credential_profile,
+        "reporting":reporting}]
     }))
     .unwrap(),
   )

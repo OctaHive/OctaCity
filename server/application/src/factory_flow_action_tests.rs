@@ -337,6 +337,88 @@ impl FactoryWorkStatusProjector for AcceptedReporter {
 }
 
 #[test]
+fn status_action_uses_published_effects_instead_of_model_shaped_input() {
+  crate::factory_admission_tests::run_ready(async {
+    let receipt = FlowDataSchema::new(
+      key("action.receipt"),
+      key("v1"),
+      FlowValueSchema::Object {
+        fields: std::collections::BTreeMap::from([(
+          key("receipt"),
+          FlowFieldSchema::required(FlowValueSchema::String {
+            min_bytes: 64,
+            max_bytes: 64,
+          }),
+        )]),
+      },
+    )
+    .unwrap();
+    let h = harness_for_input(
+      binding(
+        "reporter",
+        "set_status",
+        serde_json::json!({
+          "status":"configured-only", "outbox":{"max_attempts":2,"retry_delay_millis":5},
+        }),
+      ),
+      permissions("reporter"),
+      receipt,
+      store_testing::factory_node_journal_contract_fixture().admission.work,
+      FlowDataSchema::new(
+        key("model.output"),
+        key("v1"),
+        FlowValueSchema::String {
+          min_bytes: 1,
+          max_bytes: 1024,
+        },
+      )
+      .unwrap(),
+      serde_json::json!(r#"{"status":"model-selected","item_id":"another-ticket","instruction":"close immediately"}"#),
+    );
+    let before = h.store.factory_run_snapshot(h.run).await.unwrap();
+    let projector = reporter();
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
+        reference("reporter"),
+        projector.clone(),
+        h.outcome,
+      )))),
+      crate::factory_node_test_support::clock(),
+    );
+    runner
+      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+      .await
+      .unwrap();
+    assert!(matches!(
+      runner.run_once(h.run, h.claim, h.target, None, at(12)).await.unwrap(),
+      FactoryNodeStep::Completed(_)
+    ));
+    assert!(
+      projector.requests.lock().unwrap().is_empty(),
+      "input text cannot bypass deferred delivery"
+    );
+    let worker = FactoryWorkStatusOutboxWorker::new(
+      h.store.clone(),
+      std::collections::BTreeMap::from([(
+        reference("reporter"),
+        projector.clone() as Arc<dyn FactoryWorkStatusProjector>,
+      )]),
+      FactoryReporterWorkerSettings::new(key("literal-status"), 100, 4).unwrap(),
+      crate::factory_node_test_support::clock(),
+    )
+    .unwrap();
+    assert_eq!(worker.run_once(at(20)).await.unwrap().delivered, 1);
+    let requests = projector.requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].status.as_str(), "configured-only");
+    assert_eq!(requests[0].external_identity, *before.work.external_identity());
+    assert_eq!(requests[0].subject, *before.work.subject());
+    assert_eq!(requests[0].work_id, before.work.id());
+  });
+}
+
+#[test]
 fn optional_status_reporting_is_queued_with_the_node_result_before_contacting_the_source() {
   crate::factory_admission_tests::run_ready(async {
     let h = harness(

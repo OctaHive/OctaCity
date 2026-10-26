@@ -134,15 +134,15 @@ pub(super) async fn fixture_with_policy(
   policy: Option<WorkSourceReportingPolicy>,
   issue_delivery: Option<IssueReporterDeliveryPolicy>,
 ) -> (Fixture, FactoryReporterProfile) {
-  let mut fixture = Fixture::enabled_with_flow(
-    provider,
-    Some(if omit.is_none() {
-      flow(provider)
-    } else {
-      flow_with_authority(provider, omit)
-    }),
-  )
-  .await;
+  fixture_with_flow(provider, flow_with_authority(provider, omit), policy, issue_delivery).await
+}
+pub(super) async fn fixture_with_flow(
+  provider: &str,
+  flow: FactoryFlowConfiguration,
+  policy: Option<WorkSourceReportingPolicy>,
+  issue_delivery: Option<IssueReporterDeliveryPolicy>,
+) -> (Fixture, FactoryReporterProfile) {
+  let mut fixture = Fixture::enabled_with_flow(provider, Some(flow)).await;
   let draft = reporter_draft(&fixture, policy.clone(), issue_delivery);
   let profile = FactoryReporterProfile::new(key("reporter-settings"), key("v1"), draft).unwrap();
   let target = fixture

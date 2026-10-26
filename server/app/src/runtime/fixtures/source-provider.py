@@ -60,7 +60,9 @@ if request['family'] == 'reporter':
         sys.exit(0)
     if command in ('inspect', 'apply'):
         fields = mode.get('fieldsets', {}).get(intent['mapping']['identity'], ['a' * 64])
-        desired = intent['mapping']['identity']
+        # One mapping can describe several consecutive business statuses. The
+        # composed native-state fixture must distinguish their desired effects.
+        desired = json.dumps(intent['effects'], sort_keys=True) if mode.get('source_effects') else intent['mapping']['identity']
         def read_state():
             with open('reporter-state.json', 'a+', encoding='utf-8') as state:
                 fcntl.flock(state, fcntl.LOCK_SH)
