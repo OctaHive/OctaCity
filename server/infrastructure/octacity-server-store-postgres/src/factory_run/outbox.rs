@@ -3,7 +3,7 @@ use octacity_server_store::{
   AuditActorKind, ClaimFactoryOutbox, ClaimedFactoryOutbox, FactoryAuditFact, FactoryOutboxRecord,
   FactoryOutboxSettlement, FactoryOutboxState, SettleFactoryOutbox, StoreError, StoreInputError, StoreOperation,
 };
-use sqlx::{PgPool, Postgres, Transaction};
+use sqlx::{PgPool, Postgres, QueryBuilder, Transaction};
 
 use super::{OutboxRow, conflict, decode_outbox, insert_audit, insert_outbox, invalid};
 use crate::database::unavailable;
@@ -26,7 +26,7 @@ pub(crate) async fn claim_outbox(
     return Err(StoreError::Unavailable);
   }
   let mut transaction = pool.begin().await.map_err(unavailable)?;
-  let operation_ids: Vec<Vec<u8>> = sqlx::query_scalar(
+  let mut sql = QueryBuilder::<Postgres>::new(
     "WITH latest AS ( \
        SELECT DISTINCT ON (operation_id) operation_id, run_id, issue, input_digest, kind, state, available_at, claim_expires_at, recorded_at, id \
        FROM factory_outbox_records \
@@ -36,8 +36,14 @@ pub(crate) async fn claim_outbox(
      SELECT operation_id FROM latest \
      WHERE ($3::text[] IS NULL OR kind = ANY($3)) AND ( \
        (state = 'pending' AND available_at <= to_timestamp($1::double precision / 1000.0)) \
-        OR (state = 'claimed' AND claim_expires_at <= to_timestamp($1::double precision / 1000.0))) \
-     AND ($4::jsonb IS NULL OR (kind='work.status.projection' AND EXISTS ( \
+        OR (state = 'claimed' AND claim_expires_at <= to_timestamp($1::double precision / 1000.0))) ",
+  );
+  // PostgreSQL locks every referenced table when planning, even behind a true
+  // OR branch. Ordinary claims must not depend on publication history or Flow
+  // definitions when the caller has requested no capability routing.
+  if !request.projection_capabilities.is_empty() {
+    sql.push(
+      "AND ((kind='work.status.projection' AND EXISTS ( \
        SELECT 1 FROM factory_flow_records r \
        JOIN factory_node_attempts a ON a.id=r.node_attempt_id AND a.run_id=r.run_id \
        JOIN factory_flow_runs f ON f.id=a.flow_run_id AND f.factory_run_id=r.run_id \
@@ -69,16 +75,19 @@ pub(crate) async fn claim_outbox(
                AND NOT ($4 @> jsonb_build_array(other.payload #> '{push_intent,desired,reporter,capability}'))) \
          )) \
          AND $4 @> jsonb_build_array(e.payload #> '{push_intent,desired,reporter,capability}') \
-     ))) \
-     ORDER BY available_at, operation_id LIMIT $2",
-  )
-  .bind(request.observed_at.unix_millis())
-  .bind(i64::from(request.limit.get()))
-  .bind((!request.kinds.is_empty()).then(|| request.kinds.iter().map(FactoryKey::as_str).collect::<Vec<_>>()))
-  .bind((!request.projection_capabilities.is_empty()).then_some(sqlx::types::Json(&request.projection_capabilities)))
-  .fetch_all(&mut *transaction)
-  .await
-  .map_err(unavailable)?;
+     ))) ",
+    );
+  }
+  sql.push("ORDER BY available_at, operation_id LIMIT $2");
+  let mut query = sql
+    .build_query_scalar()
+    .bind(request.observed_at.unix_millis())
+    .bind(i64::from(request.limit.get()))
+    .bind((!request.kinds.is_empty()).then(|| request.kinds.iter().map(FactoryKey::as_str).collect::<Vec<_>>()));
+  if !request.projection_capabilities.is_empty() {
+    query = query.bind(sqlx::types::Json(&request.projection_capabilities));
+  }
+  let operation_ids: Vec<Vec<u8>> = query.fetch_all(&mut *transaction).await.map_err(unavailable)?;
   let mut claimed = Vec::with_capacity(operation_ids.len());
   for operation_id in operation_ids {
     let operation_id = super::digest(&operation_id)?;

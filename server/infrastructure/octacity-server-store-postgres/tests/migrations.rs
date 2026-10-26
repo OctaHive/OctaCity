@@ -40,21 +40,25 @@ async fn completed_issue_publication_recovery_does_not_read_history_on_readiness
     "completed recovery must not rescan historical publications"
   );
   use octacity_server_store::{ClaimFactoryOutbox, FactoryRunStore};
-  let claim = ClaimFactoryOutbox::new(
-    octacity_server_factory::FactoryKey::new("issue-reporter").unwrap(),
-    octacity_server_domain::Timestamp::from_unix_millis(1).unwrap(),
-    octacity_server_domain::Timestamp::from_unix_millis(10).unwrap(),
-    1,
-  )
-  .unwrap()
-  .only_kind(octacity_server_factory::FactoryKey::new("issue.status.projection").unwrap());
-  assert!(
-    octacity_server_store_postgres::PostgresStore::new(reader.clone())
-      .claim_factory_outbox(claim)
-      .await
-      .unwrap()
-      .is_empty()
-  );
+  for kind in [None, Some("work.status.projection"), Some("issue.status.projection")] {
+    let mut claim = ClaimFactoryOutbox::new(
+      octacity_server_factory::FactoryKey::new("issue-reporter").unwrap(),
+      octacity_server_domain::Timestamp::from_unix_millis(1).unwrap(),
+      octacity_server_domain::Timestamp::from_unix_millis(10).unwrap(),
+      1,
+    )
+    .unwrap();
+    if let Some(kind) = kind {
+      claim = claim.only_kind(octacity_server_factory::FactoryKey::new(kind).unwrap());
+    }
+    assert!(
+      octacity_server_store_postgres::PostgresStore::new(reader.clone())
+        .claim_factory_outbox(claim)
+        .await
+        .expect("claims without capability routing must not depend on publication history")
+        .is_empty()
+    );
+  }
   history.rollback().await.unwrap();
   reader.close().await;
   database.cleanup().await;
@@ -124,7 +128,7 @@ const INTEGRATION_TABLES: [&str; 7] = [
   "integration_project_access",
   "integration_project_access_versions",
 ];
-const COLLABORATION_TABLES: [&str; 23] = [
+const COLLABORATION_TABLES: [&str; 24] = [
   "issue_code_review_associations",
   "issue_code_review_observations",
   "issue_comments",
@@ -138,6 +142,7 @@ const COLLABORATION_TABLES: [&str; 23] = [
   "issue_execution_requests",
   "issue_work_associations",
   "issue_source_links",
+  "issue_source_imports",
   "issue_source_observations",
   "issue_source_refresh",
   "issue_source_reads",
