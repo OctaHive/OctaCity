@@ -1665,6 +1665,7 @@ async fn native_profile_installation_exposes_only_its_project_catalog_without_de
           )
           .unwrap(),
           max_attempts: 3,
+          target_retry: None,
           operation_timeout: Duration::from_millis(100),
           cancellation_grace: Duration::from_millis(50),
         },

@@ -81,7 +81,7 @@ impl<
     for association in items {
       let issue = self
         .visible_issue_link(context, project, association.native_correlation)
-        .await;
+        .await?;
       let reporting = self
         .store
         .source_reporting_diagnostics(project, &association, MAX_WORK_SOURCE_REPORTING_OPERATIONS)
@@ -176,7 +176,16 @@ impl<
       .diagnostic_correlations(
         context,
         query.project_id,
-        WorkSourceDiagnosticFilter::Inputs(configuration.inputs().iter().map(|i| i.id()).collect()),
+        WorkSourceDiagnosticFilter::InputVersions(
+          configuration
+            .inputs()
+            .iter()
+            .map(|input| WorkSourceMemberRef {
+              id: input.id(),
+              version: input.version(),
+            })
+            .collect(),
+        ),
         query.after,
         query.limit,
       )
@@ -232,15 +241,18 @@ impl<S> FactorySourceConfigurationHandlers<S> {
     context: &ManagementRequestContext,
     project: ProjectId,
     native: FactoryDigest,
-  ) -> Option<WorkSourceIssueLink> {
-    self
-      .issue_links
-      .as_ref()?
-      .visible_issue(context, project, native)
-      .await
-      .ok()
-      .flatten()
-      .filter(|link| link.project_id == project)
+  ) -> Result<Option<WorkSourceIssueLink>, ApplicationError> {
+    let Some(owner) = &self.issue_links else {
+      return Ok(None);
+    };
+    // Hidden references retain the protected read's indistinguishable absence.
+    // An authoritative dependency failure is not evidence that no Issue exists.
+    let link = match owner.visible_issue(context, project, native).await {
+      Ok(link) => link,
+      Err(ApplicationError::InvalidInput) => None,
+      Err(error) => return Err(error),
+    };
+    Ok(link.filter(|link| link.project_id == project))
   }
 }
 

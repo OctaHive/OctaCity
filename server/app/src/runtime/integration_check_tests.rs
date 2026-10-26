@@ -68,6 +68,65 @@ async fn released_runtime_exposes_only_verified_installed_providers_on_protected
   runtime.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn installed_source_fixture_keeps_its_input_open_until_host_cancellation() {
+  use octacity_work_source_protocol::{ConfigurationReference, Request, source};
+  let (root, _, profile) = fixture("cancellation-fixture");
+  let directory = root.path().join("cancellation-fixture");
+  fs::write(directory.join("mode.json"), br#"{"hold":true}"#).unwrap();
+  let registry = octacity_server_work_source::WorkAdapterRegistry::discover(root.path()).unwrap();
+  let adapter = registry
+    .resolve(profile.plugin.identity().as_str(), &profile.plugin.digest().to_string())
+    .unwrap();
+  let cancellation = tokio_util::sync::CancellationToken::new();
+  let reading = adapter.execute(
+    Request::Source(source::Request {
+      protocol_version: source::PROTOCOL_VERSION,
+      request_id: "held-source-read".into(),
+      command: source::Command::Scan(Box::new(source::ScanIntent {
+        scan_id: "a".repeat(64),
+        configuration_digest: profile.provider_configuration.to_string(),
+        resource: profile.resource,
+        network_hosts: profile.network_hosts,
+        selection: ConfigurationReference {
+          identity: "selection".into(),
+          sha256: "b".repeat(64),
+        },
+        additional_selections: vec![],
+        cursor: None,
+        window: None,
+        max_items: 1,
+        max_snapshot_bytes: 4096,
+        max_page_bytes: 8192,
+      })),
+    }),
+    std::time::Duration::from_secs(5),
+    std::time::Duration::from_millis(200),
+    cancellation.clone(),
+  );
+  tokio::pin!(reading);
+  tokio::select! {
+    result = &mut reading => panic!("held read ended before host cancellation: {result:?}"),
+    () = async {
+      while !directory.join("ready").exists() {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+      }
+    } => {}
+  }
+  assert!(
+    tokio::time::timeout(std::time::Duration::from_millis(50), &mut reading)
+      .await
+      .is_err(),
+    "delegation must preserve stdin while the native read is waiting"
+  );
+  cancellation.cancel();
+  assert_eq!(
+    reading.await.unwrap_err().class(),
+    octacity_server_work_source::HostFailureClass::Cancelled
+  );
+  assert!(fs::read(directory.join("cancelled")).unwrap().is_empty());
+}
+
 pub(super) fn fixture(
   provider: &str,
 ) -> (
@@ -78,25 +137,29 @@ pub(super) fn fixture(
   let root = tempfile::tempdir().unwrap();
   let directory = root.path().join(provider);
   fs::create_dir(&directory).unwrap();
-  let script = r#"#!/bin/sh
-IFS= read -r request || exit 90
-case "$request" in *'"operation":"check"'*) ;; *) exit 91 ;; esac
-printf '%s' "$request" > captured.json
-printf 'called\n' >> calls
-id=$(printf '%s' "$request" | /usr/bin/sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
-check=$(printf '%s' "$request" | /usr/bin/sed -n 's/.*"check_id":"\([^"]*\)".*/\1/p')
-profile=$(printf '%s' "$request" | /usr/bin/sed -n 's/.*"configuration_digest":"\([^"]*\)".*/\1/p')
-printf '{"family":"source","message":{"protocol_version":1,"request_id":"%s","outcome":' "$id"
-/usr/bin/sed -e "s/CHECK_ID/$check/g" -e "s/PROFILE/$profile/g" outcome.json
-printf '}}\n'
-"#;
+  let script = include_str!("fixtures/integration-provider.py");
+  fs::write(
+    directory.join("source-provider.py"),
+    include_str!("fixtures/source-provider.py"),
+  )
+  .unwrap();
+  fs::write(
+    directory.join("mode.json"),
+    serde_json::json!({"candidates":[{
+      "container_id":"external-project-42","item_id":"opaque-task","display_id":"EXTERNAL-42",
+      "update_identity":"native-update","title":"External task draft","body":null,"fields":{},
+      "labels":["arbitrary"],"state":"native-state"
+    }]})
+    .to_string(),
+  )
+  .unwrap();
   let outcome = serde_json::json!({"status":"checked","payload":{"check_id":"CHECK_ID","configuration_digest":"PROFILE",
     "resource_id":"external-project-42","configuration":"ready","authentication":"ready","resource_access":"ready","capability":"ready","retry_after_millis":null}});
   fs::write(directory.join("outcome.json"), outcome.to_string()).unwrap();
   fs::write(directory.join("plugin"), script).unwrap();
   fs::set_permissions(directory.join("plugin"), fs::Permissions::from_mode(0o700)).unwrap();
   let digest = FactoryDigest::from_bytes(Sha256::digest(script).into());
-  fs::write(directory.join("adapter.toml"), format!("manifest_version = 1\nadapter_id = {provider:?}\nexecutable = \"plugin\"\nexecutable_sha256 = \"{digest}\"\n[protocol.source]\nmin = 1\nmax = 1\n[capabilities.source]\ncheck = true\ncancel = false\ncredential_class = \"work_source_read\"\nconfiguration_digest = \"{}\"\n", "e".repeat(64))).unwrap();
+  fs::write(directory.join("adapter.toml"), format!("manifest_version = 1\nadapter_id = {provider:?}\nexecutable = \"plugin\"\nexecutable_sha256 = \"{digest}\"\n[protocol.source]\nmin = 1\nmax = 1\n[capabilities.source]\ncheck = true\npreview = true\nauthorize = true\ncancel = false\ncredential_class = \"work_source_read\"\nconfiguration_digest = \"{}\"\n", "e".repeat(64))).unwrap();
   let (mut installed, draft) = integration_connection_fixture(provider);
   installed.adapter = ImmutableReference::new(
     FactoryKey::new(provider).unwrap(),

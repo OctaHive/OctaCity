@@ -143,30 +143,7 @@ pub(super) async fn fixture_with_policy(
     }),
   )
   .await;
-  let draft = FactoryReporterProfileDraft {
-    issue_delivery,
-    reporting_policy: policy.clone(),
-    project_id: fixture.input.project_id(),
-    installation: fixture.profile.read.binding.installation.clone(),
-    capability: capability(),
-    resource: fixture.profile.read.binding.resource.clone(),
-    plugin: fixture.profile.read.plugin.clone(),
-    provider_configuration: FactoryDigest::from_bytes([0xdd; 32]),
-    access: ResourceAccess {
-      resource_id: "native-container".into(),
-      resource_locator: "private-reporter-container".into(),
-      credential: CredentialHandle {
-        class: CredentialClass::WorkReporterWrite,
-        handle: "private-reporter-grant".into(),
-      },
-    },
-    mapping: ConfigurationReference {
-      identity: "original-effects".into(),
-      sha256: "c".repeat(64),
-    },
-    credential_profile: key("writer"),
-    network_hosts: vec!["tracker.invalid".into()],
-  };
+  let draft = reporter_draft(&fixture, policy.clone(), issue_delivery);
   let profile = FactoryReporterProfile::new(key("reporter-settings"), key("v1"), draft).unwrap();
   let target = fixture
     .store
@@ -227,6 +204,36 @@ pub(super) async fn fixture_with_policy(
   use std::io::Write as _;
   std::fs::OpenOptions::new().append(true).open(dir.join("adapter.toml")).unwrap().write_all(format!("\n[protocol.reporter]\nmin=1\nmax=2\n[capabilities.reporter]\ncustom_effects=true\nobserve=true\nproject=true\ncancel=true\nidempotency=\"observe_before_retry\"\ncredential_class=\"work_reporter_write\"\nconfiguration_digest=\"{}\"\n","d".repeat(64)).as_bytes()).unwrap();
   (fixture, profile)
+}
+pub(super) fn reporter_draft<S>(
+  fixture: &Fixture<S>,
+  policy: Option<WorkSourceReportingPolicy>,
+  issue_delivery: Option<IssueReporterDeliveryPolicy>,
+) -> FactoryReporterProfileDraft {
+  FactoryReporterProfileDraft {
+    issue_delivery,
+    reporting_policy: policy.clone(),
+    project_id: fixture.input.project_id(),
+    installation: fixture.profile.read.binding.installation.clone(),
+    capability: capability(),
+    resource: fixture.profile.read.binding.resource.clone(),
+    plugin: fixture.profile.read.plugin.clone(),
+    provider_configuration: FactoryDigest::from_bytes([0xdd; 32]),
+    access: ResourceAccess {
+      resource_id: "native-container".into(),
+      resource_locator: "private-reporter-container".into(),
+      credential: CredentialHandle {
+        class: CredentialClass::WorkReporterWrite,
+        handle: "private-reporter-grant".into(),
+      },
+    },
+    mapping: ConfigurationReference {
+      identity: "original-effects".into(),
+      sha256: "c".repeat(64),
+    },
+    credential_profile: key("writer"),
+    network_hosts: vec!["tracker.invalid".into()],
+  }
 }
 pub(super) fn hosted<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore + 'static>(
   fixture: &Fixture<S>,

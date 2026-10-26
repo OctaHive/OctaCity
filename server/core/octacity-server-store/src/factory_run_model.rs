@@ -511,6 +511,9 @@ pub struct ClaimFactoryOutbox {
   pub limit: NonZeroU16,
   /// Exact effect families; empty preserves the unfiltered administrative claim.
   pub kinds: Vec<FactoryKey>,
+  /// Accepted action or Issue Reporter capabilities owned by this dispatcher.
+  /// Empty preserves administrative claims; filtering precedes the batch limit.
+  pub projection_capabilities: Vec<octacity_server_factory::ImmutableReference>,
 }
 
 impl ClaimFactoryOutbox {
@@ -541,6 +544,7 @@ impl ClaimFactoryOutbox {
       claim_expires_at,
       limit,
       kinds: vec![],
+      projection_capabilities: vec![],
     })
   }
   /// Narrows a bounded pass to the installed effect families.
@@ -556,6 +560,17 @@ impl ClaimFactoryOutbox {
   pub fn only_kind(mut self, kind: FactoryKey) -> Self {
     self.kinds = vec![kind];
     self
+  }
+  /// Routes projections by immutable accepted provenance, before taking ownership.
+  pub fn only_projection_capabilities(
+    mut self,
+    capabilities: Vec<octacity_server_factory::ImmutableReference>,
+  ) -> Result<Self, StoreError> {
+    if capabilities.is_empty() || capabilities.len() > 256 {
+      return Err(crate::source_conflict());
+    }
+    self.projection_capabilities = capabilities;
+    Ok(self)
   }
 }
 

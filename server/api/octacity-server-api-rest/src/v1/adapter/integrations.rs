@@ -21,6 +21,12 @@ mod dependencies;
 pub(super) use dependencies::list_dependencies;
 mod discovery;
 mod project_access;
+mod project_imports;
+mod project_sources;
+pub(super) use project_imports::{
+  get_current_project_import, get_project_import, list_project_imports, publish_project_import,
+};
+pub(super) use project_sources::preview_project_sources;
 mod sources;
 pub(super) use check::check_connection;
 pub(super) use discovery::*;
@@ -33,6 +39,7 @@ pub(super) use sources::*;
 type Credentials = dyn AuthorizedManagementCommandHandler<ManageIntegrationCredentialCommand, Error = ApplicationError>;
 /// Endpoint capabilities are supplied by trusted composition, with application authorization.
 pub struct IntegrationManagementApplication {
+  source_management_required: bool,
   dependencies: Option<
     Arc<
       dyn AuthorizedManagementQueryHandler<
@@ -47,6 +54,23 @@ pub struct IntegrationManagementApplication {
   project_access: Option<ProjectAccessEndpoints>,
   sources: Option<SourceConfigurationEndpoints>,
   source_reads: Option<SourceReadEndpoints>,
+  project_source_choices: Option<
+    Arc<
+      dyn AuthorizedManagementQueryHandler<
+          octacity_server_application::ListProjectIssueSourceChoicesQuery,
+          Error = ApplicationError,
+        >,
+    >,
+  >,
+  project_source_preview: Option<
+    Arc<
+      dyn AuthorizedManagementQueryHandler<
+          octacity_server_application::PreviewProjectIssueSourcesQuery,
+          Error = ApplicationError,
+        >,
+    >,
+  >,
+  project_source_imports: Option<project_imports::ProjectSourceImportEndpoints>,
   discovery: Option<DiscoveryEndpoints>,
   checks: Option<Arc<dyn AuthorizedManagementQueryHandler<CheckIntegrationConnectionQuery, Error = ApplicationError>>>,
 }
@@ -68,6 +92,7 @@ struct AdministrationEndpoints {
 impl IntegrationManagementApplication {
   pub(super) fn unavailable() -> Self {
     Self {
+      source_management_required: false,
       dependencies: None,
       credentials: None,
       metadata: None,
@@ -76,6 +101,9 @@ impl IntegrationManagementApplication {
       checks: None,
       sources: None,
       source_reads: None,
+      project_source_choices: None,
+      project_source_preview: None,
+      project_source_imports: None,
       discovery: None,
     }
   }
@@ -86,6 +114,7 @@ impl IntegrationManagementApplication {
     credentials: Arc<C>,
   ) -> Self {
     Self {
+      source_management_required: false,
       dependencies: None,
       credentials: Some(credentials),
       metadata: None,
@@ -94,6 +123,9 @@ impl IntegrationManagementApplication {
       checks: None,
       sources: None,
       source_reads: None,
+      project_source_choices: None,
+      project_source_preview: None,
+      project_source_imports: None,
       discovery: None,
     }
   }

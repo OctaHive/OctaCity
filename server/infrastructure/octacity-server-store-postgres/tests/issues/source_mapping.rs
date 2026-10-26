@@ -155,6 +155,8 @@ async fn source_mapping_replacement_retains_old_versions_and_invalidates_prior_r
   let target = IssueSourceReadTarget {
     source: imported.selection.source.clone(),
     issue_id: Some(issue.id),
+    connection: None,
+    import: None,
     pull_generation: 0,
   };
   let scan = store

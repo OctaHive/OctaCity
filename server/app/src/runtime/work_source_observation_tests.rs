@@ -15,6 +15,7 @@ fn reader(fixture: &Fixture) -> HostedWorkSourceObservations {
 
 fn request(fixture: &Fixture) -> ReadWorkSourceObservations {
   ReadWorkSourceObservations {
+    connection: None,
     project_id: fixture.profile.read.project_id,
     source: fixture.profile.read.binding.clone(),
     scan_id: FactoryDigest::from_bytes([81; 32]),
@@ -572,8 +573,12 @@ async fn observation_scope_bounds_and_failures_use_existing_protected_read_contr
 
 #[tokio::test]
 async fn observation_cancellation_drains_the_existing_process_without_handoff_or_admission() {
-  for before in [true, false] {
+  for (before, protocol_cancel) in [(true, false), (false, false), (true, true), (false, true)] {
     let fixture = Fixture::enabled("fake-tracker").await;
+    let manifest = fixture.root.path().join("fake-tracker/adapter.toml");
+    let mut declaration: toml::Value = toml::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+    declaration["capabilities"]["source"]["cancel"] = toml::Value::Boolean(protocol_cancel);
+    std::fs::write(&manifest, toml::to_string(&declaration).unwrap()).unwrap();
     std::fs::write(fixture.root.path().join("fake-tracker/mode.json"), br#"{"hold":true}"#).unwrap();
     let cancellation = CancellationToken::new();
     let reader = HostedWorkSourceObservations::new(
@@ -605,7 +610,8 @@ async fn observation_cancellation_drains_the_existing_process_without_handoff_or
     if before {
       assert!(!fixture.root.path().join("fake-tracker/requests.jsonl").exists());
     } else {
-      assert!(fixture.root.path().join("fake-tracker/cancelled").exists());
+      let stopped = std::fs::read_to_string(fixture.root.path().join("fake-tracker/cancelled")).unwrap();
+      assert_eq!(stopped.contains("cancel"), protocol_cancel);
     }
     assert!(fixture.runs().await.is_empty());
     assert!(fixture.bytes.0.lock().unwrap().is_empty());
@@ -644,3 +650,184 @@ async fn retained_observation_authority_can_be_rechecked_without_listing_another
 
 #[path = "work_source_issue_contract_tests.rs"]
 mod issue_contracts;
+
+#[tokio::test]
+async fn managed_observation_request_cannot_borrow_an_unmanaged_installed_reader() {
+  let fixture = Fixture::enabled("opaque-reader").await;
+  let mut read = request(&fixture);
+  read.connection = Some(WorkSourceConnectionRef {
+    id: IntegrationId::generate(),
+    version: IntegrationVersion::INITIAL,
+    access_version: IntegrationVersion::INITIAL,
+    source_configuration: fixture.profile.read.binding.configuration.clone(),
+    reporter_configuration: None,
+  });
+  assert!(
+    reader(&fixture)
+      .read(&fixture.profile.read.context, read)
+      .await
+      .is_err(),
+    "a managed request needs its own composed current-grant resolver"
+  );
+  assert!(!fixture.root.path().join("opaque-reader/requests.jsonl").exists());
+}
+
+#[tokio::test]
+async fn managed_observation_dispatch_checks_current_grant_without_creating_work() {
+  let fixture = Fixture::enabled("opaque-reader").await;
+  let (_, connection) = managed_access(&fixture, &fixture.profile.read.binding, IntegrationPurpose::TaskRead).await;
+  let mut read = request(&fixture);
+  read.connection = Some(WorkSourceConnectionRef {
+    id: connection,
+    version: IntegrationVersion::INITIAL,
+    access_version: IntegrationVersion::INITIAL,
+    source_configuration: fixture.profile.read.binding.configuration.clone(),
+    reporter_configuration: None,
+  });
+  let reader = reader(&fixture).with_managed_connections(ManagedIntegrationConnections::new(fixture.store.clone()));
+  reader
+    .authorize_connection(
+      &fixture.profile.read.context,
+      fixture.input.project_id(),
+      fixture.profile.read.binding.clone(),
+      read.connection.as_ref(),
+    )
+    .await
+    .unwrap();
+  let page = reader.read(&fixture.profile.read.context, read.clone()).await.unwrap();
+  assert_eq!(page.observations.len(), 1);
+  assert_eq!(page.observations[0].snapshot.title, "Original task");
+  assert!(fixture.runs().await.is_empty());
+  let calls = std::fs::read(fixture.root.path().join("opaque-reader/requests.jsonl")).unwrap();
+  fixture
+    .store
+    .publish_integration_project_access(octacity_server_store::testing::management_mutation(
+      PublishIntegrationProjectAccess {
+        intent: IntegrationProjectAccessIntent {
+          connection_id: connection,
+          project_id: fixture.input.project_id(),
+          connection_version: IntegrationVersion::INITIAL,
+          expected_current_version: Some(IntegrationVersion::INITIAL),
+          resources: vec![],
+        },
+        idempotency_key: IdempotencyKey::new("revoke-observation-read").unwrap(),
+        published_at: time(10),
+      },
+    ))
+    .await
+    .unwrap();
+  assert!(reader.read(&fixture.profile.read.context, read.clone()).await.is_err());
+  assert!(
+    reader
+      .authorize_connection(
+        &fixture.profile.read.context,
+        fixture.input.project_id(),
+        fixture.profile.read.binding.clone(),
+        read.connection.as_ref()
+      )
+      .await
+      .is_err()
+  );
+  assert!(
+    reader
+      .authorize(
+        &fixture.profile.read.context,
+        fixture.input.project_id(),
+        fixture.profile.read.binding.clone()
+      )
+      .await
+      .is_err(),
+    "retained observations cannot regain legacy authority after a managed grant is revoked"
+  );
+  assert_eq!(
+    std::fs::read(fixture.root.path().join("opaque-reader/requests.jsonl")).unwrap(),
+    calls
+  );
+  assert!(fixture.runs().await.is_empty());
+}
+
+#[tokio::test]
+async fn pinned_observation_reader_cannot_switch_to_an_equally_granted_connection_alias() {
+  let fixture = Fixture::enabled("opaque-reader").await;
+  let (access, original) = managed_access_named(
+    &fixture,
+    &fixture.profile.read.binding,
+    IntegrationPurpose::TaskRead,
+    "original",
+  )
+  .await;
+  let (_, alias) = managed_access_named(
+    &fixture,
+    &fixture.profile.read.binding,
+    IntegrationPurpose::TaskRead,
+    "alias",
+  )
+  .await;
+  assert_ne!(original, alias);
+  let reader = HostedWorkSourceObservations::new(
+    Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
+    vec![fixture.profile.read.clone().with_managed_access(access)],
+    fixture.clock.clone(),
+    settings().operation_timeout,
+    settings().cancellation_grace,
+    CancellationToken::new(),
+  )
+  .unwrap()
+  .with_managed_connections(ManagedIntegrationConnections::new(fixture.store.clone()));
+  let mut read = request(&fixture);
+  read.connection = Some(WorkSourceConnectionRef {
+    id: alias,
+    version: IntegrationVersion::INITIAL,
+    access_version: IntegrationVersion::INITIAL,
+    source_configuration: fixture.profile.read.binding.configuration.clone(),
+    reporter_configuration: None,
+  });
+  assert!(
+    reader.read(&fixture.profile.read.context, read).await.is_err(),
+    "identical native pins do not authorize replacing a reader's original connection"
+  );
+  assert!(!fixture.root.path().join("opaque-reader/requests.jsonl").exists());
+}
+
+#[tokio::test]
+async fn derived_observation_profile_keeps_its_original_native_connection_parent() {
+  let fixture = Fixture::enabled("opaque-reader").await;
+  let (access, connection) =
+    managed_access(&fixture, &fixture.profile.read.binding, IntegrationPurpose::TaskRead).await;
+  let mut profile = fixture.profile.read.clone().with_managed_access(access);
+  profile.binding.configuration = exact("derived-task-profile", 97);
+  let mut read = request(&fixture);
+  read.source = profile.binding.clone();
+  read.connection = Some(WorkSourceConnectionRef {
+    id: connection,
+    version: IntegrationVersion::INITIAL,
+    access_version: IntegrationVersion::INITIAL,
+    source_configuration: fixture.profile.read.binding.configuration.clone(),
+    reporter_configuration: None,
+  });
+  let reader = HostedWorkSourceObservations::new(
+    Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
+    vec![profile],
+    fixture.clock.clone(),
+    settings().operation_timeout,
+    settings().cancellation_grace,
+    CancellationToken::new(),
+  )
+  .unwrap()
+  .with_managed_connections(ManagedIntegrationConnections::new(fixture.store.clone()));
+  let page = reader
+    .read(&fixture.profile.read.context, read.clone())
+    .await
+    .expect("a derived immutable read profile retains its separate native connection parent");
+  assert_eq!(page.observations[0].source, read.source);
+  reader
+    .authorize_connection(
+      &fixture.profile.read.context,
+      read.project_id,
+      read.source.clone(),
+      read.connection.as_ref(),
+    )
+    .await
+    .unwrap();
+  assert!(fixture.runs().await.is_empty());
+}

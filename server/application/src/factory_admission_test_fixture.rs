@@ -20,6 +20,13 @@ pub(super) fn configuration_with_flow(
   id: FactoryConfigurationId,
   flow: Option<octacity_server_factory::FactoryFlowConfiguration>,
 ) -> FactoryConfiguration {
+  configuration_with_wip(project_id, id, flow, FactoryWipLimits::new(2, 4).unwrap())
+}
+
+pub(super) fn configuration_with_wip(
+  project_id: ProjectId, id: FactoryConfigurationId,
+  flow: Option<octacity_server_factory::FactoryFlowConfiguration>, wip_limits: FactoryWipLimits,
+) -> FactoryConfiguration {
   let build = BuildConfigurationRef::new(
     BuildConfigurationId::generate(),
     BuildConfigurationVersion::INITIAL,
@@ -82,7 +89,7 @@ pub(super) fn configuration_with_flow(
       FactoryConfigurationDraft {
         flow,
         admission_policy: key("admission"),
-        wip_limits: FactoryWipLimits::new(2, 4).unwrap(),
+        wip_limits,
         hard_budget: budget(),
         permission_ceiling: key("permissions"),
         enabled: true,

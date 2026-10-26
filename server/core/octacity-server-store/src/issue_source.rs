@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 pub struct IssueSourceSelection {
   /// Owning Project.
   pub project_id: ProjectId,
+  /// Original managed native connection pin; absent only for explicit legacy installations.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub connection: Option<octacity_server_factory::WorkSourceConnectionRef>,
   /// Reviewed installed capability/configuration; not a runtime grant.
   pub source: WorkSourceBinding,
   /// Verified stable native container and task.
@@ -119,6 +122,14 @@ pub enum IssueSourceOutcome {
 /// Narrow atomic association authority; provider reads belong to the existing Source port.
 #[async_trait::async_trait]
 pub trait IssueSourceStore: IssueStore {
+  /// Reads the original canonical native link in its Project/security partition; performs no import.
+  async fn native_issue_source_link(
+    &self,
+    project: ProjectId,
+    scope: &ManagementSecurityScope,
+    native: FactoryDigest,
+  ) -> Result<Option<IssueSourceLink>, StoreError>;
+
   /// Reads the original scoped attachment receipt before another provider read; reserves nothing.
   async fn issue_source_attachment_replay(
     &self,

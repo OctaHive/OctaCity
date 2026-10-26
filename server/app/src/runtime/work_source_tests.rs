@@ -216,6 +216,8 @@ async fn source_installations_reject_unbounded_workers_and_ambiguous_or_foreign_
     "duplicate",
     "foreign-project",
     "mapping",
+    "mapping-limits",
+    "acceptance",
   ] {
     let fixture = Fixture::enabled("jira").await;
     let mut installation = FactorySourceInstallation {
@@ -230,6 +232,10 @@ async fn source_installations_reject_unbounded_workers_and_ambiguous_or_foreign_
       "duplicate" => installation.profiles.push(fixture.profile.clone()),
       "foreign-project" => installation.profiles[0].read.project_id = ProjectId::generate(),
       "mapping" => installation.profiles[0].preparation.mapping.source.configuration = exact("foreign-settings", 90),
+      "mapping-limits" => installation.profiles[0].preparation.mapping.max_title_bytes = 0,
+      "acceptance" => {
+        installation.profiles[0].preparation.mapping.acceptance = SourceAcceptanceMapping::Field(String::new())
+      }
       _ => unreachable!(),
     }
     assert!(
@@ -1614,18 +1620,30 @@ async fn expired_pending_snapshots_wait_for_retention_without_exhausting_or_resu
 }
 
 // Trusted installed fixture; private provider material is simulated only at the store boundary.
-async fn managed_access(
-  fixture: &Fixture,
+async fn managed_access<
+  S: IntegrationConnectionStore + IntegrationAdministrationStore + IntegrationProjectAccessStore + 'static,
+>(
+  fixture: &Fixture<S>,
   binding: &WorkSourceBinding,
   purpose: IntegrationPurpose,
 ) -> (ManagedIntegrationAccess, IntegrationId) {
+  managed_access_named(fixture, binding, purpose, "managed").await
+}
+
+async fn managed_access_named<
+  S: IntegrationConnectionStore + IntegrationAdministrationStore + IntegrationProjectAccessStore + 'static,
+>(
+  fixture: &Fixture<S>,
+  binding: &WorkSourceBinding,
+  purpose: IntegrationPurpose,
+  namespace: &str,
+) -> (ManagedIntegrationAccess, IntegrationId) {
   let id = IntegrationId::generate();
-  let credential = octacity_server_store::testing::integration_connection_fixture("custom-tracker")
-    .0
-    .resources[0]
-    .capabilities[0]
-    .credential
-    .clone();
+  // Independent aliases own separate logical credentials, even for identical native pins.
+  let credential: octacity_server_secrets::LogicalSecretReference = serde_json::from_value(serde_json::json!({
+    "provider":"installed", "reference":format!("{namespace}-reader"),
+  }))
+  .unwrap();
   let installed = InstalledIntegration {
     installation: binding.installation.clone(),
     provider: key("custom-tracker"),
@@ -1664,7 +1682,7 @@ async fn managed_access(
           },
         },
         installed,
-        idempotency_key: IdempotencyKey::new("managed-metadata").unwrap(),
+        idempotency_key: IdempotencyKey::new(format!("{namespace}-metadata")).unwrap(),
         published_at: time(1),
       },
     ))
@@ -1684,7 +1702,7 @@ async fn managed_access(
             activate_connection: true,
           },
         },
-        idempotency_key: IdempotencyKey::new("managed-activate").unwrap(),
+        idempotency_key: IdempotencyKey::new(format!("{namespace}-activate")).unwrap(),
         requested_at: time(2),
       },
     ))
@@ -1706,7 +1724,7 @@ async fn managed_access(
           expected_current_version: None,
           resources,
         },
-        idempotency_key: IdempotencyKey::new("managed-project-grant").unwrap(),
+        idempotency_key: IdempotencyKey::new(format!("{namespace}-project-grant")).unwrap(),
         published_at: time(3),
       },
     ))
@@ -1767,3 +1785,38 @@ async fn managed_source_rechecks_project_grants_before_provider_reads_after_revo
 mod preview;
 #[path = "issue_code_review_reader_tests.rs"]
 mod review_reader;
+
+#[tokio::test]
+async fn explicit_source_target_retry_is_independent_of_supervisor_cadence() {
+  let fixture = Fixture::enabled("custom-provider").await;
+  std::fs::write(
+    fixture.root.path().join("custom-provider/mode.json"),
+    br#"{"failure":{"class":"transient","retry_after_millis":null}}"#,
+  )
+  .unwrap();
+  let mut policy = settings();
+  policy.target_retry = Some(DurableRetryPolicy::new(3, 100, 500).unwrap());
+  let outcome = fixture
+    .worker_with_settings(policy)
+    .run_once(CancellationToken::new())
+    .await
+    .unwrap();
+  assert_eq!((outcome.claimed, outcome.deferred), (1, 1));
+  let schedule = fixture
+    .store
+    .source_scan_schedule(
+      fixture.input.project_id(),
+      WorkSourceScanTarget::Input {
+        id: fixture.input.id(),
+        version: fixture.input.version(),
+      },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(
+    schedule.retry_at,
+    time(200),
+    "target retry uses its configured 100ms delay, independently of 10ms supervisor polling"
+  );
+}

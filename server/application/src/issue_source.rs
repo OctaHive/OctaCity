@@ -2,6 +2,7 @@
 use crate::*;
 pub use octacity_server_domain::IssueId;
 use octacity_server_domain::{ProjectId, Timestamp};
+pub use octacity_server_factory::WorkSourceConnectionRef;
 use octacity_server_store::{AttachIssueSource, IdempotencyKey, ImportIssueSource};
 pub use octacity_server_store::{
   AttachIssueSourceIntent, IssueSourceLink, IssueSourceOutcome, IssueSourceRefreshDisposition, IssueSourceSelection,
@@ -11,14 +12,25 @@ use std::sync::Arc;
 
 #[path = "issue_source_management.rs"]
 mod management;
+#[path = "issue_source_project_choices.rs"]
+mod project_choices;
+pub use project_choices::*;
+#[path = "issue_source_project_import.rs"]
+mod project_import;
+#[path = "issue_source_project_preview.rs"]
+mod project_preview;
 pub use management::*;
+pub use project_import::*;
+pub use project_preview::*;
 #[path = "issue_synchronization.rs"]
 mod synchronization;
 pub use synchronization::*;
 
 /// Source association owner; no admission, Reporter or credential port is installed here.
 pub struct IssueSourceHandlers<S> {
+  project_profiles: Option<Arc<dyn FactorySourceConfigurationProvider<S>>>,
   mappings: Vec<InstalledIssueSourceMapping>,
+  source_profile_provider: Option<Arc<dyn IssueSourceProfileProvider>>,
   refresh_policy: Option<IssueSourceRefreshPolicy>,
   store: Arc<S>,
   reader: Arc<dyn WorkSourceObservations>,
@@ -34,7 +46,9 @@ impl<S> IssueSourceHandlers<S> {
     clock: Arc<dyn FactoryExecutionClock>,
   ) -> Self {
     Self {
+      project_profiles: None,
       mappings: vec![],
+      source_profile_provider: None,
       refresh_policy: None,
       store,
       reader,
@@ -125,10 +139,25 @@ impl<S: IssueSourceStore> IssueSourceHandlers<S> {
     now: Timestamp,
     operation: octacity_server_store::StoreOperation,
   ) -> Result<(WorkSourceObservation, Timestamp), ApplicationError> {
-    if read.project_id != selection.project_id || read.source != selection.source || read.limit == 0 {
+    if read.project_id != selection.project_id
+      || read.source != selection.source
+      || read.connection != selection.connection
+      || read.limit == 0
+    {
       return Err(ApplicationError::invalid());
     }
     octacity_server_store::validate_source_cursor(&read.continuation).map_err(|_| ApplicationError::invalid())?;
+    if selection.connection.is_some() {
+      self
+        .reader
+        .authorize_connection(
+          context,
+          selection.project_id,
+          selection.source.clone(),
+          selection.connection.as_ref(),
+        )
+        .await?;
+    }
     let limit = usize::from(read.limit);
     let page = self.reader.read(context, read).await?;
     // Read again after asynchronous provider access; an observation can expire in flight.

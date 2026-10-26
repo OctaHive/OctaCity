@@ -1,15 +1,11 @@
 //! Protected local proxy transport; HTTP headers never establish its identity.
-use super::{ListenerTaskResult, ServerRuntimeError};
+use super::{ListenerTaskResult, ServerRuntimeError, integration_management::request_context};
 use crate::config::LocalIntegrationManagement;
 use axum::{
   extract::{ConnectInfo, Request},
   middleware::{self, Next},
 };
 use octacity_server_api_rest::integrations::ProtectedIntegrationRequest;
-use octacity_server_application::{
-  ManagementActor, ManagementIngress, ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId,
-  ManagementSecurityScope,
-};
 use std::{
   os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
   path::PathBuf,
@@ -116,17 +112,7 @@ impl LocalListener {
         let config = config.clone();
         async move {
           if peer.0 == Some(config.peer_uid) {
-            let context = ManagementRequestContext::new(
-              ManagementActor::authenticated(&config.principal).expect("validated principal"),
-              ManagementSecurityScope::new(format!(
-                "local-proxy:{}",
-                octacity_server_factory::FactoryDigest::content_sha256(config.principal.as_bytes())
-              ))
-              .expect("bounded principal"),
-              ManagementRequestId::new(uuid::Uuid::new_v4()).expect("generated identity"),
-              ManagementRequestAttributes::new(ManagementIngress::VerifiedIdentity, None),
-            )
-            .expect("verified local proxy");
+            let context = request_context(&config.principal);
             request
               .extensions_mut()
               .insert(ProtectedIntegrationRequest::new(context).expect("verified local transport"));

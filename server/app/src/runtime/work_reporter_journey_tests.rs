@@ -44,6 +44,46 @@ async fn wait_for_provider(mut ready: impl FnMut() -> bool + Send + 'static) {
 #[path = "../../tests/support/work_reporter.rs"]
 mod reporter_support;
 use reporter_support::*;
+
+#[tokio::test]
+async fn reporter_leaves_other_capabilities_unclaimed() {
+  let (fixture, profile) = fixture("opaque-reporter").await;
+  reporter_ownership_contract(fixture, profile).await;
+}
+
+async fn reporter_ownership_contract<
+  S: WorkSourceArtifactStore + FactoryDiscoveryStore + FactoryRunStore + IssueSourceProjectionStore + 'static,
+>(
+  fixture: Fixture<S>,
+  profile: FactoryReporterProfile,
+) {
+  let projector = hosted(&fixture, vec![profile]);
+  let run = queue(&fixture, projector.clone()).await;
+  let before = fixture.store.factory_run_snapshot(run).await.unwrap();
+  let unrelated = FactoryWorkStatusOutboxWorker::new(
+    fixture.store.clone(),
+    std::collections::BTreeMap::from([(
+      exact("unrelated-capability", 95),
+      projector.clone() as Arc<dyn FactoryWorkStatusProjector>,
+    )]),
+    FactoryReporterWorkerSettings::new(key("unrelated-owner"), 10000, 1).unwrap(),
+    fixture.clock.clone(),
+  )
+  .unwrap();
+  assert_eq!(unrelated.run_once(time(120)).await.unwrap().claimed, 0);
+  let untouched = fixture.store.factory_run_snapshot(run).await.unwrap();
+  assert_eq!(untouched.outbox, before.outbox);
+  assert!(captured_requests(&fixture.root.path().join("opaque-reporter")).is_empty());
+  assert_eq!(
+    reporting_worker(&fixture, projector, "rightful-owner", 10000)
+      .run_once(time(120))
+      .await
+      .unwrap()
+      .delivered,
+    1
+  );
+}
+
 #[tokio::test]
 async fn accepted_source_status_reaches_only_its_original_verified_reporter_for_every_provider() {
   for provider in ["github", "gitlab", "jira", "custom-tracker"] {

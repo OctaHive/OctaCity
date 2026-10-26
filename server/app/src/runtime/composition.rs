@@ -108,7 +108,7 @@ impl ServerRuntime {
       )),
       None => Arc::new(octacity_server_application::ExactRevisionResolver),
     };
-    let (registration_store, factory) = super::factory::assemble(
+    let (registration_store, mut factory) = super::factory::assemble(
       &config,
       &mut resources,
       placement_store.clone(),
@@ -184,6 +184,49 @@ impl ServerRuntime {
       retention_policy.retrying().maximum_retry_milliseconds(),
     )
     .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+    let installed_integrations = super::integration_management::install(
+      &config,
+      registration_store.clone(),
+      cancellation.child_token(),
+      &mut resources.readiness,
+    )
+    .await?;
+    let (integrations, source_reads, managed_issue_sources, source_management) = installed_integrations
+      .map_or((None, None, None, None), |i| {
+        (Some(i.application), i.source_reads, i.issues, i.source_management)
+      });
+    let source_reporting = if let Some(sources) = &source_management {
+      let mut empty = vec![];
+      let explicit = factory.as_mut().map_or(&mut empty, |factory| &mut factory.outbox);
+      match sources.reporting_dispatcher(explicit, &mut resources.readiness) {
+        Ok(worker) => worker,
+        Err(octacity_server_application::ApplicationError::CapabilityUnavailable) => {
+          resources
+            .readiness
+            .push_factory(Arc::new(super::source_reporting::UnavailableSourceReporting));
+          tracing::warn!("shared Source Reporter overlaps an explicitly installed reporting owner");
+          None
+        }
+        Err(_) => return Err(ServerRuntimeError::InvalidManagementPolicy),
+      }
+    } else {
+      None
+    };
+    let managed_factory_source = source_management
+      .map(|sources| {
+        let principal = &config
+          .integration_management()
+          .expect("installed local Source authority")
+          .principal;
+        super::managed_factory_source::ManagedFactorySource::worker(
+          sources,
+          resources.object_storage.clone(),
+          revision_resolver.clone(),
+          principal,
+        )
+      })
+      .transpose()
+      .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
     let ApplicationComponents {
       management: management_application,
       trigger_service,
@@ -193,13 +236,9 @@ impl ServerRuntime {
       webhook_provider,
     } = management_application(ApplicationAssembly {
       issue_integrations,
+      managed_issue_sources,
       store: registration_store.clone(),
-      integrations: super::integration_management::install(
-        &config,
-        registration_store.clone(),
-        cancellation.child_token(),
-      )
-      .await?,
+      integrations,
       authoritative_store: placement_store.clone(),
       toolchain: resources.job_spec_toolchain,
       supported_pipeline_capabilities: config.supported_pipeline_capabilities().to_vec(),
@@ -423,6 +462,9 @@ impl ServerRuntime {
         management_application: Some(management_application),
         webhook_router,
         workers: Some(DurableWorkers {
+          source_reads,
+          managed_factory_source,
+          source_reporting,
           factory,
           legacy_issues: registration_store.clone(),
           actions: octacity_server_application::FactoryActionProjectionWorker::new(registration_store.clone()),

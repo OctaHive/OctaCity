@@ -42,6 +42,11 @@ impl Database {
       .unwrap();
     octacity_server_store_postgres::migrate(&self.pool).await.unwrap();
   }
+  pub(crate) fn url(&self) -> String {
+    let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
+    url.set_path(&self.name);
+    url.to_string()
+  }
   pub(crate) async fn cleanup(mut self) {
     self.pool.close().await;
     sqlx::query(sqlx::AssertSqlSafe(format!(
@@ -57,6 +62,15 @@ pub(crate) async fn postgres_fixture(fixture: Fixture) -> (Fixture<PostgresStore
   let database = Database::new().await;
   let fixture = fixture.into_postgres(database.pool.clone()).await;
   (fixture, database)
+}
+
+#[tokio::test]
+#[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
+async fn postgres_reporter_leaves_other_capabilities_unclaimed() {
+  let (fixture, profile) = fixture("opaque-reporter").await;
+  let (fixture, database) = postgres_fixture(fixture).await;
+  reporter_ownership_contract(fixture, profile).await;
+  database.cleanup().await;
 }
 
 #[tokio::test(start_paused = true)]

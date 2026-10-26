@@ -12,6 +12,8 @@ use std::sync::Arc;
 
 #[path = "issue_card.rs"]
 mod card;
+#[path = "issue_source_links.rs"]
+mod source_links;
 pub use card::*;
 
 /// Manual task creation independent of workflow administration or execution setup.

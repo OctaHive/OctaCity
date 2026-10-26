@@ -7,6 +7,9 @@ use octacity_server_factory::{FactoryDigest, ImmutableReference, WorkSourceBindi
 /// One page of an explicitly requested installed read; no input identity or Factory target.
 #[derive(Clone)]
 pub struct ReadWorkSourceObservations {
+  /// Original managed connection selection. A reader must resolve its current
+  /// Project grant explicitly; it cannot borrow legacy installed authority.
+  pub connection: Option<octacity_server_factory::WorkSourceConnectionRef>,
   /// Owning Project, checked against the installed profile and current grant.
   pub project_id: ProjectId,
   /// Exact installed read profile; a consumer can select its own broader installed selector.
@@ -127,6 +130,20 @@ pub trait WorkSourceObservations: Send + Sync {
     _source: WorkSourceBinding,
   ) -> Result<(), ApplicationError> {
     Err(ApplicationError::capability_unavailable())
+  }
+  /// Reauthorizes retained data under its original managed connection without another read.
+  /// Implementers must explicitly support managed pins; legacy authorization cannot substitute.
+  async fn authorize_connection(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    source: WorkSourceBinding,
+    connection: Option<&octacity_server_factory::WorkSourceConnectionRef>,
+  ) -> Result<(), ApplicationError> {
+    if connection.is_some() {
+      return Err(ApplicationError::capability_unavailable());
+    }
+    self.authorize(context, project, source).await
   }
   /// Reads under current task-read authority, without admission, task storage or Reporter effects.
   async fn read(

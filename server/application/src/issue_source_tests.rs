@@ -11,6 +11,7 @@ fn exact(name: &str) -> ImmutableReference {
 }
 fn selection(project_id: ProjectId) -> IssueSourceSelection {
   IssueSourceSelection {
+    connection: None,
     project_id,
     source: WorkSourceBinding {
       installation: exact("forge-installation"),
@@ -26,6 +27,7 @@ fn selection(project_id: ProjectId) -> IssueSourceSelection {
 }
 fn read(selection: &IssueSourceSelection) -> ReadWorkSourceObservations {
   ReadWorkSourceObservations {
+    connection: None,
     project_id: selection.project_id,
     source: selection.source.clone(),
     scan_id: FactoryDigest::content_sha256(b"explicit reviewed read"),
@@ -1087,6 +1089,8 @@ fn issue_source_bounded_import_resumes_original_page_without_factory_or_provider
     let command = RunIssueSourceReadCommand {
       project_id,
       target: IssueSourceReadTarget {
+        connection: None,
+        import: None,
         pull_generation: 0,
         source: selection(project_id).source,
         issue_id: None,
@@ -1183,6 +1187,8 @@ fn issue_source_rate_limit_and_exhaustion_survive_owner_restart_without_blocking
     let mut command = RunIssueSourceReadCommand {
       project_id,
       target: IssueSourceReadTarget {
+        connection: None,
+        import: None,
         pull_generation: 0,
         source: selection(project_id).source,
         issue_id: None,
@@ -1274,6 +1280,8 @@ fn issue_source_retained_link_refresh_uses_its_read_profile_and_stops_when_pull_
     let command = RunIssueSourceReadCommand {
       project_id,
       target: IssueSourceReadTarget {
+        connection: None,
+        import: None,
         pull_generation: 0,
         source,
         issue_id: Some(link.issue_id),
@@ -1391,6 +1399,8 @@ fn issue_source_owner_expiring_during_reauthorization_cannot_publish_an_import()
         RunIssueSourceReadCommand {
           project_id,
           target: IssueSourceReadTarget {
+            connection: None,
+            import: None,
             pull_generation: 0,
             source: selection(project_id).source,
             issue_id: None,
@@ -1478,6 +1488,8 @@ fn issue_source_expired_original_observation_discards_the_retained_tail_before_r
     let mut command = RunIssueSourceReadCommand {
       project_id,
       target: IssueSourceReadTarget {
+        connection: None,
+        import: None,
         pull_generation: 0,
         source: selection(project_id).source,
         issue_id: None,
@@ -1559,6 +1571,8 @@ fn issue_source_hidden_project_is_rejected_before_provider_activity_even_for_an_
         RunIssueSourceReadCommand {
           project_id,
           target: IssueSourceReadTarget {
+            connection: None,
+            import: None,
             pull_generation: 0,
             source: selection(project_id).source,
             issue_id: None,
@@ -1624,6 +1638,8 @@ fn issue_source_discovery_can_pass_a_paused_link_without_refreshing_it() {
         RunIssueSourceReadCommand {
           project_id,
           target: IssueSourceReadTarget {
+            connection: None,
+            import: None,
             pull_generation: 0,
             source: selection(project_id).source,
             issue_id: None,
@@ -1718,6 +1734,8 @@ fn issue_source_discovery_pause_during_refresh_does_not_exhaust_other_tasks() {
     let command = RunIssueSourceReadCommand {
       project_id,
       target: IssueSourceReadTarget {
+        connection: None,
+        import: None,
         pull_generation: 0,
         source: selection(project_id).source,
         issue_id: None,
@@ -1818,6 +1836,8 @@ fn issue_source_read_pass_identity_is_partitioned_before_provider_continuations(
           RunIssueSourceReadCommand {
             project_id,
             target: IssueSourceReadTarget {
+              connection: None,
+              import: None,
               pull_generation: 0,
               source: selection(project_id).source,
               issue_id: None,

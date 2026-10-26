@@ -67,6 +67,7 @@ impl StoredFactoryRun {
       .map(|row| crate::WorkSourceReportingDiagnostic {
         operation_id: row.operation_id,
         state: row.state.into(),
+        failure: row.failure,
         attempt: row.attempt,
         available_at: row.available_at,
         origin: self
@@ -712,6 +713,13 @@ impl FactoryRunStore for InMemoryFactoryConfigurationStore {
         latest_outbox_records(stored)
           .into_iter()
           .filter(|record| request.kinds.is_empty() || request.kinds.contains(&record.kind))
+          .filter(|record| {
+            request.projection_capabilities.is_empty()
+              || stored.snapshot().is_ok_and(|snapshot| {
+                crate::accepted_factory_status_action(&snapshot, record)
+                  .is_ok_and(|action| request.projection_capabilities.contains(action.binding.plugin()))
+              })
+          })
           .filter(|record| match record.state {
             crate::FactoryOutboxState::Pending => record.available_at <= request.observed_at,
             crate::FactoryOutboxState::Claimed => record

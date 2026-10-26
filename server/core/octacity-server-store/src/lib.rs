@@ -17,6 +17,8 @@ mod issue_activity;
 pub use issue_activity::*;
 mod issue_discussion;
 pub use issue_discussion::*;
+mod issue_source_import;
+pub use issue_source_import::*;
 mod issue_source_read;
 pub use issue_source_read::*;
 mod issue_source_refresh;

@@ -166,6 +166,7 @@ pub(super) fn observation_reader<S: PilotStore>(
 }
 pub(super) fn observation_request<S: PilotStore>(fixture: &Fixture<S>) -> ReadWorkSourceObservations {
   ReadWorkSourceObservations {
+    connection: None,
     project_id: fixture.input.project_id(),
     source: fixture.profile.read.binding.clone(),
     scan_id: digest(81),

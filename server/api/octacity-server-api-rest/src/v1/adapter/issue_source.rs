@@ -10,6 +10,7 @@ use octacity_server_application::{
 
 /// Installs task Source review independently of admission and provider availability.
 pub struct IssueSourceManagementApplication {
+  pub(super) protected_ingress: bool,
   projections:
     Option<Arc<dyn AuthorizedManagementQueryHandler<ListIssueSourceProjectionsQuery, Error = ApplicationError>>>,
   review: Arc<dyn AuthorizedManagementQueryHandler<GetIssueSynchronizationQuery, Error = ApplicationError>>,
@@ -36,6 +37,7 @@ impl IssueSourceManagementApplication {
       + 'static,
   {
     Self {
+      protected_ingress: false,
       projections: None,
       review: queries.clone(),
       choices: queries.clone(),
@@ -43,6 +45,11 @@ impl IssueSourceManagementApplication {
       commands: None,
       resolution: None,
     }
+  }
+  /// Requires the same authenticated transport proof as Project Source controls when installed.
+  pub fn with_protected_ingress(mut self, required: bool) -> Self {
+    self.protected_ingress = required;
+    self
   }
   /// Installs retained Reporter reads independently of provider and manual-task capabilities.
   pub fn with_projection_queries(
@@ -163,6 +170,7 @@ fn read_request(
   continuation: Option<String>,
 ) -> octacity_server_application::ReadWorkSourceObservations {
   octacity_server_application::ReadWorkSourceObservations {
+    connection: None,
     project_id,
     source,
     window: None,
@@ -343,6 +351,7 @@ pub(super) async fn preview(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct AttachRequest {
+  connection: Option<octacity_server_application::WorkSourceConnectionRef>,
   source: octacity_server_application::WorkSourceBinding,
   item: octacity_server_application::WorkSourceItem,
   expected_field_policy: octacity_server_application::IssueFieldPolicy,
@@ -366,7 +375,7 @@ pub(super) async fn attach(
   let invalid = || application_error(ApplicationFailure::Invalid, &id);
   let project_id = project.parse().map_err(|_| invalid())?;
   let issue_id = issue.parse().map_err(|_| invalid())?;
-  let read = read_request(
+  let mut read = read_request(
     project_id,
     issue_id,
     request.source.clone(),
@@ -374,6 +383,7 @@ pub(super) async fn attach(
     request.scan_id,
     request.continuation,
   );
+  read.connection = request.connection.clone();
   let services = app
     .issue_sources
     .as_ref()
@@ -386,6 +396,7 @@ pub(super) async fn attach(
       AttachIssueSourceCommand {
         intent: AttachIssueSourceIntent {
           selection: IssueSourceSelection {
+            connection: request.connection,
             project_id,
             source: request.source,
             item: request.item,

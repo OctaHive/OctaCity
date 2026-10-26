@@ -7,6 +7,7 @@ use octacity_work_source_protocol::{Request, source};
 pub struct HostedWorkSourceObservations {
   registry: Arc<WorkAdapterRegistry>,
   profiles: Vec<WorkSourceReadProfile>,
+  connections: Option<ManagedIntegrationConnections>,
   clock: Arc<dyn FactoryExecutionClock>,
   timeout: Duration,
   grace: Duration,
@@ -37,11 +38,19 @@ impl HostedWorkSourceObservations {
     Ok(Self {
       registry,
       profiles,
+      connections: None,
       clock,
       timeout,
       grace,
       cancellation,
     })
+  }
+  /// Resolves each explicitly managed request's original connection under current Project grants.
+  /// Unpinned templates require an explicit connection in both reads and reauthorization;
+  /// neither operation can substitute legacy installed credentials.
+  pub fn with_managed_connections(mut self, connections: ManagedIntegrationConnections) -> Self {
+    self.connections = Some(connections);
+    self
   }
 }
 #[async_trait::async_trait]
@@ -52,12 +61,19 @@ impl WorkSourceObservations for HostedWorkSourceObservations {
     project: ProjectId,
     source: WorkSourceBinding,
   ) -> Result<(), ApplicationError> {
+    self.authorize_connection(context, project, source, None).await
+  }
+  async fn authorize_connection(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    source: WorkSourceBinding,
+    connection: Option<&WorkSourceConnectionRef>,
+  ) -> Result<(), ApplicationError> {
     require_running(&self.cancellation)?;
+    let profile = self.resolved_profile(context, project, &source, connection)?;
     self
-      .authorize_until(
-        self.profile(context, project, &source)?,
-        tokio::time::Instant::now() + self.timeout,
-      )
+      .authorize_until(&profile, tokio::time::Instant::now() + self.timeout)
       .await
   }
   async fn read(
@@ -65,14 +81,19 @@ impl WorkSourceObservations for HostedWorkSourceObservations {
     context: &ManagementRequestContext,
     request: ReadWorkSourceObservations,
   ) -> Result<WorkSourceObservationPage, ApplicationError> {
-    let profile = self.profile(context, request.project_id, &request.source)?;
+    let profile = self.resolved_profile(
+      context,
+      request.project_id,
+      &request.source,
+      request.connection.as_ref(),
+    )?;
     if request.limit == 0 {
       return Err(ApplicationError::invalid());
     }
     require_running(&self.cancellation)?;
     let observed_at = self.clock.now()?;
     let deadline = tokio::time::Instant::now() + self.timeout;
-    self.authorize_until(profile, deadline).await?;
+    self.authorize_until(&profile, deadline).await?;
     let wire = Request::Source(source::Request {
       protocol_version: source::PROTOCOL_VERSION,
       request_id: uuid::Uuid::new_v4().to_string(),
@@ -103,7 +124,7 @@ impl WorkSourceObservations for HostedWorkSourceObservations {
     });
     let source::Outcome::Page(page) = process::execute_source(
       &self.registry,
-      profile,
+      &profile,
       wire,
       deadline.saturating_duration_since(tokio::time::Instant::now()),
       self.grace,
@@ -115,7 +136,7 @@ impl WorkSourceObservations for HostedWorkSourceObservations {
     };
     // A grant may be revoked while the external read is in flight. Do not hand its private
     // response to a consumer after revocation, or reset the original operation deadline.
-    self.authorize_until(profile, deadline).await?;
+    self.authorize_until(&profile, deadline).await?;
     let expires_at = add(observed_at, Duration::from_millis(profile.polling.retention_millis))?;
     let scope = octacity_server_store::ManagementSecurityScope::new(context.security_scope().as_str())
       .map_err(|_| ApplicationError::invalid())?;
@@ -155,6 +176,21 @@ impl WorkSourceObservations for HostedWorkSourceObservations {
   }
 }
 impl HostedWorkSourceObservations {
+  fn resolved_profile(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    source: &WorkSourceBinding,
+    connection: Option<&WorkSourceConnectionRef>,
+  ) -> Result<WorkSourceReadProfile, ApplicationError> {
+    let profile = self.profile(context, project, source)?.clone();
+    // A template in managed mode contains no independent legacy read authority.
+    // Both a fresh read and retained-data authorization need the same original pin.
+    if self.connections.is_some() && connection.is_none() && profile.managed_access.is_none() {
+      return Err(ApplicationError::capability_unavailable());
+    }
+    profile.for_connection(connection, self.connections.as_ref())
+  }
   fn profile(
     &self,
     context: &ManagementRequestContext,

@@ -43,10 +43,35 @@ mod integration_check;
 mod integration_management;
 #[cfg(all(test, unix))]
 mod integration_management_tests;
+mod issue_source_worker;
 #[cfg(test)]
 mod issue_tests;
 #[cfg(test)]
 mod issue_workflow_tests;
+mod managed_factory_source;
+#[cfg(all(test, unix))]
+mod source_factory_predicate_tests;
+#[cfg(all(test, unix))]
+mod source_factory_refresh_tests;
+#[cfg(all(test, unix))]
+mod source_factory_restart_tests;
+#[cfg(all(test, unix))]
+mod source_factory_tests;
+#[cfg(all(test, unix))]
+mod source_import_tests;
+#[cfg(all(test, unix))]
+mod source_lifecycle_tests;
+mod source_management;
+#[cfg(all(test, unix))]
+mod source_management_tests;
+#[cfg(all(test, unix))]
+mod source_overlap_tests;
+mod source_profiles_file;
+#[cfg(all(test, unix))]
+mod source_profiles_file_tests;
+mod source_reporting;
+#[cfg(all(test, unix))]
+mod source_restart_tests;
 pub use integration_check::{HostedIntegrationConnectionChecker, IntegrationCheckProfile};
 mod issue_code_review_reader;
 mod lifecycle;

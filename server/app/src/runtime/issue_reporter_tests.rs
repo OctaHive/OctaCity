@@ -8,6 +8,174 @@ mod conflicts;
 mod synchronization;
 
 #[tokio::test]
+#[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
+async fn issue_reporter_leaves_other_capabilities_unclaimed() {
+  issue_projection_ownership(false).await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
+async fn legacy_issue_reporter_does_not_guess_an_operation_from_another_intent_of_the_same_revision() {
+  issue_projection_ownership(true).await;
+}
+
+async fn issue_projection_ownership(legacy: bool) {
+  let (fixture, database, store) = standalone("opaque-tracker").await;
+  let (_, profile, command) = manual_issue(&store, &fixture).await;
+  let accepted = store.transition_issue(management_mutation(command)).await.unwrap();
+  let before = store
+    .issue_push_projections(
+      accepted.issue.project_id,
+      accepted.issue.id,
+      &octacity_server_store::ManagementSecurityScope::trusted_network(),
+      None,
+      4,
+    )
+    .await
+    .unwrap()
+    .pop()
+    .unwrap();
+  let operation = before.record.operation_id;
+  fixture.clock.0.store(120, Ordering::SeqCst);
+  if legacy {
+    // Restore frozen pre-operation-routing publications in this private test DB.
+    // A resolution may share an Issue revision while selecting another writer.
+    sqlx::query("UPDATE outbox_entries SET payload=payload-'push_operation' WHERE aggregate_identity=$1")
+      .bind(accepted.issue.id.to_string())
+      .execute(&database.pool)
+      .await
+      .unwrap();
+    let mut decoy = serde_json::json!({"push_intent":before.intent});
+    decoy["push_intent"]["desired"]["reporter"]["capability"] =
+      serde_json::to_value(exact("unrelated-capability", 95)).unwrap();
+    sqlx::query("INSERT INTO outbox_entries(id,topic,aggregate_kind,aggregate_identity,payload,created_at,available_at,attempt_count) \
+      SELECT $1,topic,aggregate_kind,aggregate_identity,$2,created_at,available_at,0 FROM outbox_entries \
+      WHERE aggregate_identity=$3 AND payload->'push_intent'->'desired' IS NOT NULL LIMIT 1")
+      .bind(uuid::Uuid::new_v4()).bind(sqlx::types::Json(decoy)).bind(accepted.issue.id.to_string())
+      .execute(&database.pool).await.unwrap();
+  }
+  let projector = Arc::new(
+    HostedFactoryWorkStatusProjector::new(
+      store.clone(),
+      Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(fixture.root.path()).unwrap()),
+      vec![profile.clone()],
+      fixture.clock.clone(),
+      Duration::from_secs(2),
+      Duration::from_millis(20),
+      CancellationToken::new(),
+    )
+    .unwrap(),
+  );
+  let unrelated = FactoryWorkStatusOutboxWorker::new(
+    store.clone(),
+    std::collections::BTreeMap::from([(
+      exact("unrelated-capability", 95),
+      projector.clone() as Arc<dyn FactoryWorkStatusProjector>,
+    )]),
+    FactoryReporterWorkerSettings::new(key("unrelated-owner"), 10000, 1).unwrap(),
+    fixture.clock.clone(),
+  )
+  .unwrap();
+  assert_eq!(unrelated.run_once(time(120)).await.unwrap().claimed, 0);
+  assert_eq!(
+    store.issue_push_projection(operation).await.unwrap().record,
+    before.record
+  );
+  assert!(captured_requests(&fixture.root.path().join("opaque-tracker")).is_empty());
+  let rightful = if legacy {
+    FactoryWorkStatusOutboxWorker::new(
+      store.clone(),
+      std::collections::BTreeMap::from([
+        (capability(), projector.clone() as Arc<dyn FactoryWorkStatusProjector>),
+        (
+          exact("unrelated-capability", 95),
+          projector as Arc<dyn FactoryWorkStatusProjector>,
+        ),
+      ]),
+      FactoryReporterWorkerSettings::new(key("legacy-owner"), 10000, 1).unwrap(),
+      fixture.clock.clone(),
+    )
+    .unwrap()
+  } else {
+    issue_worker(&fixture, store.clone(), vec![profile])
+  };
+  assert_eq!(rightful.run_once(time(120)).await.unwrap().delivered, 1);
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
+async fn issue_reporter_resolver_preserves_an_explicit_connection_pin_against_an_equally_granted_alias() {
+  let (fixture, database, store) = standalone("opaque-tracker").await;
+  let (issue, profile, command) = manual_issue(&store, &fixture).await;
+  let (original, _) = managed_access_named(
+    &fixture,
+    profile.binding(),
+    IntegrationPurpose::TaskUpdate,
+    "original-writer",
+  )
+  .await;
+  let (other, _) = managed_access_named(
+    &fixture,
+    profile.binding(),
+    IntegrationPurpose::TaskUpdate,
+    "other-writer",
+  )
+  .await;
+  let mapping = store
+    .issue_source_mapping(
+      issue.project_id,
+      issue.id,
+      &octacity_server_store::ManagementSecurityScope::trusted_network(),
+      None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+  store
+    .publish_issue_source_mapping(management_mutation(PublishIssueSourceMapping {
+      writer_access: Some(original.issue_writer_access()),
+      intent: PublishIssueSourceMappingIntent {
+        project_id: issue.project_id,
+        issue_id: issue.id,
+        expected_issue_version: issue.version,
+        expected_mapping: Some(mapping.reference()),
+        definition: mapping.definition.clone(),
+      },
+      native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
+      readable: WorkSourceReportingPolicy {
+        labels: vec![],
+        states: vec![],
+      },
+      writable: Some(WorkSourceReportingPolicy {
+        labels: vec!["custom-ready".into()],
+        states: vec![],
+      }),
+      idempotency_key: IdempotencyKey::new("pin-original-writer").unwrap(),
+      published_at: time(50),
+    }))
+    .await
+    .unwrap();
+  let accepted = store.transition_issue(management_mutation(command)).await.unwrap();
+  fixture.clock.0.store(120, Ordering::SeqCst);
+  let worker = issue_worker_with_connections(
+    &fixture,
+    store.clone(),
+    vec![profile.with_managed_access(other)],
+    Some(ManagedIntegrationConnections::new(fixture.store.clone())),
+  );
+  let outcome = worker.run_once(time(120)).await.unwrap();
+  assert_eq!(outcome.delivered, 0);
+  assert_eq!(outcome.failed, 1);
+  assert!(captured_requests(&fixture.root.path().join("opaque-tracker")).is_empty());
+  assert_eq!(
+    store.issue(issue.project_id, issue.id, None).await.unwrap(),
+    accepted.issue
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn manual_issue_push_recovers_unknown_response_without_a_run_or_retargeting() {
   let (fixture, database, store) = standalone("opaque-tracker").await;
@@ -236,6 +404,7 @@ async fn manual_issue<S>(
     .attach_issue_source(management_mutation(AttachIssueSource {
       intent: AttachIssueSourceIntent {
         selection: IssueSourceSelection {
+          connection: None,
           project_id: project,
           source: source.clone(),
           item: WorkSourceItem {

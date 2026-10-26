@@ -49,6 +49,7 @@ pub struct FactoryReporterProfileDraft {
 #[derive(Clone)]
 pub struct FactoryReporterProfile {
   managed_access: Option<ManagedIntegrationAccess>,
+  native_configuration: Option<ImmutableReference>,
   binding: WorkSourceBinding,
   draft: FactoryReporterProfileDraft,
 }
@@ -93,6 +94,7 @@ impl FactoryReporterProfile {
     );
     Ok(Self {
       managed_access: None,
+      native_configuration: None,
       binding: WorkSourceBinding {
         installation: draft.installation.clone(),
         capability: draft.capability.clone(),
@@ -101,6 +103,28 @@ impl FactoryReporterProfile {
       },
       draft,
     })
+  }
+  /// Freezes a managed native connection parent into the complete installed writer identity.
+  /// Legacy explicit profiles retain their original digest when this opt-in is absent.
+  pub fn with_native_configuration(mut self, parent: ImmutableReference) -> Result<Self, ApplicationError> {
+    let bytes = serde_json::to_vec(&(&self.draft, &parent)).map_err(|_| ApplicationError::invalid())?;
+    self.binding.configuration = ImmutableReference::new(
+      self.binding.configuration.identity().clone(),
+      self.binding.configuration.version().clone(),
+      FactoryDigest::sha256("octacity.factory.managed-reporter-profile.v1", &[&bytes]),
+    );
+    self.native_configuration = Some(parent);
+    Ok(self)
+  }
+  fn require_native_configuration(&self, selected: Option<&ImmutableReference>) -> Result<(), ApplicationError> {
+    if self
+      .native_configuration
+      .as_ref()
+      .is_some_and(|parent| Some(parent) != selected)
+    {
+      return Err(ApplicationError::capability_unavailable());
+    }
+    Ok(())
   }
   /// Attaches current managed Project grants without changing accepted source identity or mapping.
   pub fn with_managed_access(mut self, access: ManagedIntegrationAccess) -> Self {

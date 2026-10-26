@@ -108,6 +108,7 @@ where
     .observations
     .remove(0);
   let selection = IssueSourceSelection {
+    connection: None,
     project_id: project,
     source: observed.source.clone(),
     item: observed.snapshot.item.clone(),

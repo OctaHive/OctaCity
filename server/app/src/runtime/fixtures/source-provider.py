@@ -171,6 +171,8 @@ if request['message']['command']['operation'] == 'authorize':
         outcome = {'status': 'failure', 'payload': {'class': 'permanent', 'retry_after_millis': None}}
     else:
         outcome = {'status': 'authorized', 'payload': {'scan_id': intent['scan_id'], 'resource_id': intent['resource']['resource_id'], 'configuration_digest': intent['configuration_digest']}}
+elif 'failure' in mode:
+    outcome = {'status': 'failure', 'payload': mode['failure']}
 elif request['message']['command']['operation'] == 'preview':
     selections = [intent['selection']] + intent.get('additional_selections', [])
     candidates = [{key: candidate[key] for key in ('item_id', 'display_id', 'title', 'state', 'labels')} for candidate in mode.get('candidates', [])[:intent['max_items']]]
@@ -179,8 +181,6 @@ elif request['message']['command']['operation'] == 'preview':
     payload = {key: intent[key] for key in ('scan_id', 'configuration_digest')}
     payload.update(resource_id=intent['resource']['resource_id'], candidates=candidates, next_cursor=None)
     outcome = {'status': 'previewed', 'payload': payload}
-elif 'failure' in mode:
-    outcome = {'status': 'failure', 'payload': mode['failure']}
 else:
     time.sleep(mode.get('delay', 0))
     candidates = mode.get('candidates', [])

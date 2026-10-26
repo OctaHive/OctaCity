@@ -25,6 +25,28 @@ impl Drop for DropSignal {
 
 static LISTENER_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
+#[test]
+fn installed_owner_context_preserves_verified_identity_and_retained_partition() {
+  use octacity_server_api_rest::integrations::ProtectedIntegrationRequest;
+  use octacity_server_application::{ManagementActorKind, ManagementIngress};
+
+  let first = super::integration_management::request_context("integration-owner");
+  let next = super::integration_management::request_context("integration-owner");
+  let other = super::integration_management::request_context("another-owner");
+  assert_eq!(first.actor().kind(), ManagementActorKind::AuthenticatedManagement);
+  assert_eq!(first.actor().identity(), Some("integration-owner"));
+  assert_eq!(first.attributes().ingress(), ManagementIngress::VerifiedIdentity);
+  assert_eq!(
+    first.security_scope().as_str(),
+    "local-proxy:61120b7646b054accafde933a387a374b78ba66c215a82a24a6d504c6e5c0043",
+    "moving the shared context must preserve accepted history and idempotency partitions"
+  );
+  assert_eq!(first.security_scope(), next.security_scope());
+  assert_ne!(first.security_scope(), other.security_scope());
+  assert_ne!(first.request_id(), next.request_id());
+  assert!(ProtectedIntegrationRequest::new(first).is_ok());
+}
+
 #[async_trait]
 impl ReadinessCheck for HealthyCheck {
   fn name(&self) -> &'static str {
@@ -36,7 +58,7 @@ impl ReadinessCheck for HealthyCheck {
   }
 }
 
-fn healthy_checks() -> ReadinessChecks {
+pub(super) fn healthy_checks() -> ReadinessChecks {
   let check = || Arc::new(HealthyCheck) as Arc<dyn ReadinessCheck>;
   ReadinessChecks::new(check(), check(), check(), check(), std::iter::empty())
 }

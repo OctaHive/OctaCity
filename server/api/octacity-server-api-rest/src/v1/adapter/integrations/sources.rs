@@ -13,6 +13,21 @@ pub(super) struct SourceConfigurationEndpoints {
   list: Arc<dyn AuthorizedManagementQueryHandler<ListWorkSourceConfigurationsQuery, Error = ApplicationError>>,
 }
 impl IntegrationManagementApplication {
+  /// Declares trusted installation intent independently of supplied handlers.
+  /// Omitting required handlers must fail scoped readiness, even when both are absent.
+  pub fn require_source_management(mut self) -> Self {
+    self.source_management_required = true;
+    self
+  }
+  /// Optional Source API installation health, independent of provider availability.
+  /// A partial handler family is an assembly failure rather than optional absence.
+  pub fn source_management_readiness(&self) -> Option<bool> {
+    match (self.source_management_required, &self.sources, &self.source_reads) {
+      (false, None, None) => None,
+      (_, Some(_), Some(_)) => Some(true),
+      _ => Some(false),
+    }
+  }
   /// Installs independently authorized input authoring; no credential or provider execution capability is added.
   pub fn with_source_configuration<C, Q>(mut self, commands: Arc<C>, queries: Arc<Q>) -> Self
   where
@@ -40,7 +55,16 @@ fn services<'a>(
   application
     .sources
     .as_ref()
-    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, request_id))
+    .ok_or_else(|| source_unavailable(application, request_id))
+}
+// Optional absence differs from an installation with only half its handlers composed.
+pub(super) fn source_unavailable(application: &IntegrationManagementApplication, request_id: &RequestId) -> ApiError {
+  let failure = if application.source_management_readiness().is_none() {
+    ApplicationFailure::CapabilityUnavailable
+  } else {
+    ApplicationFailure::Unavailable
+  };
+  application_error(failure, request_id)
 }
 fn intent(body: SafeIntent, project: &str, request_id: &RequestId) -> Result<WorkSourceConfigurationIntent, ApiError> {
   let intent: WorkSourceConfigurationIntent =
@@ -133,6 +157,57 @@ pub(crate) struct SourceChoices {
   connection_id: String,
   connection_version: u64,
 }
+fn source_choice_query(
+  query: SourceChoices,
+  project: &str,
+  id: &RequestId,
+) -> Result<ListWorkSourceInputChoicesQuery, ApiError> {
+  Ok(ListWorkSourceInputChoicesQuery {
+    project_id: project
+      .parse()
+      .map_err(|_| application_error(ApplicationFailure::Invalid, id))?,
+    connection_id: query
+      .connection_id
+      .parse()
+      .map_err(|_| application_error(ApplicationFailure::Invalid, id))?,
+    connection_version: serde_json::from_value(json!(query.connection_version))
+      .map_err(|_| application_error(ApplicationFailure::Invalid, id))?,
+  })
+}
+
+impl IntegrationManagementApplication {
+  /// Installs read-only Project task-source discovery, without import or Factory activation.
+  pub fn with_project_source_choices<Q>(mut self, queries: Arc<Q>) -> Self
+  where
+    Q: AuthorizedManagementQueryHandler<
+        octacity_server_application::ListProjectIssueSourceChoicesQuery,
+        Error = ApplicationError,
+      > + 'static,
+  {
+    self.project_source_choices = Some(queries);
+    self
+  }
+}
+pub(crate) async fn project_source_choices(
+  State(app): State<Arc<IntegrationManagementApplication>>,
+  Extension(crate::ManagementRequest(id, ctx)): Extension<crate::ManagementRequest>,
+  Path(project): Path<String>,
+  query: Result<Query<SourceChoices>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Value>, ApiError> {
+  let Query(query) = query.map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
+  let query = octacity_server_application::ListProjectIssueSourceChoicesQuery {
+    selection: source_choice_query(query, &project, &id)?,
+  };
+  let result = app
+    .project_source_choices
+    .as_ref()
+    .ok_or_else(|| source_unavailable(&app, &id))?
+    .handle_authorized_query(&ctx, query)
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(Json(encode(result, &id)?))
+}
+
 pub(crate) async fn source_choices(
   State(app): State<Arc<IntegrationManagementApplication>>,
   Extension(crate::ManagementRequest(id, ctx)): Extension<crate::ManagementRequest>,
@@ -140,17 +215,7 @@ pub(crate) async fn source_choices(
   query: Result<Query<SourceChoices>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<Value>, ApiError> {
   let Query(query) = query.map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
-  let query = ListWorkSourceInputChoicesQuery {
-    project_id: project
-      .parse()
-      .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?,
-    connection_id: query
-      .connection_id
-      .parse()
-      .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?,
-    connection_version: serde_json::from_value(json!(query.connection_version))
-      .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?,
-  };
+  let query = source_choice_query(query, &project, &id)?;
   let result = services(&app, &id)?
     .choices
     .handle_authorized_query(&ctx, query)
@@ -314,7 +379,7 @@ pub(crate) async fn preview_sources(
   let result = app
     .source_reads
     .as_ref()
-    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
+    .ok_or_else(|| source_unavailable(&app, &id))?
     .preview
     .handle_authorized_query(&ctx, query)
     .await
@@ -372,7 +437,7 @@ async fn diagnostics(
   let result = app
     .source_reads
     .as_ref()
-    .ok_or_else(|| application_error(ApplicationFailure::Unavailable, &id))?
+    .ok_or_else(|| source_unavailable(&app, &id))?
     .diagnostics
     .handle_authorized_query(&ctx, query)
     .await

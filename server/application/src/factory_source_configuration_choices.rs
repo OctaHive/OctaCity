@@ -167,9 +167,8 @@ impl<S> FactorySourceConfigurationHandlers<S> {
   }
 }
 #[async_trait]
-impl<
-  S: FactorySourceStore + IntegrationProjectAccessStore + IntegrationConnectionStore + IntegrationAdministrationStore,
-> ManagementQueryUseCase<ListWorkSourceInputChoicesQuery> for FactorySourceConfigurationHandlers<S>
+impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + IntegrationAdministrationStore>
+  ManagementQueryUseCase<ListWorkSourceInputChoicesQuery> for FactorySourceConfigurationHandlers<S>
 {
   type Error = ApplicationError;
   async fn execute_management_query(

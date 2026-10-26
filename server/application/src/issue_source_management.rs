@@ -57,14 +57,24 @@ impl<S: IssueSourceMappingStore> ManagementCommandUseCase<PreviewIssueSourceComm
     self.visible(context, command.issue_id).await?;
     self.store.issue(command.project_id, command.issue_id, None).await?;
     octacity_server_store::validate_source_cursor(&command.continuation).map_err(|_| ApplicationError::invalid())?;
-    let installed = self
-      .mappings
+    let connection = self
+      .original_source_connection(context, command.project_id, command.issue_id)
+      .await?;
+    let mappings = self
+      .installed_source_mappings(context, command.project_id, connection.as_ref())
+      .await?;
+    let installed = mappings
       .iter()
       .find(|m| m.project_id == command.project_id && m.source == command.source)
       .ok_or_else(ApplicationError::capability_unavailable)?;
     self
       .reader
-      .authorize(context, installed.project_id, installed.source.clone())
+      .authorize_connection(
+        context,
+        installed.project_id,
+        installed.source.clone(),
+        connection.as_ref(),
+      )
       .await?;
     let scan_id = command
       .scan_id
@@ -74,6 +84,7 @@ impl<S: IssueSourceMappingStore> ManagementCommandUseCase<PreviewIssueSourceComm
       .read(
         context,
         ReadWorkSourceObservations {
+          connection: connection.clone(),
           project_id: command.project_id,
           source: command.source.clone(),
           scan_id,
@@ -94,6 +105,7 @@ impl<S: IssueSourceMappingStore> ManagementCommandUseCase<PreviewIssueSourceComm
         return Err(ApplicationError::invalid());
       }
       let selection = IssueSourceSelection {
+        connection: connection.clone(),
         project_id: command.project_id,
         source: command.source.clone(),
         item: observed.snapshot.item.clone(),
@@ -180,7 +192,11 @@ impl<S: IssueSourceMappingStore> ManagementQueryUseCase<GetIssueSourceChoicesQue
       .issue_source_link(query.project_id, query.issue_id, &context.security_scope().to_store())
       .await?;
     let mut items = Vec::new();
-    for installed in self.mappings.iter().filter(|m| m.project_id == query.project_id) {
+    let connection = link.as_ref().and_then(|l| l.selection.connection.as_ref());
+    let mappings = self
+      .installed_source_mappings(context, query.project_id, connection)
+      .await?;
+    for installed in mappings.iter().filter(|m| m.project_id == query.project_id) {
       if link
         .as_ref()
         .is_some_and(|l| !l.supports_profile(&installed.source, &installed.native_resource))
@@ -189,7 +205,7 @@ impl<S: IssueSourceMappingStore> ManagementQueryUseCase<GetIssueSourceChoicesQue
       }
       match self
         .reader
-        .authorize(context, installed.project_id, installed.source.clone())
+        .authorize_connection(context, installed.project_id, installed.source.clone(), connection)
         .await
       {
         Err(ApplicationError::CapabilityUnavailable) => continue,

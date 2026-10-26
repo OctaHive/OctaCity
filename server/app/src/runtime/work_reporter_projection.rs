@@ -110,6 +110,14 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
       .find(|p| p.draft.project_id == request.subject.project_id() && p.binding == *binding)
       .cloned()
       .ok_or_else(ApplicationError::unavailable)?;
+    profile.require_native_configuration(
+      preparation
+        .input
+        .definition()
+        .connection
+        .as_ref()
+        .and_then(|connection| connection.reporter_configuration.as_ref()),
+    )?;
     let draft = &profile.draft;
     if correlation.work_id != request.work_id
       || snapshot.work.id() != request.work_id
@@ -181,6 +189,13 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
     };
     intent.validate().map_err(|_| ApplicationError::invalid())?;
     if let Some(connection) = &preparation.input.definition().connection {
+      if profile.managed_access.as_ref().is_some_and(|access| {
+        !access.matches_work_connection(connection, octacity_server_store::IntegrationPurpose::TaskUpdate)
+      }) {
+        return Err(ApplicationError::ReporterRejected(
+          octacity_server_store::FactoryOutboxFailure::Forbidden,
+        ));
+      }
       profile.managed_access = Some(
         self
           .managed_connections
@@ -210,6 +225,14 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
   ) -> Result<(FactoryReporterProfile, reporter::ProjectionIntent), ApplicationError> {
     let original = self.store.issue_push_projection(request.operation_id).await?;
     let mut profile = self.issue_profile(&original.intent)?;
+    profile.require_native_configuration(
+      original
+        .intent
+        .desired
+        .as_ref()
+        .and_then(|desired| desired.writer_access.as_ref())
+        .and_then(|access| access.configuration.as_ref()),
+    )?;
     let policy = profile
       .draft
       .issue_delivery
@@ -219,6 +242,15 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
     }
     let desired = original.intent.desired.as_ref().ok_or_else(ApplicationError::invalid)?;
     if let Some(pin) = &desired.writer_access {
+      if profile
+        .managed_access
+        .as_ref()
+        .is_some_and(|access| access.issue_writer_access() != *pin)
+      {
+        return Err(ApplicationError::ReporterRejected(
+          octacity_server_store::FactoryOutboxFailure::Forbidden,
+        ));
+      }
       if let Some(connections) = &self.managed_connections {
         profile.managed_access = Some(connections.for_issue_writer(pin, &desired.reporter));
       } else if !profile

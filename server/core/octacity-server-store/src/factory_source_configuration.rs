@@ -241,30 +241,56 @@ pub fn validate_managed_work_source(
   access: &PublishedIntegrationProjectAccess,
   administration: &IntegrationAdministrationState,
 ) -> Result<(), StoreError> {
-  let selected = input.definition().connection.as_ref().ok_or_else(source_conflict)?;
-  if metadata.id != selected.id
-    || metadata.version != selected.version
-    || access.connection_id != selected.id
-    || access.project_id != input.project_id()
-    || access.connection_version != selected.version
-    || access.version != selected.access_version
-    || administration.id != selected.id
-    || !administration.enabled
-    || administration.active_version != Some(selected.version)
-  {
-    return Err(source_conflict());
-  }
   let definition = input.definition();
-  if definition.reporter.is_some() != selected.reporter_configuration.is_some() {
+  let connection = definition.connection.as_ref().ok_or_else(source_conflict)?;
+  if definition.reporter.is_some() != connection.reporter_configuration.is_some() {
     return Err(source_conflict());
   }
-  for (binding, purpose) in std::iter::once((&definition.source, IntegrationPurpose::TaskRead)).chain(
-    definition
-      .reporter
-      .as_ref()
-      .map(|reporter| (reporter, IntegrationPurpose::TaskUpdate)),
-  ) {
-    let resource = metadata
+  let context = ManagedWorkSourceContext {
+    project_id: input.project_id(),
+    connection,
+    metadata,
+    access,
+    administration,
+  };
+  context.validate(&definition.source, IntegrationPurpose::TaskRead)?;
+  if let Some(reporter) = &definition.reporter {
+    context.validate(reporter, IntegrationPurpose::TaskUpdate)?;
+  }
+  Ok(())
+}
+
+/// One current native authority context, shared by independent task import and optional Factory inputs.
+pub struct ManagedWorkSourceContext<'a> {
+  /// Actual owning Project.
+  pub project_id: octacity_server_domain::ProjectId,
+  /// Original metadata/native parents and reviewed grant.
+  pub connection: &'a WorkSourceConnectionRef,
+  /// Exact frozen connection metadata.
+  pub metadata: &'a PublishedIntegrationConnection,
+  /// Current Project grant.
+  pub access: &'a PublishedIntegrationProjectAccess,
+  /// Current connection and credential lifecycle state.
+  pub administration: &'a IntegrationAdministrationState,
+}
+impl ManagedWorkSourceContext<'_> {
+  /// Verifies an exact current resource/purpose without a Factory target or provider call.
+  pub fn validate(&self, binding: &WorkSourceBinding, purpose: IntegrationPurpose) -> Result<(), StoreError> {
+    let selected = self.connection;
+    if self.metadata.id != selected.id
+      || self.metadata.version != selected.version
+      || self.access.connection_id != selected.id
+      || self.access.project_id != self.project_id
+      || self.access.connection_version != selected.version
+      || self.access.version != selected.access_version
+      || self.administration.id != selected.id
+      || !self.administration.enabled
+      || self.administration.active_version != Some(selected.version)
+    {
+      return Err(source_conflict());
+    }
+    let resource = self
+      .metadata
       .definition
       .resources
       .iter()
@@ -280,20 +306,22 @@ pub fn validate_managed_work_source(
       IntegrationPurpose::TaskUpdate => selected.reporter_configuration.as_ref().ok_or_else(source_conflict)?,
       _ => return Err(source_conflict()),
     };
-    if metadata.definition.installation != binding.installation
+    if self.metadata.definition.installation != binding.installation
       || capability.capability != binding.capability
       || capability.configuration != *configuration
-      || !access
+      || !self
+        .access
         .resources
         .iter()
         .any(|r| r.reference == binding.resource && r.purposes.contains(&purpose))
-      || !administration
+      || !self
+        .administration
         .credentials
         .iter()
         .any(|c| c.reference == capability.credential && c.configured)
     {
       return Err(source_conflict());
     }
+    Ok(())
   }
-  Ok(())
 }

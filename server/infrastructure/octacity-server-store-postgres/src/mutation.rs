@@ -348,6 +348,7 @@ pub(crate) enum MutationKind {
   PublishIntegrationConnection,
   PublishIntegrationProjectAccess,
   PublishWorkSourceConfiguration,
+  PublishIssueSourceImport,
   BeginIntegrationAdministration,
   CompleteIntegrationAdministration,
   AbandonIntegrationPreparation,
@@ -680,6 +681,12 @@ impl MutationKind {
         "publish-factory-role-profiles",
         "project",
         "factory.role-profiles-published"
+      ),
+      Self::PublishIssueSourceImport => metadata!(
+        b"octacity.publish-issue-source-import.v1\0",
+        "publish-issue-source-import",
+        "project",
+        "issue.source-import-published"
       ),
       Self::PublishWorkSourceConfiguration => metadata!(
         b"octacity.publish-work-source-configuration.v1\0",

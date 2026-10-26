@@ -3,14 +3,35 @@ use super::*;
 use octacity_server_store::testing::management_mutation;
 
 async fn managed_fixture(provider: &str) -> (Fixture, FactoryReporterProfile) {
-  let (mut fixture, profile) = fixture(provider).await;
+  let (fixture, profile) = fixture(provider).await;
+  managed_fixture_with_native_parent(fixture, profile, None).await
+}
+
+pub(super) async fn managed_fixture_with_native_parent<
+  S: WorkSourceArtifactStore
+    + FactoryDiscoveryStore
+    + FactorySourceConfigurationStore
+    + IntegrationConnectionStore
+    + IntegrationAdministrationStore
+    + IntegrationProjectAccessStore
+    + 'static,
+>(
+  mut fixture: Fixture<S>,
+  profile: FactoryReporterProfile,
+  native_parent: Option<ImmutableReference>,
+) -> (Fixture<S>, FactoryReporterProfile) {
+  let profile = match &native_parent {
+    Some(parent) => profile.with_native_configuration(parent.clone()).unwrap(),
+    None => profile,
+  };
+  let native_parent = native_parent.unwrap_or_else(|| profile.binding().configuration.clone());
   let (_, id) = managed_access(&fixture, &fixture.profile.read.binding, IntegrationPurpose::TaskRead).await;
   let metadata = fixture.store.integration_connection(id, None).await.unwrap();
   let mut resources = metadata.definition.resources.clone();
   let writer = IntegrationCapability {
     purpose: IntegrationPurpose::TaskUpdate,
     capability: profile.binding().capability.clone(),
-    configuration: profile.binding().configuration.clone(),
+    configuration: native_parent.clone(),
     credential: serde_json::from_value(serde_json::json!({"provider":"installed","reference":"independent-writer"}))
       .unwrap(),
   };
@@ -99,18 +120,21 @@ async fn managed_fixture(provider: &str) -> (Fixture, FactoryReporterProfile) {
     binding: profile.binding().clone(),
   };
   let mut definition = fixture.input.definition().clone();
+  definition.reporter = Some(profile.binding().clone());
   definition.connection = Some(WorkSourceConnectionRef {
     id,
     version: updated.version,
     access_version: access.version,
     source_configuration: source.binding.configuration.clone(),
-    reporter_configuration: Some(reporter.binding.configuration.clone()),
+    reporter_configuration: Some(native_parent.clone()),
   });
   let handlers = FactorySourceConfigurationHandlers::new(
     fixture.store.clone(),
     Arc::new(TrustedNetworkManagementPolicy),
-    vec![source, reporter],
+    vec![source, reporter.clone()],
   )
+  .unwrap()
+  .with_connection_configuration(reporter, native_parent)
   .unwrap();
   let published = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers))
     .handle_command(
@@ -135,7 +159,16 @@ async fn managed_fixture(provider: &str) -> (Fixture, FactoryReporterProfile) {
   (fixture, profile)
 }
 
-async fn admit_managed(fixture: &Fixture) -> FactoryRunId {
+async fn admit_managed<
+  S: WorkSourceArtifactStore
+    + FactoryDiscoveryStore
+    + IntegrationConnectionStore
+    + IntegrationAdministrationStore
+    + IntegrationProjectAccessStore
+    + 'static,
+>(
+  fixture: &Fixture<S>,
+) -> FactoryRunId {
   let worker = fixture
     .worker()
     .with_managed_connections(ManagedIntegrationConnections::new(fixture.store.clone()));
@@ -219,4 +252,38 @@ async fn managed_reporter_input_resolves_its_writer_and_rechecks_the_independent
       assert_eq!(after.flow, before.flow);
     }
   }
+}
+
+#[path = "source_reporter_inventory_tests.rs"]
+mod inventory;
+
+#[tokio::test]
+async fn managed_reporter_resolver_cannot_replace_an_explicit_connection_pin_with_an_equally_granted_alias() {
+  let (fixture, profile) = managed_fixture("opaque-reporter").await;
+  let (other, _) = managed_access_named(
+    &fixture,
+    profile.binding(),
+    IntegrationPurpose::TaskUpdate,
+    "other-writer",
+  )
+  .await;
+  let run = admit_managed(&fixture).await;
+  let projector = Arc::new(
+    Arc::try_unwrap(hosted(&fixture, vec![profile.with_managed_access(other)]))
+      .ok()
+      .unwrap()
+      .with_managed_connections(ManagedIntegrationConnections::new(fixture.store.clone())),
+  );
+  accept_status_at(&fixture, projector.clone(), run, 100).await;
+  let before = fixture.store.factory_run_snapshot(run).await.unwrap();
+  let result = reporting_worker(&fixture, projector, "pinned-reporter", 10000)
+    .run_once(time(120))
+    .await
+    .unwrap();
+  assert_eq!(result.delivered, 0);
+  assert_eq!(result.failed, 1);
+  assert!(captured_requests(&fixture.root.path().join("opaque-reporter")).is_empty());
+  let after = fixture.store.factory_run_snapshot(run).await.unwrap();
+  assert_eq!(before.work, after.work);
+  assert_eq!(before.flow, after.flow);
 }

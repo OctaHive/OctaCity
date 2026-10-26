@@ -277,12 +277,11 @@ async fn heartbeat_keeps_drain_sticky_then_fences_and_cancels_the_job() {
   assert!(*draining.borrow());
 }
 
-#[tokio::test]
+#[tokio::test(start_paused = true)]
 async fn heartbeat_failure_cancels_at_the_lease_safety_deadline() {
   let now = unix_now();
   let signing_key = SigningKey::from_bytes(&[7; 32]);
   let mut lease = signed_lease(&signing_key, now);
-  lease.expires_at = now + 2;
   let failures = (0..20)
     .map(|_| {
       Err(CoordinatorError::Rejected {
@@ -299,8 +298,10 @@ async fn heartbeat_failure_cancels_at_the_lease_safety_deadline() {
     heartbeats: Mutex::new(failures),
   });
   let (_snapshot_sender, snapshots) = watch::channel(snapshot());
+  // Start the wall-clock TTL after fixture setup; Tokio drives its safety deadline virtually.
+  lease.expires_at = unix_now() + 120;
   let monitor = LeaseMonitor::start(
-    client,
+    client.clone(),
     registration(),
     lease,
     capacity(),
@@ -313,7 +314,13 @@ async fn heartbeat_failure_cancels_at_the_lease_safety_deadline() {
   )
   .unwrap();
   let cancellation = monitor.job_cancellation();
-  let outcome = monitor.wait().await.unwrap();
+  tokio::time::sleep(Duration::from_millis(50)).await;
+  assert!(!cancellation.is_cancelled(), "a failed heartbeat alone cannot cancel the job");
+  assert!(client.heartbeats.lock().unwrap().len() < 20, "the monitor must attempt a heartbeat");
+  let outcome = tokio::time::timeout(Duration::from_secs(120), monitor.wait())
+    .await
+    .expect("the lease safety deadline must bound failed heartbeats")
+    .unwrap();
 
   assert!(matches!(outcome, LeaseMonitorOutcome::Expired));
   assert!(cancellation.is_cancelled());

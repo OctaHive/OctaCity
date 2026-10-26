@@ -23,6 +23,7 @@ pub(super) fn settings() -> FactorySourceWorkerSettings {
   FactorySourceWorkerSettings {
     worker: toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=60000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap(),
     max_attempts: 3,
+    target_retry: None,
     operation_timeout: Duration::from_secs(10),
     cancellation_grace: Duration::from_secs(1),
   }

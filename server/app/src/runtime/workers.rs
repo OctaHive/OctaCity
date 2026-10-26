@@ -20,6 +20,9 @@ use tracing::{info, warn};
 use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, readiness::WorkerHealth};
 
 pub(super) struct DurableWorkers {
+  pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
+  pub(super) managed_factory_source: Option<Arc<dyn super::FactorySourceRuntime>>,
+  pub(super) source_reporting: Option<super::source_reporting::InstalledSourceReporting>,
   pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
   pub(super) legacy_issues: Arc<PostgresStore>,
   pub(super) actions: octacity_server_application::FactoryActionProjectionWorker<PostgresStore>,
@@ -163,6 +166,27 @@ pub(super) fn spawn_durable_workers(
       cancellation.child_token(),
     )
   });
+  let source_reads = workers.source_reads.map(|worker| {
+    let settings = worker.settings();
+    let worker = Arc::new(worker);
+    let child = cancellation.child_token();
+    spawn_worker_loop(
+      WorkerIdentity::new("issue-source-read", WorkerKind::Factory),
+      Arc::new(WorkerHealth::new(
+        "issue-source-read",
+        settings.poll_interval().saturating_add(settings.claim_lifetime()),
+      )),
+      settings.poll_interval(),
+      settings.claim_lifetime(),
+      child.clone(),
+      move |_, _| {
+        let worker = worker.clone();
+        let cancellation = child.clone();
+        async move { worker.run_once(cancellation).await }
+      },
+      |_| {},
+    )
+  });
   let mut factory_outbox = vec![];
   let mut source_task = None;
   let factory = workers.factory.map(|installed| {
@@ -202,6 +226,26 @@ pub(super) fn spawn_durable_workers(
   ];
   if let Some(task) = factory {
     tasks.push((FACTORY_WORKER_NAME, task));
+  }
+  if let Some(super::source_reporting::InstalledSourceReporting {
+    dispatcher,
+    policy,
+    health,
+  }) = workers.source_reporting
+  {
+    tasks.push((
+      "managed-source-reporting",
+      spawn_factory_outbox_worker(dispatcher, health, policy, cancellation.child_token()),
+    ));
+  }
+  if let Some(worker) = workers.managed_factory_source {
+    tasks.push((
+      "managed-factory-source",
+      spawn_factory_source_worker(worker, cancellation.child_token()),
+    ));
+  }
+  if let Some(task) = source_reads {
+    tasks.push(("issue-source-read", task));
   }
   if let Some(task) = source_task {
     tasks.push(("factory-source", task));

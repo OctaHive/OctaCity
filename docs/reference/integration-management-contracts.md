@@ -62,6 +62,82 @@ advertised task purposes must exist in its manifest. Optional `checks` use
 private `ResourceAccess`, provider-configuration digest and allowed network hosts.
 These private fields are not accepted from browser connection metadata.
 
+Optional `source_profiles_file` is an absolute deployment-owned profile path that
+declares Source management as required. A declared installation whose handlers or
+profiles are unavailable returns `503 unavailable` and fails the existing scoped
+Factory readiness check, preserving ordinary manual task operations. With no Source
+installation declared or composed, Source operations return `422 capability_unavailable`.
+Connection metadata, read checks and grants alone do not declare this installation
+or enable import, execution or external status writes.
+
+The Source file is a bounded (4 MiB), owner-only version-1 JSON document with
+optional `readers` and `reporters` arrays. A reader declares `identity`, `version`,
+`read` (the exact `IntegrationCheckProfile` scope), provider-owned `selection`,
+finite `readable` values and `polling` limits. It may add `preparation` (mapping,
+Repository source policy and classification) for Factory intake; ordinary reads
+need no preparation, acceptance rule or Reporter. Optional `selection_labels`
+and `predicate_states` expose reviewed narrowing over an unrestricted native base.
+
+A Reporter declares its own `write` scope, `mapping`, `credential_profile`, optional
+`reporting` presentation/editing ceiling and immutable `issue_delivery` bounds.
+Its credential class is `work_reporter_write`, independent of `work_source_read`.
+Exact installed pins, manifest configuration digests, finite limits and duplicate
+identities/hosts are checked offline by `octacity-server validate <config>`; validation
+contacts neither the database nor a provider. Old catalogs without a Source file
+remain valid.
+
+The same installed Reporter declarations supply Project authoring choices and the
+normal supervised status dispatcher, including deployments without Factory
+execution. Derived writer profiles include the Project, complete private settings
+and exact native connection configuration parent. Accepted Work/Issue effects
+retain their original profile and connection pins; dispatch rechecks current
+`task_update` grants and cannot substitute another Project or connection alias.
+Replacing an installed native parent does not retarget pending effects.
+
+There must be one dispatcher owner per immutable reporting capability. That owner
+can serve multiple Project/resource profiles. An explicit Factory dispatcher must
+advertise every claimed Work/Issue status capability through
+`FactoryOutboxDispatcher::projection_capabilities`; the empty default is only for
+other effect families. If it overlaps the shared Source dispatcher, both conflicting
+dispatchers stay stopped and scoped Factory readiness fails, preserving pending
+effects until the ambiguous installation is corrected. Manual operations and
+unrelated dispatchers remain installed. Disjoint reporting
+capabilities are filtered before claims in the existing outbox.
+The shared Reporter's supervisor and scoped Factory readiness observe the same
+worker health. Queue dispatch failures make that scope unavailable until recovery;
+a handled individual delivery rejection remains a retained effect result. Ordinary
+server readiness keeps its independent dependency checks.
+For legacy Issue publications without an operation routing field, several intents
+of one Issue revision are dispatched only by an owner covering all their Reporter
+capabilities. An incomplete inventory leaves those ambiguous events pending;
+it cannot fail or redirect another owner's effect. Exact original intent recovery
+still runs before a claim is appended.
+
+Only readers with preparation are offered for automatic Factory inputs; a read-only
+reader cannot authorize execution-input publication. Valid files install protected
+input authoring, preview and diagnostics using the
+existing PostgreSQL-backed handlers. Per-Project profiles are resolved on each
+request, so publishing a Project or grant needs no restart. Complete reader
+settings participate in the input configuration digest; the native connection
+configuration remains its exact parent. File replacement cannot retarget a
+previously accepted binding. These routes alone start no Source worker or writer.
+
+Project task-reader discovery uses protected
+`GET /api/v1/projects/{project_id}/issue-source-choices?connection_id=...&connection_version=...`.
+It requires neither an Issue nor a Factory target, Repository or preparation.
+Only current granted task readers are returned, with safe display metadata and
+reviewed metadata/access versions. The task binding freezes Project, connection
+identity/version and read settings; Factory preparation is excluded from that
+read identity. The original native configuration remains a separate parent.
+Discovery performs no native read and activates no import, execution or push.
+
+Internal observation requests carry an optional original managed connection.
+Managed templates require that pin for both reads and retained-observation
+reauthorization (`authorize_connection`); they cannot borrow legacy installed
+authority. An already pinned reader cannot switch connection identity, metadata
+version or a retained native parent, even when another connection grants the same
+native resource. Current grant checks occur before and after provider reads.
+
 Optional `credential_publishers` select a concrete storage adapter at the server
 composition root. The installed `github_private_files` publisher takes absolute
 `root`, confined relative `directory` and `targets`: logical `reference`, original
@@ -73,8 +149,8 @@ private publication is unavailable; it does not fabricate configured credentials
 
 The composition installs discovery, metadata, credential/lifecycle administration,
 Project access and read-only checks over the existing application handlers and
-PostgreSQL store. Source configuration, preview/polling and Reporter execution
-remain separately composed capabilities. Provider identities in domain and API
+PostgreSQL store. The Source file composes Source configuration, preview/polling
+and optional Reporter execution from one trusted inventory. Provider identities in domain and API
 contracts remain open; a native storage implementation does not install GitLab,
 Jira or any other provider adapter.
 
@@ -225,6 +301,11 @@ Expand **Show Run and reporting history** on an input to read bounded existing
 Source diagnostics. Only visible Runs for that exact input version are displayed;
 reporting pending, in progress, applied and exhausted remain distinct from Run
 execution. Additional pages and truncated reporting summaries are indicated.
+Frozen groups use their exact member versions. Older input admissions and Runs
+hidden by retention are excluded before pagination; a disabled replacement cannot
+inherit the previous version's execution history. Terminal reporting may also carry
+the original closed `failure` reason (`forbidden`, `unsupported`, `exhausted` or
+`conflict`), without provider messages or effect payloads.
 This is Project-scoped visible history, not a claim that all global dependents have
 been enumerated or that an old enabled version is still active. Hidden/unavailable
 history is never presented as a complete empty result.
@@ -248,6 +329,8 @@ Source diagnostics retain bounded native correlation separately from input-scope
 Work/Run identities. An `issue` link is optional and supplied only by the authorized
 association capability. The fixtures include absent and visible associations; no
 card, Issue CRUD, explicit card execution or field-ownership API is required.
+An unavailable authoritative Issue-link read fails diagnostics/preview instead of
+reporting a successful missing link. Hidden Issue references remain omitted.
 [Manual Artifact admission](management-rest-v1.md) continues independently of a
 connection, token, automatic input or internal Issue.
 

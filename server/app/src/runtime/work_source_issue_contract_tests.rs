@@ -132,6 +132,7 @@ async fn github_fixture_and_second_source_share_native_task_contracts_and_isolat
     let attach = AttachIssueSourceCommand {
       intent: AttachIssueSourceIntent {
         selection: IssueSourceSelection {
+          connection: None,
           project_id: project,
           source: source.clone(),
           item,
