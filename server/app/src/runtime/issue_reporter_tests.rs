@@ -887,6 +887,17 @@ async fn issue_reporter_restart_cannot_renew_the_original_delivery_window() {
       .count(),
     1
   );
+  let call: serde_json::Value = serde_json::from_str(captured_requests(&directory).lines().next().unwrap()).unwrap();
+  let operation = original_intent(&call)["projection_id"]
+    .as_str()
+    .unwrap()
+    .parse()
+    .unwrap();
+  assert_eq!(
+    store.issue_push_projection(operation).await.unwrap().record.failure,
+    Some(FactoryOutboxFailure::Exhausted),
+    "the original Issue window must retain a safe exhaustion reason"
+  );
   assert_eq!(
     store
       .transition_issue(management_mutation(command))

@@ -33,6 +33,14 @@ pub(super) fn flow(provider: &str) -> FactoryFlowConfiguration {
   flow_with_authority(provider, None)
 }
 pub(super) fn flow_with_authority(provider: &str, omit: Option<&str>) -> FactoryFlowConfiguration {
+  flow_with_reporting_bounds(provider, omit, 5000, 100)
+}
+pub(super) fn flow_with_reporting_bounds(
+  provider: &str,
+  omit: Option<&str>,
+  node_millis: u64,
+  retry_millis: u64,
+) -> FactoryFlowConfiguration {
   let bytes =
     std::fs::read(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/runtime/fixtures/source-provider.py"))
       .unwrap();
@@ -50,13 +58,13 @@ pub(super) fn flow_with_authority(provider: &str, omit: Option<&str>) -> Factory
     _ => {}
   }
   let permissions = FactoryPermissionSet::try_new(ceiling).unwrap();
-  let budget = BudgetLimit::new(10, 10000, 100, 100, 10000).unwrap();
+  let budget = BudgetLimit::new(10, node_millis * 2, 100, 100, 10000).unwrap();
   let node = FlowNodeDefinition::new(FlowNodeDefinitionInput {
     key: key("report-any-stage"),
     kind: FlowNodeKind::TrustedAction,
     input_schema: Some(input_schema().reference().clone()),
     outcomes: vec![outcome()],
-    budget: BudgetLimit::new(1, 5000, 0, 0, if omit == Some("output") { 100 } else { 10000 }).unwrap(),
+    budget: BudgetLimit::new(1, node_millis, 0, 0, if omit == Some("output") { 100 } else { 10000 }).unwrap(),
     permissions: permissions.clone(),
     required: true,
     subflow: None,
@@ -66,7 +74,7 @@ pub(super) fn flow_with_authority(provider: &str, omit: Option<&str>) -> Factory
     FlowActionBinding::new(
       capability(),
       key("set_status"),
-      serde_json::json!({"status":"needs-human-eyes","outbox":{"max_attempts":2,"retry_delay_millis":100}}),
+      serde_json::json!({"status":"needs-human-eyes","outbox":{"max_attempts":2,"retry_delay_millis":retry_millis}}),
     )
     .unwrap(),
   )

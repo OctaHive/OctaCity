@@ -541,50 +541,60 @@ fn optional_status_reporting_is_queued_with_the_node_result_before_contacting_th
 #[test]
 fn a_reporter_exhausts_only_its_published_retry_budget_without_reopening_the_node() {
   crate::factory_admission_tests::run_ready(async {
-    let h = harness(
-      binding(
-        "reporter",
-        "set_status",
-        serde_json::json!({"status":"any-status","outbox":{"max_attempts":1,"retry_delay_millis":5}}),
-      ),
-      permissions("reporter"),
-    );
-    let unavailable = Arc::new(Reporter {
-      requests: Mutex::new(vec![]),
-      unavailable: true,
-      scoped: false,
-    });
-    let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
-      reference("reporter"),
-      unavailable.clone(),
-      h.outcome.clone(),
-    ))));
-    let runner = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
-    runner
-      .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
-      .await
-      .unwrap();
-    assert!(matches!(
-      runner.run_once(h.run, h.claim, h.target, None, at(12)).await.unwrap(),
-      FactoryNodeStep::Completed(_)
-    ));
-    let before = h.store.factory_run_snapshot(h.run).await.unwrap();
-    let worker = FactoryWorkStatusOutboxWorker::new(
-      h.store.clone(),
-      std::collections::BTreeMap::from([(
+    for (dispatch_at, unavailable) in [(20, true), (600, false)] {
+      let h = harness(
+        binding(
+          "reporter",
+          "set_status",
+          serde_json::json!({"status":"any-status","outbox":{"max_attempts":1,"retry_delay_millis":5}}),
+        ),
+        permissions("reporter"),
+      );
+      let projector = Arc::new(Reporter {
+        requests: Mutex::new(vec![]),
+        unavailable,
+        scoped: false,
+      });
+      let adapter = Arc::new(FactoryFlowActionAdapter::new(Arc::new(FactoryWorkStatusAction::new(
         reference("reporter"),
-        unavailable as Arc<dyn FactoryWorkStatusProjector>,
-      )]),
-      FactoryReporterWorkerSettings::new(key("reporter.worker"), 10, 10).unwrap(),
-      crate::factory_node_test_support::clock(),
-    )
-    .unwrap();
-    assert_eq!(worker.run_once(at(20)).await.unwrap().failed, 1);
-    assert_eq!(worker.run_once(at(30)).await.unwrap().claimed, 0);
-    let after = h.store.factory_run_snapshot(h.run).await.unwrap();
-    assert_eq!(after.run, before.run);
-    assert_eq!(after.flow, before.flow);
-    assert_eq!(after.current, before.current);
+        projector.clone(),
+        h.outcome.clone(),
+      ))));
+      let runner = FactoryNodeRunner::new(h.store.clone(), adapter, crate::factory_node_test_support::clock());
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+        .await
+        .unwrap();
+      assert!(matches!(
+        runner.run_once(h.run, h.claim, h.target, None, at(12)).await.unwrap(),
+        FactoryNodeStep::Completed(_)
+      ));
+      let before = h.store.factory_run_snapshot(h.run).await.unwrap();
+      let worker = FactoryWorkStatusOutboxWorker::new(
+        h.store.clone(),
+        std::collections::BTreeMap::from([(
+          reference("reporter"),
+          projector.clone() as Arc<dyn FactoryWorkStatusProjector>,
+        )]),
+        FactoryReporterWorkerSettings::new(key("reporter.worker"), 10, 10).unwrap(),
+        crate::factory_node_test_support::clock(),
+      )
+      .unwrap();
+      assert_eq!(worker.run_once(at(dispatch_at)).await.unwrap().failed, 1);
+      assert_eq!(worker.run_once(at(dispatch_at + 10)).await.unwrap().claimed, 0);
+      let after = h.store.factory_run_snapshot(h.run).await.unwrap();
+      assert_eq!(after.run, before.run);
+      assert_eq!(after.flow, before.flow);
+      assert_eq!(after.current, before.current);
+      assert!(
+        after
+          .outbox
+          .iter()
+          .any(|row| row.state == FactoryOutboxState::Failed && row.failure == Some(FactoryOutboxFailure::Exhausted)),
+        "retry/deadline exhaustion must retain its classified reason at {dispatch_at}"
+      );
+      assert!(projector.requests.lock().unwrap().is_empty());
+    }
   });
 }
 

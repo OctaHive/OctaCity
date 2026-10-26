@@ -1,6 +1,9 @@
 //! Accepted manual business transitions reach the shared ordered Reporter without Factory intake.
 use super::*;
 
+#[path = "source_issue_recovery_tests.rs"]
+mod recovery;
+
 #[tokio::test]
 #[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
 async fn normal_issue_status_delivery_applies_reviewed_native_effects_without_a_run() {

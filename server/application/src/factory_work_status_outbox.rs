@@ -346,7 +346,7 @@ fn accepted_status_material<'a>(
   policy.validate()?;
   let deadline = attempt.deadline().min(claim_end);
   if at >= deadline || row.attempt >= policy.max_attempts {
-    return Err(ApplicationError::invalid());
+    return Err(ApplicationError::ReporterRejected(FactoryOutboxFailure::Exhausted));
   }
   Ok(AcceptedStatusMaterial {
     request: FactoryWorkStatusRequest {

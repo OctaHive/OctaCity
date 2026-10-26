@@ -65,6 +65,12 @@ only their latest bounded outbox metadata. It does not load full Run snapshots o
 take execution row locks. Reading diagnostics neither starts nor retries a projection. Disabled/revoked
 inputs retain inspectable history when its dependencies and Runs remain visible.
 
+An expired original action deadline or exhausted retry budget retains the safe
+`exhausted` failure reason. Restart does not renew that window. A lost update
+response requires observation before another uncertain write; current writer
+revocation or removal of the original installed profile blocks further calls.
+Accepted Work/Run results remain available independently of delivery outcome.
+
 ## Native identity and optional internal tasks
 
 `native_correlation` is a Project/security-partition/installation/native-container/

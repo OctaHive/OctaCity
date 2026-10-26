@@ -6,6 +6,8 @@ use std::os::unix::fs::PermissionsExt as _;
 
 #[path = "source_issue_writer_tests.rs"]
 mod issue_writer;
+#[path = "source_work_recovery_tests.rs"]
+mod work_recovery;
 #[path = "source_work_reporting_tests.rs"]
 mod work_reporting;
 
