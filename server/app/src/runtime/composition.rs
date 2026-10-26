@@ -198,7 +198,7 @@ impl ServerRuntime {
     let source_reporting = if let Some(sources) = &source_management {
       let mut empty = vec![];
       let explicit = factory.as_mut().map_or(&mut empty, |factory| &mut factory.outbox);
-      match sources.reporting_dispatcher(explicit) {
+      match sources.reporting_dispatcher(explicit, &mut resources.readiness) {
         Ok(worker) => worker,
         Err(octacity_server_application::ApplicationError::CapabilityUnavailable) => {
           resources

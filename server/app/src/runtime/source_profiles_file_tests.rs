@@ -400,7 +400,8 @@ async fn shared_reporter_inventory_supplies_project_pins_to_authoring_and_dispat
     "replacing the exact native parent must replace the derived writer pin without retargeting accepted history"
   );
   let sources = Arc::new(sources);
-  let installed = sources.reporting_dispatcher(&mut vec![]).unwrap().unwrap();
+  let mut checks = super::tests::healthy_checks();
+  let installed = sources.reporting_dispatcher(&mut vec![], &mut checks).unwrap().unwrap();
   let dispatcher = installed.dispatcher;
   assert_eq!(
     dispatcher.projection_capabilities(),
@@ -409,7 +410,7 @@ async fn shared_reporter_inventory_supplies_project_pins_to_authoring_and_dispat
   let mut explicit =
     super::factory::install_outbox(vec![dispatcher], installed.policy, &mut super::tests::healthy_checks());
   assert!(matches!(
-    sources.reporting_dispatcher(&mut explicit),
+    sources.reporting_dispatcher(&mut explicit, &mut checks),
     Err(octacity_server_application::ApplicationError::CapabilityUnavailable)
   ));
   assert!(

@@ -10,12 +10,17 @@ use std::sync::Arc;
 pub(super) struct InstalledSourceReporting {
   pub dispatcher: Arc<dyn FactoryOutboxDispatcher>,
   pub policy: crate::FactoryRuntimeConfig,
+  pub health: Arc<crate::readiness::WorkerHealth>,
 }
 
 impl SourceManagement {
+  /// Installs shared reporting without I/O and registers its scoped worker health.
+  /// Overlap removes conflicting explicit workers and returns unavailable, so
+  /// neither owner can claim another profile's accepted history.
   pub(super) fn reporting_dispatcher(
     self: &Arc<Self>,
     explicit: &mut Vec<super::factory::InstalledFactoryOutbox>,
+    readiness: &mut crate::readiness::ReadinessChecks,
   ) -> Result<Option<InstalledSourceReporting>, ApplicationError> {
     if self.profiles.reporters.is_empty() {
       return Ok(None);
@@ -55,13 +60,20 @@ impl SourceManagement {
       )?,
       Arc::new(SystemFactoryExecutionClock),
     )?;
+    let policy = crate::FactoryRuntimeConfig::source_consumer(
+      consumer.worker(),
+      consumer.max_attempts,
+      consumer.maximum_retry_millis,
+    );
+    let health = Arc::new(crate::readiness::WorkerHealth::new(
+      "managed-source-reporting",
+      policy.poll_interval().saturating_add(policy.claim_lifetime()),
+    ));
+    readiness.push_factory(health.clone());
     Ok(Some(InstalledSourceReporting {
       dispatcher: Arc::new(worker),
-      policy: crate::FactoryRuntimeConfig::source_consumer(
-        consumer.worker(),
-        consumer.max_attempts,
-        consumer.maximum_retry_millis,
-      ),
+      policy,
+      health,
     }))
   }
 }

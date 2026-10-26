@@ -87,6 +87,148 @@ async fn installed_reporter(
 
 #[tokio::test]
 #[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
+async fn installed_reporter_claim_failure_and_recovery_change_only_scoped_readiness() {
+  struct InstalledHandlers;
+  #[async_trait::async_trait]
+  impl crate::readiness::ReadinessCheck for InstalledHandlers {
+    fn name(&self) -> &'static str {
+      "source-handlers"
+    }
+    async fn check(&self) -> bool {
+      true
+    }
+  }
+  let (fixture, profile) = fixture("opaque-reporter").await;
+  let (fixture, database) = ordering::postgres::postgres_fixture(fixture).await;
+  let (fixture, _) = managed_fixture_with_native_parent(fixture, profile, Some(exact("native-writer", 71))).await;
+  let (_deployment, config, sources) = installed_reporter(&fixture, &database.url()).await;
+  let pool = sqlx::PgPool::connect(&database.url()).await.unwrap();
+  // This existing HTTP readiness seam substitutes universal dependencies only;
+  // the installed Reporter, its supervisor and PostgreSQL are real.
+  let mut checks = crate::runtime::tests::healthy_checks();
+  checks.push_factory(Arc::new(InstalledHandlers));
+  let installed = sources.reporting_dispatcher(&mut vec![], &mut checks).unwrap().unwrap();
+  let dispatcher = installed.dispatcher.clone();
+  let health = installed.health.clone();
+  let policy = installed.policy;
+  let cancellation = CancellationToken::new();
+  let task = crate::runtime::workers::spawn_factory_outbox_worker(
+    installed.dispatcher,
+    installed.health,
+    installed.policy,
+    cancellation.clone(),
+  );
+  let runtime = crate::ServerRuntime::start_with_readiness(config, checks)
+    .await
+    .unwrap();
+  let client = reqwest::Client::new();
+  let origin = format!("http://{}", runtime.management_addr());
+  assert!(wait_factory_status(&client, &origin, reqwest::StatusCode::OK).await);
+  sqlx::query("ALTER TABLE factory_outbox_records RENAME TO interrupted_factory_outbox_records")
+    .execute(&pool)
+    .await
+    .unwrap();
+  let unavailable = wait_factory_status(&client, &origin, reqwest::StatusCode::SERVICE_UNAVAILABLE).await;
+  let manual_readiness = client
+    .get(format!("{origin}/health/ready"))
+    .send()
+    .await
+    .unwrap()
+    .status();
+  sqlx::query("ALTER TABLE interrupted_factory_outbox_records RENAME TO factory_outbox_records")
+    .execute(&pool)
+    .await
+    .unwrap();
+  assert!(
+    unavailable,
+    "an installed but failing Reporter must change scoped readiness even while handlers exist"
+  );
+  assert_eq!(manual_readiness, reqwest::StatusCode::OK);
+  assert!(wait_factory_status(&client, &origin, reqwest::StatusCode::OK).await);
+  assert!(captured_requests(&fixture.root.path().join("opaque-reporter")).is_empty());
+  cancellation.cancel();
+  task.await.unwrap();
+  // Pause dispatch while accepting an original effect and revoking only its writer.
+  // A handled per-effect rejection remains a successful dispatcher pass.
+  let at = SystemFactoryExecutionClock.now().unwrap().unix_millis();
+  fixture.clock.0.store(at, Ordering::SeqCst);
+  let run = admit_managed(&fixture).await;
+  let projector = Arc::new(
+    sources
+      .reporter_projector(fixture.input.project_id(), fixture.clock.clone())
+      .unwrap(),
+  );
+  accept_status_at(&fixture, projector, run, at).await;
+  let connection = fixture.input.definition().connection.as_ref().unwrap();
+  fixture
+    .store
+    .publish_integration_project_access(management_mutation(PublishIntegrationProjectAccess {
+      intent: IntegrationProjectAccessIntent {
+        connection_id: connection.id,
+        connection_version: connection.version,
+        project_id: fixture.input.project_id(),
+        expected_current_version: Some(connection.access_version),
+        resources: vec![IntegrationResourceSelection {
+          reference: fixture.input.definition().source.resource.clone(),
+          purposes: vec![IntegrationPurpose::TaskRead],
+        }],
+      },
+      idempotency_key: "revoke-readiness-writer".parse().unwrap(),
+      published_at: Timestamp::from_unix_millis(at + 21).unwrap(),
+    }))
+    .await
+    .unwrap();
+  let restarted = CancellationToken::new();
+  let task = crate::runtime::workers::spawn_factory_outbox_worker(dispatcher, health, policy, restarted.clone());
+  let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+  loop {
+    let snapshot = fixture.store.factory_run_snapshot(run).await.unwrap();
+    if snapshot
+      .outbox
+      .iter()
+      .any(|row| row.failure == Some(FactoryOutboxFailure::Forbidden))
+    {
+      break;
+    }
+    assert!(
+      tokio::time::Instant::now() < deadline,
+      "the original effect must retain its classified grant rejection"
+    );
+    tokio::time::sleep(Duration::from_millis(20)).await;
+  }
+  assert!(wait_factory_status(&client, &origin, reqwest::StatusCode::OK).await);
+  assert!(captured_requests(&fixture.root.path().join("opaque-reporter")).is_empty());
+  restarted.cancel();
+  task.await.unwrap();
+  runtime.shutdown().await.unwrap();
+  drop(sources);
+  drop(fixture);
+  pool.close().await;
+  database.cleanup().await;
+}
+
+async fn wait_factory_status(client: &reqwest::Client, origin: &str, status: reqwest::StatusCode) -> bool {
+  let deadline = tokio::time::Instant::now() + Duration::from_secs(3);
+  loop {
+    if client
+      .get(format!("{origin}/health/factory"))
+      .send()
+      .await
+      .unwrap()
+      .status()
+      == status
+    {
+      return true;
+    }
+    if tokio::time::Instant::now() >= deadline {
+      return false;
+    }
+    tokio::time::sleep(Duration::from_millis(20)).await;
+  }
+}
+
+#[tokio::test]
+#[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
 async fn conflicting_reporter_owners_preserve_the_original_pending_effect_without_adapter_io() {
   let (fixture, profile) = fixture("opaque-reporter").await;
   let (fixture, database) = ordering::postgres::postgres_fixture(fixture).await;
@@ -100,7 +242,8 @@ async fn conflicting_reporter_owners_preserve_the_original_pending_effect_withou
   );
   accept_status_at(&fixture, projector, run, 100).await;
   let before = fixture.store.factory_run_snapshot(run).await.unwrap();
-  let shared = sources.reporting_dispatcher(&mut vec![]).unwrap().unwrap();
+  let mut checks = crate::runtime::tests::healthy_checks();
+  let shared = sources.reporting_dispatcher(&mut vec![], &mut checks).unwrap().unwrap();
   let wrong_profile = profile
     .with_native_configuration(exact("another-native-writer", 72))
     .unwrap();
@@ -116,7 +259,7 @@ async fn conflicting_reporter_owners_preserve_the_original_pending_effect_withou
     &mut crate::runtime::tests::healthy_checks(),
   );
   assert!(matches!(
-    sources.reporting_dispatcher(&mut explicit),
+    sources.reporting_dispatcher(&mut explicit, &mut checks),
     Err(ApplicationError::CapabilityUnavailable)
   ));
   assert!(explicit.is_empty(), "both ambiguous owners must stop before claims");

@@ -227,18 +227,15 @@ pub(super) fn spawn_durable_workers(
   if let Some(task) = factory {
     tasks.push((FACTORY_WORKER_NAME, task));
   }
-  if let Some(super::source_reporting::InstalledSourceReporting { dispatcher, policy }) = workers.source_reporting {
+  if let Some(super::source_reporting::InstalledSourceReporting {
+    dispatcher,
+    policy,
+    health,
+  }) = workers.source_reporting
+  {
     tasks.push((
       "managed-source-reporting",
-      spawn_factory_outbox_worker(
-        dispatcher,
-        Arc::new(WorkerHealth::new(
-          "managed-source-reporting",
-          policy.poll_interval().saturating_add(policy.claim_lifetime()),
-        )),
-        policy,
-        cancellation.child_token(),
-      ),
+      spawn_factory_outbox_worker(dispatcher, health, policy, cancellation.child_token()),
     ));
   }
   if let Some(worker) = workers.managed_factory_source {

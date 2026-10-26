@@ -103,6 +103,10 @@ dispatchers stay stopped and scoped Factory readiness fails, preserving pending
 effects until the ambiguous installation is corrected. Manual operations and
 unrelated dispatchers remain installed. Disjoint reporting
 capabilities are filtered before claims in the existing outbox.
+The shared Reporter's supervisor and scoped Factory readiness observe the same
+worker health. Queue dispatch failures make that scope unavailable until recovery;
+a handled individual delivery rejection remains a retained effect result. Ordinary
+server readiness keeps its independent dependency checks.
 For legacy Issue publications without an operation routing field, several intents
 of one Issue revision are dispatched only by an owner covering all their Reporter
 capabilities. An incomplete inventory leaves those ambiguous events pending;
