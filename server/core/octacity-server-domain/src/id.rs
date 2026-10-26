@@ -161,6 +161,11 @@ opaque_id!(
   "Opaque identity of an external-system Integration."
 );
 opaque_id!(
+  IssueSourceImportId,
+  EntityKind::Integration,
+  "Opaque identity of a Project task-source import configuration."
+);
+opaque_id!(
   TriggerId,
   EntityKind::Trigger,
   "Opaque identity of a Trigger definition."

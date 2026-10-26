@@ -58,7 +58,7 @@ fn services<'a>(
     .ok_or_else(|| source_unavailable(application, request_id))
 }
 // Optional absence differs from an installation with only half its handlers composed.
-fn source_unavailable(application: &IntegrationManagementApplication, request_id: &RequestId) -> ApiError {
+pub(super) fn source_unavailable(application: &IntegrationManagementApplication, request_id: &RequestId) -> ApiError {
   let failure = if application.source_management_readiness().is_none() {
     ApplicationFailure::CapabilityUnavailable
   } else {

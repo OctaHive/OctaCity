@@ -19,6 +19,74 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     json!({"item":item.clone(),"display_id":text(256),"title":text(512),"state":text(128),"labels":array(text(256),64),"selections":array(selection,64)}),
     &["item", "display_id", "title", "state", "labels", "selections"],
   );
+  schemas.insert(
+    "ProjectIssueSourcePreviewSubmission".into(),
+    object(
+      json!({"connection_id":id(),"connection_version":{"type":"integer","minimum":1},
+      "access_version":{"type":"integer","minimum":1},"source":reference("WorkSourceBinding"),
+      "limit":{"type":"integer","minimum":1,"maximum":octacity_server_application::MAX_WORK_SOURCE_PREVIEW_ITEMS}}),
+      &[
+        "connection_id",
+        "connection_version",
+        "access_version",
+        "source",
+        "limit",
+      ],
+    ),
+  );
+  let task_summary = object(
+    json!({"item":item.clone(),"display_id":text(256),"title":text(512),"state":text(128),"labels":array(text(256),64)}),
+    &["item", "display_id", "title", "state", "labels"],
+  );
+  schemas.insert("ProjectIssueSourcePreview".into(), object(
+    json!({"source":reference("WorkSourceBinding"),"observed_at_unix_ms":time(),"failure":nullable(failure.clone()),
+      "retry_after_millis":nullable(json!({"type":"integer","minimum":0,"maximum":octacity_server_application::MAX_WORK_SOURCE_PREVIEW_RETRY_MILLIS})),
+      "items":array(task_summary,usize::from(octacity_server_application::MAX_WORK_SOURCE_PREVIEW_ITEMS)),"has_more":{"type":"boolean"}}),
+    &["source","observed_at_unix_ms","failure","retry_after_millis","items","has_more"],
+  ));
+  let import_definition = object(
+    json!({"source":reference("WorkSourceBinding"),
+    "connection":reference("WorkSourceConnectionReference"),"predicate":reference("WorkSourcePredicate"),"enabled":{"type":"boolean"}}),
+    &["source", "connection", "enabled"],
+  );
+  let import_configuration = object(
+    json!({"id":id(),"project_id":id(),"version":{"type":"integer","minimum":1},
+    "definition":import_definition.clone(),"published_at":time()}),
+    &["id", "project_id", "version", "definition", "published_at"],
+  );
+  schemas.insert("ProjectIssueSourceImportConfiguration".into(), import_configuration);
+  schemas.insert(
+    "ProjectIssueSourceImportSubmission".into(),
+    object(
+      json!({"intent":object(
+    json!({"id":id(),"project_id":id(),"expected_current_version":nullable(json!({"type":"integer","minimum":1})),
+      "definition":import_definition}),&["id","project_id","expected_current_version","definition"])}),
+      &["intent"],
+    ),
+  );
+  schemas.insert(
+    "ProjectIssueSourceImportMutation".into(),
+    object(
+      json!({"disposition":{"type":"string","enum":["applied","replayed"]},
+    "configuration":reference("ProjectIssueSourceImportConfiguration")}),
+      &["disposition", "configuration"],
+    ),
+  );
+  schemas.insert(
+    "ProjectIssueSourceImportResource".into(),
+    object(
+      json!({"configuration":reference("ProjectIssueSourceImportConfiguration")}),
+      &["configuration"],
+    ),
+  );
+  schemas.insert(
+    "ProjectIssueSourceImportPage".into(),
+    object(
+      json!({"items":array(reference("ProjectIssueSourceImportConfiguration"),usize::from(octacity_server_application::MAX_INTEGRATION_DISCOVERY_PAGE_SIZE)),
+    "next_cursor":nullable(id())}),
+      &["items", "next_cursor"],
+    ),
+  );
   let association = object(
     json!({"id":digest(),"native_correlation":digest(),"input_id":id(),"input_version":{"type":"integer","minimum":1},"work_id":id(),"run_id":id()}),
     &[
@@ -75,7 +143,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     (
       "WorkSourcePreview",
       object(
-        json!({"configuration":reference("WorkSourceConfigurationIntent"),"selectors":selectors.clone(),"observed_at_unix_ms":time(),"failure":nullable(failure),"retry_after_millis":nullable(json!({"type":"integer","minimum":0,"maximum":3600000})),"candidates":array(candidate,100),"has_more":{"type":"boolean"},"admissions_truncated":{"type":"boolean"}}),
+        json!({"configuration":reference("WorkSourceConfigurationIntent"),"selectors":selectors.clone(),"observed_at_unix_ms":time(),"failure":nullable(failure),"retry_after_millis":nullable(json!({"type":"integer","minimum":0,"maximum":octacity_server_application::MAX_WORK_SOURCE_PREVIEW_RETRY_MILLIS})),"candidates":array(candidate,100),"has_more":{"type":"boolean"},"admissions_truncated":{"type":"boolean"}}),
         &[
           "configuration",
           "selectors",

@@ -11,13 +11,23 @@ use std::sync::Arc;
 
 #[path = "issue_source_management.rs"]
 mod management;
+#[path = "issue_source_project_choices.rs"]
+mod project_choices;
+pub use project_choices::*;
+#[path = "issue_source_project_import.rs"]
+mod project_import;
+#[path = "issue_source_project_preview.rs"]
+mod project_preview;
 pub use management::*;
+pub use project_import::*;
+pub use project_preview::*;
 #[path = "issue_synchronization.rs"]
 mod synchronization;
 pub use synchronization::*;
 
 /// Source association owner; no admission, Reporter or credential port is installed here.
 pub struct IssueSourceHandlers<S> {
+  project_profiles: Option<Arc<dyn FactorySourceConfigurationProvider<S>>>,
   mappings: Vec<InstalledIssueSourceMapping>,
   refresh_policy: Option<IssueSourceRefreshPolicy>,
   store: Arc<S>,
@@ -34,6 +44,7 @@ impl<S> IssueSourceHandlers<S> {
     clock: Arc<dyn FactoryExecutionClock>,
   ) -> Self {
     Self {
+      project_profiles: None,
       mappings: vec![],
       refresh_policy: None,
       store,

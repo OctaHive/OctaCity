@@ -272,7 +272,7 @@ pub(super) async fn install(
     match super::source_profiles_file::SourceProfiles::load(path, &catalog.installations, &registry).await {
       Ok(profiles) => {
         let sources = Arc::new(super::source_management::SourceManagement {
-          store,
+          store: store.clone(),
           policy: policy.clone(),
           profiles,
           registry,
@@ -280,11 +280,25 @@ pub(super) async fn install(
           grace: std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
           cancellation,
         });
-        let project_sources = Arc::new(ProjectIssueSourceChoiceHandlers::new(Arc::new(
-          super::source_management::IssueSourceChoiceProvider(sources.clone()),
-        )));
+        let project_sources = Arc::new(
+          IssueSourceHandlers::new(
+            store,
+            sources.clone(),
+            policy.clone(),
+            Arc::new(SystemFactoryExecutionClock),
+          )
+          .with_project_source_profiles(Arc::new(super::source_management::IssueSourceChoiceProvider(
+            sources.clone(),
+          ))),
+        );
+        let project_queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), project_sources.clone()));
         application = application
-          .with_project_source_choices(Arc::new(AuthorizedQueryHandler::new(policy.clone(), project_sources)));
+          .with_project_source_choices(project_queries.clone())
+          .with_project_source_preview(project_queries.clone())
+          .with_project_source_imports(
+            Arc::new(AuthorizedCommandHandler::new(policy.clone(), project_sources)),
+            project_queries,
+          );
         let sources = Arc::new(InstalledFactorySourceHandlers::new(sources));
         application = application
           .with_source_configuration(

@@ -23,8 +23,9 @@ pub use error::{
 pub use execution::{ArtifactPolicy, ArtifactPolicyError, RuntimeClass};
 pub use id::{
   AgentId, ArtifactId, ArtifactUploadId, AttemptId, AuditFactId, BuildConfigurationId, BuildId, CacheSessionId,
-  EnrollmentCredentialId, IntegrationId, JobId, LeaseId, LogChunkId, LogIndexingWorkId, PipelineId, PoolId, ProjectId,
-  RegistrationCredentialId, RepositoryId, RetentionWorkId, TriggerId, TriggerOccurrenceId,
+  EnrollmentCredentialId, IntegrationId, IssueSourceImportId, JobId, LeaseId, LogChunkId, LogIndexingWorkId,
+  PipelineId, PoolId, ProjectId, RegistrationCredentialId, RepositoryId, RetentionWorkId, TriggerId,
+  TriggerOccurrenceId,
 };
 pub use id::{IssueCommentId, IssueExecutionRequestId, IssueId, IssueStatusId, IssueTransitionId, IssueWorkflowId};
 pub use identity::{MAX_PIPELINE_NODE_ID_BYTES, MAX_TRIGGER_IDENTITY_BYTES, PipelineNodeId, TriggerIdentity};

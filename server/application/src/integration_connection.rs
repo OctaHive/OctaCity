@@ -5,7 +5,8 @@ pub use octacity_server_store::{
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
-use octacity_server_domain::{IntegrationId, IntegrationVersion, Timestamp};
+use octacity_server_domain::Timestamp;
+pub use octacity_server_domain::{IntegrationId, IntegrationVersion};
 use octacity_server_factory::FactoryDigest;
 use octacity_server_factory::ImmutableReference;
 use octacity_server_store::{

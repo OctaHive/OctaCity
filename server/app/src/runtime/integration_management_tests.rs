@@ -323,6 +323,24 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     json!(check.capability.configuration)
   );
   assert!(!task_choices.to_string().contains("reader"));
+  super::source_management_tests::assert_project_preview_retry_bound(
+    database.pool.clone(),
+    project_id.parse().unwrap(),
+    &task_choices,
+    &profiles,
+    &registry,
+    &installed,
+  )
+  .await;
+  let import_controls =
+    super::source_management_tests::assert_project_import_controls(&client, project_id, &task_choices).await;
+  super::source_management_tests::assert_project_preview(
+    &client,
+    project_id,
+    &task_choices,
+    &registry.join("custom-provider"),
+  )
+  .await;
   assert_eq!(
     projects
       .get(format!(
@@ -432,6 +450,19 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     task_choices_second["items"][0]["binding"], task_choices_after_preparation["items"][0]["binding"],
     "a task read choice is scoped to its original Project"
   );
+  super::source_management_tests::assert_project_preview(
+    &client,
+    second_id,
+    &task_choices_second,
+    &registry.join("custom-provider"),
+  )
+  .await;
+  super::source_management_tests::assert_project_preview_rejects_foreign_scope(
+    &client,
+    second_id,
+    &task_choices_after_preparation,
+  )
+  .await;
   let history: Value = client
     .get(format!("http://localhost/api/v1/projects/{second_id}/factory-sources"))
     .send()
@@ -441,6 +472,24 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     .await
     .unwrap();
   assert_eq!(history, json!({"items":[],"next_cursor":null}));
+  let hidden = client
+    .get(format!(
+      "http://localhost/api/v1/projects/{second_id}/factory-source-inputs/{}/versions/1",
+      published["input"].as_str().unwrap()
+    ))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(hidden.status(), reqwest::StatusCode::NOT_FOUND);
+  let hidden = client
+    .get(format!(
+      "http://localhost/api/v1/projects/{second_id}/issue-source-imports/{}",
+      import_controls["id"].as_str().unwrap()
+    ))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(hidden.status(), reqwest::StatusCode::NOT_FOUND);
   // Project grants are current authority, while a retained input remains immutable history.
   let revoke = json!({"connection_id":id,"project_id":project_id,"connection_version":1,
     "expected_current_version":1,"resources":[]});
@@ -467,6 +516,17 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     .await
     .unwrap();
   assert_eq!(revoked["items"], json!([]));
+  super::source_management_tests::assert_import_disable_after_revocation(&client, project_id, &import_controls).await;
+  let response = client
+    .post(format!(
+      "http://localhost/api/v1/projects/{project_id}/issue-sources/preview"
+    ))
+    .json(&json!({"connection_id":id,"connection_version":1,"access_version":1,
+      "source":task_choices_after_preparation["items"][0]["binding"],"limit":2}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::PRECONDITION_FAILED);
   let response = client
     .post(format!(
       "http://localhost/api/v1/projects/{project_id}/factory-sources/validate"

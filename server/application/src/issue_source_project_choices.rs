@@ -1,9 +1,8 @@
 //! Project read choices require neither an existing task nor Factory preparation.
-use crate::*;
+use super::*;
 use octacity_server_domain::{IntegrationId, IntegrationVersion, ProjectId};
 use octacity_server_factory::{FactoryDigest, ImmutableReference, WorkSourceBinding};
 use octacity_server_store::*;
-use std::sync::Arc;
 
 /// Current installed task readers for one reviewed Project/connection selection.
 #[derive(Clone, Debug)]
@@ -45,20 +44,16 @@ pub fn project_issue_source_binding(
   Ok(source)
 }
 
-/// Read-only discovery over the shared trusted installation and ordinary current-grant checks.
-/// The provider may include observation-only readers; no publication command is exposed here.
-pub struct ProjectIssueSourceChoiceHandlers<S> {
-  provider: Arc<dyn FactorySourceConfigurationProvider<S>>,
-}
-impl<S> ProjectIssueSourceChoiceHandlers<S> {
-  /// Installs trusted discovery without provider reads, imports or execution.
-  pub fn new(provider: Arc<dyn FactorySourceConfigurationProvider<S>>) -> Self {
-    Self { provider }
+impl<S> IssueSourceHandlers<S> {
+  /// Supplies shared installed Project reader choices, without starting import or execution.
+  pub fn with_project_source_profiles(mut self, provider: Arc<dyn FactorySourceConfigurationProvider<S>>) -> Self {
+    self.project_profiles = Some(provider);
+    self
   }
 }
 #[async_trait::async_trait]
 impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + IntegrationAdministrationStore + 'static>
-  ManagementQueryUseCase<ListProjectIssueSourceChoicesQuery> for ProjectIssueSourceChoiceHandlers<S>
+  ManagementQueryUseCase<ListProjectIssueSourceChoicesQuery> for IssueSourceHandlers<S>
 {
   type Error = ApplicationError;
   async fn execute_management_query(
@@ -69,7 +64,9 @@ impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + Integration
   ) -> Result<WorkSourceInputChoices, ApplicationError> {
     let project = query.selection.project_id;
     let mut choices = self
-      .provider
+      .project_profiles
+      .as_ref()
+      .ok_or_else(ApplicationError::capability_unavailable)?
       .for_project(project, context)?
       .execute_management_query(context, grant, query.selection)
       .await?;

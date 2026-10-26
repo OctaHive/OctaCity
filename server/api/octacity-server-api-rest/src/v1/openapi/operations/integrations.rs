@@ -72,6 +72,21 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_protected_ingress(),
   operation!(
+    octacity_server_application::PreviewProjectIssueSourcesQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/issue-sources/preview",
+    "previewProjectIssueSources",
+    "Integrations",
+    "Preview bounded native task summaries without importing or starting execution",
+    Some("ProjectIssueSourcePreviewSubmission"),
+    "ProjectIssueSourcePreview",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_precondition_failed_response(),
+  operation!(
     PreviewWorkSourcesQuery,
     "POST",
     "/api/v1/projects/{project_id}/factory-sources/preview",
@@ -174,7 +189,66 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_protected_ingress()
   .with_parameters(ParameterProfile::WorkSourceInputChoices)
-  .with_visibility::<octacity_server_application::ListProjectIssueSourceChoicesQuery>(),
+  .with_visibility::<octacity_server_application::ListProjectIssueSourceChoicesQuery>()
+  .with_precondition_failed_response(),
+  operation!(
+    octacity_server_application::PublishIssueSourceImportCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/issue-source-imports/{import_id}/versions",
+    "publishIssueSourceImport",
+    "Integrations",
+    "Publish reviewed independent task import activation",
+    Some("ProjectIssueSourceImportSubmission"),
+    "ProjectIssueSourceImportMutation",
+    "200",
+    true,
+    true
+  )
+  .with_protected_ingress(),
+  operation!(
+    octacity_server_application::GetIssueSourceImportQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issue-source-imports/{import_id}",
+    "getCurrentIssueSourceImport",
+    "Integrations",
+    "Read current retained import metadata",
+    None,
+    "ProjectIssueSourceImportResource",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress(),
+  operation!(
+    octacity_server_application::GetIssueSourceImportQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issue-source-imports/{import_id}/versions/{version}",
+    "getIssueSourceImport",
+    "Integrations",
+    "Read an exact retained import version",
+    None,
+    "ProjectIssueSourceImportResource",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress(),
+  operation!(
+    octacity_server_application::ListIssueSourceImportsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issue-source-imports",
+    "listIssueSourceImports",
+    "Integrations",
+    "List bounded retained independent task import definitions",
+    None,
+    "ProjectIssueSourceImportPage",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::IntegrationDiscovery)
+  .with_visibility::<octacity_server_application::ListIssueSourceImportsQuery>(),
   operation!(
     ListWorkSourceInputChoicesQuery,
     "GET",

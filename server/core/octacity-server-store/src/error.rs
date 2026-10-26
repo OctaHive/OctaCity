@@ -4,6 +4,8 @@ use thiserror::Error;
 /// Atomic store operation associated with a classified failure.
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub enum StoreOperation {
+  /// Publish an independently enabled Project task-source import configuration.
+  PublishIssueSourceImport,
   /// Publish a reviewed Project Runtime configuration.
   PublishFactoryRuntimeSettings,
   /// Reserve the complete cleanup inventory of a Project skill folder.
@@ -367,6 +369,9 @@ pub enum StoreOperation {
 /// Invalid caller input rejected before any authoritative state changes.
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum StoreInputError {
+  /// Task-source import metadata or selector bounds are invalid.
+  #[error("invalid Project source import")]
+  InvalidIssueSourceImport,
   /// Runtime configuration or revision exceeds the common contract.
   #[error("invalid Runtime settings")]
   InvalidFactoryRuntimeSettings,

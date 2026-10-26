@@ -46,9 +46,7 @@ pub use issue_activity::*;
 mod issue_discussion;
 pub use issue_discussion::*;
 mod issue_source;
-mod issue_source_project_choices;
 pub use issue_source::*;
-pub use issue_source_project_choices::*;
 mod issue_execution;
 mod issue_execution_publication;
 pub use factory_issue_status_action::*;
@@ -801,10 +799,11 @@ pub use integration_administration::*;
 
 mod integration_connection;
 pub use integration_connection::{
-  GetIntegrationConnectionQuery, IntegrationConnectionHandlers, IntegrationConnectionPage, IntegrationInstallationPage,
-  ListIntegrationConnectionsQuery, ListIntegrationInstallationsQuery, MAX_INTEGRATION_AUTHENTICATION_METHODS,
-  MAX_INTEGRATION_DISCOVERY_PAGE_SIZE, MAX_INTEGRATION_ENDPOINT_BYTES, MAX_INTEGRATION_ENDPOINTS,
-  MAX_INTEGRATION_NAME_BYTES, PublishIntegrationConnectionCommand, ValidateIntegrationConnectionQuery,
+  GetIntegrationConnectionQuery, IntegrationConnectionHandlers, IntegrationConnectionPage, IntegrationId,
+  IntegrationInstallationPage, IntegrationVersion, ListIntegrationConnectionsQuery, ListIntegrationInstallationsQuery,
+  MAX_INTEGRATION_AUTHENTICATION_METHODS, MAX_INTEGRATION_DISCOVERY_PAGE_SIZE, MAX_INTEGRATION_ENDPOINT_BYTES,
+  MAX_INTEGRATION_ENDPOINTS, MAX_INTEGRATION_NAME_BYTES, PublishIntegrationConnectionCommand,
+  ValidateIntegrationConnectionQuery,
 };
 
 #[cfg(test)]

@@ -130,3 +130,108 @@ impl FactorySourceConfigurationProvider<PostgresStore> for IssueSourceChoiceProv
     )
   }
 }
+
+impl SourceManagement {
+  async fn observation_reader(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    source: &octacity_server_factory::WorkSourceBinding,
+    connection: &octacity_server_factory::WorkSourceConnectionRef,
+    deadline: tokio::time::Instant,
+  ) -> Result<super::HostedWorkSourceObservations, ApplicationError> {
+    use octacity_server_store::IntegrationConnectionStore;
+    let dependency = |class| ApplicationError::SourceDependency {
+      class,
+      retry_after_millis: None,
+    };
+    let metadata = tokio::select! {
+      biased;
+      () = self.cancellation.cancelled() => return Err(dependency(WorkSourceFailure::Cancelled)),
+      result = tokio::time::timeout_at(deadline, self.store.integration_connection(connection.id, None)) =>
+        result.map_err(|_| dependency(WorkSourceFailure::Timeout))??,
+    };
+    if metadata.version != connection.version {
+      return Err(ApplicationError::capability_unavailable());
+    }
+    let mut selected = None;
+    for declaration in &self.profiles.readers {
+      if declaration.read.installation != metadata.definition.installation
+        || declaration.read.plugin != metadata.definition.adapter
+        || declaration.read.capability.configuration != connection.source_configuration
+        || !metadata.definition.resources.iter().any(|r| {
+          r.reference == declaration.read.resource_reference
+            && r.native_id.as_str() == declaration.read.resource.resource_id
+            && r.capabilities.contains(&declaration.read.capability)
+        })
+      {
+        continue;
+      }
+      let mut profile = declaration.observation_profile(project, context.clone())?;
+      profile.binding = project_issue_source_binding(profile.binding, project, connection.id, connection.version)?;
+      if profile.binding == *source {
+        selected = Some(profile);
+        break;
+      }
+    }
+    let profile = selected.ok_or_else(ApplicationError::capability_unavailable)?;
+    let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+    if remaining.is_zero() {
+      return Err(dependency(WorkSourceFailure::Timeout));
+    }
+    Ok(
+      super::HostedWorkSourceObservations::new(
+        self.registry.clone(),
+        vec![profile],
+        Arc::new(SystemFactoryExecutionClock),
+        remaining,
+        self.grace,
+        self.cancellation.clone(),
+      )?
+      .with_managed_connections(ManagedIntegrationConnections::new(self.store.clone())),
+    )
+  }
+}
+#[async_trait::async_trait]
+impl WorkSourceObservations for SourceManagement {
+  async fn authorize_connection(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    source: octacity_server_factory::WorkSourceBinding,
+    connection: Option<&octacity_server_factory::WorkSourceConnectionRef>,
+  ) -> Result<(), ApplicationError> {
+    let connection = connection.ok_or_else(ApplicationError::capability_unavailable)?;
+    self
+      .observation_reader(
+        context,
+        project,
+        &source,
+        connection,
+        tokio::time::Instant::now() + self.timeout,
+      )
+      .await?
+      .authorize_connection(context, project, source, Some(connection))
+      .await
+  }
+  async fn read(
+    &self,
+    context: &ManagementRequestContext,
+    request: ReadWorkSourceObservations,
+  ) -> Result<WorkSourceObservationPage, ApplicationError> {
+    let connection = request
+      .connection
+      .as_ref()
+      .ok_or_else(ApplicationError::capability_unavailable)?;
+    let reader = self
+      .observation_reader(
+        context,
+        request.project_id,
+        &request.source,
+        connection,
+        tokio::time::Instant::now() + self.timeout,
+      )
+      .await?;
+    reader.read(context, request).await
+  }
+}

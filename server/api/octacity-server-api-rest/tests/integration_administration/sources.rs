@@ -563,3 +563,26 @@ async fn source_preview_and_diagnostics_rest_are_protected_closed_bounded_and_re
     );
   }
 }
+
+#[test]
+fn project_source_preview_contract_is_closed_source_only_and_exposes_stale_review_failure() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let schema = &document["components"]["schemas"]["ProjectIssueSourcePreviewSubmission"];
+  assert_eq!(schema["additionalProperties"], false);
+  assert_eq!(schema["properties"].as_object().unwrap().len(), 5);
+  assert_eq!(schema["properties"]["limit"]["minimum"], 1);
+  assert_eq!(schema["properties"]["limit"]["maximum"], 100);
+  for field in ["issue_id", "repository", "target", "token", "credential"] {
+    assert!(schema["properties"].get(field).is_none(), "{field}");
+  }
+  for (path, method) in [
+    ("/api/v1/projects/{project_id}/issue-sources/preview", "post"),
+    ("/api/v1/projects/{project_id}/issue-source-choices", "get"),
+  ] {
+    let operation = &document["paths"][path][method];
+    assert!(
+      operation["responses"].get("412").is_some(),
+      "stale metadata/grant review is a public precondition failure: {path}"
+    );
+  }
+}

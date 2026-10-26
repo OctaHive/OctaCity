@@ -7,6 +7,8 @@ use serde::Serialize;
 use std::collections::BTreeSet;
 /// Maximum native summaries returned by one preview request.
 pub const MAX_WORK_SOURCE_PREVIEW_ITEMS: u16 = 100;
+/// Maximum public retry advice for a read-only preview; it schedules no retry.
+pub const MAX_WORK_SOURCE_PREVIEW_RETRY_MILLIS: u32 = 3_600_000;
 /// Maximum UTF-8 bytes of display title; never an execution input.
 pub const MAX_WORK_SOURCE_PREVIEW_TITLE_BYTES: usize = 512;
 pub use octacity_server_factory::WorkSourcePredicateMismatch as WorkSourceSelectionMismatch;
@@ -307,7 +309,7 @@ impl<
         retry_after_millis,
       }) => {
         result.failure = Some(class);
-        result.retry_after_millis = retry_after_millis.map(|v| u64::from(v.min(3_600_000)));
+        result.retry_after_millis = retry_after_millis.map(|v| u64::from(v.min(MAX_WORK_SOURCE_PREVIEW_RETRY_MILLIS)));
         return Ok(result);
       }
       Err(error) => return Err(error),

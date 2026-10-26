@@ -62,6 +62,7 @@ mod issue_execution;
 mod issue_planning;
 mod issue_reporter;
 mod issue_source;
+mod issue_source_import;
 mod issue_source_mapping;
 mod issue_source_read;
 mod issue_workflow;
