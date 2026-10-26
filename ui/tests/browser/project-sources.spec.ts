@@ -200,11 +200,12 @@ for (const language of ['en', 'ru'] as const) {
       },
     });
     expect(renewed.headers['if-match']).toBe('"2"');
+    // A stable scrollbar gutter can make scrollWidth smaller than clientWidth.
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
       ),
-    ).toBe(0);
+    ).toBeLessThanOrEqual(0);
     expect(
       await page.evaluate(() =>
         JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }),

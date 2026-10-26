@@ -148,6 +148,29 @@ mod tests {
   }
 
   #[test]
+  fn zstd_context_reuse_does_not_carry_abandoned_input_into_the_next_cache_blob() {
+    use std::io::Write as _;
+
+    // RUSTSEC-2026-0391: dropping an unfinished stream must not disclose its input
+    // when the same compression context is borrowed for another cache artifact.
+    let mut context = zstd::zstd_safe::CCtx::create();
+    {
+      let mut abandoned = zstd::stream::write::Encoder::with_context(Vec::new(), &mut context);
+      abandoned.write_all(b"private-abandoned-cache-artifact").unwrap();
+    }
+    let expected = b"independent-cache-artifact";
+    let mut next = zstd::stream::write::Encoder::with_context(Vec::new(), &mut context);
+    next.write_all(expected).unwrap();
+    let encoded = next.finish().unwrap();
+    assert_eq!(zstd::stream::decode_all(encoded.as_slice()).unwrap(), expected);
+    verify_blob_bytes(
+      &descriptor(expected, BlobEncoding::ZstdV1, encoded.len() as u64),
+      &encoded,
+    )
+    .unwrap();
+  }
+
+  #[test]
   fn verifies_identity_and_zstd_representations() {
     let expanded = b"octacity-cache-bundle";
     verify_blob_bytes(

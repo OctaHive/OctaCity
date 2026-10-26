@@ -35,6 +35,47 @@ and detected-secret findings fail the job. Informational RustSec warnings
 remain visible and must be evaluated rather than silently ignored or converted
 into permanent blanket exceptions.
 
+### zstd advisory follow-up (2026-10-27)
+
+The direct workspace dependency now requires `zstd >=0.14.3`; the production
+lockfile resolves `zstd-safe 8.2.0` and `zstd-sys 2.1.2+zstd.1.5.7` for that
+branch. This also updates the compatible `async-compression` branch and removes
+the affected `zstd-sys` version from the entire graph. The separate fuzz lockfile
+has no affected zstd dependency and remains unchanged.
+
+The Linux Microsandbox branch still resolves
+`microsandbox 0.7.6 → microsandbox-filesystem → msb_krun 0.1.39 →
+msb_krun_vmm 0.1.40 → zstd 0.13.3 → zstd-safe 7.3.0`.
+All published `msb_krun_vmm` versions through `0.1.42` still require `zstd 0.13`.
+Consequently the production audit still reports
+[RUSTSEC-2026-0391](https://rustsec.org/advisories/RUSTSEC-2026-0391),
+[RUSTSEC-2026-0398](https://rustsec.org/advisories/RUSTSEC-2026-0398) and
+[RUSTSEC-2026-0403](https://rustsec.org/advisories/RUSTSEC-2026-0403), plus the
+related informational unsoundness warnings for `7.3.0`. No advisory ignore, platform
+filter, local fork or vendored VMM is added: the owner explicitly deferred that
+branch on 2026-10-27 pending an upstream release. Next review: 2026-11-03, or when
+a patched upstream VMM is published, whichever occurs first. The production
+security job intentionally remains blocked by those three findings.
+
+The regression at the public zstd stream/cache boundary is reproducible with:
+
+```shell
+cargo test --locked -p octacity-server-cache zstd_context_reuse
+```
+
+Before the update, decompression of the next completed stream returned the
+abandoned stream's plaintext prefix as well as its own input (Red). With `0.14.3`,
+the same test returns exactly the next input and accepts its cache descriptor
+(Green). Full cache/API and Microsandbox adapter tests qualify compatibility;
+they do not replace the remaining upstream remediation or a real VM run.
+
+Verification on 2026-10-27: `cargo test --locked -p octacity-server-cache
+-p octacity-server-api-cache` passed 8 cases; `cargo test --locked
+-p octacity-execution-microsandbox --lib` passed 14. Scoped Clippy with
+`--all-targets -- -D warnings`, formatting, architecture and both license/source
+policies passed. Production audit decreased from 7 findings to the 3 deferred
+above; fuzz audit reports no vulnerabilities. No exception policy was changed.
+
 ## Secret scanning
 
 Gitleaks scans both source trees used to produce a release: this repository and
