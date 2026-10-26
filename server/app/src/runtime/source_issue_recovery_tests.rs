@@ -1,4 +1,4 @@
-//! Retained Issue effects recover through ordinary HTTP and a fresh normal server startup.
+//! HTTP authoring, controlled public owners and normal-startup recovery of retained Issue effects.
 use super::*;
 
 async fn review_ready(p: &IssueProject) -> (Value, Value) {
@@ -63,7 +63,7 @@ async fn projection(client: &reqwest::Client, path: &str, state: &str, attempt: 
 #[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
 async fn normal_issue_reporter_restart_preserves_original_effects_and_current_writer_authority() {
   for revoked in [false, true] {
-    let p = start_issue_project_with_retry(3000).await;
+    let p = start_issue_project().await;
     let (edge, mapping) = review_ready(&p).await;
     let IssueProject {
       fixture,
@@ -83,56 +83,130 @@ async fn normal_issue_reporter_restart_preserves_original_effects_and_current_wr
     )
     .unwrap();
     let path = format!("{base}/issues/{}", issue["id"].as_str().unwrap());
-    let accepted = transition(&client, &path, &issue, &edge, "accepted-before-lost-response").await;
-    let pending = projection(&client, &path, "pending", 1).await;
+    // Stop supervised dispatch before acceptance. The same public command and one
+    // explicit outbox pass leave a retry pending without racing another live pass.
+    runtime.shutdown().await.unwrap();
+    let installed = crate::runtime::integration_management::install(
+      &config,
+      fixture.store.clone(),
+      CancellationToken::new(),
+      &mut crate::runtime::tests::healthy_checks(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let sources = installed.source_management.unwrap();
+    let managed_issues = installed.issues.unwrap();
+    let context = crate::runtime::integration_management::request_context("inventory-test");
+    let policy = crate::runtime::integration_management::management_policy(Some("inventory-test"));
+    let project_id = serde_json::from_value(issue["project_id"].clone()).unwrap();
+    let issue_id = serde_json::from_value(issue["id"].clone()).unwrap();
+    let at = SystemFactoryExecutionClock.now().unwrap().unix_millis();
+    fixture.clock.0.store(at, Ordering::SeqCst);
+    let accepted = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(IssueHandlers::new(fixture.store.clone(), policy.clone())),
+    )
+    .handle_command(
+      &context,
+      TransitionIssueCommand {
+        intent: TransitionIssueIntent {
+          project_id,
+          id: issue_id,
+          expected_version: serde_json::from_value(issue["version"].clone()).unwrap(),
+          workflow_id: serde_json::from_value(issue["workflow_id"].clone()).unwrap(),
+          workflow_version: serde_json::from_value(issue["workflow_version"].clone()).unwrap(),
+          expected_status_id: serde_json::from_value(issue["status_id"].clone()).unwrap(),
+          transition_id: serde_json::from_value(edge["id"].clone()).unwrap(),
+          reason: None,
+        },
+        idempotency_key: IdempotencyKey::new("accepted-before-lost-response").unwrap(),
+        moved_at: time(at),
+      },
+    )
+    .await
+    .unwrap()
+    .issue;
+    let projector = Arc::new(sources.reporter_projector(project_id, fixture.clock.clone()).unwrap());
+    let first = reporting_worker(&fixture, projector, "controlled-issue-reporter", 10000);
+    fixture.clock.0.store(at + 10, Ordering::SeqCst);
+    assert_eq!(first.run_once(time(at + 10)).await.unwrap().retrying, 1);
+    drop(first);
+    let page = AuthorizedQueryHandler::new(
+      policy.clone(),
+      Arc::new(IssueSynchronizationHandlers::new(
+        fixture.store.clone(),
+        fixture.clock.clone(),
+      )),
+    )
+    .handle_query(
+      &context,
+      ListIssueSourceProjectionsQuery::try_new(project_id, issue_id, None, 1).unwrap(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(page.items.len(), 1);
+    let pending = serde_json::to_value(&page.items[0]).unwrap();
+    assert_eq!(pending["state"], "pending");
+    assert_eq!(pending["attempt"], 1);
     assert_eq!(pending["mapping"], mapping["mapping_reference"]);
     assert!(directory.join("reporter-applied").exists());
-    assert_eq!(get(&client, &path).await["status_id"], accepted["status_id"]);
+    assert_eq!(
+      fixture.store.issue(project_id, issue_id, None).await.unwrap().status_id,
+      accepted.status_id
+    );
+    // Regression: this pause exceeds the former three-second shutdown race.
+    // It simulates a slow test body; no supervised worker remains to consume retry.
+    tokio::time::sleep(Duration::from_secs(4)).await;
     if revoked {
       let connection = fixture.input.definition().connection.as_ref().unwrap();
-      let response = client
-        .post(format!(
-          "http://localhost/api/v1/integrations/{}/projects/{}/access",
-          connection.id,
-          issue["project_id"].as_str().unwrap()
-        ))
-        .header("idempotency-key", "revoke-pending-writer")
-        .header("if-match", "\"1\"")
-        .json(
-          &json!({"intent":{"connection_id":connection.id,"connection_version":connection.version,
-          "project_id":issue["project_id"],"expected_current_version":1,"resources":[{
-            "reference":fixture.input.definition().source.resource,"purposes":["task_read"]
-          }]}}),
-        )
-        .send()
-        .await
-        .unwrap();
-      assert_eq!(
-        response.status(),
-        reqwest::StatusCode::OK,
-        "{}",
-        response.text().await.unwrap()
-      );
+      AuthorizedCommandHandler::new(
+        policy.clone(),
+        Arc::new(IntegrationProjectAccessHandlers::new(fixture.store.clone(), policy)),
+      )
+      .handle_command(
+        &context,
+        PublishIntegrationProjectAccessCommand {
+          request: PublishIntegrationProjectAccess {
+            intent: IntegrationProjectAccessIntent {
+              connection_id: connection.id,
+              connection_version: connection.version,
+              project_id,
+              expected_current_version: Some(IntegrationVersion::INITIAL),
+              resources: vec![IntegrationResourceSelection {
+                reference: fixture.input.definition().source.resource.clone(),
+                purposes: vec![IntegrationPurpose::TaskRead],
+              }],
+            },
+            idempotency_key: IdempotencyKey::new("revoke-pending-writer").unwrap(),
+            published_at: SystemFactoryExecutionClock.now().unwrap(),
+          },
+        },
+      )
+      .await
+      .unwrap();
     } else {
       let mut definition = mapping["resource"]["definition"].clone();
       definition["status"]["push"]["statuses"][0]["add"] = json!([]);
       definition["status"]["push"]["statuses"][0]["remove"] = json!(["custom-ready"]);
-      let response = client
-        .post(format!("{path}/source-link/mappings"))
-        .header("idempotency-key", "review-after-uncertain-write")
-        .header("if-match", format!("\"{}\"", accepted["version"].as_u64().unwrap()))
-        .json(&json!({"expected_mapping":mapping["mapping_reference"],"definition":definition}))
-        .send()
+      AuthorizedCommandHandler::new(managed_issues.policy, managed_issues.handlers)
+        .handle_command(
+          &context,
+          PublishIssueSourceMappingCommand {
+            intent: PublishIssueSourceMappingIntent {
+              project_id,
+              issue_id,
+              expected_issue_version: accepted.version,
+              expected_mapping: Some(serde_json::from_value(mapping["mapping_reference"].clone()).unwrap()),
+              definition: serde_json::from_value(definition).unwrap(),
+            },
+            idempotency_key: IdempotencyKey::new("review-after-uncertain-write").unwrap(),
+            published_at: SystemFactoryExecutionClock.now().unwrap(),
+          },
+        )
         .await
         .unwrap();
-      assert_eq!(
-        response.status(),
-        reqwest::StatusCode::CREATED,
-        "{}",
-        response.text().await.unwrap()
-      );
     }
-    runtime.shutdown().await.unwrap();
     let captured = captured_requests(&directory);
     let calls: Vec<Value> = captured
       .lines()
@@ -145,7 +219,7 @@ async fn normal_issue_reporter_restart_preserves_original_effects_and_current_wr
     assert_eq!(
       operations,
       ["inspect", "inspect", "apply"],
-      "first runtime must stop before recovery"
+      "one controlled pass must leave recovery pending"
     );
     let original = fixture
       .store
@@ -154,6 +228,7 @@ async fn normal_issue_reporter_restart_preserves_original_effects_and_current_wr
       .unwrap();
     assert_eq!(original.record.state, FactoryOutboxState::Pending);
     assert_eq!(original.record.attempt, 1);
+    drop(sources);
     std::fs::write(directory.join("reporter-mode.json"), br#"{"source_effects":true}"#).unwrap();
     let runtime = crate::ServerRuntime::start(config).await.unwrap();
     let delivered = projection(&client, &path, if revoked { "failed" } else { "delivered" }, 1).await;
@@ -194,8 +269,8 @@ async fn normal_issue_reporter_restart_preserves_original_effects_and_current_wr
     let native: Value = serde_json::from_slice(&std::fs::read(directory.join("mode.json")).unwrap()).unwrap();
     assert_eq!(native["candidates"][0]["labels"], json!(["arbitrary", "custom-ready"]));
     let retained = get(&client, &path).await;
-    assert_eq!(retained["version"], accepted["version"]);
-    assert_eq!(retained["status_id"], accepted["status_id"]);
+    assert_eq!(retained["version"], json!(accepted.version));
+    assert_eq!(retained["status_id"], json!(accepted.status_id));
     assert_eq!(get(&client, &format!("{base}/factory-runs")).await["items"], json!([]));
     runtime.shutdown().await.unwrap();
     database.cleanup().await;

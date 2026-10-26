@@ -368,10 +368,6 @@ struct IssueProject {
 }
 
 async fn start_issue_project() -> IssueProject {
-  start_issue_project_with_retry(100).await
-}
-
-async fn start_issue_project_with_retry(retry_delay_millis: u64) -> IssueProject {
   let (fixture, profile) = fixture("opaque-writer").await;
   let (fixture, database) = ordering::postgres::postgres_fixture(fixture).await;
   let (fixture, _) = managed_fixture_with_native_parent(fixture, profile, Some(exact("native-writer", 71))).await;
@@ -400,7 +396,7 @@ async fn start_issue_project_with_retry(retry_delay_millis: u64) -> IssueProject
     "editable":{"labels":["custom-ready"],"states":[]}
   });
   profiles["reporters"][0]["issue_delivery"] = json!({
-    "retry":{"max_attempts":3,"retry_delay_millis":retry_delay_millis},"window_millis":30000,
+    "retry":{"max_attempts":3,"retry_delay_millis":100},"window_millis":30000,
     "budget":BudgetLimit::new(1,5000,0,0,10000).unwrap()
   });
   std::fs::write(&profiles_path, serde_json::to_vec(&profiles).unwrap()).unwrap();
