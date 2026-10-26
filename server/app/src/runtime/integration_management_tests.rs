@@ -265,6 +265,8 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
         "resource":check.resource,"network_hosts":check.network_hosts},
       "selection":{"identity":"all-tasks","sha256":"b".repeat(64)},
       "readable":{"states":["native-state"],"labels":[]},
+      "selection_labels":{"state":"all-native","all_of":[],"any_of":[],"none_of":[]},
+      "predicate_states":["native-state"],
       "polling":{"page_items":2,"max_pages":1,"max_items":2,"max_bytes":65536,"max_page_bytes":65536,
         "overlap_millis":20,"reconciliation_interval_millis":1000,"retention_millis":60000}
     }]}))
@@ -304,6 +306,35 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     0,
     "read-only Source profiles without preparation cannot authorize automatic Factory inputs"
   );
+  let task_choices_path = format!(
+    "http://localhost/api/v1/projects/{project_id}/issue-source-choices?connection_id={id}&connection_version=1"
+  );
+  let response = client.get(&task_choices_path).send().await.unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "Project task-source choices require no Issue or Factory preparation"
+  );
+  let task_choices: Value = response.json().await.unwrap();
+  assert_eq!(task_choices["items"].as_array().unwrap().len(), 1);
+  assert_eq!(task_choices["items"][0]["purpose"], "task_read");
+  assert_eq!(
+    task_choices["items"][0]["connection_configuration"],
+    json!(check.capability.configuration)
+  );
+  assert!(!task_choices.to_string().contains("reader"));
+  assert_eq!(
+    projects
+      .get(format!(
+        "http://{}/api/v1/projects/{project_id}/issue-source-choices?connection_id={id}&connection_version=1",
+        runtime.management_addr()
+      ))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    reqwest::StatusCode::FORBIDDEN
+  );
   runtime.shutdown().await.unwrap();
   let mut source_profiles: Value = serde_json::from_slice(&fs::read(&profiles).unwrap()).unwrap();
   source_profiles["readers"][0]["preparation"] = json!({
@@ -314,7 +345,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     "source":{"kind":"default_reference"},"classification":{"priority":10,"risk":"medium","metadata":{}}
   });
   fs::write(&profiles, serde_json::to_vec(&source_profiles).unwrap()).unwrap();
-  let runtime = ServerRuntime::start(config).await.unwrap();
+  let runtime = ServerRuntime::start(config.clone()).await.unwrap();
   let response = client.get(format!("http://localhost{choices}")).send().await.unwrap();
   assert_eq!(response.status(), reqwest::StatusCode::OK);
   let selected: Value = response.json().await.unwrap();
@@ -325,6 +356,30 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     selected["items"][0]["connection_configuration"]
   );
   assert!(!selected.to_string().contains("reader"));
+  let task_choices_after_preparation: Value = client
+    .get(&task_choices_path)
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(
+    task_choices_after_preparation["items"][0]["binding"], task_choices["items"][0]["binding"],
+    "optional Factory preparation must not replace an independent task reader"
+  );
+  assert_ne!(
+    task_choices_after_preparation["items"][0]["binding"],
+    selected["items"][0]["binding"]
+  );
+  let published = super::source_management_tests::assert_input_publication(
+    &client,
+    database.pool.clone(),
+    project_id.parse().unwrap(),
+    &selected,
+    &registry.join("custom-provider"),
+  )
+  .await;
   let response = projects
     .post(format!("http://{}/api/v1/projects", runtime.management_addr()))
     .header("idempotency-key", "late-project")
@@ -363,6 +418,20 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   assert_eq!(response.status(), reqwest::StatusCode::OK);
   let late: Value = response.json().await.unwrap();
   assert_eq!(late["items"].as_array().unwrap().len(), 1);
+  let task_choices_second: Value = client
+    .get(format!(
+      "http://localhost/api/v1/projects/{second_id}/issue-source-choices?connection_id={id}&connection_version=1"
+    ))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_ne!(
+    task_choices_second["items"][0]["binding"], task_choices_after_preparation["items"][0]["binding"],
+    "a task read choice is scoped to its original Project"
+  );
   let history: Value = client
     .get(format!("http://localhost/api/v1/projects/{second_id}/factory-sources"))
     .send()
@@ -372,6 +441,77 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     .await
     .unwrap();
   assert_eq!(history, json!({"items":[],"next_cursor":null}));
+  // Project grants are current authority, while a retained input remains immutable history.
+  let revoke = json!({"connection_id":id,"project_id":project_id,"connection_version":1,
+    "expected_current_version":1,"resources":[]});
+  let response = client
+    .post(format!("{project_path}/access"))
+    .header("idempotency-key", "revoke-source-authoring")
+    .header("if-match", "\"1\"")
+    .json(&json!({"intent":revoke}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "{}",
+    response.text().await.unwrap()
+  );
+  let revoked: Value = client
+    .get(format!("http://localhost{choices}"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(revoked["items"], json!([]));
+  let response = client
+    .post(format!(
+      "http://localhost/api/v1/projects/{project_id}/factory-sources/validate"
+    ))
+    .json(&json!({"intent":published["intent"]}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::PRECONDITION_FAILED);
+  let response = client
+    .post(format!("{project_path}/access"))
+    .header("idempotency-key", "restore-source-authoring")
+    .header("if-match", "\"2\"")
+    .json(
+      &json!({"intent":{"connection_id":id,"project_id":project_id,"connection_version":1,
+      "expected_current_version":2,"resources":grant["resources"]}}),
+    )
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "{}",
+    response.text().await.unwrap()
+  );
+  runtime.shutdown().await.unwrap();
+  source_profiles["readers"][0]["polling"]["max_pages"] = json!(2);
+  fs::write(&profiles, serde_json::to_vec(&source_profiles).unwrap()).unwrap();
+  let runtime = ServerRuntime::start(config).await.unwrap();
+  let replaced: Value = client
+    .get(format!("http://localhost{choices}"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_ne!(replaced["items"][0]["binding"], selected["items"][0]["binding"]);
+  assert_eq!(
+    replaced["items"][0]["connection_configuration"],
+    selected["items"][0]["connection_configuration"]
+  );
+  super::source_management_tests::assert_history_after_replacement(&client, project_id.parse().unwrap(), &published)
+    .await;
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }

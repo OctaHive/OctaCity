@@ -48,6 +48,14 @@ pub struct IntegrationManagementApplication {
   project_access: Option<ProjectAccessEndpoints>,
   sources: Option<SourceConfigurationEndpoints>,
   source_reads: Option<SourceReadEndpoints>,
+  project_source_choices: Option<
+    Arc<
+      dyn AuthorizedManagementQueryHandler<
+          octacity_server_application::ListProjectIssueSourceChoicesQuery,
+          Error = ApplicationError,
+        >,
+    >,
+  >,
   discovery: Option<DiscoveryEndpoints>,
   checks: Option<Arc<dyn AuthorizedManagementQueryHandler<CheckIntegrationConnectionQuery, Error = ApplicationError>>>,
 }
@@ -78,6 +86,7 @@ impl IntegrationManagementApplication {
       checks: None,
       sources: None,
       source_reads: None,
+      project_source_choices: None,
       discovery: None,
     }
   }
@@ -97,6 +106,7 @@ impl IntegrationManagementApplication {
       checks: None,
       sources: None,
       source_reads: None,
+      project_source_choices: None,
       discovery: None,
     }
   }

@@ -123,6 +123,7 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
       .read(
         self.context,
         ReadWorkSourceObservations {
+          connection: None,
           project_id: self.claim.project_id,
           source: self.claim.target.source.clone(),
           scan_id: request.scan_id,

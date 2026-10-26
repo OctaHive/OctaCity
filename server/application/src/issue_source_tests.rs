@@ -26,6 +26,7 @@ fn selection(project_id: ProjectId) -> IssueSourceSelection {
 }
 fn read(selection: &IssueSourceSelection) -> ReadWorkSourceObservations {
   ReadWorkSourceObservations {
+    connection: None,
     project_id: selection.project_id,
     source: selection.source.clone(),
     scan_id: FactoryDigest::content_sha256(b"explicit reviewed read"),

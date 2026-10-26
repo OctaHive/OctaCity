@@ -280,6 +280,11 @@ pub(super) async fn install(
           grace: std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
           cancellation,
         });
+        let project_sources = Arc::new(ProjectIssueSourceChoiceHandlers::new(Arc::new(
+          super::source_management::IssueSourceChoiceProvider(sources.clone()),
+        )));
+        application = application
+          .with_project_source_choices(Arc::new(AuthorizedQueryHandler::new(policy.clone(), project_sources)));
         let sources = Arc::new(InstalledFactorySourceHandlers::new(sources));
         application = application
           .with_source_configuration(

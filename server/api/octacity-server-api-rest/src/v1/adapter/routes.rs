@@ -690,6 +690,10 @@ fn registered_integration_routes() -> ManagementRoutes<Arc<super::integrations::
       "validateWorkSourceConfiguration",
       validate_source_configuration,
     )
+    .get::<octacity_server_application::ListProjectIssueSourceChoicesQuery, _, _>(
+      "listProjectIssueSourceChoices",
+      project_source_choices,
+    )
     .get::<ListWorkSourceInputChoicesQuery, _, _>("listWorkSourceInputChoices", source_choices)
     .get::<ListWorkSourceConfigurationsQuery, _, _>("listWorkSourceConfigurations", list_source_configurations)
     .get::<GetWorkSourceConfigurationQuery, _, _>("getWorkSourceInput", get_source_input)

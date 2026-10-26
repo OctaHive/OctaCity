@@ -48,6 +48,8 @@ mod issue_tests;
 #[cfg(test)]
 mod issue_workflow_tests;
 mod source_management;
+#[cfg(all(test, unix))]
+mod source_management_tests;
 mod source_profiles_file;
 #[cfg(all(test, unix))]
 mod source_profiles_file_tests;

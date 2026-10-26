@@ -95,6 +95,22 @@ settings participate in the input configuration digest; the native connection
 configuration remains its exact parent. File replacement cannot retarget a
 previously accepted binding. These routes alone start no Source worker or writer.
 
+Project task-reader discovery uses protected
+`GET /api/v1/projects/{project_id}/issue-source-choices?connection_id=...&connection_version=...`.
+It requires neither an Issue nor a Factory target, Repository or preparation.
+Only current granted task readers are returned, with safe display metadata and
+reviewed metadata/access versions. The task binding freezes Project, connection
+identity/version and read settings; Factory preparation is excluded from that
+read identity. The original native configuration remains a separate parent.
+Discovery performs no native read and activates no import, execution or push.
+
+Internal observation requests carry an optional original managed connection.
+Managed templates require that pin for both reads and retained-observation
+reauthorization (`authorize_connection`); they cannot borrow legacy installed
+authority. An already pinned reader cannot switch connection identity, metadata
+version or a retained native parent, even when another connection grants the same
+native resource. Current grant checks occur before and after provider reads.
+
 Optional `credential_publishers` select a concrete storage adapter at the server
 composition root. The installed `github_private_files` publisher takes absolute
 `root`, confined relative `directory` and `targets`: logical `reference`, original

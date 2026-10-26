@@ -90,15 +90,48 @@ impl SourceReadDeclaration {
     project_id: octacity_server_domain::ProjectId,
     context: octacity_server_application::ManagementRequestContext,
   ) -> Result<super::WorkSourceReadProfile, octacity_server_application::ApplicationError> {
-    use octacity_server_factory::{FactoryDigest, ImmutableReference};
+    use octacity_server_factory::FactoryDigest;
     let bytes = serde_json::to_vec(self).map_err(|_| octacity_server_application::ApplicationError::invalid())?;
-    let mut binding = self.native_binding();
-    binding.configuration = ImmutableReference::new(
-      self.identity.clone(),
-      self.version.clone(),
+    Ok(self.read_profile(
+      project_id,
+      context,
       FactoryDigest::sha256("octacity.source.installed-profile.v1", &[&bytes]),
-    );
-    Ok(super::WorkSourceReadProfile {
+    ))
+  }
+  /// Independent task reads retain only read settings; Factory preparation changes
+  /// cannot replace their installed identity or invalidate a task's original read pin.
+  pub(super) fn observation_profile(
+    &self,
+    project_id: octacity_server_domain::ProjectId,
+    context: octacity_server_application::ManagementRequestContext,
+  ) -> Result<super::WorkSourceReadProfile, octacity_server_application::ApplicationError> {
+    let bytes = serde_json::to_vec(&(
+      &self.identity,
+      &self.version,
+      &self.read,
+      &self.selection,
+      &self.readable,
+      &self.polling,
+      &self.selection_labels,
+      &self.predicate_states,
+    ))
+    .map_err(|_| octacity_server_application::ApplicationError::invalid())?;
+    Ok(self.read_profile(
+      project_id,
+      context,
+      octacity_server_factory::FactoryDigest::sha256("octacity.source.observation-profile.v1", &[&bytes]),
+    ))
+  }
+  fn read_profile(
+    &self,
+    project_id: octacity_server_domain::ProjectId,
+    context: octacity_server_application::ManagementRequestContext,
+    digest: octacity_server_factory::FactoryDigest,
+  ) -> super::WorkSourceReadProfile {
+    let mut binding = self.native_binding();
+    binding.configuration =
+      octacity_server_factory::ImmutableReference::new(self.identity.clone(), self.version.clone(), digest);
+    super::WorkSourceReadProfile {
       managed_access: None,
       project_id,
       binding,
@@ -109,7 +142,7 @@ impl SourceReadDeclaration {
       selection: self.selection.clone(),
       network_hosts: self.read.network_hosts.clone(),
       polling: self.polling.policy(),
-    })
+    }
   }
   fn validate(
     &self,

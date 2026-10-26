@@ -18,24 +18,16 @@ pub(super) struct SourceManagement {
   pub(super) grace: Duration,
   pub(super) cancellation: CancellationToken,
 }
-impl FactorySourceConfigurationProvider<PostgresStore> for SourceManagement {
-  fn for_project(
+impl SourceManagement {
+  fn handlers(
     &self,
     project: ProjectId,
-    context: &ManagementRequestContext,
+    profiles: Vec<(
+      &super::source_profiles_file::SourceReadDeclaration,
+      super::WorkSourceReadProfile,
+    )>,
   ) -> Result<FactorySourceConfigurationHandlers<PostgresStore>, ApplicationError> {
-    // These are execution-input choices. Source-only readers remain installed for
-    // task consumers, but cannot promise preparation for a Factory input.
-    let prepared: Vec<_> = self
-      .profiles
-      .readers
-      .iter()
-      .filter(|r| r.preparation.is_some())
-      .collect();
-    let reads = prepared
-      .iter()
-      .map(|r| r.profile(project, context.clone()))
-      .collect::<Result<Vec<_>, _>>()?;
+    let (declarations, reads): (Vec<_>, Vec<_>) = profiles.into_iter().unzip();
     let reporters = self
       .profiles
       .reporters
@@ -60,7 +52,7 @@ impl FactorySourceConfigurationProvider<PostgresStore> for SourceManagement {
       self.policy.clone(),
       sources.iter().chain(&writers).cloned().collect(),
     )?;
-    for (reader, source) in prepared.into_iter().zip(sources) {
+    for (reader, source) in declarations.into_iter().zip(sources) {
       handler = handler.with_connection_configuration(source.clone(), reader.read.capability.configuration.clone())?;
       if let Some(selection) = &reader.selection_labels {
         let state = selection.state.clone().ok_or_else(ApplicationError::invalid)?;
@@ -94,5 +86,47 @@ impl FactorySourceConfigurationProvider<PostgresStore> for SourceManagement {
     )?
     .with_managed_connections(ManagedIntegrationConnections::new(self.store.clone()));
     Ok(handler.with_preview(Arc::new(preview)))
+  }
+}
+
+impl FactorySourceConfigurationProvider<PostgresStore> for SourceManagement {
+  fn for_project(
+    &self,
+    project: ProjectId,
+    context: &ManagementRequestContext,
+  ) -> Result<FactorySourceConfigurationHandlers<PostgresStore>, ApplicationError> {
+    // Execution inputs can only select readers with actual preparation support.
+    self.handlers(
+      project,
+      self
+        .profiles
+        .readers
+        .iter()
+        .filter(|r| r.preparation.is_some())
+        .map(|r| Ok((r, r.profile(project, context.clone())?)))
+        .collect::<Result<Vec<_>, ApplicationError>>()?,
+    )
+  }
+}
+
+/// Reuses the installed inventory for task discovery, including observation-only readers.
+/// Only the Project task-choice query is exposed through this adapter.
+pub(super) struct IssueSourceChoiceProvider(pub(super) Arc<SourceManagement>);
+impl FactorySourceConfigurationProvider<PostgresStore> for IssueSourceChoiceProvider {
+  fn for_project(
+    &self,
+    project: ProjectId,
+    context: &ManagementRequestContext,
+  ) -> Result<FactorySourceConfigurationHandlers<PostgresStore>, ApplicationError> {
+    self.0.handlers(
+      project,
+      self
+        .0
+        .profiles
+        .readers
+        .iter()
+        .map(|r| Ok((r, r.observation_profile(project, context.clone())?)))
+        .collect::<Result<Vec<_>, ApplicationError>>()?,
+    )
   }
 }

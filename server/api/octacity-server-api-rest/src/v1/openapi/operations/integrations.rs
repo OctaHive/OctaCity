@@ -160,6 +160,22 @@ pub(super) const OPERATIONS: &[ManagementOperation] = &[
   )
   .with_protected_ingress(),
   operation!(
+    octacity_server_application::ListProjectIssueSourceChoicesQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/issue-source-choices",
+    "listProjectIssueSourceChoices",
+    "Integrations",
+    "List granted task readers without an existing Issue, Repository or Factory target",
+    None,
+    "WorkSourceInputChoices",
+    "200",
+    false,
+    false
+  )
+  .with_protected_ingress()
+  .with_parameters(ParameterProfile::WorkSourceInputChoices)
+  .with_visibility::<octacity_server_application::ListProjectIssueSourceChoicesQuery>(),
+  operation!(
     ListWorkSourceInputChoicesQuery,
     "GET",
     "/api/v1/projects/{project_id}/factory-source-choices",

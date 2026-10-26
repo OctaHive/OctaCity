@@ -157,6 +157,57 @@ pub(crate) struct SourceChoices {
   connection_id: String,
   connection_version: u64,
 }
+fn source_choice_query(
+  query: SourceChoices,
+  project: &str,
+  id: &RequestId,
+) -> Result<ListWorkSourceInputChoicesQuery, ApiError> {
+  Ok(ListWorkSourceInputChoicesQuery {
+    project_id: project
+      .parse()
+      .map_err(|_| application_error(ApplicationFailure::Invalid, id))?,
+    connection_id: query
+      .connection_id
+      .parse()
+      .map_err(|_| application_error(ApplicationFailure::Invalid, id))?,
+    connection_version: serde_json::from_value(json!(query.connection_version))
+      .map_err(|_| application_error(ApplicationFailure::Invalid, id))?,
+  })
+}
+
+impl IntegrationManagementApplication {
+  /// Installs read-only Project task-source discovery, without import or Factory activation.
+  pub fn with_project_source_choices<Q>(mut self, queries: Arc<Q>) -> Self
+  where
+    Q: AuthorizedManagementQueryHandler<
+        octacity_server_application::ListProjectIssueSourceChoicesQuery,
+        Error = ApplicationError,
+      > + 'static,
+  {
+    self.project_source_choices = Some(queries);
+    self
+  }
+}
+pub(crate) async fn project_source_choices(
+  State(app): State<Arc<IntegrationManagementApplication>>,
+  Extension(crate::ManagementRequest(id, ctx)): Extension<crate::ManagementRequest>,
+  Path(project): Path<String>,
+  query: Result<Query<SourceChoices>, axum::extract::rejection::QueryRejection>,
+) -> Result<Json<Value>, ApiError> {
+  let Query(query) = query.map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
+  let query = octacity_server_application::ListProjectIssueSourceChoicesQuery {
+    selection: source_choice_query(query, &project, &id)?,
+  };
+  let result = app
+    .project_source_choices
+    .as_ref()
+    .ok_or_else(|| source_unavailable(&app, &id))?
+    .handle_authorized_query(&ctx, query)
+    .await
+    .map_err(|e| authorized_handler_error(e, &id))?;
+  Ok(Json(encode(result, &id)?))
+}
+
 pub(crate) async fn source_choices(
   State(app): State<Arc<IntegrationManagementApplication>>,
   Extension(crate::ManagementRequest(id, ctx)): Extension<crate::ManagementRequest>,
@@ -164,17 +215,7 @@ pub(crate) async fn source_choices(
   query: Result<Query<SourceChoices>, axum::extract::rejection::QueryRejection>,
 ) -> Result<Json<Value>, ApiError> {
   let Query(query) = query.map_err(|_| application_error(ApplicationFailure::Invalid, &id))?;
-  let query = ListWorkSourceInputChoicesQuery {
-    project_id: project
-      .parse()
-      .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?,
-    connection_id: query
-      .connection_id
-      .parse()
-      .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?,
-    connection_version: serde_json::from_value(json!(query.connection_version))
-      .map_err(|_| application_error(ApplicationFailure::Invalid, &id))?,
-  };
+  let query = source_choice_query(query, &project, &id)?;
   let result = services(&app, &id)?
     .choices
     .handle_authorized_query(&ctx, query)

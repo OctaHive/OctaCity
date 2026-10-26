@@ -74,6 +74,7 @@ impl<S: IssueSourceMappingStore> ManagementCommandUseCase<PreviewIssueSourceComm
       .read(
         context,
         ReadWorkSourceObservations {
+          connection: None,
           project_id: command.project_id,
           source: command.source.clone(),
           scan_id,

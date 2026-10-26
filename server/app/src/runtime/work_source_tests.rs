@@ -1625,13 +1625,21 @@ async fn managed_access(
   binding: &WorkSourceBinding,
   purpose: IntegrationPurpose,
 ) -> (ManagedIntegrationAccess, IntegrationId) {
+  managed_access_named(fixture, binding, purpose, "managed").await
+}
+
+async fn managed_access_named(
+  fixture: &Fixture,
+  binding: &WorkSourceBinding,
+  purpose: IntegrationPurpose,
+  namespace: &str,
+) -> (ManagedIntegrationAccess, IntegrationId) {
   let id = IntegrationId::generate();
-  let credential = octacity_server_store::testing::integration_connection_fixture("custom-tracker")
-    .0
-    .resources[0]
-    .capabilities[0]
-    .credential
-    .clone();
+  // Independent aliases own separate logical credentials, even for identical native pins.
+  let credential: octacity_server_secrets::LogicalSecretReference = serde_json::from_value(serde_json::json!({
+    "provider":"installed", "reference":format!("{namespace}-reader"),
+  }))
+  .unwrap();
   let installed = InstalledIntegration {
     installation: binding.installation.clone(),
     provider: key("custom-tracker"),
@@ -1670,7 +1678,7 @@ async fn managed_access(
           },
         },
         installed,
-        idempotency_key: IdempotencyKey::new("managed-metadata").unwrap(),
+        idempotency_key: IdempotencyKey::new(format!("{namespace}-metadata")).unwrap(),
         published_at: time(1),
       },
     ))
@@ -1690,7 +1698,7 @@ async fn managed_access(
             activate_connection: true,
           },
         },
-        idempotency_key: IdempotencyKey::new("managed-activate").unwrap(),
+        idempotency_key: IdempotencyKey::new(format!("{namespace}-activate")).unwrap(),
         requested_at: time(2),
       },
     ))
@@ -1712,7 +1720,7 @@ async fn managed_access(
           expected_current_version: None,
           resources,
         },
-        idempotency_key: IdempotencyKey::new("managed-project-grant").unwrap(),
+        idempotency_key: IdempotencyKey::new(format!("{namespace}-project-grant")).unwrap(),
         published_at: time(3),
       },
     ))

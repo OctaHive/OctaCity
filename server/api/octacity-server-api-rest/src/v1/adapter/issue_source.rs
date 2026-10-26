@@ -163,6 +163,7 @@ fn read_request(
   continuation: Option<String>,
 ) -> octacity_server_application::ReadWorkSourceObservations {
   octacity_server_application::ReadWorkSourceObservations {
+    connection: None,
     project_id,
     source,
     window: None,

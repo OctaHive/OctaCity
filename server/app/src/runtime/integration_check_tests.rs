@@ -78,25 +78,29 @@ pub(super) fn fixture(
   let root = tempfile::tempdir().unwrap();
   let directory = root.path().join(provider);
   fs::create_dir(&directory).unwrap();
-  let script = r#"#!/bin/sh
-IFS= read -r request || exit 90
-case "$request" in *'"operation":"check"'*) ;; *) exit 91 ;; esac
-printf '%s' "$request" > captured.json
-printf 'called\n' >> calls
-id=$(printf '%s' "$request" | /usr/bin/sed -n 's/.*"request_id":"\([^"]*\)".*/\1/p')
-check=$(printf '%s' "$request" | /usr/bin/sed -n 's/.*"check_id":"\([^"]*\)".*/\1/p')
-profile=$(printf '%s' "$request" | /usr/bin/sed -n 's/.*"configuration_digest":"\([^"]*\)".*/\1/p')
-printf '{"family":"source","message":{"protocol_version":1,"request_id":"%s","outcome":' "$id"
-/usr/bin/sed -e "s/CHECK_ID/$check/g" -e "s/PROFILE/$profile/g" outcome.json
-printf '}}\n'
-"#;
+  let script = include_str!("fixtures/integration-provider.py");
+  fs::write(
+    directory.join("source-provider.py"),
+    include_str!("fixtures/source-provider.py"),
+  )
+  .unwrap();
+  fs::write(
+    directory.join("mode.json"),
+    serde_json::json!({"candidates":[{
+      "container_id":"external-project-42","item_id":"opaque-task","display_id":"EXTERNAL-42",
+      "update_identity":"native-update","title":"External task draft","body":null,"fields":{},
+      "labels":["arbitrary"],"state":"native-state"
+    }]})
+    .to_string(),
+  )
+  .unwrap();
   let outcome = serde_json::json!({"status":"checked","payload":{"check_id":"CHECK_ID","configuration_digest":"PROFILE",
     "resource_id":"external-project-42","configuration":"ready","authentication":"ready","resource_access":"ready","capability":"ready","retry_after_millis":null}});
   fs::write(directory.join("outcome.json"), outcome.to_string()).unwrap();
   fs::write(directory.join("plugin"), script).unwrap();
   fs::set_permissions(directory.join("plugin"), fs::Permissions::from_mode(0o700)).unwrap();
   let digest = FactoryDigest::from_bytes(Sha256::digest(script).into());
-  fs::write(directory.join("adapter.toml"), format!("manifest_version = 1\nadapter_id = {provider:?}\nexecutable = \"plugin\"\nexecutable_sha256 = \"{digest}\"\n[protocol.source]\nmin = 1\nmax = 1\n[capabilities.source]\ncheck = true\ncancel = false\ncredential_class = \"work_source_read\"\nconfiguration_digest = \"{}\"\n", "e".repeat(64))).unwrap();
+  fs::write(directory.join("adapter.toml"), format!("manifest_version = 1\nadapter_id = {provider:?}\nexecutable = \"plugin\"\nexecutable_sha256 = \"{digest}\"\n[protocol.source]\nmin = 1\nmax = 1\n[capabilities.source]\ncheck = true\npreview = true\nauthorize = true\ncancel = false\ncredential_class = \"work_source_read\"\nconfiguration_digest = \"{}\"\n", "e".repeat(64))).unwrap();
   let (mut installed, draft) = integration_connection_fixture(provider);
   installed.adapter = ImmutableReference::new(
     FactoryKey::new(provider).unwrap(),

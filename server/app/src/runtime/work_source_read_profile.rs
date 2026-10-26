@@ -32,6 +32,13 @@ impl WorkSourceReadProfile {
     connections: Option<&ManagedIntegrationConnections>,
   ) -> Result<Self, ApplicationError> {
     if let Some(connection) = connection {
+      if self
+        .managed_access
+        .as_ref()
+        .is_some_and(|access| !access.matches_work_connection(connection, IntegrationPurpose::TaskRead))
+      {
+        return Err(ApplicationError::capability_unavailable());
+      }
       self.managed_access = Some(
         connections
           .ok_or_else(ApplicationError::capability_unavailable)?

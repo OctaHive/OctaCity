@@ -325,14 +325,8 @@ impl ManagedIntegrationConnections {
     binding: &octacity_server_factory::WorkSourceBinding,
     purpose: IntegrationPurpose,
   ) -> Result<ManagedIntegrationAccess, ApplicationError> {
-    let configuration = match purpose {
-      IntegrationPurpose::TaskRead => &connection.source_configuration,
-      IntegrationPurpose::TaskUpdate => connection
-        .reporter_configuration
-        .as_ref()
-        .ok_or_else(ApplicationError::capability_unavailable)?,
-      _ => return Err(ApplicationError::capability_unavailable()),
-    };
+    let configuration =
+      work_connection_configuration(connection, purpose).ok_or_else(ApplicationError::capability_unavailable)?;
     Ok(ManagedIntegrationAccess {
       connection_id: connection.id,
       version: connection.version,
@@ -341,7 +335,33 @@ impl ManagedIntegrationConnections {
     })
   }
 }
+fn work_connection_configuration(
+  connection: &octacity_server_factory::WorkSourceConnectionRef,
+  purpose: IntegrationPurpose,
+) -> Option<&octacity_server_factory::ImmutableReference> {
+  match purpose {
+    IntegrationPurpose::TaskRead => Some(&connection.source_configuration),
+    IntegrationPurpose::TaskUpdate => connection.reporter_configuration.as_ref(),
+    _ => None,
+  }
+}
 impl ManagedIntegrationAccess {
+  /// Checks original metadata and any retained native configuration parent without granting use.
+  /// Identical resource pins on another connection cannot replace this accepted authority.
+  pub fn matches_work_connection(
+    &self,
+    connection: &octacity_server_factory::WorkSourceConnectionRef,
+    purpose: IntegrationPurpose,
+  ) -> bool {
+    self.connection_id == connection.id
+      && self.version == connection.version
+      && work_connection_configuration(connection, purpose).is_some_and(|selected| {
+        self
+          .work_configuration
+          .as_ref()
+          .is_none_or(|(_, parent)| parent == selected)
+      })
+  }
   /// Original connection identity for independent management visibility/use checks.
   pub fn connection_id(&self) -> IntegrationId {
     self.connection_id
