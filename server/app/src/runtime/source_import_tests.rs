@@ -844,7 +844,7 @@ pub(super) async fn assert_unavailable_import_lifecycle(client: &reqwest::Client
   );
 }
 
-async fn wait_for_task_title(client: &reqwest::Client, base: &str, issue: &str, title: &str) {
+pub(super) async fn wait_for_task_title(client: &reqwest::Client, base: &str, issue: &str, title: &str) {
   let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
   loop {
     let task: Value = client
@@ -860,7 +860,7 @@ async fn wait_for_task_title(client: &reqwest::Client, base: &str, issue: &str, 
     }
     assert!(
       tokio::time::Instant::now() < deadline,
-      "reviewed link pull must refresh independently of disabled import: {task}"
+      "reviewed link pull must refresh independently of import and execution: {task}"
     );
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
   }

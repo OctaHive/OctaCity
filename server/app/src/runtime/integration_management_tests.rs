@@ -483,6 +483,21 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     &registry.join("custom-provider"),
   )
   .await;
+  super::source_factory_predicate_tests::assert_exclusive_groups_do_not_choose_an_ambiguous_member(
+    &client,
+    project_id,
+    &published,
+    &registry.join("custom-provider"),
+  )
+  .await;
+  super::source_factory_refresh_tests::assert_retained_pull_survives_input_mismatch_and_disablement(
+    &client,
+    project_id,
+    &published,
+    &imported,
+    &registry.join("custom-provider"),
+  )
+  .await;
   let response = projects
     .post(format!("http://{}/api/v1/projects", runtime.management_addr()))
     .header("idempotency-key", "late-project")

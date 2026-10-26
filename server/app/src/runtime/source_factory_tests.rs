@@ -99,6 +99,28 @@ pub(super) async fn assert_factory_intake(
     );
     for admission in admissions {
       assert!(admission["association"]["run_id"].is_string());
+      let work_response = client
+        .get(format!(
+          "http://localhost/api/v1/factory-runs/{}/work",
+          admission["association"]["run_id"].as_str().unwrap()
+        ))
+        .send()
+        .await
+        .unwrap();
+      assert_eq!(work_response.status(), reqwest::StatusCode::OK);
+      let work: Value = work_response.json().await.unwrap();
+      assert_eq!(work["items"].as_array().unwrap().len(), 1);
+      let work = &work["items"][0]["record"];
+      assert_eq!(work["id"], admission["association"]["work_id"]);
+      assert_eq!(
+        work["configuration"],
+        published["intent"]["inputs"][0]["definition"]["target"]
+      );
+      assert_eq!(
+        work["subject"]["repository_id"], published["intent"]["inputs"][0]["definition"]["repository"]["id"],
+        "execution uses the separately reviewed code Repository, not the native task container"
+      );
+      assert_eq!(work["subject"]["base_revision"], "a".repeat(40));
       assert_eq!(admission["reporting"], json!([]));
       assert!(
         works.insert(admission["association"]["work_id"].as_str().unwrap().to_owned()),
