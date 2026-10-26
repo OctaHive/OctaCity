@@ -18,8 +18,16 @@ impl FactorySourceDiagnosticsStore for PostgresStore {
     // Registration already proved accepted-action provenance and the original Reporter
     // inside the publication transaction. Fetch one latest metadata row per operation;
     // no Flow documents, private Source snapshots or execution locks are needed here.
-    let rows: Vec<(Vec<u8>, String, i32, i64, Json<WorkSourceReportingOrigin>)> = sqlx::query_as(
-      "SELECT initial.operation_id, latest.state, latest.attempt, latest.available_at, \
+    type ReportingRow = (
+      Vec<u8>,
+      String,
+      Option<Json<FactoryOutboxFailure>>,
+      i32,
+      i64,
+      Json<WorkSourceReportingOrigin>,
+    );
+    let rows: Vec<ReportingRow> = sqlx::query_as(
+      "SELECT initial.operation_id, latest.state, to_jsonb(latest.failure), latest.attempt, latest.available_at, \
        jsonb_build_object('action', jsonb_build_object('definition', action.doc#>'{input,definition}', 'flow_run_id', action.doc#>'{input,flow_run_id}', 'cycle_id', action.doc#>'{input,cycle_id}', 'node', action.doc#>'{input,node}', 'outcome', action.doc->'outcome', 'node_attempt_id', action.doc->'node_attempt_id'), \
          'stages', COALESCE((SELECT jsonb_agg(jsonb_build_object('definition', stage.doc#>'{input,definition}', 'flow_run_id', stage.doc#>'{input,flow_run_id}', 'cycle_id', stage.doc#>'{input,cycle_id}', 'node', stage.doc#>'{input,node}', 'outcome', stage.doc->'outcome', 'node_attempt_id', stage.doc->'node_attempt_id') ORDER BY selected.position) \
          FROM jsonb_array_elements(action.doc#>'{input,sources}') WITH ORDINALITY selected(ref, position) \
@@ -32,7 +40,7 @@ impl FactorySourceDiagnosticsStore for PostgresStore {
        JOIN factory_source_projection_intents accepted ON accepted.operation_id=initial.operation_id AND accepted.project_id=p.project_id \
        JOIN factory_flow_records action_record ON action_record.run_id=p.run_id AND action_record.id=initial.input_digest \
        CROSS JOIN LATERAL (SELECT convert_from(action_record.document, 'UTF8')::jsonb AS doc) action \
-       CROSS JOIN LATERAL (SELECT state, attempt, FLOOR(EXTRACT(EPOCH FROM available_at)*1000)::BIGINT AS available_at \
+       CROSS JOIN LATERAL (SELECT state, failure, attempt, FLOOR(EXTRACT(EPOCH FROM available_at)*1000)::BIGINT AS available_at \
          FROM factory_outbox_records history WHERE history.operation_id=initial.operation_id AND history.run_id=p.run_id \
          ORDER BY attempt DESC, CASE state WHEN 'pending' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END DESC, recorded_at DESC, id DESC LIMIT 1) latest \
        WHERE p.id=$1 AND p.project_id=$2 AND p.input_id=$3 AND p.input_version=$4 AND p.work_id=$5 AND p.run_id=$6 AND p.settled \
@@ -43,7 +51,7 @@ impl FactorySourceDiagnosticsStore for PostgresStore {
       .fetch_all(self.pool()).await.map_err(unavailable)?;
     let mut items = rows
       .into_iter()
-      .map(|(operation, state, attempt, at, origin)| {
+      .map(|(operation, state, failure, attempt, at, origin)| {
         Ok(WorkSourceReportingDiagnostic {
           operation_id: read_digest(operation)?,
           origin: Some(origin.0),
@@ -55,6 +63,7 @@ impl FactorySourceDiagnosticsStore for PostgresStore {
             _ => return Err(StoreError::Unavailable),
           },
           attempt: u16::try_from(attempt).map_err(|_| StoreError::Unavailable)?,
+          failure: failure.map(|Json(reason)| reason),
           available_at: crate::discovery::timestamp(at)?,
         })
       })
@@ -95,30 +104,45 @@ impl FactorySourceDiagnosticsStore for PostgresStore {
     let connections =
       crate::read_visibility::sql_read_visibility(request.visibility.connections.view(), |id| id.as_uuid());
     let runs = crate::read_visibility::sql_read_visibility(request.runs.view(), |id| id.as_uuid());
-    let (by_inputs, inputs, issues, partition) = match &request.filter {
-      WorkSourceDiagnosticFilter::Inputs(ids) => {
-        (true, ids.iter().map(|i| i.as_uuid()).collect::<Vec<_>>(), vec![], None)
-      }
+    let (by_inputs, inputs, issues, partition, versions) = match &request.filter {
+      WorkSourceDiagnosticFilter::Inputs(ids) => (
+        true,
+        ids.iter().map(|i| i.as_uuid()).collect::<Vec<_>>(),
+        vec![],
+        None,
+        None,
+      ),
+      WorkSourceDiagnosticFilter::InputVersions(members) => (
+        true,
+        members.iter().map(|member| member.id.as_uuid()).collect(),
+        vec![],
+        None,
+        Some(Json(members)),
+      ),
       WorkSourceDiagnosticFilter::Native { issues, security_scope } => (
         false,
         vec![],
         issues.iter().map(|i| i.as_bytes().to_vec()).collect::<Vec<_>>(),
         Some(security_scope.as_bytes().to_vec()),
+        None,
       ),
     };
     type Row = (Vec<u8>, Vec<u8>, Vec<u8>, uuid::Uuid, i64, uuid::Uuid, uuid::Uuid);
     let rows:Vec<Row>=sqlx::query_as(
       "SELECT p.id,p.issue,w.security_scope_digest,p.input_id,p.input_version,p.work_id,p.run_id \
        FROM factory_source_preparations p JOIN factory_source_inputs i ON i.id=p.input_id AND i.version=p.input_version AND i.project_id=p.project_id \
+       JOIN factory_runs run ON run.id=p.run_id AND run.visible \
        JOIN factory_work_envelopes w ON w.id=p.work_id AND w.project_id=p.project_id \
        WHERE p.project_id=$1 AND p.settled \
        AND ($2 OR i.configuration_id=ANY($3::uuid[])) AND ($4 OR i.repository_id=ANY($5::uuid[])) \
        AND ((i.document#>>'{definition,connection,id}') IS NULL OR $6 OR (i.document#>>'{definition,connection,id}')::uuid=ANY($7::uuid[])) \
        AND ($8 OR p.run_id=ANY($9::uuid[])) \
        AND (($10 AND p.input_id=ANY($11::uuid[])) OR (NOT $10 AND p.issue=ANY($12::bytea[]) AND w.security_scope_digest=$13)) \
+       AND ($16::jsonb IS NULL OR EXISTS(SELECT 1 FROM jsonb_to_recordset($16) AS selected(id uuid, version bigint) \
+         WHERE p.input_id=selected.id AND p.input_version=selected.version)) \
        AND ($14::bytea IS NULL OR p.id>$14) ORDER BY p.id LIMIT $15")
       .bind(request.project_id.as_uuid()).bind(configs.all).bind(configs.identities).bind(repos.all).bind(repos.identities).bind(connections.all).bind(connections.identities).bind(runs.all).bind(runs.identities)
-      .bind(by_inputs).bind(inputs).bind(issues).bind(partition).bind(request.after.map(|id|id.as_bytes().to_vec())).bind(i64::from(request.limit)+1).fetch_all(self.pool()).await.map_err(unavailable)?;
+      .bind(by_inputs).bind(inputs).bind(issues).bind(partition).bind(request.after.map(|id|id.as_bytes().to_vec())).bind(i64::from(request.limit)+1).bind(versions).fetch_all(self.pool()).await.map_err(unavailable)?;
     let mut items = rows
       .into_iter()
       .map(|(id, issue, partition, input, version, work, run)| {

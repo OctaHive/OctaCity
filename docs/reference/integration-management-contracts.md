@@ -297,6 +297,11 @@ Expand **Show Run and reporting history** on an input to read bounded existing
 Source diagnostics. Only visible Runs for that exact input version are displayed;
 reporting pending, in progress, applied and exhausted remain distinct from Run
 execution. Additional pages and truncated reporting summaries are indicated.
+Frozen groups use their exact member versions. Older input admissions and Runs
+hidden by retention are excluded before pagination; a disabled replacement cannot
+inherit the previous version's execution history. Terminal reporting may also carry
+the original closed `failure` reason (`forbidden`, `unsupported`, `exhausted` or
+`conflict`), without provider messages or effect payloads.
 This is Project-scoped visible history, not a claim that all global dependents have
 been enumerated or that an old enabled version is still active. Hidden/unavailable
 history is never presented as a complete empty result.
@@ -320,6 +325,8 @@ Source diagnostics retain bounded native correlation separately from input-scope
 Work/Run identities. An `issue` link is optional and supplied only by the authorized
 association capability. The fixtures include absent and visible associations; no
 card, Issue CRUD, explicit card execution or field-ownership API is required.
+An unavailable authoritative Issue-link read fails diagnostics/preview instead of
+reporting a successful missing link. Hidden Issue references remain omitted.
 [Manual Artifact admission](management-rest-v1.md) continues independently of a
 connection, token, automatic input or internal Issue.
 

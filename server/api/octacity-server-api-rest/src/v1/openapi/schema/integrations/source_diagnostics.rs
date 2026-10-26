@@ -107,7 +107,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["action","stages"],
   ));
   let reporting = object(
-    json!({"operation_id":digest(),"state":{"type":"string","enum":["pending","claimed","applied","exhausted"]},"attempt":{"type":"integer","minimum":0},"available_at":time(),"origin":reference("WorkSourceReportingOrigin")}),
+    json!({"operation_id":digest(),"state":{"type":"string","enum":["pending","claimed","applied","exhausted"]},"failure":{"type":"string","enum":["forbidden","unsupported","exhausted","conflict"]},"attempt":{"type":"integer","minimum":0},"available_at":time(),"origin":reference("WorkSourceReportingOrigin")}),
     &["operation_id", "state", "attempt", "available_at"],
   );
   let admission = object(

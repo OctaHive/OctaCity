@@ -342,7 +342,7 @@ impl<
       };
       let issue = self
         .visible_issue_link(context, query.intent.project_id, native_correlation)
-        .await;
+        .await?;
       result.candidates.push(WorkSourcePreviewCandidate {
         native_correlation,
         summary,

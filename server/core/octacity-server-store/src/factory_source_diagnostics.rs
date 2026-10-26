@@ -34,6 +34,8 @@ impl WorkSourceScanDiagnostics {
 pub enum WorkSourceDiagnosticFilter {
   /// All retained versions of these stable inputs.
   Inputs(Vec<WorkSourceInputId>),
+  /// Exact immutable members of the inspected input/group publication.
+  InputVersions(Vec<WorkSourceMemberRef>),
   /// Exact native observations in one installed security partition.
   Native {
     /// Existing native item hashes, independent of input identity.
@@ -87,6 +89,7 @@ impl ReadWorkSourceCorrelations {
   pub fn validate(&self) -> Result<(), StoreError> {
     let count = match &self.filter {
       WorkSourceDiagnosticFilter::Inputs(ids) => ids.len(),
+      WorkSourceDiagnosticFilter::InputVersions(members) => members.len(),
       WorkSourceDiagnosticFilter::Native { issues, .. } => issues.len(),
     };
     if !(1..=64).contains(&self.limit) || count == 0 || count > 100 {
@@ -128,6 +131,9 @@ pub struct WorkSourceReportingDiagnostic {
   pub operation_id: FactoryDigest,
   /// Safe dispatch classification.
   pub state: WorkSourceReportingState,
+  /// Retained terminal cause; absent for active/delivered effects or older unclassified failures.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub failure: Option<FactoryOutboxFailure>,
   /// Current bounded dispatch attempt.
   pub attempt: u16,
   /// Earliest permitted retry/dispatch time; not a completed effect timestamp.

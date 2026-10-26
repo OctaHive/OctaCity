@@ -1,6 +1,70 @@
 //! Public read-only preview, independent of Work and future task-card storage.
 use super::*;
 struct Reader;
+
+#[derive(Clone, Copy)]
+enum IssueLinksFailure {
+  Unavailable,
+  Hidden,
+}
+#[async_trait]
+impl FactoryWorkSourceIssueLinks for IssueLinksFailure {
+  async fn visible_issue(
+    &self,
+    _: &ManagementRequestContext,
+    _: ProjectId,
+    _: FactoryDigest,
+  ) -> Result<Option<WorkSourceIssueLink>, ApplicationError> {
+    Err(match self {
+      Self::Unavailable => ApplicationError::unavailable(),
+      Self::Hidden => ApplicationError::invalid(),
+    })
+  }
+}
+
+#[test]
+fn source_preview_does_not_report_an_empty_issue_association_when_its_authoritative_owner_is_unavailable() {
+  run_ready(async {
+    let fixture = Fixture::new("custom-tracker").await;
+    let before = fixture.store.mutation_evidence_counts().await;
+    for failure in [IssueLinksFailure::Unavailable, IssueLinksFailure::Hidden] {
+      let queries = AuthorizedQueryHandler::new(
+        Arc::new(TrustedNetworkManagementPolicy),
+        Arc::new(
+          fixture
+            .handlers()
+            .with_preview(Arc::new(Reader))
+            .with_issue_links(Arc::new(failure)),
+        ),
+      );
+      let result = queries
+        .handle_query(
+          &context(),
+          PreviewWorkSourcesQuery {
+            intent: fixture.intent.clone(),
+            limit: 2,
+            observed_at: time(4),
+          },
+        )
+        .await;
+      match failure {
+        IssueLinksFailure::Unavailable => assert_eq!(
+          result.unwrap_err().application().unwrap().classification(),
+          ApplicationFailure::Unavailable
+        ),
+        IssueLinksFailure::Hidden => assert!(
+          result
+            .unwrap()
+            .candidates
+            .iter()
+            .all(|candidate| candidate.issue.is_none())
+        ),
+      }
+    }
+    assert_eq!(fixture.store.mutation_evidence_counts().await, before);
+  });
+}
+
 #[async_trait]
 impl FactoryWorkSourcePreview for Reader {
   async fn preview(&self, request: ReadWorkSourcePreview) -> Result<WorkSourcePreviewPage, ApplicationError> {

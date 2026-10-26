@@ -9,6 +9,16 @@ fn reporting_progress_exposes_exact_stage_outcome_and_action_without_private_pay
   assert_component_exists(&document, "WorkSourceReportingRecord");
   let schemas = &document["components"]["schemas"];
   assert_eq!(
+    schemas["WorkSourceReportingDiagnostic"]["properties"]["failure"]["enum"],
+    json!(["forbidden", "unsupported", "exhausted", "conflict"])
+  );
+  assert!(
+    !schemas["WorkSourceReportingDiagnostic"]["required"]
+      .as_array()
+      .unwrap()
+      .contains(&json!("failure"))
+  );
+  assert_eq!(
     schemas["WorkSourceReportingDiagnostic"]["properties"]["origin"]["$ref"],
     "#/components/schemas/WorkSourceReportingOrigin"
   );

@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 
 pub(super) async fn assert_factory_intake(
   client: &reqwest::Client,
+  pool: &sqlx::PgPool,
   project: &str,
   published: &Value,
   provider: &std::path::Path,
@@ -37,12 +38,17 @@ pub(super) async fn assert_factory_intake(
   let mut canonical_works = Vec::new();
   let mut no_card_works = Vec::new();
   let mut native = std::collections::BTreeSet::new();
+  let mut diagnostics_path = String::new();
+  let mut retained = std::collections::BTreeSet::new();
   for index in 0..2 {
     let id = uuid::Uuid::new_v4().to_string();
+    retained.insert((id.clone(), 1));
+    retained.insert((id.clone(), 2));
     let mut intent = published["intent"].clone();
     intent["inputs"][0]["id"] = json!(id);
     intent["inputs"][0]["definition"]["enabled"] = json!(true);
     let path = format!("{base}/factory-source-inputs/{id}/versions");
+    diagnostics_path = format!("{path}/1/diagnostics");
     let response = client
       .post(&path)
       .header("idempotency-key", format!("normal-factory-intake.{index}"))
@@ -77,6 +83,7 @@ pub(super) async fn assert_factory_intake(
       tokio::time::sleep(std::time::Duration::from_millis(20)).await;
     };
     let admissions = diagnostics["admissions"].as_array().unwrap();
+    assert_paged_diagnostics(client, &diagnostics_path, admissions).await;
     assert_eq!(
       admissions
         .iter()
@@ -121,8 +128,56 @@ pub(super) async fn assert_factory_intake(
       .await
       .unwrap();
     assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let replacement: Value = client
+      .get(format!("{path}/2/diagnostics"))
+      .send()
+      .await
+      .unwrap()
+      .json()
+      .await
+      .unwrap();
+    assert_eq!(
+      replacement["admissions"],
+      json!([]),
+      "a disabled replacement with no admission cannot display the previous version's Work/Run as its own"
+    );
   }
   assert_eq!(works.len(), 4);
+  retained.insert((published["input"].as_str().unwrap().to_owned(), 1));
+  assert_retained_dependencies(client, project, published, &retained).await;
+  // Only this journey's disposable DB: a missing authoritative task-link read
+  // must be unavailable, not a successful empty association after admission.
+  sqlx::query("ALTER TABLE issue_source_links RENAME TO interrupted_issue_source_links")
+    .execute(pool)
+    .await
+    .unwrap();
+  let unavailable = client.get(&diagnostics_path).send().await;
+  sqlx::query("ALTER TABLE interrupted_issue_source_links RENAME TO issue_source_links")
+    .execute(pool)
+    .await
+    .unwrap();
+  assert_eq!(
+    unavailable.unwrap().status(),
+    reqwest::StatusCode::SERVICE_UNAVAILABLE,
+    "Source diagnostics cannot hide an authoritative Issue association outage"
+  );
+  let recovered: Value = client
+    .get(&diagnostics_path)
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(
+    recovered["admissions"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .filter(|row| row.get("issue").is_some())
+      .count(),
+    1
+  );
   assert_eq!(
     native.len(),
     2,
@@ -146,7 +201,142 @@ pub(super) async fn assert_factory_intake(
   );
   wait_associations(client, &base, canonical.as_str().unwrap(), &canonical_works).await;
   assert_late_import(client, &base, published, &no_card_works).await;
+  assert_retired_run_does_not_consume_a_diagnostic_page(client, pool, &diagnostics_path).await;
   std::fs::write(mode_path, original).unwrap();
+}
+
+async fn assert_retired_run_does_not_consume_a_diagnostic_page(
+  client: &reqwest::Client,
+  pool: &sqlx::PgPool,
+  path: &str,
+) {
+  let before: Value = client.get(path).send().await.unwrap().json().await.unwrap();
+  let admissions = before["admissions"].as_array().unwrap();
+  assert_eq!(admissions.len(), 2);
+  let retired: uuid::Uuid = admissions[0]["association"]["run_id"]
+    .as_str()
+    .unwrap()
+    .parse()
+    .unwrap();
+  let surviving = &admissions[1]["association"]["run_id"];
+  // Simulate the retained-hidden phase already qualified by retention contracts;
+  // this slice qualifies the public Source read, not the retention worker itself.
+  sqlx::query("UPDATE factory_runs SET visible=false,hidden_at=now() WHERE id=$1")
+    .bind(retired)
+    .execute(pool)
+    .await
+    .unwrap();
+  let page: Value = client
+    .get(history_page_url(path, None))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(page["admissions"].as_array().unwrap().len(), 1);
+  assert_eq!(
+    &page["admissions"][0]["association"]["run_id"], surviving,
+    "retained-hidden Runs cannot appear in Source diagnostics or consume their bounded page"
+  );
+  assert!(page["next_cursor"].is_null());
+}
+
+async fn assert_paged_diagnostics(client: &reqwest::Client, path: &str, admissions: &[Value]) {
+  let first: Value = client
+    .get(history_page_url(path, None))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(first["admissions"].as_array().unwrap().len(), 1);
+  let cursor = first["next_cursor"].as_str().unwrap();
+  let second: Value = client
+    .get(history_page_url(path, Some(cursor)))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(second["admissions"].as_array().unwrap().len(), 1);
+  assert!(second["next_cursor"].is_null());
+  let expected: std::collections::BTreeSet<_> = admissions
+    .iter()
+    .map(|row| row["association"]["id"].as_str().unwrap())
+    .collect();
+  assert_eq!(
+    std::collections::BTreeSet::from([
+      first["admissions"][0]["association"]["id"].as_str().unwrap(),
+      second["admissions"][0]["association"]["id"].as_str().unwrap(),
+    ]),
+    expected
+  );
+  assert!(!first.to_string().contains("Reviewed external acceptance criteria"));
+  let other_version = path.replace("/versions/1/", "/versions/2/");
+  assert_eq!(
+    client
+      .get(history_page_url(&other_version, Some(cursor)))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    reqwest::StatusCode::BAD_REQUEST,
+    "diagnostic cursors cannot cross immutable input versions"
+  );
+}
+
+async fn assert_retained_dependencies(
+  client: &reqwest::Client,
+  project: &str,
+  published: &Value,
+  required: &std::collections::BTreeSet<(String, u64)>,
+) {
+  let connection = published["intent"]["inputs"][0]["definition"]["connection"]["id"]
+    .as_str()
+    .unwrap();
+  let path = format!("http://localhost/api/v1/integrations/{connection}/projects/{project}/dependencies");
+  let mut after = None;
+  let mut seen = std::collections::BTreeSet::new();
+  for _ in 0..16 {
+    let response = client
+      .get(history_page_url(&path, after.as_deref()))
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let page: Value = response.json().await.unwrap();
+    assert!(page["items"].as_array().unwrap().len() <= 1);
+    for record in page["items"].as_array().unwrap() {
+      assert_eq!(record["kind"], "input");
+      let input = &record["definition"];
+      assert_eq!(input["definition"]["connection"]["id"], connection);
+      assert!(seen.insert((
+        input["id"].as_str().unwrap().to_owned(),
+        input["version"].as_u64().unwrap()
+      )));
+    }
+    after = page["next_cursor"].as_str().map(str::to_owned);
+    if after.is_none() {
+      break;
+    }
+  }
+  assert!(after.is_none(), "retained dependency fixture must drain bounded pages");
+  assert!(
+    required.is_subset(&seen),
+    "disabled and previous immutable inputs stay visible: {seen:?}"
+  );
+}
+
+fn history_page_url(path: &str, after: Option<&str>) -> url::Url {
+  let mut url = url::Url::parse(path).unwrap();
+  url.query_pairs_mut().append_pair("limit", "1");
+  if let Some(after) = after {
+    url.query_pairs_mut().append_pair("after", after);
+  }
+  url
 }
 
 pub(super) async fn assert_disabled_profile_is_ignored(

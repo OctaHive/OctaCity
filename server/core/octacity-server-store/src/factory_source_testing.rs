@@ -961,6 +961,9 @@ impl crate::FactorySourceDiagnosticsStore for InMemoryFactoryConfigurationStore 
         .ok_or(StoreError::Unavailable)?;
       let matches = match &request.filter {
         crate::WorkSourceDiagnosticFilter::Inputs(ids) => ids.contains(&p.input.id()),
+        crate::WorkSourceDiagnosticFilter::InputVersions(members) => members
+          .iter()
+          .any(|member| member.id == p.input.id() && member.version == p.input.version()),
         crate::WorkSourceDiagnosticFilter::Native { issues, security_scope } => {
           issues.contains(&p.issue) && partition == *security_scope
         }

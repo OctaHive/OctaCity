@@ -462,6 +462,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   super::source_factory_tests::assert_disabled_profile_is_ignored(&config, database.pool.clone(), &published).await;
   super::source_factory_tests::assert_factory_intake(
     &client,
+    &database.pool,
     project_id,
     &published,
     &registry.join("custom-provider"),

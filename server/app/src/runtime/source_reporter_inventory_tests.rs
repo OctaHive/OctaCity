@@ -234,6 +234,40 @@ async fn normal_reporter_dispatch_reuses_the_authoring_inventory_and_original_na
     assert_eq!(after.work, before.work);
     assert_eq!(after.run, before.run);
     assert_eq!(after.flow, before.flow);
+    let response = client
+      .get(format!(
+        "http://localhost/api/v1/projects/{}/factory-source-inputs/{}/versions/{}/diagnostics",
+        fixture.input.project_id(),
+        fixture.input.id(),
+        fixture.input.version().get(),
+      ))
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let diagnostic: Value = response.json().await.unwrap();
+    let admissions = diagnostic["admissions"].as_array().unwrap();
+    assert_eq!(admissions.len(), 1);
+    assert_eq!(admissions[0]["association"]["input_id"], json!(fixture.input.id()));
+    assert_eq!(
+      admissions[0]["association"]["input_version"],
+      json!(fixture.input.version().get())
+    );
+    assert_eq!(admissions[0]["association"]["work_id"], json!(before.work.id()));
+    assert_eq!(admissions[0]["association"]["run_id"], json!(run));
+    let effects = admissions[0]["reporting"].as_array().unwrap();
+    assert_eq!(effects.len(), 1);
+    assert_eq!(effects[0]["state"], if allow_write { "applied" } else { "exhausted" });
+    assert_eq!(
+      effects[0].get("failure").and_then(Value::as_str),
+      match scenario {
+        "allowed" => None,
+        "revoked" => Some("forbidden"),
+        _ => Some("exhausted"),
+      },
+      "retained reporting distinguishes grant denial from exhausted delivery"
+    );
+    assert_eq!(effects[0]["origin"]["action"]["node"], "report-any-stage");
     let calls: Vec<Value> = captured_requests(&directory)
       .lines()
       .map(|line| serde_json::from_str(line).unwrap())

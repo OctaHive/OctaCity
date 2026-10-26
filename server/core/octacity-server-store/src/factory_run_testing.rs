@@ -67,6 +67,7 @@ impl StoredFactoryRun {
       .map(|row| crate::WorkSourceReportingDiagnostic {
         operation_id: row.operation_id,
         state: row.state.into(),
+        failure: row.failure,
         attempt: row.attempt,
         available_at: row.available_at,
         origin: self
