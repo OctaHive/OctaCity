@@ -1,12 +1,19 @@
 import { useRef, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { ManagementApiError, redactManagementError } from '../../api/client';
+import type { ManagementApiError } from '../../api/client';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import type { ConfirmedMutationAttempt } from '../../shared/confirmedIntent';
 import type { FactorySourcesApi, SourceIntent } from './sourceApi';
 import { SourceAdmissions } from '../../shared/SourceAdmissions';
+import {
+  safeSourceError,
+  sourceFailure,
+  sourceNeedsRefresh,
+  sourcePreviewFailure,
+} from '../../shared/sourceErrors';
+import { QueryFailureNotice } from '../../shared/QueryStateNotice';
 
 /** Proofs, previews and confirmed snapshots live only in this mounted editor. */
 export function SourcePublication({
@@ -33,7 +40,10 @@ export function SourcePublication({
     value: Awaited<ReturnType<FactorySourcesApi['preview']>>;
   } | null>(null);
   const [pending, setPending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<{
+    failure: ManagementApiError;
+    operation: 'validate' | 'preview' | 'refresh';
+  } | null>(null);
   const [refreshRequired, setRefreshRequired] = useState(false);
   const [review, setReview] = useState<{
     intent: SourceIntent;
@@ -47,6 +57,7 @@ export function SourcePublication({
     setPending(true);
     setError(null);
     if (kind === 'validate') setProof(null);
+    else setPreview(null);
     try {
       if (kind === 'validate') {
         await api.validate(intent);
@@ -55,8 +66,16 @@ export function SourcePublication({
         const value = await api.preview(intent);
         if (latestRef.current === captured) setPreview({ signature: captured, value });
       }
-    } catch {
-      if (latestRef.current === captured) setError(t('factory.sourceFailure'));
+    } catch (failure) {
+      if (latestRef.current === captured) {
+        const safe = safeSourceError(failure);
+        const stale = sourceNeedsRefresh(safe);
+        if (stale) {
+          setRefreshRequired(true);
+          setProof(null);
+        }
+        setError({ failure: safe, operation: stale ? 'refresh' : kind });
+      }
     } finally {
       setPending(false);
     }
@@ -71,15 +90,12 @@ export function SourcePublication({
       onPublished(result);
       return result;
     } catch (failure) {
-      if (
-        failure instanceof ManagementApiError &&
-        (failure.code === 'precondition_failed' || failure.code === 'conflict')
-      ) {
+      if (sourceNeedsRefresh(failure)) {
         setRefreshRequired(true);
         setProof(null);
       }
       // Never display provider or transport text in a draft/confirmation.
-      throw redactManagementError(failure, t('factory.sourceFailure'));
+      throw sourceFailure(failure, t);
     }
   }
   async function refresh() {
@@ -89,13 +105,19 @@ export function SourcePublication({
       await onRefresh();
       setRefreshRequired(false);
       setError(null);
-    } catch {
-      setError(t('factory.sourceFailure'));
+    } catch (failure) {
+      setError({ failure: safeSourceError(failure), operation: 'refresh' });
     }
   }
   return (
     <section aria-label={t('factory.sourceValidation')}>
-      {error ? <p role="alert">{error}</p> : null}
+      {error ? (
+        <QueryFailureNotice
+          title={t('factory.sourceValidation')}
+          error={sourceFailure(error.failure, t)}
+          onRetry={() => (error.operation === 'refresh' ? refresh() : read(error.operation))}
+        />
+      ) : null}
       {refreshRequired ? (
         <p role="alert">
           {t('factory.sourceStale')}{' '}
@@ -132,9 +154,15 @@ export function SourcePublication({
         <section aria-label={t('factory.sourcePreview')}>
           <p>{t('factory.previewSourceHelp')}</p>
           {preview.value.failure ? (
-            <p role="alert">
-              {t('factory.previewUnavailable')} · {preview.value.failure}
-            </p>
+            <QueryFailureNotice
+              title={`${t('factory.previewUnavailable')} · ${t(`factory.sourceFailure.${preview.value.failure}`)}`}
+              error={sourcePreviewFailure(
+                preview.value.failure,
+                preview.value.retry_after_millis,
+                t,
+              )}
+              onRetry={() => read('preview')}
+            />
           ) : (
             <>
               {!preview.value.candidates.length ? <p>{t('factory.previewEmpty')}</p> : null}

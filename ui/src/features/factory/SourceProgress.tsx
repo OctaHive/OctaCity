@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { useInfiniteQuery } from '@tanstack/react-query';
-import { redactManagementError } from '../../api/client';
+import { sourceFailure } from '../../shared/sourceErrors';
 import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateNotice';
@@ -40,7 +40,7 @@ function Progress({ record, api }: { record: SourceRecord; api: FactorySourcesAp
       {history.error ? (
         <QueryFailureNotice
           title={t('factory.sourceProgress')}
-          error={redactManagementError(history.error, t('factory.sourceFailure'))}
+          error={sourceFailure(history.error, t)}
           onRetry={() => history.refetch()}
         />
       ) : null}

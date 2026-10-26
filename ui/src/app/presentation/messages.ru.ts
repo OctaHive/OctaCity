@@ -1,6 +1,26 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'issueImport.open': 'Источники задач',
+  'issueImport.add': 'Добавить источник задач',
+  'issueImport.help':
+    'Импорт создаёт задачи с начальным бизнес-статусом. Исполнение и синхронизация статусов настраиваются отдельно.',
+  'issueImport.preview': 'Предпросмотр задач',
+  'issueImport.previewTitle': 'Предпросмотр источника задач',
+  'issueImport.refreshTasks': 'Обновить задачи',
+  'issueImport.enabled': 'Автоматически находить задачи',
+  'issueImport.active': 'Обнаружение задач включено',
+  'issueImport.inactive': 'Обнаружение задач выключено',
+  'issueImport.review': 'Проверить импорт задач',
+  'issueImport.publish': 'Опубликовать импорт задач',
+  'issueImport.confirm': 'Подтвердить импорт задач',
+  'issueImport.published':
+    'Настройки импорта опубликованы. Обновите список, чтобы увидеть импортированные задачи.',
+  'issueImport.disable': 'Отключить импорт задач',
+  'issueImport.enable': 'Включить импорт задач',
+  'issueImport.more': 'Ещё источники задач',
+  'issueImport.lifecycleHelp':
+    'Меняется только обнаружение задач. Существующие задачи, исполнение и синхронизация связей сохраняют собственные настройки.',
   'runtime.unsupportedMcp':
     'В установке Runtime нет квалифицированных транспортов MCP. Сначала администратору нужно настроить поддержку установки.',
   'runtime.installationChanged':
@@ -891,6 +911,15 @@ export const ruMessages = {
   'factory.configureAutomatic': 'Настроить автоматический приём',
   'factory.manageIntegrations': 'Управлять интеграциями',
   'factory.sourceFailure': 'Не удалось выполнить операцию с источником.',
+  'factory.sourceInvalid':
+    'Проверьте выбранные настройки и допустимые значения, затем повторите просмотр.',
+  'factory.sourceMissing': 'Обновите подключение и варианты источника: ресурс недоступен.',
+  'factory.sourceDenied': 'Проверьте права на эту операцию и выбранный ресурс.',
+  'factory.sourceSetupRequired':
+    'Проверьте активацию подключения, доступ проекта и установленный runtime/профиль Source.',
+  'factory.sourceDeferred': 'Провайдер отложил запрос. Подождите перед повтором.',
+  'factory.sourceUnavailable': 'Источник временно недоступен. Повторите позже.',
+  'factory.sourceTransport': 'Проверьте связь с сервером и повторите запрос.',
   'factory.reporterRemoved':
     'Область источника изменилась. Эта версия не будет обновлять внешний статус.',
   'factory.noSourceSetup':
@@ -904,11 +933,13 @@ export const ruMessages = {
   'factory.sourceConnection': 'Подключение источника',
   'factory.taskContainer': 'Контейнер задач',
   'factory.inputProfile': 'Отбор и преобразование входных данных',
+  'factory.preparationHelp':
+    'Профиль готовит ограниченные Артефакты задачи и критериев приёмки. Без критериев выполнение заблокировано; импорт задач независим.',
   'factory.codeRepository': 'Репозиторий кода',
   'factory.chooseInput': 'Выберите значение',
   'factory.manageSourceAccess': 'Настроить подключение и доступ проекта',
   'factory.noSourceAccess':
-    'Нет доступного профиля чтения задач. Настройте доступ проекта или установите профиль источника в Integrations.',
+    'Нет совместимого профиля чтения. Проверьте доступ проекта; при необходимости попросите администратора развёртывания установить совместимый профиль Source.',
   'factory.repositoryIndependent':
     'Репозиторий кода может находиться на другом хосте. Он не определяет контейнер задач.',
   'factory.customizeFilters': 'Настроить фильтры',
@@ -931,7 +962,7 @@ export const ruMessages = {
   'factory.moreRepositories': 'Ещё репозитории кода',
   'factory.sourceValidation': 'Проверка и публикация входа',
   'factory.sourceStale':
-    'Опубликованная версия или доступ изменились. Обновите данные, проверьте и подтвердите сохранённый черновик заново.',
+    'Опубликованная версия или доступ изменились. Обновите текущие настройки и заново просмотрите операцию.',
   'factory.refreshSource': 'Обновить текущую версию и доступ',
   'factory.previewSource': 'Предпросмотр источника (только чтение)',
   'factory.validateInput': 'Проверить вход',

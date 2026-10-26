@@ -279,7 +279,11 @@ export function createConsoleRoutes(
         {
           path: childPath(CONSOLE_PATHS.issues),
           element: defer(
-            <IssuesView api={dependencies.issuesApi} projects={dependencies.projectsApi} />,
+            <IssuesView
+              api={dependencies.issuesApi}
+              projects={dependencies.projectsApi}
+              sources={dependencies.issueSourcesApi}
+            />,
           ),
         },
         {

@@ -4,6 +4,51 @@ import { createManagementApiClient } from '../../api/client';
 import { integrationFixture } from '../../../tests/fixtures/integrations';
 import { createFactorySourcesApi } from './sourceApi';
 
+it.each([
+  'connections',
+  'list',
+  'choices',
+  'validate',
+  'preview',
+  'publish',
+  'diagnostics',
+] as const)(
+  'keeps classified %s failures and server correlation without retaining private response material',
+  async (operation) => {
+    const requestId = '0199a6f4-d56c-7440-9aa2-6a320f862795';
+    const api = createFactorySourcesApi(
+      createManagementApiClient(async () =>
+        Response.json(
+          {
+            code: 'capability_unavailable',
+            message: 'private-selector-token /private/runtime.json',
+            request_id: requestId,
+            diagnostics: {
+              errors: [{ field: '/private/selector', code: 'unavailable_reference' }],
+            },
+          },
+          { status: 422, headers: { 'X-Request-Id': requestId } },
+        ),
+      ),
+    );
+    const intent = integrationFixture('WorkSourceConfigurationSubmission').intent;
+    const operations = {
+      connections: () => api.connections(null),
+      list: () => api.list(intent.project_id, null),
+      choices: () => api.choices(intent.project_id, 'connection', 1),
+      validate: () => api.validate(intent),
+      preview: () => api.preview(intent),
+      publish: () => api.publish(intent, { 'Idempotency-Key': 'reviewed-input' }),
+      diagnostics: () =>
+        api.diagnostics(intent.project_id, { kind: 'input', id: 'input', version: 1 }, null),
+    };
+    const error: unknown = await operations[operation]().catch((error: unknown) => error);
+    expect(error).toMatchObject({ code: 'capability_unavailable', status: 422, requestId });
+    expect(String(error)).not.toContain('private-');
+    expect(JSON.stringify(error)).not.toContain('private');
+  },
+);
+
 it('drops remote error text before diagnostics can enter a query cache while retaining safe retry metadata', async () => {
   const api = createFactorySourcesApi(
     createManagementApiClient(async () =>

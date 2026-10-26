@@ -1,4 +1,5 @@
 import { Link } from 'react-router-dom';
+import { issuePath } from '../app/routes';
 import type { components } from '../../.generated/api/schema';
 import { usePresentation } from '../app/presentation/PresentationProvider';
 import { formatTimestamp } from './display';
@@ -35,7 +36,7 @@ export function SourceAdmissions({
             {admission.issue ? (
               <>
                 {' '}
-                <Link to={`/issues/${encodeURIComponent(admission.issue.issue_id)}`}>
+                <Link to={issuePath(admission.issue.project_id, admission.issue.issue_id)}>
                   {t('factory.openTaskCard')}
                 </Link>
               </>

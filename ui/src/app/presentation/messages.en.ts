@@ -1,4 +1,23 @@
 export const enMessages = {
+  'issueImport.open': 'Task sources',
+  'issueImport.add': 'Add task source',
+  'issueImport.help':
+    'Import creates tasks with their initial business status. Execution and status synchronization are configured separately.',
+  'issueImport.preview': 'Preview tasks',
+  'issueImport.previewTitle': 'Task source preview',
+  'issueImport.refreshTasks': 'Refresh tasks',
+  'issueImport.enabled': 'Discover tasks automatically',
+  'issueImport.active': 'Task discovery enabled',
+  'issueImport.inactive': 'Task discovery disabled',
+  'issueImport.review': 'Review task import',
+  'issueImport.publish': 'Publish task import',
+  'issueImport.confirm': 'Confirm task import',
+  'issueImport.published': 'Import settings published. Refresh tasks to see imported tasks.',
+  'issueImport.disable': 'Disable task import',
+  'issueImport.enable': 'Enable task import',
+  'issueImport.more': 'More task sources',
+  'issueImport.lifecycleHelp':
+    'This changes task discovery only. Existing tasks, execution and link synchronization keep their own settings.',
   'runtime.unsupportedMcp':
     'This Runtime installation has no qualified MCP transports. An administrator must configure installation support first.',
   'runtime.installationChanged':
@@ -882,6 +901,16 @@ export const enMessages = {
   'factory.configureAutomatic': 'Configure automatic intake',
   'factory.manageIntegrations': 'Manage integrations',
   'factory.sourceFailure': 'The source operation could not be completed.',
+  'factory.sourceInvalid':
+    'Check the selected configuration and supported values, then review again.',
+  'factory.sourceMissing':
+    'Refresh the connection and source choices: the resource is unavailable.',
+  'factory.sourceDenied': 'Check your permissions for this operation and the selected resource.',
+  'factory.sourceSetupRequired':
+    'Check connection activation, Project access and the installed Source runtime/profile.',
+  'factory.sourceDeferred': 'The provider deferred the request. Wait before retrying.',
+  'factory.sourceUnavailable': 'The source is temporarily unavailable. Retry later.',
+  'factory.sourceTransport': 'Check the server connection and retry.',
   'factory.reporterRemoved':
     'The source scope changed. This version will not report external status.',
   'factory.noSourceSetup':
@@ -895,11 +924,13 @@ export const enMessages = {
   'factory.sourceConnection': 'Source connection',
   'factory.taskContainer': 'Task container',
   'factory.inputProfile': 'Selector and input mapping',
+  'factory.preparationHelp':
+    'This profile prepares bounded task and acceptance Artifacts. Missing acceptance blocks execution, not task import.',
   'factory.codeRepository': 'Code Repository',
   'factory.chooseInput': 'Choose an option',
   'factory.manageSourceAccess': 'Configure connection and Project access',
   'factory.noSourceAccess':
-    'No usable task-read profile. Configure Project access or install a Source profile in Integrations.',
+    'No compatible task-read profile. Check Project access in Integrations; ask a deployment administrator to install a compatible Source profile if needed.',
   'factory.repositoryIndependent':
     'The code Repository can belong to another host. It does not select the task container.',
   'factory.customizeFilters': 'Customize filters',
@@ -922,7 +953,7 @@ export const enMessages = {
   'factory.moreRepositories': 'More code repositories',
   'factory.sourceValidation': 'Input validation and publication',
   'factory.sourceStale':
-    'The published version or access changed. Refresh, validate again and review the retained draft.',
+    'The published version or access changed. Refresh current settings and review the operation again.',
   'factory.refreshSource': 'Refresh current version and access',
   'factory.previewSource': 'Preview source (read-only)',
   'factory.validateInput': 'Validate input',

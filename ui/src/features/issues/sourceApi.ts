@@ -3,9 +3,15 @@ import {
   managementApi,
   requireManagementResponse,
   ManagementApiError,
+  versionedMutationHeaders,
   type IdempotencyRequestHeaders,
 } from '../../api/client';
 import type { VersionedMutationHeaders } from '../../shared/confirmedIntent';
+import { sourceRequest } from '../../shared/sourceErrors';
+
+export type IssueSourceImport = components['schemas']['ProjectIssueSourceImportConfiguration'];
+export type IssueSourceImportIntent =
+  components['schemas']['ProjectIssueSourceImportSubmission']['intent'];
 
 export type IssueSynchronization = components['schemas']['IssueSynchronization'];
 export type IssueSourceProjection = components['schemas']['IssueSourceProjection'];
@@ -31,6 +37,83 @@ export class IssueSourceAssociationConflict extends ManagementApiError {
 /** Optional task synchronization transport; retained reads never dispatch a provider. */
 export function createIssueSourcesApi(client = managementApi) {
   return {
+    async connections(after: string | null, signal?: AbortSignal) {
+      return requireManagementResponse(
+        (
+          await sourceRequest(
+            client.GET('/api/v1/integrations', {
+              params: { query: { limit: 25, ...(after ? { after } : {}) } },
+              signal: signal ?? null,
+            }),
+          )
+        ).data,
+      );
+    },
+    async imports(project_id: string, after: string | null, signal?: AbortSignal) {
+      return requireManagementResponse(
+        (
+          await sourceRequest(
+            client.GET('/api/v1/projects/{project_id}/issue-source-imports', {
+              params: { path: { project_id }, query: { limit: 25, ...(after ? { after } : {}) } },
+              signal: signal ?? null,
+            }),
+          )
+        ).data,
+      );
+    },
+    async importChoices(
+      project_id: string,
+      connection_id: string,
+      connection_version: number,
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await sourceRequest(
+            client.GET('/api/v1/projects/{project_id}/issue-source-choices', {
+              params: { path: { project_id }, query: { connection_id, connection_version } },
+              signal: signal ?? null,
+            }),
+          )
+        ).data,
+      );
+    },
+    async previewImport(
+      project_id: string,
+      body: components['schemas']['ProjectIssueSourcePreviewSubmission'],
+      signal?: AbortSignal,
+    ) {
+      return requireManagementResponse(
+        (
+          await sourceRequest(
+            client.POST('/api/v1/projects/{project_id}/issue-sources/preview', {
+              params: { path: { project_id } },
+              body,
+              signal: signal ?? null,
+            }),
+          )
+        ).data,
+      );
+    },
+    async publishImport(intent: IssueSourceImportIntent, headers: IdempotencyRequestHeaders) {
+      const precondition =
+        intent.expected_current_version === null
+          ? { ...headers, 'If-None-Match': '*' as const }
+          : versionedMutationHeaders(headers['Idempotency-Key'], intent.expected_current_version);
+      return requireManagementResponse(
+        (
+          await sourceRequest(
+            client.POST('/api/v1/projects/{project_id}/issue-source-imports/{import_id}/versions', {
+              params: {
+                path: { project_id: intent.project_id, import_id: intent.id },
+                header: precondition,
+              },
+              body: { intent },
+            }),
+          )
+        ).data,
+      );
+    },
     async projections(
       project_id: string,
       issue_id: string,

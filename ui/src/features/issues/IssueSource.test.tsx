@@ -9,6 +9,7 @@ import {
   fakeIssueSourcesApi,
 } from '../../../tests/fixtures/issueTestSupport';
 import { issueSourceChoice, issueSourceReview } from '../../../tests/fixtures/issueSources';
+import { queryKeys } from '../../app/query';
 
 afterEach(() => {
   cleanup();
@@ -130,7 +131,20 @@ it('maps an opaque native status and labels to an explicit workflow status befor
     resource: { version: 1 },
     mapping_reference: null,
   });
-  setup('/projects/delivery/issues/' + issue.id, undefined, { issueSourcesApi: sources });
+  const { workflows, queryClient, api } = setup(
+    '/projects/delivery/issues/' + issue.id,
+    undefined,
+    { issueSourcesApi: sources },
+  );
+  const laterDefault = {
+    version: 9,
+    workflow: {
+      ...workflow,
+      version: 4,
+      definition: { ...workflow.definition, name: 'Later default policy' },
+    },
+  };
+  workflows.getDefault.mockResolvedValue(laterDefault);
   await screen.findByText('opaque-7');
   await userEvent.click(screen.getByRole('button', { name: 'Configure source' }));
   await userEvent.click(await screen.findByRole('combobox', { name: 'Status authority' }));
@@ -147,7 +161,14 @@ it('maps an opaque native status and labels to an explicit workflow status befor
   expect(dialog.textContent).toContain('Waiting for native review');
   expect(dialog.textContent).toContain(target.name);
   expect(dialog.textContent).toContain('needs-human-review');
+  act(() => {
+    queryClient.setQueryData(queryKeys.issueWorkflowDefault('delivery'), laterDefault);
+  });
+  expect(dialog.textContent).not.toContain('Later default policy');
   await userEvent.click(within(dialog).getByRole('button', { name: 'Publish mapping' }));
+  expect(workflows.get.mock.calls.every((call) => call[2] === issue.workflow_version)).toBe(true);
+  expect(workflows.selectDefault).not.toHaveBeenCalled();
+  expect(api.adopt).not.toHaveBeenCalled();
   await waitFor(() =>
     expect(sources.publishMapping).toHaveBeenCalledWith(
       'delivery',

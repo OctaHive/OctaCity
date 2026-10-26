@@ -45,6 +45,11 @@ export function fakeIssueCodeReviewsApi() {
 }
 export function fakeIssueSourcesApi() {
   return {
+    connections: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
+    imports: vi.fn().mockResolvedValue({ items: [], next_cursor: null }),
+    importChoices: vi.fn(),
+    previewImport: vi.fn(),
+    publishImport: vi.fn(),
     projections: vi.fn().mockResolvedValue({
       items: [],
       next_cursor: null,

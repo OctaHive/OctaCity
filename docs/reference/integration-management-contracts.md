@@ -236,6 +236,14 @@ separate choice and can use another host/provider; the server returns its exact
 connection setup or usable read access links to Integrations. Source input editing
 does not import or refresh cards and does not request execution for a manual card.
 
+Source and Reporter options display their exact installed configuration versions,
+including when several versions share a name. The current input's Factory target
+is shown read-only and retained independently from the code Repository. Its
+selected input mapping owns bounded task/acceptance Artifact preparation; missing
+acceptance can block Factory admission without blocking independent task import.
+The confirmation repeats that boundary and the exact optional Reporter version
+and effects. Changing the profile or activation checkbox requires fresh validation.
+
 New inputs start disabled. A user can enable intake explicitly, preview a bounded
 read without admission, validate against current server authority and review the
 pinned target, Repository, source and predicates before confirming publication.
@@ -270,6 +278,23 @@ state. Closing the editor discards its transient data. An unpublished input/grou
 can refresh current dependencies without an existing publication and keeps its
 initial-creation precondition; an existing version still requires its current
 published record. A refresh never silently repins selected group members.
+
+Input reads, validation, preview and publication show English/Russian guidance from
+closed failure codes, with a server UUID for request correlation when available.
+Shared access/configuration guidance describes the failing operation and selected
+resource without assuming TaskRead authority or a Factory-only validation control.
+Remote error text and diagnostics are removed before query caching. Missing resources,
+denied access, unavailable installed support, invalid selectors, version conflicts,
+provider deferral and transport failure retain distinct guidance. The existing
+`capability_unavailable` result can describe connection activation, Project access
+or installed runtime/profile prerequisites; it does not prove which prerequisite
+is absent. Empty compatible choices direct the operator to Project access and the
+deployment administrator. Retry clears an old failure after success and retains
+the mounted draft; a stale validation requires current-version/access refresh and
+fresh review. Publication transport retry keeps its original frozen intent/key.
+Deferred preview offers a Retry button governed by its supplied delay without
+presenting an empty successful scan. Task/selector drafts and preview bodies never
+enter browser storage.
 
 A change to the source connection, installation pin or native task resource omits
 the previous Reporter and its parent configuration together from the new input
@@ -349,6 +374,9 @@ association capability. The fixtures include absent and visible associations; no
 card, Issue CRUD, explicit card execution or field-ownership API is required.
 An unavailable authoritative Issue-link read fails diagnostics/preview instead of
 reporting a successful missing link. Hidden Issue references remain omitted.
+Visible task links use the authoritative Project and Issue identities to open the
+existing card route; Work links select the original record in its Run diagnostics,
+while Run links open that original execution. No card is inferred from source text.
 [Manual Artifact admission](management-rest-v1.md) continues independently of a
 connection, token, automatic input or internal Issue.
 

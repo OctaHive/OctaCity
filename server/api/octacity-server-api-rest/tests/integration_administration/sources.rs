@@ -588,6 +588,31 @@ fn project_source_preview_contract_is_closed_source_only_and_exposes_stale_revie
 }
 
 #[test]
+fn project_import_routes_expose_the_required_import_identity_to_generated_clients() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  for (path, method) in [
+    ("/api/v1/projects/{project_id}/issue-source-imports/{import_id}", "get"),
+    (
+      "/api/v1/projects/{project_id}/issue-source-imports/{import_id}/versions",
+      "post",
+    ),
+    (
+      "/api/v1/projects/{project_id}/issue-source-imports/{import_id}/versions/{version}",
+      "get",
+    ),
+  ] {
+    let parameters = document["paths"][path][method]["parameters"].as_array().unwrap();
+    let identity = parameters
+      .iter()
+      .find(|parameter| parameter["in"] == "path" && parameter["name"] == "import_id")
+      .expect("generated clients must bind the exact retained import identity");
+    assert_eq!(identity["required"], true);
+    assert_eq!(identity["schema"]["type"], "string");
+    assert_eq!(identity["schema"]["format"], "uuid");
+  }
+}
+
+#[test]
 fn project_import_contract_requires_reviewed_activation_and_excludes_private_or_execution_inputs() {
   let document = octacity_server_api_rest::v1::openapi_document();
   let submission = &document["components"]["schemas"]["ProjectIssueSourceImportSubmission"];

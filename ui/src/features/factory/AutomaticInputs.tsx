@@ -13,6 +13,7 @@ import {
 } from '../../shared/QueryStateNotice';
 import type { FactoryConfigurationDetails } from './api';
 import type { FactorySourcesApi } from './sourceApi';
+import { sourceFailure } from '../../shared/sourceErrors';
 
 /** Automatic input administration is loaded only when explicitly opened. */
 export function AutomaticInputs({
@@ -66,7 +67,7 @@ export function AutomaticInputs({
       {connections.error || inputs.error ? (
         <QueryFailureNotice
           title={t('factory.automaticInputs')}
-          error={new Error(t('factory.sourceFailure'))}
+          error={sourceFailure(connections.error ?? inputs.error, t)}
           onRetry={() => Promise.all([connections.refetch(), inputs.refetch()])}
         />
       ) : null}

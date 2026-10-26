@@ -363,6 +363,35 @@ managed values and receipt metadata fit without truncation or another journal.
 
 ## Source HTTP and Console contracts
 
+In **Project → Tasks → Task sources**, select an installed connection and exact
+read profile before any task or Factory target exists. **Preview tasks** is a
+bounded read; it neither imports tasks nor enables execution or status delivery.
+Review publication separately and explicitly enable discovery when desired.
+Published settings appear with their retained version. **Refresh tasks** reloads
+the ordinary canonical task list after the supervised importer has made progress;
+successful configuration publication alone does not claim a task was imported.
+
+Enable/disable reviews preserve the original import identity, source pins and
+filters. They change discovery only; existing tasks, linked-task pull, Factory
+inputs and outgoing reporting keep their separate controls. Drafts and preview
+bodies stay in the mounted form. Transport retry reuses the frozen request and
+replay key; stale access/profile changes require refresh and another review.
+Each fresh enable review resolves current Project access for the original
+connection version and exact Source/connection-configuration pins. It updates
+only the mutable access revision, preserving the import ID and filters.
+Unavailable or replaced pins block review with safe Retry guidance. Disabling
+discovery does not require resolving a currently authorized reader.
+Connection/profile absence leaves manual task creation available and points to
+integration/access setup. These controls support English/Russian, keyboard
+review with focus restoration and narrow screens.
+
+The Project controls use `issue-source-choices`, `issue-sources/preview` and
+versioned `issue-source-imports` under `/api/v1/projects/{project_id}`. Open a
+retained task's **Properties → Source** for its existing mapping and separate
+incoming/outgoing feedback. The linked workflow canvas retains its independent
+publication/default review. A native mapping uses that task's exact workflow
+version; publishing a later Project default does not change it.
+
 Task Source endpoints live under `/api/v1/projects/{project_id}/issues/{issue_id}`.
 Retained responses use `Cache-Control: no-store`. Source administration is
 separate from ordinary Issue editing and workflow administration.

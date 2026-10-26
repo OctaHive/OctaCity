@@ -128,7 +128,9 @@ it('follows only visible authoritative card links and keeps earlier Work on boun
   );
   await userEvent.click(await screen.findByRole('button', { name: 'Load more Run history' }));
   const card = await screen.findByRole('link', { name: 'Open task card' });
-  expect(card.getAttribute('href')).toBe('/issues/visible%2Ftask');
+  expect(card.getAttribute('href')).toBe(
+    `/projects/${encodeURIComponent(later.admissions[0]!.issue!.project_id)}/issues/visible%2Ftask`,
+  );
   expect(screen.getAllByRole('link', { name: 'Open Run' })).toHaveLength(2);
   expect(diagnostics.mock.calls[1]![2]).toBe('next-visible');
 });
@@ -147,7 +149,11 @@ it('renders denied diagnostics as a safe failure without provider text or a fals
   await userEvent.click(
     await screen.findByRole('button', { name: 'Source and reporting progress' }),
   );
-  expect((await screen.findByRole('alert')).getAttribute('data-state')).toBe('forbidden');
+  const alert = await screen.findByRole('alert');
+  expect(alert.getAttribute('data-state')).toBe('forbidden');
+  expect(alert.textContent).toContain(
+    'Check your permissions for this operation and the selected resource',
+  );
   expect(document.body.textContent).not.toContain('private-provider-body-token');
   expect(
     screen.queryByText(

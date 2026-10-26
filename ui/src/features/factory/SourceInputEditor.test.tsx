@@ -10,9 +10,12 @@ import { integrationFixture } from '../../../tests/fixtures/integrations';
 import { factorySourcesApi, type FactorySourcesApi, type SourceIntent } from './sourceApi';
 import { ManagementApiError } from '../../api/client';
 import { FactoryPipelineInputs } from './FactoryPipelineInputs';
+import { PresentationProvider } from '../../app/presentation/PresentationProvider';
+import { DEFAULT_PREFERENCES, type Language } from '../../app/presentation/preferences';
+import { translate, type MessageKey } from '../../app/presentation/messages';
 
 afterEach(cleanup);
-function fixture(overrides: Partial<FactorySourcesApi> = {}) {
+function fixture(overrides: Partial<FactorySourcesApi> = {}, language: Language = 'en') {
   const configuration = configurationFixture();
   const connection = integrationFixture('IntegrationConnection');
   const choice = integrationFixture('WorkSourceInputChoices');
@@ -78,26 +81,34 @@ function fixture(overrides: Partial<FactorySourcesApi> = {}) {
     })),
     ...overrides,
   };
+  const queryClient = createConsoleQueryClient();
   render(
-    <QueryClientProvider client={createConsoleQueryClient()}>
-      <RouterProvider
-        router={createMemoryRouter([
-          {
-            path: '*',
-            element: (
-              <FactoryPipelineInputs
-                configuration={configuration}
-                api={api}
-                repositories={repositories}
-                onManual={() => {}}
-              />
-            ),
-          },
-        ])}
-      />
-    </QueryClientProvider>,
+    <PresentationProvider
+      storage={{
+        getItem: () => JSON.stringify({ ...DEFAULT_PREFERENCES, language }),
+        setItem: vi.fn(),
+      }}
+    >
+      <QueryClientProvider client={queryClient}>
+        <RouterProvider
+          router={createMemoryRouter([
+            {
+              path: '*',
+              element: (
+                <FactoryPipelineInputs
+                  configuration={configuration}
+                  api={api}
+                  repositories={repositories}
+                  onManual={() => {}}
+                />
+              ),
+            },
+          ])}
+        />
+      </QueryClientProvider>
+    </PresentationProvider>,
   );
-  return { api, validate, publish, connection, choice, read, code, repositories };
+  return { api, validate, publish, connection, choice, read, code, repositories, queryClient };
 }
 async function choose(label: string, option: string) {
   await userEvent.click(await screen.findByRole('combobox', { name: label }));
@@ -106,6 +117,434 @@ async function choose(label: string, option: string) {
 async function openInput() {
   await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Add automatic input' }));
+}
+
+it('distinguishes installed preparation profile versions and revalidates the exact selection without enabling intake', async () => {
+  const choices = integrationFixture('WorkSourceInputChoices');
+  const original = choices.items[0]!;
+  const newer = structuredClone(original);
+  newer.binding.configuration.version = 'v2';
+  newer.binding.configuration.digest = 'cd'.repeat(32);
+  const { connection, validate, publish } = fixture({
+    choices: vi.fn(async () => ({ ...choices, items: [original, newer] })),
+  });
+  await openInput();
+  await choose('Source connection', connection.definition.name);
+  await choose('Task container', original.locator);
+  await choose('Selector and input mapping', `${original.binding.configuration.identity} · v1`);
+  await choose('Code Repository', 'Code in another host · v3');
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  const review = screen.getByRole('button', { name: 'Review input publication' });
+  await waitFor(() => expect(review).toHaveProperty('disabled', false));
+  await choose('Selector and input mapping', `${original.binding.configuration.identity} · v2`);
+  expect(review).toHaveProperty('disabled', true);
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  expect(validate.mock.calls[1]![0].inputs[0]!.definition.source).toEqual(newer.binding);
+  await userEvent.click(review);
+  const dialog = await screen.findByRole('dialog', { name: 'Publish automatic input' });
+  expect(dialog.textContent).toContain(`${original.binding.configuration.identity} · v2`);
+  expect(dialog.textContent).toContain('Automatic intake disabled');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm publication' }));
+  await within(dialog).findByText('Automatic input published.');
+  const submitted = publish.mock.calls[0]![0].inputs[0]!.definition;
+  expect(submitted.source).toEqual(newer.binding);
+  expect(submitted.target).toEqual(configurationFixture().configuration.reference);
+  expect(submitted.enabled).toBe(false);
+  expect(submitted.reporter).toBeNull();
+  expect(submitted).not.toHaveProperty('issue');
+});
+
+it('reviews the exact optional Reporter version and its effects before independently enabling execution intake', async () => {
+  const choices = integrationFixture('WorkSourceInputChoices', 1);
+  const read = choices.items.find((item) => item.purpose === 'task_read')!;
+  const writer = choices.items.find((item) => item.purpose === 'task_update')!;
+  const newer = structuredClone(writer);
+  newer.binding.configuration.version = 'v2';
+  newer.binding.configuration.digest = 'de'.repeat(32);
+  newer.connection_configuration.version = 'v2';
+  newer.reporting = {
+    mapping: {
+      statuses: [{ status: 'inspection-ready', add: ['reviewed'], remove: [], state: null }],
+    },
+    editable: null,
+  };
+  const { connection, publish } = fixture({
+    choices: vi.fn(async () => ({ ...choices, items: [read, writer, newer] })),
+  });
+  await openInput();
+  await choose('Source connection', connection.definition.name);
+  await choose('Task container', read.locator);
+  await choose('Selector and input mapping', `${read.binding.configuration.identity} · v1`);
+  await choose('Code Repository', 'Code in another host · v3');
+  await choose('Reporter mapping', `${writer.binding.configuration.identity} · v2`);
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  const review = screen.getByRole('button', { name: 'Review input publication' });
+  await waitFor(() => expect(review).toHaveProperty('disabled', false));
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Automatic intake enabled' }));
+  expect(review).toHaveProperty('disabled', true);
+  expect(publish).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  await userEvent.click(review);
+  const dialog = await screen.findByRole('dialog', { name: 'Publish automatic input' });
+  expect(dialog.textContent).toContain(`${writer.binding.configuration.identity} · v2`);
+  expect(dialog.textContent).toContain('inspection-ready');
+  expect(dialog.textContent).toContain('Automatic intake enabled');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm publication' }));
+  await within(dialog).findByText('Automatic input published.');
+  const definition = publish.mock.calls[0]![0].inputs[0]!.definition;
+  expect(definition.reporter).toEqual(newer.binding);
+  expect(definition.connection?.reporter_configuration).toEqual(newer.connection_configuration);
+  expect(definition.enabled).toBe(true);
+  expect(definition).not.toHaveProperty('issue');
+  expect(definition).not.toHaveProperty('import');
+});
+
+for (const language of ['en', 'ru'] as const) {
+  it(
+    'reviews installed preparation and its independent execution target in ' + language,
+    async () => {
+      const setup = fixture({}, language);
+      const text = (key: MessageKey) => translate(language, key);
+      const target = configurationFixture().configuration.reference;
+      const guidance =
+        language === 'en'
+          ? 'This profile prepares bounded task and acceptance Artifacts. Missing acceptance blocks execution, not task import.'
+          : 'Профиль готовит ограниченные Артефакты задачи и критериев приёмки. Без критериев выполнение заблокировано; импорт задач независим.';
+      await userEvent.click(
+        screen.getByRole('button', { name: text('factory.configureAutomatic') }),
+      );
+      await userEvent.click(await screen.findByRole('button', { name: text('factory.addInput') }));
+      await choose(text('factory.sourceConnection'), setup.connection.definition.name);
+      await choose(text('factory.taskContainer'), setup.read.locator);
+      await choose(
+        text('factory.inputProfile'),
+        `${setup.read.binding.configuration.identity} · v1`,
+      );
+      expect(screen.getByText(guidance)).toBeTruthy();
+      expect(
+        screen.getByText(`${text('factory.sourceTarget')}: ${target.id} · v${target.version}`),
+      ).toBeTruthy();
+      expect(screen.getByRole('button', { name: text('factory.validateInput') })).toHaveProperty(
+        'disabled',
+        true,
+      );
+      expect(screen.getByRole('checkbox', { name: text('factory.inputEnabled') })).toHaveProperty(
+        'checked',
+        false,
+      );
+      await choose(text('factory.codeRepository'), 'Code in another host · v3');
+      await userEvent.click(screen.getByRole('button', { name: text('factory.validateInput') }));
+      await userEvent.click(screen.getByRole('button', { name: text('factory.reviewInput') }));
+      const dialog = await screen.findByRole('dialog', { name: text('factory.publishInput') });
+      expect(dialog.textContent).toContain(guidance);
+      expect(dialog.textContent).toContain(`${target.id} · v${target.version}`);
+      expect(dialog.textContent).toContain('Code in another host · v3');
+      expect(setup.publish).not.toHaveBeenCalled();
+      expect(screen.queryByRole('textbox', { name: text('factory.sourceTarget') })).toBeNull();
+      expect(screen.queryByRole('textbox', { name: 'Credential value' })).toBeNull();
+    },
+  );
+}
+
+it('retries missing Source support without losing the selected connection or claiming an empty result', async () => {
+  const choices = vi.fn<FactorySourcesApi['choices']>().mockRejectedValue(
+    new ManagementApiError({
+      code: 'capability_unavailable',
+      status: 422,
+      message: 'private-runtime-path',
+      requestId: null,
+      retryAfterMilliseconds: null,
+    }),
+  );
+  const setup = fixture({ choices });
+  await openInput();
+  await choose('Source connection', setup.connection.definition.name);
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('installed Source runtime/profile');
+  expect(screen.queryByText(/No compatible task-read profile/)).toBeNull();
+  choices.mockResolvedValue(setup.choice);
+  await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(screen.getByRole('combobox', { name: 'Source connection' }).textContent).toContain(
+    setup.connection.definition.name,
+  );
+  await choose('Task container', setup.read.locator);
+  expect(setup.repositories.getRepository).not.toHaveBeenCalled();
+  expect(setup.publish).not.toHaveBeenCalled();
+});
+
+it.each(['en', 'ru'] as const)(
+  'redacts Repository query failures and gives operation-neutral access guidance in %s',
+  async (language) => {
+    const setup = fixture({}, language);
+    const text = (key: MessageKey) => translate(language, key);
+    setup.repositories.listRepositories.mockRejectedValueOnce(
+      new ManagementApiError({
+        code: 'forbidden',
+        status: 403,
+        message: 'private-repository-token',
+        requestId: null,
+        retryAfterMilliseconds: null,
+      }),
+    );
+    await userEvent.click(screen.getByRole('button', { name: text('factory.configureAutomatic') }));
+    await userEvent.click(await screen.findByRole('button', { name: text('factory.addInput') }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.textContent).toContain(
+      language === 'en'
+        ? 'Check your permissions for this operation and the selected resource'
+        : 'Проверьте права на эту операцию и выбранный ресурс',
+    );
+    expect(alert.textContent).not.toContain(language === 'en' ? 'task-read' : 'чтения задач');
+    expect(
+      setup.queryClient
+        .getQueryCache()
+        .getAll()
+        .map((query) => String(query.state.error))
+        .join(),
+    ).not.toContain('private-repository-token');
+    await userEvent.click(within(alert).getByRole('button', { name: text('query.retry') }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    await choose(text('factory.codeRepository'), 'Code in another host · v3');
+    expect(setup.publish).not.toHaveBeenCalled();
+  },
+);
+
+for (const language of ['en', 'ru'] as const) {
+  it(
+    'explains a missing task-read profile without inventing access or starting intake in ' +
+      language,
+    async () => {
+      const setup = fixture(
+        {
+          choices: vi.fn(async () => ({
+            ...integrationFixture('WorkSourceInputChoices'),
+            items: [],
+          })),
+        },
+        language,
+      );
+      const text = (key: MessageKey) => translate(language, key);
+      await userEvent.click(
+        screen.getByRole('button', { name: text('factory.configureAutomatic') }),
+      );
+      await userEvent.click(await screen.findByRole('button', { name: text('factory.addInput') }));
+      await choose(text('factory.sourceConnection'), setup.connection.definition.name);
+      await screen.findByText(
+        language === 'en'
+          ? /ask a deployment administrator to install a compatible Source profile/
+          : /попросите администратора развёртывания установить совместимый профиль Source/,
+      );
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(screen.getByRole('button', { name: text('factory.validateInput') })).toHaveProperty(
+        'disabled',
+        true,
+      );
+      expect(setup.api.preview).not.toHaveBeenCalled();
+      expect(setup.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
+    'explains provider-deferred preview and replaces it after a bounded retry in ' + language,
+    async () => {
+      const record = retainedInput();
+      const preview = vi
+        .fn<FactorySourcesApi['preview']>()
+        .mockResolvedValueOnce({
+          ...integrationFixture('WorkSourcePreview'),
+          failure: 'rate_limited',
+          retry_after_millis: 1000,
+          candidates: [],
+        })
+        .mockResolvedValue({
+          ...integrationFixture('WorkSourcePreview'),
+          failure: null,
+          candidates: [],
+        });
+      const setup = fixture(
+        { list: vi.fn(async () => ({ items: [record], next_cursor: null })), preview },
+        language,
+      );
+      const text = (key: MessageKey) => translate(language, key);
+      await userEvent.click(
+        screen.getByRole('button', { name: text('factory.configureAutomatic') }),
+      );
+      await userEvent.click(await screen.findByRole('button', { name: text('factory.editInput') }));
+      await waitFor(() =>
+        expect(screen.getByRole('button', { name: text('factory.previewSource') })).toHaveProperty(
+          'disabled',
+          false,
+        ),
+      );
+      await userEvent.click(screen.getByRole('button', { name: text('factory.previewSource') }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain(
+        language === 'en'
+          ? 'The provider deferred the request. Wait before retrying'
+          : 'Провайдер отложил запрос. Подождите перед повтором',
+      );
+      expect(screen.queryByText(text('factory.previewEmpty'))).toBeNull();
+      const retry = within(alert).getByRole('button');
+      expect(retry).toHaveProperty('disabled', true);
+      expect(preview).toHaveBeenCalledOnce();
+      await waitFor(() => expect(retry).toHaveProperty('disabled', false), { timeout: 2000 });
+      await userEvent.click(retry);
+      await screen.findByText(text('factory.previewEmpty'));
+      expect(screen.queryByRole('alert')).toBeNull();
+      expect(preview).toHaveBeenCalledTimes(2);
+      expect(setup.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it(
+    'retains the input draft after validation failure and clears the failure on successful retry in ' +
+      language,
+    async () => {
+      const requestId = '0199a6f4-d56c-7440-9aa2-6a320f862795';
+      const validate = vi.fn<FactorySourcesApi['validate']>().mockRejectedValue(
+        new ManagementApiError({
+          code: 'forbidden',
+          status: 403,
+          message: 'private-provider-token',
+          requestId,
+          retryAfterMilliseconds: null,
+        }),
+      );
+      const setup = fixture({ validate }, language);
+      const text = (key: MessageKey) => translate(language, key);
+      await userEvent.click(
+        screen.getByRole('button', { name: text('factory.configureAutomatic') }),
+      );
+      await userEvent.click(await screen.findByRole('button', { name: text('factory.addInput') }));
+      await choose(text('factory.sourceConnection'), setup.connection.definition.name);
+      await choose(text('factory.taskContainer'), setup.read.locator);
+      await choose(
+        text('factory.inputProfile'),
+        `${setup.read.binding.configuration.identity} · ${setup.read.binding.configuration.version}`,
+      );
+      await choose(text('factory.codeRepository'), 'Code in another host · v3');
+      await userEvent.click(
+        screen.getByRole('checkbox', { name: text('factory.customizeFilters') }),
+      );
+      await userEvent.type(
+        screen.getByLabelText(text('factory.allLabels')),
+        'transient-selector-draft',
+      );
+      await userEvent.click(screen.getByRole('button', { name: text('factory.validateInput') }));
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain(
+        language === 'en'
+          ? 'Check your permissions for this operation and the selected resource'
+          : 'Проверьте права на эту операцию и выбранный ресурс',
+      );
+      expect(alert.textContent).toContain(requestId);
+      expect(document.body.textContent).not.toContain('private-provider-token');
+      expect(screen.getByLabelText(text('factory.allLabels'))).toHaveProperty(
+        'value',
+        'transient-selector-draft',
+      );
+      expect(
+        JSON.stringify(
+          setup.queryClient
+            .getQueryCache()
+            .getAll()
+            .map((query) => query.state),
+        ),
+      ).not.toContain('transient-selector-draft');
+      expect(JSON.stringify({ ...localStorage, ...sessionStorage })).not.toContain(
+        'transient-selector-draft',
+      );
+      validate.mockImplementation(setup.validate);
+      await userEvent.click(screen.getByRole('button', { name: text('factory.validateInput') }));
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      expect(screen.getByRole('button', { name: text('factory.reviewInput') })).toHaveProperty(
+        'disabled',
+        false,
+      );
+      expect(validate.mock.calls[1]![0].inputs[0]!.definition.predicate?.all_of).toEqual([
+        'transient-selector-draft',
+      ]);
+      expect(setup.publish).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    [
+      'invalid_request',
+      'Check the selected configuration and supported values',
+      'Проверьте выбранные настройки и допустимые значения',
+    ],
+    [
+      'not_found',
+      'Refresh the connection and source choices',
+      'Обновите подключение и варианты источника',
+    ],
+    [
+      'forbidden',
+      'Check your permissions for this operation and the selected resource',
+      'Проверьте права на эту операцию и выбранный ресурс',
+    ],
+    [
+      'capability_unavailable',
+      'Check connection activation, Project access and the installed Source runtime/profile',
+      'Проверьте активацию подключения, доступ проекта и установленный runtime/профиль Source',
+    ],
+    [
+      'conflict',
+      'Refresh current settings and review the operation again',
+      'Обновите текущие настройки и заново просмотрите операцию',
+    ],
+    [
+      'unavailable',
+      'The source is temporarily unavailable. Retry later',
+      'Источник временно недоступен. Повторите позже',
+    ],
+    [
+      'rate_limited',
+      'The provider deferred the request. Wait before retrying',
+      'Провайдер отложил запрос. Подождите перед повтором',
+    ],
+    [
+      'transport_failure',
+      'Check the server connection and retry',
+      'Проверьте связь с сервером и повторите запрос',
+    ],
+  ] as const)(
+    'shows actionable %s guidance in ' + language + ' and clears it after query recovery',
+    async (code, en, ru) => {
+      const requestId = '0199a6f4-d56c-7440-9aa2-6a320f862795';
+      const failure = new ManagementApiError({
+        code,
+        status: null,
+        message: 'private-provider-token',
+        requestId,
+        retryAfterMilliseconds: null,
+      });
+      const list = vi.fn<FactorySourcesApi['list']>().mockRejectedValue(failure);
+      fixture({ list }, language);
+      await userEvent.click(
+        screen.getByRole('button', {
+          name: language === 'en' ? 'Configure automatic intake' : 'Настроить автоматический приём',
+        }),
+      );
+      const alert = await screen.findByRole('alert');
+      expect(alert.textContent).toContain(language === 'en' ? en : ru);
+      expect(alert.textContent).toContain(code);
+      expect(alert.textContent).toContain(requestId);
+      expect(document.body.textContent).not.toContain('private-provider-token');
+      list.mockResolvedValue({ items: [], next_cursor: null });
+      await userEvent.click(
+        within(alert).getByRole('button', { name: language === 'en' ? 'Retry' : 'Повторить' }),
+      );
+      await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+      expect(
+        screen.getByRole('button', {
+          name: language === 'en' ? 'Add automatic input' : 'Добавить автоматический вход',
+        }),
+      ).toHaveProperty('disabled', false);
+    },
+  );
 }
 
 it('selects only a same-resource granted Reporter and reviews arbitrary installed status effects without claiming verified write readiness', async () => {
@@ -154,9 +593,12 @@ it('selects only a same-resource granted Reporter and reviews arbitrary installe
   await openInput();
   await choose('Source connection', connection.definition.name);
   await choose('Task container', read.locator);
-  await choose('Selector and input mapping', read.binding.configuration.identity);
+  await choose(
+    'Selector and input mapping',
+    `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+  );
   await choose('Code Repository', 'Code in another host · v3');
-  await choose('Reporter mapping', 'editorial-effects');
+  await choose('Reporter mapping', 'editorial-effects · v1');
   expect(screen.queryByRole('option', { name: 'wrong-container' })).toBeNull();
   expect(
     screen.getByText(
@@ -208,9 +650,12 @@ it('edits arbitrary status mappings using only advertised labels and states and 
   await openInput();
   await choose('Source connection', connection.definition.name);
   await choose('Task container', read.locator);
-  await choose('Selector and input mapping', read.binding.configuration.identity);
+  await choose(
+    'Selector and input mapping',
+    `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+  );
   await choose('Code Repository', 'Code in another host · v3');
-  await choose('Reporter mapping', 'editable-effects');
+  await choose('Reporter mapping', 'editable-effects · v1');
   await userEvent.click(screen.getByRole('checkbox', { name: 'Customize status mapping' }));
   const status = screen.getByRole('textbox', { name: 'Logical status' });
   await userEvent.clear(status);
@@ -244,7 +689,10 @@ it('selects an authorized task container independently of code, previews read-on
   await openInput();
   await choose('Source connection', connection.definition.name);
   await choose('Task container', read.locator);
-  await choose('Selector and input mapping', read.binding.configuration.identity);
+  await choose(
+    'Selector and input mapping',
+    `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+  );
   await choose('Code Repository', 'Code in another host · v3');
   await userEvent.click(screen.getByRole('checkbox', { name: 'Customize filters' }));
   await choose('Task state', 'native-open');
@@ -393,6 +841,141 @@ function retainedInput() {
     },
   };
 }
+
+it('keeps a failed publication classified and retries the same frozen intent without persisting its draft', async () => {
+  const record = retainedInput();
+  const publish = vi.fn<FactorySourcesApi['publish']>().mockRejectedValueOnce(
+    new ManagementApiError({
+      code: 'transport_failure',
+      status: null,
+      message: 'private-transport-token',
+      requestId: null,
+      retryAfterMilliseconds: null,
+    }),
+  );
+  const setup = fixture({
+    list: vi.fn(async () => ({ items: [record], next_cursor: null })),
+    publish,
+  });
+  publish.mockImplementation(setup.publish);
+  await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit automatic input' }));
+  await userEvent.type(
+    await screen.findByLabelText('All required labels (one per line)'),
+    '-private-draft',
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review input publication' }));
+  const dialog = await screen.findByRole('dialog');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm publication' }));
+  const alert = await within(dialog).findByRole('alert');
+  expect(alert.textContent).toContain('Check the server connection and retry');
+  expect(alert.textContent).not.toContain('private-transport-token');
+  expect(screen.getByLabelText('All required labels (one per line)')).toHaveProperty(
+    'value',
+    'retained-label-private-draft',
+  );
+  expect(JSON.stringify({ ...localStorage, ...sessionStorage })).not.toContain('private-draft');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Retry same command' }));
+  await within(dialog).findByText('Automatic input published.');
+  expect(within(dialog).queryByRole('alert')).toBeNull();
+  expect(publish.mock.calls).toHaveLength(2);
+  expect(publish.mock.calls[1]).toEqual(publish.mock.calls[0]);
+});
+
+it('refreshes stale validation before retrying while retaining the selector draft', async () => {
+  const original = retainedInput();
+  let stale = false;
+  const validate = vi.fn<FactorySourcesApi['validate']>().mockImplementationOnce(async () => {
+    stale = true;
+    throw new ManagementApiError({
+      code: 'precondition_failed',
+      status: 412,
+      requestId: null,
+      retryAfterMilliseconds: null,
+      message: 'private-version-detail',
+    });
+  });
+  const setup = fixture({
+    validate,
+    list: vi.fn(async () => ({
+      items: [{ ...original, definition: { ...original.definition, version: stale ? 2 : 1 } }],
+      next_cursor: null,
+    })),
+  });
+  validate.mockImplementation(setup.validate);
+  await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit automatic input' }));
+  await userEvent.type(
+    await screen.findByLabelText('All required labels (one per line)'),
+    '-retained-draft',
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Refresh current version and access' }),
+  );
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Review input publication' })).toHaveProperty(
+      'disabled',
+      false,
+    ),
+  );
+  expect(validate.mock.calls[1]![0].inputs[0]).toMatchObject({
+    expected_version: 2,
+    definition: { predicate: { all_of: ['retained-label-retained-draft'] } },
+  });
+  expect(setup.publish).not.toHaveBeenCalled();
+});
+
+it('replaces an earlier deferred preview with the latest classified failure before recovery', async () => {
+  const record = retainedInput();
+  const preview = vi
+    .fn<FactorySourcesApi['preview']>()
+    .mockResolvedValueOnce({
+      ...integrationFixture('WorkSourcePreview'),
+      failure: 'unavailable',
+      candidates: [],
+    })
+    .mockRejectedValueOnce(
+      new ManagementApiError({
+        code: 'forbidden',
+        status: 403,
+        message: 'private-provider-token',
+        requestId: null,
+        retryAfterMilliseconds: null,
+      }),
+    )
+    .mockResolvedValue({
+      ...integrationFixture('WorkSourcePreview'),
+      failure: null,
+      candidates: [],
+    });
+  fixture({ list: vi.fn(async () => ({ items: [record], next_cursor: null })), preview });
+  await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit automatic input' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Preview source (read-only)' })).toHaveProperty(
+      'disabled',
+      false,
+    ),
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Preview source (read-only)' }));
+  await userEvent.click(
+    within(await screen.findByRole('alert')).getByRole('button', { name: 'Retry' }),
+  );
+  await screen.findByText('Error code: forbidden');
+  const alerts = screen.getAllByRole('alert');
+  expect(alerts).toHaveLength(1);
+  expect(alerts[0]!.textContent).toContain(
+    'Check your permissions for this operation and the selected resource',
+  );
+  await userEvent.click(within(alerts[0]!).getByRole('button', { name: 'Retry' }));
+  await screen.findByText('No tasks returned by this bounded read.');
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
 it('does not silently remove a retained filter when installed editing support is withdrawn', async () => {
   const record = retainedInput();
   fixture({
@@ -490,7 +1073,10 @@ it('reuses one connection for separate disabled inputs without credentials and d
     await openInput();
     await choose('Source connection', connection.definition.name);
     await choose('Task container', read.locator);
-    await choose('Selector and input mapping', read.binding.configuration.identity);
+    await choose(
+      'Selector and input mapping',
+      `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+    );
     await choose('Code Repository', 'Code in another host · v3');
     await userEvent.click(screen.getByRole('checkbox', { name: 'Customize filters' }));
     await userEvent.type(screen.getByLabelText('Any matching labels (one per line)'), label);
@@ -530,7 +1116,10 @@ it('explains unrestricted state and labels including unlabeled tasks', async () 
   await openInput();
   await choose('Source connection', connection.definition.name);
   await choose('Task container', read.locator);
-  await choose('Selector and input mapping', read.binding.configuration.identity);
+  await choose(
+    'Selector and input mapping',
+    `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+  );
   await userEvent.click(screen.getByRole('checkbox', { name: 'Customize filters' }));
   expect(screen.getByRole('combobox', { name: 'Task state' }).textContent).toContain(
     'Any state (no extra restriction)',
@@ -556,7 +1145,7 @@ it('selects the exact installed profile even when separate profile identities sh
   await openInput();
   await choose('Source connection', connection.definition.name);
   await choose('Task container', read.locator);
-  await choose('Selector and input mapping', 'second-mapping-same-content');
+  await choose('Selector and input mapping', 'second-mapping-same-content · v1');
   await choose('Code Repository', 'Code in another host · v3');
   await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
   expect(validate.mock.calls[0]![0].inputs[0]!.definition.source.configuration.identity).toBe(
@@ -579,7 +1168,10 @@ it('explains a filtered preview using translated reasons and distinguishes an un
   await openInput();
   await choose('Source connection', connection.definition.name);
   await choose('Task container', read.locator);
-  await choose('Selector and input mapping', read.binding.configuration.identity);
+  await choose(
+    'Selector and input mapping',
+    `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+  );
   await choose('Code Repository', 'Code in another host · v3');
   await userEvent.click(screen.getByRole('button', { name: 'Preview source (read-only)' }));
   expect(await screen.findByText(/A required label is missing/)).toBeTruthy();
@@ -738,7 +1330,7 @@ it.each(['container', 'installation', 'connection'] as const)(
     await userEvent.click(await screen.findByRole('button', { name: 'Edit automatic input' }));
     if (scope === 'connection') await choose('Source connection', 'Another tracker');
     await choose('Task container', alternative.locator);
-    await choose('Selector and input mapping', 'other-mapping');
+    await choose('Selector and input mapping', 'other-mapping · v1');
     await waitFor(() =>
       expect(screen.getByRole('button', { name: 'Validate input' })).toHaveProperty(
         'disabled',
@@ -785,7 +1377,7 @@ it('preserves the retained Reporter and its parent when only the source mapping 
   expect(screen.getByRole('combobox', { name: 'Reporter mapping' }).textContent).toContain(
     'Retained mapping unavailable: status-mapping',
   );
-  await choose('Selector and input mapping', 'another-read-mapping');
+  await choose('Selector and input mapping', 'another-read-mapping · v1');
   await waitFor(() =>
     expect(screen.getByRole('button', { name: 'Validate input' })).toHaveProperty(
       'disabled',
@@ -835,7 +1427,10 @@ it('refreshes a new input after a connection conflict without requiring an exist
   await openInput();
   await choose('Source connection', connection.definition.name);
   await choose('Task container', read.locator);
-  await choose('Selector and input mapping', read.binding.configuration.identity);
+  await choose(
+    'Selector and input mapping',
+    `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+  );
   await choose('Code Repository', 'Code in another host · v3');
   await userEvent.click(screen.getByRole('checkbox', { name: 'Customize filters' }));
   await userEvent.type(

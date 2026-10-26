@@ -1,7 +1,8 @@
 import { expect, test, type Page } from '@playwright/test';
-import { configurationFixture } from '../fixtures/factory';
+import { configurationFixture, runFixture } from '../fixtures/factory';
+import { issueFixture } from '../fixtures/issues';
 import { integrationFixture } from '../fixtures/integrations';
-import { installOperatorFixture } from './operatorFixture';
+import { FIXTURE_IDS, installOperatorFixture } from './operatorFixture';
 
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 async function installSources(
@@ -82,13 +83,219 @@ async function installSources(
       },
     }),
   );
-  return { project: configuration.reference.project_id, publications };
+  return { project: configuration.reference.project_id, publications, diagnostics };
 }
 async function choose(page: Page, name: string, option: string) {
   await page.getByRole('combobox', { name, exact: true }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('option', { name: option, exact: true }).click();
 }
+
+test('enables read-only execution input independently of task import with separate code and literal predicates at 390px', async ({
+  page,
+}) => {
+  const { project, publications } = await installSources(page);
+  const commands: string[] = [];
+  page.on('request', (request) => {
+    const path = new URL(request.url()).pathname;
+    if (path.startsWith('/api/v1/') && request.method() !== 'GET') commands.push(path);
+  });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`/factory?project_id=${project}`);
+  await page.getByRole('button', { name: 'Inspect Factory Configuration · v1' }).click();
+  await expect(page.getByRole('button', { name: 'Admit manual Work' })).toBeEnabled();
+  await page.getByRole('button', { name: 'Configure automatic intake' }).click();
+  await page.getByRole('button', { name: 'Add automatic input' }).click();
+  await choose(page, 'Source connection', 'Tracker');
+  await choose(page, 'Task container', 'team/project');
+  await choose(page, 'Selector and input mapping', 'triage-labels · v1');
+  await expect(
+    page.getByText(
+      'This profile prepares bounded task and acceptance Artifacts. Missing acceptance blocks execution, not task import.',
+    ),
+  ).toBeVisible();
+  await choose(page, 'Code Repository', 'Factory source · v1');
+  await expect(page.getByRole('combobox', { name: 'Reporter mapping' })).toContainText(
+    'No external status updates',
+  );
+  await expect(page.getByRole('checkbox', { name: 'Automatic intake enabled' })).not.toBeChecked();
+  await page.getByRole('checkbox', { name: 'Customize filters' }).check();
+  await choose(page, 'Task state', 'native-open');
+  await page.getByLabel('All required labels (one per line)').fill('required, literal');
+  await page.getByLabel('Any matching labels (one per line)').fill('assessment\nimplementation');
+  await page.getByLabel('Excluded labels (one per line)').fill('paused');
+  await page.getByRole('button', { name: 'Preview source (read-only)' }).click();
+  await expect(page.getByText(/synthetic-preview-only/)).toBeVisible();
+  expect(publications).toHaveLength(0);
+  await page.getByRole('checkbox', { name: 'Automatic intake enabled' }).focus();
+  await page.keyboard.press('Space');
+  await page.getByRole('button', { name: 'Validate input', exact: true }).click();
+  const review = page.getByRole('button', { name: 'Review input publication' });
+  await expect(review).toBeEnabled();
+  await review.focus();
+  await page.keyboard.press('Enter');
+  const dialog = page.getByRole('dialog', { name: 'Publish automatic input' });
+  await expect(dialog).toContainText('Automatic intake enabled');
+  await expect(dialog).toContainText('paused');
+  await page.keyboard.press('Escape');
+  await expect(review).toBeFocused();
+  await page.keyboard.press('Enter');
+  await page.keyboard.press('Enter');
+  await expect(dialog.getByText('Automatic input published.')).toBeVisible();
+  expect(publications).toHaveLength(1);
+  const input = integrationFixture('WorkSourceConfigurationSubmission').intent.inputs[0]!;
+  expect(publications[0]!.body).toMatchObject({
+    project_id: project,
+    group: null,
+    inputs: [
+      {
+        expected_version: null,
+        definition: {
+          enabled: true,
+          source: input.definition.source,
+          target: configurationFixture().configuration.reference,
+          repository: {
+            id: '66666666-6666-4666-8666-666666666666',
+            version: 1,
+            definition_digest: 'ab'.repeat(32),
+          },
+          reporter: null,
+          connection: { reporter_configuration: null },
+          predicate: {
+            state: 'native-open',
+            all_of: ['required, literal'],
+            any_of: ['assessment', 'implementation'],
+            none_of: ['paused'],
+          },
+        },
+      },
+    ],
+  });
+  expect(commands).toEqual([
+    `/api/v1/projects/${project}/factory-sources/preview`,
+    `/api/v1/projects/${project}/factory-sources/validate`,
+    expect.stringMatching(/\/factory-source-inputs\/[^/]+\/versions$/u),
+  ]);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+    ),
+  ).toBe(true);
+});
+
+test('opens the authoritative task card, original Work and Run from retained input progress', async ({
+  page,
+}) => {
+  const { project, diagnostics } = await installSources(page, { progress: true });
+  const run = runFixture();
+  const issue = issueFixture(FIXTURE_IDS.project);
+  const admission = diagnostics.admissions[0]!;
+  admission.issue = { project_id: issue.project_id, issue_id: issue.id };
+  admission.association.run_id = run.id;
+  admission.association.work_id = run.work_id;
+  await page.route(`**/api/v1/factory-runs/${run.id}/work*`, (route) =>
+    route.fulfill({
+      json: {
+        items: [
+          {
+            kind: 'work',
+            record: {
+              id: run.work_id,
+              configuration: configurationFixture().configuration.reference,
+              external_identity: run.external_identity,
+              priority: 0,
+              risk: 'low',
+              subject: {
+                project_id: project,
+                repository_id: '66666666-6666-4666-8666-666666666666',
+                base_revision: 'revision-a',
+              },
+            },
+          },
+        ],
+        next_cursor: null,
+      },
+    }),
+  );
+  const path = `/factory?project_id=${project}`;
+  async function openProgress() {
+    await page.goto(path);
+    await page.getByRole('button', { name: 'Inspect Factory Configuration · v1' }).click();
+    await page.getByRole('button', { name: 'Configure automatic intake' }).click();
+    await page.getByRole('button', { name: 'Source and reporting progress' }).click();
+  }
+  await openProgress();
+  await page.getByRole('link', { name: 'Open task card' }).click();
+  await expect(page).toHaveURL(`/projects/${issue.project_id}/issues/${issue.id}`);
+  await expect(page.getByRole('heading', { name: 'ISS-42 · Investigate checkout' })).toBeVisible();
+  await openProgress();
+  await page.getByRole('link', { name: 'Work summary' }).click();
+  await expect(page).toHaveURL(`/factory/${run.id}?diagnostic=work&diagnostic_id=${run.work_id}`);
+  await expect(page.getByRole('heading', { name: 'Factory Run', level: 1 })).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: `Inspect record · ${run.work_id}` }),
+  ).toHaveAttribute('aria-pressed', 'true');
+  await openProgress();
+  await page.getByRole('link', { name: 'Open Run' }).click();
+  await expect(page).toHaveURL(`/factory/${run.id}`);
+  await expect(page.getByRole('heading', { name: 'Factory Run', level: 1 })).toBeVisible();
+});
+
+test('recovers a classified input failure with safe correlation and a transient selector draft', async ({
+  page,
+}) => {
+  const { project, publications } = await installSources(page);
+  const requestId = '0199a6f4-d56c-7440-9aa2-6a320f862795';
+  let rejected = false;
+  await page.route('**/factory-sources/validate', async (route) => {
+    if (rejected) return route.fallback();
+    rejected = true;
+    await route.fulfill({
+      status: 403,
+      headers: { 'X-Request-Id': requestId },
+      json: {
+        code: 'forbidden',
+        message: 'private-provider-token /private/runtime.json',
+        request_id: requestId,
+      },
+    });
+  });
+  await page.goto(`/factory?project_id=${project}`);
+  await page.getByRole('button', { name: 'Inspect Factory Configuration · v1' }).click();
+  await page.getByRole('button', { name: 'Configure automatic intake' }).click();
+  await page.getByRole('button', { name: 'Add automatic input' }).click();
+  await choose(page, 'Source connection', 'Tracker');
+  await choose(page, 'Task container', 'team/project');
+  await choose(page, 'Selector and input mapping', 'triage-labels · v1');
+  await choose(page, 'Code Repository', 'Factory source · v1');
+  await page.getByRole('checkbox', { name: 'Customize filters' }).check();
+  const selector = page.getByLabel('All required labels (one per line)');
+  await selector.fill('transient-selector-only');
+  await page.getByRole('button', { name: 'Validate input', exact: true }).click();
+  const alert = page.getByRole('alert');
+  await expect(alert).toContainText(
+    'Check your permissions for this operation and the selected resource',
+  );
+  await expect(alert).toContainText(requestId);
+  await expect(page.locator('body')).not.toContainText('private-provider-token');
+  await expect(selector).toHaveValue('transient-selector-only');
+  await alert.getByRole('button', { name: 'Retry' }).click();
+  await expect(alert).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Review input publication' })).toBeEnabled();
+  await expect(selector).toHaveValue('transient-selector-only');
+  const storage = await page.evaluate(() =>
+    JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }),
+  );
+  expect(storage).not.toContain('transient-selector-only');
+  expect(storage).not.toContain('private-provider-token');
+  await page.getByRole('button', { name: 'Close input editor' }).click();
+  await page.getByRole('button', { name: 'Add automatic input' }).click();
+  await expect(page.getByRole('combobox', { name: 'Source connection' })).toContainText(
+    'Choose an option',
+  );
+  expect(publications).toHaveLength(0);
+});
+
 test('configures a pipeline input with keyboard review and keeps drafts and preview out of browser storage', async ({
   page,
 }) => {
@@ -99,7 +306,7 @@ test('configures a pipeline input with keyboard review and keeps drafts and prev
   await page.getByRole('button', { name: 'Add automatic input' }).click();
   await choose(page, 'Source connection', 'Tracker');
   await choose(page, 'Task container', 'team/project');
-  await choose(page, 'Selector and input mapping', 'triage-labels');
+  await choose(page, 'Selector and input mapping', 'triage-labels · v1');
   await choose(page, 'Code Repository', 'Factory source · v1');
   await page.getByRole('checkbox', { name: 'Customize filters' }).check();
   await expect(page.getByRole('combobox', { name: 'Task state' })).toContainText(
@@ -153,9 +360,9 @@ test('authors and reviews status effects with keyboard access and clears mapping
   await page.getByRole('button', { name: 'Add automatic input' }).click();
   await choose(page, 'Source connection', 'Tracker');
   await choose(page, 'Task container', 'team/project');
-  await choose(page, 'Selector and input mapping', 'triage-labels');
+  await choose(page, 'Selector and input mapping', 'triage-labels · v1');
   await choose(page, 'Code Repository', 'Factory source · v1');
-  await choose(page, 'Reporter mapping', 'editorial-effects');
+  await choose(page, 'Reporter mapping', 'editorial-effects · v1');
   await page.getByRole('checkbox', { name: 'Customize status mapping' }).focus();
   await page.keyboard.press('Space');
   await page.getByRole('textbox', { name: 'Logical status' }).fill('synthetic-status-only');
@@ -208,8 +415,8 @@ test('shows Russian input guidance and manual intake at narrow width', async ({ 
   await page.getByRole('button', { name: 'Добавить автоматический вход' }).click();
   await choose(page, 'Подключение источника', 'Tracker');
   await choose(page, 'Контейнер задач', 'team/project');
-  await choose(page, 'Отбор и преобразование входных данных', 'triage-labels');
-  await choose(page, 'Маппинг обновлений внешней системы', 'editorial-effects');
+  await choose(page, 'Отбор и преобразование входных данных', 'triage-labels · v1');
+  await choose(page, 'Маппинг обновлений внешней системы', 'editorial-effects · v1');
   await expect(page.getByText('Остальные метки сохраняются.')).toBeVisible();
   await page.getByRole('checkbox', { name: 'Настроить маппинг статусов' }).check();
   await expect(page.getByRole('textbox', { name: 'Логический статус' })).toHaveValue(

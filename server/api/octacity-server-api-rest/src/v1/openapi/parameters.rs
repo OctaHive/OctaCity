@@ -36,6 +36,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
     "integration_id",
     "trigger_id",
     "input_id",
+    "import_id",
     "group_id",
     "version",
   ] {
@@ -49,7 +50,7 @@ pub(super) fn parameters(operation: &ManagementOperation) -> Vec<Value> {
           else if name == "property_version" { non_negative_integer() }
           else if name == "version" && matches!(operation.operation_id, "getFactoryRoleTemplate" | "getProjectSkill") { json!({"type":"string","minLength":1,"maxLength":octacity_server_application::factory_configuration_document_bounds().key_bytes,"pattern":"^[a-z0-9][a-z0-9._-]*$"}) }
           else if name == "version" { positive_integer() }
-          else if matches!(name, "workflow_id" | "issue_id" | "request_id" | "comment_id" | "work_id") { json!({"type":"string","format":"uuid"}) }
+          else if matches!(name, "workflow_id" | "issue_id" | "request_id" | "comment_id" | "work_id" | "import_id") { json!({"type":"string","format":"uuid"}) }
           else { non_empty_string() }
       }));
     }

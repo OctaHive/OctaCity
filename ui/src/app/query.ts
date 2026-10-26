@@ -120,6 +120,10 @@ export const queryKeys = {
   issueChildrenRoot: (project: string, id: string) => ['issues', project, id, 'children'] as const,
   issuePropertyChoices: (project: string) => ['issues', project, 'property-choices'] as const,
   issues: (project: string) => ['issues', project] as const,
+  issueImportConnections: ['issue-import', 'connections'] as const,
+  issueImports: (project: string) => ['issue-import', project] as const,
+  issueImportChoices: (project: string, connection: string, version: number) =>
+    ['issue-import', project, 'choices', connection, version] as const,
   issueList: (project: string, after: string | null) => ['issues', project, 'list', after] as const,
   issue: (project: string, id: string) => ['issues', project, id, 'current'] as const,
   issueSynchronization: (project: string, id: string) => ['issues', project, id, 'source'] as const,

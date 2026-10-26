@@ -15,6 +15,8 @@ import type {
 } from './sourceApi';
 import { SourcePublication } from './SourcePublication';
 import { SourceReporting } from '../../shared/SourceReporting';
+import { QueryFailureNotice } from '../../shared/QueryStateNotice';
+import { sourceFailure, sourceRequest } from '../../shared/sourceErrors';
 import {
   sourceReferenceKey as referenceKey,
   sourceBindingKey as bindingKey,
@@ -43,6 +45,7 @@ export function SourceInputEditor({
   const client = useQueryClient();
   const [base] = useState(input?.definition);
   const project = configuration.configuration.reference.project_id;
+  const target = base?.target ?? configuration.configuration.reference;
   const [id] = useState(() => input?.id ?? crypto.randomUUID());
   const [version, setVersion] = useState(input?.version ?? null);
   const [connectionId, setConnectionId] = useState(base?.connection?.id ?? '');
@@ -63,7 +66,8 @@ export function SourceInputEditor({
   ];
   const code = useInfiniteQuery({
     queryKey: queryKeys.factoryWorkSources(project, 'repositories'),
-    queryFn: ({ pageParam, signal }) => repositories.listRepositories(project, pageParam, signal),
+    queryFn: ({ pageParam, signal }) =>
+      sourceRequest(repositories.listRepositories(project, pageParam, signal)),
     initialPageParam: null as string | null,
     getNextPageParam: (page) => page.next_cursor,
   });
@@ -75,7 +79,8 @@ export function SourceInputEditor({
       : repositoryItems.find((item) => item.id === repositoryId)?.version;
   const repository = useQuery({
     queryKey: queryKeys.repository(repositoryId, repositoryVersion ?? 0),
-    queryFn: ({ signal }) => repositories.getRepository(repositoryId, repositoryVersion!, signal),
+    queryFn: ({ signal }) =>
+      sourceRequest(repositories.getRepository(repositoryId, repositoryVersion!, signal)),
     enabled: !!repositoryId && !!repositoryVersion,
   });
   const [custom, setCustom] = useState(!!base?.predicate);
@@ -113,7 +118,7 @@ export function SourceInputEditor({
     : undefined;
   const reporterOptions = writers.map((item) => ({
     value: bindingKey(item.binding),
-    label: item.binding.configuration.identity,
+    label: `${item.binding.configuration.identity} · ${item.binding.configuration.version}`,
   }));
   // Retaining an existing pin is distinct from offering a currently usable writer.
   if (reporter && !selectedWriter)
@@ -137,7 +142,7 @@ export function SourceInputEditor({
               id,
               expected_version: version,
               definition: {
-                target: base?.target ?? configuration.configuration.reference,
+                target,
                 repository: {
                   id: repositoryId,
                   version: repositoryVersion!,
@@ -223,9 +228,10 @@ export function SourceInputEditor({
     `${t('factory.taskContainer')}: ${selected?.locator ?? ''}`,
     `${t('factory.inputProfile')}: ${selected?.binding.configuration.identity ?? ''} · ${selected?.binding.configuration.version ?? ''}`,
     `${t('factory.codeRepository')}: ${repository.data?.name ?? ''} · v${repositoryVersion ?? ''}`,
-    `${t('factory.sourceTarget')}: ${(base?.target ?? configuration.configuration.reference).id} · v${(base?.target ?? configuration.configuration.reference).version}`,
+    `${t('factory.sourceTarget')}: ${target.id} · v${target.version}`,
+    t('factory.preparationHelp'),
     t(enabled ? 'factory.inputEnabled' : 'factory.inputDisabled'),
-    `${t('factory.diag.reporting')}: ${reporter?.configuration.identity ?? t('common.none')}`,
+    `${t('factory.diag.reporting')}: ${reporter ? `${reporter.configuration.identity} · ${reporter.configuration.version}` : t('common.none')}`,
     ...(reporter ? [t('factory.preserveLabels'), t('factory.reporterReadiness')] : []),
     ...(reporting?.statuses.map(
       (effect) =>
@@ -240,6 +246,9 @@ export function SourceInputEditor({
     <fieldset>
       <legend>{t(input ? 'factory.editInput' : 'factory.addInput')}</legend>
       <p>{t('factory.sourceDraftHelp')}</p>
+      <p>
+        {t('factory.sourceTarget')}: {target.id} · v{target.version}
+      </p>
       {base?.reporter && selected && !reporter ? <p>{t('factory.reporterRemoved')}</p> : null}
       {select(
         t('factory.sourceConnection'),
@@ -261,9 +270,19 @@ export function SourceInputEditor({
         <p role="status">{t('query.loading', { label: t('factory.taskContainer') })}</p>
       ) : null}
       {choices.isError || code.isError || repository.isError ? (
-        <p role="alert">{t('factory.sourceFailure')}</p>
+        <QueryFailureNotice
+          title={t('factory.addInput')}
+          error={sourceFailure(choices.error ?? code.error ?? repository.error, t)}
+          onRetry={() =>
+            Promise.all(
+              [choices, code, repository]
+                .filter((query) => query.isError)
+                .map((query) => query.refetch()),
+            )
+          }
+        />
       ) : null}
-      {connection && !choices.isPending && !reads.length ? (
+      {connection && choices.isSuccess && !reads.length ? (
         <p>{t('factory.noSourceAccess')}</p>
       ) : null}
       {select(
@@ -285,13 +304,14 @@ export function SourceInputEditor({
           .filter((item) => item.binding.resource.identity === resource)
           .map((item) => ({
             value: bindingKey(item.binding),
-            label: item.binding.configuration.identity,
+            label: `${item.binding.configuration.identity} · ${item.binding.configuration.version}`,
           })),
         (value) => {
           setProfile(value);
           setCustom(false);
         },
       )}
+      {selected ? <p>{t('factory.preparationHelp')}</p> : null}
       <p>{t('factory.repositoryIndependent')}</p>
       {select(
         t('factory.codeRepository'),

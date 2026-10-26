@@ -14,23 +14,42 @@ import { IssueProjectNav, type IssueProjectReader } from './IssueProjectNav';
 import { IssueEditor } from './IssueEditor';
 import type { IssuesApi } from './api';
 import styles from './Issues.module.css';
-export function IssuesView({ api, projects }: { api: IssuesApi; projects: IssueProjectReader }) {
+import type { IssueSourcesApi } from './sourceApi';
+import { ProjectSources } from './ProjectSources';
+export function IssuesView({
+  api,
+  projects,
+  sources,
+}: {
+  api: IssuesApi;
+  projects: IssueProjectReader;
+  sources: IssueSourcesApi;
+}) {
   const { projectId } = useParams<'projectId'>();
   return projectId ? (
-    <ProjectIssues key={projectId} api={api} projects={projects} projectId={projectId} />
+    <ProjectIssues
+      key={projectId}
+      api={api}
+      projects={projects}
+      sources={sources}
+      projectId={projectId}
+    />
   ) : null;
 }
 function ProjectIssues({
   api,
   projects,
   projectId,
+  sources,
 }: {
   api: IssuesApi;
   projects: IssueProjectReader;
   projectId: string;
+  sources: IssueSourcesApi;
 }) {
   const { t } = usePresentation();
   const [creating, setCreating] = useState(false);
+  const [showSources, setShowSources] = useState(false);
   const [after, setAfter] = useState<string | null>(null);
   const list = useQuery({
     queryKey: queryKeys.issueList(projectId, after),
@@ -41,10 +60,21 @@ function ProjectIssues({
       <IssueProjectNav projects={projects} projectId={projectId} />
       <h1>{t('issues.tasks')}</h1>
       <p>{t('issues.manualHelp')}</p>
+      <button type="button" disabled={list.isFetching} onClick={() => void list.refetch()}>
+        {t('issueImport.refreshTasks')}
+      </button>
       <button type="button" onClick={() => setCreating(!creating)}>
         {t(creating ? 'command.abandon' : 'issues.create')}
       </button>
       {creating ? <IssueEditor api={api} projectId={projectId} /> : null}
+      <button
+        type="button"
+        aria-expanded={showSources}
+        onClick={() => setShowSources(!showSources)}
+      >
+        {t('issueImport.open')}
+      </button>
+      {showSources ? <ProjectSources projectId={projectId} api={sources} /> : null}
       {list.isPending ? (
         <QueryLoadingNotice label={t('issues.tasks')} />
       ) : list.data === undefined ? (

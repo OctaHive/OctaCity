@@ -1,11 +1,16 @@
 import type { components } from '../../../.generated/api/schema';
 import {
   managementApi,
-  redactManagementError,
   requireManagementResponse,
   versionedMutationHeaders,
   type IdempotencyRequestHeaders,
 } from '../../api/client';
+
+import { sourceRequest } from '../../shared/sourceErrors';
+
+async function sourceResponse<T>(request: Promise<{ data?: T }>): Promise<T> {
+  return sourceRequest(request.then((response) => requireManagementResponse(response.data)));
+}
 
 export type SourceIntent = components['schemas']['WorkSourceConfigurationIntent'];
 export type SourceRecord = components['schemas']['WorkSourceConfigurationRecord'];
@@ -22,92 +27,77 @@ export function createFactorySourcesApi(client = managementApi) {
       after: string | null,
       signal?: AbortSignal,
     ) {
-      try {
-        const query = { limit: 10, ...(after === null ? {} : { after }) };
-        return requireManagementResponse(
-          (target.kind === 'input'
-            ? await client.GET(
-                '/api/v1/projects/{project_id}/factory-source-inputs/{input_id}/versions/{version}/diagnostics',
-                {
-                  params: {
-                    path: { project_id: projectId, input_id: target.id, version: target.version },
-                    query,
-                  },
-                  signal: signal ?? null,
+      const query = { limit: 10, ...(after === null ? {} : { after }) };
+      return sourceResponse(
+        target.kind === 'input'
+          ? client.GET(
+              '/api/v1/projects/{project_id}/factory-source-inputs/{input_id}/versions/{version}/diagnostics',
+              {
+                params: {
+                  path: { project_id: projectId, input_id: target.id, version: target.version },
+                  query,
                 },
-              )
-            : await client.GET(
-                '/api/v1/projects/{project_id}/factory-source-groups/{group_id}/versions/{version}/diagnostics',
-                {
-                  params: {
-                    path: { project_id: projectId, group_id: target.id, version: target.version },
-                    query,
-                  },
-                  signal: signal ?? null,
+                signal: signal ?? null,
+              },
+            )
+          : client.GET(
+              '/api/v1/projects/{project_id}/factory-source-groups/{group_id}/versions/{version}/diagnostics',
+              {
+                params: {
+                  path: { project_id: projectId, group_id: target.id, version: target.version },
+                  query,
                 },
-              )
-          ).data,
-        );
-      } catch (error) {
-        throw redactManagementError(error, 'The source operation could not be completed.');
-      }
+                signal: signal ?? null,
+              },
+            ),
+      );
     },
     async connections(after: string | null, signal?: AbortSignal) {
-      return requireManagementResponse(
-        (
-          await client.GET('/api/v1/integrations', {
-            params: { query: { limit: 25, ...(after === null ? {} : { after }) } },
-            signal: signal ?? null,
-          })
-        ).data,
+      return sourceResponse(
+        client.GET('/api/v1/integrations', {
+          params: { query: { limit: 25, ...(after === null ? {} : { after }) } },
+          signal: signal ?? null,
+        }),
       );
     },
     async list(projectId: string, after: string | null, signal?: AbortSignal) {
-      return requireManagementResponse(
-        (
-          await client.GET('/api/v1/projects/{project_id}/factory-sources', {
-            params: {
-              path: { project_id: projectId },
-              query: { limit: 25, ...(after === null ? {} : { after }) },
-            },
-            signal: signal ?? null,
-          })
-        ).data,
+      return sourceResponse(
+        client.GET('/api/v1/projects/{project_id}/factory-sources', {
+          params: {
+            path: { project_id: projectId },
+            query: { limit: 25, ...(after === null ? {} : { after }) },
+          },
+          signal: signal ?? null,
+        }),
       );
     },
     async choices(projectId: string, connectionId: string, version: number, signal?: AbortSignal) {
-      return requireManagementResponse(
-        (
-          await client.GET('/api/v1/projects/{project_id}/factory-source-choices', {
-            params: {
-              path: { project_id: projectId },
-              query: { connection_id: connectionId, connection_version: version },
-            },
-            signal: signal ?? null,
-          })
-        ).data,
+      return sourceResponse(
+        client.GET('/api/v1/projects/{project_id}/factory-source-choices', {
+          params: {
+            path: { project_id: projectId },
+            query: { connection_id: connectionId, connection_version: version },
+          },
+          signal: signal ?? null,
+        }),
       );
     },
     async validate(intent: SourceIntent, signal?: AbortSignal) {
-      return requireManagementResponse(
-        (
-          await client.POST('/api/v1/projects/{project_id}/factory-sources/validate', {
-            params: { path: { project_id: intent.project_id } },
-            body: { intent },
-            signal: signal ?? null,
-          })
-        ).data,
+      return sourceResponse(
+        client.POST('/api/v1/projects/{project_id}/factory-sources/validate', {
+          params: { path: { project_id: intent.project_id } },
+          body: { intent },
+          signal: signal ?? null,
+        }),
       );
     },
     async preview(intent: SourceIntent, signal?: AbortSignal) {
-      return requireManagementResponse(
-        (
-          await client.POST('/api/v1/projects/{project_id}/factory-sources/preview', {
-            params: { path: { project_id: intent.project_id } },
-            body: { intent, limit: 10 },
-            signal: signal ?? null,
-          })
-        ).data,
+      return sourceResponse(
+        client.POST('/api/v1/projects/{project_id}/factory-sources/preview', {
+          params: { path: { project_id: intent.project_id } },
+          body: { intent, limit: 10 },
+          signal: signal ?? null,
+        }),
       );
     },
     async publish(intent: SourceIntent, headers: IdempotencyRequestHeaders) {
@@ -119,36 +109,26 @@ export function createFactorySourcesApi(client = managementApi) {
           ? { ...headers, 'If-None-Match': '*' as const }
           : versionedMutationHeaders(headers['Idempotency-Key'], version);
       if (intent.group)
-        return requireManagementResponse(
-          (
-            await client.POST(
-              '/api/v1/projects/{project_id}/factory-source-groups/{group_id}/versions',
-              {
-                params: {
-                  path: { project_id: intent.project_id, group_id: intent.group.id },
-                  header: precondition,
-                },
-                body: { intent },
-              },
-            )
-          ).data,
+        return sourceResponse(
+          client.POST('/api/v1/projects/{project_id}/factory-source-groups/{group_id}/versions', {
+            params: {
+              path: { project_id: intent.project_id, group_id: intent.group.id },
+              header: precondition,
+            },
+            body: { intent },
+          }),
         );
       const input = intent.inputs[0];
       if (!input || intent.inputs.length !== 1)
         throw new Error('An input publication requires exactly one input.');
-      return requireManagementResponse(
-        (
-          await client.POST(
-            '/api/v1/projects/{project_id}/factory-source-inputs/{input_id}/versions',
-            {
-              params: {
-                path: { project_id: intent.project_id, input_id: input.id },
-                header: precondition,
-              },
-              body: { intent },
-            },
-          )
-        ).data,
+      return sourceResponse(
+        client.POST('/api/v1/projects/{project_id}/factory-source-inputs/{input_id}/versions', {
+          params: {
+            path: { project_id: intent.project_id, input_id: input.id },
+            header: precondition,
+          },
+          body: { intent },
+        }),
       );
     },
   };
