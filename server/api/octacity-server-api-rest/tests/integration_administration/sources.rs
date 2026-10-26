@@ -586,3 +586,35 @@ fn project_source_preview_contract_is_closed_source_only_and_exposes_stale_revie
     );
   }
 }
+
+#[test]
+fn project_import_contract_requires_reviewed_activation_and_excludes_private_or_execution_inputs() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let submission = &document["components"]["schemas"]["ProjectIssueSourceImportSubmission"];
+  assert_eq!(submission["additionalProperties"], false);
+  let intent = &submission["properties"]["intent"];
+  assert_eq!(intent["additionalProperties"], false);
+  let definition = &intent["properties"]["definition"];
+  assert_eq!(definition["additionalProperties"], false);
+  assert!(definition["required"].as_array().unwrap().contains(&json!("enabled")));
+  for private in [
+    "issue_id",
+    "target",
+    "repository",
+    "body",
+    "acceptance",
+    "token",
+    "credential",
+    "plugin",
+    "network_hosts",
+  ] {
+    assert!(definition["properties"].get(private).is_none(), "{private}");
+  }
+  let publish = &document["paths"]["/api/v1/projects/{project_id}/issue-source-imports/{import_id}/versions"]["post"];
+  for status in ["409", "412", "428"] {
+    assert!(
+      publish["responses"].get(status).is_some(),
+      "reviewed import publication must advertise {status}"
+    );
+  }
+}

@@ -15,6 +15,14 @@ pub(super) async fn assert_project_import_controls(client: &reqwest::Client, pro
       "access_version":choices["access_version"],"source_configuration":choice["connection_configuration"],"reporter_configuration":null},
     "predicate":{"state":"native-state","all_of":["control-test-no-match"],"any_of":[],"none_of":[]},"enabled":true
   }});
+  let unreviewed = client
+    .post(&path)
+    .header("idempotency-key", "missing-import-precondition")
+    .json(&json!({"intent":intent}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(unreviewed.status(), reqwest::StatusCode::PRECONDITION_REQUIRED);
   let response = client
     .post(&path)
     .header("idempotency-key", "enable-project-import")
@@ -64,6 +72,21 @@ pub(super) async fn assert_project_import_controls(client: &reqwest::Client, pro
     .unwrap();
   assert_eq!(replay["disposition"], "replayed");
   assert_eq!(replay["configuration"], enabled["configuration"]);
+  let mut changed_replay = intent.clone();
+  changed_replay["definition"]["predicate"]["all_of"] = json!(["different-reviewed-filter"]);
+  let changed = client
+    .post(&path)
+    .header("idempotency-key", "enable-project-import")
+    .header("if-none-match", "*")
+    .json(&json!({"intent":changed_replay}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    changed.status(),
+    reqwest::StatusCode::CONFLICT,
+    "an idempotency key cannot substitute another reviewed import definition"
+  );
   let current: Value = client
     .get(format!("{base}/{id}"))
     .send()
@@ -546,7 +569,119 @@ pub(super) async fn assert_normal_import_creates_task(
     schema["components"]["schemas"]["IssueSourceSelection"]["properties"]["connection"]["$ref"],
     "#/components/schemas/WorkSourceConnectionReference"
   );
-  json!({"intent":intent,"issue":issue,"task":task})
+  json!({"intent":intent,"issue":issue,"task":task,"mapping":mapped})
+}
+
+pub(super) async fn assert_preview_and_mapping_preserve_disabled_imports(
+  client: &reqwest::Client,
+  project: &str,
+  choices: &Value,
+  imported: &Value,
+  provider: &std::path::Path,
+) {
+  let base = format!("http://localhost/api/v1/projects/{project}");
+  let controls: Value = client
+    .get(format!("{base}/issue-source-imports?limit=100"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert!(
+    controls["items"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .all(|item| item["definition"]["enabled"] == false)
+  );
+  let tasks: Value = client
+    .get(format!("{base}/issues"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  let mode_path = provider.join("mode.json");
+  let original = std::fs::read(&mode_path).unwrap();
+  let mut mode: Value = serde_json::from_slice(&original).unwrap();
+  let mut candidate = mode["candidates"][0].clone();
+  candidate["item_id"] = json!("unpublished-task-candidate");
+  candidate["title"] = json!("Preview-only native task");
+  mode["candidates"].as_array_mut().unwrap().push(candidate);
+  std::fs::write(&mode_path, serde_json::to_vec(&mode).unwrap()).unwrap();
+  let response = client
+    .post(format!("{base}/issue-sources/preview"))
+    .json(
+      &json!({"connection_id":choices["connection_id"],"connection_version":choices["connection_version"],
+      "access_version":choices["access_version"],"source":choices["items"][0]["binding"],"limit":2}),
+    )
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::OK);
+  let preview: Value = response.json().await.unwrap();
+  assert!(
+    preview["items"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .any(|item| item["item"]["item"] == "unpublished-task-candidate")
+  );
+  let issue_path = format!("{base}/issues/{}", imported["issue"]["id"].as_str().unwrap());
+  let current: Value = client.get(&issue_path).send().await.unwrap().json().await.unwrap();
+  let mapping = client
+    .post(format!("{issue_path}/source-link/mappings"))
+    .header("idempotency-key", "review-map-while-import-disabled")
+    .header("if-match", format!("\"{}\"", current["version"].as_u64().unwrap()))
+    .json(&json!({"expected_mapping":imported["mapping"]["mapping_reference"],
+      "definition":imported["mapping"]["resource"]["definition"]}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(mapping.status(), reqwest::StatusCode::CREATED);
+  assert!(mapping.json::<Value>().await.unwrap().get("projection").is_none());
+  let after: Value = client
+    .get(format!("{base}/issue-source-imports?limit=100"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(
+    after, controls,
+    "preview and mapping publication cannot activate or revise import controls"
+  );
+  let after_tasks: Value = client
+    .get(format!("{base}/issues"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(
+    after_tasks, tasks,
+    "preview/mapping cannot import the new native candidate"
+  );
+  for collection in ["factory-configurations", "factory-runs"] {
+    let page: Value = client
+      .get(format!("{base}/{collection}"))
+      .send()
+      .await
+      .unwrap()
+      .json()
+      .await
+      .unwrap();
+    assert_eq!(page["items"], json!([]), "mapping/preview cannot enable execution");
+  }
+  assert!(
+    !provider.join("reporter-requests.jsonl").exists(),
+    "mapping/preview cannot enable native push"
+  );
+  std::fs::write(mode_path, original).unwrap();
 }
 
 pub(super) async fn assert_filtered_import_keeps_task_list(

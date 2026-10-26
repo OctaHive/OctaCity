@@ -395,6 +395,14 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
 
   let import_controls =
     super::source_import_tests::assert_project_import_controls(&client, project_id, &task_choices).await;
+  super::source_import_tests::assert_preview_and_mapping_preserve_disabled_imports(
+    &client,
+    project_id,
+    &task_choices,
+    &imported,
+    &registry.join("custom-provider"),
+  )
+  .await;
   super::source_management_tests::assert_project_preview(
     &client,
     project_id,
