@@ -68,6 +68,65 @@ async fn released_runtime_exposes_only_verified_installed_providers_on_protected
   runtime.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn installed_source_fixture_keeps_its_input_open_until_host_cancellation() {
+  use octacity_work_source_protocol::{ConfigurationReference, Request, source};
+  let (root, _, profile) = fixture("cancellation-fixture");
+  let directory = root.path().join("cancellation-fixture");
+  fs::write(directory.join("mode.json"), br#"{"hold":true}"#).unwrap();
+  let registry = octacity_server_work_source::WorkAdapterRegistry::discover(root.path()).unwrap();
+  let adapter = registry
+    .resolve(profile.plugin.identity().as_str(), &profile.plugin.digest().to_string())
+    .unwrap();
+  let cancellation = tokio_util::sync::CancellationToken::new();
+  let reading = adapter.execute(
+    Request::Source(source::Request {
+      protocol_version: source::PROTOCOL_VERSION,
+      request_id: "held-source-read".into(),
+      command: source::Command::Scan(Box::new(source::ScanIntent {
+        scan_id: "a".repeat(64),
+        configuration_digest: profile.provider_configuration.to_string(),
+        resource: profile.resource,
+        network_hosts: profile.network_hosts,
+        selection: ConfigurationReference {
+          identity: "selection".into(),
+          sha256: "b".repeat(64),
+        },
+        additional_selections: vec![],
+        cursor: None,
+        window: None,
+        max_items: 1,
+        max_snapshot_bytes: 4096,
+        max_page_bytes: 8192,
+      })),
+    }),
+    std::time::Duration::from_secs(5),
+    std::time::Duration::from_millis(200),
+    cancellation.clone(),
+  );
+  tokio::pin!(reading);
+  tokio::select! {
+    result = &mut reading => panic!("held read ended before host cancellation: {result:?}"),
+    () = async {
+      while !directory.join("ready").exists() {
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+      }
+    } => {}
+  }
+  assert!(
+    tokio::time::timeout(std::time::Duration::from_millis(50), &mut reading)
+      .await
+      .is_err(),
+    "delegation must preserve stdin while the native read is waiting"
+  );
+  cancellation.cancel();
+  assert_eq!(
+    reading.await.unwrap_err().class(),
+    octacity_server_work_source::HostFailureClass::Cancelled
+  );
+  assert!(fs::read(directory.join("cancelled")).unwrap().is_empty());
+}
+
 pub(super) fn fixture(
   provider: &str,
 ) -> (

@@ -2,14 +2,28 @@
 """Hermetic installed provider: read checks plus the shared Source protocol peer."""
 import json
 import pathlib
-import subprocess
+import runpy
 import sys
+
+
+class RequestInput:
+    """Replay the inspected frame while preserving the host pipe for cancellation or EOF."""
+    def __init__(self, first, remaining):
+        self.first = first
+        self.remaining = remaining
+
+    def readline(self):
+        if self.first is not None:
+            first, self.first = self.first, None
+            return first
+        return self.remaining.readline()
 
 raw = sys.stdin.readline()
 request = json.loads(raw)
 message = request["message"]
 if message["command"]["operation"] != "check":
-    subprocess.run([sys.executable, "source-provider.py"], input=raw, text=True, check=True)
+    sys.stdin = RequestInput(raw, sys.stdin)
+    runpy.run_path("source-provider.py", run_name="__main__")
     sys.exit(0)
 
 pathlib.Path("captured.json").write_text(raw, encoding="utf-8")
