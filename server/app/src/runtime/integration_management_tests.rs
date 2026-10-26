@@ -476,6 +476,13 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     &registry.join("custom-provider"),
   )
   .await;
+  super::source_factory_predicate_tests::assert_nonmatching_inputs_checkpoint_without_execution(
+    &client,
+    project_id,
+    &published,
+    &registry.join("custom-provider"),
+  )
+  .await;
   let response = projects
     .post(format!("http://{}/api/v1/projects", runtime.management_addr()))
     .header("idempotency-key", "late-project")
