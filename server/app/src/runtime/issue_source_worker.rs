@@ -23,7 +23,7 @@ impl IssueSourceWorker {
   pub(super) fn new(sources: Arc<SourceManagement>, principal: &str) -> Self {
     Self {
       sources,
-      context: super::local_management::request_context(principal),
+      context: super::integration_management::request_context(principal),
       discovery: tokio::sync::Mutex::new(Discovery::default()),
     }
   }

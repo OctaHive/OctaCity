@@ -10,6 +10,23 @@ use serde::Deserialize;
 use std::{path::PathBuf, sync::Arc};
 
 const MAX_CATALOG_BYTES: u64 = 4 * 1024 * 1024;
+
+/// Protected ingress and supervised consumers share the validated installation owner's partition.
+/// Keep this platform-independent and preserve the scope of previously accepted history.
+pub(super) fn request_context(principal: &str) -> ManagementRequestContext {
+  ManagementRequestContext::new(
+    ManagementActor::authenticated(principal).expect("validated principal"),
+    ManagementSecurityScope::new(format!(
+      "local-proxy:{}",
+      octacity_server_factory::FactoryDigest::content_sha256(principal.as_bytes())
+    ))
+    .expect("bounded principal"),
+    ManagementRequestId::new(uuid::Uuid::new_v4()).expect("generated identity"),
+    ManagementRequestAttributes::new(ManagementIngress::VerifiedIdentity, None),
+  )
+  .expect("verified installation owner")
+}
+
 // Handler composition is static; provider availability belongs to consumer diagnostics.
 struct SourceManagementReadiness(bool);
 #[async_trait::async_trait]

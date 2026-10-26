@@ -21,7 +21,7 @@ impl ManagedFactorySource {
   pub(super) fn new(sources: Arc<SourceManagement>, principal: &str) -> Self {
     Self {
       sources,
-      context: super::local_management::request_context(principal),
+      context: super::integration_management::request_context(principal),
       cursor: tokio::sync::Mutex::new(Cursor::default()),
     }
   }

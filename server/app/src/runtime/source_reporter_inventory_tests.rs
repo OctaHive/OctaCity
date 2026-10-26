@@ -284,7 +284,7 @@ async fn normal_reporter_dispatch_reuses_the_authoring_inventory_and_original_na
     let native_parent = exact("trusted-native-writer", 71);
     let (fixture, profile) = managed_fixture_with_native_parent(fixture, profile, Some(native_parent.clone())).await;
     let (_deployment, config, sources) = installed_reporter(&fixture, &database.url()).await;
-    let context = crate::runtime::local_management::request_context("inventory-test");
+    let context = crate::runtime::integration_management::request_context("inventory-test");
     let connection = fixture.input.definition().connection.as_ref().unwrap();
     let authoring = sources.for_project(fixture.input.project_id(), &context).unwrap();
     let choices = AuthorizedQueryHandler::new(sources.policy.clone(), Arc::new(authoring))

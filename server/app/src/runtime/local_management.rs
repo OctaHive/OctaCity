@@ -1,15 +1,11 @@
 //! Protected local proxy transport; HTTP headers never establish its identity.
-use super::{ListenerTaskResult, ServerRuntimeError};
+use super::{ListenerTaskResult, ServerRuntimeError, integration_management::request_context};
 use crate::config::LocalIntegrationManagement;
 use axum::{
   extract::{ConnectInfo, Request},
   middleware::{self, Next},
 };
 use octacity_server_api_rest::integrations::ProtectedIntegrationRequest;
-use octacity_server_application::{
-  ManagementActor, ManagementIngress, ManagementRequestAttributes, ManagementRequestContext, ManagementRequestId,
-  ManagementSecurityScope,
-};
 use std::{
   os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
   path::PathBuf,
@@ -134,21 +130,6 @@ impl LocalListener {
       Ok("local-integration-management")
     });
   }
-}
-
-// The worker and protected ingress share the same accepted installation-owner partition.
-pub(super) fn request_context(principal: &str) -> ManagementRequestContext {
-  ManagementRequestContext::new(
-    ManagementActor::authenticated(principal).expect("validated principal"),
-    ManagementSecurityScope::new(format!(
-      "local-proxy:{}",
-      octacity_server_factory::FactoryDigest::content_sha256(principal.as_bytes())
-    ))
-    .expect("bounded principal"),
-    ManagementRequestId::new(uuid::Uuid::new_v4()).expect("generated identity"),
-    ManagementRequestAttributes::new(ManagementIngress::VerifiedIdentity, None),
-  )
-  .expect("verified local proxy")
 }
 
 #[cfg(test)]
