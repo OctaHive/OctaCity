@@ -573,8 +573,12 @@ async fn observation_scope_bounds_and_failures_use_existing_protected_read_contr
 
 #[tokio::test]
 async fn observation_cancellation_drains_the_existing_process_without_handoff_or_admission() {
-  for before in [true, false] {
+  for (before, protocol_cancel) in [(true, false), (false, false), (true, true), (false, true)] {
     let fixture = Fixture::enabled("fake-tracker").await;
+    let manifest = fixture.root.path().join("fake-tracker/adapter.toml");
+    let mut declaration: toml::Value = toml::from_str(&std::fs::read_to_string(&manifest).unwrap()).unwrap();
+    declaration["capabilities"]["source"]["cancel"] = toml::Value::Boolean(protocol_cancel);
+    std::fs::write(&manifest, toml::to_string(&declaration).unwrap()).unwrap();
     std::fs::write(fixture.root.path().join("fake-tracker/mode.json"), br#"{"hold":true}"#).unwrap();
     let cancellation = CancellationToken::new();
     let reader = HostedWorkSourceObservations::new(
@@ -606,7 +610,8 @@ async fn observation_cancellation_drains_the_existing_process_without_handoff_or
     if before {
       assert!(!fixture.root.path().join("fake-tracker/requests.jsonl").exists());
     } else {
-      assert!(fixture.root.path().join("fake-tracker/cancelled").exists());
+      let stopped = std::fs::read_to_string(fixture.root.path().join("fake-tracker/cancelled")).unwrap();
+      assert_eq!(stopped.contains("cancel"), protocol_cancel);
     }
     assert!(fixture.runs().await.is_empty());
     assert!(fixture.bytes.0.lock().unwrap().is_empty());

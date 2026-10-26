@@ -24,7 +24,7 @@ pub(super) async fn pause_retained_reads(client: &reqwest::Client, project: &str
       .json()
       .await
       .unwrap();
-    if sync["link"].is_null() {
+    if sync["link"].is_null() || sync["observation"]["enabled"] == false {
       continue;
     }
     let stopped = client

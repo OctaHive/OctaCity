@@ -603,6 +603,14 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     .unwrap();
   assert_eq!(hidden.status(), reqwest::StatusCode::NOT_FOUND);
   // Project grants are current authority, while a retained input remains immutable history.
+  let paused = super::source_lifecycle_tests::pause_import(
+    &client,
+    &database.pool,
+    &imported["intent"],
+    &registry.join("custom-provider"),
+    super::source_lifecycle_tests::ScanBlock::UntilReleased,
+  )
+  .await;
   let revoke = json!({"connection_id":id,"project_id":project_id,"connection_version":1,
     "expected_current_version":1,"resources":[]});
   let response = client
@@ -619,6 +627,9 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     "{}",
     response.text().await.unwrap()
   );
+  paused
+    .assert_revoked(&client, &database.pool, &registry.join("custom-provider"))
+    .await;
   let revoked: Value = client
     .get(format!("http://localhost{choices}"))
     .send()
@@ -684,6 +695,15 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   );
   super::source_management_tests::assert_history_after_replacement(&client, project_id.parse().unwrap(), &published)
     .await;
+  let runtime = super::source_lifecycle_tests::assert_supervised_shutdown(
+    runtime,
+    &config,
+    &client,
+    &database.pool,
+    &imported["intent"],
+    &registry.join("custom-provider"),
+  )
+  .await;
   runtime.shutdown().await.unwrap();
   source_profiles["consumer"] = json!({"claim_lifetime_millis":1000});
   fs::write(&profiles, serde_json::to_vec(&source_profiles).unwrap()).unwrap();

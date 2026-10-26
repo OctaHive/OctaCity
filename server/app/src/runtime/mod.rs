@@ -59,6 +59,8 @@ mod source_factory_restart_tests;
 mod source_factory_tests;
 #[cfg(all(test, unix))]
 mod source_import_tests;
+#[cfg(all(test, unix))]
+mod source_lifecycle_tests;
 mod source_management;
 #[cfg(all(test, unix))]
 mod source_management_tests;
