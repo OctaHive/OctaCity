@@ -4,54 +4,22 @@ use super::*;
 #[tokio::test]
 #[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
 async fn normal_issue_choices_expose_only_the_independently_granted_installed_writer() {
-  let (fixture, profile) = fixture("opaque-writer").await;
-  let (fixture, database) = ordering::postgres::postgres_fixture(fixture).await;
-  let (fixture, _) = managed_fixture_with_native_parent(fixture, profile, Some(exact("native-writer", 71))).await;
-  let (deployment, config, _) = installed_reporter(&fixture, &database.url()).await;
+  let IssueProject {
+    fixture,
+    database,
+    deployment,
+    config,
+    runtime,
+    client,
+    base,
+    source,
+    issue,
+  } = start_issue_project().await;
   let connection = fixture.input.definition().connection.as_ref().unwrap();
-  let metadata = fixture.store.integration_connection(connection.id, None).await.unwrap();
   let read = &fixture.profile.read;
-  let native = metadata.definition.resources[0]
-    .capabilities
-    .iter()
-    .find(|c| c.purpose == IntegrationPurpose::TaskRead)
-    .unwrap();
+  let project = issue["project_id"].as_str().unwrap();
   let profiles_path = deployment.path().join("shared-source-profiles.json");
   let mut profiles: Value = serde_json::from_slice(&std::fs::read(&profiles_path).unwrap()).unwrap();
-  profiles["readers"] = json!([{
-    "identity":"task-reader","version":"v1",
-    "read":{"installation":read.binding.installation,"resource_reference":read.binding.resource,
-      "capability":native,"plugin":read.plugin,"provider_configuration":read.provider_configuration,
-      "resource":read.resource,"network_hosts":read.network_hosts},
-    "selection":read.selection,"readable":{"labels":[],"states":["native-state"]},
-    "polling":{"page_items":2,"max_pages":1,"max_items":2,"max_bytes":65536,"max_page_bytes":65536,
-      "overlap_millis":20,"reconciliation_interval_millis":1000,"retention_millis":60000}
-  }]);
-  profiles["reporters"][0]["reporting"] = json!({
-    "mapping":{"statuses":[{"status":"reviewed","add":["custom-ready"],"remove":[],"state":null}]},
-    "editable":{"labels":["custom-ready"],"states":[]}
-  });
-  profiles["reporters"][0]["issue_delivery"] = json!({
-    "retry":{"max_attempts":3,"retry_delay_millis":100},"window_millis":30000,
-    "budget":BudgetLimit::new(1,5000,0,0,10000).unwrap()
-  });
-  std::fs::write(&profiles_path, serde_json::to_vec(&profiles).unwrap()).unwrap();
-  let runtime = crate::ServerRuntime::start(config.clone()).await.unwrap();
-  let client = reqwest::Client::builder()
-    .unix_socket(deployment.path().join("management.sock"))
-    .build()
-    .unwrap();
-  let created = client
-    .post("http://localhost/api/v1/projects")
-    .header("idempotency-key", "writer-choice-project")
-    .json(&json!({"name":"Independent task sync"}))
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(created.status(), reqwest::StatusCode::CREATED);
-  let created: Value = created.json().await.unwrap();
-  let project = created["resource"]["id"].as_str().unwrap();
-  let base = format!("http://localhost/api/v1/projects/{project}");
   let grant_path = format!(
     "http://localhost/api/v1/integrations/{}/projects/{project}/access",
     connection.id
@@ -66,68 +34,6 @@ async fn normal_issue_choices_expose_only_the_independently_granted_installed_wr
       Some(version) => request.header("if-match", format!("\"{version}\"")),
       None => request.header("if-none-match", "*"),
     }
-  };
-  let response = grant(None, json!(["task_read", "task_update"]), "grant-issue-writer")
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(
-    response.status(),
-    reqwest::StatusCode::OK,
-    "{}",
-    response.text().await.unwrap()
-  );
-  let choices: Value = client
-    .get(format!(
-      "{base}/issue-source-choices?connection_id={}&connection_version={}",
-      connection.id,
-      connection.version.get()
-    ))
-    .send()
-    .await
-    .unwrap()
-    .json()
-    .await
-    .unwrap();
-  let source = &choices["items"][0];
-  let import = uuid::Uuid::new_v4().to_string();
-  let response = client
-    .post(format!("{base}/issue-source-imports/{import}/versions"))
-    .header("idempotency-key", "import-before-writer-choice")
-    .header("if-none-match", "*")
-    .json(
-      &json!({"intent":{"id":import,"project_id":project,"expected_current_version":null,
-      "definition":{"source":source["binding"],"connection":{"id":connection.id,"version":connection.version,
-        "access_version":choices["access_version"],"source_configuration":source["connection_configuration"],
-        "reporter_configuration":null},"enabled":true}}}),
-    )
-    .send()
-    .await
-    .unwrap();
-  assert_eq!(
-    response.status(),
-    reqwest::StatusCode::OK,
-    "{}",
-    response.text().await.unwrap()
-  );
-  let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
-  let issue = loop {
-    let tasks: Value = client
-      .get(format!("{base}/issues"))
-      .send()
-      .await
-      .unwrap()
-      .json()
-      .await
-      .unwrap();
-    if let Some(issue) = tasks["items"].as_array().unwrap().first() {
-      break issue.clone();
-    }
-    assert!(
-      tokio::time::Instant::now() < deadline,
-      "Source-only import must create a visible task"
-    );
-    tokio::time::sleep(Duration::from_millis(20)).await;
   };
   let choices_path = format!("{base}/issues/{}/source-choices", issue["id"].as_str().unwrap());
   let observed: Value = client.get(&choices_path).send().await.unwrap().json().await.unwrap();
@@ -443,4 +349,156 @@ async fn review_push_after_workflow_change(
     .unwrap();
   assert_eq!(response.status(), reqwest::StatusCode::BAD_REQUEST);
   mapping
+}
+
+// Shared normal-startup HTTP fixture for independent writer review and delivery.
+struct IssueProject {
+  fixture: Fixture<PostgresStore>,
+  database: ordering::postgres::Database,
+  deployment: tempfile::TempDir,
+  config: crate::ServerConfig,
+  runtime: crate::ServerRuntime,
+  client: reqwest::Client,
+  base: String,
+  source: Value,
+  issue: Value,
+}
+
+async fn start_issue_project() -> IssueProject {
+  let (fixture, profile) = fixture("opaque-writer").await;
+  let (fixture, database) = ordering::postgres::postgres_fixture(fixture).await;
+  let (fixture, _) = managed_fixture_with_native_parent(fixture, profile, Some(exact("native-writer", 71))).await;
+  let (deployment, config, _) = installed_reporter(&fixture, &database.url()).await;
+  let connection = fixture.input.definition().connection.as_ref().unwrap();
+  let metadata = fixture.store.integration_connection(connection.id, None).await.unwrap();
+  let read = &fixture.profile.read;
+  let native = metadata.definition.resources[0]
+    .capabilities
+    .iter()
+    .find(|c| c.purpose == IntegrationPurpose::TaskRead)
+    .unwrap();
+  let profiles_path = deployment.path().join("shared-source-profiles.json");
+  let mut profiles: Value = serde_json::from_slice(&std::fs::read(&profiles_path).unwrap()).unwrap();
+  profiles["readers"] = json!([{
+    "identity":"task-reader","version":"v1",
+    "read":{"installation":read.binding.installation,"resource_reference":read.binding.resource,
+      "capability":native,"plugin":read.plugin,"provider_configuration":read.provider_configuration,
+      "resource":read.resource,"network_hosts":read.network_hosts},
+    "selection":read.selection,"readable":{"labels":[],"states":["native-state"]},
+    "polling":{"page_items":2,"max_pages":1,"max_items":2,"max_bytes":65536,"max_page_bytes":65536,
+      "overlap_millis":20,"reconciliation_interval_millis":1000,"retention_millis":60000}
+  }]);
+  profiles["reporters"][0]["reporting"] = json!({
+    "mapping":{"statuses":[{"status":"reviewed","add":["custom-ready"],"remove":[],"state":null}]},
+    "editable":{"labels":["custom-ready"],"states":[]}
+  });
+  profiles["reporters"][0]["issue_delivery"] = json!({
+    "retry":{"max_attempts":3,"retry_delay_millis":100},"window_millis":30000,
+    "budget":BudgetLimit::new(1,5000,0,0,10000).unwrap()
+  });
+  std::fs::write(&profiles_path, serde_json::to_vec(&profiles).unwrap()).unwrap();
+  let runtime = crate::ServerRuntime::start(config.clone()).await.unwrap();
+  let client = reqwest::Client::builder()
+    .unix_socket(deployment.path().join("management.sock"))
+    .build()
+    .unwrap();
+  let created = client
+    .post("http://localhost/api/v1/projects")
+    .header("idempotency-key", "writer-choice-project")
+    .json(&json!({"name":"Independent task sync"}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+  let created: Value = created.json().await.unwrap();
+  let project = created["resource"]["id"].as_str().unwrap();
+  let base = format!("http://localhost/api/v1/projects/{project}");
+  let grant_path = format!(
+    "http://localhost/api/v1/integrations/{}/projects/{project}/access",
+    connection.id
+  );
+  let grant = |expected: Option<u64>, purposes: Value, key: &str| {
+    let request = client.post(&grant_path).header("idempotency-key", key).json(
+      &json!({"intent":{"connection_id":connection.id,"connection_version":connection.version,
+        "project_id":project,"expected_current_version":expected,
+        "resources":[{"reference":read.binding.resource,"purposes":purposes}]}}),
+    );
+    match expected {
+      Some(version) => request.header("if-match", format!("\"{version}\"")),
+      None => request.header("if-none-match", "*"),
+    }
+  };
+  let response = grant(None, json!(["task_read", "task_update"]), "grant-issue-writer")
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "{}",
+    response.text().await.unwrap()
+  );
+  let choices: Value = client
+    .get(format!(
+      "{base}/issue-source-choices?connection_id={}&connection_version={}",
+      connection.id,
+      connection.version.get()
+    ))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  let source = &choices["items"][0];
+  let import = uuid::Uuid::new_v4().to_string();
+  let response = client
+    .post(format!("{base}/issue-source-imports/{import}/versions"))
+    .header("idempotency-key", "import-before-writer-choice")
+    .header("if-none-match", "*")
+    .json(
+      &json!({"intent":{"id":import,"project_id":project,"expected_current_version":null,
+      "definition":{"source":source["binding"],"connection":{"id":connection.id,"version":connection.version,
+        "access_version":choices["access_version"],"source_configuration":source["connection_configuration"],
+        "reporter_configuration":null},"enabled":true}}}),
+    )
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "{}",
+    response.text().await.unwrap()
+  );
+  let deadline = tokio::time::Instant::now() + Duration::from_secs(8);
+  let issue = loop {
+    let tasks: Value = client
+      .get(format!("{base}/issues"))
+      .send()
+      .await
+      .unwrap()
+      .json()
+      .await
+      .unwrap();
+    if let Some(issue) = tasks["items"].as_array().unwrap().first() {
+      break issue.clone();
+    }
+    assert!(
+      tokio::time::Instant::now() < deadline,
+      "Source-only import must create a visible task"
+    );
+    tokio::time::sleep(Duration::from_millis(20)).await;
+  };
+  IssueProject {
+    fixture,
+    database,
+    deployment,
+    config,
+    runtime,
+    client,
+    base,
+    source: source.clone(),
+    issue,
+  }
 }
