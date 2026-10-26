@@ -34,6 +34,43 @@ struct Catalog {
   #[serde(default)]
   source_profiles_file: Option<PathBuf>,
 }
+impl Catalog {
+  async fn load(path: &std::path::Path) -> Result<Self, ServerRuntimeError> {
+    let invalid = || ServerRuntimeError::InvalidManagementPolicy;
+    let bytes = super::assembly::read_private_bytes("integration catalog", path, MAX_CATALOG_BYTES)
+      .await
+      .map_err(ServerRuntimeError::Assembly)?;
+    let catalog: Self = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
+    if catalog.version != 1
+      || !catalog.registry.is_absolute()
+      || catalog.installations.len() > 128
+      || catalog
+        .source_profiles_file
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+      return Err(invalid());
+    }
+    Ok(catalog)
+  }
+}
+
+pub(super) async fn validate_source_profiles(config: &crate::ServerConfig) -> Result<(), super::RuntimeAssemblyError> {
+  if let Some(path) = config
+    .integration_management()
+    .and_then(|local| local.catalog_file.as_ref())
+  {
+    let catalog = Catalog::load(path)
+      .await
+      .map_err(|_| super::RuntimeAssemblyError::InvalidSourceProfiles)?;
+    if let Some(path) = catalog.source_profiles_file {
+      let registry = WorkAdapterRegistry::discover(&catalog.registry)
+        .map_err(|_| super::RuntimeAssemblyError::InvalidSourceProfiles)?;
+      super::source_profiles_file::SourceProfiles::load(&path, &catalog.installations, &registry).await?;
+    }
+  }
+  Ok(())
+}
 #[derive(Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 enum CredentialPublisher {
@@ -171,20 +208,7 @@ pub(super) async fn install(
     return Ok(None);
   };
   let invalid = || ServerRuntimeError::InvalidManagementPolicy;
-  let bytes = super::assembly::read_private_bytes("integration catalog", path, MAX_CATALOG_BYTES)
-    .await
-    .map_err(ServerRuntimeError::Assembly)?;
-  let catalog: Catalog = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
-  if catalog.version != 1
-    || !catalog.registry.is_absolute()
-    || catalog.installations.len() > 128
-    || catalog
-      .source_profiles_file
-      .as_ref()
-      .is_some_and(|path| !path.is_absolute())
-  {
-    return Err(invalid());
-  }
+  let catalog = Catalog::load(path).await?;
   let registry = Arc::new(WorkAdapterRegistry::discover(&catalog.registry).map_err(|_| invalid())?);
   for installed in &catalog.installations {
     installed.validate().map_err(|_| invalid())?;
@@ -213,17 +237,17 @@ pub(super) async fn install(
   let publishers = Arc::new(InstalledPublishers::load(&catalog)?);
   let checker = Arc::new(
     super::HostedIntegrationConnectionChecker::new(
-      registry,
-      catalog.checks,
+      registry.clone(),
+      catalog.checks.clone(),
       std::time::Duration::from_millis(local.operation_timeout_milliseconds),
       std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
-      cancellation,
+      cancellation.clone(),
     )
     .map_err(|_| invalid())?,
   );
   let checks = Arc::new(IntegrationCheckHandlers::new(store.clone(), checker, policy.clone()));
   let connections =
-    Arc::new(IntegrationConnectionHandlers::new(store.clone(), catalog.installations).map_err(|_| invalid())?);
+    Arc::new(IntegrationConnectionHandlers::new(store.clone(), catalog.installations.clone()).map_err(|_| invalid())?);
   let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), connections.clone()));
   let commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), connections));
   let administration = Arc::new(IntegrationAdministrationHandlers::new(store.clone(), publishers));
@@ -232,7 +256,7 @@ pub(super) async fn install(
   // Retained input history needs the store and authorization, not installed execution profiles.
   let dependencies =
     Arc::new(FactorySourceConfigurationHandlers::new(store.clone(), policy.clone(), vec![]).map_err(|_| invalid())?);
-  let access = Arc::new(IntegrationProjectAccessHandlers::new(store, policy.clone()));
+  let access = Arc::new(IntegrationProjectAccessHandlers::new(store.clone(), policy.clone()));
   let mut application = IntegrationManagementApplication::new(admin_commands.clone())
     .with_checks(Arc::new(AuthorizedQueryHandler::new(policy.clone(), checks)))
     .with_metadata(commands, queries.clone())
@@ -241,10 +265,31 @@ pub(super) async fn install(
     .with_dependencies(Arc::new(AuthorizedQueryHandler::new(policy.clone(), dependencies)))
     .with_project_access(
       Arc::new(AuthorizedCommandHandler::new(policy.clone(), access.clone())),
-      Arc::new(AuthorizedQueryHandler::new(policy, access)),
+      Arc::new(AuthorizedQueryHandler::new(policy.clone(), access)),
     );
-  if catalog.source_profiles_file.is_some() {
+  if let Some(path) = &catalog.source_profiles_file {
     application = application.require_source_management();
+    match super::source_profiles_file::SourceProfiles::load(path, &catalog.installations, &registry).await {
+      Ok(profiles) => {
+        let sources = Arc::new(super::source_management::SourceManagement {
+          store,
+          policy: policy.clone(),
+          profiles,
+          registry,
+          timeout: std::time::Duration::from_millis(local.operation_timeout_milliseconds),
+          grace: std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
+          cancellation,
+        });
+        let sources = Arc::new(InstalledFactorySourceHandlers::new(sources));
+        application = application
+          .with_source_configuration(
+            Arc::new(AuthorizedCommandHandler::new(policy.clone(), sources.clone())),
+            Arc::new(AuthorizedQueryHandler::new(policy.clone(), sources.clone())),
+          )
+          .with_source_reads(Arc::new(AuthorizedQueryHandler::new(policy, sources)));
+      }
+      Err(_) => tracing::warn!("installed Source profiles unavailable; Source management readiness failed"),
+    }
   }
   if let Some(ready) = application.source_management_readiness() {
     readiness.push_factory(Arc::new(SourceManagementReadiness(ready)));

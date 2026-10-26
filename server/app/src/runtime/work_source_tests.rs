@@ -216,6 +216,8 @@ async fn source_installations_reject_unbounded_workers_and_ambiguous_or_foreign_
     "duplicate",
     "foreign-project",
     "mapping",
+    "mapping-limits",
+    "acceptance",
   ] {
     let fixture = Fixture::enabled("jira").await;
     let mut installation = FactorySourceInstallation {
@@ -230,6 +232,10 @@ async fn source_installations_reject_unbounded_workers_and_ambiguous_or_foreign_
       "duplicate" => installation.profiles.push(fixture.profile.clone()),
       "foreign-project" => installation.profiles[0].read.project_id = ProjectId::generate(),
       "mapping" => installation.profiles[0].preparation.mapping.source.configuration = exact("foreign-settings", 90),
+      "mapping-limits" => installation.profiles[0].preparation.mapping.max_title_bytes = 0,
+      "acceptance" => {
+        installation.profiles[0].preparation.mapping.acceptance = SourceAcceptanceMapping::Field(String::new())
+      }
       _ => unreachable!(),
     }
     assert!(

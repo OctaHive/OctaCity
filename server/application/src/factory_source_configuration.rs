@@ -12,6 +12,9 @@ pub use octacity_server_store::{
 use std::sync::Arc;
 #[path = "factory_source_actions.rs"]
 mod actions;
+#[path = "factory_source_installation.rs"]
+mod installation;
+pub use installation::*;
 #[path = "factory_source_configuration_choices.rs"]
 mod choices;
 pub use choices::*;

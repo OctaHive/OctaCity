@@ -122,6 +122,11 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
       return Err(ApplicationError::invalid());
     }
     for (index, profile) in installation.profiles.iter().enumerate() {
+      profile
+        .preparation
+        .mapping
+        .validate()
+        .map_err(|_| ApplicationError::invalid())?;
       if !installation.projects.contains(&profile.read.project_id)
         || profile.preparation.mapping.source != profile.read.binding
         || installation.profiles[..index]

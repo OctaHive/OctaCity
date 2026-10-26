@@ -61,6 +61,44 @@ pub struct WorkSourceMapping {
   /// Private input lifetime from its original reservation.
   pub retention_millis: u64,
 }
+impl WorkSourceMapping {
+  /// Validates installed limits and acceptance selection before any native read or preparation.
+  pub fn validate(&self) -> Result<(), SourceMappingFailure> {
+    if !self.valid_limits() {
+      return Err(SourceMappingFailure::InvalidMapping);
+    }
+    match &self.acceptance {
+      SourceAcceptanceMapping::Field(field) => validate_acceptance_field(field),
+      SourceAcceptanceMapping::Body => Ok(()),
+      SourceAcceptanceMapping::BodySection(heading) => acceptance_heading_level(heading).map(|_| ()),
+    }
+  }
+  fn valid_limits(&self) -> bool {
+    (1..=MAX_SOURCE_TITLE_BYTES).contains(&self.max_title_bytes)
+      && (1..=MAX_SOURCE_BODY_BYTES).contains(&self.max_body_bytes)
+      && (1..=MAX_SOURCE_INPUT_BYTES).contains(&self.max_artifact_bytes)
+      && (1..=MAX_SOURCE_RETENTION_MILLIS).contains(&self.retention_millis)
+  }
+}
+fn validate_acceptance_field(field: &str) -> Result<(), SourceMappingFailure> {
+  if field.is_empty() || field.len() > 128 {
+    Err(SourceMappingFailure::InvalidMapping)
+  } else {
+    Ok(())
+  }
+}
+fn acceptance_heading_level(heading: &str) -> Result<usize, SourceMappingFailure> {
+  let level = heading.bytes().take_while(|v| *v == b'#').count();
+  if !(1..=6).contains(&level)
+    || heading.len() > 128
+    || heading.as_bytes().get(level) != Some(&b' ')
+    || heading.contains(['\r', '\n'])
+  {
+    Err(SourceMappingFailure::InvalidMapping)
+  } else {
+    Ok(level)
+  }
+}
 /// Safe classified mapping error; no title, body or provider diagnostics.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
 pub enum SourceMappingFailure {
@@ -95,12 +133,7 @@ pub fn map_work_source_snapshot(
   preparation: &WorkSourcePreparation,
   mapping: &WorkSourceMapping,
 ) -> Result<MappedWorkSource, SourceMappingFailure> {
-  if mapping.source != preparation.input.definition().source
-    || !(1..=MAX_SOURCE_TITLE_BYTES).contains(&mapping.max_title_bytes)
-    || !(1..=MAX_SOURCE_BODY_BYTES).contains(&mapping.max_body_bytes)
-    || !(1..=MAX_SOURCE_INPUT_BYTES).contains(&mapping.max_artifact_bytes)
-    || !(1..=MAX_SOURCE_RETENTION_MILLIS).contains(&mapping.retention_millis)
-  {
+  if mapping.source != preparation.input.definition().source || !mapping.valid_limits() {
     return Err(SourceMappingFailure::InvalidMapping);
   }
   if preparation.snapshot.len() > MAX_SOURCE_INPUT_BYTES as usize {
@@ -144,21 +177,12 @@ pub fn map_work_source_snapshot(
   }
   let criteria = match &mapping.acceptance {
     SourceAcceptanceMapping::Field(field) => {
-      if field.is_empty() || field.len() > 128 {
-        return Err(SourceMappingFailure::InvalidMapping);
-      }
+      validate_acceptance_field(field)?;
       snapshot.fields.get(field).cloned()
     }
     SourceAcceptanceMapping::Body => snapshot.body.clone(),
     SourceAcceptanceMapping::BodySection(heading) => {
-      let level = heading.bytes().take_while(|v| *v == b'#').count();
-      if !(1..=6).contains(&level)
-        || heading.len() > 128
-        || heading.as_bytes().get(level) != Some(&b' ')
-        || heading.contains(['\r', '\n'])
-      {
-        return Err(SourceMappingFailure::InvalidMapping);
-      }
+      let level = acceptance_heading_level(heading)?;
       let body = snapshot.body.as_deref().unwrap_or("");
       let mut selected = None;
       let lines = body.lines().collect::<Vec<_>>();

@@ -70,6 +70,31 @@ installation declared or composed, Source operations return `422 capability_unav
 Connection metadata, read checks and grants alone do not declare this installation
 or enable import, execution or external status writes.
 
+The Source file is a bounded (4 MiB), owner-only version-1 JSON document with
+optional `readers` and `reporters` arrays. A reader declares `identity`, `version`,
+`read` (the exact `IntegrationCheckProfile` scope), provider-owned `selection`,
+finite `readable` values and `polling` limits. It may add `preparation` (mapping,
+Repository source policy and classification) for Factory intake; ordinary reads
+need no preparation, acceptance rule or Reporter. Optional `selection_labels`
+and `predicate_states` expose reviewed narrowing over an unrestricted native base.
+
+A Reporter declares its own `write` scope, `mapping`, `credential_profile`, optional
+`reporting` presentation/editing ceiling and immutable `issue_delivery` bounds.
+Its credential class is `work_reporter_write`, independent of `work_source_read`.
+Exact installed pins, manifest configuration digests, finite limits and duplicate
+identities/hosts are checked offline by `octacity-server validate <config>`; validation
+contacts neither the database nor a provider. Old catalogs without a Source file
+remain valid.
+
+Only readers with preparation are offered for automatic Factory inputs; a read-only
+reader cannot authorize execution-input publication. Valid files install protected
+input authoring, preview and diagnostics using the
+existing PostgreSQL-backed handlers. Per-Project profiles are resolved on each
+request, so publishing a Project or grant needs no restart. Complete reader
+settings participate in the input configuration digest; the native connection
+configuration remains its exact parent. File replacement cannot retarget a
+previously accepted binding. These routes alone start no Source worker or writer.
+
 Optional `credential_publishers` select a concrete storage adapter at the server
 composition root. The installed `github_private_files` publisher takes absolute
 `root`, confined relative `directory` and `targets`: logical `reference`, original

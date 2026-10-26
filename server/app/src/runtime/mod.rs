@@ -47,6 +47,10 @@ mod integration_management_tests;
 mod issue_tests;
 #[cfg(test)]
 mod issue_workflow_tests;
+mod source_management;
+mod source_profiles_file;
+#[cfg(all(test, unix))]
+mod source_profiles_file_tests;
 pub use integration_check::{HostedIntegrationConnectionChecker, IntegrationCheckProfile};
 mod issue_code_review_reader;
 mod lifecycle;

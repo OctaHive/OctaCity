@@ -235,7 +235,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   let mut declaration: Value = serde_json::from_slice(&fs::read(&catalog).unwrap()).unwrap();
   declaration["source_profiles_file"] = json!(root.path().join("missing-source-profiles.json"));
   fs::write(&catalog, serde_json::to_vec(&declaration).unwrap()).unwrap();
-  let runtime = ServerRuntime::start(config).await.unwrap();
+  let runtime = ServerRuntime::start(config.clone()).await.unwrap();
   let response = client.get(format!("http://localhost{choices}")).send().await.unwrap();
   assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
   assert_eq!(response.json::<Value>().await.unwrap()["code"], "unavailable");
@@ -253,6 +253,125 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     .await
     .unwrap();
   assert_eq!(manual.status(), reqwest::StatusCode::CREATED);
+  runtime.shutdown().await.unwrap();
+  // Installing Source support exposes choices for current grants, including Projects added later.
+  let profiles = root.path().join("sources.json");
+  fs::write(
+    &profiles,
+    serde_json::to_vec(&json!({"version":1,"readers":[{
+      "identity":"task-drafts","version":"v1",
+      "read":{"installation":check.installation,"resource_reference":check.resource_reference,
+        "capability":check.capability,"plugin":check.plugin,"provider_configuration":check.provider_configuration,
+        "resource":check.resource,"network_hosts":check.network_hosts},
+      "selection":{"identity":"all-tasks","sha256":"b".repeat(64)},
+      "readable":{"states":["native-state"],"labels":[]},
+      "polling":{"page_items":2,"max_pages":1,"max_items":2,"max_bytes":65536,"max_page_bytes":65536,
+        "overlap_millis":20,"reconciliation_interval_millis":1000,"retention_millis":60000}
+    }]}))
+    .unwrap(),
+  )
+  .unwrap();
+  fs::set_permissions(&profiles, fs::Permissions::from_mode(0o600)).unwrap();
+  declaration["source_profiles_file"] = json!(profiles);
+  fs::write(&catalog, serde_json::to_vec(&declaration).unwrap()).unwrap();
+  let runtime = ServerRuntime::start(config.clone()).await.unwrap();
+  let response = client
+    .post(format!("{path}/state"))
+    .header("idempotency-key", "activate-source-connection")
+    .header("if-match", "\"1\"")
+    .json(
+      &json!({"intent":{"id":id,"expected_metadata_version":1,"expected_revision":1,
+      "action":{"operation":"activate"}}}),
+    )
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "{}",
+    response.text().await.unwrap()
+  );
+  let response = client.get(format!("http://localhost{choices}")).send().await.unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "valid installed Source must compose at normal startup"
+  );
+  let selected: Value = response.json().await.unwrap();
+  assert_eq!(
+    selected["items"].as_array().unwrap().len(),
+    0,
+    "read-only Source profiles without preparation cannot authorize automatic Factory inputs"
+  );
+  runtime.shutdown().await.unwrap();
+  let mut source_profiles: Value = serde_json::from_slice(&fs::read(&profiles).unwrap()).unwrap();
+  source_profiles["readers"][0]["preparation"] = json!({
+    "mapping":{"source":{"installation":check.installation,"resource":check.resource_reference,
+      "capability":check.capability.capability,"configuration":check.capability.configuration},
+      "acceptance":{"kind":"body"},"require_body":true,"max_title_bytes":4096,"max_body_bytes":262144,
+      "max_artifact_bytes":1048576,"retention_millis":60000},
+    "source":{"kind":"default_reference"},"classification":{"priority":10,"risk":"medium","metadata":{}}
+  });
+  fs::write(&profiles, serde_json::to_vec(&source_profiles).unwrap()).unwrap();
+  let runtime = ServerRuntime::start(config).await.unwrap();
+  let response = client.get(format!("http://localhost{choices}")).send().await.unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::OK);
+  let selected: Value = response.json().await.unwrap();
+  assert_eq!(selected["items"].as_array().unwrap().len(), 1);
+  assert_eq!(selected["items"][0]["purpose"], "task_read");
+  assert_ne!(
+    selected["items"][0]["binding"]["configuration"],
+    selected["items"][0]["connection_configuration"]
+  );
+  assert!(!selected.to_string().contains("reader"));
+  let response = projects
+    .post(format!("http://{}/api/v1/projects", runtime.management_addr()))
+    .header("idempotency-key", "late-project")
+    .json(&json!({"name":"Created after installation"}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::CREATED);
+  let second: Value = response.json().await.unwrap();
+  let second_id = second["resource"]["id"].as_str().unwrap();
+  let second_choices = format!(
+    "http://localhost/api/v1/projects/{second_id}/factory-source-choices?connection_id={id}&connection_version=1"
+  );
+  assert_eq!(
+    client.get(&second_choices).send().await.unwrap().status(),
+    reqwest::StatusCode::UNPROCESSABLE_ENTITY
+  );
+  let response = client
+    .post(format!("{path}/projects/{second_id}/access"))
+    .header("idempotency-key", "late-project-grant")
+    .header("if-none-match", "*")
+    .json(
+      &json!({"intent":{"connection_id":id,"project_id":second_id,"connection_version":1,
+      "expected_current_version":null,"resources":grant["resources"]}}),
+    )
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "{}",
+    response.text().await.unwrap()
+  );
+  let response = client.get(&second_choices).send().await.unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::OK);
+  let late: Value = response.json().await.unwrap();
+  assert_eq!(late["items"].as_array().unwrap().len(), 1);
+  let history: Value = client
+    .get(format!("http://localhost/api/v1/projects/{second_id}/factory-sources"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(history, json!({"items":[],"next_cursor":null}));
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
 }

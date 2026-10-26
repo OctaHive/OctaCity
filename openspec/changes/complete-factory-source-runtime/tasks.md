@@ -5,7 +5,7 @@
 
 ## 2. Share installed authority and expose missing controls
 
-- [ ] 2.1 Through TDD, extend existing typed installation only for missing bounded Source observation, optional Factory preparation and Reporter/Issue-delivery declarations. Verify exact pins, invalid/ambiguous declarations and compatible old installations; Source-only import requires no Factory target, fabricated acceptance or writer.
+- [x] 2.1 Through TDD, extend existing typed installation only for missing bounded Source observation, optional Factory preparation and Reporter/Issue-delivery declarations. Verify exact pins, invalid/ambiguous declarations and compatible old installations; Source-only import requires no Factory target, fabricated acceptance or writer.
 - [ ] 2.2 Through TDD, resolve authoring, observations and dispatch from the same installed declarations, persisted derived profiles and current grants. Verify separate Projects, grant/input/import publication without restart, exact replacement parents and no legacy fallback or retargeting of accepted history; cover an opaque synthetic provider at this common boundary.
 - [ ] 2.3 Through TDD, compose existing input/group list, exact reads, choices, validate and immutable publication through protected HTTP/PostgreSQL. Verify empty history, current preconditions, identical replay, hidden-resource denial and bounded predicate errors. A connection/check/grant does not activate intake.
 - [ ] 2.4 Through TDD, compose read-only preview using the same retained predicates and compatible installed profiles. Verify actual adapter fixture dispositions, deferred failures and zero authoritative import/admission/progress/remote writes; distinguish a valid Issue draft from missing Factory acceptance content.

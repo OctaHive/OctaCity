@@ -42,7 +42,8 @@ struct RuntimeFileInputs {
 
 /// Validate every runtime file and its credential or policy contents offline.
 pub async fn validate_runtime_files(config: &ServerConfig) -> Result<(), RuntimeAssemblyError> {
-  load_runtime_file_inputs(config).await.map(drop)
+  load_runtime_file_inputs(config).await?;
+  super::integration_management::validate_source_profiles(config).await
 }
 
 async fn load_runtime_file_inputs(config: &ServerConfig) -> Result<RuntimeFileInputs, RuntimeAssemblyError> {
@@ -422,6 +423,9 @@ fn validate_unix_credential_metadata(mode: u32, owner_uid: u32, effective_uid: u
 /// Failure to assemble the server's static runtime resources safely.
 #[derive(Debug, Error)]
 pub enum RuntimeAssemblyError {
+  /// The trusted Source profile document is malformed or uses an unsupported version.
+  #[error("installed Source profiles are invalid")]
+  InvalidSourceProfiles,
   /// The JobSpec toolchain policy file could not be opened or read.
   #[error("failed to read JobSpec policy file '{path}': {source}")]
   ReadJobSpecPolicy {
