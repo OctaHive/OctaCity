@@ -240,8 +240,11 @@ async fn offline_predicate_editing_requires_an_explicit_unrestricted_base_and_un
   }
 }
 
-#[tokio::test]
-async fn offline_optional_reporter_requires_its_own_write_class_and_original_delivery_bounds() {
+fn installed_reporter_profile_fixture() -> (
+  tempfile::TempDir,
+  octacity_server_store::InstalledIntegration,
+  serde_json::Value,
+) {
   let (root, mut installed, reader_document) = installed_source_profile_fixture();
   let manifest = root.path().join("adapters/opaque-source/adapter.toml");
   let mut source = std::fs::read_to_string(&manifest).unwrap();
@@ -262,6 +265,12 @@ async fn offline_optional_reporter_requires_its_own_write_class_and_original_del
     "issue_delivery":{"retry":{"max_attempts":3,"retry_delay_millis":100},"window_millis":30000,
       "budget":{"max_attempts":1,"max_elapsed_millis":5000,"max_tokens":0,"max_cost_micro_units":0,"max_output_bytes":10000}}
   }]});
+  (root, installed, document)
+}
+
+#[tokio::test]
+async fn offline_optional_reporter_requires_its_own_write_class_and_original_delivery_bounds() {
+  let (root, installed, document) = installed_reporter_profile_fixture();
   let (profiles, config) = source_profile_config(root.path(), &document, &[installed]);
   assert!(validate_runtime_files(&config).await.is_ok());
   for (pointer, value) in [
@@ -311,4 +320,101 @@ async fn offline_consumer_bounds_include_the_installed_provider_operation_window
     validate_runtime_files(&config).await.is_err(),
     "a positive bounded claim must still cover timeout and process cleanup"
   );
+}
+
+#[tokio::test]
+async fn shared_reporter_inventory_supplies_project_pins_to_authoring_and_dispatch_without_io() {
+  use octacity_server_application::{
+    FactoryWorkStatusProjector as _, SystemFactoryExecutionClock, TrustedNetworkManagementPolicy,
+  };
+  use octacity_server_domain::ProjectId;
+  use std::{sync::Arc, time::Duration};
+  let (root, installed, document) = installed_reporter_profile_fixture();
+  let (path, _) = source_profile_config(root.path(), &document, std::slice::from_ref(&installed));
+  let registry =
+    Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(&root.path().join("adapters")).unwrap());
+  let profiles = super::source_profiles_file::SourceProfiles::load(
+    &path,
+    std::slice::from_ref(&installed),
+    &registry,
+    Duration::from_secs(1),
+    Duration::from_millis(20),
+  )
+  .await
+  .unwrap();
+  let pool = sqlx::postgres::PgPoolOptions::new()
+    .connect_lazy("postgres://fixture@127.0.0.1:9/unused")
+    .unwrap();
+  let mut sources = super::source_management::SourceManagement {
+    store: Arc::new(octacity_server_store_postgres::PostgresStore::new(pool)),
+    policy: Arc::new(TrustedNetworkManagementPolicy),
+    profiles,
+    registry,
+    timeout: Duration::from_secs(1),
+    grace: Duration::from_millis(20),
+    cancellation: tokio_util::sync::CancellationToken::new(),
+  };
+  let first = ProjectId::generate();
+  let second = ProjectId::generate();
+  let first_profiles = sources.reporter_profiles(first).unwrap();
+  let second_profiles = sources.reporter_profiles(second).unwrap();
+  assert_eq!(first_profiles.len(), 1);
+  assert_eq!(
+    first_profiles[0].binding().configuration.identity().as_str(),
+    "write-effects"
+  );
+  assert_ne!(
+    first_profiles[0].binding(),
+    second_profiles[0].binding(),
+    "Project ownership participates in the immutable installed writer pin"
+  );
+  assert_ne!(
+    serde_json::to_value(&first_profiles[0].binding().configuration).unwrap(),
+    document["reporters"][0]["write"]["capability"]["configuration"],
+    "derived writer settings retain a separate native connection parent"
+  );
+  assert!(
+    sources
+      .reporter_projector(first, Arc::new(SystemFactoryExecutionClock))
+      .unwrap()
+      .supports_issue_delivery()
+  );
+  let mut replacement = document.clone();
+  replacement["reporters"][0]["write"]["capability"]["configuration"]["digest"] = serde_json::json!("f".repeat(64));
+  let mut replacement_installation = installed;
+  replacement_installation.resources[0].capabilities[0].configuration =
+    serde_json::from_value(replacement["reporters"][0]["write"]["capability"]["configuration"].clone()).unwrap();
+  std::fs::write(&path, serde_json::to_vec(&replacement).unwrap()).unwrap();
+  sources.profiles = super::source_profiles_file::SourceProfiles::load(
+    &path,
+    &[replacement_installation],
+    &sources.registry,
+    Duration::from_secs(1),
+    Duration::from_millis(20),
+  )
+  .await
+  .unwrap();
+  assert_ne!(
+    first_profiles[0].binding(),
+    sources.reporter_profiles(first).unwrap()[0].binding(),
+    "replacing the exact native parent must replace the derived writer pin without retargeting accepted history"
+  );
+  let sources = Arc::new(sources);
+  let installed = sources.reporting_dispatcher(&mut vec![]).unwrap().unwrap();
+  let dispatcher = installed.dispatcher;
+  assert_eq!(
+    dispatcher.projection_capabilities(),
+    vec![first_profiles[0].binding().capability.clone()]
+  );
+  let mut explicit =
+    super::factory::install_outbox(vec![dispatcher], installed.policy, &mut super::tests::healthy_checks());
+  assert!(matches!(
+    sources.reporting_dispatcher(&mut explicit),
+    Err(octacity_server_application::ApplicationError::CapabilityUnavailable)
+  ));
+  assert!(
+    explicit.is_empty(),
+    "neither conflicting owner may claim the other's accepted profiles"
+  );
+  assert!(!root.path().join("adapters/opaque-source/captured.json").exists());
 }

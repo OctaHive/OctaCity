@@ -47,6 +47,12 @@ pub struct FactoryOutboxDispatchSummary {
 /// Runtime extension for deferred technical effects; it owns no Flow decisions.
 #[async_trait::async_trait]
 pub trait FactoryOutboxDispatcher: Send + Sync {
+  /// Exact reporting capabilities claimed by this dispatcher. Composition must
+  /// install one owner per capability; that owner may serve many pinned profiles.
+  /// The default is for dispatchers that claim no Work or Issue status projections.
+  fn projection_capabilities(&self) -> Vec<ImmutableReference> {
+    vec![]
+  }
   /// Runs one bounded fenced dispatch pass; source state never enters the owner.
   async fn dispatch_once(&self, at: Timestamp) -> Result<FactoryOutboxDispatchSummary, ApplicationError>;
 }
@@ -131,7 +137,9 @@ impl<S: FactoryRunStore + IssueSourceProjectionStore> FactoryWorkStatusOutboxWor
     let claimed = self
       .store
       .claim_factory_outbox(
-        ClaimFactoryOutbox::new(self.settings.owner.clone(), at, expires, self.settings.limit)?.only_kinds(kinds)?,
+        ClaimFactoryOutbox::new(self.settings.owner.clone(), at, expires, self.settings.limit)?
+          .only_kinds(kinds)?
+          .only_projection_capabilities(self.projectors.keys().cloned().collect())?,
       )
       .await?;
     let mut summary = FactoryOutboxDispatchSummary {
@@ -363,6 +371,9 @@ fn accepted_status_material<'a>(
 impl<S: FactoryRunStore + IssueSourceProjectionStore + 'static> FactoryOutboxDispatcher
   for FactoryWorkStatusOutboxWorker<S>
 {
+  fn projection_capabilities(&self) -> Vec<ImmutableReference> {
+    self.projectors.keys().cloned().collect()
+  }
   async fn dispatch_once(&self, at: Timestamp) -> Result<FactoryOutboxDispatchSummary, ApplicationError> {
     self.run_once(at).await
   }

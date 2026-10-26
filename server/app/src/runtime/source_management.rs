@@ -19,6 +19,31 @@ pub(super) struct SourceManagement {
   pub(super) cancellation: CancellationToken,
 }
 impl SourceManagement {
+  /// One inventory supplies the exact Project-scoped writer settings to authoring and dispatch.
+  pub(super) fn reporter_profiles(
+    &self,
+    project: ProjectId,
+  ) -> Result<Vec<super::FactoryReporterProfile>, ApplicationError> {
+    self.profiles.reporters.iter().map(|r| r.profile(project)).collect()
+  }
+  pub(super) fn reporter_projector(
+    &self,
+    project: ProjectId,
+    clock: Arc<dyn FactoryExecutionClock>,
+  ) -> Result<super::HostedFactoryWorkStatusProjector<PostgresStore>, ApplicationError> {
+    Ok(
+      super::HostedFactoryWorkStatusProjector::new(
+        self.store.clone(),
+        self.registry.clone(),
+        self.reporter_profiles(project)?,
+        clock,
+        self.timeout,
+        self.grace,
+        self.cancellation.clone(),
+      )?
+      .with_managed_connections(ManagedIntegrationConnections::new(self.store.clone())),
+    )
+  }
   fn handlers(
     &self,
     project: ProjectId,
@@ -28,12 +53,7 @@ impl SourceManagement {
     )>,
   ) -> Result<FactorySourceConfigurationHandlers<PostgresStore>, ApplicationError> {
     let (declarations, reads): (Vec<_>, Vec<_>) = profiles.into_iter().unzip();
-    let reporters = self
-      .profiles
-      .reporters
-      .iter()
-      .map(|r| r.profile(project))
-      .collect::<Result<Vec<_>, _>>()?;
+    let reporters = self.reporter_profiles(project)?;
     let capability = |role, binding| WorkSourceCapability {
       project_id: project,
       role,

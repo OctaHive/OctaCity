@@ -1620,16 +1620,20 @@ async fn expired_pending_snapshots_wait_for_retention_without_exhausting_or_resu
 }
 
 // Trusted installed fixture; private provider material is simulated only at the store boundary.
-async fn managed_access(
-  fixture: &Fixture,
+async fn managed_access<
+  S: IntegrationConnectionStore + IntegrationAdministrationStore + IntegrationProjectAccessStore + 'static,
+>(
+  fixture: &Fixture<S>,
   binding: &WorkSourceBinding,
   purpose: IntegrationPurpose,
 ) -> (ManagedIntegrationAccess, IntegrationId) {
   managed_access_named(fixture, binding, purpose, "managed").await
 }
 
-async fn managed_access_named(
-  fixture: &Fixture,
+async fn managed_access_named<
+  S: IntegrationConnectionStore + IntegrationAdministrationStore + IntegrationProjectAccessStore + 'static,
+>(
+  fixture: &Fixture<S>,
   binding: &WorkSourceBinding,
   purpose: IntegrationPurpose,
   namespace: &str,

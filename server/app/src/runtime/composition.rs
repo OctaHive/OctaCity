@@ -108,7 +108,7 @@ impl ServerRuntime {
       )),
       None => Arc::new(octacity_server_application::ExactRevisionResolver),
     };
-    let (registration_store, factory) = super::factory::assemble(
+    let (registration_store, mut factory) = super::factory::assemble(
       &config,
       &mut resources,
       placement_store.clone(),
@@ -195,6 +195,23 @@ impl ServerRuntime {
       .map_or((None, None, None, None), |i| {
         (Some(i.application), i.source_reads, i.issues, i.source_management)
       });
+    let source_reporting = if let Some(sources) = &source_management {
+      let mut empty = vec![];
+      let explicit = factory.as_mut().map_or(&mut empty, |factory| &mut factory.outbox);
+      match sources.reporting_dispatcher(explicit) {
+        Ok(worker) => worker,
+        Err(octacity_server_application::ApplicationError::CapabilityUnavailable) => {
+          resources
+            .readiness
+            .push_factory(Arc::new(super::source_reporting::UnavailableSourceReporting));
+          tracing::warn!("shared Source Reporter overlaps an explicitly installed reporting owner");
+          None
+        }
+        Err(_) => return Err(ServerRuntimeError::InvalidManagementPolicy),
+      }
+    } else {
+      None
+    };
     let managed_factory_source = source_management
       .map(|sources| {
         let principal = &config
@@ -447,6 +464,7 @@ impl ServerRuntime {
         workers: Some(DurableWorkers {
           source_reads,
           managed_factory_source,
+          source_reporting,
           factory,
           legacy_issues: registration_store.clone(),
           actions: octacity_server_application::FactoryActionProjectionWorker::new(registration_store.clone()),

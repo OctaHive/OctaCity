@@ -28,7 +28,7 @@ pub(crate) async fn claim_outbox(
   let mut transaction = pool.begin().await.map_err(unavailable)?;
   let operation_ids: Vec<Vec<u8>> = sqlx::query_scalar(
     "WITH latest AS ( \
-       SELECT DISTINCT ON (operation_id) operation_id, kind, state, available_at, claim_expires_at, recorded_at, id \
+       SELECT DISTINCT ON (operation_id) operation_id, run_id, issue, input_digest, kind, state, available_at, claim_expires_at, recorded_at, id \
        FROM factory_outbox_records \
        ORDER BY operation_id, attempt DESC, \
          CASE state WHEN 'pending' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END DESC, recorded_at DESC, id DESC \
@@ -37,11 +37,45 @@ pub(crate) async fn claim_outbox(
      WHERE ($3::text[] IS NULL OR kind = ANY($3)) AND ( \
        (state = 'pending' AND available_at <= to_timestamp($1::double precision / 1000.0)) \
         OR (state = 'claimed' AND claim_expires_at <= to_timestamp($1::double precision / 1000.0))) \
+     AND ($4::jsonb IS NULL OR (kind='work.status.projection' AND EXISTS ( \
+       SELECT 1 FROM factory_flow_records r \
+       JOIN factory_node_attempts a ON a.id=r.node_attempt_id AND a.run_id=r.run_id \
+       JOIN factory_flow_runs f ON f.id=a.flow_run_id AND f.factory_run_id=r.run_id \
+       JOIN factory_flow_definition_versions d ON d.id=f.flow_definition_id AND d.version=f.flow_definition_version \
+       CROSS JOIN LATERAL jsonb_array_elements(d.definition->'nodes') AS n(node) \
+       WHERE r.run_id=latest.run_id AND r.id=latest.input_digest \
+         AND n.node->>'key'=a.node_key AND n.node->>'kind'='trusted_action' \
+         AND n.node #>> '{action,action}'='set_status' \
+         AND $4 @> jsonb_build_array(n.node #> '{action,plugin}') \
+     )) OR (kind='issue.status.projection' AND EXISTS ( \
+       SELECT 1 FROM outbox_entries e \
+       WHERE e.aggregate_identity=latest.issue->>'issue_id' \
+         AND e.payload #>> '{push_intent,project_id}'=latest.issue->>'project_id' \
+         AND e.payload #>> '{push_intent,version}'=latest.issue->>'version' \
+         AND (e.payload->>'push_operation'=encode(latest.operation_id,'hex') OR ( \
+           e.payload->>'push_operation' IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM outbox_entries exact \
+             WHERE exact.aggregate_identity=e.aggregate_identity \
+               AND exact.payload #>> '{push_intent,project_id}'=e.payload #>> '{push_intent,project_id}' \
+               AND exact.payload #>> '{push_intent,version}'=e.payload #>> '{push_intent,version}' \
+               AND exact.payload->>'push_operation'=encode(latest.operation_id,'hex')) \
+           AND NOT EXISTS (SELECT 1 FROM outbox_entries other \
+             WHERE other.aggregate_identity=e.aggregate_identity \
+               AND other.payload #>> '{push_intent,project_id}'=e.payload #>> '{push_intent,project_id}' \
+               AND other.payload #>> '{push_intent,version}'=e.payload #>> '{push_intent,version}' \
+               AND other.payload->>'push_operation' IS NULL \
+               AND other.payload #> '{push_intent,desired}' IS NOT NULL \
+               AND other.payload #> '{push_intent,desired}'<>'null'::jsonb \
+               AND NOT ($4 @> jsonb_build_array(other.payload #> '{push_intent,desired,reporter,capability}'))) \
+         )) \
+         AND $4 @> jsonb_build_array(e.payload #> '{push_intent,desired,reporter,capability}') \
+     ))) \
      ORDER BY available_at, operation_id LIMIT $2",
   )
   .bind(request.observed_at.unix_millis())
   .bind(i64::from(request.limit.get()))
   .bind((!request.kinds.is_empty()).then(|| request.kinds.iter().map(FactoryKey::as_str).collect::<Vec<_>>()))
+  .bind((!request.projection_capabilities.is_empty()).then_some(sqlx::types::Json(&request.projection_capabilities)))
   .fetch_all(&mut *transaction)
   .await
   .map_err(unavailable)?;
@@ -62,6 +96,22 @@ pub(crate) async fn claim_outbox(
         .is_some_and(|claim| claim.expires_at() <= request.observed_at);
     if !is_pending && !is_expired {
       continue;
+    }
+    // Legacy metadata can contain several intents for one Issue revision. Its
+    // SQL routing is conservative; prove the exact original operation before
+    // appending even a retry/claim row. Current publication carries push_operation.
+    if !request.projection_capabilities.is_empty()
+      && matches!(current.subject, octacity_server_store::FactoryOutboxSubject::Issue(_))
+    {
+      let original = crate::issue_reporter::read(&mut transaction, operation_id).await?;
+      if !original
+        .intent
+        .desired
+        .as_ref()
+        .is_some_and(|desired| request.projection_capabilities.contains(&desired.reporter.capability))
+      {
+        continue;
+      }
     }
     let pending = if is_expired {
       let retry = FactoryOutboxRecord::retry(&current, request.observed_at, request.observed_at).ok_or_else(|| {

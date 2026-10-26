@@ -86,6 +86,29 @@ identities/hosts are checked offline by `octacity-server validate <config>`; val
 contacts neither the database nor a provider. Old catalogs without a Source file
 remain valid.
 
+The same installed Reporter declarations supply Project authoring choices and the
+normal supervised status dispatcher, including deployments without Factory
+execution. Derived writer profiles include the Project, complete private settings
+and exact native connection configuration parent. Accepted Work/Issue effects
+retain their original profile and connection pins; dispatch rechecks current
+`task_update` grants and cannot substitute another Project or connection alias.
+Replacing an installed native parent does not retarget pending effects.
+
+There must be one dispatcher owner per immutable reporting capability. That owner
+can serve multiple Project/resource profiles. An explicit Factory dispatcher must
+advertise every claimed Work/Issue status capability through
+`FactoryOutboxDispatcher::projection_capabilities`; the empty default is only for
+other effect families. If it overlaps the shared Source dispatcher, both conflicting
+dispatchers stay stopped and scoped Factory readiness fails, preserving pending
+effects until the ambiguous installation is corrected. Manual operations and
+unrelated dispatchers remain installed. Disjoint reporting
+capabilities are filtered before claims in the existing outbox.
+For legacy Issue publications without an operation routing field, several intents
+of one Issue revision are dispatched only by an owner covering all their Reporter
+capabilities. An incomplete inventory leaves those ambiguous events pending;
+it cannot fail or redirect another owner's effect. Exact original intent recovery
+still runs before a claim is appended.
+
 Only readers with preparation are offered for automatic Factory inputs; a read-only
 reader cannot authorize execution-input publication. Valid files install protected
 input authoring, preview and diagnostics using the
@@ -122,8 +145,8 @@ private publication is unavailable; it does not fabricate configured credentials
 
 The composition installs discovery, metadata, credential/lifecycle administration,
 Project access and read-only checks over the existing application handlers and
-PostgreSQL store. Source configuration, preview/polling and Reporter execution
-remain separately composed capabilities. Provider identities in domain and API
+PostgreSQL store. The Source file composes Source configuration, preview/polling
+and optional Reporter execution from one trusted inventory. Provider identities in domain and API
 contracts remain open; a native storage implementation does not install GitLab,
 Jira or any other provider adapter.
 

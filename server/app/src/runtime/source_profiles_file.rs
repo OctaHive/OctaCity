@@ -299,7 +299,8 @@ impl ReporterDeclaration {
         issue_delivery: self.issue_delivery,
         reporting_policy: self.reporting.as_ref().and_then(|r| r.editable.clone()),
       },
-    )
+    )?
+    .with_native_configuration(self.write.capability.configuration.clone())
   }
   fn validate(
     &self,
