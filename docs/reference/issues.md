@@ -435,16 +435,21 @@ an execution outcome. Refresh and incoming pause/resume are separately reviewed
 commands. Forms contain no credentials, endpoints or execution-state setters,
 and do not persist native previews or drafts in browser storage.
 
-The standard native runtime installs retained task Source reads and local pull
-control with an unavailable reader and no installed choices. Manual tasks need
-no adapters. Deployments may use `ServerRuntime::start_with_issue_sources` with
-`IssueSourceRuntimeInstallation` to supply the existing bounded reader and exact
-safe mapping choices independently of Factory targets. Installation starts no
-polling or provider I/O; `HostedWorkSourceObservations` is the shared verified
-process reader. Writer authorization uses the separate managed connection and
-TaskUpdate contract. This API adds no profile file or credential loader. Deferred
-delivery uses the independently installed Reporter dispatcher described above;
-Source read installation alone does not enable it.
+The standard native runtime keeps retained task Source reads and local pull
+control available when Source support is absent. Manual tasks need no adapters.
+An installed `source_profiles_file` supplies the bounded reader, supervised
+consumers and exact mapping choices through normal startup independently of
+Factory targets; see [installation contracts](integration-management-contracts.md).
+Project import and linked-task pull obey their separate reviewed controls.
+`HostedWorkSourceObservations` remains the shared verified process reader.
+Optional Issue writer choices use the same installed Reporter inventory with
+explicit delivery bounds and native effect ceilings. They recheck the original
+managed connection's separate TaskUpdate authority; a read grant is insufficient.
+Replacing mapping/delivery settings changes the writer pin and requires another
+review. Installation, source attachment and workflow/default publication do not
+enable status push or adopt a newer workflow for an existing Issue. Alternate
+`ServerRuntime::start_with_issue_sources` installation remains supported. Deferred
+delivery uses the independently installed Reporter dispatcher described above.
 
 ## Implementation scope
 

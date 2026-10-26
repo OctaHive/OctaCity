@@ -19,6 +19,45 @@ pub(super) struct SourceManagement {
   pub(super) cancellation: CancellationToken,
 }
 impl SourceManagement {
+  /// Pair a task reader only with independently installed delivery on the same native parent.
+  /// The returned access pin grants nothing; mapping choices/publication recheck TaskUpdate.
+  fn issue_writer(
+    &self,
+    project: ProjectId,
+    reader: &super::source_profiles_file::SourceReadDeclaration,
+    connection: &octacity_server_factory::WorkSourceConnectionRef,
+  ) -> Result<Option<InstalledIssueSourceWriter>, ApplicationError> {
+    let mut compatible = self.profiles.reporters.iter().filter(|r| {
+      r.issue_delivery.is_some()
+        && r.write.installation == reader.read.installation
+        && r.write.plugin == reader.read.plugin
+        && r.write.resource_reference == reader.read.resource_reference
+        && r.write.resource.resource_id == reader.read.resource.resource_id
+    });
+    let Some(reporter) = compatible.next() else {
+      return Ok(None);
+    };
+    if compatible.next().is_some() {
+      return Err(ApplicationError::capability_unavailable());
+    }
+    let profile = reporter.profile(project)?;
+    let binding = profile.binding().clone();
+    let pin = octacity_server_store::IssueSourceWriterAccess {
+      connection_id: connection.id,
+      connection_version: connection.version,
+      configuration: Some(reporter.write.capability.configuration.clone()),
+    };
+    Ok(Some(InstalledIssueSourceWriter {
+      access: ManagedIntegrationConnections::new(self.store.clone()).for_issue_writer(&pin, &binding),
+      binding,
+      plugin: reporter.write.plugin.clone(),
+      effects: reporter
+        .reporting
+        .as_ref()
+        .and_then(|r| r.editable.clone())
+        .ok_or_else(ApplicationError::capability_unavailable)?,
+    }))
+  }
   /// One inventory supplies the exact Project-scoped writer settings to authoring and dispatch.
   pub(super) fn reporter_profiles(
     &self,
@@ -342,7 +381,7 @@ impl IssueSourceProfileProvider for IssueSourceChoiceProvider {
         native_resource: octacity_server_factory::ExternalWorkIdentity::new(profile.resource.resource_id)
           .map_err(|_| ApplicationError::invalid())?,
         readable: declaration.readable.clone(),
-        writer: None,
+        writer: self.0.issue_writer(project, declaration, connection)?,
       });
     }
     Ok(mappings)

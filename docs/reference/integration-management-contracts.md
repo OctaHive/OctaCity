@@ -94,6 +94,17 @@ retain their original profile and connection pins; dispatch rechecks current
 `task_update` grants and cannot substitute another Project or connection alias.
 Replacing an installed native parent does not retarget pending effects.
 
+Per-Issue `source-choices` uses this same inventory. A task reader may offer one
+compatible Reporter with explicit `issue_delivery` and editable native effects,
+matching the exact installation, adapter and native resource. Its writer choice
+requires current `task_update` authority on the original connection, separately
+from the task-read grant; a Work-only Reporter supplies no Issue writer choice.
+Multiple compatible Issue writers fail with `capability_unavailable` rather than
+selecting an arbitrary mapping. Changing native mapping or delivery bounds changes
+the derived writer pin and requires a fresh mapping review. A workflow/default
+publication or source attachment does not enable push or migrate an Issue's
+workflow pin.
+
 There must be one dispatcher owner per immutable reporting capability. That owner
 can serve multiple Project/resource profiles. An explicit Factory dispatcher must
 advertise every claimed Work/Issue status capability through

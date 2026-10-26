@@ -4,6 +4,9 @@ use octacity_server_store_postgres::PostgresStore;
 use serde_json::{Value, json};
 use std::os::unix::fs::PermissionsExt as _;
 
+#[path = "source_issue_writer_tests.rs"]
+mod issue_writer;
+
 async fn installed_reporter(
   fixture: &Fixture<PostgresStore>,
   database_url: &str,

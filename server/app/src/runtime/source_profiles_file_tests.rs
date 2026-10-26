@@ -279,6 +279,17 @@ async fn offline_optional_reporter_requires_its_own_write_class_and_original_del
       serde_json::json!("work_source_read"),
     ),
     ("/reporters/0/issue_delivery/window_millis", serde_json::json!(0)),
+    (
+      "/reporters/0/issue_delivery/window_millis",
+      serde_json::json!(3_600_001),
+    ),
+    ("/reporters/0/issue_delivery/retry/max_attempts", serde_json::json!(0)),
+    ("/reporters/0/reporting/editable", serde_json::Value::Null),
+    ("/reporters/0/mapping/sha256", serde_json::json!("invalid-digest")),
+    (
+      "/reporters/0/write/capability/configuration/digest",
+      serde_json::json!("f".repeat(64)),
+    ),
   ] {
     let mut invalid = document.clone();
     *invalid.pointer_mut(pointer).unwrap() = value;
