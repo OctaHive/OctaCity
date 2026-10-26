@@ -186,6 +186,17 @@ impl FactorySourceStore for PostgresStore {
         .and_then(|s| s.schedule),
     )
   }
+  async fn source_projects(&self, after: Option<ProjectId>, limit: u16) -> Result<Vec<ProjectId>, StoreError> {
+    if !(1..=octacity_server_store::MAX_WORK_SOURCE_CONFIGURATION_PAGE_SIZE).contains(&limit) {
+      return Err(source_conflict());
+    }
+    let ids: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT project_id FROM factory_source_inputs WHERE ($1::uuid IS NULL OR project_id>$1) ORDER BY project_id LIMIT $2")
+      .bind(after.map(|p| p.as_uuid())).bind(i64::from(limit)).fetch_all(self.pool()).await.map_err(unavailable)?;
+    ids
+      .into_iter()
+      .map(|id| ProjectId::from_uuid(id).map_err(|_| StoreError::Unavailable))
+      .collect()
+  }
   async fn source_scan_targets(
     &self,
     project: ProjectId,
@@ -532,13 +543,23 @@ pub(crate) async fn correlate(
 ) -> Result<(), StoreError> {
   preparation.correlate(receipt);
   save_preparation(tx, &preparation).await?;
-  // Share recoverable association with upgrade Work. Admission keeps its own
-  // authority/lock order; the Issue worker resolves verified native identity.
-  sqlx::query("INSERT INTO issue_legacy_backfill(work_id) SELECT $1 WHERE NOT EXISTS(SELECT 1 FROM issue_work_associations WHERE work_id=$1) ON CONFLICT DO NOTHING")
+  // Only explicit native task import/attachment enables association. The existing
+  // frozen upgrade queue remains unchanged; execution-only Work invents no Issue.
+  let partition: Vec<u8> = sqlx::query_scalar("SELECT security_scope_digest FROM factory_work_envelopes WHERE id=$1")
     .bind(receipt.work.id().as_uuid())
-    .execute(&mut **tx)
+    .fetch_one(&mut **tx)
     .await
     .map_err(unavailable)?;
+  let partition =
+    octacity_server_factory::FactoryDigest::from_bytes(partition.try_into().map_err(|_| StoreError::Unavailable)?);
+  crate::issue_source::queue_native_work_associations(
+    tx,
+    preparation.input.project_id(),
+    preparation.issue,
+    partition,
+    Some(receipt.work.id()),
+  )
+  .await?;
   Ok(())
 }
 pub(crate) async fn correlate_replay(

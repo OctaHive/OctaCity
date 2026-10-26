@@ -29,7 +29,8 @@ pub trait IssueLegacyStore: Send + Sync {
   ) -> Result<IssueLegacyWorkPage, StoreError>;
   /// Atomically creates and associates at most `limit` retained, unassociated Work.
   /// Membership itself is the restart checkpoint: upgrade Work and newly settled
-  /// Source Work share recovery; original input authority stays with Work.
+  /// Source Work with an explicitly imported/attached native Issue share recovery;
+  /// new execution-only Source Work creates no Issue. Original input authority stays with Work.
   async fn backfill_legacy_issue_work(
     &self,
     limit: u16,

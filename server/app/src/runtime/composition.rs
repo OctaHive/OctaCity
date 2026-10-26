@@ -191,8 +191,25 @@ impl ServerRuntime {
       &mut resources.readiness,
     )
     .await?;
-    let (integrations, source_reads, managed_issue_sources) =
-      installed_integrations.map_or((None, None, None), |i| (Some(i.application), i.source_reads, i.issues));
+    let (integrations, source_reads, managed_issue_sources, source_management) = installed_integrations
+      .map_or((None, None, None, None), |i| {
+        (Some(i.application), i.source_reads, i.issues, i.source_management)
+      });
+    let managed_factory_source = source_management
+      .map(|sources| {
+        let principal = &config
+          .integration_management()
+          .expect("installed local Source authority")
+          .principal;
+        super::managed_factory_source::ManagedFactorySource::worker(
+          sources,
+          resources.object_storage.clone(),
+          revision_resolver.clone(),
+          principal,
+        )
+      })
+      .transpose()
+      .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
     let ApplicationComponents {
       management: management_application,
       trigger_service,
@@ -429,6 +446,7 @@ impl ServerRuntime {
         webhook_router,
         workers: Some(DurableWorkers {
           source_reads,
+          managed_factory_source,
           factory,
           legacy_issues: registration_store.clone(),
           actions: octacity_server_application::FactoryActionProjectionWorker::new(registration_store.clone()),

@@ -21,6 +21,7 @@ use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, rea
 
 pub(super) struct DurableWorkers {
   pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
+  pub(super) managed_factory_source: Option<Arc<dyn super::FactorySourceRuntime>>,
   pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
   pub(super) legacy_issues: Arc<PostgresStore>,
   pub(super) actions: octacity_server_application::FactoryActionProjectionWorker<PostgresStore>,
@@ -224,6 +225,12 @@ pub(super) fn spawn_durable_workers(
   ];
   if let Some(task) = factory {
     tasks.push((FACTORY_WORKER_NAME, task));
+  }
+  if let Some(worker) = workers.managed_factory_source {
+    tasks.push((
+      "managed-factory-source",
+      spawn_factory_source_worker(worker, cancellation.child_token()),
+    ));
   }
   if let Some(task) = source_reads {
     tasks.push(("issue-source-read", task));

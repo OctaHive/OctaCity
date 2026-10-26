@@ -37,6 +37,8 @@ pub struct FactorySourceWorkerSettings {
   pub worker: crate::FactoryRuntimeConfig,
   /// Positive per-target failure budget, independent of the supervisor's circuit cooldown.
   pub max_attempts: u16,
+  /// Optional exact retained-target retry policy; None preserves explicit legacy worker bounds.
+  pub target_retry: Option<DurableRetryPolicy>,
   /// One original provider operation's absolute deadline.
   pub operation_timeout: Duration,
   /// Time for verified process cancellation and tree cleanup.
@@ -88,12 +90,19 @@ pub struct FactorySourceWorkerOutcome {
   /// Targets durably deferred or blocked after an isolated failure.
   pub deferred: u16,
 }
+/// Live installed discovery and exact profiles, resolved from the same trusted authoring inventory.
+#[async_trait::async_trait]
+pub(super) trait FactorySourceProfileProvider: Send + Sync {
+  async fn targets(&self, limit: u16) -> Result<Vec<(ProjectId, WorkSourceScanTarget)>, ApplicationError>;
+  async fn profiles(&self, members: &[WorkSourceInput]) -> Result<Vec<FactorySourceProfile>, ApplicationError>;
+}
 /// Bounded worker over the existing source journal and ordinary admission.
 pub struct FactorySourceWorker<S, B> {
   dependencies: Arc<FactorySourceWorkerDependencies<S, B>>,
   installation: Arc<FactorySourceInstallation>,
   discovery: tokio::sync::Mutex<(usize, Option<WorkSourceScanTarget>)>,
   managed_connections: Option<ManagedIntegrationConnections>,
+  profile_provider: Option<Arc<dyn FactorySourceProfileProvider>>,
 }
 impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> FactorySourceWorker<S, B> {
   /// Constructs explicit source support without fetching tokens or contacting a provider.
@@ -141,11 +150,16 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
       installation: Arc::new(installation),
       discovery: tokio::sync::Mutex::new((0, None)),
       managed_connections: None,
+      profile_provider: None,
     })
   }
   /// Enables current connection resolution for explicitly managed inputs; legacy profiles stay explicit.
   pub fn with_managed_connections(mut self, connections: ManagedIntegrationConnections) -> Self {
     self.managed_connections = Some(connections);
+    self
+  }
+  pub(super) fn with_profile_provider(mut self, provider: Arc<dyn FactorySourceProfileProvider>) -> Self {
+    self.profile_provider = Some(provider);
     self
   }
   /// Runs one finite slice; absence or pre-cancellation performs no provider activity.
@@ -158,10 +172,12 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
       return Ok(outcome);
     }
     let settings = self.installation.settings;
-    if self.installation.projects.is_empty() {
+    if self.profile_provider.is_none() && self.installation.projects.is_empty() {
       return Ok(outcome);
     }
-    let targets = {
+    let targets = if let Some(provider) = &self.profile_provider {
+      provider.targets(settings.worker.batch_size()).await?
+    } else {
       let mut cursor = self.discovery.lock().await;
       let project = self.installation.projects[cursor.0];
       let targets = self
@@ -189,7 +205,10 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> F
         let project = *project;
         let target = *target;
         let connections = self.managed_connections.clone();
-        tasks.spawn(async move { poll_target(d, installation, project, target, cancellation, connections).await });
+        let profiles = self.profile_provider.clone();
+        tasks.spawn(
+          async move { poll_target(d, installation, project, target, cancellation, connections, profiles).await },
+        );
       }
       while let Some(result) = tasks.join_next().await {
         let one = result.map_err(|_| ApplicationError::unavailable())??;
@@ -209,6 +228,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
   target: WorkSourceScanTarget,
   cancellation: CancellationToken,
   managed_connections: Option<ManagedIntegrationConnections>,
+  profile_provider: Option<Arc<dyn FactorySourceProfileProvider>>,
 ) -> Result<FactorySourceWorkerOutcome, ApplicationError> {
   let mut outcome = FactorySourceWorkerOutcome::default();
   let settings = installation.settings;
@@ -237,7 +257,12 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
   let operation_cancel = cancellation.child_token();
   let pass = async {
     let members = d.store.source_scan_members(scan.claim.clone(), d.clock.now()?).await?;
-    let profiles = profiles_for(&installation.profiles, &members, managed_connections.as_ref())?;
+    let installed_profiles = if let Some(provider) = &profile_provider {
+      provider.profiles(&members).await?
+    } else {
+      installation.profiles.clone()
+    };
+    let profiles = profiles_for(&installed_profiles, &members, managed_connections.as_ref())?;
     let mut polling = common_polling(profiles.iter().map(|p| &p.read))?;
     let reader = Arc::new(SourcePageBridge {
       managed_connections: managed_connections.clone(),
@@ -255,7 +280,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
       revisions: d.revisions.clone(),
       authorization: d.authorization.clone(),
       registry: d.registry.clone(),
-      profiles: installation.profiles.clone(),
+      profiles: installed_profiles,
       clock: d.clock.clone(),
       cancellation: operation_cancel.clone(),
       settings,
@@ -307,12 +332,15 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
   } else {
     outcome.deferred += 1;
   }
-  let retry = DurableRetryPolicy::new(
-    settings.max_attempts,
-    settings.worker.poll_interval().as_millis() as u64,
-    settings.worker.retry_policy().max_backoff().as_millis() as u64,
-  )
-  .map_err(|_| ApplicationError::invalid())?;
+  let retry = match settings.target_retry {
+    Some(retry) => retry,
+    None => DurableRetryPolicy::new(
+      settings.max_attempts,
+      settings.worker.poll_interval().as_millis() as u64,
+      settings.worker.retry_policy().max_backoff().as_millis() as u64,
+    )
+    .map_err(|_| ApplicationError::invalid())?,
+  };
   let schedule = source_scan_schedule(
     scan.schedule.as_ref(),
     at,

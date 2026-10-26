@@ -48,6 +48,9 @@ mod issue_source_worker;
 mod issue_tests;
 #[cfg(test)]
 mod issue_workflow_tests;
+mod managed_factory_source;
+#[cfg(all(test, unix))]
+mod source_factory_tests;
 #[cfg(all(test, unix))]
 mod source_import_tests;
 mod source_management;

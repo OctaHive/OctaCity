@@ -426,6 +426,16 @@ impl SourceConsumerDeclaration {
     }
     Ok(())
   }
+  pub(super) fn retry_policy(
+    self,
+  ) -> Result<octacity_server_application::DurableRetryPolicy, octacity_server_application::ApplicationError> {
+    octacity_server_application::DurableRetryPolicy::new(
+      self.max_attempts,
+      self.initial_retry_millis,
+      self.maximum_retry_millis,
+    )
+    .map_err(|_| octacity_server_application::ApplicationError::invalid())
+  }
   pub(super) fn read_policy(
     self,
     polling: SourcePollingPolicy,
@@ -433,12 +443,7 @@ impl SourceConsumerDeclaration {
     Ok(octacity_server_application::IssueSourceReadPolicy {
       polling,
       poll_interval_millis: self.poll_interval_millis,
-      retry: octacity_server_application::DurableRetryPolicy::new(
-        self.max_attempts,
-        self.initial_retry_millis,
-        self.maximum_retry_millis,
-      )
-      .map_err(|_| octacity_server_application::ApplicationError::invalid())?,
+      retry: self.retry_policy()?,
     })
   }
 }

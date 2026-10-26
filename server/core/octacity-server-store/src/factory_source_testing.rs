@@ -359,6 +359,24 @@ impl FactorySourceStore for InMemoryFactoryConfigurationStore {
         .and_then(|s| s.schedule.clone()),
     )
   }
+  async fn source_projects(&self, after: Option<ProjectId>, limit: u16) -> Result<Vec<ProjectId>, StoreError> {
+    if !(1..=crate::MAX_WORK_SOURCE_CONFIGURATION_PAGE_SIZE).contains(&limit) {
+      return Err(source_conflict());
+    }
+    Ok(
+      self
+        .lock()?
+        .sources
+        .inputs
+        .values()
+        .map(|i| i.project_id())
+        .filter(|p| after.is_none_or(|a| *p > a))
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .take(usize::from(limit))
+        .collect(),
+    )
+  }
   async fn source_scan_targets(
     &self,
     project: ProjectId,

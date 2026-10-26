@@ -333,8 +333,36 @@ async fn insert_link(
 ) -> Result<(), StoreError> {
   sqlx::query("INSERT INTO issue_source_links(project_id,issue_id,security_scope,native_correlation,document) VALUES($1,$2,$3,$4,$5)")
     .bind(link.selection.project_id.as_uuid()).bind(link.issue_id.as_uuid()).bind(scope.as_str()).bind(link.native_correlation.as_bytes().as_slice()).bind(Json(link)).execute(&mut *connection).await.map_err(unavailable)?;
+  queue_native_work_associations(
+    connection,
+    link.selection.project_id,
+    source_native_issue(
+      link.selection.project_id,
+      link.selection.source.installation.identity(),
+      &link.selection.item,
+    ),
+    source_security_partition(scope),
+    None,
+  )
+  .await
+}
+/// Project fences already serialize Source admission and explicit native attachment/import.
+/// Existing associations converge through the same bounded worker; new Source Work cannot create a card.
+pub(super) async fn queue_native_work_associations(
+  connection: &mut PgConnection,
+  project: ProjectId,
+  native: FactoryDigest,
+  partition: FactoryDigest,
+  work: Option<octacity_server_factory::WorkEnvelopeId>,
+) -> Result<(), StoreError> {
+  let correlation = source_native_correlation(native, partition);
+  sqlx::query("INSERT INTO issue_legacy_backfill(work_id) SELECT p.work_id FROM factory_source_preparations p JOIN factory_work_envelopes w ON w.project_id=p.project_id AND w.id=p.work_id WHERE p.project_id=$1 AND p.issue=$2 AND p.settled AND w.security_scope_digest=$3 AND ($4::uuid IS NULL OR p.work_id=$4) AND EXISTS(SELECT 1 FROM issue_source_links l WHERE l.project_id=p.project_id AND l.native_correlation=$5) AND NOT EXISTS(SELECT 1 FROM issue_work_associations a WHERE a.work_id=p.work_id) ON CONFLICT DO NOTHING")
+    .bind(project.as_uuid()).bind(native.as_bytes().as_slice()).bind(partition.as_bytes().as_slice())
+    .bind(work.map(|id| id.as_uuid())).bind(correlation.as_bytes().as_slice())
+    .execute(connection).await.map_err(unavailable)?;
   Ok(())
 }
+
 async fn commit(
   tx: sqlx::Transaction<'_, sqlx::Postgres>,
   identity: &MutationIdentity,

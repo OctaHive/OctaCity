@@ -210,6 +210,7 @@ pub(super) struct InstalledIntegrationManagement {
   pub(super) issues: Option<ManagedIssueSources>,
   pub(super) application: IntegrationManagementApplication,
   pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
+  pub(super) source_management: Option<Arc<super::source_management::SourceManagement>>,
 }
 pub(super) async fn install(
   config: &crate::ServerConfig,
@@ -284,6 +285,7 @@ pub(super) async fn install(
       Arc::new(AuthorizedQueryHandler::new(policy.clone(), access)),
     );
   let mut source_reads = None;
+  let mut source_management = None;
   let mut issues = None;
   if let Some(path) = &catalog.source_profiles_file {
     application = application.require_source_management();
@@ -338,6 +340,7 @@ pub(super) async fn install(
       project_queries.clone(),
     );
     if let Some(sources) = sources {
+      source_management = Some(sources.clone());
       application = application
         .with_project_source_choices(project_queries.clone())
         .with_project_source_preview(project_queries);
@@ -360,6 +363,7 @@ pub(super) async fn install(
   Ok(Some(InstalledIntegrationManagement {
     application,
     source_reads,
+    source_management,
     issues,
   }))
 }

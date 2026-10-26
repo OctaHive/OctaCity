@@ -156,6 +156,9 @@ pub trait FactorySourceStore: crate::FactoryAdmissionStore {
     project: ProjectId,
     id: FactoryDigest,
   ) -> Result<WorkSourcePreparation, StoreError>;
+  /// Bounded live Project discovery for installed consumers, including nested Projects.
+  /// Presence of an input grants no read/admission authority; current members and grants are checked later.
+  async fn source_projects(&self, after: Option<ProjectId>, limit: u16) -> Result<Vec<ProjectId>, StoreError>;
   /// Lists at most 64 current enabled independent inputs/groups, excluding grouped members.
   /// An obsolete group blocks independent fallback until its revision is repaired.
   async fn source_scan_targets(

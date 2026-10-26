@@ -1910,21 +1910,26 @@ setter. See [task 7.3 verification](../../openspec/changes/archive/2026-10-22-ad
 Migration `0093_issue_legacy_backfill.sql` freezes a pending set of visible,
 unassociated Work at upgrade. It excludes already reserved Issue execution
 publication. Ordinary manual and reviewed-request admissions keep their own
-association path. Settled Source admissions atomically add their Work to the same
-durable pending set, including replay/recovery; they do not acquire Issue locks
-inside admission. The independent `issue-legacy-backfill` maintenance worker processes
-bounded passes through ordinary Issue creation and association transactions.
-It starts cards at the selected Project workflow's exact initial status. It does
-not derive business status from a Run outcome, contact a provider, publish inputs,
-start a Run, install synchronization or send Reporter effects.
+association path. The independent `issue-legacy-backfill` maintenance worker
+processes the frozen set in bounded passes through ordinary Issue creation and
+association transactions. Backfilled cards start at the selected Project
+workflow's exact initial status, with `content_available: false` and no invented
+requirements revision or execution request. Verified native provenance in the
+same Project and security partition groups related retained Work; otherwise
+frozen upgrade Work receives a separate Issue. Installations and security
+partitions remain separate.
 
-Only settled original Source admission provenance in the same Project and security
-partition can group legacy Work under one verified native task. Otherwise each
-Work gets a separate Issue. Different installations and security partitions stay
-separate. The original Work/Run/input identities and admission replay survive.
-Backfilled cards have `content_available: false`, with no invented requirements
-revision or execution request. A later explicit native import reuses a verified
-canonical card without overwriting its text or installing a mapping implicitly.
+New Source intake keeps task import independent of execution. A newly settled
+Source Work enters association recovery only when its verified native task has
+an explicitly imported or attached primary Issue link. Execution-only Work
+creates no card. A later explicit native import or attachment queues associations
+for the original admitted Work/Run, including separate inputs, without another
+admission or a history rewrite. The same Project fence covers either ordering;
+the frozen upgrade membership remains unchanged.
+
+Association maintenance does not derive business status from a Run outcome,
+contact a provider, publish inputs, start a Run, overwrite task text, install a
+mapping or synchronization, or send Reporter effects.
 
 `GET /api/v1/projects/{project_id}/issues/{issue_id}/legacy-work` returns bounded
 original association metadata. Its opaque continuation binds the security scope,

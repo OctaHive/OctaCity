@@ -9,8 +9,9 @@ use std::{
 use super::postgres_test_support as postgres;
 
 #[tokio::test]
-#[ignore = "requires OCTACITY_POSTGRES_URL pointing to disposable PostgreSQL"]
+#[ignore = "requires disposable OCTACITY_POSTGRES_URL and OCTACITY_SOURCE_OBJECT_URL services"]
 async fn runtime_publishes_connection_credentials_and_project_access_without_enabling_inputs() {
+  let object_endpoint = std::env::var("OCTACITY_SOURCE_OBJECT_URL").expect("task-owned S3 endpoint required");
   let database = postgres::TestDatabase::migrated().await;
   let mut url = url::Url::parse(&std::env::var("OCTACITY_POSTGRES_URL").unwrap()).unwrap();
   url.set_path(&database.name);
@@ -54,7 +55,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   let config = crate::ServerConfig::parse_toml(&super::test_runtime_config::runtime_config_source(
     root.path(),
     url.as_str(),
-    "http://127.0.0.1:9",
+    &object_endpoint,
     &extra,
   ))
   .unwrap();
@@ -258,18 +259,20 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   let profiles = root.path().join("sources.json");
   fs::write(
     &profiles,
-    serde_json::to_vec(&json!({"version":1,"readers":[{
-      "identity":"task-drafts","version":"v1",
-      "read":{"installation":check.installation,"resource_reference":check.resource_reference,
-        "capability":check.capability,"plugin":check.plugin,"provider_configuration":check.provider_configuration,
-        "resource":check.resource,"network_hosts":check.network_hosts},
-      "selection":{"identity":"all-tasks","sha256":"b".repeat(64)},
-      "readable":{"states":["native-state"],"labels":[]},
-      "selection_labels":{"state":"all-native","all_of":[],"any_of":[],"none_of":[]},
-      "predicate_states":["native-state"],
-      "polling":{"page_items":2,"max_pages":1,"max_items":2,"max_bytes":65536,"max_page_bytes":65536,
-        "overlap_millis":20,"reconciliation_interval_millis":1000,"retention_millis":60000}
-    }]}))
+    serde_json::to_vec(
+      &json!({"version":1,"consumer":{"initial_retry_millis":100,"maximum_retry_millis":500},"readers":[{
+        "identity":"task-drafts","version":"v1",
+        "read":{"installation":check.installation,"resource_reference":check.resource_reference,
+          "capability":check.capability,"plugin":check.plugin,"provider_configuration":check.provider_configuration,
+          "resource":check.resource,"network_hosts":check.network_hosts},
+        "selection":{"identity":"all-tasks","sha256":"b".repeat(64)},
+        "readable":{"states":["native-state"],"labels":[]},
+        "selection_labels":{"state":"all-native","all_of":[],"any_of":[],"none_of":[]},
+        "predicate_states":["native-state"],
+        "polling":{"page_items":2,"max_pages":1,"max_items":2,"max_bytes":65536,"max_page_bytes":65536,
+          "overlap_millis":20,"reconciliation_interval_millis":1000,"retention_millis":60000}
+      }]}),
+    )
     .unwrap(),
   )
   .unwrap();
@@ -361,7 +364,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   let secondary_config = crate::ServerConfig::parse_toml(&super::test_runtime_config::runtime_config_source(
     root.path(),
     url.as_str(),
-    "http://127.0.0.1:9",
+    &object_endpoint,
     &secondary_extra,
   ))
   .unwrap();
@@ -418,7 +421,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
       "capability":check.capability.capability,"configuration":check.capability.configuration},
       "acceptance":{"kind":"body"},"require_body":true,"max_title_bytes":4096,"max_body_bytes":262144,
       "max_artifact_bytes":1048576,"retention_millis":60000},
-    "source":{"kind":"default_reference"},"classification":{"priority":10,"risk":"medium","metadata":{}}
+    "source":{"kind":"exact_revision","value":"a".repeat(40)},"classification":{"priority":10,"risk":"medium","metadata":{}}
   });
   fs::write(&profiles, serde_json::to_vec(&source_profiles).unwrap()).unwrap();
   let runtime = ServerRuntime::start(config.clone()).await.unwrap();
@@ -453,6 +456,14 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     database.pool.clone(),
     project_id.parse().unwrap(),
     &selected,
+    &registry.join("custom-provider"),
+  )
+  .await;
+  super::source_factory_tests::assert_disabled_profile_is_ignored(&config, database.pool.clone(), &published).await;
+  super::source_factory_tests::assert_factory_intake(
+    &client,
+    project_id,
+    &published,
     &registry.join("custom-provider"),
   )
   .await;

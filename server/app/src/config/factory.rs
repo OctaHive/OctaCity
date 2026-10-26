@@ -40,6 +40,23 @@ impl FactoryRetryPolicy {
 }
 
 impl FactoryRuntimeConfig {
+  /// Reuses explicit Source consumer bounds for the existing finite polling driver.
+  pub(crate) fn source_consumer(worker: super::WorkerPolicy, max_attempts: u16, max_backoff_milliseconds: u64) -> Self {
+    // The supervisor cannot retry before its next poll; the journal keeps the original retry policy.
+    let max_backoff_milliseconds = max_backoff_milliseconds.max(worker.poll_interval().as_millis() as u64);
+    Self {
+      poll_interval_milliseconds: worker.poll_interval().as_millis() as u64,
+      claim_lifetime_milliseconds: worker.claim_lifetime().as_millis() as u64,
+      batch_size: worker.batch_size(),
+      concurrency: 1,
+      retry: Some(FactoryRetryPolicy {
+        max_backoff_milliseconds,
+        consecutive_failure_limit: max_attempts,
+        circuit_open_milliseconds: max_backoff_milliseconds,
+      }),
+    }
+  }
+
   /// Retry settings; older enabled configurations default to a bounded claim-window cooldown.
   pub fn retry_policy(self) -> FactoryRetryPolicy {
     self.retry.unwrap_or_else(|| {

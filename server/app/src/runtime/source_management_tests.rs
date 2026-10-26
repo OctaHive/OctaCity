@@ -14,7 +14,12 @@ pub(super) async fn assert_input_publication(
 ) -> Value {
   let store = PostgresStore::new(pool);
   let at = Timestamp::from_unix_millis(1).unwrap();
-  let configuration = super::work_source_tests::configuration(project, FactoryConfigurationId::generate());
+  let configuration = super::work_source_tests::configuration_with_wip(
+    project,
+    FactoryConfigurationId::generate(),
+    None,
+    FactoryWipLimits::new(4, 8).unwrap(),
+  );
   let draft = FactoryConfigurationDraft {
     flow: Some(configuration.flow().clone()),
     admission_policy: FactoryKey::new("admission").unwrap(),

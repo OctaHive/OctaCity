@@ -1781,3 +1781,38 @@ async fn managed_source_rechecks_project_grants_before_provider_reads_after_revo
 mod preview;
 #[path = "issue_code_review_reader_tests.rs"]
 mod review_reader;
+
+#[tokio::test]
+async fn explicit_source_target_retry_is_independent_of_supervisor_cadence() {
+  let fixture = Fixture::enabled("custom-provider").await;
+  std::fs::write(
+    fixture.root.path().join("custom-provider/mode.json"),
+    br#"{"failure":{"class":"transient","retry_after_millis":null}}"#,
+  )
+  .unwrap();
+  let mut policy = settings();
+  policy.target_retry = Some(DurableRetryPolicy::new(3, 100, 500).unwrap());
+  let outcome = fixture
+    .worker_with_settings(policy)
+    .run_once(CancellationToken::new())
+    .await
+    .unwrap();
+  assert_eq!((outcome.claimed, outcome.deferred), (1, 1));
+  let schedule = fixture
+    .store
+    .source_scan_schedule(
+      fixture.input.project_id(),
+      WorkSourceScanTarget::Input {
+        id: fixture.input.id(),
+        version: fixture.input.version(),
+      },
+    )
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(
+    schedule.retry_at,
+    time(200),
+    "target retry uses its configured 100ms delay, independently of 10ms supervisor polling"
+  );
+}
