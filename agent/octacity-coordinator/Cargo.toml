@@ -28,3 +28,4 @@ ed25519-dalek = { workspace = true, features = ["rand_core"] }
 octacity-private-fs = { path = "../octacity-private-fs", features = ["test-support"] }
 rcgen.workspace = true
 tempfile.workspace = true
+tokio = { workspace = true, features = ["test-util"] }
