@@ -160,10 +160,13 @@ async fn request_context(mut request: Request, next: Next) -> Response {
   let span = telemetry::request_span(&request_id, method.as_str(), matched_route.as_deref());
   request.extensions_mut().insert(RequestId(request_id.clone()));
   if is_management_operation(&method, matched_route.as_deref()) {
-    request.extensions_mut().insert(ManagementRequest(
-      RequestId(request_id.clone()),
-      ManagementRequestContext::trusted_network(management_request_id),
-    ));
+    let context = match request.extensions().get::<integrations::ProtectedIntegrationRequest>() {
+      Some(proof) => proof.context_for_request(management_request_id),
+      None => ManagementRequestContext::trusted_network(management_request_id),
+    };
+    request
+      .extensions_mut()
+      .insert(ManagementRequest(RequestId(request_id.clone()), context));
   }
   async move {
     let started = Instant::now();
@@ -334,6 +337,47 @@ mod tests {
         );
       }
     }
+  }
+
+  #[tokio::test]
+  async fn ordinary_issue_transitions_preserve_verified_transport_identity_and_scope() {
+    use octacity_server_application::{ManagementActor, ManagementRequestAttributes, ManagementSecurityScope};
+    async fn verified_probe(Extension(ManagementRequest(id, context)): Extension<ManagementRequest>) -> StatusCode {
+      assert_eq!(context.actor().identity(), Some("verified-proxy"));
+      assert_eq!(context.security_scope().as_str(), "verified-owner");
+      assert_eq!(context.attributes().ingress(), ManagementIngress::VerifiedIdentity);
+      assert_eq!(context.request_id().to_string(), id.0);
+      StatusCode::NO_CONTENT
+    }
+    let path = "/api/v1/projects/{project_id}/issues/{issue_id}/transitions";
+    let router = Router::new()
+      .route(path, post(verified_probe))
+      .layer(middleware::from_fn(request_context));
+    let original_id = ManagementRequestId::new(Uuid::new_v4()).unwrap();
+    let proof = integrations::ProtectedIntegrationRequest::new(
+      ManagementRequestContext::new(
+        ManagementActor::authenticated("verified-proxy").unwrap(),
+        ManagementSecurityScope::new("verified-owner").unwrap(),
+        original_id,
+        ManagementRequestAttributes::new(ManagementIngress::VerifiedIdentity, None),
+      )
+      .unwrap(),
+    )
+    .unwrap();
+    let mut request = HttpRequest::builder()
+      .method(Method::POST)
+      .uri(concrete_path(path))
+      .header("x-octacity-principal", "untrusted")
+      .header("x-request-id", original_id.to_string())
+      .body(Body::empty())
+      .unwrap();
+    request.extensions_mut().insert(proof);
+    let response = router.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert_ne!(
+      response.headers()[&REQUEST_ID_HEADER].to_str().unwrap(),
+      original_id.to_string()
+    );
   }
 
   #[tokio::test]

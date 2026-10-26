@@ -196,6 +196,16 @@ impl ProtectedIntegrationRequest {
     }
     Ok(Self(context))
   }
+  /// Preserve transport authority across ordinary and protected operations, with fresh correlation.
+  pub(crate) fn context_for_request(&self, request_id: ManagementRequestId) -> ManagementRequestContext {
+    ManagementRequestContext::new(
+      self.0.actor().clone(),
+      self.0.security_scope().clone(),
+      request_id,
+      self.0.attributes(),
+    )
+    .expect("verified context with generated request identity")
+  }
 }
 /// Builds opt-in protected routes. Without a verified ingress extension every
 /// request fails closed. Ordinary/manual management routes require no integration.
@@ -209,16 +219,12 @@ pub(super) async fn protected_ingress(mut request: Request, next: Next) -> Respo
     .cloned()
     .expect("request context precedes protected ingress");
   let mut response = if let Some(proof) = request.extensions_mut().remove::<ProtectedIntegrationRequest>() {
-    let context = ManagementRequestContext::new(
-      proof.0.actor().clone(),
-      proof.0.security_scope().clone(),
+    let context = proof.context_for_request(
       request_id
         .0
         .parse::<ManagementRequestId>()
         .expect("generated request identity"),
-      proof.0.attributes(),
-    )
-    .expect("verified context with generated request identity");
+    );
     request
       .extensions_mut()
       .insert(crate::ManagementRequest(request_id, context));
