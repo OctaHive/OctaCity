@@ -183,7 +183,7 @@ pub(super) async fn assert_overlapping_imports(
   }
   std::fs::write(mode_path, original).unwrap();
 }
-async fn scans(pool: &sqlx::PgPool, project: &str) -> Vec<IssueSourceReadScan> {
+pub(super) async fn scans(pool: &sqlx::PgPool, project: &str) -> Vec<IssueSourceReadScan> {
   let rows: Vec<Vec<u8>> = sqlx::query_scalar("SELECT document FROM issue_source_reads WHERE project_id=$1")
     .bind(project.parse::<ProjectId>().unwrap().as_uuid())
     .fetch_all(pool)

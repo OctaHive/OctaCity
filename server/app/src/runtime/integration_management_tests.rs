@@ -378,6 +378,16 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   )
   .await;
   secondary.shutdown().await.unwrap();
+  let runtime = super::source_restart_tests::assert_import_restart(
+    runtime,
+    &config,
+    &client,
+    &database.pool,
+    project_id,
+    &task_choices,
+    &registry.join("custom-provider"),
+  )
+  .await;
   assert!(imported["issue"]["id"].is_string());
   assert_eq!(
     reqwest::Client::new()
