@@ -52,11 +52,10 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     fs::metadata(root.path()).unwrap().uid(),
     catalog.to_str().unwrap()
   );
-  let config = crate::ServerConfig::parse_toml(&super::test_runtime_config::runtime_config_source(
-    root.path(),
-    url.as_str(),
-    &object_endpoint,
-    &extra,
+  // Observe full readiness without racing the production retention worker's first five-second interval.
+  let config = crate::ServerConfig::parse_toml(&format!(
+    "retention_poll_interval_milliseconds=100\n{}",
+    super::test_runtime_config::runtime_config_source(root.path(), url.as_str(), &object_endpoint, &extra),
   ))
   .unwrap();
   let runtime = ServerRuntime::start(config.clone())
@@ -190,6 +189,9 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   assert_eq!(access["access"]["project_id"], project_id);
   assert_eq!(access["access"]["resources"], grant["resources"]);
   // A read/check installation alone does not install automatic Source execution.
+  let health = client.get("http://localhost/health/factory").send().await.unwrap();
+  assert_eq!(health.status(), reqwest::StatusCode::OK);
+  assert_eq!(health.json::<Value>().await.unwrap(), json!({"status":"disabled"}));
   let choices = format!("/api/v1/projects/{project_id}/factory-source-choices?connection_id={id}&connection_version=1");
   for source_path in [
     choices.clone(),
@@ -279,7 +281,10 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   fs::set_permissions(&profiles, fs::Permissions::from_mode(0o600)).unwrap();
   declaration["source_profiles_file"] = json!(profiles);
   fs::write(&catalog, serde_json::to_vec(&declaration).unwrap()).unwrap();
+  assert_unstarted_issue_consumer_is_unavailable(&config, database.pool.clone()).await;
   let runtime = ServerRuntime::start(config.clone()).await.unwrap();
+  // Before any import/input is enabled, both consumers qualify without provider work.
+  super::tests::assert_scoped_health(&client, "http://localhost", reqwest::StatusCode::OK).await;
   let response = client
     .post(format!("{path}/state"))
     .header("idempotency-key", "activate-source-connection")
@@ -754,4 +759,33 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
 
   runtime.shutdown().await.unwrap();
   database.cleanup().await;
+}
+
+/// Normal Source installation must not qualify an advertised consumer that never starts.
+async fn assert_unstarted_issue_consumer_is_unavailable(config: &crate::ServerConfig, pool: sqlx::PgPool) {
+  let mut checks = super::tests::healthy_checks();
+  let installed = super::integration_management::install(
+    config,
+    Arc::new(octacity_server_store_postgres::PostgresStore::new(pool)),
+    CancellationToken::new(),
+    &mut checks,
+  )
+  .await
+  .unwrap()
+  .unwrap();
+  assert!(installed.source_reads.is_some());
+  let runtime = ServerRuntime::start_with_readiness(config.clone(), checks)
+    .await
+    .unwrap();
+  let client = reqwest::Client::new();
+  let origin = format!("http://{}", runtime.management_addr());
+  let scoped = client.get(format!("{origin}/health/factory")).send().await.unwrap();
+  assert_eq!(
+    scoped.status(),
+    reqwest::StatusCode::SERVICE_UNAVAILABLE,
+    "installed handlers cannot qualify an unstarted Issue import/refresh consumer"
+  );
+  let ordinary = client.get(format!("{origin}/health/ready")).send().await.unwrap();
+  assert_eq!(ordinary.status(), reqwest::StatusCode::OK);
+  runtime.shutdown().await.unwrap();
 }

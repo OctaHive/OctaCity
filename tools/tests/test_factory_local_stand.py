@@ -205,7 +205,7 @@ class FactoryLocalStandTests(unittest.TestCase):
             self.assertEqual(server.read_text(), 'management_bind = "0.0.0.0:8080"\n')
             self.assertEqual(json.loads(receipt.read_text()), {"retained":"run-history"})
             for path in bundle.iterdir():
-                self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+                self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600)
             again = demo.configure_integrations(root, "OctaHive/OctaCity", native_repository_id="1234", adapter_digest="ab" * 32)
             self.assertEqual(again, bundle)
 

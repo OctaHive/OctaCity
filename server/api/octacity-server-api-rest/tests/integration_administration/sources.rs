@@ -132,6 +132,158 @@ fn router(peer: Arc<SourcePeer>) -> axum::Router {
     .with_source_reads(Arc::new(AuthorizedQueryHandler::new(policy, peer))),
   )
 }
+// Readiness must inspect composition without invoking any application/provider operation.
+struct ReadinessPeer;
+#[async_trait]
+impl<Q: Query + Send + Sync + 'static> ManagementQueryUseCase<Q> for ReadinessPeer {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    _: Q,
+  ) -> Result<Q::Outcome, ApplicationError> {
+    panic!("readiness must not dispatch queries")
+  }
+}
+#[async_trait]
+impl<C: Command + Send + Sync + 'static> ManagementCommandUseCase<C> for ReadinessPeer {
+  type Error = ApplicationError;
+  async fn execute_management_command(
+    &self,
+    _: &ManagementRequestContext,
+    _: &ManagementAuthorizationGrant,
+    _: C,
+  ) -> Result<C::Outcome, ApplicationError> {
+    panic!("readiness must not dispatch commands")
+  }
+}
+#[tokio::test]
+async fn project_source_partial_installation_is_unavailable_without_factory_inputs() {
+  let policy = Arc::new(Policy);
+  let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), Arc::new(ReadinessPeer)));
+  let application = IntegrationManagementApplication::new(Arc::new(AuthorizedCommandHandler::new(
+    policy,
+    Arc::new(Peer::default()),
+  )))
+  .with_project_source_choices(queries);
+  let readiness = application.source_management_readiness();
+  let router = octacity_server_api_rest::factory_readiness_routes(move || readiness);
+  let response = router
+    .oneshot(Request::builder().uri("/health/factory").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+}
+
+#[tokio::test]
+async fn complete_project_source_family_can_be_installed_without_factory_input_authoring() {
+  let policy = Arc::new(Policy);
+  let peer = Arc::new(ReadinessPeer);
+  let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), peer.clone()));
+  let commands = Arc::new(AuthorizedCommandHandler::new(policy, peer));
+  let application = IntegrationManagementApplication::new(commands.clone())
+    .with_project_source_choices(queries.clone())
+    .with_project_source_preview(queries.clone())
+    .with_project_source_imports(commands, queries);
+  let readiness = application.source_management_readiness();
+  let router = octacity_server_api_rest::factory_readiness_routes(move || readiness);
+  let response = router
+    .oneshot(Request::builder().uri("/health/factory").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  let body: Value = serde_json::from_slice(&to_bytes(response.into_body(), 1024).await.unwrap()).unwrap();
+  assert_eq!(body, json!({"status":"ready"}));
+}
+
+#[tokio::test]
+async fn advertised_source_readiness_requires_each_route_family_without_dispatching() {
+  for omitted in [
+    Some("configuration"),
+    Some("reads"),
+    Some("choices"),
+    Some("preview"),
+    Some("imports"),
+    Some("dependencies"),
+    None,
+  ] {
+    let policy = Arc::new(Policy);
+    let peer = Arc::new(ReadinessPeer);
+    let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), peer.clone()));
+    let commands = Arc::new(AuthorizedCommandHandler::new(policy, peer));
+    let mut application = IntegrationManagementApplication::new(commands.clone()).require_source_management();
+    if omitted != Some("configuration") {
+      application = application.with_source_configuration(commands.clone(), queries.clone());
+    }
+    if omitted != Some("reads") {
+      application = application.with_source_reads(queries.clone());
+    }
+    if omitted != Some("choices") {
+      application = application.with_project_source_choices(queries.clone());
+    }
+    if omitted != Some("preview") {
+      application = application.with_project_source_preview(queries.clone());
+    }
+    if omitted != Some("imports") {
+      application = application.with_project_source_imports(commands.clone(), queries.clone());
+    }
+    if omitted != Some("dependencies") {
+      application = application.with_dependencies(queries);
+    }
+    let readiness = application.source_management_readiness();
+    let router = octacity_server_api_rest::factory_readiness_routes(move || readiness);
+    let response = router
+      .oneshot(Request::builder().uri("/health/factory").body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(
+      response.status(),
+      if omitted.is_some() {
+        StatusCode::SERVICE_UNAVAILABLE
+      } else {
+        StatusCode::OK
+      },
+      "omitted {omitted:?}"
+    );
+  }
+}
+
+#[tokio::test]
+async fn advertised_source_management_requires_project_import_routes() {
+  let policy = Arc::new(Policy);
+  let peer = Arc::new(SourcePeer::default());
+  let application = IntegrationManagementApplication::new(Arc::new(AuthorizedCommandHandler::new(
+    policy.clone(),
+    Arc::new(Peer::default()),
+  )))
+  .require_source_management()
+  .with_source_configuration(
+    Arc::new(AuthorizedCommandHandler::new(policy.clone(), peer.clone())),
+    Arc::new(AuthorizedQueryHandler::new(policy.clone(), peer.clone())),
+  )
+  .with_source_reads(Arc::new(AuthorizedQueryHandler::new(policy, peer)));
+  let readiness = application.source_management_readiness();
+  let router = integration_management_routes(application)
+    .merge(octacity_server_api_rest::factory_readiness_routes(move || readiness));
+  let response = router
+    .clone()
+    .oneshot(Request::builder().uri("/health/factory").body(Body::empty()).unwrap())
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    StatusCode::SERVICE_UNAVAILABLE,
+    "Factory input handlers alone cannot qualify advertised Project import support"
+  );
+  let path = format!("/api/v1/projects/{PROJECT}/issue-source-imports");
+  let (status, body) = request(&router, "GET", &path, Value::Null, &[], true).await;
+  assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+  assert_eq!(body["code"], "unavailable");
+  let (status, _) = request(&router, "GET", &path, Value::Null, &[], false).await;
+  assert_eq!(status, StatusCode::FORBIDDEN);
+}
+
 #[tokio::test]
 async fn source_management_readiness_distinguishes_optional_absence_and_incomplete_composition() {
   for (configuration, reads, status, state) in [

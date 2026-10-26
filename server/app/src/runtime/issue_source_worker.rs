@@ -7,6 +7,7 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct IssueSourceWorker {
+  pub(super) health: Arc<crate::readiness::WorkerHealth>,
   sources: Arc<SourceManagement>,
   context: ManagementRequestContext,
   discovery: tokio::sync::Mutex<Discovery>,
@@ -21,7 +22,12 @@ struct Discovery {
 impl IssueSourceWorker {
   /// The shared loader validates Source bounds before composition; construction performs no read.
   pub(super) fn new(sources: Arc<SourceManagement>, principal: &str) -> Self {
+    let settings = sources.profiles.consumer.worker();
     Self {
+      health: Arc::new(crate::readiness::WorkerHealth::new(
+        "issue-source-read",
+        settings.poll_interval().saturating_add(settings.claim_lifetime()),
+      )),
       sources,
       context: super::integration_management::request_context(principal),
       discovery: tokio::sync::Mutex::new(Discovery::default()),

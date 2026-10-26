@@ -1,6 +1,6 @@
 //! Wire contract uses the optional safe Reporter query, never a provider call.
 use super::*;
-struct Projections;
+pub(super) struct Projections;
 #[async_trait]
 impl ManagementQueryUseCase<ListIssueSourceProjectionsQuery> for Projections {
   type Error = ApplicationError;

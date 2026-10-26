@@ -56,6 +56,8 @@ class LocalStandEntrypointTests(unittest.TestCase):
             bundle = configure_integrations(root, "Example/Tickets", native_repository_id="1234", adapter_digest="ab" * 32)
             catalog = json.loads((bundle / "catalog.json").read_text())
             provider = catalog["credential_publishers"][0]["root"]
+            selector, = (bundle / "selections").iterdir()
+            mapping, = (bundle / "mappings").iterdir()
             secrets = root / "secrets"
             secrets.mkdir()
             for name in ("postgres-url", "object-access-key", "object-secret-key", "signing-key",
@@ -71,6 +73,12 @@ test "$(stat -c %a /run/octacity-management)" = 711
 test "$(stat -c %a {provider}/credentials)" = 700
 test "$(stat -c %a {provider}/github-work.toml)" = 600
 test -x {provider}/plugin
+test -r {catalog['source_profiles_file']}
+test "$(stat -c %a {catalog['source_profiles_file']})" = 600
+test -r {provider}/selections/{selector.name}
+test "$(stat -c %a {provider}/selections)" = 700
+test -r {provider}/mappings/{mapping.name}
+test "$(stat -c %a {provider}/mappings)" = 700
 test -r /run/octacity-secrets/integration-server.toml
 if [ -e {provider}/credentials/retained ]; then
   test "$(cat {provider}/credentials/retained)" = credential-retained

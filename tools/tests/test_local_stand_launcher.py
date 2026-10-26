@@ -228,6 +228,30 @@ class LocalStandLauncherTests(unittest.TestCase):
         initialize.assert_not_called()
         self.assertFalse(self.root.exists())
 
+    def test_source_only_up_installs_before_starting_without_factory_profiles_or_runtime(self):
+        import factory_integrations
+        events = []
+        native = launcher.NativeInstallation(Path("/verified/native"), {"sources": {}})
+        with (
+            mock.patch.object(launcher.initializer, "initialize"),
+            mock.patch.object(launcher.lifecycle, "LifecycleState", return_value=FakeOwner(self.root)),
+            mock.patch.object(launcher, "_prepare_native_installation", return_value=native),
+            mock.patch.object(launcher.server_configurator, "generate_server_configuration",
+                              side_effect=lambda *a, **kw: events.append("configure")) as configure,
+            mock.patch.object(launcher, "_build_images", side_effect=lambda *a: events.append("build")),
+            mock.patch.object(factory_integrations, "install_repository",
+                              side_effect=lambda *a: events.append("install-source")) as install,
+            mock.patch.object(launcher, "_run_compose", side_effect=lambda *a, **kw: events.append("compose")),
+            mock.patch.object(launcher.bootstrapper, "bootstrap", return_value=types.SimpleNamespace(state="enrolled")),
+            mock.patch.object(launcher.agent_starter, "start_agent", return_value=types.SimpleNamespace(state="registered", pid=42)),
+        ):
+            receipt = launcher.run(self.arguments("up", "--github-repository", "Other/Issues"))
+        self.assertEqual(receipt["state"], "running")
+        self.assertEqual(events, ["configure", "build", "install-source", "compose", "compose"])
+        install.assert_called_once_with(self.root, "Other/Issues")
+        self.assertIsNone(configure.call_args.kwargs["factory_profiles"])
+        self.assertIsNone(configure.call_args.kwargs["factory_runtime_bundle"])
+
     def test_explicit_factory_profiles_reach_server_configuration(self):
         profiles = self.root.parent / "profiles.json"
         connectors = self.root.parent / "connectors.json"

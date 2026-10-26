@@ -309,6 +309,43 @@ or replacing it. To select another public task repository on initial setup:
 tools/factory-stand --github-repository OctaHive/OctaCity
 ```
 
+For task import/status synchronization without Factory demo resources or a model
+runtime, use the ordinary stand entry point with an explicit public task resource:
+
+```shell
+tools/local-stand up --github-repository OWNER/REPO
+```
+
+Both commands use the same `factory_integrations.configure_integrations` seam.
+Its trusted defaults live in `deployment/local-stand/source-policy.json`:
+bounded Issue reads, an unrestricted native selector with editable narrowing,
+optional Factory task/acceptance preparation, and separately scoped Reporter
+effects/delivery bounds. The default acceptance rule reads `## Acceptance` from
+the native body; missing acceptance blocks Factory admission, not task import.
+Default native effects support explicit open/closed state changes and preserve
+unrelated labels; installing these choices performs no write.
+
+The private generated catalog references `source-profiles.json`; selector/mapping
+files are named by their logical identity hash and pinned by content SHA-256.
+The normal server entrypoint installs them with owner-only permissions alongside
+the verified adapter and retained credentials. Repeated starts validate the same
+immutable files. Existing Runtime/Profile settings and Factory receipts are not
+rewritten. Repeating `up --github-repository OWNER/REPO` reuses the original native
+repository ID without a GitHub lookup, so provider outage does not block startup
+of a compatible retained installation. Local adapter bytes and the complete
+immutable bundle are still validated; another repository, changed pins or an
+incomplete bundle are rejected without replacement or network fallback.
+The profiles contain no Project, code Repository or Factory target IDs:
+current connections, Project grants and explicitly published import/input/mapping
+controls resolve those independently while the server runs. Future enrollment
+should reuse this installation seam and the existing protected management APIs.
+
+This is a pre-release test stand. Earlier metadata-only integration bundles are
+not silently rewritten into another native configuration: their pins differ.
+Use an explicitly selected fresh disposable root to test the new installation;
+keep any existing stand/data until deliberately choosing to remove it. No released
+installation migration is introduced here.
+
 The launcher builds **committed** sources. Commit a local fix before rebuilding;
 editing the working tree alone does not update its images. The server image now
 includes the independent `octacity-github` executable. Initial setup resolves the
@@ -353,9 +390,21 @@ protocol claims cannot establish this identity. It is not authentication for a
 shared deployment. Token bytes are private server files (`0700` directories,
 `0600` files) and are never returned by the management API.
 
-Read-only connection checks use the installed adapter. Automatic Factory input,
-preview and Reporter execution still require their separately installed runtime
-profiles; this option does not configure those profiles or qualify live writes.
+Read-only connection checks use the installed adapter. Generated Source/Reporter
+profiles make their bounded choices available; Project import, Factory input and
+task synchronization still require separate explicit review and activation.
+Installation and read checks do not qualify live writes.
+
+`/health/factory` reports the independent Source/Factory scope: `disabled` when
+optional capability is absent, `unavailable` (HTTP503) for incomplete protected
+API composition or a consumer without a recent successful pass, and `ready`
+after all installed checks pass. It includes Project import, input/catalog/history,
+task synchronization and the Issue, Factory Source and Reporter consumers.
+Startup and readiness do not contact a provider. Provider failures remain in the
+affected task/input/delivery diagnostics; `/health/ready` and manual task/CI
+operation do not depend on them. A healthy scope proves composition and worker
+health, not successful import, execution or status delivery; qualify those journeys
+separately.
 
 ## Verify readiness and a real job
 

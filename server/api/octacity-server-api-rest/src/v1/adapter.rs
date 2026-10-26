@@ -236,6 +236,25 @@ pub struct ManagementApplication {
 }
 
 impl ManagementApplication {
+  /// Reports installed Source routes, including retained task synchronization, without I/O.
+  /// Optional legacy readers do not advertise the protected Source management family.
+  pub fn source_management_readiness(&self) -> Option<bool> {
+    let integration = self
+      .integrations
+      .as_ref()
+      .and_then(|app| app.source_management_readiness());
+    let required = self
+      .integrations
+      .as_ref()
+      .is_some_and(|app| app.source_management_required);
+    let sources = self.issue_sources.as_ref();
+    if required || sources.is_some_and(|app| app.protected_ingress) {
+      Some(integration.unwrap_or(!required) && sources.is_some_and(|app| app.protected_ingress && app.is_complete()))
+    } else {
+      integration
+    }
+  }
+
   /// Enables protected reusable-integration endpoints with explicitly supplied services.
   /// The ingress verifier must independently install a ProtectedIntegrationRequest.
   pub fn with_integrations(mut self, integrations: integrations::IntegrationManagementApplication) -> Self {

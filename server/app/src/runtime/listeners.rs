@@ -57,7 +57,7 @@ impl ServerRuntime {
 
   pub(super) async fn start_with_components(
     config: ServerConfig,
-    checks: ReadinessChecks,
+    mut checks: ReadinessChecks,
     components: RuntimeComponents,
   ) -> Result<Self, ServerRuntimeError> {
     let RuntimeComponents {
@@ -99,6 +99,14 @@ impl ServerRuntime {
       Some(local) => Some(super::local_management::bind(local).await?),
       None => None,
     };
+    if let Some(ready) = management_application
+      .as_ref()
+      .and_then(|app| app.source_management_readiness())
+    {
+      checks.push_factory(Arc::new(super::integration_management::SourceManagementReadiness(
+        ready,
+      )));
+    }
     let monitor = ReadinessMonitor::start(
       checks,
       config.readiness_check_interval(),

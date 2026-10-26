@@ -152,6 +152,27 @@ if [ -e "$integration_bundle" ] || [ -L "$integration_bundle" ]; then
   install_integration_file "$integration_bundle/catalog.json" "$integration_root/catalog.json" 4194304 0600
   install_integration_file "$integration_bundle/adapter.toml" "$provider/adapter.toml" 1048576 0600
   install_integration_file "$integration_bundle/github-work.toml" "$provider/github-work.toml" 65536 0600
+  if [ -e "$integration_bundle/source-profiles.json" ] || [ -L "$integration_bundle/source-profiles.json" ]; then
+    install_integration_file "$integration_bundle/source-profiles.json" "$integration_root/source-profiles.json" 4194304 0600
+    for directory in selections mappings; do
+      configurations=$integration_bundle/$directory
+      [ -d "$configurations" ] && [ ! -L "$configurations" ] || { echo "Source configurations are invalid" >&2; exit 1; }
+      [ ! -L "$provider/$directory" ] || { echo "Source configurations are invalid" >&2; exit 1; }
+      mkdir -p "$provider/$directory"
+      chmod 0700 "$provider/$directory"
+      chown octacity:octacity "$provider/$directory"
+      configuration_count=0
+      for configuration in "$configurations"/*.json; do
+        [ -e "$configuration" ] || [ -L "$configuration" ] || continue
+        name=${configuration##*/}
+        key_name=${name%.json}
+        case "$key_name" in ''|*[!a-f0-9]*) echo "Source configuration name is invalid" >&2; exit 1 ;; esac
+        configuration_count=$((configuration_count + 1))
+        [ "${#key_name}" -eq 64 ] && [ "$configuration_count" -le 128 ] || { echo "Source configurations exceed their bounds" >&2; exit 1; }
+        install_integration_file "$configuration" "$provider/$directory/$name" 65536 0600
+      done
+    done
+  fi
   install_integration_file /usr/local/bin/octacity-github "$provider/plugin" 268435456 0700
   install_integration_file "$integration_bundle/server.toml" "$target/integration-server.toml" 65536 0600
   [ ! -L /run/octacity-management ] || { echo "management channel is invalid" >&2; exit 1; }

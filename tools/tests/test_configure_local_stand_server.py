@@ -484,6 +484,70 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
                 self.assertNotIn("do-not-disclose", str(error.exception))
                 self.assertFalse((self.root / "config/server").exists())
 
+    def test_real_server_loads_generated_source_preparation_and_reporter_without_provider_or_database(self):
+        from factory_integrations import configure_integrations
+        plugin = Path(os.environ.get("OCTACITY_GITHUB_BIN", REPOSITORY / "target/debug/octacity-github"))
+        if not plugin.is_file():
+            self.skipTest("build octacity-github to validate its exact installation")
+        receipt = self.generate()
+        bundle = configure_integrations(self.root, "Example/Tickets", native_repository_id="1234",
+                                        adapter_digest=hashlib.sha256(plugin.read_bytes()).hexdigest())
+        catalog = json.loads((bundle / "catalog.json").read_text())
+        files = self.validation_root(receipt)
+        registry = files / "adapters"
+        provider = registry / "github"
+        for directory in (registry, provider, provider / "credentials"):
+            directory.mkdir(mode=0o700)
+        shutil.copyfile(plugin, provider / "plugin")
+        (provider / "plugin").chmod(0o700)
+        for name in ("adapter.toml", "github-work.toml"):
+            shutil.copyfile(bundle / name, provider / name)
+            (provider / name).chmod(0o600)
+        for name in ("selections", "mappings"):
+            shutil.copytree(bundle / name, provider / name)
+        profiles = files / "source-profiles.json"
+        shutil.copyfile(bundle / profiles.name, profiles)
+        profiles.chmod(0o600)
+        catalog["registry"] = str(registry)
+        catalog["source_profiles_file"] = str(profiles)
+        catalog["credential_publishers"][0]["root"] = str(provider)
+        catalog_file = files / "catalog.json"
+        catalog_file.write_text(json.dumps(catalog))
+        catalog_file.chmod(0o600)
+        config = files / "server.toml"
+        source = (bundle / "server.toml").read_text()
+        original_catalog = tomllib.loads(source)["integration_management"]["catalog_file"]
+        config.write_text(source.replace(original_catalog, str(catalog_file)))
+        valid = self.validate_with_real_server(config, files)
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        self.assertIn("server configuration is valid", valid.stdout)
+        read = catalog["checks"][0]
+        credential = read["resource"]["credential"]
+        credential_file = provider / "credentials" / (hashlib.sha256(credential["handle"].encode()).hexdigest() + ".json")
+        credential_file.write_text(json.dumps({"class": "work_source_read", "token": "synthetic-fixture-token",
+                                                "repositories": ["Example/Tickets"]}))
+        credential_file.chmod(0o600)
+        authorization = {
+            "family": "source", "message": {"protocol_version": 1, "request_id": "stand-read-scope",
+                "command": {"operation": "authorize", "payload": {
+                    "scan_id": "a" * 64, "configuration_digest": read["provider_configuration"],
+                    "resource": read["resource"], "network_hosts": read["network_hosts"],
+                }}},
+        }
+        authorized = subprocess.run([str(provider / "plugin")], cwd=provider, env={},
+                                    input=json.dumps(authorization) + "\n", capture_output=True, text=True, timeout=10)
+        self.assertEqual(authorized.returncode, 0, authorized.stderr)
+        self.assertEqual(json.loads(authorized.stdout)["message"]["outcome"], {
+            "status": "authorized", "payload": {"scan_id": "a" * 64, "resource_id": "1234",
+            "configuration_digest": read["provider_configuration"]},
+        })
+        self.assertNotIn("synthetic-fixture-token", authorized.stdout + authorized.stderr)
+        document = json.loads(profiles.read_text())
+        document["readers"][0]["polling"]["max_pages"] = 0
+        profiles.write_text(json.dumps(document))
+        invalid = self.validate_with_real_server(config, files)
+        self.assertNotEqual(invalid.returncode, 0)
+
     def test_real_server_accepts_generated_config_and_rejects_removed_acknowledgement(self):
         receipt = self.generate()
         config = Path(receipt["config"])

@@ -670,6 +670,84 @@ async fn installed_factory_outbox_health_tracks_failure_recovery_and_shutdown_ov
   runtime.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn installed_source_consumer_health_tracks_start_failure_and_recovery_over_http() {
+  struct Source(std::sync::atomic::AtomicBool);
+  #[async_trait]
+  impl super::FactorySourceRuntime for Source {
+    fn settings(&self) -> super::FactorySourceWorkerSettings {
+      super::FactorySourceWorkerSettings {
+        worker: toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap(),
+        max_attempts: 3,
+        target_retry: None,
+        operation_timeout: std::time::Duration::from_millis(100),
+        cancellation_grace: std::time::Duration::from_millis(10),
+      }
+    }
+    async fn poll(
+      &self,
+      _: CancellationToken,
+    ) -> Result<super::FactorySourceWorkerOutcome, octacity_server_application::ApplicationError> {
+      if self.0.load(std::sync::atomic::Ordering::SeqCst) {
+        Err(octacity_server_application::ApplicationError::Store(
+          octacity_server_store::StoreError::Unavailable,
+        ))
+      } else {
+        Ok(Default::default())
+      }
+    }
+  }
+  let _listener_guard = LISTENER_TEST_LOCK.lock().await;
+  let source = Arc::new(Source(std::sync::atomic::AtomicBool::new(false)));
+  let mut checks = healthy_checks();
+  let installed = factory::install_source(source.clone(), &mut checks);
+  let runtime = ServerRuntime::start_with_readiness(test_config(), checks)
+    .await
+    .unwrap();
+  let client = reqwest::Client::new();
+  let origin = format!("http://{}", runtime.management_addr());
+  assert_scoped_health(&client, &origin, StatusCode::SERVICE_UNAVAILABLE).await;
+  let cancel = CancellationToken::new();
+  let task = workers::spawn_factory_source_worker(installed, cancel.clone());
+  assert_scoped_health(&client, &origin, StatusCode::OK).await;
+  source.0.store(true, std::sync::atomic::Ordering::SeqCst);
+  assert_scoped_health(&client, &origin, StatusCode::SERVICE_UNAVAILABLE).await;
+  source.0.store(false, std::sync::atomic::Ordering::SeqCst);
+  assert_scoped_health(&client, &origin, StatusCode::OK).await;
+  cancel.cancel();
+  task.await.unwrap();
+  runtime.shutdown().await.unwrap();
+}
+
+pub(super) async fn assert_scoped_health(client: &reqwest::Client, origin: &str, expected: StatusCode) {
+  tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    loop {
+      if client
+        .get(format!("{origin}/health/factory"))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        == expected
+      {
+        break;
+      }
+      tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+  })
+  .await
+  .expect("scoped readiness must converge to supervised consumer health");
+  assert_eq!(
+    client
+      .get(format!("{origin}/health/ready"))
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::OK
+  );
+}
+
 #[tokio::test(start_paused = true)]
 async fn shutdown_timeout_drains_only_tasks_that_have_not_already_completed() {
   for blocked in ["workers", "notifications", "metrics"] {

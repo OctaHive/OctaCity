@@ -184,6 +184,110 @@ it('publishes explicitly enabled import only after frozen review and shows its r
   expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Add task source' }));
 });
 
+it.each(['precondition_failed', 'conflict'] as const)(
+  'refreshes stale preview access after %s without discarding the import draft',
+  async (code) => {
+    const { sources, connection, choices, read } = fixture();
+    const current = choices.access_version + 1;
+    sources.importChoices
+      .mockResolvedValueOnce(structuredClone(choices))
+      .mockResolvedValue({ ...choices, access_version: current });
+    sources.previewImport.mockImplementation(async (_project, request) => {
+      if (request.access_version !== current)
+        throw new ManagementApiError({
+          code,
+          status: code === 'conflict' ? 409 : 412,
+          requestId: null,
+          retryAfterMilliseconds: null,
+          message: 'private-grant-detail',
+        });
+      return {
+        source: read.binding,
+        items: [],
+        has_more: false,
+        failure: null,
+        observed_at_unix_ms: 1,
+        retry_after_millis: null,
+      };
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'Task sources' }));
+    await userEvent.click(await screen.findByRole('button', { name: 'Add task source' }));
+    await choose('Source connection', connection.definition.name);
+    await choose('Source profile', `${read.locator} · ${read.binding.configuration.identity} / v1`);
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Discover tasks automatically' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Preview tasks' }));
+    const alert = await screen.findByRole('alert');
+    await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+    await userEvent.click(screen.getByRole('button', { name: 'Preview tasks' }));
+    await screen.findByRole('region', { name: 'Task source preview' });
+    expect(sources.previewImport.mock.lastCall?.[1].access_version).toBe(current);
+    expect(screen.getByRole('checkbox', { name: 'Discover tasks automatically' })).toHaveProperty(
+      'checked',
+      true,
+    );
+    expect(screen.getByRole('combobox', { name: 'Source connection' }).textContent).toContain(
+      connection.definition.name,
+    );
+    expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+      'disabled',
+      false,
+    );
+    expect(sources.publishImport).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain('private-grant-detail');
+  },
+);
+
+it('requires explicit Source reselection after refreshing a stale preview with a replacement pin', async () => {
+  const { sources, connection, choices, read } = fixture();
+  const replacement = structuredClone(read);
+  replacement.binding.configuration.version = 'v2';
+  replacement.binding.configuration.digest = '22'.repeat(32);
+  sources.previewImport.mockImplementationOnce(async () => {
+    sources.importChoices.mockResolvedValue({
+      ...choices,
+      access_version: choices.access_version + 1,
+      items: [replacement],
+    });
+    throw new ManagementApiError({
+      code: 'precondition_failed',
+      status: 412,
+      requestId: null,
+      retryAfterMilliseconds: null,
+      message: '',
+    });
+  });
+  await userEvent.click(await screen.findByRole('button', { name: 'Task sources' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Add task source' }));
+  await choose('Source connection', connection.definition.name);
+  await choose('Source profile', `${read.locator} · ${read.binding.configuration.identity} / v1`);
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Discover tasks automatically' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Preview tasks' }));
+  const alert = await screen.findByRole('alert');
+  expect(screen.getByRole('combobox', { name: 'Source profile' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await userEvent.click(within(alert).getByRole('button', { name: 'Retry' }));
+  await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+  expect(screen.getByRole('button', { name: 'Preview tasks' })).toHaveProperty('disabled', true);
+  expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await choose('Source profile', `${read.locator} · ${read.binding.configuration.identity} / v2`);
+  expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+    'disabled',
+    false,
+  );
+  expect(screen.getByRole('checkbox', { name: 'Discover tasks automatically' })).toHaveProperty(
+    'checked',
+    true,
+  );
+  expect(sources.publishImport).not.toHaveBeenCalled();
+});
+
 it('keeps an import draft through stale access and requires explicit profile selection and a fresh review after refresh', async () => {
   const { sources, connection, choices, read } = fixture();
   const replacement = {
@@ -535,6 +639,10 @@ for (const language of ['en', 'ru'] as const) {
       );
       expect(alert.textContent).not.toContain('private-provider-text');
       await userEvent.click(within(alert).getByRole('button', { name: text('query.retry') }));
+      if (code === 'precondition_failed') {
+        await waitFor(() => expect(screen.queryByRole('alert')).toBeNull());
+        await userEvent.click(screen.getByRole('button', { name: text('issueImport.preview') }));
+      }
       await screen.findByRole('region', { name: text('issueImport.previewTitle') });
       expect(screen.queryByRole('alert')).toBeNull();
       expect(sources.publishImport).not.toHaveBeenCalled();

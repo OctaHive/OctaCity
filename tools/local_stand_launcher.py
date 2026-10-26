@@ -23,6 +23,7 @@ import build_pinned_minio as minio_builder
 import configure_local_stand_agent as agent_configurator
 import configure_local_stand_server as server_configurator
 import init_local_stand as initializer
+import factory_integrations as integration_configurator
 import local_stand_lifecycle as lifecycle
 import local_stand_state as state
 import stage_local_stand_native as native_stager
@@ -363,6 +364,11 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
             factory_runtime_bundle=arguments.factory_runtime_bundle,
         )
         _build_images(native)
+        if arguments.github_repository is not None:
+            try:
+                integration_configurator.install_repository(root, arguments.github_repository)
+            except ValueError as error:
+                raise LocalStandError(str(error)) from error
         _run_compose(root, arguments.https_port, ("config", "--quiet"))
         try:
             _run_compose(
@@ -718,6 +724,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
         help="must match the gateway origin derived from --https-port",
     )
     up.add_argument("--openssl", default="openssl")
+    up.add_argument("--github-repository", help="explicit GitHub task resource; independent of Factory and its code Repository")
     up.add_argument(
         "--factory-profiles", type=Path,
         help="explicit private native Factory profile catalog; omitted disables Factory",

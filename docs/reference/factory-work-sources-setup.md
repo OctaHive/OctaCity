@@ -66,6 +66,11 @@ installed settings instead of treating an unknown description as editable.
 The released server can explicitly load the protected connection-management
 catalog described in [integration management contracts](integration-management-contracts.md#released-server-composition).
 For the personal stand, see the [GitHub installation command](../operations/local-stand.md#github-connections-in-the-personal-factory-stand).
+The normal launcher can generate the complete bounded Source/Issue consumer,
+optional preparation and Reporter installation from the trusted stand policy
+without private-file editing or a Factory target. Both Source-only and Factory
+demo setup reuse the same installation builder; current Project grants and
+published controls still determine each operation independently.
 Automatic input, preview and Reporter execution retain their separate installed
 profile contracts. Public composition types and the canonical native test
 installation are linked in the [example README](../../config/factory/work-sources/README.md).
@@ -141,6 +146,14 @@ unverified. A check does not mutate a label/state, grant access, activate pollin
 advance cursors, admit Work or refresh a task card. A throttled/unavailable response
 is not a successful empty source. Live write qualification uses the separate
 [opt-in disposable-repository procedure](github-work-source-live-qualification.md).
+
+The independent `/health/factory` scope checks protected Source route composition
+and supervised Issue import/refresh, Factory Source and Reporter consumers. Optional
+absence reports `disabled`; incomplete composition or unhealthy workers reports
+HTTP503 `unavailable`. Startup/readiness performs no provider request. Provider
+outages stay scoped to their diagnostics and do not block ordinary `/health/ready`
+or manual tasks/CI. `ready` and a successful access check alone do not establish
+that a task was imported, executed or delivered remotely.
 
 ## Configure and review automatic inputs
 

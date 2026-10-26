@@ -226,7 +226,8 @@ impl ServerRuntime {
         )
       })
       .transpose()
-      .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
+      .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?
+      .map(|worker| super::factory::install_source(worker, &mut resources.readiness));
     let ApplicationComponents {
       management: management_application,
       trigger_service,

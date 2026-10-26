@@ -14,7 +14,7 @@ pub(super) struct SourceConfigurationEndpoints {
 }
 impl IntegrationManagementApplication {
   /// Declares trusted installation intent independently of supplied handlers.
-  /// Omitting required handlers must fail scoped readiness, even when both are absent.
+  /// Requires both Source API families and retained dependency reads in normal installation.
   pub fn require_source_management(mut self) -> Self {
     self.source_management_required = true;
     self
@@ -22,10 +22,27 @@ impl IntegrationManagementApplication {
   /// Optional Source API installation health, independent of provider availability.
   /// A partial handler family is an assembly failure rather than optional absence.
   pub fn source_management_readiness(&self) -> Option<bool> {
-    match (self.source_management_required, &self.sources, &self.source_reads) {
-      (false, None, None) => None,
-      (_, Some(_), Some(_)) => Some(true),
-      _ => Some(false),
+    let factory = [self.sources.is_some(), self.source_reads.is_some()];
+    let project = [
+      self.project_source_choices.is_some(),
+      self.project_source_preview.is_some(),
+      self.project_source_imports.is_some(),
+    ];
+    if self.source_management_required {
+      Some(
+        factory.into_iter().all(|installed| installed)
+          && project.into_iter().all(|installed| installed)
+          && self.dependencies.is_some(),
+      )
+    } else if factory.into_iter().chain(project).any(|installed| installed) {
+      // Alternate installers may expose either complete family independently.
+      Some(
+        [factory.as_slice(), project.as_slice()]
+          .into_iter()
+          .all(|family| family.iter().all(|installed| *installed) || family.iter().all(|installed| !installed)),
+      )
+    } else {
+      None
     }
   }
   /// Installs independently authorized input authoring; no credential or provider execution capability is added.

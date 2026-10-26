@@ -709,7 +709,8 @@ async fn a_source_pass_deadline_bounds_revision_resolution_and_leaves_original_i
 async fn installed_source_polling_is_supervised_and_stops_with_the_runtime() {
   let fixture = Fixture::enabled("jira").await;
   let cancellation = CancellationToken::new();
-  let task = super::workers::spawn_factory_source_worker(Arc::new(fixture.worker()), cancellation.clone());
+  let installed = super::factory::install_source(Arc::new(fixture.worker()), &mut super::tests::healthy_checks());
+  let task = super::workers::spawn_factory_source_worker(installed, cancellation.clone());
   tokio::time::timeout(TEST_WAIT, async {
     while fixture.runs().await.is_empty() {
       tokio::time::sleep(Duration::from_millis(5)).await;

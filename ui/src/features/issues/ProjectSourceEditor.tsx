@@ -4,7 +4,12 @@ import { queryKeys } from '../../app/query';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { QueryFailureNotice } from '../../shared/QueryStateNotice';
-import { safeSourceError, sourceFailure, sourcePreviewFailure } from '../../shared/sourceErrors';
+import {
+  safeSourceError,
+  sourceFailure,
+  sourceNeedsRefresh,
+  sourcePreviewFailure,
+} from '../../shared/sourceErrors';
 import { sourceBindingKey } from '../../shared/sourceReferences';
 import type { components } from '../../../.generated/api/schema';
 import type { IssueSourcesApi } from './sourceApi';
@@ -62,10 +67,21 @@ export function ProjectSourceEditor({
   const latestRef = useRef(signature);
   latestRef.current = signature;
   const [preview, setPreview] = useState<{ signature: string; data: Preview } | null>(null);
-  const [error, setError] = useState<ReturnType<typeof safeSourceError> | null>(null);
+  const [error, setError] = useState<{
+    failure: ReturnType<typeof safeSourceError>;
+    refresh: boolean;
+  } | null>(null);
   const [pending, setPending] = useState(false);
+  // Refresh changed parents before preview or publication can use the draft again.
+  const refreshRequired = error?.refresh ?? false;
   const intent: IssueSourceImportIntent | null =
-    connection && selected && choices.data && ready && !choices.error && !choices.isFetching
+    connection &&
+    selected &&
+    choices.data &&
+    ready &&
+    !choices.error &&
+    !choices.isFetching &&
+    !refreshRequired
       ? {
           project_id: projectId,
           id,
@@ -96,13 +112,19 @@ export function ProjectSourceEditor({
     }
   }
   async function read() {
-    if (!connection || !selected || !choices.data || choices.error || choices.isFetching || pending)
-      return;
+    if (pending) return;
     const captured = signature;
     setPending(true);
-    setError(null);
-    setPreview(null);
     try {
+      if (refreshRequired) {
+        await onRefresh();
+        await choices.refetch({ throwOnError: true });
+        setError(null);
+        return;
+      }
+      if (!connection || !selected || !choices.data || choices.error || choices.isFetching) return;
+      setError(null);
+      setPreview(null);
       const data = await api.previewImport(projectId, {
         connection_id: connection.id,
         connection_version: connection.version,
@@ -112,7 +134,12 @@ export function ProjectSourceEditor({
       });
       if (latestRef.current === captured) setPreview({ signature: captured, data });
     } catch (failure) {
-      if (latestRef.current === captured) setError(safeSourceError(failure));
+      if (refreshRequired || latestRef.current === captured) {
+        setError({
+          failure: safeSourceError(failure),
+          refresh: refreshRequired || sourceNeedsRefresh(failure),
+        });
+      }
     } finally {
       setPending(false);
     }
@@ -142,6 +169,7 @@ export function ProjectSourceEditor({
       ) : null}
       <SelectMenu
         ariaLabel={t('issueSource.profile')}
+        disabled={refreshRequired}
         value={profile}
         options={[
           { value: '', label: t('issueSource.chooseProfile') },
@@ -160,7 +188,7 @@ export function ProjectSourceEditor({
       ) : null}
       <button
         type="button"
-        disabled={!selected || choices.isFetching || !!choices.error || pending}
+        disabled={!selected || choices.isFetching || !!choices.error || pending || refreshRequired}
         onClick={() => void read()}
       >
         {t('issueImport.preview')}
@@ -190,7 +218,7 @@ export function ProjectSourceEditor({
       {error ? (
         <QueryFailureNotice
           title={t('issueImport.preview')}
-          error={sourceFailure(error, t)}
+          error={sourceFailure(error.failure, t)}
           onRetry={read}
         />
       ) : null}

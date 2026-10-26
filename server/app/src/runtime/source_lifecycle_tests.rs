@@ -109,6 +109,9 @@ pub(super) async fn pause_import(
     .await
     .unwrap();
   assert_eq!(manual.status(), reqwest::StatusCode::CREATED);
+  // A stalled first consumer pass may be unready; ordinary CI/manual tasks remain available.
+  let ready = client.get("http://localhost/health/ready").send().await.unwrap();
+  assert_eq!(ready.status(), reqwest::StatusCode::OK);
   PausedImport { intent, original, runs }
 }
 

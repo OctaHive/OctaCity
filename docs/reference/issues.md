@@ -376,6 +376,10 @@ filters. They change discovery only; existing tasks, linked-task pull, Factory
 inputs and outgoing reporting keep their separate controls. Drafts and preview
 bodies stay in the mounted form. Transport retry reuses the frozen request and
 replay key; stale access/profile changes require refresh and another review.
+After a stale preview, **Retry** refreshes connections and Source choices while
+preserving the draft. Preview and publication wait for that refresh; if the
+original Source pin disappears, select its replacement explicitly before another
+preview or review. A failed refresh keeps the same recovery action available.
 Each fresh enable review resolves current Project access for the original
 connection version and exact Source/connection-configuration pins. It updates
 only the mutable access revision, preserving the import ID and filters.

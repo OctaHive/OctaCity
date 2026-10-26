@@ -21,6 +21,55 @@ impl WorkSourceObservations for NoSource {
 async fn source_router() -> axum::Router {
   source_router_with(Arc::new(NoSource), vec![]).await
 }
+
+#[tokio::test]
+async fn protected_source_readiness_requires_sync_commands_resolution_and_reporting_reads() {
+  let store = manual_issue_store(PROJECT.parse().unwrap()).await;
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let sources = Arc::new(IssueSourceHandlers::new(
+    store.clone(),
+    Arc::new(NoSource),
+    policy.clone(),
+    Arc::new(SystemFactoryExecutionClock),
+  ));
+  let queries = Arc::new(AuthorizedQueryHandler::new(policy.clone(), sources.clone()));
+  let commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), sources));
+  let resolver = Arc::new(AuthorizedCommandHandler::new(
+    policy.clone(),
+    Arc::new(resolution::Resolver::default()),
+  ));
+  let reporting = Arc::new(AuthorizedQueryHandler::new(policy, Arc::new(projections::Projections)));
+  for omitted in [Some("commands"), Some("resolution"), Some("reporting"), None] {
+    let mut sources =
+      octacity_server_api_rest::v1::IssueSourceManagementApplication::new(queries.clone()).with_protected_ingress(true);
+    if omitted != Some("commands") {
+      sources = sources.with_commands(commands.clone());
+    }
+    if omitted != Some("resolution") {
+      sources = sources.with_resolution(resolver.clone());
+    }
+    if omitted != Some("reporting") {
+      sources = sources.with_projection_queries(reporting.clone());
+    }
+    let peer = Arc::new(RecordingApplication::default());
+    let app = recording_management_application(peer.clone(), peer).with_issue_sources(sources);
+    let readiness = app.source_management_readiness();
+    let router = octacity_server_api_rest::factory_readiness_routes(move || readiness);
+    let response = router
+      .oneshot(Request::builder().uri("/health/factory").body(Body::empty()).unwrap())
+      .await
+      .unwrap();
+    assert_eq!(
+      response.status(),
+      if omitted.is_some() {
+        StatusCode::SERVICE_UNAVAILABLE
+      } else {
+        StatusCode::OK
+      },
+      "omitted {omitted:?}"
+    );
+  }
+}
 async fn source_router_with(
   reader: Arc<dyn WorkSourceObservations>,
   choices: Vec<InstalledIssueSourceMapping>,

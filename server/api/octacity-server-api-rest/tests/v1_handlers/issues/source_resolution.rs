@@ -2,7 +2,7 @@
 use super::*;
 type MappingOutcome = <ResolveIssueSourceConflictCommand as Command>::Outcome;
 #[derive(Default)]
-struct Resolver(Mutex<Vec<ResolveIssueSourceConflictCommand>>);
+pub(super) struct Resolver(Mutex<Vec<ResolveIssueSourceConflictCommand>>);
 #[async_trait]
 impl ManagementCommandUseCase<ResolveIssueSourceConflictCommand> for Resolver {
   type Error = ApplicationError;

@@ -21,7 +21,7 @@ use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, rea
 
 pub(super) struct DurableWorkers {
   pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
-  pub(super) managed_factory_source: Option<Arc<dyn super::FactorySourceRuntime>>,
+  pub(super) managed_factory_source: Option<super::factory::InstalledFactorySource>,
   pub(super) source_reporting: Option<super::source_reporting::InstalledSourceReporting>,
   pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
   pub(super) legacy_issues: Arc<PostgresStore>,
@@ -172,10 +172,7 @@ pub(super) fn spawn_durable_workers(
     let child = cancellation.child_token();
     spawn_worker_loop(
       WorkerIdentity::new("issue-source-read", WorkerKind::Factory),
-      Arc::new(WorkerHealth::new(
-        "issue-source-read",
-        settings.poll_interval().saturating_add(settings.claim_lifetime()),
-      )),
+      worker.health.clone(),
       settings.poll_interval(),
       settings.claim_lifetime(),
       child.clone(),
@@ -940,20 +937,18 @@ pub(super) fn spawn_factory_outbox_worker(
   )
 }
 
-// Source health is deliberately excluded from Factory admission readiness.
+// Only scoped readiness observes Source health; ordinary CI/manual admission remains independent.
 pub(super) fn spawn_factory_source_worker(
-  worker: Arc<dyn super::FactorySourceRuntime>,
+  installed: super::factory::InstalledFactorySource,
   cancellation: CancellationToken,
 ) -> JoinHandle<()> {
+  let super::factory::InstalledFactorySource { worker, health } = installed;
   let settings = worker.settings();
   let policy = settings.worker;
   let pass_cancel = cancellation.clone();
   spawn_worker_loop(
     WorkerIdentity::new("factory-source", WorkerKind::Factory).with_retry(policy.retry_policy()),
-    Arc::new(WorkerHealth::new(
-      "factory-source",
-      policy.poll_interval().saturating_add(policy.claim_lifetime()),
-    )),
+    health,
     policy.poll_interval(),
     policy.claim_lifetime(),
     cancellation,

@@ -629,7 +629,7 @@ pub(super) struct InstalledFactoryWorker {
   pub(super) owner: octacity_server_application::FactoryReconciler<PostgresStore>,
   pub(super) health: Arc<crate::readiness::WorkerHealth>,
   pub(super) outbox: Vec<InstalledFactoryOutbox>,
-  pub(super) work_sources: Option<Arc<dyn super::FactorySourceRuntime>>,
+  pub(super) work_sources: Option<InstalledFactorySource>,
   pub(super) tool_authorizer: Arc<dyn octacity_server_application::LeaseBoundToolActionAuthorizer>,
   pub(super) output_finalizer: Option<Arc<dyn octacity_server_application::AgentOutputFinalizer>>,
 }
@@ -638,6 +638,25 @@ pub(super) struct InstalledFactoryWorker {
 pub(super) struct InstalledFactoryOutbox {
   pub(super) dispatcher: Arc<dyn octacity_server_application::FactoryOutboxDispatcher>,
   pub(super) health: Arc<crate::readiness::WorkerHealth>,
+}
+
+/// A Source consumer shares one health signal with scoped readiness and supervision.
+pub(super) struct InstalledFactorySource {
+  pub(super) worker: Arc<dyn super::FactorySourceRuntime>,
+  pub(super) health: Arc<crate::readiness::WorkerHealth>,
+}
+
+pub(super) fn install_source(
+  worker: Arc<dyn super::FactorySourceRuntime>,
+  readiness: &mut crate::readiness::ReadinessChecks,
+) -> InstalledFactorySource {
+  let policy = worker.settings().worker;
+  let health = Arc::new(crate::readiness::WorkerHealth::new(
+    "factory-source",
+    policy.poll_interval().saturating_add(policy.claim_lifetime()),
+  ));
+  readiness.push_factory(health.clone());
+  InstalledFactorySource { worker, health }
 }
 
 pub(super) fn install_outbox(
@@ -755,7 +774,9 @@ pub(super) async fn assemble(
         health,
         outbox: install_outbox(installed.outbox_dispatchers, policy, &mut resources.readiness),
         output_finalizer: installed.output_finalizer,
-        work_sources: installed.work_sources,
+        work_sources: installed
+          .work_sources
+          .map(|worker| install_source(worker, &mut resources.readiness)),
         tool_authorizer: installed
           .tool_authorizer
           .unwrap_or_else(|| Arc::new(octacity_server_application::FailClosedToolActionAuthorizer)),

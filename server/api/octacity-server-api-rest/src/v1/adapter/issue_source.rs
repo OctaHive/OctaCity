@@ -28,6 +28,9 @@ struct IssueSourceCommands {
   pull: Arc<dyn AuthorizedManagementCommandHandler<SetIssueSourcePullCommand, Error = ApplicationError>>,
 }
 impl IssueSourceManagementApplication {
+  pub(super) fn is_complete(&self) -> bool {
+    self.commands.is_some() && self.resolution.is_some() && self.projections.is_some()
+  }
   /// Uses retained reads, even when no provider capability is installed.
   pub fn new<Q>(queries: Arc<Q>) -> Self
   where

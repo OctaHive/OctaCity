@@ -28,7 +28,7 @@ pub(super) fn request_context(principal: &str) -> ManagementRequestContext {
 }
 
 // Handler composition is static; provider availability belongs to consumer diagnostics.
-struct SourceManagementReadiness(bool);
+pub(super) struct SourceManagementReadiness(pub(super) bool);
 #[async_trait::async_trait]
 impl crate::readiness::ReadinessCheck for SourceManagementReadiness {
   fn name(&self) -> &'static str {
@@ -393,10 +393,9 @@ pub(super) async fn install(
       application = application
         .with_project_source_choices(project_queries.clone())
         .with_project_source_preview(project_queries);
-      source_reads = Some(super::issue_source_worker::IssueSourceWorker::new(
-        sources.clone(),
-        &local.principal,
-      ));
+      let worker = super::issue_source_worker::IssueSourceWorker::new(sources.clone(), &local.principal);
+      readiness.push_factory(worker.health.clone());
+      source_reads = Some(worker);
       let sources = Arc::new(InstalledFactorySourceHandlers::new(sources));
       application = application
         .with_source_configuration(
@@ -405,9 +404,6 @@ pub(super) async fn install(
         )
         .with_source_reads(Arc::new(AuthorizedQueryHandler::new(policy, sources)));
     }
-  }
-  if let Some(ready) = application.source_management_readiness() {
-    readiness.push_factory(Arc::new(SourceManagementReadiness(ready)));
   }
   Ok(Some(InstalledIntegrationManagement {
     application,
