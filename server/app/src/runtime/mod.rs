@@ -54,6 +54,8 @@ mod source_factory_predicate_tests;
 #[cfg(all(test, unix))]
 mod source_factory_refresh_tests;
 #[cfg(all(test, unix))]
+mod source_factory_restart_tests;
+#[cfg(all(test, unix))]
 mod source_factory_tests;
 #[cfg(all(test, unix))]
 mod source_import_tests;

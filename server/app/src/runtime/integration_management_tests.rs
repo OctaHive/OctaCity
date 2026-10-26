@@ -478,7 +478,9 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   )
   .await;
   super::source_factory_tests::assert_disabled_profile_is_ignored(&config, database.pool.clone(), &published).await;
-  super::source_factory_tests::assert_factory_intake(
+  let runtime = super::source_factory_tests::assert_factory_intake(
+    runtime,
+    &config,
     &client,
     &database.pool,
     project_id,

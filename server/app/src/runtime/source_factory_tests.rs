@@ -2,12 +2,14 @@
 use serde_json::{Value, json};
 
 pub(super) async fn assert_factory_intake(
+  mut runtime: super::ServerRuntime,
+  config: &crate::ServerConfig,
   client: &reqwest::Client,
   pool: &sqlx::PgPool,
   project: &str,
   published: &Value,
   provider: &std::path::Path,
-) {
+) -> super::ServerRuntime {
   let base = format!("http://localhost/api/v1/projects/{project}");
   let tasks_before: Value = client
     .get(format!("{base}/issues"))
@@ -49,6 +51,9 @@ pub(super) async fn assert_factory_intake(
     intent["inputs"][0]["definition"]["enabled"] = json!(true);
     let path = format!("{base}/factory-source-inputs/{id}/versions");
     diagnostics_path = format!("{path}/1/diagnostics");
+    if index == 0 {
+      super::source_factory_restart_tests::interrupt_admission_checkpoint(pool).await;
+    }
     let response = client
       .post(&path)
       .header("idempotency-key", format!("normal-factory-intake.{index}"))
@@ -63,6 +68,18 @@ pub(super) async fn assert_factory_intake(
       "{}",
       response.text().await.unwrap()
     );
+    if index == 0 {
+      runtime = super::source_factory_restart_tests::assert_admission_restart(
+        runtime,
+        config,
+        client,
+        pool,
+        project,
+        &diagnostics_path,
+        provider,
+      )
+      .await;
+    }
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
     let diagnostics = loop {
       let diagnostics: Value = client
@@ -225,6 +242,7 @@ pub(super) async fn assert_factory_intake(
   assert_late_import(client, &base, published, &no_card_works).await;
   assert_retired_run_does_not_consume_a_diagnostic_page(client, pool, &diagnostics_path).await;
   std::fs::write(mode_path, original).unwrap();
+  runtime
 }
 
 async fn assert_retired_run_does_not_consume_a_diagnostic_page(
