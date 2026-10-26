@@ -235,6 +235,9 @@ impl ServerRuntime {
       webhook_verifier,
       webhook_provider,
     } = management_application(ApplicationAssembly {
+      management_policy: super::integration_management::management_policy(
+        config.integration_management().map(|local| local.principal.as_str()),
+      ),
       issue_integrations,
       managed_issue_sources,
       store: registration_store.clone(),

@@ -16,8 +16,13 @@ REST client served by the documented same-origin reverse proxy and sends
 management requests with browser credentials omitted. There is no login,
 session, operator identity, logout, RBAC, ABAC, or supported cross-origin
 browser deployment in v1. Any browser or headless client that can reach the
-management listener receives the canonical anonymous trusted-network context,
-so network admission to that origin is equivalent to management access.
+TCP management listener receives the canonical anonymous trusted-network context,
+so network admission to that origin is equivalent to management access. An optional
+authenticated local proxy transport retains its configured verified principal and
+security scope on ordinary management operations as well as integration routes.
+The runtime authorizes that configured principal through the existing local policy;
+browser headers cannot establish this identity. Keeping one scope lets an explicit
+Issue transition retain its original managed native link and reviewed push mapping.
 
 ## Prerequisites
 

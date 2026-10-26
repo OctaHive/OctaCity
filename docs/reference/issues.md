@@ -272,6 +272,15 @@ Issue transition or accepted Factory result. Profiles carrying
 `ManagedIntegrationAccess` retain its current TaskUpdate checks before each
 process invocation; a Source read grant does not supply writer credentials.
 
+Normal installed Source/Reporter startup delivers an explicitly reviewed manual
+Issue-status push through that same ordered worker without a Factory Configuration
+or Run. The verified proxy's identity/scope is preserved on the local transition,
+so its original native link and writer grant remain in the same partition. Delivery
+preserves unrelated labels and the accepted local Issue status. A missing push
+mapping or read-only/source-owned pull produces no outbound effect; incoming status
+echoes retain the current revision. Safe Reporter receipts remain visible while
+retrying and after delivery/failure, independently of local transition success.
+
 Migration 0085 resumes original pre-5.2 desired material in bounded atomic batches
 without reconstructing legacy intents from current links or mappings. Repeated
 migration is idempotent. Readiness also detects an unfinished publication phase;

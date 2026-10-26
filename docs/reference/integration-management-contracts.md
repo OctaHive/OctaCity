@@ -30,6 +30,13 @@ headers are optional in OpenAPI because the required choice depends on the inten
 Checks, validation and preview need neither mutation header. Integration operations
 require verified protected ingress; setting a browser header does not supply that proof.
 
+The verified local proxy's actor and security scope also accompany ordinary Issue
+and workflow commands. A manual status transition and its Source mapping therefore
+use the same retained partition. The normal runtime accepts the configured verified
+proxy through its existing local policy while retaining canonical trusted-network
+access for ordinary TCP management. Integration administration still requires
+protected ingress and its separate policy.
+
 ## Console setup and discovery
 
 ### Released server composition

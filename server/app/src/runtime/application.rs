@@ -20,8 +20,8 @@ use octacity_server_application::{
   JobEventLongPoll, JobSpecToolchainPolicy, ManagementAuthorizationPolicy, ManagementOperationalMetadataProjection,
   ManualTriggerRetryWorker, ManualTriggerService, OperationalMetadataQueries, OperatorAttentionHandlers,
   PipelineHandlers, ProjectHandlers, ResourceSearchHandlers, RevisionResolver, ScheduleHandlers,
-  StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext, TrustedNetworkManagementPolicy,
-  WebhookDeliveryVerifier, WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
+  StoreBackedEffectiveProjectPolicySource, StoreBackedManualTriggerContext, WebhookDeliveryVerifier,
+  WebhookIngressService, WebhookManagementProvider, WebhookManagementService,
 };
 use octacity_server_store_postgres::{PostgresAuthoritativeStore, PostgresLogSearchIndex, PostgresStore};
 use octacity_server_webhook::WebhookAdapterRegistry;
@@ -52,6 +52,7 @@ type WebhookHostConfiguration = (
 );
 
 pub(super) struct ApplicationAssembly {
+  pub(super) management_policy: Arc<dyn ManagementAuthorizationPolicy>,
   pub(super) managed_issue_sources: Option<super::integration_management::ManagedIssueSources>,
   pub(super) issue_integrations: super::IssueRuntimeIntegrations,
   pub(super) store: Arc<PostgresStore>,
@@ -77,6 +78,7 @@ pub(super) fn management_application(
   assembly: ApplicationAssembly,
 ) -> Result<ApplicationComponents, ServerRuntimeError> {
   let ApplicationAssembly {
+    management_policy,
     managed_issue_sources,
     issue_integrations,
     store,
@@ -160,7 +162,6 @@ pub(super) fn management_application(
   let audit = Arc::new(AuditQueries::new(store.clone()));
   let resource_search = Arc::new(ResourceSearchHandlers::new(store.clone()));
   let operator_attention = Arc::new(OperatorAttentionHandlers::new(store.clone()));
-  let management_policy: Arc<dyn ManagementAuthorizationPolicy> = Arc::new(TrustedNetworkManagementPolicy);
   let workflows = Arc::new(octacity_server_application::IssueWorkflowHandlers::new(store.clone()));
   let workflow_commands = authorized_commands(&management_policy, workflows.clone());
   let workflow_queries = authorized_queries(&management_policy, workflows);

@@ -115,6 +115,38 @@ struct CredentialTarget {
 struct LocalIntegrationPolicy {
   principal: String,
 }
+/// Ordinary management retains the acknowledged network mode and the configured verified proxy.
+/// Protected integration routes continue to use LocalIntegrationPolicy alone.
+pub(super) fn management_policy(principal: Option<&str>) -> Arc<dyn ManagementAuthorizationPolicy> {
+  Arc::new(RuntimeManagementPolicy {
+    local: principal.map(|principal| LocalIntegrationPolicy {
+      principal: principal.into(),
+    }),
+  })
+}
+struct RuntimeManagementPolicy {
+  local: Option<LocalIntegrationPolicy>,
+}
+#[async_trait::async_trait]
+impl ManagementAuthorizationPolicy for RuntimeManagementPolicy {
+  async fn authorize(
+    &self,
+    context: &ManagementRequestContext,
+    action: ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<ManagementAuthorizationGrant, ManagementAuthorizationDenial> {
+    if let Ok(grant) = TrustedNetworkManagementPolicy
+      .authorize(context, action, resource)
+      .await
+    {
+      return Ok(grant);
+    }
+    match &self.local {
+      Some(local) => local.authorize(context, action, resource).await,
+      None => Err(ManagementAuthorizationDenial::forbidden()),
+    }
+  }
+}
 #[async_trait::async_trait]
 impl ManagementAuthorizationPolicy for LocalIntegrationPolicy {
   async fn authorize(

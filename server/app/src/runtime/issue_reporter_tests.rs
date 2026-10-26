@@ -177,6 +177,59 @@ async fn issue_reporter_resolver_preserves_an_explicit_connection_pin_against_an
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn issue_reporter_receipts_remain_visible_after_retry_and_delivery() {
+  let (fixture, database, store) = standalone("receipt-history-tracker").await;
+  let (_, profile, command) = manual_issue(&store, &fixture).await;
+  let accepted = store
+    .transition_issue(management_mutation(command))
+    .await
+    .unwrap()
+    .issue;
+  let scope = octacity_server_store::ManagementSecurityScope::trusted_network();
+  let pending = store
+    .issue_push_projections(accepted.project_id, accepted.id, &scope, None, 20)
+    .await
+    .unwrap();
+  assert_eq!(pending.len(), 1);
+  let operation = pending[0].record.operation_id;
+  let mode = fixture.root.path().join("receipt-history-tracker/reporter-mode.json");
+  std::fs::write(&mode, br#"{"failure":{"class":"transient","retry_after_millis":null}}"#).unwrap();
+  let worker = issue_worker(&fixture, store.clone(), vec![profile]);
+  fixture.clock.0.store(120, Ordering::SeqCst);
+  assert_eq!(worker.run_once(time(120)).await.unwrap().retrying, 1);
+  let retrying = store
+    .issue_push_projections(accepted.project_id, accepted.id, &scope, None, 20)
+    .await
+    .unwrap();
+  assert_eq!(retrying.len(), 1, "retrying accepted effects must stay visible");
+  assert_eq!(retrying[0].record.operation_id, operation);
+  assert_eq!(retrying[0].record.attempt, 1);
+  std::fs::write(&mode, "{}").unwrap();
+  fixture.clock.0.store(220, Ordering::SeqCst);
+  assert_eq!(worker.run_once(time(220)).await.unwrap().delivered, 1);
+  let delivered = store
+    .issue_push_projections(accepted.project_id, accepted.id, &scope, None, 20)
+    .await
+    .unwrap();
+  assert_eq!(
+    delivered.len(),
+    1,
+    "delivery cannot remove the retained receipt from task history"
+  );
+  assert_eq!(delivered[0].record.operation_id, operation);
+  assert_eq!(delivered[0].record.state, FactoryOutboxState::Delivered);
+  assert!(
+    store
+      .issue_push_projections(accepted.project_id, accepted.id, &scope, Some(operation), 20)
+      .await
+      .unwrap()
+      .is_empty()
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn manual_issue_push_recovers_unknown_response_without_a_run_or_retargeting() {
   let (fixture, database, store) = standalone("opaque-tracker").await;
   let project = fixture.input.project_id();

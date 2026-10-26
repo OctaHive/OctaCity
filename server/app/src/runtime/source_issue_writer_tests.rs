@@ -1,6 +1,9 @@
 //! Protected Issue choices use the same installed Reporter and independent live grants.
 use super::*;
 
+#[path = "source_issue_delivery_tests.rs"]
+mod delivery;
+
 #[tokio::test]
 #[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
 async fn normal_issue_choices_expose_only_the_independently_granted_installed_writer() {
