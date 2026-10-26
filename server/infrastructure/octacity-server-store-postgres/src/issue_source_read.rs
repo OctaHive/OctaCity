@@ -34,6 +34,38 @@ async fn save(
 }
 #[async_trait::async_trait]
 impl IssueSourceReadStore for PostgresStore {
+  async fn active_issue_source_reads(
+    &self,
+    scope: &ManagementSecurityScope,
+    after: Option<(ProjectId, octacity_server_domain::IssueId)>,
+    limit: u16,
+  ) -> Result<Vec<(ProjectId, IssueSourceReadTarget)>, StoreError> {
+    if !(1..=MAX_SOURCE_POLL_PAGE_ITEMS).contains(&limit) {
+      return Err(source_conflict());
+    }
+    let rows:Vec<(sqlx::types::Json<IssueSourceLink>,Option<sqlx::types::Json<PublishedIssueSourceMapping>>)> = sqlx::query_as(
+      "SELECT l.document,m.document FROM issue_source_links l JOIN issue_source_refresh r USING(project_id,issue_id) LEFT JOIN LATERAL (SELECT document FROM issue_source_mappings WHERE project_id=l.project_id AND issue_id=l.issue_id ORDER BY version DESC LIMIT 1) m ON TRUE WHERE l.security_scope=$1 AND (r.document->>'enabled')::boolean AND l.document->'selection'->'connection' IS NOT NULL AND ($2::uuid IS NULL OR (l.project_id,l.issue_id)>($2,$3)) ORDER BY l.project_id,l.issue_id LIMIT $4"
+    ).bind(scope.as_str()).bind(after.map(|v|v.0.as_uuid())).bind(after.map(|v|v.1.as_uuid())).bind(i64::from(limit))
+      .fetch_all(self.pool()).await.map_err(unavailable)?;
+    Ok(
+      rows
+        .into_iter()
+        .map(|(sqlx::types::Json(link), mapping)| {
+          (
+            link.selection.project_id,
+            IssueSourceReadTarget {
+              source: mapping.map_or(link.selection.source, |m| m.0.definition.source),
+              issue_id: Some(link.issue_id),
+              connection: link.selection.connection,
+              import: None,
+              pull_generation: 0,
+            },
+          )
+        })
+        .collect(),
+    )
+  }
+
   async fn claim_issue_source_read(
     &self,
     scope: &ManagementSecurityScope,
@@ -116,11 +148,7 @@ pub(super) async fn require_claim(
 ) -> Result<(), StoreError> {
   if claim.project_id != selection.project_id
     || claim.target.source != selection.source
-    || claim
-      .target
-      .import
-      .as_ref()
-      .is_some_and(|i| selection.connection.as_ref() != Some(&i.definition.connection))
+    || (claim.target.read_connection().is_some() && claim.target.read_connection() != selection.connection.as_ref())
     || claim.target.issue_id.is_some_and(|id| Some(id) != issue)
   {
     return Err(source_conflict());
@@ -140,17 +168,26 @@ async fn read_generation(
 ) -> Result<Option<u64>, StoreError> {
   use sqlx::types::Json;
   if let Some(import) = &target.import {
-    if target.issue_id.is_some() || import.project_id != project || import.definition.source != target.source {
+    if target.connection.is_some()
+      || target.issue_id.is_some()
+      || import.project_id != project
+      || import.definition.source != target.source
+    {
       return Err(source_conflict());
     }
     let current = crate::issue_source_import::read(connection, project, scope, import.id, None).await?;
     return Ok((current == *import && current.definition.enabled).then_some(current.version.get()));
   }
   let Some(issue) = target.issue_id else {
+    if target.connection.is_some() {
+      return Err(source_conflict());
+    }
     return Ok(Some(0));
   };
   let (Json(link),Json(state)):(Json<IssueSourceLink>,Json<IssueSourceRefreshState>)=sqlx::query_as("SELECT l.document,r.document FROM issue_source_links l JOIN issue_source_refresh r USING(project_id,issue_id) WHERE l.project_id=$1 AND l.issue_id=$2 AND l.security_scope=$3 FOR SHARE OF r").bind(project.as_uuid()).bind(issue.as_uuid()).bind(scope.as_str()).fetch_optional(connection).await.map_err(unavailable)?.ok_or_else(source_conflict)?;
-  if link.selection.source.installation.identity() != target.source.installation.identity() {
+  if link.selection.connection != target.connection
+    || link.selection.source.installation.identity() != target.source.installation.identity()
+  {
     return Err(source_conflict());
   }
   Ok(state.enabled.then_some(state.generation))

@@ -191,8 +191,8 @@ impl ServerRuntime {
       &mut resources.readiness,
     )
     .await?;
-    let (integrations, source_imports, managed_issue_sources) =
-      installed_integrations.map_or((None, None, None), |i| (Some(i.application), i.imports, i.issues));
+    let (integrations, source_reads, managed_issue_sources) =
+      installed_integrations.map_or((None, None, None), |i| (Some(i.application), i.source_reads, i.issues));
     let ApplicationComponents {
       management: management_application,
       trigger_service,
@@ -428,7 +428,7 @@ impl ServerRuntime {
         management_application: Some(management_application),
         webhook_router,
         workers: Some(DurableWorkers {
-          source_imports,
+          source_reads,
           factory,
           legacy_issues: registration_store.clone(),
           actions: octacity_server_application::FactoryActionProjectionWorker::new(registration_store.clone()),

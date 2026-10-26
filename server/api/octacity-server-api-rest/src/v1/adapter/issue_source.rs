@@ -351,6 +351,7 @@ pub(super) async fn preview(
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct AttachRequest {
+  connection: Option<octacity_server_application::WorkSourceConnectionRef>,
   source: octacity_server_application::WorkSourceBinding,
   item: octacity_server_application::WorkSourceItem,
   expected_field_policy: octacity_server_application::IssueFieldPolicy,
@@ -374,7 +375,7 @@ pub(super) async fn attach(
   let invalid = || application_error(ApplicationFailure::Invalid, &id);
   let project_id = project.parse().map_err(|_| invalid())?;
   let issue_id = issue.parse().map_err(|_| invalid())?;
-  let read = read_request(
+  let mut read = read_request(
     project_id,
     issue_id,
     request.source.clone(),
@@ -382,6 +383,7 @@ pub(super) async fn attach(
     request.scan_id,
     request.continuation,
   );
+  read.connection = request.connection.clone();
   let services = app
     .issue_sources
     .as_ref()
@@ -394,7 +396,7 @@ pub(super) async fn attach(
       AttachIssueSourceCommand {
         intent: AttachIssueSourceIntent {
           selection: IssueSourceSelection {
-            connection: None,
+            connection: request.connection,
             project_id,
             source: request.source,
             item: request.item,

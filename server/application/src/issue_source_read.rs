@@ -22,17 +22,23 @@ pub struct IssueSourceRefreshPolicy {
   /// Positive finite lease; a crashed HTTP reader cannot retain ownership indefinitely.
   pub claim_lifetime: std::time::Duration,
 }
-impl<S> IssueSourceHandlers<S> {
-  /// Enables resumable card reads using the existing Source progress journal.
-  pub fn with_refresh_policy(mut self, policy: IssueSourceRefreshPolicy) -> Result<Self, ApplicationError> {
-    policy.read.polling.validate()?;
-    if policy.read.poll_interval_millis == 0
-      || policy.read.poll_interval_millis > i64::MAX as u64
-      || policy.claim_lifetime.is_zero()
-      || policy.claim_lifetime.as_millis() > i64::MAX as u128
+impl IssueSourceRefreshPolicy {
+  fn validate(&self) -> Result<(), ApplicationError> {
+    self.read.polling.validate()?;
+    if self.read.poll_interval_millis == 0
+      || self.read.poll_interval_millis > i64::MAX as u64
+      || self.claim_lifetime.is_zero()
+      || self.claim_lifetime.as_millis() > i64::MAX as u128
     {
       return Err(ApplicationError::invalid());
     }
+    Ok(())
+  }
+}
+impl<S> IssueSourceHandlers<S> {
+  /// Enables resumable card reads using the existing Source progress journal.
+  pub fn with_refresh_policy(mut self, policy: IssueSourceRefreshPolicy) -> Result<Self, ApplicationError> {
+    policy.validate()?;
     self.refresh_policy = Some(policy);
     Ok(self)
   }
@@ -123,12 +129,7 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
       .read(
         self.context,
         ReadWorkSourceObservations {
-          connection: self
-            .claim
-            .target
-            .import
-            .as_ref()
-            .map(|i| i.definition.connection.clone()),
+          connection: self.claim.target.read_connection().cloned(),
           project_id: self.claim.project_id,
           source: self.claim.target.source.clone(),
           scan_id: request.scan_id,
@@ -145,12 +146,7 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
     let mut candidates = Vec::new();
     for observation in page.observations {
       let selection = IssueSourceSelection {
-        connection: self
-          .claim
-          .target
-          .import
-          .as_ref()
-          .map(|i| i.definition.connection.clone()),
+        connection: self.claim.target.read_connection().cloned(),
         project_id: self.claim.project_id,
         source: self.claim.target.source.clone(),
         item: observation.snapshot.item.clone(),
@@ -193,12 +189,7 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
     }
     // Project/profile come from the original fence; native identity is already in the snapshot.
     let selection = IssueSourceSelection {
-      connection: self
-        .claim
-        .target
-        .import
-        .as_ref()
-        .map(|i| i.definition.connection.clone()),
+      connection: self.claim.target.read_connection().cloned(),
       project_id: self.claim.project_id,
       source: self.claim.target.source.clone(),
       item: candidate.snapshot.item.clone(),
@@ -210,7 +201,7 @@ impl<S: IssueSourceReadStore> SourcePollingSession for IssueReadSession<'_, S> {
         self.context,
         self.claim.project_id,
         self.claim.target.source.clone(),
-        self.claim.target.import.as_ref().map(|i| &i.definition.connection),
+        self.claim.target.read_connection(),
       )
       .await?;
     let at = inner.clock.now()?;
@@ -464,7 +455,7 @@ impl<S: IssueSourceReadStore> IssueSourceHandlers<S> {
     &self,
     context: &ManagementRequestContext,
     grant: &ManagementAuthorizationGrant,
-    command: RefreshIssueSourceCommand,
+    mut command: RefreshIssueSourceCommand,
   ) -> Result<octacity_server_store::IssueSourceRefreshOutcome, ApplicationError> {
     crate::issue::visible_issue(grant, command.issue_id)?;
     self.visible(context, command.issue_id).await?;
@@ -479,6 +470,10 @@ impl<S: IssueSourceReadStore> IssueSourceHandlers<S> {
     {
       return Err(ApplicationError::invalid());
     }
+    if command.read.connection.is_some() && command.read.connection != link.selection.connection {
+      return Err(ApplicationError::invalid());
+    }
+    command.read.connection = link.selection.connection.clone();
     let selection = IssueSourceSelection {
       source: command.read.source.clone(),
       ..link.selection
@@ -513,12 +508,22 @@ impl<S: IssueSourceReadStore> IssueSourceHandlers<S> {
     }
     self
       .reader
-      .authorize(context, command.project_id, command.read.source.clone())
+      .authorize_connection(
+        context,
+        command.project_id,
+        command.read.source.clone(),
+        selection.connection.as_ref(),
+      )
       .await?;
-    let policy = self
-      .refresh_policy
-      .as_ref()
-      .ok_or_else(ApplicationError::capability_unavailable)?;
+    let policy = if let Some(provider) = &self.source_profile_provider {
+      provider.refresh_policy(context, &selection).await?
+    } else {
+      self
+        .refresh_policy
+        .clone()
+        .ok_or_else(ApplicationError::capability_unavailable)?
+    };
+    policy.validate()?;
     let now = self.clock.now()?;
     let until = Timestamp::from_unix_millis(
       now
@@ -544,6 +549,7 @@ impl<S: IssueSourceReadStore> IssueSourceHandlers<S> {
             pull_generation: 0,
             source: command.read.source.clone(),
             issue_id: Some(command.issue_id),
+            connection: selection.connection.clone(),
           },
           owner: format!("issue-refresh.{digest}")
             .parse()

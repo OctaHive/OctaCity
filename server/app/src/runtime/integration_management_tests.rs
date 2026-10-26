@@ -340,8 +340,41 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
     &registry.join("custom-provider"),
   )
   .await;
-  let imported =
-    super::source_import_tests::assert_normal_import_creates_task(&client, project_id, &task_choices).await;
+  let imported = super::source_import_tests::assert_normal_import_creates_task(
+    &client,
+    project_id,
+    &task_choices,
+    &registry.join("custom-provider"),
+  )
+  .await;
+  super::source_overlap_tests::set_budget_import(&client, &imported["intent"], true).await;
+  runtime.shutdown().await.unwrap();
+  super::source_overlap_tests::assert_pass_budget(&config, database.pool.clone(), &profiles).await;
+  let runtime = ServerRuntime::start(config.clone()).await.unwrap();
+  super::source_overlap_tests::set_budget_import(&client, &imported["intent"], false).await;
+  super::source_overlap_tests::pause_retained_reads(&client, project_id).await;
+  runtime.shutdown().await.unwrap();
+  // Drain old observations before the controlled two-server provider barrier.
+  let runtime = ServerRuntime::start(config.clone()).await.unwrap();
+  let secondary_socket = root.path().join("secondary-management.sock");
+  let secondary_extra = extra.replace(socket.to_str().unwrap(), secondary_socket.to_str().unwrap());
+  let secondary_config = crate::ServerConfig::parse_toml(&super::test_runtime_config::runtime_config_source(
+    root.path(),
+    url.as_str(),
+    "http://127.0.0.1:9",
+    &secondary_extra,
+  ))
+  .unwrap();
+  let secondary = ServerRuntime::start(secondary_config).await.unwrap();
+  super::source_overlap_tests::assert_overlapping_imports(
+    &client,
+    &database.pool,
+    project_id,
+    &task_choices,
+    &registry.join("custom-provider"),
+  )
+  .await;
+  secondary.shutdown().await.unwrap();
   assert!(imported["issue"]["id"].is_string());
   assert_eq!(
     reqwest::Client::new()

@@ -209,7 +209,7 @@ pub(super) struct ManagedIssueSources {
 pub(super) struct InstalledIntegrationManagement {
   pub(super) issues: Option<ManagedIssueSources>,
   pub(super) application: IntegrationManagementApplication,
-  pub(super) imports: Option<super::source_import::SourceImportWorker>,
+  pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
 }
 pub(super) async fn install(
   config: &crate::ServerConfig,
@@ -283,7 +283,7 @@ pub(super) async fn install(
       Arc::new(AuthorizedCommandHandler::new(policy.clone(), access.clone())),
       Arc::new(AuthorizedQueryHandler::new(policy.clone(), access)),
     );
-  let mut imports = None;
+  let mut source_reads = None;
   let mut issues = None;
   if let Some(path) = &catalog.source_profiles_file {
     application = application.require_source_management();
@@ -317,6 +317,11 @@ pub(super) async fn install(
     };
     let mut project_sources =
       IssueSourceHandlers::new(store, reader, policy.clone(), Arc::new(SystemFactoryExecutionClock));
+    let source_profile_provider: Arc<dyn IssueSourceProfileProvider> = match &sources {
+      Some(sources) => Arc::new(super::source_management::IssueSourceChoiceProvider(sources.clone())),
+      None => Arc::new(super::source_management::UnavailableIssueSourceProfiles),
+    };
+    project_sources = project_sources.with_source_profile_provider(source_profile_provider);
     if let Some(sources) = &sources {
       project_sources = project_sources.with_project_source_profiles(Arc::new(
         super::source_management::IssueSourceChoiceProvider(sources.clone()),
@@ -336,7 +341,7 @@ pub(super) async fn install(
       application = application
         .with_project_source_choices(project_queries.clone())
         .with_project_source_preview(project_queries);
-      imports = Some(super::source_import::SourceImportWorker::new(
+      source_reads = Some(super::issue_source_worker::IssueSourceWorker::new(
         sources.clone(),
         &local.principal,
       ));
@@ -354,7 +359,7 @@ pub(super) async fn install(
   }
   Ok(Some(InstalledIntegrationManagement {
     application,
-    imports,
+    source_reads,
     issues,
   }))
 }

@@ -144,6 +144,27 @@ impl SourceManagement {
     connection: &octacity_server_factory::WorkSourceConnectionRef,
     deadline: tokio::time::Instant,
   ) -> Result<super::WorkSourceReadProfile, ApplicationError> {
+    self
+      .observation_profiles(context, project, connection, deadline)
+      .await?
+      .into_iter()
+      .find(|(_, profile)| profile.binding == *source)
+      .map(|(_, profile)| profile)
+      .ok_or_else(ApplicationError::capability_unavailable)
+  }
+  async fn observation_profiles(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    connection: &octacity_server_factory::WorkSourceConnectionRef,
+    deadline: tokio::time::Instant,
+  ) -> Result<
+    Vec<(
+      &super::source_profiles_file::SourceReadDeclaration,
+      super::WorkSourceReadProfile,
+    )>,
+    ApplicationError,
+  > {
     use octacity_server_store::IntegrationConnectionStore;
     let dependency = |class| ApplicationError::SourceDependency {
       class,
@@ -158,7 +179,7 @@ impl SourceManagement {
     if metadata.version != connection.version {
       return Err(ApplicationError::capability_unavailable());
     }
-    let mut selected = None;
+    let mut selected = Vec::new();
     for declaration in &self.profiles.readers {
       if declaration.read.installation != metadata.definition.installation
         || declaration.read.plugin != metadata.definition.adapter
@@ -173,12 +194,9 @@ impl SourceManagement {
       }
       let mut profile = declaration.observation_profile(project, context.clone())?;
       profile.binding = project_issue_source_binding(profile.binding, project, connection.id, connection.version)?;
-      if profile.binding == *source {
-        selected = Some(profile);
-        break;
-      }
+      selected.push((declaration, profile));
     }
-    selected.ok_or_else(ApplicationError::capability_unavailable)
+    Ok(selected)
   }
   async fn observation_reader(
     &self,
@@ -252,5 +270,81 @@ impl WorkSourceObservations for SourceManagement {
       )
       .await?;
     reader.read(context, request).await
+  }
+}
+
+#[async_trait::async_trait]
+impl IssueSourceProfileProvider for IssueSourceChoiceProvider {
+  async fn refresh_policy(
+    &self,
+    context: &ManagementRequestContext,
+    selection: &IssueSourceSelection,
+  ) -> Result<IssueSourceRefreshPolicy, ApplicationError> {
+    let connection = selection
+      .connection
+      .as_ref()
+      .ok_or_else(ApplicationError::capability_unavailable)?;
+    let profile = self
+      .0
+      .observation_profile(
+        context,
+        selection.project_id,
+        &selection.source,
+        connection,
+        tokio::time::Instant::now() + self.0.timeout,
+      )
+      .await?;
+    Ok(IssueSourceRefreshPolicy {
+      read: self.0.profiles.consumer.read_policy(profile.polling)?,
+      claim_lifetime: self.0.profiles.consumer.worker().claim_lifetime(),
+    })
+  }
+  async fn for_connection(
+    &self,
+    context: &ManagementRequestContext,
+    project: ProjectId,
+    connection: &octacity_server_factory::WorkSourceConnectionRef,
+  ) -> Result<Vec<InstalledIssueSourceMapping>, ApplicationError> {
+    let mut mappings = Vec::new();
+    for (declaration, profile) in self
+      .0
+      .observation_profiles(
+        context,
+        project,
+        connection,
+        tokio::time::Instant::now() + self.0.timeout,
+      )
+      .await?
+    {
+      mappings.push(InstalledIssueSourceMapping {
+        project_id: project,
+        source: profile.binding,
+        native_resource: octacity_server_factory::ExternalWorkIdentity::new(profile.resource.resource_id)
+          .map_err(|_| ApplicationError::invalid())?,
+        readable: declaration.readable.clone(),
+        writer: None,
+      });
+    }
+    Ok(mappings)
+  }
+}
+/// Advertised Source intent remains unavailable, without falling back to legacy profiles.
+pub(super) struct UnavailableIssueSourceProfiles;
+#[async_trait::async_trait]
+impl IssueSourceProfileProvider for UnavailableIssueSourceProfiles {
+  async fn refresh_policy(
+    &self,
+    _: &ManagementRequestContext,
+    _: &IssueSourceSelection,
+  ) -> Result<IssueSourceRefreshPolicy, ApplicationError> {
+    Err(ApplicationError::unavailable())
+  }
+  async fn for_connection(
+    &self,
+    _: &ManagementRequestContext,
+    _: ProjectId,
+    _: &octacity_server_factory::WorkSourceConnectionRef,
+  ) -> Result<Vec<InstalledIssueSourceMapping>, ApplicationError> {
+    Err(ApplicationError::unavailable())
   }
 }

@@ -36,7 +36,7 @@ impl ReadinessCheck for HealthyCheck {
   }
 }
 
-fn healthy_checks() -> ReadinessChecks {
+pub(super) fn healthy_checks() -> ReadinessChecks {
   let check = || Arc::new(HealthyCheck) as Arc<dyn ReadinessCheck>;
   ReadinessChecks::new(check(), check(), check(), check(), std::iter::empty())
 }

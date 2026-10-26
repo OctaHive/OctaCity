@@ -703,6 +703,7 @@ async fn source_refresh_paused_publication_is_a_durable_skip_without_advancing_f
       ClaimWorkSourceScan {
         project_id: project.id,
         target: IssueSourceReadTarget {
+          connection: None,
           import: None,
           pull_generation: 0,
           source: request.selection.source.clone(),
@@ -822,6 +823,7 @@ async fn source_execution_neutral_progress_retains_pages_and_retry_without_reusi
   let command = ClaimWorkSourceScan {
     project_id: project.id,
     target: IssueSourceReadTarget {
+      connection: None,
       import: None,
       pull_generation: 0,
       source: selection(project.id).source,
@@ -907,6 +909,7 @@ async fn source_read_takeover_fences_import_in_the_same_transaction_as_issue_pub
   let claim = ClaimWorkSourceScan {
     project_id: project.id,
     target: IssueSourceReadTarget {
+      connection: None,
       import: None,
       pull_generation: 0,
       source: selection(project.id).source,
@@ -980,6 +983,7 @@ async fn source_pull_disable_and_reenable_invalidates_original_read_owner_and_re
   let command = ClaimWorkSourceScan {
     project_id: project.id,
     target: IssueSourceReadTarget {
+      connection: None,
       import: None,
       pull_generation: 0,
       source: selection(project.id).source,
@@ -1120,6 +1124,7 @@ async fn source_private_read_progress_does_not_anchor_an_otherwise_empty_project
       ClaimWorkSourceScan {
         project_id: project.id,
         target: IssueSourceReadTarget {
+          connection: None,
           import: None,
           pull_generation: 0,
           source: selection(project.id).source,

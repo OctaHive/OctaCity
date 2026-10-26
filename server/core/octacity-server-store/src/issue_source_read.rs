@@ -12,12 +12,23 @@ pub struct IssueSourceReadTarget {
   /// Exact reviewed import revision; absent for legacy discovery and retained-link refresh.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub import: Option<PublishedIssueSourceImport>,
+  /// Original retained-link managed native parent, independent of Project import enablement.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub connection: Option<octacity_server_factory::WorkSourceConnectionRef>,
   /// Authorized installed profile; a refresh profile can use a broader selector.
   pub source: WorkSourceBinding,
   /// A retained link to refresh, or a bounded discovery/import pass.
   pub issue_id: Option<IssueId>,
 }
 impl IssueSourceReadTarget {
+  /// Original managed reader pin; explicit legacy installations retain None.
+  pub fn read_connection(&self) -> Option<&octacity_server_factory::WorkSourceConnectionRef> {
+    self
+      .import
+      .as_ref()
+      .map(|i| &i.definition.connection)
+      .or(self.connection.as_ref())
+  }
   /// Original partitioned read-journal identity; no Factory input or target is fabricated.
   pub fn identity(&self, project: ProjectId, scope: &ManagementSecurityScope) -> Result<FactoryDigest, StoreError> {
     if let Some(import) = &self.import {
@@ -27,6 +38,23 @@ impl IssueSourceReadTarget {
           project.to_string().as_bytes(),
           scope.as_str().as_bytes(),
           &serde_json::to_vec(&(&self.source, self.issue_id, import.id)).map_err(|_| StoreError::Unavailable)?,
+        ],
+      ));
+    }
+    if let Some(connection) = &self.connection {
+      return Ok(FactoryDigest::sha256(
+        "octacity.issue.managed-link-read.v1",
+        &[
+          project.to_string().as_bytes(),
+          scope.as_str().as_bytes(),
+          &serde_json::to_vec(&(
+            &self.source,
+            self.issue_id,
+            connection.id,
+            connection.version,
+            &connection.source_configuration,
+          ))
+          .map_err(|_| StoreError::Unavailable)?,
         ],
       ));
     }
@@ -47,6 +75,15 @@ pub type IssueSourceReadScan = WorkSourceScan<IssueSourceReadTarget>;
 /// Optional read progress; independent of all Factory admission ports.
 #[async_trait::async_trait]
 pub trait IssueSourceReadStore: IssueSourceRefreshStore {
+  /// Lists enabled managed retained-link reads independently of import or Factory input activation.
+  /// Current reviewed mapping chooses the read profile; the original link keeps its native parent.
+  async fn active_issue_source_reads(
+    &self,
+    scope: &ManagementSecurityScope,
+    after: Option<(ProjectId, IssueId)>,
+    limit: u16,
+  ) -> Result<Vec<(ProjectId, IssueSourceReadTarget)>, StoreError>;
+
   /// Acquires the shared fenced scan model for a visible Project/native read target.
   async fn claim_issue_source_read(
     &self,

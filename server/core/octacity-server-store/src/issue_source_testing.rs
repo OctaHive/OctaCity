@@ -87,7 +87,9 @@ impl IssueSourceMemoryState {
       .get(&issue)
       .filter(|(owner, link)| owner == scope && link.selection.project_id == project)
       .ok_or_else(crate::source_conflict)?;
-    if link.selection.source.installation.identity() != target.source.installation.identity() {
+    if link.selection.connection != target.connection
+      || link.selection.source.installation.identity() != target.source.installation.identity()
+    {
       return Err(crate::source_conflict());
     }
     let state = self.states.get(&issue).ok_or(StoreError::Unavailable)?;
@@ -674,6 +676,58 @@ impl IssueSourceRefreshStore for crate::testing::InMemoryProjectStore {
 
 #[async_trait::async_trait]
 impl IssueSourceReadStore for crate::testing::InMemoryProjectStore {
+  async fn active_issue_source_reads(
+    &self,
+    scope: &ManagementSecurityScope,
+    after: Option<(ProjectId, IssueId)>,
+    limit: u16,
+  ) -> Result<Vec<(ProjectId, IssueSourceReadTarget)>, StoreError> {
+    if !(1..=MAX_SOURCE_POLL_PAGE_ITEMS).contains(&limit) {
+      return Err(crate::source_conflict());
+    }
+    let state = self.lock()?;
+    let mut reads: Vec<_> = state
+      .issues
+      .sources
+      .links
+      .values()
+      .filter(|(owner, link)| {
+        owner == scope
+          && link.selection.connection.is_some()
+          && state
+            .issues
+            .sources
+            .states
+            .get(&link.issue_id)
+            .is_some_and(|s| s.enabled)
+          && after.is_none_or(|p| (link.selection.project_id, link.issue_id) > p)
+      })
+      .map(|(_, link)| {
+        let source = state
+          .issues
+          .sources
+          .mappings
+          .iter()
+          .rev()
+          .find(|((issue, _), _)| *issue == link.issue_id)
+          .map_or_else(|| link.selection.source.clone(), |(_, m)| m.definition.source.clone());
+        (
+          link.selection.project_id,
+          IssueSourceReadTarget {
+            source,
+            issue_id: Some(link.issue_id),
+            connection: link.selection.connection.clone(),
+            import: None,
+            pull_generation: 0,
+          },
+        )
+      })
+      .collect();
+    reads.sort_by_key(|(project, target)| (*project, target.issue_id));
+    reads.truncate(usize::from(limit));
+    Ok(reads)
+  }
+
   async fn claim_issue_source_read(
     &self,
     scope: &ManagementSecurityScope,

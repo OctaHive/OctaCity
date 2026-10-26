@@ -326,6 +326,7 @@ pub(super) async fn assert_normal_import_creates_task(
   client: &reqwest::Client,
   project: &str,
   choices: &Value,
+  provider: &std::path::Path,
 ) -> Value {
   let base = format!("http://localhost/api/v1/projects/{project}");
   let configurations: Value = client
@@ -402,6 +403,108 @@ pub(super) async fn assert_normal_import_creates_task(
     "the primary native link must retain its original managed connection pin"
   );
   assert_eq!(linked["selection"]["item"]["item"], "opaque-task");
+  let source_choices = client
+    .get(format!(
+      "{base}/issues/{}/source-choices",
+      issue["id"].as_str().unwrap()
+    ))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(source_choices.status(), reqwest::StatusCode::OK);
+  let source_choices: Value = source_choices.json().await.unwrap();
+  assert_eq!(
+    source_choices["items"].as_array().unwrap().len(),
+    1,
+    "a managed linked task uses the same installed native reader as Project discovery"
+  );
+  assert_eq!(source_choices["items"][0]["source"], intent["definition"]["source"]);
+  assert_eq!(
+    source_choices["items"][0]["readable"]["states"],
+    json!(["native-state"])
+  );
+  assert_eq!(source_choices["items"][0]["push_fields"], json!([]));
+  assert!(source_choices["items"][0]["writer"].is_null());
+  let candidates = client
+    .post(format!(
+      "{base}/issues/{}/source-link/candidates",
+      issue["id"].as_str().unwrap()
+    ))
+    .json(&json!({"source":intent["definition"]["source"]}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    candidates.status(),
+    reqwest::StatusCode::OK,
+    "existing native candidate preview resolves the retained managed parent"
+  );
+  let candidates: Value = candidates.json().await.unwrap();
+  assert_eq!(candidates["items"][0]["item"], "opaque-task");
+  assert!(candidates["items"][0].get("body").is_none());
+
+  let refreshed = client
+    .post(format!(
+      "{base}/issues/{}/synchronization/refresh",
+      issue["id"].as_str().unwrap()
+    ))
+    .header("idempotency-key", "refresh-managed-native-task")
+    .json(&json!({"source":intent["definition"]["source"]}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    refreshed.status(),
+    reqwest::StatusCode::OK,
+    "explicit refresh uses the retained managed pin and installed finite read policy"
+  );
+  let refreshed: Value = refreshed.json().await.unwrap();
+  assert_eq!(refreshed["issue_id"], issue["id"]);
+  let mapped = client.post(format!("{base}/issues/{}/source-link/mappings",issue["id"].as_str().unwrap()))
+    .header("idempotency-key","review-managed-pull-map").header("if-match",format!("\"{}\"",source_choices["issue_version"].as_u64().unwrap()))
+    .json(&json!({"expected_mapping":null,"definition":{"source":intent["definition"]["source"],"reporter":null,"push_enabled":false,
+      "fields":{"title":"source_owned_pull","description":"source_owned_pull"},"status":null}})).send().await.unwrap();
+  assert_eq!(
+    mapped.status(),
+    reqwest::StatusCode::CREATED,
+    "reviewed pull mapping uses the installed managed reader without a writer"
+  );
+  let mapped: Value = mapped.json().await.unwrap();
+  assert_eq!(mapped["resource"]["definition"]["push_enabled"], false);
+  assert!(
+    mapped.get("projection").is_none(),
+    "pull publication cannot create an outbound effect"
+  );
+
+  let mut disabled = intent.clone();
+  disabled["expected_current_version"] = json!(1);
+  disabled["definition"]["enabled"] = json!(false);
+  let response = client
+    .post(format!("{base}/issue-source-imports/{id}/versions"))
+    .header("idempotency-key", "disable-import-before-retained-refresh")
+    .header("if-match", "\"1\"")
+    .json(&json!({"intent":disabled}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(response.status(), reqwest::StatusCode::OK);
+  let mode_path = provider.join("mode.json");
+  let original = std::fs::read(&mode_path).unwrap();
+  let mut mode: Value = serde_json::from_slice(&original).unwrap();
+  mode["candidates"][0]["title"] = json!("Native title after import was disabled");
+  mode["candidates"][0]["update_identity"] = json!("native-update-2");
+  std::fs::write(&mode_path, serde_json::to_vec(&mode).unwrap()).unwrap();
+  wait_for_task_title(
+    client,
+    &base,
+    issue["id"].as_str().unwrap(),
+    "Native title after import was disabled",
+  )
+  .await;
+  std::fs::write(mode_path, original).unwrap();
+  wait_for_task_title(client, &base, issue["id"].as_str().unwrap(), "External task draft").await;
+  assert_manual_attachment(client, &base, &intent, provider).await;
+
   assert_eq!(task["content"]["title"], "External task draft");
   assert_eq!(task["content"]["description"], "");
   let default: Value = client
@@ -604,4 +707,74 @@ pub(super) async fn assert_unavailable_import_lifecycle(client: &reqwest::Client
     reqwest::StatusCode::SERVICE_UNAVAILABLE,
     "an advertised missing read installation is unavailable, not unsupported capability"
   );
+}
+
+async fn wait_for_task_title(client: &reqwest::Client, base: &str, issue: &str, title: &str) {
+  let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+  loop {
+    let task: Value = client
+      .get(format!("{base}/issues/{issue}"))
+      .send()
+      .await
+      .unwrap()
+      .json()
+      .await
+      .unwrap();
+    if task["content"]["title"] == title {
+      return;
+    }
+    assert!(
+      tokio::time::Instant::now() < deadline,
+      "reviewed link pull must refresh independently of disabled import: {task}"
+    );
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+  }
+}
+
+async fn assert_manual_attachment(client: &reqwest::Client, base: &str, source: &Value, provider: &std::path::Path) {
+  let created=client.post(format!("{base}/issues")).header("idempotency-key","manual-native-attachment")
+    .json(&json!({"title":"Manual task with native link","description":"Local description","acceptance":null,"priority":null})).send().await.unwrap();
+  assert_eq!(created.status(), reqwest::StatusCode::CREATED);
+  let created: Value = created.json().await.unwrap();
+  let path = format!("{base}/issues/{}", created["resource"]["id"].as_str().unwrap());
+  let review: Value = client
+    .get(format!("{path}/synchronization"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  let mode_path = provider.join("mode.json");
+  let original = std::fs::read(&mode_path).unwrap();
+  let mut mode: Value = serde_json::from_slice(&original).unwrap();
+  let mut native = mode["candidates"][0].clone();
+  native["item_id"] = json!("manual-native-target");
+  native["title"] = json!("A different native title");
+  mode["candidates"].as_array_mut().unwrap().push(native);
+  std::fs::write(&mode_path, serde_json::to_vec(&mode).unwrap()).unwrap();
+  let response=client.post(format!("{path}/source-link")).header("idempotency-key","attach-reviewed-managed-source")
+    .header("if-match",format!("\"{}\"",created["resource"]["version"].as_u64().unwrap()))
+    .json(&json!({"source":source["definition"]["source"],"connection":source["definition"]["connection"],
+      "item":{"resource":"external-project-42","item":"manual-native-target"},"expected_field_policy":review["field_policy"]})).send().await.unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::CREATED,
+    "existing manual attachment supports the reviewed managed connection without importing or executing"
+  );
+  let linked: Value = client
+    .get(format!("{path}/source-link"))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(linked["selection"]["connection"], source["definition"]["connection"]);
+  let after: Value = client.get(&path).send().await.unwrap().json().await.unwrap();
+  assert_eq!(
+    after["content"], created["resource"]["content"],
+    "attachment does not enable field synchronization"
+  );
+  std::fs::write(mode_path, original).unwrap();
 }

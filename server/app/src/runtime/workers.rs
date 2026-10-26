@@ -20,7 +20,7 @@ use tracing::{info, warn};
 use crate::{DurableWorkerError, ServerConfig, config::RetentionWorkerPolicy, readiness::WorkerHealth};
 
 pub(super) struct DurableWorkers {
-  pub(super) source_imports: Option<super::source_import::SourceImportWorker>,
+  pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
   pub(super) factory: Option<super::factory::InstalledFactoryWorker>,
   pub(super) legacy_issues: Arc<PostgresStore>,
   pub(super) actions: octacity_server_application::FactoryActionProjectionWorker<PostgresStore>,
@@ -164,14 +164,14 @@ pub(super) fn spawn_durable_workers(
       cancellation.child_token(),
     )
   });
-  let source_imports = workers.source_imports.map(|worker| {
+  let source_reads = workers.source_reads.map(|worker| {
     let settings = worker.settings();
     let worker = Arc::new(worker);
     let child = cancellation.child_token();
     spawn_worker_loop(
-      WorkerIdentity::new("issue-source-import", WorkerKind::Factory),
+      WorkerIdentity::new("issue-source-read", WorkerKind::Factory),
       Arc::new(WorkerHealth::new(
-        "issue-source-import",
+        "issue-source-read",
         settings.poll_interval().saturating_add(settings.claim_lifetime()),
       )),
       settings.poll_interval(),
@@ -225,8 +225,8 @@ pub(super) fn spawn_durable_workers(
   if let Some(task) = factory {
     tasks.push((FACTORY_WORKER_NAME, task));
   }
-  if let Some(task) = source_imports {
-    tasks.push(("issue-source-import", task));
+  if let Some(task) = source_reads {
+    tasks.push(("issue-source-read", task));
   }
   if let Some(task) = source_task {
     tasks.push(("factory-source", task));
