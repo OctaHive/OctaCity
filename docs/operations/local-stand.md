@@ -898,6 +898,13 @@ The launcher repairs stale ownership records without signalling an unrelated
 process. Do not manually delete PID files or named volumes. Use confirmed
 `reset` only when loss of all local stand data is intended.
 
+Factory bootstrap and the final gateway use different caller identities, so
+their idempotency receipts are separate. If pool creation returns HTTP 409,
+bootstrap looks up the existing `local-macos-microsandbox` pool and reuses its
+current ID and version only when its policy exactly matches the standard stand
+policy. It does not overwrite a customized pool or ignore other API failures.
+This allows an interrupted Factory startup to resume without resetting data.
+
 ### Agent registration fails after Docker volumes were recreated
 
 If Compose reports newly created PostgreSQL/MinIO volumes while the private

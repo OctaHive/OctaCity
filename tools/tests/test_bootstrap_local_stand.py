@@ -32,6 +32,17 @@ REGISTRATION = (
 POOL_ID = "66666666-6666-4666-8666-666666666666"
 
 
+def pool_resource(**overrides):
+    return {
+        "id": POOL_ID,
+        "name": bootstrap.LOCAL_POOL_REQUEST["name"],
+        "version": 7,
+        "definition": json.loads(json.dumps(bootstrap.LOCAL_POOL_REQUEST["definition"])),
+        "published_at_unix_ms": 1_790_000_000_000,
+        **overrides,
+    }
+
+
 class FixtureTransport:
     def __init__(self, *, lose_pool_response: bool = False, gate: threading.Event | None = None):
         self.calls: list[tuple[str, str, dict[str, str], bytes | None]] = []
@@ -61,13 +72,7 @@ class FixtureTransport:
                 201,
                 {
                     "disposition": "applied",
-                    "resource": {
-                        "id": POOL_ID,
-                        "name": request["name"],
-                        "version": 7,
-                        "definition": request["definition"],
-                        "published_at_unix_ms": 1_790_000_000_000,
-                    },
+                    "resource": pool_resource(name=request["name"], definition=request["definition"]),
                 },
             )
         if path == "/api/v1/agent-enrollments":
@@ -83,6 +88,26 @@ class FixtureTransport:
                 },
             )
         raise AssertionError(f"unexpected request: {method} {path}")
+
+
+class PreparedPoolTransport(FixtureTransport):
+    """A pool already exists, but its create receipt belongs to another caller."""
+
+    def __init__(self, *, pages=None, create_status=409):
+        super().__init__()
+        self.pages = pages if pages is not None else {
+            f"{bootstrap.POOL_PATH}?limit=100": {"items": [pool_resource()], "next_cursor": None}
+        }
+        self.create_status = create_status
+
+    def request(self, method, path, headers, body, timeout_seconds):
+        if path == bootstrap.POOL_PATH and method == "POST":
+            self.calls.append((method, path, dict(headers), body))
+            return response(self.create_status, {"code": "conflict"})
+        if path.startswith(bootstrap.POOL_PATH) and method == "GET":
+            self.calls.append((method, path, dict(headers), body))
+            return response(200, self.pages[path])
+        return super().request(method, path, headers, body, timeout_seconds)
 
 
 def response(status: int, document: dict[str, object]) -> bootstrap.HttpResponse:
@@ -151,6 +176,80 @@ class LocalStandBootstrapTests(unittest.TestCase):
         self.assertEqual(len(pool_calls), 2)
         self.assertEqual(pool_calls[0][2]["Idempotency-Key"], pool_calls[1][2]["Idempotency-Key"])
         self.assertEqual(pool_calls[0][3], pool_calls[1][3])
+
+    def test_factory_pool_created_before_gateway_start_is_reused_for_enrollment(self):
+        transport = PreparedPoolTransport()
+
+        result = self.run_bootstrap(transport)
+
+        self.assertEqual(result.state, "enrollment_installed")
+        self.assertEqual((result.pool_id, result.pool_version), (POOL_ID, 7))
+        enrollment = json.loads(transport.calls[-1][3])
+        self.assertEqual((enrollment["pool_id"], enrollment["pool_version"]), (POOL_ID, 7))
+        self.assertEqual((self.root / "agent/credential").read_text().strip(), ENROLLMENT)
+
+    def test_factory_pool_lookup_follows_pages_and_ignores_other_pools(self):
+        transport = PreparedPoolTransport(pages={
+            f"{bootstrap.POOL_PATH}?limit=100": {
+                "items": [pool_resource(name="another-pool")], "next_cursor": "cursor+/="},
+            f"{bootstrap.POOL_PATH}?limit=100&after=cursor%2B%2F%3D": {
+                "items": [pool_resource()], "next_cursor": None},
+        })
+
+        result = self.run_bootstrap(transport)
+
+        self.assertEqual((result.pool_id, result.pool_version), (POOL_ID, 7))
+        self.assertEqual(len([call for call in transport.calls if call[0] == "GET"]), 3)
+
+    def test_factory_pool_with_changed_policy_is_never_enrolled_or_overwritten(self):
+        resource = pool_resource()
+        resource["definition"]["concurrency_limit"] = 2
+        transport = PreparedPoolTransport(pages={
+            f"{bootstrap.POOL_PATH}?limit=100": {"items": [resource], "next_cursor": None}
+        })
+
+        with self.assertRaisesRegex(bootstrap.BootstrapError, "differs from the requested policy"):
+            self.run_bootstrap(transport)
+
+        self.assertEqual([call[1] for call in transport.calls if call[0] == "POST"], [bootstrap.POOL_PATH])
+        self.assertFalse((self.root / "agent/credential").exists())
+
+    def test_pool_conflict_without_the_expected_pool_fails_closed(self):
+        transport = PreparedPoolTransport(pages={
+            f"{bootstrap.POOL_PATH}?limit=100": {"items": [pool_resource(name="other")], "next_cursor": None}
+        })
+
+        with self.assertRaisesRegex(bootstrap.BootstrapError, "could not be verified"):
+            self.run_bootstrap(transport)
+
+        self.assertFalse((self.root / "agent/credential").exists())
+
+    def test_pool_lookup_rejects_malformed_pages_and_repeated_cursors(self):
+        for page in (
+            {"items": {}, "next_cursor": None},
+            {"items": [None], "next_cursor": None},
+            {"items": [], "next_cursor": 42},
+            {"items": [], "next_cursor": ""},
+            {"items": [], "next_cursor": "repeated"},
+        ):
+            with self.subTest(page=page):
+                transport = PreparedPoolTransport(pages={
+                    f"{bootstrap.POOL_PATH}?limit=100": page,
+                    f"{bootstrap.POOL_PATH}?limit=100&after=repeated": page,
+                })
+                with self.assertRaises(bootstrap.BootstrapError):
+                    self.run_bootstrap(transport)
+                self.assertLessEqual(len(transport.calls), 4)
+                self.assertFalse((self.root / "agent/credential").exists())
+
+    def test_non_conflict_pool_failures_do_not_reuse_existing_resources(self):
+        for status in (400, 403, 500):
+            with self.subTest(status=status):
+                transport = PreparedPoolTransport(create_status=status)
+                with self.assertRaisesRegex(bootstrap.BootstrapError, f"HTTP {status}"):
+                    self.run_bootstrap(transport)
+                self.assertEqual([call[1] for call in transport.calls if call[0] == "GET"], [bootstrap.READY_PATH])
+                self.assertFalse((self.root / "agent/credential").exists())
 
     def test_rerun_reuses_stable_mutation_identities_and_enrollment(self):
         first = FixtureTransport()

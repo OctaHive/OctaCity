@@ -25,6 +25,7 @@ import local_stand_state as state
 DEFAULT_ORIGIN = initializer.gateway_origin("octacity.localhost")
 MAX_RESPONSE_BYTES = 128 * 1024
 MAX_CREDENTIAL_BYTES = 4096
+MAX_POOL_LOOKUP_PAGES = 100
 RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
 POOL_PATH = "/api/v1/agent-pools"
 ENROLLMENT_PATH = "/api/v1/agent-enrollments"
@@ -67,6 +68,14 @@ class BootstrapError(RuntimeError):
 
 class TransportError(BootstrapError):
     """One HTTP attempt failed before a trusted response was available."""
+
+
+class HttpStatusError(BootstrapError):
+    """An HTTP failure without potentially sensitive response contents."""
+
+    def __init__(self, operation: str, status: int):
+        super().__init__(f"{operation} returned HTTP {status}")
+        self.status = status
 
 
 @dataclass(frozen=True)
@@ -238,7 +247,7 @@ class BootstrapClient:
         }
         response = self._request("POST", path, headers, body)
         if response.status not in {200, 201}:
-            raise BootstrapError(f"management mutation returned HTTP {response.status}")
+            raise HttpStatusError("management mutation", response.status)
         return _json_object(response.body, "management mutation response")
 
     def _request(
@@ -401,7 +410,10 @@ def _pool(document: dict[str, object]) -> tuple[str, int]:
     _exact_keys(document, {"disposition", "resource"}, "Agent Pool response")
     if document["disposition"] not in {"applied", "replayed"}:
         raise BootstrapError("Agent Pool response has an invalid disposition")
-    resource = document["resource"]
+    return _pool_resource(document["resource"])
+
+
+def _pool_resource(resource: object) -> tuple[str, int]:
     if not isinstance(resource, dict):
         raise BootstrapError("Agent Pool response has an invalid resource")
     _exact_keys(
@@ -419,6 +431,42 @@ def _pool(document: dict[str, object]) -> tuple[str, int]:
         _canonical_uuid(resource["id"], "Agent Pool identity"),
         _positive_integer(resource["version"], "Agent Pool version"),
     )
+
+
+def _converge_pool(client: BootstrapClient) -> tuple[str, int]:
+    """Reuse the exact Factory pool across bootstrap and gateway identity scopes.
+
+    Idempotency keys are scoped to the caller, while pool names are unique.
+    Only a create conflict permits bounded lookup; existing policy is never changed.
+    """
+    try:
+        return _pool(client.post(POOL_PATH, _stable_key(b"pool"), LOCAL_POOL_REQUEST))
+    except HttpStatusError as error:
+        if error.status != 409:
+            raise
+
+    after = None
+    seen = set()
+    for _ in range(MAX_POOL_LOOKUP_PAGES):
+        query = {"limit": "100"}
+        if after is not None:
+            query["after"] = after
+        page = client.get(f"{POOL_PATH}?{parse.urlencode(query)}")
+        _exact_keys(page, {"items", "next_cursor"}, "Agent Pool page")
+        if not isinstance(page["items"], list):
+            raise BootstrapError("Agent Pool page has invalid items")
+        for resource in page["items"]:
+            if not isinstance(resource, dict):
+                raise BootstrapError("Agent Pool page has an invalid resource")
+            if resource.get("name") == LOCAL_POOL_REQUEST["name"]:
+                return _pool_resource(resource)
+        after = page["next_cursor"]
+        if after is None:
+            break
+        if not isinstance(after, str) or not after or after in seen:
+            raise BootstrapError("Agent Pool page has an invalid cursor")
+        seen.add(after)
+    raise BootstrapError("existing local Agent Pool could not be verified after HTTP 409")
 
 
 def _enrollment(document: dict[str, object], pool_id: str, pool_version: int) -> str:
@@ -508,9 +556,7 @@ def _converge(
         transport = HttpsTransport(origin, ca_certificate)
     client = BootstrapClient(transport, retry)
     client.ready()
-    pool_id, pool_version = _pool(
-        client.post(POOL_PATH, _stable_key(b"pool"), LOCAL_POOL_REQUEST)
-    )
+    pool_id, pool_version = _converge_pool(client)
     enrollment_request = {
         "pool_id": pool_id,
         "pool_version": pool_version,
