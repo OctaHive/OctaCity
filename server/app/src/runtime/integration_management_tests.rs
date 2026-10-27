@@ -22,6 +22,13 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   let registry = root.path().join("adapters");
   fs::create_dir(&registry).unwrap();
   fs::rename(root.path().join("custom-provider"), registry.join("custom-provider")).unwrap();
+  let manifest = registry.join("custom-provider/adapter.toml");
+  let original_manifest = fs::read_to_string(&manifest).unwrap();
+  fs::write(
+    &manifest,
+    original_manifest.replace("[capabilities.source]", "[capabilities.source]\nlabel_presence=true"),
+  )
+  .unwrap();
   let private = root.path().join("private");
   fs::create_dir(&private).unwrap();
   fs::set_permissions(&private, fs::Permissions::from_mode(0o700)).unwrap();
@@ -439,6 +446,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   );
   runtime.shutdown().await.unwrap();
   let mut source_profiles: Value = serde_json::from_slice(&fs::read(&profiles).unwrap()).unwrap();
+  source_profiles["readers"][0]["predicate_label_presence"] = json!(true);
   source_profiles["readers"][0]["preparation"] = json!({
     "mapping":{"source":{"installation":check.installation,"resource":check.resource_reference,
       "capability":check.capability.capability,"configuration":check.capability.configuration},
@@ -453,6 +461,7 @@ async fn runtime_publishes_connection_credentials_and_project_access_without_ena
   let selected: Value = response.json().await.unwrap();
   assert_eq!(selected["items"].as_array().unwrap().len(), 1);
   assert_eq!(selected["items"][0]["purpose"], "task_read");
+  assert_eq!(selected["items"][0]["predicate_label_presence"], json!(["any", "none"]));
   assert_ne!(
     selected["items"][0]["binding"]["configuration"],
     selected["items"][0]["connection_configuration"]

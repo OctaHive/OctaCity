@@ -13,6 +13,9 @@ use serde::Serialize;
 pub struct WorkSourceSelectionLabels {
   /// Opaque installed state key; no provider's state vocabulary is built in.
   pub state: FactoryKey,
+  /// Effective presence restriction; omission retains legacy metadata bytes.
+  #[serde(skip_serializing_if = "WorkSourceLabelPresence::is_any")]
+  pub label_presence: WorkSourceLabelPresence,
   /// Required literal labels.
   pub all_of: Vec<String>,
   /// Literal alternatives.
@@ -30,6 +33,9 @@ pub struct WorkSourceInputChoice {
   /// Absence keeps legacy installed-only selection; clients cannot infer editing support.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub predicate_states: Option<Vec<FactoryKey>>,
+  /// Explicit label-presence choices; absence preserves legacy unrestricted-label behavior.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub predicate_label_presence: Option<Vec<WorkSourceLabelPresence>>,
   /// Exact input selector/mapping profile.
   pub binding: WorkSourceBinding,
   /// Connection profile from which this input configuration was installed.
@@ -126,16 +132,36 @@ impl<S> FactorySourceConfigurationHandlers<S> {
       .ok_or_else(ApplicationError::invalid)?;
     if capability.role != WorkSourceCapabilityRole::Source
       || base.state != unrestricted
+      || base.label_presence != WorkSourceLabelPresence::Any
       || !base.all_of.is_empty()
       || !base.any_of.is_empty()
       || !base.none_of.is_empty()
       || states.len() > MAX_SOURCE_SELECTION_LABELS
       || states.iter().collect::<std::collections::BTreeSet<_>>().len() != states.len()
-      || self.predicate_states.iter().any(|(c, _)| c == &capability)
+      || self.predicate_support.iter().any(|s| s.capability == capability)
     {
       return Err(ApplicationError::invalid());
     }
-    self.predicate_states.push((capability, states));
+    self.predicate_support.push(InstalledSourcePredicate {
+      capability,
+      states,
+      label_presence: false,
+    });
+    Ok(self)
+  }
+
+  /// Explicitly qualifies label-presence narrowing for this exact installed source.
+  /// Requires the existing unrestricted-base predicate contract; states alone do not imply support.
+  pub fn with_predicate_label_presence(mut self, capability: WorkSourceCapability) -> Result<Self, ApplicationError> {
+    let support = self
+      .predicate_support
+      .iter_mut()
+      .find(|s| s.capability == capability)
+      .ok_or_else(ApplicationError::invalid)?;
+    if support.label_presence {
+      return Err(ApplicationError::invalid());
+    }
+    support.label_presence = true;
     Ok(self)
   }
 
@@ -259,17 +285,17 @@ impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + Integration
       {
         continue;
       }
+      let predicate = self.predicate_support.iter().find(|s| &s.capability == capability);
       items.push(WorkSourceInputChoice {
         reporting: self
           .reporting_mappings
           .iter()
           .find(|(c, _)| c == capability)
           .map(|(_, choice)| choice.clone()),
-        predicate_states: self
-          .predicate_states
-          .iter()
-          .find(|(c, _)| c == capability)
-          .map(|(_, states)| states.clone()),
+        predicate_states: predicate.map(|s| s.states.clone()),
+        predicate_label_presence: predicate
+          .filter(|s| s.label_presence)
+          .map(|_| vec![WorkSourceLabelPresence::Any, WorkSourceLabelPresence::None]),
         binding: binding.clone(),
         connection_configuration: installed.configuration.clone(),
         purpose,

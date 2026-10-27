@@ -213,10 +213,49 @@ async fn offline_factory_preparation_rejects_invalid_mapping_limits_and_acceptan
 }
 
 #[tokio::test]
+async fn offline_label_presence_requires_both_verified_adapter_and_unrestricted_reader_qualification() {
+  let (root, installed, mut document) = installed_source_profile_fixture();
+  document["readers"][0]["selection_labels"] = serde_json::json!({
+    "state":"all","all_of":[],"any_of":[],"none_of":[]
+  });
+  document["readers"][0]["predicate_states"] = serde_json::json!(["native-state"]);
+  document["readers"][0]["predicate_label_presence"] = serde_json::json!(true);
+  let manifest = root.path().join("adapters/opaque-source/adapter.toml");
+  let legacy_manifest = std::fs::read_to_string(&manifest).unwrap();
+  let qualified = legacy_manifest.replace("[capabilities.source]", "[capabilities.source]\nlabel_presence=true");
+  std::fs::write(&manifest, &qualified).unwrap();
+  let (profiles, config) = source_profile_config(root.path(), &document, &[installed]);
+  assert!(
+    validate_runtime_files(&config).await.is_ok(),
+    "an exact qualified adapter must support the reader declaration"
+  );
+  std::fs::write(&manifest, &legacy_manifest).unwrap();
+  assert!(
+    validate_runtime_files(&config).await.is_err(),
+    "reader metadata cannot qualify an older adapter"
+  );
+  document["readers"][0]["predicate_label_presence"] = serde_json::json!(false);
+  std::fs::write(&profiles, serde_json::to_vec(&document).unwrap()).unwrap();
+  assert!(
+    validate_runtime_files(&config).await.is_ok(),
+    "legacy state editing remains available without label-presence support"
+  );
+  std::fs::write(&manifest, qualified).unwrap();
+  document["readers"][0]["predicate_label_presence"] = serde_json::json!(true);
+  document["readers"][0]["predicate_states"] = serde_json::Value::Null;
+  std::fs::write(&profiles, serde_json::to_vec(&document).unwrap()).unwrap();
+  assert!(
+    validate_runtime_files(&config).await.is_err(),
+    "qualification requires the unrestricted predicate base"
+  );
+  assert!(!root.path().join("adapters/opaque-source/captured.json").exists());
+}
+
+#[tokio::test]
 async fn offline_predicate_editing_requires_an_explicit_unrestricted_base_and_unique_states() {
   let (root, installed, mut document) = installed_source_profile_fixture();
   document["readers"][0]["selection_labels"] = serde_json::json!({
-    "state":"unrestricted-native","all_of":[],"any_of":[],"none_of":[]
+    "state":"unrestricted-native","all_of":[],"any_of":[],"none_of":[],"label_presence":"any"
   });
   document["readers"][0]["predicate_states"] = serde_json::json!(["native-open", "native-closed"]);
   let (profiles, config) = source_profile_config(root.path(), &document, &[installed]);
@@ -224,6 +263,7 @@ async fn offline_predicate_editing_requires_an_explicit_unrestricted_base_and_un
   for (pointer, value) in [
     ("/readers/0/selection_labels", serde_json::Value::Null),
     ("/readers/0/selection_labels/state", serde_json::Value::Null),
+    ("/readers/0/selection_labels/label_presence", serde_json::json!("none")),
     ("/readers/0/selection_labels/all_of", serde_json::json!(["fixed-label"])),
     (
       "/readers/0/predicate_states",

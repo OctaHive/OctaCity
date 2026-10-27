@@ -411,6 +411,7 @@ async fn hosted_preview_applies_immutable_normalized_input_predicates_without_ad
     .unwrap();
     let mut definition = fixture.input.definition().clone();
     definition.predicate = Some(WorkSourcePredicate {
+      label_presence: Default::default(),
       state: None,
       all_of: vec!["different-label".into()],
       any_of: vec![],

@@ -151,6 +151,7 @@ impl FactoryWorkSourcePreview for HostedFactoryWorkSourcePreview {
               .iter()
               .map(|reason| match reason {
                 preview::SelectionMismatch::StateMismatch => WorkSourceSelectionMismatch::StateMismatch,
+                preview::SelectionMismatch::LabelsPresent => WorkSourceSelectionMismatch::LabelsPresent,
                 preview::SelectionMismatch::RequiredLabelMissing => WorkSourceSelectionMismatch::RequiredLabelMissing,
                 preview::SelectionMismatch::AlternativeLabelMissing => {
                   WorkSourceSelectionMismatch::AlternativeLabelMissing

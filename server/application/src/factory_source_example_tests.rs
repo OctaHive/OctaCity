@@ -36,6 +36,7 @@ async fn publish_examples(provider: &str, names: &[&str]) -> PublishWorkSources 
       .with_selection_labels(
         fixture.capability.clone(),
         WorkSourceSelectionLabels {
+          label_presence: Default::default(),
           state: key("all"),
           all_of: vec![],
           any_of: vec![],

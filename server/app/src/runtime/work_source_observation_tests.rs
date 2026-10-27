@@ -312,6 +312,7 @@ async fn observations_of_closed_nonmatching_tasks_share_two_original_input_runs_
     };
     let mut draft = fixture.input.definition().clone();
     draft.predicate = Some(WorkSourcePredicate {
+      label_presence: Default::default(),
       state: Some(key("native-state")),
       all_of: vec!["arbitrary".into()],
       any_of: vec![],

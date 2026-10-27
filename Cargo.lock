@@ -4272,6 +4272,7 @@ dependencies = [
  "octacity-delivery-protocol",
  "octacity-protocol",
  "octacity-server-secrets",
+ "octacity-server-work-source",
  "octacity-work-source-protocol",
  "octocrab",
  "processkit",

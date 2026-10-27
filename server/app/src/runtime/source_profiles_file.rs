@@ -6,7 +6,7 @@ use octacity_server_application::{
 };
 use octacity_server_factory::{
   FactoryKey, MAX_WORK_SOURCE_PREDICATE_LABELS, NetworkHost, WorkClassification, WorkSourceBinding,
-  WorkSourcePredicate, WorkSourceReportingPolicy, WorkSourceStatusMapping,
+  WorkSourceLabelPresence, WorkSourcePredicate, WorkSourceReportingPolicy, WorkSourceStatusMapping,
 };
 use octacity_server_store::{InstalledIntegration, IntegrationPurpose, RepositorySourceSelection};
 use octacity_server_work_source::{InstalledWorkAdapter, WorkAdapterRegistry};
@@ -84,6 +84,9 @@ pub(super) struct SourceReadDeclaration {
   pub(super) selection_labels: Option<WorkSourcePredicate>,
   #[serde(default)]
   pub(super) predicate_states: Option<Vec<FactoryKey>>,
+  /// Factory narrowing qualification; independent task observation keeps its original read pin.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub(super) predicate_label_presence: bool,
 }
 impl SourceReadDeclaration {
   pub(super) fn native_binding(&self) -> WorkSourceBinding {
@@ -160,12 +163,24 @@ impl SourceReadDeclaration {
     registry: &WorkAdapterRegistry,
   ) -> Result<(), RuntimeAssemblyError> {
     let invalid = || RuntimeAssemblyError::InvalidSourceProfiles;
-    validate_access(&self.read, IntegrationPurpose::TaskRead, installations, registry)?;
+    let adapter = validate_access(&self.read, IntegrationPurpose::TaskRead, installations, registry)?;
+    if self.predicate_label_presence
+      && (self.predicate_states.is_none()
+        || !adapter
+          .manifest
+          .capabilities
+          .source
+          .as_ref()
+          .is_some_and(|s| s.label_presence))
+    {
+      return Err(invalid());
+    }
     self.selection.validate().map_err(|_| invalid())?;
     self.readable.validate().map_err(|_| invalid())?;
     if let Some(selection) = &self.selection_labels {
       selection.validate().map_err(|_| invalid())?;
-      if selection.state.is_none() {
+      // Literal selector presentation alone cannot qualify label-presence filtering.
+      if selection.state.is_none() || selection.label_presence != WorkSourceLabelPresence::Any {
         return Err(invalid());
       }
     }

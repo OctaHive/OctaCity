@@ -11,7 +11,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["project_id", "issue_id"],
   );
   let selection = object(
-    json!({"input_id":id(),"reasons":array(json!({"type":"string","enum":["state_mismatch","required_label_missing","alternative_label_missing","excluded_label_present","predicate_mismatch"]}),5)}),
+    json!({"input_id":id(),"reasons":array(json!({"type":"string","enum":["state_mismatch","labels_present","required_label_missing","alternative_label_missing","excluded_label_present","predicate_mismatch"]}),6)}),
     &["input_id", "reasons"],
   );
   let item = object(json!({"resource":text(256),"item":text(256)}), &["resource", "item"]);

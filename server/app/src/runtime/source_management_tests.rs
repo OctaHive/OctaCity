@@ -210,11 +210,35 @@ async fn assert_preview(client: &reqwest::Client, base: &str, intent: &Value, pr
   );
   assert_eq!(preview["candidates"][0]["admissions"], json!([]));
   assert!(!preview.to_string().contains("reader"));
+  // Retained-link pull remains independent of both preview and disabled import.
+  // Observe a real poll here so this contract cannot accidentally rely on its timing.
+  tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    loop {
+      let calls = std::fs::read_to_string(provider.join("requests.jsonl")).unwrap();
+      if calls.lines().skip(previous_calls).any(|line| {
+        let wire: Value = serde_json::from_str(line).unwrap();
+        wire["message"]["command"]["operation"] == "scan"
+      }) {
+        break;
+      }
+      tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+    }
+  })
+  .await
+  .expect("retained-link polling must continue during preview");
   let mut narrowed = intent.clone();
   narrowed["inputs"][0]["definition"]["predicate"] =
     json!({"state":"native-state","all_of":["not-present"],"any_of":[],"none_of":[]});
   let filtered: Value = request(&narrowed).send().await.unwrap().json().await.unwrap();
   assert_eq!(filtered["candidates"][0]["disposition"], "filtered");
+  narrowed["inputs"][0]["definition"]["predicate"] =
+    json!({"state":"native-state","all_of":[],"any_of":[],"none_of":[],"label_presence":"none"});
+  let unlabeled: Value = request(&narrowed).send().await.unwrap().json().await.unwrap();
+  assert_eq!(unlabeled["candidates"][0]["disposition"], "filtered");
+  assert_eq!(
+    unlabeled["candidates"][0]["summary"]["selections"][0]["reasons"],
+    json!(["labels_present"])
+  );
   let mut group = intent.clone();
   let first = group["inputs"][0].clone();
   let mut second = first.clone();
@@ -247,11 +271,14 @@ async fn assert_preview(client: &reqwest::Client, base: &str, intent: &Value, pr
     .unwrap();
   assert_eq!(after, issues, "preview cannot import or alter an Issue");
   let calls = std::fs::read_to_string(provider.join("requests.jsonl")).unwrap();
-  assert_eq!(calls.lines().count() - previous_calls, 4);
-  for line in calls.lines().skip(previous_calls) {
-    let wire: Value = serde_json::from_str(line).unwrap();
-    assert_eq!(wire["message"]["command"]["operation"], "preview");
-  }
+  // Only preview calls belong to this assertion; retained-link scans are independent.
+  let preview_calls = calls
+    .lines()
+    .skip(previous_calls)
+    .map(|line| serde_json::from_str::<Value>(line).unwrap())
+    .filter(|wire| wire["message"]["command"]["operation"] == "preview")
+    .count();
+  assert_eq!(preview_calls, 5);
 }
 
 pub(super) async fn assert_history_after_replacement(client: &reqwest::Client, project: ProjectId, published: &Value) {

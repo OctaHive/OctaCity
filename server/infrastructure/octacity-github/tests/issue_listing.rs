@@ -167,6 +167,102 @@ async fn every_returned_issue_is_filtered_locally_and_pull_requests_are_excluded
 }
 
 #[tokio::test]
+async fn unlabeled_continuations_replay_the_frozen_incremental_window_and_reject_retargeting() {
+  use octacity_work_source_protocol::FailureClass;
+  use sha2::{Digest as _, Sha256};
+  let forge = Forge::start().await;
+  let mut strict = selector();
+  strict["label_presence"] = json!("none");
+  let installation = Installation::new(&forge, strict);
+  let mut request = installation.request();
+  intent(&mut request).max_items = 2;
+  intent(&mut request).window = Some(source::ScanWindow {
+    from_millis: 1000,
+    until_millis: 2000,
+  });
+  let mut labeled = issue(9000, 1);
+  labeled["updated_at"] = json!("1970-01-01T00:00:01Z");
+  labeled["labels"] = json!([{"name":"triaged"}]);
+  let mut link = url::Url::parse(&format!("{}repos/owner/tickets/issues", forge.endpoint)).unwrap();
+  link.query_pairs_mut().extend_pairs([
+    ("state", "all"),
+    ("sort", "updated"),
+    ("direction", "asc"),
+    ("per_page", "2"),
+    ("page", "2"),
+    ("since", "1970-01-01T00:00:00Z"),
+  ]);
+  let mut first = Reply::json(json!([labeled]));
+  first.headers.push(("Link".into(), format!("<{link}>; rel=\"next\"")));
+  let mut at_upper = issue(9001, 17);
+  at_upper["updated_at"] = json!("1970-01-01T00:00:02Z");
+  let mut future = issue(9002, 18);
+  future["updated_at"] = json!("1970-01-01T00:00:02.001Z");
+  forge.replies.lock().await.extend([
+    first,
+    Reply::json(json!([at_upper, future])),
+    Reply::json(json!([at_upper, future])),
+  ]);
+  let provider = installation.provider();
+  let first = page(provider.execute(&request, CancellationToken::new()).await);
+  assert!(first.candidates.is_empty());
+  intent(&mut request).cursor = Some(
+    first
+      .next_cursor
+      .expect("a labeled page cannot end unlabeled discovery"),
+  );
+  let second = page(provider.execute(&request, CancellationToken::new()).await);
+  assert_eq!(
+    second.candidates.iter().map(|c| c.item_id.as_str()).collect::<Vec<_>>(),
+    ["9001"]
+  );
+  let replay = page(provider.execute(&request, CancellationToken::new()).await);
+  assert_eq!(
+    serde_json::to_value(replay).unwrap(),
+    serde_json::to_value(second).unwrap()
+  );
+  let bytes = serde_json::to_vec(&selector()).unwrap();
+  private_file(
+    &installation
+      .root
+      .path()
+      .join("selections")
+      .join(hashed("another-selection")),
+    &bytes,
+  );
+  let alternative = octacity_work_source_protocol::ConfigurationReference {
+    identity: "another-selection".into(),
+    sha256: hex::encode(Sha256::digest(bytes)),
+  };
+  for change in ["window", "selection", "group"] {
+    let mut changed = request.clone();
+    match change {
+      "window" => intent(&mut changed).window.as_mut().unwrap().until_millis += 1,
+      "selection" => intent(&mut changed).selection = alternative.clone(),
+      _ => intent(&mut changed).additional_selections = vec![alternative.clone()],
+    }
+    failure(
+      provider.execute(&changed, CancellationToken::new()).await,
+      FailureClass::InvalidRequest,
+    );
+  }
+  let requests = forge.requests.lock().await;
+  assert_eq!(
+    requests.len(),
+    6,
+    "retargeted cursors must fail before any provider call"
+  );
+  for request in requests.iter().filter(|r| r.contains("/issues?")) {
+    let target = request.split_whitespace().nth(1).unwrap();
+    let url = url::Url::parse(&format!("https://localhost{target}")).unwrap();
+    assert_eq!(
+      url.query_pairs().find(|(key, _)| key == "since").unwrap().1,
+      "1970-01-01T00:00:00Z"
+    );
+  }
+}
+
+#[tokio::test]
 async fn pagination_keeps_empty_filtered_pages_and_continues_the_exact_installed_query() {
   let forge = Forge::start().await;
   let installation = Installation::new(&forge, selector());

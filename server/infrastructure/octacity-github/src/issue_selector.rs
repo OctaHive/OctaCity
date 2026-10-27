@@ -32,12 +32,31 @@ pub enum IssueStateSelection {
   All,
 }
 
+/// Label-presence selection in the GitHub-owned configuration format.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum IssueLabelPresence {
+  /// Preserve unrestricted label presence, including existing selectors.
+  #[default]
+  Any,
+  /// Require the entire observed label set to be empty.
+  None,
+}
+impl IssueLabelPresence {
+  fn is_any(&self) -> bool {
+    *self == Self::Any
+  }
+}
+
 /// Closed typed selector definition owned by the GitHub adapter.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct IssueSelectorDraft {
   /// Explicit state selection, independent of label predicates.
   pub state: IssueStateSelection,
+  /// Optional strict unlabeled selection; the default preserves legacy canonical bytes.
+  #[serde(default, skip_serializing_if = "IssueLabelPresence::is_any")]
+  pub label_presence: IssueLabelPresence,
   /// Every configured label must be observed.
   pub all_of: Vec<String>,
   /// At least one configured alternative must be observed when nonempty.
@@ -51,6 +70,8 @@ pub struct IssueSelectorDraft {
 pub enum SelectorField {
   /// Whole configuration document, before typed field validation.
   Selector,
+  /// Requirement on the whole observed label set.
+  LabelPresence,
   /// Required labels.
   AllOf,
   /// Alternative labels.
@@ -88,6 +109,8 @@ pub struct SelectorError {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct IssueSelector {
   state: IssueStateSelection,
+  #[serde(skip_serializing_if = "IssueLabelPresence::is_any")]
+  label_presence: IssueLabelPresence,
   all_of: Vec<String>,
   any_of: Vec<String>,
   none_of: Vec<String>,
@@ -111,6 +134,12 @@ impl IssueSelector {
 
   /// Validates a complete typed selector without provider access or side effects.
   pub fn new(draft: IssueSelectorDraft) -> Result<Self, SelectorError> {
+    if draft.label_presence == IssueLabelPresence::None && (!draft.all_of.is_empty() || !draft.any_of.is_empty()) {
+      return Err(SelectorError {
+        field: SelectorField::LabelPresence,
+        reason: SelectorRejection::Contradictory,
+      });
+    }
     for (field, labels) in [
       (SelectorField::AllOf, &draft.all_of),
       (SelectorField::AnyOf, &draft.any_of),
@@ -157,6 +186,7 @@ impl IssueSelector {
     }
     Ok(Self {
       state: draft.state,
+      label_presence: draft.label_presence,
       all_of: draft.all_of,
       any_of: draft.any_of,
       none_of: draft.none_of,
@@ -183,6 +213,9 @@ impl IssueSelector {
         | (IssueStateSelection::Closed, IssueState::Closed)
     ) {
       reasons.push(Reason::StateMismatch);
+    }
+    if self.label_presence == IssueLabelPresence::None && !labels.is_empty() {
+      reasons.push(Reason::LabelsPresent);
     }
     if !self.all_of.iter().all(|label| contains_label(labels, label)) {
       reasons.push(Reason::RequiredLabelMissing);

@@ -109,6 +109,7 @@ pub(super) async fn qualify(
     .into_iter()
     .map(|status_id| IssueSourceStatusRule {
       native: WorkSourcePredicate {
+        label_presence: Default::default(),
         state: Some("native-state".into()),
         all_of: vec![],
         any_of: vec![],

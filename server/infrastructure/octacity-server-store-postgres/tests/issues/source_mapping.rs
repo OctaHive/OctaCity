@@ -31,6 +31,7 @@ async fn synchronization_retains_supported_managed_values_with_receipt_across_re
     },
     pull: vec![IssueSourceStatusRule {
       native: octacity_server_factory::WorkSourcePredicate {
+        label_presence: Default::default(),
         state: Some("opaque-native".into()),
         all_of: labels.clone(),
         any_of: vec![],
@@ -287,6 +288,7 @@ async fn source_mapping_publication_and_transition_survive_restart_as_one_origin
           },
           pull: vec![IssueSourceStatusRule {
             native: octacity_server_factory::WorkSourcePredicate {
+              label_presence: Default::default(),
               state: Some("opaque-native".parse().unwrap()),
               all_of: vec![],
               any_of: vec![],

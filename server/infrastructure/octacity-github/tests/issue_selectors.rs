@@ -7,6 +7,7 @@ fn names(values: &[&str]) -> Vec<String> {
 fn draft(all_of: &[&str], any_of: &[&str], none_of: &[&str]) -> IssueSelectorDraft {
   IssueSelectorDraft {
     state: IssueStateSelection::Open,
+    label_presence: Default::default(),
     all_of: names(all_of),
     any_of: names(any_of),
     none_of: names(none_of),
@@ -96,6 +97,32 @@ fn issue_state_selection_is_independent_of_label_predicates() {
   assert!(selector.matches(IssueState::Closed, &names(&["ready-for-review"])));
   assert!(serde_json::from_str::<IssueState>("\"all\"").is_err());
   assert!(serde_json::from_str::<IssueStateSelection>("\"merged\"").is_err());
+}
+
+#[test]
+fn strict_unlabeled_predicates_reject_required_labels_without_echoing_their_values() {
+  for field in ["all_of", "any_of"] {
+    let error = IssueSelector::from_config(
+      serde_json::to_string(&serde_json::json!({
+        "state":"open","all_of":if field == "all_of" { vec!["private label"] } else { vec![] },
+        "any_of":if field == "any_of" { vec!["private label"] } else { vec![] },
+        "none_of":[],"label_presence":"none"
+      }))
+      .unwrap()
+      .as_bytes(),
+    )
+    .unwrap_err();
+    assert_eq!(
+      error.to_string(),
+      "invalid GitHub Issue selector: LabelPresence (Contradictory)"
+    );
+  }
+  let excluded = IssueSelector::from_config(
+    br#"{"state":"open","all_of":[],"any_of":[],"none_of":["blocked"],"label_presence":"none"}"#,
+  )
+  .unwrap();
+  assert!(excluded.matches(IssueState::Open, &[]));
+  assert!(!excluded.matches(IssueState::Open, &names(&["unrelated"])));
 }
 
 #[test]

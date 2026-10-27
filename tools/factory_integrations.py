@@ -211,6 +211,7 @@ max = 2
 check = true
 authorize = true
 preview = true
+label_presence = true
 cancel = false
 credential_class = "work_source_read"
 configuration_digest = "{profile_digest}"

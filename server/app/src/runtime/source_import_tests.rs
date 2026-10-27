@@ -370,6 +370,28 @@ pub(super) async fn assert_normal_import_creates_task(
   let intent = json!({"id":id,"project_id":project,"expected_current_version":null,"definition":{
     "source":choices["items"][0]["binding"],"connection":{"id":choices["connection_id"],"version":choices["connection_version"],
       "access_version":choices["access_version"],"source_configuration":choices["items"][0]["connection_configuration"],"reporter_configuration":null},"enabled":true}});
+  let mut unsupported = intent.clone();
+  unsupported["definition"]["predicate"] = json!({
+    "state":"native-state","all_of":[],"any_of":[],"none_of":[],"label_presence":"none"
+  });
+  let rejected = client
+    .post(format!("{base}/issue-source-imports/{id}/versions"))
+    .header("idempotency-key", "unsupported-unlabeled-import")
+    .header("if-none-match", "*")
+    .json(&json!({"intent":unsupported}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    rejected.status(),
+    reqwest::StatusCode::BAD_REQUEST,
+    "state editing alone cannot qualify strict label presence for task import"
+  );
+  let rejected: Value = rejected.json().await.unwrap();
+  assert_eq!(
+    rejected["diagnostics"]["errors"][0]["field"],
+    "/predicate/label_presence"
+  );
   let response = client
     .post(format!("{base}/issue-source-imports/{id}/versions"))
     .header("idempotency-key", "activate-real-task-import")

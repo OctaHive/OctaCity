@@ -941,8 +941,18 @@ export const enMessages = {
     'No compatible task-read profile. Check Project access in Integrations; ask a deployment administrator to install a compatible Source profile if needed.',
   'factory.repositoryIndependent':
     'The code Repository can belong to another host. It does not select the task container.',
+  'factory.labelPresence': 'Label presence',
+  'factory.labelsAny': 'Any labels, including none',
+  'factory.labelsNone': 'Only tasks without labels',
+  'factory.labelPresenceHelp':
+    'Only tasks without labels requires an empty label set. Excluded labels alone still allow tasks with other labels.',
+  'factory.labelsContradiction':
+    'Tasks without labels cannot require labels. Clear required and alternative labels or choose any labels.',
+  'factory.labelsUnsupported':
+    'This profile cannot select only tasks without labels. Your filters are retained; choose a qualified profile or explicitly change the filters.',
   'factory.customizeFilters': 'Customize filters',
   'factory.taskState': 'Task state',
+  'factory.stateUnsupported': 'Choose a supported state or any state.',
   'factory.anyState': 'Any state (no extra restriction)',
   'factory.allLabels': 'All required labels (one per line)',
   'factory.anyLabels': 'Any matching labels (one per line)',
@@ -987,6 +997,7 @@ export const enMessages = {
     'Saved filters are unavailable in the installed profile. Publication is blocked until an authorized compatible profile is selected.',
   'factory.accessVersion': 'Project access v{version}',
   'factory.sourceTarget': 'Target pipeline',
+  'factory.previewReason.labels_present': 'Task has labels; only tasks without labels are eligible',
   'factory.previewReason.state_mismatch': 'Task state does not match',
   'factory.previewReason.required_label_missing': 'A required label is missing',
   'factory.previewReason.alternative_label_missing': 'No alternative label matches',

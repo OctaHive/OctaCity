@@ -381,6 +381,7 @@ fn source_preview_and_diagnostics_identify_exact_effective_selectors() {
   run_ready(async {
     let fixture = Fixture::new("gitlab").await;
     let labels = WorkSourceSelectionLabels {
+      label_presence: Default::default(),
       state: key("open"),
       all_of: vec!["customer request".into()],
       any_of: vec![],
@@ -571,11 +572,61 @@ fn source_group_preview_does_not_reveal_hidden_member_existence() {
 }
 
 #[test]
+fn preview_describes_strict_unlabeled_selection_without_losing_its_presence_requirement() {
+  run_ready(async {
+    let fixture = Fixture::new("custom-tracker").await;
+    let mut intent = fixture.intent.clone();
+    intent.inputs[0].definition.predicate = Some(
+      serde_json::from_value(serde_json::json!({
+        "state":"todo","all_of":[],"any_of":[],"none_of":["on hold"],"label_presence":"none"
+      }))
+      .unwrap(),
+    );
+    let handlers = fixture
+      .handlers()
+      .with_selection_labels(
+        fixture.capability.clone(),
+        WorkSourceSelectionLabels {
+          label_presence: Default::default(),
+          state: key("any"),
+          all_of: vec![],
+          any_of: vec![],
+          none_of: vec![],
+        },
+      )
+      .unwrap()
+      .with_predicate_states(fixture.capability.clone(), key("any"), vec![key("todo")])
+      .unwrap()
+      .with_predicate_label_presence(fixture.capability.clone())
+      .unwrap()
+      .with_preview(Arc::new(Reader));
+    let result = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers))
+      .handle_query(
+        &context(),
+        PreviewWorkSourcesQuery {
+          intent,
+          limit: 2,
+          observed_at: time(4),
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      serde_json::to_value(&result.selectors[0].selection).unwrap(),
+      serde_json::json!({
+        "state":"todo","all_of":[],"any_of":[],"none_of":["on hold"],"label_presence":"none"
+      })
+    );
+  });
+}
+
+#[test]
 fn preview_presents_the_effective_custom_predicate_instead_of_the_installed_base() {
   run_ready(async {
     let fixture = Fixture::new("custom-tracker").await;
     let mut intent = fixture.intent.clone();
     intent.inputs[0].definition.predicate = Some(octacity_server_factory::WorkSourcePredicate {
+      label_presence: Default::default(),
       state: Some(key("todo")),
       all_of: vec!["literal, label".into()],
       any_of: vec![],
@@ -586,6 +637,7 @@ fn preview_presents_the_effective_custom_predicate_instead_of_the_installed_base
       .with_selection_labels(
         fixture.capability.clone(),
         WorkSourceSelectionLabels {
+          label_presence: Default::default(),
           state: key("any"),
           all_of: vec![],
           any_of: vec![],
@@ -610,6 +662,7 @@ fn preview_presents_the_effective_custom_predicate_instead_of_the_installed_base
     assert_eq!(
       result.selectors[0].selection,
       Some(WorkSourceSelectionLabels {
+        label_presence: Default::default(),
         state: key("todo"),
         all_of: vec!["literal, label".into()],
         any_of: vec![],

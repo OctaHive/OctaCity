@@ -23,7 +23,8 @@ pub(super) async fn assert_retained_pull_survives_input_mismatch_and_disablement
   let mode_path = provider.join("mode.json");
   let original = std::fs::read(&mode_path).unwrap();
   let mut mode: Value = serde_json::from_slice(&original).unwrap();
-  mode["candidates"][0]["state"] = json!("different-native-state");
+  mode["candidates"][0]["state"] = json!("native-state");
+  mode["candidates"][0]["labels"] = json!(["reported-triage-label"]);
   mode["candidates"][0]["title"] = json!("Refreshed outside the execution selector");
   mode["candidates"][0]["body"] = json!("Source owned description after the selector mismatch");
   std::fs::write(&mode_path, serde_json::to_vec(&mode).unwrap()).unwrap();
@@ -31,7 +32,8 @@ pub(super) async fn assert_retained_pull_survives_input_mismatch_and_disablement
   let mut intent = published["intent"].clone();
   intent["inputs"][0]["id"] = json!(id);
   intent["inputs"][0]["definition"]["enabled"] = json!(true);
-  intent["inputs"][0]["definition"]["predicate"] = json!({"state":"native-state","all_of":[],"any_of":[],"none_of":[]});
+  intent["inputs"][0]["definition"]["predicate"] =
+    json!({"state":"native-state","all_of":[],"any_of":[],"none_of":[],"label_presence":"none"});
   let path = format!("{base}/factory-source-inputs/{id}/versions");
   let response = client
     .post(&path)

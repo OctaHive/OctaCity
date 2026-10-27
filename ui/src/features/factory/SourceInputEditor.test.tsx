@@ -1153,36 +1153,42 @@ it('selects the exact installed profile even when separate profile identities sh
   );
 });
 
-it('explains a filtered preview using translated reasons and distinguishes an unavailable source from empty results', async () => {
-  const preview = integrationFixture('WorkSourcePreview');
-  preview.candidates[0]!.disposition = 'filtered';
-  preview.candidates[0]!.summary.selections[0]!.reasons = ['required_label_missing'];
-  let unavailable = false;
-  const { connection, read } = fixture({
-    preview: vi.fn<FactorySourcesApi['preview']>(async (intent) =>
-      unavailable
-        ? { ...preview, configuration: intent, failure: 'unavailable', candidates: [] }
-        : { ...preview, configuration: intent },
-    ),
-  });
-  await openInput();
-  await choose('Source connection', connection.definition.name);
-  await choose('Task container', read.locator);
-  await choose(
-    'Selector and input mapping',
-    `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
-  );
-  await choose('Code Repository', 'Code in another host · v3');
-  await userEvent.click(screen.getByRole('button', { name: 'Preview source (read-only)' }));
-  expect(await screen.findByText(/A required label is missing/)).toBeTruthy();
-  expect(screen.queryByText(/required_label_missing/)).toBeNull();
-  unavailable = true;
-  await userEvent.click(screen.getByRole('button', { name: 'Preview source (read-only)' }));
-  expect(
-    await screen.findByText(/Source preview is unavailable; this is not an empty result/),
-  ).toBeTruthy();
-  expect(screen.queryByText('No tasks returned by this bounded read.')).toBeNull();
-});
+it.each([
+  ['required_label_missing', 'A required label is missing'],
+  ['labels_present', 'Task has labels; only tasks without labels are eligible'],
+] as const)(
+  'explains a filtered preview reason %s and distinguishes an unavailable source from empty results',
+  async (reason, message) => {
+    const preview = integrationFixture('WorkSourcePreview');
+    preview.candidates[0]!.disposition = 'filtered';
+    preview.candidates[0]!.summary.selections[0]!.reasons = [reason];
+    let unavailable = false;
+    const { connection, read } = fixture({
+      preview: vi.fn<FactorySourcesApi['preview']>(async (intent) =>
+        unavailable
+          ? { ...preview, configuration: intent, failure: 'unavailable', candidates: [] }
+          : { ...preview, configuration: intent },
+      ),
+    });
+    await openInput();
+    await choose('Source connection', connection.definition.name);
+    await choose('Task container', read.locator);
+    await choose(
+      'Selector and input mapping',
+      `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+    );
+    await choose('Code Repository', 'Code in another host · v3');
+    await userEvent.click(screen.getByRole('button', { name: 'Preview source (read-only)' }));
+    expect(await screen.findByText(new RegExp(message))).toBeTruthy();
+    expect(screen.queryByText(new RegExp(reason))).toBeNull();
+    unavailable = true;
+    await userEvent.click(screen.getByRole('button', { name: 'Preview source (read-only)' }));
+    expect(
+      await screen.findByText(/Source preview is unavailable; this is not an empty result/),
+    ).toBeTruthy();
+    expect(screen.queryByText('No tasks returned by this bounded read.')).toBeNull();
+  },
+);
 
 it('keeps every selected group member visible and removable when a conflicting refresh advances current inputs', async () => {
   const first = retainedInput().definition;
@@ -1552,3 +1558,228 @@ it('refreshes a new group after a publication conflict and lets the operator rev
   });
   expect(publish).toHaveBeenCalledOnce();
 });
+
+it('selects strictly unlabeled tasks independently of exclusions and blocks contradictory required labels', async () => {
+  const choices = integrationFixture('WorkSourceInputChoices', 1);
+  const read = choices.items.find((item) => item.purpose === 'task_read')!;
+  const setup = fixture({
+    choices: vi.fn(async () => ({
+      ...choices,
+      items: [
+        {
+          ...read,
+          predicate_states: ['native-open'],
+          predicate_label_presence: ['any', 'none'] satisfies NonNullable<
+            typeof read.predicate_label_presence
+          >,
+        },
+      ],
+    })),
+  });
+  await openInput();
+  await choose('Source connection', setup.connection.definition.name);
+  await choose('Task container', read.locator);
+  await choose('Selector and input mapping', `${read.binding.configuration.identity} · v1`);
+  await choose('Code Repository', 'Code in another host · v3');
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Customize filters' }));
+  await userEvent.type(screen.getByLabelText('Excluded labels (one per line)'), 'on hold');
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  expect(setup.validate.mock.calls[0]![0].inputs[0]!.definition.predicate).toEqual({
+    state: null,
+    all_of: [],
+    any_of: [],
+    none_of: ['on hold'],
+  });
+  await choose('Label presence', 'Only tasks without labels');
+  expect(
+    screen.queryByText('No label restrictions: tasks without labels are eligible too.'),
+  ).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  expect(setup.validate.mock.calls[1]![0].inputs[0]!.definition.predicate).toEqual({
+    state: null,
+    label_presence: 'none',
+    all_of: [],
+    any_of: [],
+    none_of: ['on hold'],
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Review input publication' }));
+  const dialog = await screen.findByRole('dialog');
+  expect(dialog.textContent).toContain('Only tasks without labels');
+  await userEvent.keyboard('{Escape}');
+  await userEvent.type(screen.getByLabelText('All required labels (one per line)'), 'required');
+  expect(screen.getByRole('alert').textContent).toContain('cannot require labels');
+  expect(screen.getByRole('button', { name: 'Validate input' })).toHaveProperty('disabled', true);
+  expect(screen.getByLabelText('All required labels (one per line)')).toHaveProperty(
+    'value',
+    'required',
+  );
+  await choose('Label presence', 'Any labels, including none');
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Validate input' })).toHaveProperty('disabled', false);
+});
+
+it('preserves saved unlabeled filters across profile changes and refuses unsupported broadening', async () => {
+  const original = retainedInput();
+  const record = {
+    ...original,
+    definition: {
+      ...original.definition,
+      definition: {
+        ...original.definition.definition,
+        predicate: {
+          state: null,
+          label_presence: 'none' as const,
+          all_of: [],
+          any_of: [],
+          none_of: ['on hold'],
+        },
+      },
+    },
+  };
+  const choices = integrationFixture('WorkSourceInputChoices', 1);
+  const read = choices.items.find((item) => item.purpose === 'task_read')!;
+  const newer = structuredClone(read);
+  newer.binding.configuration.version = 'v2';
+  newer.binding.configuration.digest = 'cd'.repeat(32);
+  const setup = fixture({
+    list: vi.fn(async () => ({ items: [record], next_cursor: null })),
+    choices: vi.fn(async () => ({
+      ...choices,
+      items: [
+        {
+          ...read,
+          predicate_states: ['native-open'],
+          predicate_label_presence: ['any', 'none'] satisfies NonNullable<
+            typeof read.predicate_label_presence
+          >,
+        },
+        { ...newer, predicate_states: ['native-open'] },
+      ],
+    })),
+  });
+  await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit automatic input' }));
+  expect(await screen.findByRole('combobox', { name: 'Label presence' })).toHaveProperty(
+    'textContent',
+    'Only tasks without labels',
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  expect(setup.validate.mock.calls[0]![0].inputs[0]!.definition.predicate).toEqual(
+    record.definition.definition.predicate,
+  );
+  await choose('Selector and input mapping', `${read.binding.configuration.identity} · v2`);
+  expect(screen.getByRole('alert').textContent).toContain('Your filters are retained');
+  expect(screen.getByRole('button', { name: 'Validate input' })).toHaveProperty('disabled', true);
+  expect(screen.getByLabelText('Excluded labels (one per line)')).toHaveProperty(
+    'value',
+    'on hold',
+  );
+  await choose('Selector and input mapping', `${read.binding.configuration.identity} · v1`);
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  expect(setup.validate.mock.calls[1]![0].inputs[0]!.definition.predicate).toEqual(
+    record.definition.definition.predicate,
+  );
+});
+
+it.each([
+  { language: 'en', choice: 'native-closed', expectedState: 'native-closed' },
+  { language: 'ru', choice: 'any', expectedState: null },
+] as const)(
+  'keeps an incompatible saved state visible and requires an explicit $choice replacement in $language',
+  async ({ language, choice, expectedState }) => {
+    const text = (key: MessageKey) => translate(language, key);
+    const original = retainedInput();
+    const record = {
+      ...original,
+      definition: {
+        ...original.definition,
+        definition: {
+          ...original.definition.definition,
+          predicate: {
+            state: 'native-open',
+            label_presence: 'none' as const,
+            all_of: [],
+            any_of: [],
+            none_of: ['on hold'],
+          },
+        },
+      },
+    };
+    const choices = integrationFixture('WorkSourceInputChoices', 1);
+    const read = choices.items.find((item) => item.purpose === 'task_read')!;
+    const replacement = structuredClone(read);
+    replacement.binding.configuration.version = 'v2';
+    replacement.binding.configuration.digest = 'cd'.repeat(32);
+    const setup = fixture(
+      {
+        list: vi.fn(async () => ({ items: [record], next_cursor: null })),
+        choices: vi.fn<FactorySourcesApi['choices']>(async () => ({
+          ...choices,
+          items: [
+            {
+              ...read,
+              predicate_states: ['native-open'],
+              predicate_label_presence: ['any', 'none'],
+            },
+            {
+              ...replacement,
+              predicate_states: ['native-closed'],
+              predicate_label_presence: ['any', 'none'],
+            },
+          ],
+        })),
+      },
+      language,
+    );
+    await userEvent.click(screen.getByRole('button', { name: text('factory.configureAutomatic') }));
+    await userEvent.click(await screen.findByRole('button', { name: text('factory.editInput') }));
+    await screen.findByRole('combobox', { name: text('factory.labelPresence') });
+    await userEvent.click(screen.getByRole('button', { name: text('factory.validateInput') }));
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: text('factory.reviewInput') })).toHaveProperty(
+        'disabled',
+        false,
+      ),
+    );
+    await choose(text('factory.inputProfile'), `${read.binding.configuration.identity} · v2`);
+    expect(screen.getByRole('combobox', { name: text('factory.taskState') }).textContent).toBe(
+      'native-open',
+    );
+    expect(screen.getByRole('alert').textContent).toBe(
+      language === 'en'
+        ? 'Choose a supported state or any state.'
+        : 'Выберите допустимое или любое состояние.',
+    );
+    for (const key of [
+      'factory.validateInput',
+      'factory.previewSource',
+      'factory.reviewInput',
+    ] as const) {
+      expect(screen.getByRole('button', { name: text(key) })).toHaveProperty('disabled', true);
+    }
+    await userEvent.click(screen.getByRole('button', { name: text('factory.validateInput') }));
+    await userEvent.click(screen.getByRole('button', { name: text('factory.previewSource') }));
+    expect(setup.validate).toHaveBeenCalledOnce();
+    expect(setup.api.preview).not.toHaveBeenCalled();
+    expect(setup.publish).not.toHaveBeenCalled();
+    await choose(text('factory.taskState'), choice === 'any' ? text('factory.anyState') : choice);
+    expect(screen.queryByRole('alert')).toBeNull();
+    await userEvent.click(screen.getByRole('button', { name: text('factory.previewSource') }));
+    await userEvent.click(screen.getByRole('button', { name: text('factory.validateInput') }));
+    const expected = {
+      state: expectedState,
+      label_presence: 'none',
+      all_of: [],
+      any_of: [],
+      none_of: ['on hold'],
+    };
+    expect(setup.validate.mock.calls[1]![0].inputs[0]!.definition.predicate).toEqual(expected);
+    expect(setup.api.preview).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        inputs: [
+          expect.objectContaining({ definition: expect.objectContaining({ predicate: expected }) }),
+        ],
+      }),
+    );
+  },
+);

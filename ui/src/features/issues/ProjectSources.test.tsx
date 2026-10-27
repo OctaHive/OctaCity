@@ -598,9 +598,14 @@ it('keeps an import draft through stale access and requires explicit profile sel
   expect(document.body.textContent).not.toContain('private-access-detail');
 });
 
-it.each([true, false])(
-  'reviews lifecycle changes from enabled=%s with exact pins and safe replay, without changing linked task synchronization',
-  async (enabled) => {
+it.each([
+  { enabled: true, unlabeled: false },
+  { enabled: false, unlabeled: false },
+  { enabled: true, unlabeled: true },
+  { enabled: false, unlabeled: true },
+])(
+  'reviews lifecycle changes from enabled=$enabled unlabeled=$unlabeled with exact pins and safe replay, without changing linked task synchronization',
+  async ({ enabled, unlabeled }) => {
     const { sources, read, connection, choices, api } = fixture();
     const original: IssueSourceImport = {
       project_id: 'delivery',
@@ -612,8 +617,9 @@ it.each([true, false])(
         source: read.binding,
         predicate: {
           state: 'native-open',
-          all_of: ['keep-filter'],
-          any_of: ['one-of-these'],
+          ...(unlabeled ? { label_presence: 'none' as const } : {}),
+          all_of: unlabeled ? [] : ['keep-filter'],
+          any_of: unlabeled ? [] : ['one-of-these'],
           none_of: ['leave-out'],
         },
         connection: {
@@ -626,6 +632,7 @@ it.each([true, false])(
       },
     };
     sources.imports.mockResolvedValue({ items: [original], next_cursor: null });
+    if (unlabeled) read.predicate_label_presence = ['any', 'none'];
     sources.publishImport
       .mockRejectedValueOnce(
         new ManagementApiError({
@@ -648,7 +655,7 @@ it.each([true, false])(
     await userEvent.click(action);
     const dialog = await screen.findByRole('dialog', { name: 'Publish task import' });
     if (enabled) expect(sources.importChoices).not.toHaveBeenCalled();
-    expect(dialog.textContent).toContain('keep-filter');
+    expect(dialog.textContent).toContain(unlabeled ? 'Only tasks without labels' : 'keep-filter');
     expect(dialog.textContent).toContain('All required labels');
     expect(dialog.textContent).toContain('Any matching labels');
     expect(dialog.textContent).toContain('Excluded labels');
@@ -776,7 +783,7 @@ it('refreshes current access for re-enabling the same retained import after a gr
   expect(sources.previewImport).not.toHaveBeenCalled();
 });
 
-it.each(['Source', 'connection configuration'] as const)(
+it.each(['Source', 'connection configuration', 'label-presence support'] as const)(
   'blocks re-enable when the exact retained %s pin is no longer authorized and retries without adopting its replacement',
   async (parent) => {
     const { sources, read, connection, choices } = fixture();
@@ -797,8 +804,19 @@ it.each(['Source', 'connection configuration'] as const)(
         },
       },
     };
+    if (parent === 'label-presence support') {
+      original.definition.predicate = {
+        state: null,
+        label_presence: 'none',
+        all_of: [],
+        any_of: [],
+        none_of: [],
+      };
+      read.predicate_label_presence = ['any', 'none'];
+    }
     const replacement = structuredClone(read);
-    if (parent === 'Source') replacement.binding.configuration.version = 'v2';
+    if (parent === 'label-presence support') delete replacement.predicate_label_presence;
+    else if (parent === 'Source') replacement.binding.configuration.version = 'v2';
     else replacement.connection_configuration.version = 'v2';
     sources.imports.mockResolvedValue({ items: [original], next_cursor: null });
     sources.importChoices.mockResolvedValue({ ...choices, items: [replacement] });
@@ -866,3 +884,35 @@ for (const language of ['en', 'ru'] as const) {
     },
   );
 }
+
+it('retains an unsupported saved unlabeled import but permits explicitly disabling it', async () => {
+  const data = fixture();
+  const original = retainedImport(data);
+  original.definition.predicate = {
+    state: null,
+    label_presence: 'none',
+    all_of: [],
+    any_of: [],
+    none_of: [],
+  };
+  data.sources.imports.mockResolvedValue({ items: [original], next_cursor: null });
+  await userEvent.click(await screen.findByRole('button', { name: 'Task sources' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit task import' }));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toContain('Your filters are retained');
+  expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Discover tasks automatically' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review task import' }));
+  expect(screen.getByRole('dialog').textContent).toContain('Only tasks without labels');
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm task import' }),
+  );
+  await waitFor(() => expect(data.sources.publishImport).toHaveBeenCalledOnce());
+  expect(data.sources.publishImport.mock.calls[0]![0].definition).toEqual({
+    ...original.definition,
+    enabled: false,
+  });
+});

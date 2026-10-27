@@ -32,6 +32,9 @@ pub struct ProtocolRanges {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SourceCapabilities {
+  /// Explicit support for strict label-presence selectors; legacy adapters do not inherit it.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub label_presence: bool,
   /// Explicit opt-in for summaries/reasons, without production scan or task events.
   #[serde(default)]
   pub preview: bool,

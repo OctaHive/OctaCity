@@ -546,6 +546,70 @@ fn reporting_is_optional_and_requires_an_independent_compatible_reporter_selecti
 }
 
 #[test]
+fn legacy_input_predicate_preserves_exact_bytes_digest_and_unrestricted_labels() {
+  let canonical = r#"{"state":"open","all_of":[],"any_of":[],"none_of":[]}"#;
+  let predicate: crate::WorkSourcePredicate = serde_json::from_str(canonical).unwrap();
+  predicate.validate().unwrap();
+  assert!(predicate.mismatches("open", &[]).is_empty());
+  assert!(predicate.mismatches("open", &["human-owned".into()]).is_empty());
+  let bytes = serde_json::to_vec(&predicate).unwrap();
+  assert_eq!(bytes, canonical.as_bytes());
+  assert_eq!(
+    FactoryDigest::content_sha256(&bytes).to_string(),
+    "3f3c8a781028756ccabf932d54cd4a0437d7d8c477889bc54eb9851e28c789b2"
+  );
+}
+
+#[test]
+fn strict_unlabeled_input_predicate_rejects_even_unrelated_observed_labels() {
+  let predicate: crate::WorkSourcePredicate = serde_json::from_value(serde_json::json!({
+    "state":"open","all_of":[],"any_of":[],"none_of":[],"label_presence":"none"
+  }))
+  .unwrap();
+  predicate.validate().unwrap();
+  assert!(predicate.mismatches("open", &[]).is_empty());
+  assert!(!predicate.mismatches("open", &["human-owned".into()]).is_empty());
+  assert!(!predicate.mismatches("closed", &[]).is_empty());
+  let any: crate::WorkSourcePredicate = serde_json::from_value(serde_json::json!({
+    "state":"open","all_of":[],"any_of":[],"none_of":[],"label_presence":"any"
+  }))
+  .unwrap();
+  assert!(any.mismatches("open", &["human-owned".into()]).is_empty());
+  assert_eq!(
+    serde_json::to_string(&any).unwrap(),
+    r#"{"state":"open","all_of":[],"any_of":[],"none_of":[]}"#,
+    "the explicit default must retain the legacy canonical representation"
+  );
+}
+
+#[test]
+fn strict_unlabeled_input_predicate_rejects_required_labels_but_allows_bounded_exclusions() {
+  for (all, any) in [(vec!["bug"], vec![]), (vec![], vec!["bug"]), (vec!["bug"], vec!["bug"])] {
+    let contradictory: crate::WorkSourcePredicate = serde_json::from_value(serde_json::json!({
+      "state":"open","all_of":all,"any_of":any,"none_of":[],"label_presence":"none"
+    }))
+    .unwrap();
+    assert!(
+      contradictory.validate().is_err(),
+      "required labels contradict an empty label set"
+    );
+  }
+  let excluded: crate::WorkSourcePredicate = serde_json::from_value(serde_json::json!({
+    "state":"open","all_of":[],"any_of":[],"none_of":["blocked"],"label_presence":"none"
+  }))
+  .unwrap();
+  excluded.validate().unwrap();
+  assert!(excluded.mismatches("open", &[]).is_empty());
+  assert_eq!(
+    excluded.mismatches("open", &["blocked".into()]),
+    [
+      crate::WorkSourcePredicateMismatch::LabelsPresent,
+      crate::WorkSourcePredicateMismatch::ExcludedLabelPresent
+    ]
+  );
+}
+
+#[test]
 fn input_predicate_is_immutable_bounded_and_uses_literal_normalized_labels() {
   let predicate: crate::WorkSourcePredicate = serde_json::from_value(serde_json::json!({
     "state":"open","all_of":["needs-human-review"],"any_of":["docs","maintenance"],"none_of":["blocked"]
@@ -558,6 +622,14 @@ fn input_predicate_is_immutable_bounded_and_uses_literal_normalized_labels() {
       .is_empty()
   );
   assert!(!predicate.mismatches("open", &["docs".into()]).is_empty());
+  assert_eq!(
+    predicate.mismatches("open", &["needs-human-review".into()]),
+    [crate::WorkSourcePredicateMismatch::AlternativeLabelMissing]
+  );
+  assert_eq!(
+    predicate.mismatches("open", &["needs-human-review".into(), "docs".into(), "blocked".into()]),
+    [crate::WorkSourcePredicateMismatch::ExcludedLabelPresent]
+  );
   assert!(
     !predicate
       .mismatches("closed", &["docs".into(), "needs-human-review".into()])

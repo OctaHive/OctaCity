@@ -9,6 +9,8 @@ pub const MAX_SUMMARY_BYTES: usize = 512;
 pub enum SelectionMismatch {
   /// Observed provider state fails the selected state predicate.
   StateMismatch,
+  /// Labels were observed by a selector requiring an empty label set.
+  LabelsPresent,
   /// At least one required literal label is absent.
   RequiredLabelMissing,
   /// No permitted alternative label is present.

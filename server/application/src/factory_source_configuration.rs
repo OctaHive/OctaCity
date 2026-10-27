@@ -61,6 +61,12 @@ impl ManagementAuthorizationTarget for ValidateWorkSourceConfigurationQuery {
     instance_resource(ManagementResourceKind::Project, self.intent.project_id)
   }
 }
+struct InstalledSourcePredicate {
+  capability: WorkSourceCapability,
+  states: Vec<FactoryKey>,
+  label_presence: bool,
+}
+
 /// Trusted installed Source/Reporter choices, independent of provider names and private files.
 pub struct FactorySourceConfigurationHandlers<S> {
   store: Arc<S>,
@@ -68,7 +74,7 @@ pub struct FactorySourceConfigurationHandlers<S> {
   capabilities: Vec<WorkSourceCapability>,
   configuration_parents: Vec<(WorkSourceCapability, ImmutableReference)>,
   selection_labels: Vec<(WorkSourceCapability, WorkSourceSelectionLabels)>,
-  predicate_states: Vec<(WorkSourceCapability, Vec<FactoryKey>)>,
+  predicate_support: Vec<InstalledSourcePredicate>,
   reporting_mappings: Vec<(WorkSourceCapability, WorkSourceReportingChoice)>,
   preview: Option<Arc<dyn FactoryWorkSourcePreview>>,
   issue_links: Option<Arc<dyn FactoryWorkSourceIssueLinks>>,
@@ -95,7 +101,7 @@ impl<S> FactorySourceConfigurationHandlers<S> {
       capabilities,
       configuration_parents: vec![],
       selection_labels: vec![],
-      predicate_states: vec![],
+      predicate_support: vec![],
       reporting_mappings: vec![],
       preview: None,
       issue_links: None,
@@ -201,14 +207,18 @@ impl<
       predicate
         .validate()
         .map_err(|_| FactoryValidationDiagnostics::invalid("/predicate"))?;
-      let states = self
-        .predicate_states
+      let support = self
+        .predicate_support
         .iter()
-        .find(|(c, _)| c.project_id == definition.target.project_id() && c.binding == definition.source)
-        .map(|(_, states)| states)
+        .find(|s| {
+          s.capability.project_id == definition.target.project_id() && s.capability.binding == definition.source
+        })
         .ok_or_else(|| FactoryValidationDiagnostics::invalid("/predicate"))?;
-      if predicate.state.as_ref().is_some_and(|s| !states.contains(s)) {
+      if predicate.state.as_ref().is_some_and(|s| !support.states.contains(s)) {
         return Err(FactoryValidationDiagnostics::invalid("/predicate/state"));
+      }
+      if predicate.label_presence == WorkSourceLabelPresence::None && !support.label_presence {
+        return Err(FactoryValidationDiagnostics::invalid("/predicate/label_presence"));
       }
     }
     let connection = definition

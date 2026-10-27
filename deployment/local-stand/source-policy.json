@@ -1,9 +1,10 @@
 {
   "reader": {
     "identity": "github-issues",
-    "version": "v1",
+    "version": "v2",
     "readable": { "states": ["open", "closed"], "labels": [] },
     "predicate_states": ["open", "closed"],
+    "predicate_label_presence": true,
     "preparation": {
       "mapping": {
         "acceptance": { "kind": "body_section", "value": "## Acceptance" },

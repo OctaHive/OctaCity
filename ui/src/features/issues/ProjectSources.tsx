@@ -9,7 +9,7 @@ import { sourceBindingKey, sourceReferenceKey } from '../../shared/sourceReferen
 import { ManagementApiError } from '../../api/client';
 import type { IssueSourcesApi, IssueSourceImport, IssueSourceImportIntent } from './sourceApi';
 import { ProjectSourceEditor } from './ProjectSourceEditor';
-import { importPredicateSummary } from './importPredicateSummary';
+import { sourcePredicateSummary } from '../../shared/sourcePredicateSummary';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import type { ConfirmedMutationAttempt } from '../../shared/confirmedIntent';
 import styles from './Issues.module.css';
@@ -81,7 +81,9 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
               choice.purpose === 'task_read' &&
               sourceBindingKey(choice.binding) === sourceBindingKey(definition.source) &&
               sourceReferenceKey(choice.connection_configuration) ===
-                sourceReferenceKey(definition.connection.source_configuration),
+                sourceReferenceKey(definition.connection.source_configuration) &&
+              (definition.predicate?.label_presence !== 'none' ||
+                choice.predicate_label_presence?.includes('none')),
           )
         )
           throw new ManagementApiError({
@@ -107,7 +109,7 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
             definition.source.installation.identity,
           `${definition.source.resource.identity} · ${definition.source.configuration.identity} / ${definition.source.configuration.version}`,
           t('issues.revision', { version: record.version }),
-          importPredicateSummary(definition.predicate, t),
+          sourcePredicateSummary(definition.predicate, t),
           t(definition.enabled ? 'issueImport.active' : 'issueImport.inactive'),
           t(retire ? 'issueImport.removeHelp' : 'issueImport.lifecycleHelp'),
         ].join('; '),

@@ -292,6 +292,7 @@ impl<S> FactorySourceConfigurationHandlers<S> {
         })
         .map(|(_, selection)| match &definition.predicate {
           Some(predicate) => WorkSourceSelectionLabels {
+            label_presence: predicate.label_presence,
             state: predicate.state.clone().unwrap_or_else(|| selection.state.clone()),
             all_of: predicate.all_of.clone(),
             any_of: predicate.any_of.clone(),

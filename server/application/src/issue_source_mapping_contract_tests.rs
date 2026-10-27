@@ -80,6 +80,7 @@ fn issue_source_mapping_conditions_preserve_cards_without_inference_or_guard_byp
         .into_iter()
         .map(|status_id| IssueSourceStatusRule {
           native: octacity_server_factory::WorkSourcePredicate {
+            label_presence: Default::default(),
             state: Some("opaque-state".into()),
             all_of: vec![],
             any_of: vec![],
@@ -192,6 +193,7 @@ fn issue_source_mapping_publication_rejects_unsupported_fields_values_workflows_
         "workflow" => status.workflow.version = octacity_server_domain::IssueWorkflowVersion::new(99).unwrap(),
         "status" => status.pull.push(IssueSourceStatusRule {
           native: octacity_server_factory::WorkSourcePredicate {
+            label_presence: Default::default(),
             state: None,
             all_of: vec![],
             any_of: vec![],
@@ -201,6 +203,7 @@ fn issue_source_mapping_publication_rejects_unsupported_fields_values_workflows_
         }),
         "state" | "label" => status.pull.push(IssueSourceStatusRule {
           native: octacity_server_factory::WorkSourcePredicate {
+            label_presence: Default::default(),
             state: (case == "state").then(|| "not-advertised".into()),
             all_of: if case == "label" {
               vec!["not-advertised".into()]

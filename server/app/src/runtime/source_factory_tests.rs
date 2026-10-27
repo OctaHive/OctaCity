@@ -29,6 +29,7 @@ pub(super) async fn assert_factory_intake(
   let mode_path = provider.join("mode.json");
   let original = std::fs::read(&mode_path).unwrap();
   let mut mode: Value = serde_json::from_slice(&original).unwrap();
+  mode["candidates"][0]["labels"] = json!([]);
   mode["candidates"][0]["body"] = json!("Reviewed external acceptance criteria");
   let mut no_card = mode["candidates"][0].clone();
   no_card["item_id"] = json!("execution-without-card");
@@ -49,6 +50,8 @@ pub(super) async fn assert_factory_intake(
     let mut intent = published["intent"].clone();
     intent["inputs"][0]["id"] = json!(id);
     intent["inputs"][0]["definition"]["enabled"] = json!(true);
+    intent["inputs"][0]["definition"]["predicate"] =
+      json!({"state":"native-state","all_of":[],"any_of":[],"none_of":[],"label_presence":"none"});
     let path = format!("{base}/factory-source-inputs/{id}/versions");
     diagnostics_path = format!("{path}/1/diagnostics");
     if index == 0 {
@@ -155,6 +158,39 @@ pub(super) async fn assert_factory_intake(
           .unwrap()
           .to_owned(),
       );
+    }
+    if index == 0 {
+      for candidate in mode["candidates"].as_array_mut().unwrap() {
+        candidate["labels"] = json!(["triaged"]);
+      }
+      std::fs::write(&mode_path, serde_json::to_vec(&mode).unwrap()).unwrap();
+      let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(15);
+      loop {
+        let updated: Value = client
+          .get(&diagnostics_path)
+          .send()
+          .await
+          .unwrap()
+          .json()
+          .await
+          .unwrap();
+        if updated["scan"]["selection"]["matching_inputs"] == json!([]) {
+          assert_eq!(
+            updated["admissions"], diagnostics["admissions"],
+            "labeling an admitted ticket cannot replace its original Work/Run"
+          );
+          break;
+        }
+        assert!(
+          tokio::time::Instant::now() < deadline,
+          "new labels must stop subsequent input matches"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+      }
+      for candidate in mode["candidates"].as_array_mut().unwrap() {
+        candidate["labels"] = json!([]);
+      }
+      std::fs::write(&mode_path, serde_json::to_vec(&mode).unwrap()).unwrap();
     }
     intent["inputs"][0]["expected_version"] = json!(1);
     intent["inputs"][0]["definition"]["enabled"] = json!(false);

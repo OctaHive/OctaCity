@@ -13,6 +13,7 @@ import type {
   SourceIntent,
   SourceSnapshot,
 } from './sourceApi';
+import { sourcePredicateSummary } from '../../shared/sourcePredicateSummary';
 import { SourcePublication } from './SourcePublication';
 import { SourceReporting } from '../../shared/SourceReporting';
 import { QueryFailureNotice } from '../../shared/QueryStateNotice';
@@ -88,6 +89,16 @@ export function SourceInputEditor({
   const [all, setAll] = useState(base?.predicate?.all_of.join('\n') ?? '');
   const [any, setAny] = useState(base?.predicate?.any_of.join('\n') ?? '');
   const [none, setNone] = useState(base?.predicate?.none_of.join('\n') ?? '');
+  const [labelPresence, setLabelPresence] = useState<
+    components['schemas']['WorkSourceLabelPresence']
+  >(base?.predicate?.label_presence ?? 'any');
+  const contradictoryLabels =
+    custom && labelPresence === 'none' && (lines(all).length > 0 || lines(any).length > 0);
+  // A profile change must not silently widen a retained strict selector.
+  const unsupportedPresence =
+    custom && labelPresence === 'none' && !selected?.predicate_label_presence?.includes('none');
+  const unsupportedState =
+    custom && !!state && !!selected?.predicate_states && !selected.predicate_states.includes(state);
   const [enabled, setEnabled] = useState(base?.enabled ?? false);
   const [reporterProfile, setReporterProfile] = useState(() =>
     base?.reporter ? bindingKey(base.reporter) : '',
@@ -132,6 +143,9 @@ export function SourceInputEditor({
     choices.data &&
     !choices.isError &&
     (!custom || !!selected.predicate_states) &&
+    !contradictoryLabels &&
+    !unsupportedPresence &&
+    !unsupportedState &&
     !repository.isError &&
     repository.data?.definition_digest
       ? {
@@ -168,6 +182,7 @@ export function SourceInputEditor({
                   ? {
                       predicate: {
                         state: state || null,
+                        ...(labelPresence === 'none' ? { label_presence: labelPresence } : {}),
                         all_of: lines(all),
                         any_of: lines(any),
                         none_of: lines(none),
@@ -216,13 +231,18 @@ export function SourceInputEditor({
   const selection = custom
     ? {
         state: state || t('factory.anyState'),
+        label_presence: labelPresence,
         all_of: lines(all),
         any_of: lines(any),
         none_of: lines(none),
       }
     : selected?.selection;
   const unrestricted =
-    selection && !selection.all_of.length && !selection.any_of.length && !selection.none_of.length;
+    selection &&
+    selection.label_presence !== 'none' &&
+    !selection.all_of.length &&
+    !selection.any_of.length &&
+    !selection.none_of.length;
   const summary = [
     `${t('factory.sourceConnection')}: ${connection?.definition.name ?? ''} · v${connection?.version} · ${t('factory.accessVersion', { version: choices.data?.access_version ?? 0 })}`,
     `${t('factory.taskContainer')}: ${selected?.locator ?? ''}`,
@@ -237,10 +257,7 @@ export function SourceInputEditor({
       (effect) =>
         `${effect.status}: ${t('factory.addEffect')} ${effect.add.join(', ')}; ${t('factory.removeEffect')} ${effect.remove.join(', ')}; ${t('factory.taskState')} ${effect.state ?? t('factory.preserveState')}`,
     ) ?? []),
-    `${t('factory.taskState')}: ${selection?.state ?? t('factory.installedFilters')}`,
-    `${t('factory.allLabels')}: ${selection?.all_of.join(' / ') ?? ''}`,
-    `${t('factory.anyLabels')}: ${selection?.any_of.join(' / ') ?? ''}`,
-    `${t('factory.excludedLabels')}: ${selection?.none_of.join(' / ') ?? ''}`,
+    sourcePredicateSummary(selection, t, ' / '),
   ].join('; ');
   return (
     <fieldset>
@@ -260,7 +277,7 @@ export function SourceInputEditor({
           setReportingDraft(null);
           setResource('');
           setProfile('');
-          setCustom(false);
+          if (labelPresence !== 'none') setCustom(false);
         },
       )}
       <Link to={connection ? `/integrations/${connection.id}` : '/integrations'}>
@@ -294,7 +311,7 @@ export function SourceInputEditor({
           setReporterProfile('');
           setReportingDraft(null);
           setProfile('');
-          setCustom(false);
+          if (labelPresence !== 'none') setCustom(false);
         },
       )}
       {select(
@@ -308,7 +325,7 @@ export function SourceInputEditor({
           })),
         (value) => {
           setProfile(value);
-          setCustom(false);
+          if (labelPresence !== 'none') setCustom(false);
         },
       )}
       {selected ? <p>{t('factory.preparationHelp')}</p> : null}
@@ -348,10 +365,28 @@ export function SourceInputEditor({
           {select(
             t('factory.taskState'),
             state,
-            selected.predicate_states.map((value) => ({ value, label: value })),
+            [...selected.predicate_states, ...(unsupportedState ? [state] : [])].map((value) => ({
+              value,
+              label: value,
+            })),
             setState,
             t('factory.anyState'),
           )}
+          {selected.predicate_label_presence?.length ? (
+            <div>
+              <span>{t('factory.labelPresence')}</span>
+              <SelectMenu
+                ariaLabel={t('factory.labelPresence')}
+                value={labelPresence}
+                options={selected.predicate_label_presence.map((value) => ({
+                  value,
+                  label: t(value === 'none' ? 'factory.labelsNone' : 'factory.labelsAny'),
+                }))}
+                onValueChange={setLabelPresence}
+              />
+              <p>{t('factory.labelPresenceHelp')}</p>
+            </div>
+          ) : null}
           <label>
             {t('factory.allLabels')}
             <textarea value={all} onChange={(event) => setAll(event.target.value)} />
@@ -374,6 +409,11 @@ export function SourceInputEditor({
       ) : null}
       {custom && selected && !selected.predicate_states ? (
         <p role="alert">{t('factory.savedFiltersUnavailable')}</p>
+      ) : null}
+      {contradictoryLabels ? <p role="alert">{t('factory.labelsContradiction')}</p> : null}
+      {unsupportedState ? <p role="alert">{t('factory.stateUnsupported')}</p> : null}
+      {unsupportedPresence && selected ? (
+        <p role="alert">{t('factory.labelsUnsupported')}</p>
       ) : null}
       {unrestricted ? <p>{t('factory.unrestrictedLabels')}</p> : null}
       {repository.data && !repository.data.definition_digest ? (

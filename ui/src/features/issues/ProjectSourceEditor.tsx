@@ -16,7 +16,7 @@ import type { IssueSourcesApi, IssueSourceImport } from './sourceApi';
 import type { IssueSourceImportIntent } from './sourceApi';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import type { ConfirmedMutationAttempt } from '../../shared/confirmedIntent';
-import { importPredicateSummary } from './importPredicateSummary';
+import { sourcePredicateSummary } from '../../shared/sourcePredicateSummary';
 
 type Preview = components['schemas']['ProjectIssueSourcePreview'];
 /** Preview bodies stay in the mounted form, never in query state or browser storage. */
@@ -64,6 +64,10 @@ export function ProjectSourceEditor({
   });
   const readers = choices.data?.items.filter((item) => item.purpose === 'task_read') ?? [];
   const selected = readers.find((item) => sourceBindingKey(item.binding) === profile);
+  const unsupportedPresence =
+    enabled &&
+    predicate?.label_presence === 'none' &&
+    !selected?.predicate_label_presence?.includes('none');
   const signature = JSON.stringify([
     connectionId,
     connection?.version,
@@ -87,6 +91,7 @@ export function ProjectSourceEditor({
     ready &&
     !choices.error &&
     !choices.isFetching &&
+    !unsupportedPresence &&
     !refreshRequired
       ? {
           project_id: projectId,
@@ -193,7 +198,10 @@ export function ProjectSourceEditor({
       {connection && choices.isSuccess && !readers.length ? (
         <p>{t('factory.noSourceAccess')}</p>
       ) : null}
-      {predicate ? <p>{importPredicateSummary(predicate, t)}</p> : null}
+      {predicate ? <p>{sourcePredicateSummary(predicate, t)}</p> : null}
+      {selected && unsupportedPresence ? (
+        <p role="alert">{t('factory.labelsUnsupported')}</p>
+      ) : null}
       <button
         type="button"
         disabled={!selected || choices.isFetching || !!choices.error || pending || refreshRequired}
@@ -217,7 +225,7 @@ export function ProjectSourceEditor({
           setReview({
             intent: structuredClone(intent),
             returnFocus: event.currentTarget,
-            summary: `${connection?.definition.name} · v${connection?.version}; ${selected?.locator} · ${selected?.binding.configuration.identity} / ${selected?.binding.configuration.version}; ${importPredicateSummary(intent.definition.predicate, t)}; ${t(enabled ? 'issueImport.active' : 'issueImport.inactive')}. ${t('issueImport.help')}`,
+            summary: `${connection?.definition.name} · v${connection?.version}; ${selected?.locator} · ${selected?.binding.configuration.identity} / ${selected?.binding.configuration.version}; ${sourcePredicateSummary(intent.definition.predicate, t)}; ${t(enabled ? 'issueImport.active' : 'issueImport.inactive')}. ${t('issueImport.help')}`,
           })
         }
       >

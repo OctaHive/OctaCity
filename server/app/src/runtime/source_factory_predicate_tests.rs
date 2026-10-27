@@ -20,6 +20,10 @@ pub(super) async fn assert_nonmatching_inputs_checkpoint_without_execution(
   let original = std::fs::read(&mode_path).unwrap();
   let cases = [
     (
+      json!({"state":"native-state","all_of":[],"any_of":[],"none_of":[],"label_presence":"none"}),
+      "native-state",
+    ),
+    (
       json!({"state":"native-state","all_of":["absent-required-label"],"any_of":[],"none_of":[]}),
       "native-state",
     ),
@@ -107,7 +111,13 @@ pub(super) async fn assert_exclusive_groups_do_not_choose_an_ambiguous_member(
     .json()
     .await
     .unwrap();
-  for (index, expected_matches) in [0, 2].into_iter().enumerate() {
+  for (index, (expected_matches, strict)) in [(0, false), (0, true), (2, true)].into_iter().enumerate() {
+    mode["candidates"][0]["labels"] = if expected_matches == 0 {
+      json!(["arbitrary"])
+    } else {
+      json!([])
+    };
+    std::fs::write(&mode_path, serde_json::to_vec(&mode).unwrap()).unwrap();
     let mut intent = published["intent"].clone();
     let mut first = intent["inputs"][0].clone();
     let mut second = first.clone();
@@ -116,7 +126,8 @@ pub(super) async fn assert_exclusive_groups_do_not_choose_an_ambiguous_member(
     for input in [&mut first, &mut second] {
       input["definition"]["enabled"] = json!(true);
       input["definition"]["predicate"] = json!({"state":"native-state","all_of":[],"any_of":[],
-        "none_of":if expected_matches == 0 {vec!["arbitrary"]} else {vec![]}});
+        "none_of":if strict {vec![]} else {vec!["arbitrary"]},
+        "label_presence":if strict {"none"} else {"any"}});
     }
     let group = uuid::Uuid::new_v4().to_string();
     intent["inputs"] = json!([first, second]);

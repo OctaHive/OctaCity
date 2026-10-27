@@ -1,6 +1,7 @@
 //! Reviewed import activation changes metadata only; consumers retain their existing Source journal.
 use super::*;
 use octacity_server_domain::IntegrationVersion;
+use octacity_server_factory::WorkSourceLabelPresence;
 use octacity_server_store::{
   IntegrationAdministrationStore, IntegrationConnectionStore, IntegrationProjectAccessStore, IssueSourceImportStore,
   PublishIssueSourceImport, ReplayIssueSourceImport,
@@ -199,6 +200,14 @@ impl<
           .ok_or_else(|| FactoryValidationDiagnostics::invalid("/predicate"))?;
         if predicate.state.as_ref().is_some_and(|s| !states.contains(s)) {
           return Err(FactoryValidationDiagnostics::invalid("/predicate/state"));
+        }
+        if predicate.label_presence == WorkSourceLabelPresence::None
+          && !choice
+            .predicate_label_presence
+            .as_ref()
+            .is_some_and(|modes| modes.contains(&WorkSourceLabelPresence::None))
+        {
+          return Err(FactoryValidationDiagnostics::invalid("/predicate/label_presence"));
         }
       }
     }

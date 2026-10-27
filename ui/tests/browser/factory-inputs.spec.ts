@@ -7,7 +7,7 @@ import { FIXTURE_IDS, installOperatorFixture } from './operatorFixture';
 test.use({ trace: 'off', screenshot: 'off', video: 'off' });
 async function installSources(
   page: Page,
-  options: { reporting?: boolean; progress?: boolean } = {},
+  options: { reporting?: boolean; progress?: boolean; labelPresence?: boolean } = {},
 ) {
   await installOperatorFixture(page);
   const configuration = configurationFixture().configuration;
@@ -45,10 +45,30 @@ async function installSources(
       const choices = integrationFixture('WorkSourceInputChoices', options.reporting ? 1 : 0);
       body = {
         ...choices,
-        items: choices.items.map((item) => ({
-          ...item,
-          predicate_states: ['native-open', 'native-closed'],
-        })),
+        items: choices.items.flatMap((item) => {
+          const reader = {
+            ...item,
+            predicate_states: ['native-open', 'native-closed'],
+            ...(options.labelPresence ? { predicate_label_presence: ['any', 'none'] } : {}),
+          };
+          return options.labelPresence && item.purpose === 'task_read'
+            ? [
+                reader,
+                {
+                  ...reader,
+                  binding: {
+                    ...reader.binding,
+                    configuration: {
+                      ...reader.binding.configuration,
+                      version: 'v2',
+                      digest: 'cd'.repeat(32),
+                    },
+                  },
+                  predicate_states: ['native-closed'],
+                },
+              ]
+            : [reader];
+        }),
       };
     } else if (path.endsWith('/diagnostics')) body = diagnostics;
     else if (path.endsWith('/preview')) {
@@ -531,3 +551,133 @@ test('edits a stage source action with the keyboard and discards its unpublished
   await page.getByRole('button', { name: 'Edit Flow draft' }).click();
   await expect(page.getByText('browser-stage-only', { exact: true })).toHaveCount(0);
 });
+
+for (const language of ['en', 'ru'] as const) {
+  test(`selects unlabeled inputs with the keyboard and reviews exclusions at 390px in ${language}`, async ({
+    page,
+  }) => {
+    const { project, publications } = await installSources(page, { labelPresence: true });
+    await page.addInitScript(
+      (language) =>
+        localStorage.setItem(
+          'octacity.console.preferences',
+          JSON.stringify({
+            version: 2,
+            language,
+            theme: 'light',
+            favorites: [],
+            recents: [],
+            expanded: [],
+            explorerOpen: false,
+            explorerWidth: 288,
+            notificationLastOpenedAt: null,
+          }),
+        ),
+      language,
+    );
+    const text =
+      language === 'en'
+        ? {
+            inspect: 'Inspect Factory Configuration · v1',
+            configure: 'Configure automatic intake',
+            add: 'Add automatic input',
+            connection: 'Source connection',
+            container: 'Task container',
+            profile: 'Selector and input mapping',
+            repository: 'Code Repository',
+            customize: 'Customize filters',
+            presence: 'Label presence',
+            taskState: 'Task state',
+            none: 'Only tasks without labels',
+            excluded: 'Excluded labels (one per line)',
+            validate: 'Validate input',
+            review: 'Review input publication',
+            dialog: 'Publish automatic input',
+            confirm: 'Confirm publication',
+          }
+        : {
+            inspect: 'Просмотреть конфигурацию · v1',
+            configure: 'Настроить автоматический приём',
+            add: 'Добавить автоматический вход',
+            connection: 'Подключение источника',
+            container: 'Контейнер задач',
+            profile: 'Отбор и преобразование входных данных',
+            repository: 'Репозиторий кода',
+            customize: 'Настроить фильтры',
+            presence: 'Наличие меток',
+            taskState: 'Состояние задачи',
+            none: 'Только задачи без меток',
+            excluded: 'Исключённые метки (по одной на строку)',
+            validate: 'Проверить вход',
+            review: 'Просмотреть публикацию входа',
+            dialog: 'Опубликовать автоматический вход',
+            confirm: 'Подтвердить публикацию',
+          };
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/factory?project_id=${project}`);
+    await page.getByRole('button', { name: text.inspect }).click();
+    await page.getByRole('button', { name: text.configure }).click();
+    await page.getByRole('button', { name: text.add, exact: true }).click();
+    await choose(page, text.connection, 'Tracker');
+    await choose(page, text.container, 'team/project');
+    await choose(page, text.profile, 'triage-labels · v1');
+    await choose(page, text.repository, 'Factory source · v1');
+    await page.getByRole('checkbox', { name: text.customize }).check();
+    const presence = page.getByRole('combobox', { name: text.presence });
+    await presence.focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    await expect(presence).toBeFocused();
+    await expect(presence).toContainText(text.none);
+    await choose(page, text.taskState, 'native-open');
+    await choose(page, text.profile, 'triage-labels · v2');
+    const taskState = page.getByRole('combobox', { name: text.taskState });
+    await expect(taskState).toHaveText('native-open');
+    await expect(page.getByRole('alert')).toBeVisible();
+    await expect(page.getByRole('button', { name: text.validate, exact: true })).toBeDisabled();
+    await taskState.focus();
+    await page.keyboard.press('Enter');
+    await page.keyboard.press('Home');
+    await page.keyboard.press('Enter');
+    await expect(taskState).toBeFocused();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+
+    await page.getByLabel(text.excluded).fill('on hold');
+    expect(
+      await page.evaluate(() =>
+        Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+      ),
+    ).toBe(0);
+    await page.getByRole('button', { name: text.validate, exact: true }).click();
+    await expect(page.getByRole('button', { name: text.review })).toBeEnabled();
+    await page.getByRole('button', { name: text.review }).focus();
+    await page.keyboard.press('Enter');
+    const dialog = page.getByRole('dialog', { name: text.dialog });
+    await expect(dialog).toContainText(text.none);
+    await expect(dialog).toContainText('on hold');
+    expect(
+      await page.evaluate(() =>
+        Math.max(0, document.documentElement.scrollWidth - document.documentElement.clientWidth),
+      ),
+    ).toBe(0);
+    await dialog.getByRole('button', { name: text.confirm }).click();
+    await expect.poll(() => publications.length).toBe(1);
+    expect(publications[0]!.body).toMatchObject({
+      inputs: [
+        {
+          definition: {
+            source: { configuration: { version: 'v2' } },
+            predicate: {
+              state: null,
+              label_presence: 'none',
+              all_of: [],
+              any_of: [],
+              none_of: ['on hold'],
+            },
+          },
+        },
+      ],
+    });
+  });
+}

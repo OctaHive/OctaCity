@@ -118,6 +118,7 @@ impl SourceManagement {
         handler = handler.with_selection_labels(
           source.clone(),
           WorkSourceSelectionLabels {
+            label_presence: selection.label_presence,
             state: state.clone(),
             all_of: selection.all_of.clone(),
             any_of: selection.any_of.clone(),
@@ -125,7 +126,10 @@ impl SourceManagement {
           },
         )?;
         if let Some(states) = &reader.predicate_states {
-          handler = handler.with_predicate_states(source, state, states.clone())?;
+          handler = handler.with_predicate_states(source.clone(), state, states.clone())?;
+          if reader.predicate_label_presence {
+            handler = handler.with_predicate_label_presence(source)?;
+          }
         }
       }
     }

@@ -66,6 +66,12 @@ would duplicate existing policy and obscure the two-stage acceptance boundary.
 
 ### 2. Keep dependency ownership explicit
 
+Task 1.1 records the inspected implementation, current installation observations,
+verification scope and shared API ownership in the
+[dependency baseline and handoff](dependency-baseline.md). Task 1.2 records
+the [baseline verification and TDD test correction](baseline-verification.md),
+including current environment limitations.
+
 | Dependency | Required boundary and handoff |
 | --- | --- |
 | `complete-factory-source-runtime` | Completed shared Source/Reporter, import, admission, association and ordered delivery baseline. Re-run its relevant public contracts; completed tasks do not prove an AI triage deployment. |

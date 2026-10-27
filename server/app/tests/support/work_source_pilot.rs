@@ -363,6 +363,7 @@ pub(super) fn handlers<S: PilotStore>(
   .with_selection_labels(
     source.clone(),
     WorkSourceSelectionLabels {
+      label_presence: Default::default(),
       state: key("any"),
       all_of: vec![],
       any_of: vec![],
@@ -464,6 +465,7 @@ pub(super) async fn pipeline_with_target<S: PilotStore>(
     }],
   });
   assessment.predicate = Some(WorkSourcePredicate {
+    label_presence: Default::default(),
     state: None,
     all_of: vec![],
     any_of: vec![],
@@ -474,6 +476,7 @@ pub(super) async fn pipeline_with_target<S: PilotStore>(
   let mut downstream = assessment.clone();
   downstream.target = target.reference().clone();
   downstream.predicate = Some(WorkSourcePredicate {
+    label_presence: Default::default(),
     state: None,
     all_of: vec![labels[0].into()],
     any_of: vec![],

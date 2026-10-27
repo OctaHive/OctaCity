@@ -24,6 +24,19 @@ fn publication(group: bool) -> Value {
   json!({"project_id":PROJECT,"inputs":[{"input":input(),"expected_version":null}],
     "group":if group { json!({"group":{"id":GROUP,"version":1,"project_id":PROJECT,"members":[input()]},"expected_version":null}) } else { Value::Null }})
 }
+fn unlabeled_predicate() -> Value {
+  json!({"state":null,"all_of":[],"any_of":[],"none_of":["on hold"],"label_presence":"none"})
+}
+fn unlabeled_intent() -> Value {
+  let mut value = intent(false);
+  value["inputs"][0]["definition"]["predicate"] = unlabeled_predicate();
+  value
+}
+fn unlabeled_publication() -> Value {
+  let mut value = publication(false);
+  value["inputs"][0]["input"]["definition"]["predicate"] = unlabeled_predicate();
+  value
+}
 #[derive(Default)]
 struct SourcePeer(AtomicUsize);
 #[async_trait]
@@ -54,12 +67,15 @@ impl ManagementQueryUseCase<ValidateWorkSourceConfigurationQuery> for SourcePeer
     _: &ManagementAuthorizationGrant,
     query: ValidateWorkSourceConfigurationQuery,
   ) -> Result<<ValidateWorkSourceConfigurationQuery as Query>::Outcome, ApplicationError> {
-    assert_eq!(
-      serde_json::to_value(&query.intent).unwrap(),
-      intent(query.intent.group.is_some())
-    );
+    let submitted = serde_json::to_value(&query.intent).unwrap();
+    let expected = if submitted == unlabeled_intent() {
+      unlabeled_publication()
+    } else {
+      assert_eq!(submitted, intent(query.intent.group.is_some()));
+      publication(query.intent.group.is_some())
+    };
     self.0.fetch_add(1, Ordering::SeqCst);
-    Ok(serde_json::from_value(publication(query.intent.group.is_some())).unwrap())
+    Ok(serde_json::from_value(expected).unwrap())
   }
 }
 #[async_trait]
@@ -483,6 +499,58 @@ async fn source_configuration_rest_reads_choices_validates_and_publishes_exact_g
   assert_eq!(peer.0.load(Ordering::SeqCst), 2);
 }
 #[test]
+fn source_label_presence_schema_preserves_legacy_omission_and_types_qualified_choices() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let schemas = &document["components"]["schemas"];
+  assert_eq!(schemas["WorkSourceLabelPresence"]["enum"], json!(["any", "none"]));
+  assert_eq!(schemas["WorkSourceLabelPresence"]["default"], "any");
+  for name in ["WorkSourcePredicate", "WorkSourceSelectionLabels"] {
+    let schema = &schemas[name];
+    assert_eq!(
+      schema["properties"]["label_presence"]["$ref"],
+      "#/components/schemas/WorkSourceLabelPresence"
+    );
+    assert!(
+      !schema["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("label_presence"))
+    );
+    openapi::assert_json_matches_component(
+      &document,
+      name,
+      &json!({"state":"open","all_of":[],"any_of":[],"none_of":[]}),
+    );
+    openapi::assert_json_matches_component(
+      &document,
+      name,
+      &json!({"state":"open","all_of":[],"any_of":[],"none_of":[],"label_presence":"none"}),
+    );
+  }
+  let choice = &schemas["WorkSourceInputChoices"]["properties"]["items"]["items"];
+  assert_eq!(
+    choice["properties"]["predicate_label_presence"]["items"]["$ref"],
+    "#/components/schemas/WorkSourceLabelPresence"
+  );
+  assert_eq!(choice["properties"]["predicate_label_presence"]["maxItems"], 2);
+  assert!(
+    !choice["required"]
+      .as_array()
+      .unwrap()
+      .contains(&json!("predicate_label_presence"))
+  );
+  let reasons = &schemas["WorkSourcePreview"]["properties"]["candidates"]["items"]["properties"]["summary"]["properties"]
+    ["selections"]["items"]["properties"]["reasons"];
+  assert!(
+    reasons["items"]["enum"]
+      .as_array()
+      .unwrap()
+      .contains(&json!("labels_present"))
+  );
+  assert_eq!(reasons["maxItems"], 6);
+}
+
+#[test]
 fn source_configuration_openapi_has_closed_typed_contracts_and_authorization() {
   let document = octacity_server_api_rest::v1::openapi_document();
   let schemas = &document["components"]["schemas"];
@@ -794,4 +862,42 @@ fn project_import_contract_requires_reviewed_activation_and_excludes_private_or_
       "reviewed import publication must advertise {status}"
     );
   }
+}
+
+#[tokio::test]
+async fn source_http_validation_retains_strict_presence_and_exclusions_in_typed_publication() {
+  let peer = Arc::new(SourcePeer::default());
+  let router = router(peer.clone());
+  let (status, body) = request(
+    &router,
+    "POST",
+    &format!("/api/v1/projects/{PROJECT}/factory-sources/validate"),
+    json!({"intent":unlabeled_intent()}),
+    &[],
+    true,
+  )
+  .await;
+  assert_eq!(status, StatusCode::OK, "{body}");
+  assert_eq!(
+    body["publication"]["inputs"][0]["input"]["definition"]["predicate"],
+    json!({"state":null,"label_presence":"none","all_of":[],"any_of":[],"none_of":["on hold"]})
+  );
+  assert_eq!(peer.0.load(Ordering::SeqCst), 1);
+  let mut unknown = unlabeled_intent();
+  unknown["inputs"][0]["definition"]["predicate"]["label_presence"] = json!("some");
+  let (status, _) = request(
+    &router,
+    "POST",
+    &format!("/api/v1/projects/{PROJECT}/factory-sources/validate"),
+    json!({"intent":unknown}),
+    &[],
+    true,
+  )
+  .await;
+  assert_eq!(status, StatusCode::BAD_REQUEST);
+  assert_eq!(
+    peer.0.load(Ordering::SeqCst),
+    1,
+    "invalid selectors must not reach the application"
+  );
 }

@@ -180,6 +180,7 @@ fn issue_source_mapping_rejects_status_facts_not_covered_by_the_original_snapsho
       .pull
       .push(IssueSourceStatusRule {
         native: octacity_server_factory::WorkSourcePredicate {
+          label_presence: Default::default(),
           state: Some("closed".parse().unwrap()),
           all_of: vec![],
           any_of: vec![],
@@ -248,6 +249,7 @@ fn issue_source_mapping_rejects_oversized_documents_before_publishing_ownership(
     command.intent.definition.status.as_mut().unwrap().pull = vec![
       IssueSourceStatusRule {
         native: octacity_server_factory::WorkSourcePredicate {
+          label_presence: Default::default(),
           state: None,
           all_of: labels.clone(),
           any_of: labels,
@@ -305,6 +307,7 @@ fn issue_source_status_pull_uses_the_shared_edge_once_and_preserves_echo_and_sou
       .pull
       .push(IssueSourceStatusRule {
         native: octacity_server_factory::WorkSourcePredicate {
+          label_presence: Default::default(),
           state: Some("opaque-state".parse().unwrap()),
           all_of: vec![],
           any_of: vec![],
@@ -425,6 +428,7 @@ fn issue_source_status_mapping_cannot_reinterpret_an_observation_from_before_its
       .pull
       .push(IssueSourceStatusRule {
         native: octacity_server_factory::WorkSourcePredicate {
+          label_presence: Default::default(),
           state: Some("opaque-state".parse().unwrap()),
           all_of: vec![],
           any_of: vec![],

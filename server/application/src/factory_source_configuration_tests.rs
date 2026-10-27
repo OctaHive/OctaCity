@@ -511,6 +511,7 @@ fn source_configuration_choices_are_current_granted_and_show_safe_literal_label_
   run_ready(async {
     let fixture = Fixture::new("custom-tracker").await;
     let selection = WorkSourceSelectionLabels {
+      label_presence: Default::default(),
       state: FactoryKey::new("custom-native-state").unwrap(),
       all_of: vec!["ready-for-review".into()],
       any_of: vec!["documentation".into(), "maintenance".into()],
@@ -839,6 +840,7 @@ fn custom_input_predicates_require_explicit_installed_editing_support() {
   run_ready(async {
     let mut fixture = Fixture::new("custom-tracker").await;
     fixture.intent.inputs[0].definition.predicate = Some(WorkSourcePredicate {
+      label_presence: Default::default(),
       state: Some(key("todo")),
       all_of: vec!["operator-label".into()],
       any_of: vec![],
@@ -859,11 +861,215 @@ fn custom_input_predicates_require_explicit_installed_editing_support() {
 }
 
 #[test]
+fn editable_predicates_cannot_widen_an_installed_unlabeled_only_base() {
+  run_ready(async {
+    let fixture = Fixture::new("custom-tracker").await;
+    let result = fixture
+      .handlers()
+      .with_selection_labels(
+        fixture.capability.clone(),
+        WorkSourceSelectionLabels {
+          state: key("any"),
+          label_presence: WorkSourceLabelPresence::None,
+          all_of: vec![],
+          any_of: vec![],
+          none_of: vec![],
+        },
+      )
+      .unwrap()
+      .with_predicate_states(fixture.capability.clone(), key("any"), vec![key("todo")]);
+    assert!(
+      result.is_err(),
+      "predicate editing requires a genuinely unrestricted base"
+    );
+  });
+}
+
+#[test]
+fn strict_unlabeled_inputs_require_separate_installed_predicate_support() {
+  run_ready(async {
+    let mut fixture = Fixture::new("custom-tracker").await;
+    fixture.intent.inputs[0].definition.predicate = Some(WorkSourcePredicate {
+      state: Some(key("todo")),
+      label_presence: WorkSourceLabelPresence::None,
+      all_of: vec![],
+      any_of: vec![],
+      none_of: vec![],
+    });
+    let handlers = Arc::new(
+      fixture
+        .handlers()
+        .with_selection_labels(
+          fixture.capability.clone(),
+          WorkSourceSelectionLabels {
+            label_presence: Default::default(),
+            state: key("any"),
+            all_of: vec![],
+            any_of: vec![],
+            none_of: vec![],
+          },
+        )
+        .unwrap()
+        .with_predicate_states(fixture.capability.clone(), key("any"), vec![key("todo")])
+        .unwrap(),
+    );
+    let before = fixture.store.mutation_evidence_counts().await;
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers.clone());
+    let error = queries
+      .handle_query(
+        &context(),
+        ValidateWorkSourceConfigurationQuery {
+          intent: fixture.intent.clone(),
+        },
+      )
+      .await
+      .unwrap_err();
+    let ManagementHandlerError::Application(ApplicationError::FactoryValidation(report)) = error else {
+      panic!("expected normalized field diagnostics: {error:?}")
+    };
+    assert_eq!(report.errors[0].field, "/inputs/0/definition/predicate/label_presence");
+    let commands = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers);
+    assert!(
+      commands
+        .handle_command(
+          &context(),
+          PublishWorkSourceConfigurationCommand {
+            intent: fixture.intent,
+            idempotency_key: IdempotencyKey::new("unsupported-label-presence").unwrap(),
+            published_at: time(4),
+          }
+        )
+        .await
+        .is_err()
+    );
+    assert_eq!(fixture.store.mutation_evidence_counts().await, before);
+  });
+}
+
+#[test]
+fn advertised_label_presence_publishes_new_selection_without_rewriting_legacy_input_pins() {
+  run_ready(async {
+    let mut fixture = Fixture::new("custom-tracker").await;
+    fixture.intent.inputs[0].definition.predicate = Some(
+      serde_json::from_value(serde_json::json!({
+        "state":"todo","all_of":[],"any_of":[],"none_of":[]
+      }))
+      .unwrap(),
+    );
+    let handlers = fixture
+      .handlers()
+      .with_selection_labels(
+        fixture.capability.clone(),
+        WorkSourceSelectionLabels {
+          label_presence: Default::default(),
+          state: key("any"),
+          all_of: vec![],
+          any_of: vec![],
+          none_of: vec![],
+        },
+      )
+      .unwrap()
+      .with_predicate_states(fixture.capability.clone(), key("any"), vec![key("todo")])
+      .unwrap()
+      .with_predicate_label_presence(fixture.capability.clone())
+      .unwrap();
+    let handlers = Arc::new(handlers);
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers.clone());
+    let choices = queries
+      .handle_query(
+        &context(),
+        ListWorkSourceInputChoicesQuery {
+          project_id: fixture.intent.project_id,
+          connection_id: fixture.intent.inputs[0].definition.connection.as_ref().unwrap().id,
+          connection_version: IntegrationVersion::INITIAL,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      choices.items[0].predicate_label_presence.as_deref(),
+      Some([WorkSourceLabelPresence::Any, WorkSourceLabelPresence::None].as_slice())
+    );
+    let commands = AuthorizedCommandHandler::new(Arc::new(TrustedNetworkManagementPolicy), handlers);
+    let original = commands
+      .handle_command(
+        &context(),
+        PublishWorkSourceConfigurationCommand {
+          intent: fixture.intent.clone(),
+          idempotency_key: IdempotencyKey::new("legacy-label-presence").unwrap(),
+          published_at: time(4),
+        },
+      )
+      .await
+      .unwrap()
+      .publication
+      .inputs
+      .remove(0)
+      .input;
+    let bytes = serde_json::to_vec(&original).unwrap();
+    assert!(!String::from_utf8_lossy(&bytes).contains("label_presence"));
+    fixture.intent.inputs[0].expected_version = Some(WorkSourceInputVersion::INITIAL);
+    fixture.intent.inputs[0]
+      .definition
+      .predicate
+      .as_mut()
+      .unwrap()
+      .label_presence = WorkSourceLabelPresence::None;
+    let replacement = commands
+      .handle_command(
+        &context(),
+        PublishWorkSourceConfigurationCommand {
+          intent: fixture.intent.clone(),
+          idempotency_key: IdempotencyKey::new("strict-label-presence").unwrap(),
+          published_at: time(5),
+        },
+      )
+      .await
+      .unwrap()
+      .publication
+      .inputs
+      .remove(0)
+      .input;
+    assert_eq!(replacement.version().get(), 2);
+    assert_eq!(replacement.definition().source, original.definition().source);
+    assert_eq!(replacement.definition().target, original.definition().target);
+    assert_eq!(replacement.root_flow(), original.root_flow());
+    let predicate = replacement.definition().predicate.as_ref().unwrap();
+    assert!(predicate.mismatches("todo", &[]).is_empty());
+    assert!(!predicate.mismatches("todo", &["unrelated".into()]).is_empty());
+    let retained = queries
+      .handle_query(
+        &context(),
+        GetWorkSourceConfigurationQuery {
+          project_id: fixture.intent.project_id,
+          target: WorkSourceScanTarget::Input {
+            id: original.id(),
+            version: WorkSourceInputVersion::INITIAL,
+          },
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(serde_json::to_vec(&retained.inputs()[0]).unwrap(), bytes);
+    assert!(
+      retained.inputs()[0]
+        .definition()
+        .predicate
+        .as_ref()
+        .unwrap()
+        .mismatches("todo", &["unrelated".into()])
+        .is_empty()
+    );
+  });
+}
+
+#[test]
 fn advertised_normalized_predicates_publish_immutable_inputs_for_open_provider_identities() {
   run_ready(async {
     for provider in ["github", "gitlab", "jira", "custom-tracker"] {
       let mut fixture = Fixture::new(provider).await;
       let predicate = WorkSourcePredicate {
+        label_presence: Default::default(),
         state: Some(key("todo")),
         all_of: vec!["operator-label".into()],
         any_of: vec![],
@@ -875,6 +1081,7 @@ fn advertised_normalized_predicates_publish_immutable_inputs_for_open_provider_i
         .with_selection_labels(
           fixture.capability.clone(),
           WorkSourceSelectionLabels {
+            label_presence: Default::default(),
             state: key("any"),
             all_of: vec![],
             any_of: vec![],

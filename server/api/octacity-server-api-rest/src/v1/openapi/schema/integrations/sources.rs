@@ -80,11 +80,11 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     object(json!({"kind":{"const":"group"},"definition":reference("WorkSourceGroup")}),&["kind","definition"])
   ],"discriminator":{"propertyName":"kind"}});
   let labels = object(
-    json!({"state":text(128),"all_of":array(text(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"any_of":array(text(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"none_of":array(text(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES),octacity_server_application::MAX_SOURCE_SELECTION_LABELS)}),
+    json!({"state":text(128),"label_presence":reference("WorkSourceLabelPresence"),"all_of":array(text(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"any_of":array(text(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"none_of":array(text(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES),octacity_server_application::MAX_SOURCE_SELECTION_LABELS)}),
     &["state", "all_of", "any_of", "none_of"],
   );
   let choices = object(
-    json!({"connection_id":id(),"connection_version":version(),"access_version":version(),"items":array(object(json!({"binding":reference("WorkSourceBinding"),"connection_configuration":pin(),"purpose":{"type":"string","enum":["task_read","task_update"]},"native_id":text(1024),"locator":text(1024),"selection":nullable(labels.clone()),"predicate_states":array(text(128),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"reporting":reference("WorkSourceReportingChoice")}),&["binding","connection_configuration","purpose","native_id","locator","selection"]),256)}),
+    json!({"connection_id":id(),"connection_version":version(),"access_version":version(),"items":array(object(json!({"binding":reference("WorkSourceBinding"),"connection_configuration":pin(),"purpose":{"type":"string","enum":["task_read","task_update"]},"native_id":text(1024),"locator":text(1024),"selection":nullable(labels.clone()),"predicate_states":array(text(128),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"predicate_label_presence":array(reference("WorkSourceLabelPresence"),2),"reporting":reference("WorkSourceReportingChoice")}),&["binding","connection_configuration","purpose","native_id","locator","selection"]),256)}),
     &["connection_id", "connection_version", "access_version", "items"],
   );
   let mut predicate = labels.clone();
@@ -95,7 +95,12 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     predicate["properties"][labels]["items"]["x-max-utf8-bytes"] =
       json!(octacity_server_application::MAX_SOURCE_SELECTION_LABEL_BYTES);
   }
+  // A component default preserves optional referencing properties in generated clients.
   for (name, value) in [
+    (
+      "WorkSourceLabelPresence",
+      json!({"type":"string","enum":["any","none"],"default":"any","description":"Omission permits labeled and unlabeled tasks. none requires an empty observed label set and cannot combine with nonempty all_of or any_of; exclusions alone do not require unlabeled tasks."}),
+    ),
     ("WorkSourceStatusEffects", effects),
     ("WorkSourceStatusMapping", status_mapping),
     ("WorkSourceReportingPolicy", reporting_policy),
