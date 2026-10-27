@@ -37,6 +37,41 @@ fn page(response: Response) -> source::Page {
 }
 
 #[tokio::test]
+async fn initial_epoch_window_omits_since_and_still_filters_future_updates() {
+  let forge = Forge::start().await;
+  let installation = Installation::new(&forge, selector());
+  let mut request = installation.request();
+  intent(&mut request).window = Some(source::ScanWindow {
+    from_millis: 0,
+    until_millis: 1_792_137_600_000, // 2026-10-16 08:00:00 UTC.
+  });
+  let mut future = issue(9002, 18);
+  future["updated_at"] = json!("2026-10-16T08:00:00.001Z");
+  forge
+    .replies
+    .lock()
+    .await
+    .push_back(Reply::json(json!([issue(9001, 17), future])));
+  let result = page(
+    installation
+      .provider()
+      .execute(&request, CancellationToken::new())
+      .await,
+  );
+  assert_eq!(
+    result.candidates.iter().map(|c| c.item_id.as_str()).collect::<Vec<_>>(),
+    ["9001"]
+  );
+  let requests = forge.requests.lock().await;
+  let target = requests[1].split_whitespace().nth(1).unwrap();
+  let url = url::Url::parse(&format!("https://localhost{target}")).unwrap();
+  assert!(
+    url.query_pairs().all(|(key, _)| key != "since"),
+    "initial history must not use GitHub's epoch since sentinel"
+  );
+}
+
+#[tokio::test]
 async fn installed_read_scope_lists_private_issues_over_verified_https() {
   let forge = Forge::start().await;
   forge

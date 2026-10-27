@@ -284,8 +284,11 @@ Title, optional body, native labels and state stay private normalized data.
 No comment, attachment or linked resource is fetched.
 
 An optional inclusive millisecond update window is enforced locally. The API
-`since` value starts one whole second before the lower bound to include equal
-timestamps at its exclusive boundary. The server's provider-neutral polling
+`since` value starts one whole second before a positive lower bound to include equal
+timestamps at its exclusive boundary. An initial window starting at Unix epoch
+omits `since`: GitHub can return an empty page for an epoch/pre-epoch sentinel
+even when existing Issues are present. The original inclusive upper bound is
+still enforced locally. The server's provider-neutral polling
 owner retains pages and overlapping/reconciliation contexts under the existing
 scan fence; see [bounded polling](../../../docs/architecture/factory-extension-boundaries.md#bounded-source-polling).
 The optional trusted Source worker composes this protocol with ordinary admission. A

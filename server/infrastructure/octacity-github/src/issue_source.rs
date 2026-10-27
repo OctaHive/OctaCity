@@ -119,6 +119,7 @@ async fn list(
   let (page, context) = crate::issue_pagination::current(intent)?;
   let since = intent
     .window
+    .filter(|window| window.from_millis != 0)
     .map(|window| {
       // GitHub's since is exclusive and second-precision. Fetch one second of overlap,
       // then enforce the caller's inclusive millisecond window locally.
