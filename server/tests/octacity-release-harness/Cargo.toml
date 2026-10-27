@@ -36,6 +36,7 @@ thiserror.workspace = true
 toml.workspace = true
 
 [dev-dependencies]
+octacity-work-source-protocol = { path = "../../protocols/octacity-work-source-protocol" }
 octacity-server-delivery = { path = "../../infrastructure/octacity-server-delivery" }
 octacity-server = { path = "../../app" }
 octacity-coordinator = { path = "../../../agent/octacity-coordinator" }

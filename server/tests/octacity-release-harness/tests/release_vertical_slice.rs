@@ -36,14 +36,40 @@ mod backend;
 mod backend_config_tests;
 #[path = "release_vertical_slice/browser.rs"]
 mod browser;
+#[path = "release_vertical_slice/issue_source_status.rs"]
+mod issue_source_status;
 #[path = "release_vertical_slice/linux_native.rs"]
 mod linux_native;
+#[path = "release_vertical_slice/project_source.rs"]
+mod project_source;
 #[path = "release_vertical_slice/release.rs"]
 mod release;
 #[path = "release_vertical_slice/server.rs"]
 mod server;
 #[path = "release_vertical_slice/server_config_tests.rs"]
 mod server_config_tests;
+#[path = "release_vertical_slice/source_checkpoint.rs"]
+mod source_checkpoint;
+#[path = "release_vertical_slice/source_environment.rs"]
+mod source_environment;
+#[path = "release_vertical_slice/source_evidence.rs"]
+mod source_evidence;
+#[path = "release_vertical_slice/source_factory.rs"]
+mod source_factory;
+#[path = "release_vertical_slice/source_factory_configuration.rs"]
+mod source_factory_configuration;
+#[path = "release_vertical_slice/source_factory_effect.rs"]
+mod source_factory_effect;
+#[path = "release_vertical_slice/source_factory_second.rs"]
+mod source_factory_second;
+#[path = "release_vertical_slice/source_installation.rs"]
+mod source_installation;
+#[path = "release_vertical_slice/source_provider.rs"]
+mod source_provider;
+#[path = "release_vertical_slice/source_revocation.rs"]
+mod source_revocation;
+#[path = "release_vertical_slice/source_setup.rs"]
+mod source_setup;
 #[path = "release_vertical_slice/support.rs"]
 mod support;
 use server::*;
@@ -113,6 +139,58 @@ async fn released_macos_apple_vf_matrix_satisfies_the_end_to_end_contract() {
 #[ignore = "requires matching released server and console products, PostgreSQL, nginx, and Chromium"]
 async fn released_console_satisfies_the_same_origin_browser_contract() {
   browser::run().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Server/Console, native GitHub adapter, disposable PostgreSQL/S3, nginx and Chromium"]
+async fn packaged_source_only_import_creates_one_visible_canonical_issue_without_execution() {
+  project_source::run().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Source installation, disposable PostgreSQL/S3, nginx and Chromium"]
+async fn packaged_issue_status_mapping_delivers_without_execution() {
+  issue_source_status::run().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Source installation, disposable PostgreSQL/S3, nginx and Chromium"]
+async fn packaged_read_only_connection_with_installed_reporter_keeps_status_local() {
+  issue_source_status::read_only().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Source installation, disposable PostgreSQL/S3, nginx and Chromium"]
+async fn packaged_factory_source_admission_retains_canonical_issue_and_configured_status() {
+  source_factory::run().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Source installation, disposable PostgreSQL/S3 and nginx"]
+async fn packaged_failed_qualification_drop_releases_the_gateway_listener() {
+  let environment = source_environment::SourceEnvironment::start().await;
+  let client = environment.client.clone();
+  let origin = environment.origin.clone();
+  let original_evidence = environment.evidence.clone();
+  drop(environment);
+  let deadline = Instant::now() + Duration::from_secs(3);
+  loop {
+    if client.get(&origin).send().await.is_err() {
+      break;
+    }
+    assert!(
+      Instant::now() < deadline,
+      "a failed qualification must not leave a gateway worker listening"
+    );
+    sleep(Duration::from_millis(20)).await;
+  }
+  let mut next = source_environment::SourceEnvironment::start().await;
+  let next_evidence = next.evidence.clone();
+  next.stop().await;
+  assert_ne!(
+    original_evidence, next_evidence,
+    "a later environment must not overwrite earlier process/browser evidence"
+  );
 }
 
 async fn run_released_oci_vertical_slice(expected_backend: Option<&str>) {

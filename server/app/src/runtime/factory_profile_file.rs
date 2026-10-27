@@ -20,6 +20,7 @@ pub(super) struct FileProfileInstaller {
   bindings: FileBindings,
 }
 struct FileBindings {
+  issue_status_actions: Vec<IssueStatusActionEntry>,
   model_discovery: Vec<(ProjectId, FactoryKey, ModelDiscoveryDeclaration)>,
   protected_validation: Vec<ValidationCommandBinding>,
   promotions: Vec<PromotionCommandBinding>,
@@ -98,6 +99,14 @@ impl super::FactoryRuntimeInstaller for FileProfileInstaller {
       self.providers.clone(),
     ));
     let mut catalog = self.catalog.clone();
+    for action in &self.bindings.issue_status_actions {
+      catalog.executors.push(resources.issue_status_executor(
+        action.identity.clone(),
+        super::integration_management::request_context(&action.principal),
+        super::integration_management::management_policy(Some(&action.principal)),
+        std::sync::Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+      ));
+    }
     for binding in &self.bindings.protected_validation_evidence {
       catalog.executors.push(resources.protected_validation_evidence_executor(
         binding.identity.clone(),
@@ -199,6 +208,8 @@ impl super::FactoryRuntimeInstaller for FileProfileInstaller {
 struct CatalogFile {
   version: u16,
   #[serde(default)]
+  issue_status_actions: Vec<IssueStatusActionEntry>,
+  #[serde(default)]
   commands: Vec<CommandProfile>,
   #[serde(default)]
   protected_test_authors: Vec<AuthorEntry>,
@@ -222,6 +233,14 @@ struct CatalogFile {
   protected_validation_evidence: Vec<ValidationEvidenceEntry>,
   #[serde(default)]
   delivery: Vec<super::factory_delivery_file::FactoryFileDeliveryProfile>,
+}
+
+/// Operator-owned attribution for a local action, never selected by Flow or model input.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct IssueStatusActionEntry {
+  identity: ImmutableReference,
+  principal: String,
 }
 
 #[derive(Deserialize)]
@@ -612,6 +631,7 @@ impl FactoryRuntimeProfileCatalog {
       || !bindings.evaluation_decisions.is_empty()
       || !bindings.delivery.is_empty()
       || !bindings.model_discovery.is_empty()
+      || !bindings.issue_status_actions.is_empty()
     {
       return Err(FactoryRuntimeInstallationError::Invalid);
     }
@@ -637,6 +657,7 @@ impl FactoryRuntimeProfileCatalog {
       return Err(Invalid);
     }
     if file.signals.len() > MAX_FACTORY_EXECUTOR_BINDINGS
+      || file.issue_status_actions.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.profile_selectors.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.tool_risk.len() > MAX_FACTORY_EXECUTOR_BINDINGS
       || file.review_planning.len() > MAX_FACTORY_EXECUTOR_BINDINGS
@@ -649,6 +670,15 @@ impl FactoryRuntimeProfileCatalog {
       || file.protected_validation.len() > MAX_FACTORY_EXECUTOR_BINDINGS
     {
       return Err(Invalid);
+    }
+    for (index, action) in file.issue_status_actions.iter().enumerate() {
+      octacity_server_application::ManagementActor::authenticated(&action.principal).map_err(|_| Invalid)?;
+      if file.issue_status_actions[..index]
+        .iter()
+        .any(|previous| previous.identity == action.identity)
+      {
+        return Err(Invalid);
+      }
     }
     let mut model_discovery = Vec::new();
     let projects = file
@@ -1010,6 +1040,7 @@ impl FactoryRuntimeProfileCatalog {
     Ok((
       catalog,
       FileBindings {
+        issue_status_actions: file.issue_status_actions,
         model_discovery,
         protected_validation,
         promotions,

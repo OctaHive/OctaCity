@@ -20,6 +20,8 @@ pub struct Issue {
   pub fault: Option<(&'static str, LostResponse)>,
   pub confirmation: Option<Reply>,
   changed: bool,
+  // Repeated reads remain comparable; only an applied mutation advances native update identity.
+  updated_at: String,
 }
 impl Issue {
   pub fn new(labels: &[&str]) -> Self {
@@ -30,6 +32,7 @@ impl Issue {
       fault: None,
       confirmation: None,
       changed: false,
+      updated_at: issue(9001, 17)["updated_at"].as_str().unwrap().to_owned(),
     }
   }
   pub fn respond(&mut self, request: &str) -> Reply {
@@ -59,9 +62,10 @@ impl Issue {
         {
           return reply;
         }
-        let mut value = issue(9001, 17);
-        value["state"] = json!(self.state);
-        return Reply::json(value);
+        return Reply::json(self.snapshot());
+      }
+      if path.starts_with(&format!("{root}/issues?")) {
+        return Reply::json(json!([self.snapshot()]));
       }
       if path.starts_with(&format!("{root}/labels/")) {
         return Reply {
@@ -103,6 +107,7 @@ impl Issue {
       _ => panic!("unexpected native method: {method}"),
     }
     self.changed = true;
+    self.updated_at = issue(9001, 17)["updated_at"].as_str().unwrap().to_owned();
     if self.fault.as_ref().is_some_and(|(verb, _)| *verb == method) {
       return match self.fault.take().unwrap().1 {
         LostResponse::Empty => Reply {
@@ -143,6 +148,13 @@ impl Issue {
       };
     }
     self.labels_reply()
+  }
+  fn snapshot(&self) -> Value {
+    let mut value = issue(9001, 17);
+    value["state"] = json!(self.state);
+    value["updated_at"] = json!(self.updated_at);
+    value["labels"] = json!(self.labels.iter().map(|name| json!({"name":name})).collect::<Vec<_>>());
+    value
   }
   fn labels_reply(&self) -> Reply {
     Reply::json(json!(

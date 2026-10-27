@@ -4475,6 +4475,7 @@ dependencies = [
  "octacity-source-plugin",
  "octacity-vcs-protocol",
  "octacity-webhook-provider-protocol",
+ "octacity-work-source-protocol",
  "rcgen",
  "reqwest",
  "rustix",

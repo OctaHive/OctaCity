@@ -12,6 +12,33 @@ impl FactoryRuntimeReadiness for Ready {
 }
 
 #[tokio::test]
+async fn file_issue_status_action_installs_only_its_explicit_identity_and_authority() {
+  let identity = super::factory_tests::managed::reference("reviewed-issue-status", "v1");
+  let project = octacity_server_domain::ProjectId::generate();
+  let mut document = serde_json::json!({
+    "version":1,"projects":[{"project_id":project,"references":[],"build_configurations":[]}],"codex":[],
+    "issue_status_actions":[{"identity":identity,"principal":"reviewed-operator"}]
+  });
+  let installer =
+    super::factory_profile_file::FileProfileInstaller::parse_json(&serde_json::to_vec(&document).unwrap(), &[])
+      .expect("an operator can install the ordinary Issue action without a custom Server entry point");
+  let installed = installer.install(super::factory_tests::resources()).await.unwrap();
+  assert_eq!(installed.executors.len(), 1);
+  assert_eq!(installed.executors[0].0, FlowNodeKind::TrustedAction);
+  assert_eq!(installed.executors[0].1, NodeExecutionIdentity::External(identity));
+  assert!(
+    FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap()).is_err(),
+    "metadata-only parsing cannot silently discard an action"
+  );
+  document["issue_status_actions"][0]["principal"] = serde_json::json!("");
+  assert!(
+    super::factory_profile_file::FileProfileInstaller::parse_json(&serde_json::to_vec(&document).unwrap(), &[],)
+      .is_err(),
+    "an action cannot acquire an anonymous installation owner"
+  );
+}
+
+#[tokio::test]
 async fn file_review_planning_profile_installs_its_exact_native_executor_without_io() {
   let project = octacity_server_domain::ProjectId::generate();
   let profile = super::factory_tests::review_planning_profile(project);

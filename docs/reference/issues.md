@@ -1978,6 +1978,14 @@ Association maintenance does not derive business status from a Run outcome,
 contact a provider, publish inputs, start a Run, overwrite task text, install a
 mapping or synchronization, or send Reporter effects.
 
+For ordinary file deployments, explicitly install the local action as described
+in [Factory operations](../operations/factory.md#explicit-local-issue-status-actions).
+It still requires a reviewed Issue execution association, a pinned workflow edge
+permitting pipeline origin and current command authorization. Source-only
+association deliberately has no reviewed requirements revision. The
+[packaged qualification guide](../testing/source-runtime.md) records the separate
+import, optional admission, explicit execution and reporting journeys.
+
 `GET /api/v1/projects/{project_id}/issues/{issue_id}/legacy-work` returns bounded
 original association metadata. Its opaque continuation binds the security scope,
 Project/Issue, membership and current Issue revision; changed membership/revision

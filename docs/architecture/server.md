@@ -212,6 +212,13 @@ The public metadata-only `FactoryRuntimeProfileCatalog::parse_json` refuses a
 catalog containing deferred resource bindings, so callers cannot silently drop
 an installed capability. Binary startup uses the complete file installer.
 
+Optional `issue_status_actions` entries bind an exact local capability and
+validated installation-owner principal to the existing authorized Issue command.
+They install `FactoryIssueStatusAction` through the common trusted-action adapter;
+no task-selected actor or alternate workflow executor is introduced. See
+[Factory operations](../operations/factory.md#explicit-local-issue-status-actions)
+and [packaged qualification](../testing/source-runtime.md).
+
 Installed command programs use the ordinary managed Job path independently of
 model execution. Their exact Octafile bytes, finite task selection, protected
 input destination, output contracts, permission ceilings and candidate capture

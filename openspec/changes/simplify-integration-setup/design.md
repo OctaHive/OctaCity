@@ -115,3 +115,14 @@ Alternative rejected: relabeling Disable as Delete, cascading deletion of refere
 4. Install the adapter-only policy in clean Factory stands. Existing explicit installations retain their ceilings and resources; moving to broader enrollment is an explicit policy change with safe dependency checks, never an automatic widening of grants.
 5. Verify a packaged composed stand: create a non-demo integration through the form against a hermetic provider fixture, grant Project read separately, select it in a pipeline, archive it and verify retained history and blocked subsequent use across restart. Separately delete a never-used connection and verify safe credential cleanup and fresh setup without ownership collisions. Prove manual intake still works. No real-provider writes are part of default qualification.
 6. Roll back UI/runtime features by disabling new enrollment and new setup submissions while retaining readable managed resources and operation history. An older binary lacking the new resource format is not a supported in-place downgrade; retain backups and existing schema compatibility policy rather than deleting enrolled data to force rollback.
+
+### Shared packaged qualification environment
+
+Reuse the Source runtime's `SourceEnvironment` in
+`server/tests/octacity-release-harness/tests/release_vertical_slice/source_environment.rs`
+and the [packaged qualification guide](../../../docs/testing/source-runtime.md).
+It already supplies checked Server/Console packages, nginx with protected Unix
+ingress, disposable PostgreSQL/S3 endpoints and the verified native adapter
+against the shared approved HTTPS provider fixture. This change adds its own
+browser enrollment/archive/delete journey instead of duplicating that harness;
+its qualification tasks remain pending.

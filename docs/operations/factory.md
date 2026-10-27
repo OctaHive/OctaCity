@@ -39,6 +39,37 @@ supported private-file inputs. Server-side Signal connectors use a separate
 private catalogue and credential file. Never put a provider key, private URL,
 raw provider payload or mutable model alias into a Flow or management command.
 
+### Explicit local Issue status actions
+
+The ordinary file installer accepts an optional `issue_status_actions` array:
+
+```json
+{
+  "issue_status_actions": [{
+    "identity": {"identity": "issue-action", "version": "v1", "digest": "<exact-installed-capability-sha256>"},
+    "principal": "<verified-installation-owner>"
+  }]
+}
+```
+
+This is part of the existing private Factory catalogue alongside its `version`,
+`projects` and `codex` entries. Select the same validated principal as protected
+integration ingress when acting on imported tasks. Attribution is operator-owned;
+Flow parameters and model output cannot choose it. Exact identity registration
+installs the existing `transition_issue` executor and shared authorized Issue
+transition command. It installs no provider or credentials.
+
+A published Flow selects that exact capability and pins the workflow, transition
+and declared outcome. The workflow must permit pipeline origin. The Work/Run must
+also have an explicitly reviewed Issue execution association with its original
+requirements revision. Automatic Source association alone does not grant that
+review. Native reporting additionally requires a separately reviewed push mapping
+and current writer authority; avoid overlapping Issue and Work Reporter producers
+for the same status effect.
+
+See [Source runtime qualification](../testing/source-runtime.md) for the packaged
+procedure, evidence and separate model/Agent boundaries.
+
 Keep authoring, implementation, protected validation, review, verification,
 delivery and promotion profiles independently scoped. Install the pinned Codex
 and task/source plugins, exact question/model identities, read-only inputs,

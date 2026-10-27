@@ -335,6 +335,15 @@ repository ID without a GitHub lookup, so provider outage does not block startup
 of a compatible retained installation. Local adapter bytes and the complete
 immutable bundle are still validated; another repository, changed pins or an
 incomplete bundle are rejected without replacement or network fallback.
+
+The [packaged Source runtime gate](../testing/source-runtime.md) qualifies actual
+Console/nginx/Server import, reviewed status delivery and separately enabled
+Factory admission against a native adapter and hermetic HTTPS provider. It records
+package pins, controlled restart barriers and public canonical identities. It
+performs no live repository write and qualifies no model or Agent backend. Older
+metadata-only pre-release test bundles require explicit trusted regeneration;
+retain old connection pins/history and review new metadata/grants. Future
+consolidated enrollment remains in `simplify-integration-setup`.
 The profiles contain no Project, code Repository or Factory target IDs:
 current connections, Project grants and explicitly published import/input/mapping
 controls resolve those independently while the server runs. Future enrollment

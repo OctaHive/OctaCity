@@ -117,7 +117,7 @@ pub(super) async fn run() {
   shutdown_server(&mut server, &server_stdout).await;
 }
 
-fn load_browser_release() -> InstalledBrowserRelease {
+pub(super) fn load_browser_release() -> InstalledBrowserRelease {
   let release = validate_installed_browser_release(&BrowserReleaseBundles {
     server: required_path("OCTACITY_RELEASE_SERVER_ROOT", true),
     console: required_path("OCTACITY_RELEASE_CONSOLE_ROOT", true),
@@ -125,13 +125,13 @@ fn load_browser_release() -> InstalledBrowserRelease {
   .unwrap_or_else(|error| panic!("released browser installation failed validation: {error}"));
   assert_eq!(
     release.server_manifest.platform(),
-    format!("linux-{}", host_architecture())
+    format!("{}-{}", env::consts::OS, host_architecture())
   );
   assert_eq!(release.console_manifest.platform(), "any");
   release
 }
 
-fn browser_toolchain() -> Toolchain {
+pub(super) fn browser_toolchain() -> Toolchain {
   Toolchain {
     source_version: "0.1.0".to_owned(),
     source_digest: "1".repeat(64),
@@ -156,7 +156,7 @@ fn browser_backend(root: &Path) -> ReleaseBackend {
   }
 }
 
-fn unused_loopback_address() -> SocketAddr {
+pub(super) fn unused_loopback_address() -> SocketAddr {
   TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap()
 }
 
@@ -193,13 +193,23 @@ fn write_nginx_config(
   proxy_addr: SocketAddr,
   error_log: &Path,
 ) -> PathBuf {
+  write_nginx_config_with_upstream(directory, release, &management_addr.to_string(), proxy_addr, error_log)
+}
+
+pub(super) fn write_nginx_config_with_upstream(
+  directory: &Path,
+  release: &InstalledBrowserRelease,
+  management_upstream: &str,
+  proxy_addr: SocketAddr,
+  error_log: &Path,
+) -> PathBuf {
   let path = |value: &Path| nginx_string(value.to_str().expect("release paths must be UTF-8"));
   let config = format!(
     r#"pid {};
 error_log {} notice;
 events {{}}
 http {{
-    include /etc/nginx/mime.types;
+    include {};
     default_type application/octet-stream;
     include {};
     access_log off;
@@ -210,7 +220,7 @@ http {{
     proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-Proto http;
     proxy_set_header Connection "";
-    upstream octacity_management {{ server {management_addr}; }}
+    upstream octacity_management {{ server {management_upstream}; }}
     server {{
         listen {proxy_addr};
         server_name _;
@@ -223,6 +233,11 @@ http {{
 "#,
     path(&directory.join("nginx.pid")),
     path(error_log),
+    path(
+      &env::var_os("OCTACITY_RELEASE_NGINX_MIME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/etc/nginx/mime.types"))
+    ),
     path(&release.console_nginx_root.join("cache-map.conf")),
     path(&release.console_root),
     path(&release.console_nginx_root.join("security-headers.conf")),
@@ -237,12 +252,14 @@ fn nginx_string(value: &str) -> String {
   format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
 }
 
-fn spawn_nginx(binary: &Path, config: &Path, stdout: &Path, stderr: &Path) -> Child {
+pub(super) fn spawn_nginx(binary: &Path, config: &Path, stdout: &Path, stderr: &Path) -> Child {
   Command::new(binary)
     .arg("-c")
     .arg(config)
     .arg("-g")
-    .arg("daemon off;")
+    // Keep the disposable gateway in the owned foreground process. Killing a
+    // master on failed qualification otherwise leaves its worker serving forever.
+    .arg("daemon off; master_process off;")
     .stdout(Stdio::from(File::create(stdout).unwrap()))
     .stderr(Stdio::from(File::create(stderr).unwrap()))
     .kill_on_drop(true)
@@ -250,7 +267,7 @@ fn spawn_nginx(binary: &Path, config: &Path, stdout: &Path, stderr: &Path) -> Ch
     .unwrap()
 }
 
-async fn wait_for_proxy(client: &Client, origin: &str, nginx: &mut Child, log: &Path) {
+pub(super) async fn wait_for_proxy(client: &Client, origin: &str, nginx: &mut Child, log: &Path) {
   let deadline = Instant::now() + Duration::from_secs(30);
   loop {
     if let Some(status) = nginx.try_wait().unwrap() {
@@ -277,33 +294,62 @@ async fn wait_for_proxy(client: &Client, origin: &str, nginx: &mut Child, log: &
 }
 
 async fn run_browser(ui_root: &Path, origin: &str, project_id: &str, build_id: &str, job_id: &str, evidence: &Path) {
+  run_browser_scenario(
+    ui_root,
+    origin,
+    "released-product.spec.ts",
+    &[
+      ("OCTACITY_RELEASE_PROJECT_ID", project_id),
+      ("OCTACITY_RELEASE_BUILD_ID", build_id),
+      ("OCTACITY_RELEASE_JOB_ID", job_id),
+    ],
+    evidence,
+  )
+  .await
+  .unwrap();
+}
+
+/// Run only the requested journey, keeping traces/logs with its packaged evidence.
+pub(super) async fn run_browser_scenario(
+  ui_root: &Path,
+  origin: &str,
+  scenario: &str,
+  environment: &[(&str, &str)],
+  evidence: &Path,
+) -> Result<(), String> {
   let stdout = evidence.join("browser.stdout.log");
   let stderr = evidence.join("browser.stderr.log");
   let status = Command::new("pnpm")
-    .arg("exec")
-    .arg("playwright")
-    .arg("test")
-    .arg("--config")
-    .arg("playwright.released.config.ts")
+    .args([
+      "exec",
+      "playwright",
+      "test",
+      "--config",
+      "playwright.released.config.ts",
+      scenario,
+      "--output",
+    ])
+    .arg(evidence.join("browser-results"))
     .current_dir(ui_root)
     .env("OCTACITY_RELEASE_CONSOLE_ORIGIN", origin)
-    .env("OCTACITY_RELEASE_PROJECT_ID", project_id)
-    .env("OCTACITY_RELEASE_BUILD_ID", build_id)
-    .env("OCTACITY_RELEASE_JOB_ID", job_id)
+    .envs(environment.iter().copied())
     .stdout(Stdio::from(File::create(&stdout).unwrap()))
     .stderr(Stdio::from(File::create(&stderr).unwrap()))
     .status()
     .await
     .unwrap();
-  assert!(
-    status.success(),
-    "released browser slice failed: {}{}",
-    fs::read_to_string(stdout).unwrap_or_default(),
-    fs::read_to_string(stderr).unwrap_or_default()
-  );
+  if status.success() {
+    Ok(())
+  } else {
+    Err(format!(
+      "released browser scenario {scenario} failed: {}{}",
+      fs::read_to_string(stdout).unwrap_or_default(),
+      fs::read_to_string(stderr).unwrap_or_default()
+    ))
+  }
 }
 
-async fn shutdown_process(process: &mut Child, log: &Path, name: &str) {
+pub(super) async fn shutdown_process(process: &mut Child, log: &Path, name: &str) {
   let process_id = process.id().unwrap_or_else(|| panic!("{name} must still be running"));
   let process_id = rustix::process::Pid::from_raw(process_id as i32).unwrap();
   rustix::process::kill_process(process_id, rustix::process::Signal::TERM).unwrap();
