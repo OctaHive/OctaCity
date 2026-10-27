@@ -1,6 +1,13 @@
 export const enMessages = {
   'issueImport.open': 'Task sources',
   'issueImport.add': 'Add task source',
+  'issueImport.edit': 'Edit task import',
+  'issueImport.unavailable': 'This import is no longer available.',
+  'issueImport.remove': 'Remove task import',
+  'issueImport.confirmRemove': 'Confirm removal',
+  'issueImport.removeHelp':
+    'Stop discovery and remove these import settings. Existing tasks, their history and independent source synchronization are preserved.',
+  'issueImport.removed': 'Task import removed. Existing tasks and their history are preserved.',
   'issueImport.help':
     'Import creates tasks with their initial business status. Execution and status synchronization are configured separately.',
   'issueImport.preview': 'Preview tasks',

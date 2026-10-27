@@ -5,6 +5,8 @@ use octacity_server_store::{
   IssueSourceStore, ManagementSecurityScope,
 };
 use octacity_server_store::{ImportIssueSource, IssueListVisibility};
+#[path = "source_import_lifecycle.rs"]
+mod import_lifecycle;
 #[path = "source_mapping.rs"]
 mod mapping;
 #[path = "source_refresh_command.rs"]

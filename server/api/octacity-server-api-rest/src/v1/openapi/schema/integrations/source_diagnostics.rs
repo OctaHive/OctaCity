@@ -46,7 +46,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   ));
   let import_definition = object(
     json!({"source":reference("WorkSourceBinding"),
-    "connection":reference("WorkSourceConnectionReference"),"predicate":reference("WorkSourcePredicate"),"enabled":{"type":"boolean"}}),
+    "connection":reference("WorkSourceConnectionReference"),"predicate":reference("WorkSourcePredicate"),"enabled":{"type":"boolean"},"retired":{"type":"boolean","description":"Terminal removal; omission preserves the existing non-retired state."}}),
     &["source", "connection", "enabled"],
   );
   let import_configuration = object(

@@ -78,7 +78,10 @@ async function installSources(page: Page) {
         return route.fulfill({ json: { disposition: 'applied', configuration } });
       }
       return route.fulfill({
-        json: { items: configuration ? [configuration] : [], next_cursor: null },
+        json: {
+          items: configuration && !configuration.definition.retired ? [configuration] : [],
+          next_cursor: null,
+        },
       });
     },
   );
@@ -112,6 +115,91 @@ async function installSources(page: Page) {
 }
 
 for (const language of ['en', 'ru'] as const) {
+  test(`edits and removes task import with the keyboard at narrow width in ${language} while retaining imported tasks`, async ({
+    page,
+  }) => {
+    const fixture = await installSources(page);
+    await page.addInitScript(
+      ({ key, preferences }) => localStorage.setItem(key, JSON.stringify(preferences)),
+      {
+        key: PREFERENCES_KEY,
+        preferences: { ...DEFAULT_PREFERENCES, language },
+      },
+    );
+    const text = (key: MessageKey) => translate(language, key);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(`/projects/${fixture.issue.project_id}/issues`);
+    await page.getByRole('button', { name: text('issueImport.open') }).click();
+    await page.getByRole('button', { name: text('issueImport.add') }).click();
+    for (const [label, option] of [
+      [text('factory.sourceConnection'), fixture.connection.definition.name],
+      [
+        text('issueSource.profile'),
+        `${fixture.read.locator} · ${fixture.read.binding.configuration.identity} / ${fixture.read.binding.configuration.version}`,
+      ],
+    ] as const) {
+      await page.getByRole('combobox', { name: label }).click();
+      await page.getByRole('option', { name: option, exact: true }).click();
+    }
+    await page.getByRole('checkbox', { name: text('issueImport.enabled') }).check();
+    await page.getByRole('button', { name: text('issueImport.review') }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: text('issueImport.confirm') })
+      .click();
+    await expect(page.getByRole('dialog')).toContainText(text('issueImport.published'));
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: text('issueImport.edit') }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('checkbox', { name: text('issueImport.enabled') })).toBeChecked();
+    await page.getByRole('checkbox', { name: text('issueImport.enabled') }).focus();
+    await page.keyboard.press('Space');
+    await page.getByRole('button', { name: text('issueImport.review') }).click();
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: text('issueImport.confirm') })
+      .click();
+    await expect(page.getByRole('dialog')).toContainText(text('issueImport.published'));
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: text('issueImport.remove') }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByRole('dialog')).toContainText(text('issueImport.removeHelp'));
+    await page
+      .getByRole('dialog')
+      .getByRole('button', { name: text('issueImport.confirmRemove') })
+      .press('Enter');
+    await expect(page.getByRole('dialog')).toContainText(text('issueImport.removed'));
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button', { name: text('issueImport.remove') })).toHaveCount(0);
+    await page.getByRole('button', { name: text('issueImport.refreshTasks') }).click();
+    await expect(
+      page.getByRole('link', {
+        name: `${fixture.issue.display_key} · ${fixture.issue.content.title}`,
+      }),
+    ).toBeVisible();
+    expect(fixture.publications).toHaveLength(3);
+    expect(fixture.publications.map((p) => p.intent.id)).toEqual(
+      Array(3).fill(fixture.publications[0]!.intent.id),
+    );
+    expect(fixture.publications.map((p) => p.intent.expected_current_version)).toEqual([
+      null,
+      1,
+      2,
+    ]);
+    expect(fixture.publications[1]!.headers['if-match']).toBe('"1"');
+    expect(fixture.publications[2]!.headers['if-match']).toBe('"2"');
+    expect(fixture.publications[2]!.intent.definition).toMatchObject({
+      enabled: false,
+      retired: true,
+    });
+    expect(fixture.unexpected).toEqual([]);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+      ),
+    ).toBe(true);
+  });
+
   test(`reviews Project task import with the keyboard at narrow width and retains canonical source feedback in ${language}`, async ({
     page,
   }) => {

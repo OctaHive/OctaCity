@@ -49,6 +49,223 @@ async function choose(label: string, option: string) {
   await userEvent.click(await screen.findByRole('option', { name: option }));
 }
 
+function retainedImport({
+  connection,
+  read,
+  choices,
+}: ReturnType<typeof fixture>): IssueSourceImport {
+  return {
+    id: 'retained-import',
+    project_id: 'delivery',
+    version: 2,
+    published_at: 1,
+    definition: {
+      source: read.binding,
+      enabled: true,
+      predicate: { state: null, all_of: ['retained-label'], any_of: [], none_of: [] },
+      connection: {
+        id: connection.id,
+        version: connection.version,
+        access_version: choices.access_version,
+        source_configuration: read.connection_configuration,
+        reporter_configuration: null,
+      },
+    },
+  };
+}
+
+it('edits an existing import through reviewed version replacement without changing its identity or filters', async () => {
+  const data = fixture();
+  const { sources, api } = data;
+  const original = retainedImport(data);
+  sources.imports.mockResolvedValue({ items: [original], next_cursor: null });
+  sources.publishImport.mockImplementation(async (intent: IssueSourceImportIntent) => ({
+    disposition: 'applied',
+    configuration: { ...original, version: 3, definition: intent.definition },
+  }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Task sources' }));
+  const edit = await screen.findByRole('button', { name: 'Edit task import' });
+  await userEvent.click(edit);
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+      'disabled',
+      false,
+    ),
+  );
+  expect(screen.getByRole('checkbox', { name: 'Discover tasks automatically' })).toHaveProperty(
+    'checked',
+    true,
+  );
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Discover tasks automatically' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review task import' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Publish task import' });
+  expect(dialog.textContent).toContain('retained-label');
+  expect(sources.publishImport).not.toHaveBeenCalled();
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm task import' }));
+  await within(dialog).findByText(
+    'Import settings published. Refresh tasks to see imported tasks.',
+  );
+  expect(sources.publishImport).toHaveBeenCalledWith(
+    {
+      id: original.id,
+      project_id: original.project_id,
+      expected_current_version: 2,
+      definition: { ...original.definition, enabled: false },
+    },
+    { 'Idempotency-Key': expect.any(String) },
+  );
+  expect(api.create).not.toHaveBeenCalled();
+});
+
+it('refreshes a stale import version while retaining the operator draft for a new review', async () => {
+  const data = fixture();
+  const { sources } = data;
+  const original = retainedImport(data);
+  sources.imports.mockResolvedValue({ items: [original], next_cursor: null });
+  sources.publishImport
+    .mockImplementationOnce(async () => {
+      sources.imports.mockResolvedValue({
+        items: [{ ...original, version: 3 }],
+        next_cursor: null,
+      });
+      throw new ManagementApiError({
+        code: 'conflict',
+        status: 409,
+        requestId: null,
+        retryAfterMilliseconds: null,
+        message: '',
+      });
+    })
+    .mockImplementation(async (intent: IssueSourceImportIntent) => ({
+      disposition: 'applied',
+      configuration: { ...original, version: 4, definition: intent.definition },
+    }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Task sources' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit task import' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+      'disabled',
+      false,
+    ),
+  );
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Discover tasks automatically' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review task import' }));
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm task import' }),
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Refresh current data' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(screen.getByRole('checkbox', { name: 'Discover tasks automatically' })).toHaveProperty(
+    'checked',
+    false,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Review task import' }));
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm task import' }),
+  );
+  await within(screen.getByRole('dialog')).findByText(
+    'Import settings published. Refresh tasks to see imported tasks.',
+  );
+  expect(sources.publishImport.mock.lastCall?.[0]).toEqual({
+    id: original.id,
+    project_id: original.project_id,
+    expected_current_version: 3,
+    definition: { ...original.definition, enabled: false },
+  });
+});
+
+it('blocks publication when an import is removed while it is being edited without discarding the draft', async () => {
+  const data = fixture();
+  const { sources } = data;
+  sources.imports.mockResolvedValue({ items: [retainedImport(data)], next_cursor: null });
+  sources.publishImport.mockImplementationOnce(async () => {
+    sources.imports.mockResolvedValue({ items: [], next_cursor: null });
+    throw new ManagementApiError({
+      code: 'conflict',
+      status: 409,
+      requestId: null,
+      retryAfterMilliseconds: null,
+      message: '',
+    });
+  });
+  await userEvent.click(await screen.findByRole('button', { name: 'Task sources' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Edit task import' }));
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+      'disabled',
+      false,
+    ),
+  );
+  await userEvent.click(screen.getByRole('checkbox', { name: 'Discover tasks automatically' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Review task import' }));
+  await userEvent.click(
+    within(screen.getByRole('dialog')).getByRole('button', { name: 'Confirm task import' }),
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Refresh current data' }));
+  await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+  expect(screen.getByRole('checkbox', { name: 'Discover tasks automatically' })).toHaveProperty(
+    'checked',
+    false,
+  );
+  expect(screen.getByRole('button', { name: 'Review task import' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  expect(screen.getByRole('alert').textContent).toContain('This import is no longer available.');
+  expect(sources.publishImport).toHaveBeenCalledTimes(1);
+});
+
+it.each(['en', 'ru'] as const)(
+  'removes an import in %s after frozen review without requiring reader availability or changing task synchronization',
+  async (language) => {
+    localStorage.setItem(PREFERENCES_KEY, JSON.stringify({ ...DEFAULT_PREFERENCES, language }));
+    const data = fixture();
+    const { sources } = data;
+    const original = retainedImport(data);
+    const text = (key: MessageKey) => translate(language, key);
+    sources.imports.mockResolvedValue({ items: [original], next_cursor: null });
+    sources.publishImport.mockImplementation(async (intent: IssueSourceImportIntent) => {
+      sources.imports.mockResolvedValue({ items: [], next_cursor: null });
+      return {
+        disposition: 'applied',
+        configuration: { ...original, version: 3, definition: intent.definition },
+      };
+    });
+    await userEvent.click(await screen.findByRole('button', { name: text('issueImport.open') }));
+    const remove = await screen.findByRole('button', { name: text('issueImport.remove') });
+    await userEvent.click(remove);
+    const dialog = await screen.findByRole('dialog', { name: text('issueImport.remove') });
+    expect(dialog.textContent).toContain(text('issueImport.removeHelp'));
+    expect(sources.publishImport).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Escape}');
+    expect(document.activeElement).toBe(remove);
+    await userEvent.click(remove);
+    await userEvent.click(
+      within(screen.getByRole('dialog')).getByRole('button', {
+        name: text('issueImport.confirmRemove'),
+      }),
+    );
+    await within(screen.getByRole('dialog')).findByText(text('issueImport.removed'));
+    expect(sources.publishImport).toHaveBeenCalledWith(
+      {
+        id: original.id,
+        project_id: original.project_id,
+        expected_current_version: 2,
+        definition: { ...original.definition, enabled: false, retired: true },
+      },
+      { 'Idempotency-Key': expect.any(String) },
+    );
+    expect(sources.importChoices).not.toHaveBeenCalled();
+    expect(sources.setPull).not.toHaveBeenCalled();
+    expect(sources.publishMapping).not.toHaveBeenCalled();
+    await userEvent.keyboard('{Escape}');
+    expect(screen.queryByRole('button', { name: text('issueImport.remove') })).toBeNull();
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: text('issueImport.add') }),
+    );
+  },
+);
+
 it('previews a Project task source before any Issue or Factory target exists without activating import or execution', async () => {
   const { api, sources, connection, read, choices, queryClient } = fixture();
   await screen.findByText('No tasks yet. Create your first task here.');

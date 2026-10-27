@@ -20,11 +20,18 @@ pub struct IssueSourceImportDefinition {
   pub predicate: Option<WorkSourcePredicate>,
   /// Explicit import opt-in; it grants no execution or synchronization authority.
   pub enabled: bool,
+  /// Terminal removal from discovery; exact history and imported tasks remain available.
+  #[serde(default, skip_serializing_if = "is_false")]
+  pub retired: bool,
+}
+fn is_false(value: &bool) -> bool {
+  !value
 }
 impl IssueSourceImportDefinition {
   /// Rejects invalid read-only scope and unbounded selectors before publication.
   pub fn validate(&self) -> Result<(), StoreError> {
-    if self.connection.version.get() > i64::MAX as u64
+    if (self.retired && self.enabled)
+      || self.connection.version.get() > i64::MAX as u64
       || self.connection.access_version.get() > i64::MAX as u64
       || self.connection.reporter_configuration.is_some()
       || self.predicate.as_ref().is_some_and(|p| p.validate().is_err())
@@ -88,6 +95,9 @@ impl PublishIssueSourceImport {
   /// Resolves only static shape and version; current grants remain transactional preconditions.
   pub fn resolve(&self) -> Result<PublishedIssueSourceImport, StoreError> {
     self.intent.definition.validate()?;
+    if self.intent.definition.retired && self.intent.expected_current_version.is_none() {
+      return Err(issue_source_import_conflict());
+    }
     let version = self
       .intent
       .expected_current_version
@@ -156,7 +166,7 @@ pub trait IssueSourceImportStore: Send + Sync {
     id: IssueSourceImportId,
     version: Option<IntegrationVersion>,
   ) -> Result<PublishedIssueSourceImport, StoreError>;
-  /// Lists bounded current definitions, including disabled ones, in their original security partition.
+  /// Lists bounded current non-retired definitions, including disabled ones, in their original partition.
   async fn list_issue_source_imports(
     &self,
     project: ProjectId,

@@ -105,16 +105,18 @@ impl IssueSourceImportStore for PostgresStore {
       return Err(issue_source_import_conflict());
     }
     crate::issue_workflow::lock_project(&mut tx, configuration.project_id).await?;
-    let previous: Option<i64> = sqlx::query_scalar(
-      "SELECT max(version) FROM issue_source_imports WHERE project_id=$1 AND security_scope=$2 AND id=$3",
+    let previous: Option<(i64, bool)> = sqlx::query_as(
+      "SELECT version,COALESCE((document->'definition'->>'retired')::boolean,false) FROM issue_source_imports WHERE project_id=$1 AND security_scope=$2 AND id=$3 ORDER BY version DESC LIMIT 1",
     )
     .bind(configuration.project_id.as_uuid())
     .bind(audit.security_scope().as_str())
     .bind(configuration.id.as_uuid())
-    .fetch_one(&mut *tx)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(unavailable)?;
-    if previous.map(|v| v as u64) != request.intent.expected_current_version.map(|v| v.get()) {
+    if previous.map(|(version, _)| version as u64) != request.intent.expected_current_version.map(|v| v.get())
+      || previous.is_some_and(|(_, retired)| retired)
+    {
       return Err(issue_source_import_conflict());
     }
     // Disabled revisions may keep an old parent, but it must be retained metadata.
@@ -140,7 +142,7 @@ impl IssueSourceImportStore for PostgresStore {
     let facts = MutationFacts::management(
       &audit,
       configuration.project_id.to_string(),
-      json!({"import_id":configuration.id,"version":configuration.version,"enabled":configuration.definition.enabled}),
+      json!({"import_id":configuration.id,"version":configuration.version,"enabled":configuration.definition.enabled,"retired":configuration.definition.retired}),
       json!({"project_id":configuration.project_id,"import_id":configuration.id,"version":configuration.version}),
     );
     let outcome = IssueSourceImportOutcome {
@@ -177,7 +179,7 @@ impl IssueSourceImportStore for PostgresStore {
     crate::discovery::require_project(self.pool(), project).await?;
     let visibility = crate::read_visibility::sql_read_visibility(visibility.view(), |id| id.as_uuid());
     let rows:Vec<(Json<PublishedIssueSourceImport>,)>=sqlx::query_as(
-      "SELECT document FROM (SELECT DISTINCT ON(id) id,connection_id,document FROM issue_source_imports WHERE project_id=$1 AND security_scope=$2 ORDER BY id,version DESC) heads WHERE ($5 OR connection_id=ANY($6::uuid[])) AND ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT $4"
+      "SELECT document FROM (SELECT DISTINCT ON(id) id,connection_id,document FROM issue_source_imports WHERE project_id=$1 AND security_scope=$2 ORDER BY id,version DESC) heads WHERE NOT COALESCE((document->'definition'->>'retired')::boolean,false) AND ($5 OR connection_id=ANY($6::uuid[])) AND ($3::uuid IS NULL OR id>$3) ORDER BY id LIMIT $4"
     ).bind(project.as_uuid()).bind(scope.as_str()).bind(after.map(|v|v.as_uuid())).bind(i64::from(limit)+1).bind(visibility.all).bind(visibility.identities)
       .fetch_all(self.pool()).await.map_err(unavailable)?;
     let mut items: Vec<_> = rows.into_iter().map(|(Json(v),)| v).collect();

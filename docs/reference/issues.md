@@ -371,6 +371,17 @@ Published settings appear with their retained version. **Refresh tasks** reloads
 the ordinary canonical task list after the supervised importer has made progress;
 successful configuration publication alone does not claim a task was imported.
 
+**Edit task import** opens the existing connection/profile and discovery setting.
+Publication retains the import ID and filters and requires the exact current
+version; a conflict refreshes that version while keeping the operator draft for
+another review. Editing import settings does not retarget already imported tasks.
+**Remove task import** requires separate confirmation and publishes a terminal
+`retired: true`, `enabled: false` version through the same versioned API. Removed
+imports leave the current list, including its pagination, while exact historical
+versions remain readable. They cannot be reactivated by editing or replaying an
+older publication. Removal requires no available reader or active read grant and
+does not delete tasks, pause their independent pull or change outgoing mappings.
+
 Enable/disable reviews preserve the original import identity, source pins and
 filters. They change discovery only; existing tasks, linked-task pull, Factory
 inputs and outgoing reporting keep their separate controls. Drafts and preview

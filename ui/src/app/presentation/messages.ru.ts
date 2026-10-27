@@ -3,6 +3,13 @@ import type { MessageCatalog } from './messages.en';
 export const ruMessages = {
   'issueImport.open': 'Источники задач',
   'issueImport.add': 'Добавить источник задач',
+  'issueImport.edit': 'Редактировать импорт задач',
+  'issueImport.unavailable': 'Импорт больше недоступен.',
+  'issueImport.remove': 'Удалить импорт задач',
+  'issueImport.confirmRemove': 'Подтвердить удаление',
+  'issueImport.removeHelp':
+    'Остановить обнаружение задач и удалить настройку импорта. Существующие задачи, их история и отдельные настройки синхронизации источника сохранятся.',
+  'issueImport.removed': 'Импорт задач удалён. Существующие задачи и их история сохранены.',
   'issueImport.help':
     'Импорт создаёт задачи с начальным бизнес-статусом. Исполнение и синхронизация статусов настраиваются отдельно.',
   'issueImport.preview': 'Предпросмотр задач',

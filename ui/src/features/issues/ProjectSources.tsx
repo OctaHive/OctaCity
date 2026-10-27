@@ -9,6 +9,7 @@ import { sourceBindingKey, sourceReferenceKey } from '../../shared/sourceReferen
 import { ManagementApiError } from '../../api/client';
 import type { IssueSourcesApi, IssueSourceImport, IssueSourceImportIntent } from './sourceApi';
 import { ProjectSourceEditor } from './ProjectSourceEditor';
+import { importPredicateSummary } from './importPredicateSummary';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import type { ConfirmedMutationAttempt } from '../../shared/confirmedIntent';
 import styles from './Issues.module.css';
@@ -17,7 +18,7 @@ import styles from './Issues.module.css';
 export function ProjectSources({ projectId, api }: { projectId: string; api: IssueSourcesApi }) {
   const { t } = usePresentation();
   const client = useQueryClient();
-  const [adding, setAdding] = useState(false);
+  const [editor, setEditor] = useState<'new' | IssueSourceImport | null>(null);
   const [preparing, setPreparing] = useState(false);
   const [reviewFailure, setReviewFailure] = useState<{
     error: Error;
@@ -42,12 +43,32 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
     getNextPageParam: (page) => page.next_cursor,
   });
   const available = connections.data?.pages.flatMap((page) => page.items) ?? [];
-  async function reviewLifecycle(record: IssueSourceImport, returnFocus: HTMLElement) {
+  const busy = imports.isFetching || !!imports.error || !!editor || lifecycle !== null || preparing;
+  const unavailable =
+    editor &&
+    editor !== 'new' &&
+    imports.isSuccess &&
+    !imports.data.pages.some((page) => page.items.some((item) => item.id === editor.id));
+  async function refreshEditor() {
+    const [, refreshed] = await Promise.all([connections.refetch(), imports.refetch()]);
+    if (editor && editor !== 'new') {
+      const current = refreshed.data?.pages
+        .flatMap((page) => page.items)
+        .find((item) => item.id === editor.id);
+      if (current) setEditor(current);
+    }
+  }
+  async function reviewLifecycle(
+    record: IssueSourceImport,
+    returnFocus: HTMLElement,
+    retire = false,
+  ) {
     setPreparing(true);
     setReviewFailure(null);
     try {
       const definition = structuredClone(record.definition);
-      definition.enabled = !definition.enabled;
+      definition.enabled = retire ? false : !definition.enabled;
+      if (retire) definition.retired = true;
       if (definition.enabled) {
         const choices = await api.importChoices(
           projectId,
@@ -73,7 +94,6 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
         // Mutable grants may advance; immutable connection and Source pins must still match.
         definition.connection.access_version = choices.access_version;
       }
-      const predicate = definition.predicate;
       setLifecycle({
         intent: {
           id: record.id,
@@ -87,22 +107,15 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
             definition.source.installation.identity,
           `${definition.source.resource.identity} · ${definition.source.configuration.identity} / ${definition.source.configuration.version}`,
           t('issues.revision', { version: record.version }),
-          predicate
-            ? [
-                `${t('factory.taskState')}: ${predicate.state ?? t('factory.anyState')}`,
-                `${t('factory.allLabels')}: ${predicate.all_of.join(', ')}`,
-                `${t('factory.anyLabels')}: ${predicate.any_of.join(', ')}`,
-                `${t('factory.excludedLabels')}: ${predicate.none_of.join(', ')}`,
-              ].join('; ')
-            : t('factory.installedFilters'),
+          importPredicateSummary(definition.predicate, t),
           t(definition.enabled ? 'issueImport.active' : 'issueImport.inactive'),
-          t('issueImport.lifecycleHelp'),
+          t(retire ? 'issueImport.removeHelp' : 'issueImport.lifecycleHelp'),
         ].join('; '),
       });
     } catch (error) {
       setReviewFailure({
         error: sourceFailure(error, t),
-        retry: () => reviewLifecycle(record, returnFocus),
+        retry: () => reviewLifecycle(record, returnFocus, retire),
       });
     } finally {
       setPreparing(false);
@@ -147,21 +160,24 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
         type="button"
         ref={addRef}
         disabled={!available.length || !!connections.error || !!imports.error}
-        onClick={() => setAdding(!adding)}
+        onClick={() => setEditor(editor ? null : 'new')}
       >
-        {t(adding ? 'command.abandon' : 'issueImport.add')}
+        {t(editor ? 'command.abandon' : 'issueImport.add')}
       </button>
-      {adding ? (
+      {editor ? (
         <ProjectSourceEditor
+          key={editor === 'new' ? 'new' : editor.id}
+          record={editor === 'new' ? undefined : editor}
           projectId={projectId}
           api={api}
           connections={available}
-          ready={!connections.isFetching && !connections.error && !imports.error}
-          onClose={() => setAdding(false)}
+          ready={!connections.isFetching && !connections.error && !imports.error && !unavailable}
+          onClose={() => setEditor(null)}
           fallbackFocusRef={addRef}
-          onRefresh={() => Promise.all([connections.refetch(), imports.refetch()])}
+          onRefresh={refreshEditor}
         />
       ) : null}
+      {unavailable ? <p role="alert">{t('issueImport.unavailable')}</p> : null}
       <ul>
         {imports.data?.pages
           .flatMap((page) => page.items)
@@ -171,12 +187,22 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
               {record.definition.source.configuration.identity} ·{' '}
               {t('issues.revision', { version: record.version })}
               <p>{t(record.definition.enabled ? 'issueImport.active' : 'issueImport.inactive')}</p>
+              <button type="button" disabled={busy} onClick={() => setEditor(record)}>
+                {t('issueImport.edit')}
+              </button>
               <button
                 type="button"
-                disabled={imports.isFetching || !!imports.error || lifecycle !== null || preparing}
+                disabled={busy}
                 onClick={(event) => void reviewLifecycle(record, event.currentTarget)}
               >
                 {t(record.definition.enabled ? 'issueImport.disable' : 'issueImport.enable')}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={(event) => void reviewLifecycle(record, event.currentTarget, true)}
+              >
+                {t('issueImport.remove')}
               </button>
             </li>
           ))}
@@ -192,8 +218,14 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
       ) : null}
       {lifecycle ? (
         <ConfirmedCommand
-          title={t('issueImport.publish')}
-          confirmLabel={t('issueImport.confirm')}
+          title={t(
+            lifecycle.intent.definition.retired ? 'issueImport.remove' : 'issueImport.publish',
+          )}
+          confirmLabel={t(
+            lifecycle.intent.definition.retired
+              ? 'issueImport.confirmRemove'
+              : 'issueImport.confirm',
+          )}
           request={lifecycle.intent}
           consequence={lifecycle.summary}
           returnFocus={lifecycle.returnFocus}
@@ -203,7 +235,15 @@ export function ProjectSources({ projectId, api }: { projectId: string; api: Iss
           execute={publishLifecycle}
           onRefresh={() => imports.refetch()}
           onClose={() => setLifecycle(null)}
-          renderSuccess={() => <p>{t('issueImport.published')}</p>}
+          renderSuccess={() => (
+            <p>
+              {t(
+                lifecycle.intent.definition.retired
+                  ? 'issueImport.removed'
+                  : 'issueImport.published',
+              )}
+            </p>
+          )}
         />
       ) : null}
       {connections.hasNextPage ? (

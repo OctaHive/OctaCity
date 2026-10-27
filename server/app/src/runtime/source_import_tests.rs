@@ -164,7 +164,7 @@ pub(super) async fn assert_import_disable_after_revocation(client: &reqwest::Cli
     imports["id"].as_str().unwrap()
   );
   let response = client
-    .post(path)
+    .post(&path)
     .header("idempotency-key", "disable-import-with-revoked-read")
     .header("if-match", "\"2\"")
     .json(&json!({"intent":intent}))
@@ -256,6 +256,7 @@ async fn source_import_enable_requires_create_visibility_before_resolving_reader
       expected_current_version: None,
       definition: app::IssueSourceImportDefinition {
         enabled: true,
+        retired: false,
         predicate: None,
         source: WorkSourceBinding {
           installation: check.installation,
@@ -841,6 +842,49 @@ pub(super) async fn assert_unavailable_import_lifecycle(client: &reqwest::Client
     response.status(),
     reqwest::StatusCode::SERVICE_UNAVAILABLE,
     "an advertised missing read installation is unavailable, not unsupported capability"
+  );
+  let mut removed = controls["disabled"].clone();
+  removed["expected_current_version"] = json!(4);
+  removed["definition"]["retired"] = json!(true);
+  let path = format!("{base}/{}/versions", controls["id"].as_str().unwrap());
+  let response = client
+    .post(&path)
+    .header("idempotency-key", "remove-import-with-missing-source-profile")
+    .header("if-match", "\"4\"")
+    .json(&json!({"intent":removed}))
+    .send()
+    .await
+    .unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::OK,
+    "removal requires no active reader"
+  );
+  let response: Value = response.json().await.unwrap();
+  assert_eq!(response["configuration"]["version"], 5);
+  assert_eq!(response["configuration"]["definition"]["retired"], true);
+  let listed: Value = client
+    .get(format!(
+      "http://localhost/api/v1/projects/{project}/issue-source-imports"
+    ))
+    .send()
+    .await
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert!(
+    !listed["items"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .any(|i| i["id"] == controls["id"])
+  );
+  let original = client.get(format!("{path}/1")).send().await.unwrap();
+  assert_eq!(
+    original.status(),
+    reqwest::StatusCode::OK,
+    "removal retains original history"
   );
 }
 

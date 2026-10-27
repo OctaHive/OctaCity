@@ -267,11 +267,11 @@ test('admits measured workflow canvas and rejects unplanned aggregate growth', a
   await write(root, 'dist/assets/styles.css', 'x'.repeat(90_943));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
-  assert.equal(policy.bundleBudgets.totalJavaScriptBytes, 1_316_352);
+  assert.equal(policy.bundleBudgets.totalJavaScriptBytes, 1_318_400);
   assert.equal(policy.bundleBudgets.totalCssBytes, 91_136);
-  assert.equal(policy.bundleBudgets.totalStaticBytes, 1_408_000);
+  assert.equal(policy.bundleBudgets.totalStaticBytes, 1_410_048);
   assert.equal(policy.bundleBudgets.assetCount, 57);
-  await write(root, 'dist/assets/unplanned.js', 'x'.repeat(17_408));
+  await write(root, 'dist/assets/unplanned.js', 'x'.repeat(19_456));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });
   assert.ok(rejected.some((message) => message.includes('total JavaScript')));
   assert.ok(rejected.some((message) => message.includes('total static output')));
@@ -295,7 +295,7 @@ test('admits bounded Agent diagnostics and retains the CSS ceiling', async (cont
   );
 });
 
-test('admits measured Source lifecycle and stale preview recovery and rejects another KiB of aggregate growth', async (context) => {
+test('admits measured Source editing and removal and rejects another KiB of aggregate growth', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
@@ -306,7 +306,7 @@ test('admits measured Source lifecycle and stale preview recovery and rejects an
     '<script type="module" src="./assets/index.js"></script>'.padEnd(622, ' '),
   );
   await write(root, 'dist/assets/index.js', 'x'.repeat(304_779));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(1_011_144));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(1_013_079));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(90_943));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   await write(root, 'dist/assets/unplanned.js', 'x'.repeat(1_024));

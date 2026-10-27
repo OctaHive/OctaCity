@@ -12,14 +12,16 @@ import {
 } from '../../shared/sourceErrors';
 import { sourceBindingKey } from '../../shared/sourceReferences';
 import type { components } from '../../../.generated/api/schema';
-import type { IssueSourcesApi } from './sourceApi';
+import type { IssueSourcesApi, IssueSourceImport } from './sourceApi';
 import type { IssueSourceImportIntent } from './sourceApi';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import type { ConfirmedMutationAttempt } from '../../shared/confirmedIntent';
+import { importPredicateSummary } from './importPredicateSummary';
 
 type Preview = components['schemas']['ProjectIssueSourcePreview'];
 /** Preview bodies stay in the mounted form, never in query state or browser storage. */
 export function ProjectSourceEditor({
+  record,
   projectId,
   api,
   connections,
@@ -28,6 +30,7 @@ export function ProjectSourceEditor({
   onRefresh,
   fallbackFocusRef,
 }: {
+  record?: IssueSourceImport | undefined;
   projectId: string;
   api: IssueSourcesApi;
   connections: components['schemas']['IntegrationConnection'][];
@@ -38,16 +41,19 @@ export function ProjectSourceEditor({
 }) {
   const { t } = usePresentation();
   const client = useQueryClient();
-  const [id] = useState(() => crypto.randomUUID());
-  const [enabled, setEnabled] = useState(false);
+  const [id] = useState(() => record?.id ?? crypto.randomUUID());
+  const [enabled, setEnabled] = useState(record?.definition.enabled ?? false);
+  const [predicate] = useState(record?.definition.predicate);
   const [published, setPublished] = useState(false);
   const [review, setReview] = useState<{
     intent: IssueSourceImportIntent;
     summary: string;
     returnFocus: HTMLElement;
   } | null>(null);
-  const [connectionId, setConnectionId] = useState('');
-  const [profile, setProfile] = useState('');
+  const [connectionId, setConnectionId] = useState(record?.definition.connection.id ?? '');
+  const [profile, setProfile] = useState(() =>
+    record ? sourceBindingKey(record.definition.source) : '',
+  );
   const connection = connections.find((item) => item.id === connectionId);
   const choices = useQuery({
     queryKey: queryKeys.issueImportChoices(projectId, connectionId, connection?.version ?? 0),
@@ -85,8 +91,9 @@ export function ProjectSourceEditor({
       ? {
           project_id: projectId,
           id,
-          expected_current_version: null,
+          expected_current_version: record?.version ?? null,
           definition: {
+            ...(predicate ? { predicate } : {}),
             enabled,
             source: selected.binding,
             connection: {
@@ -146,7 +153,7 @@ export function ProjectSourceEditor({
   }
   return (
     <fieldset>
-      <legend>{t('issueImport.add')}</legend>
+      <legend>{t(record ? 'issueImport.edit' : 'issueImport.add')}</legend>
       <SelectMenu
         ariaLabel={t('factory.sourceConnection')}
         value={connectionId}
@@ -186,6 +193,7 @@ export function ProjectSourceEditor({
       {connection && choices.isSuccess && !readers.length ? (
         <p>{t('factory.noSourceAccess')}</p>
       ) : null}
+      {predicate ? <p>{importPredicateSummary(predicate, t)}</p> : null}
       <button
         type="button"
         disabled={!selected || choices.isFetching || !!choices.error || pending || refreshRequired}
@@ -209,7 +217,7 @@ export function ProjectSourceEditor({
           setReview({
             intent: structuredClone(intent),
             returnFocus: event.currentTarget,
-            summary: `${connection?.definition.name} · v${connection?.version}; ${selected?.locator} · ${selected?.binding.configuration.identity} / ${selected?.binding.configuration.version}; ${t(enabled ? 'issueImport.active' : 'issueImport.inactive')}. ${t('issueImport.help')}`,
+            summary: `${connection?.definition.name} · v${connection?.version}; ${selected?.locator} · ${selected?.binding.configuration.identity} / ${selected?.binding.configuration.version}; ${importPredicateSummary(intent.definition.predicate, t)}; ${t(enabled ? 'issueImport.active' : 'issueImport.inactive')}. ${t('issueImport.help')}`,
           })
         }
       >
