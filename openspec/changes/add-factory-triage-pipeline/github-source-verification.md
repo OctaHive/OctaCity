@@ -42,7 +42,7 @@ uncommitted changes from tasks 1.1–2.1 were preserved.
 | --- | --- | --- |
 | `cargo test -p octacity-github --test issue_preview strictly_unlabeled -j2` | Strict native selector produced a permanent configuration failure | Scan/preview agree for single and grouped selectors, exclude PRs and future updates, preserve initial no-`since` behavior and default selector bytes |
 | `cargo test -p octacity-github --test issue_selectors strict_unlabeled -j2` | A contradictory required-label predicate was accepted | Contradictions fail without echoing label values; bounded exclusions remain valid |
-| The native scan/preview test extended to the verified process boundary | Manifest decoding rejected the missing new capability field | The actual locally built `octacity-github` executable runs through `WorkAdapterRegistry`, with its content digest checked, against a hermetic HTTPS GitHub peer; all four scan/preview/group cases pass |
+| The native scan/preview test extended to the verified process boundary | Manifest decoding rejected the missing new capability field | The actual locally built `octacity-github` executable runs through the shared verified process host, with its content digest checked, against a hermetic HTTPS GitHub peer; all four scan/preview/group cases pass (see architecture correction below) |
 | `cargo test -p octacity-server --lib offline_label_presence -j2` | A qualified reader declaration was rejected | Public offline validation accepts a qualified adapter/reader pair, rejects an older adapter or missing unrestricted-base contract, and preserves legacy state-only profiles without executing a provider |
 | `cargo test -p octacity-server --lib runtime::integration_management_tests::runtime_publishes_connection_credentials_and_project_access_without_enabling_inputs -- --ignored --exact --nocapture` with the unsupported-import extension | Old code returned HTTP 200 instead of the existing field-validation rejection | Unsupported import returns HTTP 400 with the exact field diagnostic; subsequent legacy publication succeeds |
 | `python3 -m unittest tools.tests.test_factory_source_installation.FactorySourceInstallationTests.test_factory_preparation_is_bounded_and_does_not_pin_a_project_repository_or_target` | Fresh profile lacked qualification metadata | Fresh reader `v2` and matching manifest advertise support; the full installation suite passes |
@@ -112,3 +112,38 @@ Build concurrency stayed at two with debug/incremental artifacts disabled. Only
 task-owned PostgreSQL/MinIO containers and anonymous volumes were removed after
 successful verification; tagged images, personal stand data and other changes
 were preserved. No commit was created.
+
+
+## Architecture correction: independent adapter test dependencies
+
+A later CI gate caught an invalid dev-dependency from the GitHub provider to the
+concrete Work Source host. `python3 tools/check_architecture.py` and
+`python3 -m unittest tools.tests.test_check_architecture.ArchitecturePolicyTests.test_current_workspace_satisfies_the_policy`
+both failed with `ARCH003_ADAPTER_SELECTION` before the correction. The existing
+native strict-selection behavioral test passed before this structural refactor.
+
+The provider test now depends only on the explicitly shared
+`octacity-server-adapter-host` support package. It uses `verify_installed_program`
+and `execute_process`, keeping executable digest verification, bounded process
+execution, response correlation/validation and the same native scan/preview/group
+assertions. It no longer constructs a duplicate registry directory and synthetic
+manifest. Work Source-specific registry/capability qualification stays with the
+Work Source host and server composition; this native test does not claim to
+exercise that concrete registry. Production behavior and architecture policy are
+unchanged, and no dependency exception was added.
+
+Verification on 2026-10-27, with debug/incremental build artifacts disabled and two
+Cargo build jobs:
+
+- The architecture CLI passed: 63 packages and 261 dependency edges.
+- `python3 -m unittest tools.tests.test_check_architecture`: all 33 passed,
+  including the previously failing real workspace graph test (Red → Green).
+- `cargo test -p octacity-github --test issue_preview strictly_unlabeled -j2`:
+  the unchanged behavioral assertions passed after the refactor.
+- `cargo test --locked -p octacity-github -p octacity-server-adapter-host
+  -p octacity-server-work-source -j2`: all 148 tests passed, none ignored.
+- `cargo clippy --locked -p octacity-github --all-targets -j2 -- -D warnings`,
+  workspace format check, OpenSpec strict validation and `git diff --check` passed.
+
+Free disk space stayed about 14–15 GiB, above the 10 GB cleanup threshold.
+No live GitHub request, personal stand change or commit was made for this fix.

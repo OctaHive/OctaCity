@@ -3,6 +3,7 @@
 #[allow(dead_code)]
 mod fixture;
 use fixture::*;
+use octacity_server_adapter_host::{ProcessRequest, execute_process, verify_installed_program};
 use octacity_work_source_protocol::{Request, Response, preview::SelectionMismatch as Reason, source};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -52,42 +53,33 @@ async fn strictly_unlabeled_scan_and_preview_share_group_selection_and_initial_w
     }
     let primary = payload["selection"].clone();
     let request: Request = octacity_work_source_protocol::decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
-    // Exercise the actual binary through the same verified host as managed Source.
-    let registry_root = tempfile::tempdir().unwrap();
-    let directory = registry_root.path().join("github");
-    std::fs::rename(installation.root.path(), &directory).unwrap();
+    // Reuse the shared verified process mechanics without selecting another concrete adapter.
+    let program = installation.root.path().join("plugin");
     let binary = std::fs::read(env!("CARGO_BIN_EXE_octacity-github")).unwrap();
     let binary_digest = hex::encode(Sha256::digest(&binary));
-    std::fs::write(directory.join("plugin"), binary).unwrap();
+    std::fs::write(&program, binary).unwrap();
     use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(directory.join("plugin"), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let configuration = wire["message"]["command"]["payload"]["configuration_digest"]
-      .as_str()
-      .unwrap();
-    std::fs::write(
-      directory.join("adapter.toml"),
-      format!(
-        "manifest_version=1\nadapter_id='github'\nexecutable='plugin'\nexecutable_sha256='{binary_digest}'\n\
-      [protocol.source]\nmin=1\nmax=1\n[capabilities.source]\npreview=true\nlabel_presence=true\n\
-      cancel=false\ncredential_class='work_source_read'\nconfiguration_digest='{configuration}'\n"
-      ),
-    )
-    .unwrap();
-    let registry = octacity_server_work_source::WorkAdapterRegistry::discover(registry_root.path()).unwrap();
-    let adapter = registry.resolve("github", &binary_digest).unwrap();
-    assert_eq!(
-      serde_json::to_value(&adapter.manifest.capabilities.source).unwrap()["label_presence"],
-      json!(true)
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let executable = verify_installed_program(&program, "github", &binary_digest).unwrap();
+    let Request::Source(source_request) = &request else {
+      unreachable!()
+    };
+    let process = ProcessRequest::new(
+      &executable,
+      &source_request.request_id,
+      serde_json::to_vec(&request).unwrap(),
+      None,
+      request.max_response_bytes(),
     );
-    let response = adapter
-      .execute(
-        request.clone(),
-        std::time::Duration::from_secs(5),
-        std::time::Duration::from_secs(1),
-        CancellationToken::new(),
-      )
-      .await
-      .unwrap();
+    let response = execute_process(
+      process,
+      std::time::Duration::from_secs(5),
+      std::time::Duration::from_secs(1),
+      CancellationToken::new(),
+      |frame| octacity_work_source_protocol::decode_response(frame, &request).map_err(|error| error.to_string()),
+    )
+    .await
+    .unwrap();
     response.validate_for(&request).unwrap();
     match response {
       Response::Source(source::Response {
