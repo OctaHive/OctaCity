@@ -320,11 +320,8 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
       projects: tokio::sync::RwLock::new(projects),
       discovery: self.model_discovery.clone(),
     };
-    for (project, alias) in capabilities.discovery.keys() {
-      // Initial registration may provide manual input even when discovery is unavailable.
-      // Failure does not disable independent Factory/worker operation.
-      let _ = capabilities.refresh_role_models(*project, alias).await;
-    }
+    // Advisory model discovery belongs to explicit refresh. Waiting here could consume
+    // the installation deadline and discard otherwise usable authoring/execution capabilities.
     Ok(FactoryRuntimeInstallation {
       capabilities: Arc::new(capabilities),
       executors,

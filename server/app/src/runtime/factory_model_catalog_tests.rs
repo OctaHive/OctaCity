@@ -56,6 +56,37 @@ fn plugin_fixture_with_script(
 }
 
 #[tokio::test]
+async fn runtime_registration_never_waits_for_optional_model_discovery() {
+  use super::FactoryRuntimeInstaller;
+  let marker = tempfile::tempdir().unwrap();
+  let (_directory, program, reference) = plugin_fixture_with_script(
+    json!({"available":true,"manual_model":true,"models":[],"parameters":{"type":"object","additionalProperties":false,"properties":{}}}),
+    ": > \"$DISCOVERY_MARKER\"; /bin/sleep 5",
+  );
+  let (mut document, project, definition, alias) = runtime_catalog_document(&program, &reference);
+  let entered = marker.path().join("entered");
+  document["projects"][0]["role_profiles"]["runtime-profile"]["model_discovery"]["environment"] =
+    json!({"DISCOVERY_MARKER": entered});
+  let installer =
+    super::factory_profile_file::FileProfileInstaller::parse_json(&serde_json::to_vec(&document).unwrap(), &[])
+      .unwrap();
+  let installed = tokio::time::timeout(
+    std::time::Duration::from_secs(1),
+    installer.install(super::factory_tests::resources()),
+  )
+  .await
+  .expect("optional model discovery must not consume the installation deadline")
+  .unwrap();
+  assert!(!entered.exists(), "registration must not invoke the discovery plugin");
+  let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
+    installed.capabilities.availability(project).await.unwrap()
+  else {
+    panic!("registration must retain Factory authoring capabilities")
+  };
+  assert_eq!(choices.role_profile_capabilities()[&alias].ceiling, definition);
+}
+
+#[tokio::test]
 async fn file_runtime_model_discovery_is_cached_and_refresh_never_rewrites_profiles() {
   use super::FactoryRuntimeInstaller;
   let (_directory, program, reference) = plugin_fixture();
@@ -64,6 +95,11 @@ async fn file_runtime_model_discovery_is_cached_and_refresh_never_rewrites_profi
     super::factory_profile_file::FileProfileInstaller::parse_json(&serde_json::to_vec(&document).unwrap(), &[])
       .expect("installed plugins attach discovery to the existing capability");
   let installed = installer.install(super::factory_tests::resources()).await.unwrap();
+  installed
+    .capabilities
+    .refresh_role_models(project, &alias)
+    .await
+    .unwrap();
   let before = installed.capabilities.availability(project).await.unwrap();
   let octacity_server_store::FactoryConfigurationAvailability::Available(choices) = &before else {
     panic!("missing choices")
@@ -192,6 +228,16 @@ async fn model_refresh_is_independent_and_rejects_overlapping_requests_without_q
     super::factory_profile_file::FileProfileInstaller::parse_json(&serde_json::to_vec(&document).unwrap(), &[])
       .unwrap();
   let installed = installer.install(super::factory_tests::resources()).await.unwrap();
+  installed
+    .capabilities
+    .refresh_role_models(project, &slow)
+    .await
+    .unwrap();
+  installed
+    .capabilities
+    .refresh_role_models(project, &other)
+    .await
+    .unwrap();
   std::fs::write(gate.path().join("block"), "").unwrap();
   let capabilities = installed.capabilities.clone();
   let same_source = slow.clone();
@@ -244,6 +290,11 @@ async fn file_runtime_installs_qualified_settings_support_without_changing_model
     super::factory_profile_file::FileProfileInstaller::parse_json(&serde_json::to_vec(&document).unwrap(), &[])
       .expect("file installation accepts the shared Runtime support contract");
   let installed = installer.install(super::factory_tests::resources()).await.unwrap();
+  installed
+    .capabilities
+    .refresh_role_models(project, &alias)
+    .await
+    .unwrap();
   let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
     installed.capabilities.availability(project).await.unwrap()
   else {

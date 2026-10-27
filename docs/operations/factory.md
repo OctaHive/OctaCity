@@ -1117,8 +1117,12 @@ in UTF-8 bytes: a plugin's `maxLength` becomes a conservative byte ceiling;
 positive character-based `minLength` is rejected because it cannot be preserved
 by the shared byte grammar. Unsupported schema constructs fail discovery
 explicitly rather than weakening validation.
-Initial unavailability does not fabricate models; a failed explicit refresh preserves
-the previous usable catalog. Refreshes for different installed sources are
+Runtime registration performs no model discovery. Use **Refresh models** to populate
+the advisory cache; the installed model/parameter declarations remain available
+before that request completes. Slow or unavailable discovery cannot consume the
+Factory installation deadline or disable Flow/schema authoring. No model is
+fabricated; a failed explicit refresh preserves the previous usable catalog.
+Refreshes for different installed sources are
 independent. An overlapping refresh for the same source fails immediately,
 retaining its snapshot instead of joining an unbounded queue. Cached reads and
 profile validation never discover.
