@@ -876,6 +876,7 @@ export const ruMessages = {
   'factory.reporterReadiness':
     'Выбор Reporter не подтверждает право записи во внешней системе. Только принятые настроенные действия могут поставить обновление в очередь.',
   'factory.preserveLabels': 'Остальные метки сохраняются.',
+  'factory.noLabels': 'Профиль не разрешает менять метки.',
   'factory.addEffect': 'Добавить метки',
   'factory.removeEffect': 'Удалить метки',
   'factory.preserveState': 'Сохранить текущее состояние',

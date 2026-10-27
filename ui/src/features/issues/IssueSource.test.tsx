@@ -257,6 +257,42 @@ it('reviews only authorized push effects with an explicit independent enable swi
   );
 });
 
+it('explains an installed writer without label choices while allowing state mapping', async () => {
+  const sources = fakeIssueSourcesApi();
+  const base = issueSourceChoice();
+  sources.review.mockResolvedValue(issueSourceReview(true));
+  sources.choices.mockResolvedValue({
+    issue_version: issue.version,
+    items: [
+      {
+        ...base,
+        push_fields: ['status'],
+        writer: {
+          binding: {
+            ...base.source,
+            capability: { ...base.source.capability, identity: 'task-update' },
+          },
+          effects: { states: ['open', 'closed'], labels: [] },
+        },
+      },
+    ],
+  });
+  setup('/projects/delivery/issues/' + issue.id, undefined, { issueSourcesApi: sources });
+  await screen.findByText('opaque-7');
+  await userEvent.click(screen.getByRole('button', { name: 'Configure source' }));
+  await userEvent.click(await screen.findByRole('combobox', { name: 'Status authority' }));
+  await userEvent.click(screen.getByRole('option', { name: 'OctaCity owns · push' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add status mapping' }));
+  expect(screen.getByText('This profile has no editable labels.')).toBeTruthy();
+  expect(screen.queryByRole('group', { name: 'Add labels' })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Remove labels' })).toBeNull();
+  await userEvent.click(screen.getByRole('combobox', { name: 'Resulting task state' }));
+  await userEvent.click(screen.getByRole('option', { name: 'closed' }));
+  expect(screen.getByRole('combobox', { name: 'Resulting task state' }).textContent).toContain(
+    'closed',
+  );
+});
+
 it('shows retained freshness and reviews pause independently from explicit provider refresh', async () => {
   const sources = fakeIssueSourcesApi();
   sources.review.mockResolvedValue(issueSourceReview(true));

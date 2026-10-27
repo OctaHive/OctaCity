@@ -866,6 +866,7 @@ export const enMessages = {
   'factory.reporterReadiness':
     'Selecting a Reporter does not verify remote write readiness. Only accepted configured actions can queue updates.',
   'factory.preserveLabels': 'Unrelated labels are preserved.',
+  'factory.noLabels': 'This profile has no editable labels.',
   'factory.addEffect': 'Add labels',
   'factory.removeEffect': 'Remove labels',
   'factory.preserveState': 'Preserve current state',

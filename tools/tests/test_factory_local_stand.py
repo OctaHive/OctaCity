@@ -100,14 +100,16 @@ class FactoryLocalStandTests(unittest.TestCase):
             server.parent.mkdir(parents=True)
             server.write_text('management_bind = "0.0.0.0:8080"\n')
             server.chmod(0o600)
-            response = io.BytesIO(b'{"id":1234,"full_name":"Example/Tickets"}')
-            with patch.object(urllib.request.OpenerDirector, "open", return_value=response) as fetch, \
+            responses = [io.BytesIO(b'{"id":1234,"full_name":"Example/Tickets"}'), io.BytesIO(b'[]')]
+            with patch.object(urllib.request.OpenerDirector, "open", side_effect=responses) as fetch, \
                     patch.object(subprocess, "run", return_value=subprocess.CompletedProcess([], 0, stdout="ab" * 32 + "  /usr/local/bin/octacity-github\n")), \
                     patch.dict(os.environ, {"GITHUB_TOKEN":"ambient-secret-must-not-be-used"}):
                 bundle = demo.install_repository(root, "Example/Tickets")
-            request = fetch.call_args.args[0]
+            request = fetch.call_args_list[0].args[0]
             self.assertEqual(request.full_url, "https://api.github.com/repos/Example/Tickets")
-            self.assertFalse(request.has_header("Authorization"))
+            self.assertEqual(fetch.call_args_list[1].args[0].full_url,
+                             "https://api.github.com/repos/Example/Tickets/labels?per_page=100&page=1")
+            self.assertTrue(all(not call.args[0].has_header("Authorization") for call in fetch.call_args_list))
             catalog = json.loads((bundle / "catalog.json").read_text())
             self.assertEqual(catalog["installations"][0]["resources"][0]["native_id"], "1234")
             self.assertNotIn("ambient-secret", json.dumps(catalog))

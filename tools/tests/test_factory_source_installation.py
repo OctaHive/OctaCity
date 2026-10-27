@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -29,12 +30,37 @@ class FactorySourceInstallationTests(unittest.TestCase):
         self.baseline.write_bytes(self.original)
         self.baseline.chmod(0o600)
 
-    def install(self, repository, *, native_repository_id, adapter_digest):
+    def install(self, repository, *, native_repository_id, adapter_digest, repository_labels=()):
         return configure_integrations(self.root, repository, native_repository_id=native_repository_id,
-                                      adapter_digest=adapter_digest)
+                                      adapter_digest=adapter_digest, repository_labels=repository_labels)
+
+    def test_fresh_public_repository_installs_existing_labels_for_reviewed_updates(self):
+        requests = []
+        def fetch(request, **_):
+            requests.append(request)
+            if request.full_url == "https://api.github.com/repos/Example/Tickets":
+                return io.BytesIO(b'{"id":1234,"full_name":"Example/Tickets"}')
+            self.assertEqual(request.full_url, "https://api.github.com/repos/Example/Tickets/labels?per_page=100&page=1")
+            return io.BytesIO(json.dumps([{"name": "triage"}, {"name": "bug"}, {"name": "Нужна проверка"}]).encode())
+        with patch("factory_integrations.urllib.request.OpenerDirector.open", side_effect=fetch), \
+                patch("factory_integrations.subprocess.run", return_value=subprocess.CompletedProcess(
+                    [], 0, stdout="ab" * 32 + "  /usr/local/bin/octacity-github\n")), \
+                patch.dict(os.environ, {"GITHUB_TOKEN": "ambient-secret"}):
+            bundle = install_repository(self.root, "Example/Tickets")
+        profiles = json.loads((bundle / "source-profiles.json").read_text())
+        writer, = profiles["reporters"]
+        self.assertEqual(writer["reporting"]["editable"]["labels"], ["bug", "triage", "Нужна проверка"])
+        mapping = writer["mapping"]
+        filename = hashlib.sha256(mapping["identity"].encode()).hexdigest() + ".json"
+        native = json.loads((bundle / "mappings" / filename).read_text())
+        self.assertEqual(list(native["managed_label_groups"].values()), [["bug"], ["triage"], ["Нужна проверка"]])
+        self.assertEqual(len(requests), 2)
+        self.assertTrue(all(request.get_method() == "GET" and not request.has_header("Authorization") for request in requests))
+        self.assertNotIn("ambient-secret", json.dumps(profiles))
 
     def test_retained_repository_is_reused_offline_without_changing_pins_or_state(self):
-        bundle = self.install("Example/Tickets", native_repository_id="1234", adapter_digest="ab" * 32)
+        bundle = self.install("Example/Tickets", native_repository_id="1234", adapter_digest="ab" * 32,
+                              repository_labels=["bug", "triage"])
         before = {path.relative_to(bundle): (path.read_bytes(), path.stat().st_mtime_ns)
                   for path in bundle.rglob("*") if path.is_file()}
         history = self.root / "retained-history"
@@ -48,6 +74,49 @@ class FactorySourceInstallationTests(unittest.TestCase):
         self.assertEqual({path.relative_to(bundle): (path.read_bytes(), path.stat().st_mtime_ns)
                           for path in bundle.rglob("*") if path.is_file()}, before)
         self.assertEqual(history.read_bytes(), b"original-runtime-profiles-and-runs")
+
+    def test_existing_labels_are_paged_and_bounded_by_both_profile_and_native_group_limits(self):
+        responses = [io.BytesIO(b'{"id":1234,"full_name":"Example/Tickets"}'),
+                     io.BytesIO(json.dumps([{"name": f"label-{i:03d}"} for i in range(100)]).encode()),
+                     io.BytesIO(json.dumps([{"name": f"label-{i:03d}"} for i in range(100, 128)]).encode())]
+        with patch("factory_integrations.urllib.request.OpenerDirector.open", side_effect=responses) as fetch, \
+                patch("factory_integrations.subprocess.run", return_value=subprocess.CompletedProcess(
+                    [], 0, stdout="ab" * 32 + "  /usr/local/bin/octacity-github\n")):
+            bundle = install_repository(self.root, "Example/Tickets")
+        self.assertEqual(fetch.call_args_list[-1].args[0].full_url,
+                         "https://api.github.com/repos/Example/Tickets/labels?per_page=100&page=2")
+        writer, = json.loads((bundle / "source-profiles.json").read_text())["reporters"]
+        labels = writer["reporting"]["editable"]["labels"]
+        self.assertEqual((len(labels), labels[0], labels[-1]), (128, "label-000", "label-127"))
+        filename = hashlib.sha256(writer["mapping"]["identity"].encode()).hexdigest() + ".json"
+        groups = json.loads((bundle / "mappings" / filename).read_text())["managed_label_groups"]
+        self.assertEqual(len(groups), 128)
+        self.assertTrue(all(len(group) == 1 for group in groups.values()))
+
+    def test_incomplete_or_invalid_label_catalogue_does_not_publish_an_installation(self):
+        cases = [
+            [{"name": "bug"}, {"name": "BUG"}],
+            [{"name": ""}], [{"name": "bad\nlabel"}], [{"name": 123}],
+            [{"name": "x" * 257}], {"message": "not a catalogue"},
+            [{"name": f"label-{i}"} for i in range(100)] + [{"name": "overflow"}],
+        ]
+        for labels in cases:
+            with self.subTest(labels=labels):
+                responses = [io.BytesIO(b'{"id":1234,"full_name":"Example/Tickets"}'),
+                             io.BytesIO(json.dumps(labels).encode())]
+                with patch("factory_integrations.urllib.request.OpenerDirector.open", side_effect=responses), \
+                        patch("factory_integrations.subprocess.run") as docker:
+                    with self.assertRaisesRegex(ValueError, "repository labels"):
+                        install_repository(self.root, "Example/Tickets")
+                docker.assert_not_called()
+                self.assertFalse((self.root / "config/integrations").exists())
+
+    def test_labels_cannot_publish_a_mapping_larger_than_the_native_adapter_can_read(self):
+        labels = [f"{index:03d}-" + "😀" * 50 for index in range(128)]
+        with self.assertRaisesRegex(ValueError, "mapping.*large"):
+            configure_integrations(self.root, "Example/Tickets", native_repository_id="1234",
+                                   adapter_digest="ab" * 32, repository_labels=labels)
+        self.assertFalse((self.root / "config/integrations").exists())
 
     def test_offline_reuse_rejects_mismatched_or_incomplete_installation_without_replacing_it(self):
         for change in ("repository", "profiles", "adapter", "missing-catalog", "symbolic-catalog"):

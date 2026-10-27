@@ -184,7 +184,7 @@ blank/control/oversized names and unmanaged labels are rejected. Literal `.` and
 `..` labels are unsupported because URL dot-segment normalization cannot safely
 address their individual removal endpoints.
 
-Local bounds are 64 KiB per document, 32 groups, 64 labels per group, 128 managed
+Local bounds are 64 KiB per document, 128 groups, 64 labels per group, 128 managed
 labels overall, 128 statuses, 64 additions/removals per status and 256 UTF-8 bytes
 per name/value. Installed mapping files/directories use the same private-file,
 regular-file and confinement checks as selectors. Source-only installations

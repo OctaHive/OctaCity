@@ -50,6 +50,7 @@ export function SourceReporting({
       ) : null}
       {draft && policy ? (
         <>
+          {!policy.labels.length ? <p>{t('factory.noLabels')}</p> : null}
           {rows.map((row, index) => (
             <fieldset key={keys[index]}>
               <legend>{t('factory.mappingRow', { number: index + 1 })}</legend>
@@ -69,7 +70,7 @@ export function SourceReporting({
                   />
                 </label>
               )}
-              {(['add', 'remove'] as const).map((effect) => (
+              {(policy.labels.length ? (['add', 'remove'] as const) : []).map((effect) => (
                 <fieldset key={effect}>
                   <legend>
                     {t(effect === 'add' ? 'factory.addEffect' : 'factory.removeEffect')}

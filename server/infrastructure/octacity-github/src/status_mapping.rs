@@ -91,7 +91,7 @@ impl StatusMapping {
         .enumerate()
         .any(|(i, state)| mapping.editable_states[..i].contains(state))
       || (!mapping.editable && !mapping.editable_states.is_empty())
-      || mapping.managed_label_groups.len() > 32
+      || mapping.managed_label_groups.len() > 128
       || mapping.statuses.is_empty()
       || mapping.statuses.len() > 128
     {

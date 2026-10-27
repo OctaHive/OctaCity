@@ -322,8 +322,21 @@ bounded Issue reads, an unrestricted native selector with editable narrowing,
 optional Factory task/acceptance preparation, and separately scoped Reporter
 effects/delivery bounds. The default acceptance rule reads `## Acceptance` from
 the native body; missing acceptance blocks Factory admission, not task import.
-Default native effects support explicit open/closed state changes and preserve
-unrelated labels; installing these choices performs no write.
+Default native effects support explicit open/closed state changes. On a fresh
+public-repository installation, the launcher also reads the existing GitHub label
+catalogue and installs those names as selectable additions/removals. The snapshot
+is limited to 128 labels, 256 UTF-8 bytes per name and a 64 KiB native mapping;
+an unavailable, invalid or oversized catalogue stops installation instead of
+silently installing incomplete choices. Each label has an independent conflict
+scope. Installing these choices performs no write and creates no GitHub label;
+configured updates preserve unrelated labels.
+
+The label snapshot is part of the immutable installation identity. Repeated
+starts reuse it offline rather than discover new labels or widen pending effects.
+An existing state-only installation retains its empty label scope; its UI explains
+that no label updates are available. A different label snapshot requires an
+explicit new trusted installation and review of connection/source settings. Do not
+edit a retained bundle in place or reset its database to refresh these choices.
 
 The private generated catalog references `source-profiles.json`; selector/mapping
 files are named by their logical identity hash and pinned by content SHA-256.

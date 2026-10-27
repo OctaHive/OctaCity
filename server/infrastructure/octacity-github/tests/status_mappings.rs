@@ -1,6 +1,21 @@
 use octacity_github::status_mapping::StatusMapping;
 use serde_json::json;
 
+#[test]
+fn independent_repository_labels_do_not_need_shared_conflict_groups() {
+  let groups: serde_json::Map<String, serde_json::Value> = (0..128)
+    .map(|i| (format!("label-{i}"), json!([format!("label-{i}")])))
+    .collect();
+  let bytes = serde_json::to_vec(&json!({
+    "config_version": 1,
+    "managed_label_groups": groups,
+    "statuses": {"reviewed": {"add": ["label-127"], "remove": []}}
+  }))
+  .unwrap();
+  let mapping = StatusMapping::from_config(&bytes).unwrap();
+  assert_eq!(mapping.effects("reviewed").unwrap().add(), ["label-127"]);
+}
+
 fn document() -> serde_json::Value {
   json!({"config_version":1,"managed_label_groups":{"review":["ready","blocked"]},
     "statuses":{"publish":{"add":["ready"],"remove":["blocked"]}}})
