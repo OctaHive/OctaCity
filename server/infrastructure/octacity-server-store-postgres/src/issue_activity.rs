@@ -4,6 +4,15 @@ use octacity_server_domain::{EntityKind, IssueVersion};
 use octacity_server_factory::FactoryDigest;
 use octacity_server_store::*;
 use sqlx::{PgConnection, types::Json};
+
+#[derive(sqlx::FromRow)]
+struct SourceActivityRow {
+  native: Option<Vec<u8>>,
+  membership: Vec<u8>,
+  generation: i64,
+  mapping: i64,
+  rows: Json<Vec<IssueTimelineReference>>,
+}
 #[async_trait::async_trait]
 impl IssueTimelineStore for PostgresStore {
   async fn issue_timeline(&self, request: ReadIssueTimeline) -> Result<IssueTimelineReadPage, StoreError> {
@@ -74,37 +83,38 @@ impl IssueTimelineStore for PostgresStore {
     ))
   }
 }
-async fn source_watermark(
-  connection: &mut PgConnection,
-  request: &ReadIssueTimeline,
-) -> Result<FactoryDigest, StoreError> {
-  let source:Option<(Vec<u8>,i64,i64,i64)>=sqlx::query_as("SELECT l.native_correlation,(SELECT count(*) FROM issue_source_observations o WHERE o.project_id=l.project_id AND o.security_scope=l.security_scope AND o.native_correlation=l.native_correlation),COALESCE((r.document->>'generation')::bigint,0),(SELECT COALESCE(max(version),0) FROM issue_source_mappings WHERE project_id=l.project_id AND issue_id=l.issue_id) FROM issue_source_links l LEFT JOIN issue_source_refresh r USING(project_id,issue_id) WHERE l.project_id=$1 AND l.issue_id=$2 AND l.security_scope=$3")
-    .bind(request.project_id.as_uuid()).bind(request.issue_id.as_uuid()).bind(request.scope.as_str()).fetch_optional(connection).await.map_err(unavailable)?;
-  match source {
-    None => issue_timeline_source_watermark(None, 0, 0, 0),
-    Some((native, count, generation, mapping)) => issue_timeline_source_watermark(
-      Some(FactoryDigest::from_bytes(
-        native.try_into().map_err(|_| StoreError::Unavailable)?,
-      )),
-      count as u64,
-      generation as u64,
-      mapping as u64,
-    ),
-  }
-}
-
 // A failed optional section rolls back to its savepoint without aborting local metadata reads.
 async fn source_section(
   connection: &mut PgConnection,
   request: &ReadIssueTimeline,
 ) -> Result<(FactoryDigest, Vec<IssueTimelineReference>), StoreError> {
-  let source = source_watermark(connection, request).await?;
-  if !request.kinds.contains(&IssueTimelineKind::Source) || request.boundary.is_some_and(|b| b.source != Some(source)) {
-    return Ok((source, Vec::new()));
-  }
   let position = request.after.as_ref();
-  let rows:Vec<(Json<IssueTimelineReference>,)>=sqlx::query_as("SELECT jsonb_build_object('kind','source','at',(o.document->>'observed_at')::bigint,'id',encode(o.id,'hex'),'expires_at',(o.document->>'expires_at')::bigint) FROM issue_source_observations o JOIN issue_source_links l USING(project_id,security_scope,native_correlation) WHERE l.project_id=$1 AND l.issue_id=$2 AND l.security_scope=$3 AND ($4::bigint IS NULL OR ((o.document->>'observed_at')::bigint,4,encode(o.id,'hex'))>($4,$5,$6)) ORDER BY (o.document->>'observed_at')::bigint,o.id LIMIT $7")
-    .bind(request.project_id.as_uuid()).bind(request.issue_id.as_uuid()).bind(request.scope.as_str()).bind(position.map(|p|p.at.unix_millis())).bind(position.map(|p|p.kind as i32)).bind(position.map(|p|p.identity.as_str())).bind(i64::from(request.limit)+1)
-    .fetch_all(connection).await.map_err(unavailable)?;
-  Ok((source, rows.into_iter().map(|(Json(row),)| row).collect()))
+  let limit = if request.kinds.contains(&IssueTimelineKind::Source) {
+    i64::from(request.limit) + 1
+  } else {
+    0
+  };
+  let source: SourceActivityRow = sqlx::query_as(include_str!("issue_activity_source.sql"))
+    .bind(request.project_id.as_uuid())
+    .bind(request.issue_id.as_uuid())
+    .bind(request.scope.as_str())
+    .bind(position.map(|p| p.at.unix_millis()))
+    .bind(position.map(|p| p.kind as i32))
+    .bind(position.map(|p| p.identity.as_str()))
+    .bind(limit)
+    .fetch_one(connection)
+    .await
+    .map_err(unavailable)?;
+  let native = source
+    .native
+    .map(|bytes| {
+      bytes
+        .try_into()
+        .map(FactoryDigest::from_bytes)
+        .map_err(|_| StoreError::Unavailable)
+    })
+    .transpose()?;
+  let membership = FactoryDigest::from_bytes(source.membership.try_into().map_err(|_| StoreError::Unavailable)?);
+  let watermark = issue_timeline_source_watermark(native, membership, source.generation as u64, source.mapping as u64)?;
+  Ok((watermark, source.rows.0))
 }

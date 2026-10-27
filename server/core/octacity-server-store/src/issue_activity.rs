@@ -186,16 +186,16 @@ pub trait IssueTimelineStore: Send + Sync {
   async fn issue_timeline(&self, request: ReadIssueTimeline) -> Result<IssueTimelineReadPage, StoreError>;
 }
 
-/// Fingerprints the append-only native read membership and reviewed mapping/pull generation.
-/// Counts are internal; external observations expose only this scoped digest.
+/// Fingerprints Source change membership and reviewed mapping/pull generation.
+/// Quiet rereads keep cursors valid; delayed reads that alter event membership invalidate them.
 pub fn issue_timeline_source_watermark(
   native: Option<FactoryDigest>,
-  count: u64,
+  membership: FactoryDigest,
   generation: u64,
   mapping: u64,
 ) -> Result<FactoryDigest, StoreError> {
-  let encoded = serde_json::to_vec(&(native, count, generation, mapping)).map_err(|_| StoreError::Unavailable)?;
-  Ok(FactoryDigest::sha256("octacity.issue.timeline.source.v1", &[&encoded]))
+  let encoded = serde_json::to_vec(&(native, membership, generation, mapping)).map_err(|_| StoreError::Unavailable)?;
+  Ok(FactoryDigest::sha256("octacity.issue.timeline.source.v2", &[&encoded]))
 }
 
 impl ReadIssueTimeline {

@@ -1,5 +1,6 @@
 //! Timeline metadata shares the existing atomic Issue memory snapshot.
 use super::*;
+use octacity_server_factory::FactoryDigest;
 #[async_trait::async_trait]
 impl IssueTimelineStore for crate::testing::InMemoryProjectStore {
   async fn issue_timeline(&self, request: ReadIssueTimeline) -> Result<IssueTimelineReadPage, StoreError> {
@@ -28,16 +29,19 @@ impl IssueTimelineStore for crate::testing::InMemoryProjectStore {
       .get(&issue.id)
       .filter(|(scope, _)| scope == &request.scope)
       .map(|(_, link)| link.native_correlation);
-    let source_count = if native.is_some() {
+    let mut observations: Vec<_> = if native.is_some() {
       memory
         .sources
         .observations
-        .keys()
-        .filter(|(id, _)| *id == issue.id)
-        .count() as u64
+        .iter()
+        .filter(|((id, _), _)| *id == issue.id)
+        .map(|((_, id), observation)| (*id, observation))
+        .collect()
     } else {
-      0
+      Vec::new()
     };
+    observations.sort_by_key(|(id, observation)| (observation.observed_at, *id));
+    observations.dedup_by(|(_, later), (_, earlier)| later.same_activity_content(earlier));
     let generation = if native.is_some() {
       memory.sources.states.get(&issue.id).map(|s| s.generation).unwrap_or(0)
     } else {
@@ -55,7 +59,10 @@ impl IssueTimelineStore for crate::testing::InMemoryProjectStore {
     } else {
       0
     };
-    let source = issue_timeline_source_watermark(native, source_count, generation, mapping)?;
+    // Match the PostgreSQL digest of ordered fixed-width receipt IDs, not raw poll count.
+    let identities: String = observations.iter().map(|(id, _)| id.to_string()).collect();
+    let membership = FactoryDigest::content_sha256(identities.as_bytes());
+    let source = issue_timeline_source_watermark(native, membership, generation, mapping)?;
     let boundary = request.boundary.unwrap_or(IssueTimelineBoundary {
       issue_version: issue.version,
       executions,
@@ -100,14 +107,12 @@ impl IssueTimelineStore for crate::testing::InMemoryProjectStore {
     }
     let source_stale = boundary.source.is_some_and(|original| original != source);
     if !source_stale && boundary.source.is_some() && native.is_some() {
-      for ((id, receipt), observation) in &memory.sources.observations {
-        if *id == issue.id {
-          rows.push(IssueTimelineReference::Source {
-            at: observation.observed_at,
-            id: *receipt,
-            expires_at: observation.expires_at,
-          });
-        }
+      for (receipt, observation) in observations {
+        rows.push(IssueTimelineReference::Source {
+          at: observation.observed_at,
+          id: receipt,
+          expires_at: observation.expires_at,
+        });
       }
     }
     Ok(IssueTimelineReadPage::bounded(

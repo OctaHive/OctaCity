@@ -188,6 +188,16 @@ pub struct IssueSourceObservation {
   pub expires_at: Timestamp,
 }
 impl IssueSourceObservation {
+  /// Activity changes when content or installed provenance changes, independently of read freshness.
+  pub fn same_activity_content(&self, other: &Self) -> bool {
+    self.display_id == other.display_id
+      && self.source == other.source
+      && self.plugin == other.plugin
+      && self.provider_configuration == other.provider_configuration
+      && self.selection_digest == other.selection_digest
+      && self.snapshot_digest == other.snapshot_digest
+  }
+
   /// Stable receipt identity bound to the existing Project/security/native correlation.
   pub fn id(&self, native: FactoryDigest) -> Result<FactoryDigest, StoreError> {
     Ok(FactoryDigest::sha256(

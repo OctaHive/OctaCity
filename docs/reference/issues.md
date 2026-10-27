@@ -1325,6 +1325,14 @@ reasons, provider payloads, native credentials, logs and technical Run detail.
 Dedicated content and execution readers retain their own permissions. Manual
 Issues need no Factory, input publication or installed provider to use this read.
 
+Consecutive Source reads with identical snapshot and installed provenance produce
+one Activity entry, using the first receipt's original time and identity. Read
+time and expiry alone do not create another entry. Content changes, changes in
+installed provenance and a return to an earlier snapshot remain separate events.
+Folding happens before pagination and applies to already retained history. Exact
+technical read receipts and the current freshness state remain independently
+available to synchronization readers.
+
 The default limit is 50, with a maximum of 200. Optional `kinds` is a comma-separated
 set of `revision,status,execution,discussion,source`; omission selects all kinds.
 Ordering is original timestamp, source kind in that order, then canonical stable
@@ -1335,8 +1343,10 @@ and comments cannot enter an existing traversal, even if their timestamps sort
 before its current position. `current_version` reports the independently current
 Issue head; it does not rewrite original requirements or facts.
 
-The Source fingerprint binds native-link correlation, append-only retained
-observation membership, pull generation and mapping version. A changed fingerprint
+The Source fingerprint binds native-link correlation, ordered Activity receipt
+identities, pull generation and mapping version. Quiet rereads keep the fingerprint
+stable; a delayed receipt that changes Activity membership invalidates it even if
+the number of entries stays the same. A changed fingerprint
 omits only the Source section and marks `source_stale`; other frozen local
 sections remain readable. PostgreSQL uses a read-only repeatable-read transaction
 and an optional-section savepoint. Source storage failure marks
