@@ -12,6 +12,42 @@ use serde::{Deserialize, Serialize};
 pub type SourceArtifactRole = crate::FactoryInputRole;
 /// Exact private byte identity; shared with Project text preparation.
 pub type SourceArtifactObject = crate::FactoryInputObject;
+/// Fenced selection of private installed choices before any external document read.
+#[derive(Clone)]
+pub struct FreezeSourcePreparationPolicy {
+  /// Current authoritative scan ownership.
+  pub claim: WorkSourceScanClaim,
+  /// Original snapshot reservation.
+  pub preparation_id: FactoryDigest,
+  /// Bounded serialized application settings; never ticket-selected authority.
+  pub policy: Vec<u8>,
+  /// Trusted observation time.
+  pub now: Timestamp,
+}
+impl FreezeSourcePreparationPolicy {
+  /// Retains exactly one policy, including compatibility with older materializations.
+  pub fn retain(
+    &self,
+    mut preparation: crate::WorkSourcePreparation,
+    current: Option<&SourceMaterialization>,
+  ) -> Result<crate::WorkSourcePreparation, StoreError> {
+    if self.policy.is_empty()
+      || self.policy.len() > MAX_SOURCE_INPUT_BYTES as usize
+      || preparation.snapshot.is_empty()
+      || self.now >= preparation.snapshot_expires_at
+      || preparation.policy.as_ref().is_some_and(|p| *p != self.policy)
+      || current.is_some_and(|m| {
+        m.mapping_digest != FactoryDigest::content_sha256(&self.policy)
+          || m.cleaned_at.is_some()
+          || self.now >= m.expires_at
+      })
+    {
+      return Err(source_conflict());
+    }
+    preparation.policy = Some(self.policy.clone());
+    Ok(preparation)
+  }
+}
 /// Original immutable source materialization, with private retention.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -230,6 +266,11 @@ pub trait SourceArtifactQueryStore: Send + Sync {
 /// Trusted source byte lifecycle, separate from Agent output publication.
 #[async_trait]
 pub trait WorkSourceArtifactStore: FactorySourceStore + SourceArtifactQueryStore {
+  /// Freezes installed choices before I/O, without a separate journal or publication owner.
+  async fn freeze_source_preparation_policy(
+    &self,
+    request: FreezeSourcePreparationPolicy,
+  ) -> Result<crate::WorkSourcePreparation, StoreError>;
   /// Classifies a rejected candidate with a bounded private snapshot lifetime.
   async fn reject_source_preparation(
     &self,

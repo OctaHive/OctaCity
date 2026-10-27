@@ -21,6 +21,8 @@ pub struct FactorySourceWorkerDependencies<S, B> {
   pub store: Arc<S>,
   /// Private immutable input publication.
   pub bytes: Arc<B>,
+  /// Shared exact Project-document reader; absent installations reject references.
+  pub project_inputs: Option<Arc<FactoryProjectInputReader>>,
   /// Existing revision resolution; replay precedes this port.
   pub revisions: Arc<dyn RevisionResolver>,
   /// Explicit installation-owner management authorization policy.
@@ -277,6 +279,7 @@ async fn poll_target<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublis
       managed_connections: managed_connections.clone(),
       store: d.store.clone(),
       bytes: d.bytes.clone(),
+      project_inputs: d.project_inputs.clone(),
       revisions: d.revisions.clone(),
       authorization: d.authorization.clone(),
       registry: d.registry.clone(),

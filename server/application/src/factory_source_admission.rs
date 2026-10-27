@@ -203,10 +203,14 @@ impl<S: octacity_server_store::FactorySourceStore + 'static> FactorySourceAdmiss
       .await?;
     validate_authorization(&authorized, command.input_id, command.input_version, &preparation.item)?;
     preparation.require_selected_owner(&command.guard.claim, &authorized.input)?;
-    let intent = preparation.intent.clone().ok_or_else(ApplicationError::invalid)?;
     self
       .admission
-      .authorize_source_intent(&authorized.context, &intent)
+      .authorize_source_preparation(&authorized.context, &preparation)
+      .await?;
+    let intent = preparation.intent.as_ref().ok_or_else(ApplicationError::invalid)?;
+    self
+      .admission
+      .authorize_source_intent(&authorized.context, intent)
       .await?;
     let probe = preparation.admission_probe(authorized.context.security_scope().to_store())?;
     let request = if let Some(replay) = self.store.replay_factory_admission(&probe).await? {
@@ -222,9 +226,25 @@ impl<S: octacity_server_store::FactorySourceStore + 'static> FactorySourceAdmiss
     } else {
       self
         .admission
-        .prepare_fresh_intent(&authorized.context, intent, probe, Some(&preparation.input))
+        .prepare_fresh_intent(&authorized.context, intent.clone(), probe, Some(&preparation.input))
         .await?
     };
+    // Revision resolution may yield after the initial grant/visibility checks.
+    // Neither retained Source bytes nor an earlier grant authorize a revoked input.
+    let current = self
+      .authorization
+      .authorize(command.input_id, command.input_version)
+      .await?;
+    validate_authorization(&current, command.input_id, command.input_version, &preparation.item)?;
+    preparation.require_selected_owner(&command.guard.claim, &current.input)?;
+    self
+      .admission
+      .authorize_source_preparation(&authorized.context, &preparation)
+      .await?;
+    self
+      .admission
+      .authorize_source_intent(&authorized.context, intent)
+      .await?;
     let mut guard = command.guard;
     guard.now = guard.now.max(self.clock.now()?);
     self

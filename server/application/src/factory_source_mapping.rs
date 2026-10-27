@@ -41,6 +41,8 @@ pub enum SourceAcceptanceMapping {
   Body,
   /// Exact Markdown heading; retain its text through the next peer/parent heading.
   BodySection(String),
+  /// Reviewed process completion, distinct from ticket-authored implementation acceptance.
+  ProcessCompletion(crate::SourceCompletionDocument),
 }
 /// Trusted installed configuration pinned by its exact Source binding.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -71,6 +73,7 @@ impl WorkSourceMapping {
       SourceAcceptanceMapping::Field(field) => validate_acceptance_field(field),
       SourceAcceptanceMapping::Body => Ok(()),
       SourceAcceptanceMapping::BodySection(heading) => acceptance_heading_level(heading).map(|_| ()),
+      SourceAcceptanceMapping::ProcessCompletion(document) => document.validate(self.max_body_bytes),
     }
   }
   fn valid_limits(&self) -> bool {
@@ -133,6 +136,13 @@ pub fn map_work_source_snapshot(
   preparation: &WorkSourcePreparation,
   mapping: &WorkSourceMapping,
 ) -> Result<MappedWorkSource, SourceMappingFailure> {
+  map_work_source_snapshot_with_completion(preparation, mapping, None)
+}
+pub(crate) fn map_work_source_snapshot_with_completion(
+  preparation: &WorkSourcePreparation,
+  mapping: &WorkSourceMapping,
+  resolved: Option<&crate::FactoryRetainedInput>,
+) -> Result<MappedWorkSource, SourceMappingFailure> {
   if mapping.source != preparation.input.definition().source || !mapping.valid_limits() {
     return Err(SourceMappingFailure::InvalidMapping);
   }
@@ -176,6 +186,11 @@ pub fn map_work_source_snapshot(
     return Err(SourceMappingFailure::TooLarge);
   }
   let criteria = match &mapping.acceptance {
+    SourceAcceptanceMapping::ProcessCompletion(document) => Some(
+      document
+        .criteria(preparation.input.project_id(), mapping.max_body_bytes, resolved)?
+        .to_owned(),
+    ),
     SourceAcceptanceMapping::Field(field) => {
       validate_acceptance_field(field)?;
       snapshot.fields.get(field).cloned()
@@ -207,11 +222,15 @@ pub fn map_work_source_snapshot(
   .filter(|text| !text.trim().is_empty())
   .ok_or(SourceMappingFailure::MissingAcceptance)?;
   let provenance = serde_json::json!({"installation":preparation.input.definition().source.installation,"input_id":preparation.input.id(),"input_version":preparation.input.version(),"mapping":mapping.source.configuration,"item":preparation.item,"display_id":snapshot.display_id,"update_identity":snapshot.update_identity,"labels":snapshot.labels,"state":snapshot.state,"configuration":preparation.input.definition().target,"repository":preparation.input.definition().repository,"root_flow":preparation.input.root_flow(),"selection":preparation.target,"snapshot_digest":octacity_server_factory::FactoryDigest::content_sha256(&preparation.snapshot)});
-  let task =
-    serde_json::to_vec(&serde_json::json!({"title":snapshot.title,"body":snapshot.body,"provenance":provenance}))
-      .map_err(|_| SourceMappingFailure::InvalidSnapshot)?;
-  let acceptance = serde_json::to_vec(&serde_json::json!({"criteria":criteria,"provenance":provenance}))
-    .map_err(|_| SourceMappingFailure::InvalidSnapshot)?;
+  let mut task = serde_json::json!({"title":snapshot.title,"body":snapshot.body,"provenance":provenance});
+  let mut acceptance = serde_json::json!({"criteria":criteria,"provenance":provenance});
+  if let SourceAcceptanceMapping::ProcessCompletion(document) = &mapping.acceptance {
+    task["fields"] = serde_json::json!(snapshot.fields);
+    acceptance["purpose"] = serde_json::json!("process_completion");
+    acceptance["completion_document"] = document.provenance(resolved);
+  }
+  let task = serde_json::to_vec(&task).map_err(|_| SourceMappingFailure::InvalidSnapshot)?;
+  let acceptance = serde_json::to_vec(&acceptance).map_err(|_| SourceMappingFailure::InvalidSnapshot)?;
   if task.len() > mapping.max_artifact_bytes as usize || acceptance.len() > mapping.max_artifact_bytes as usize {
     return Err(SourceMappingFailure::TooLarge);
   }

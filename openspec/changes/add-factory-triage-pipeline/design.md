@@ -139,6 +139,14 @@ freeze cannot alter pending/admitted inputs; retention covers the document for
 the Run. This avoids optionalizing acceptance across all Work/Agent contracts or
 building a second input journal.
 
+Task 3.1 delivers the reviewed draft/reference contracts and bundled completion
+criteria described in [completion contract verification](completion-verification.md).
+Task 3.2 installs the reader, freezes settings in the existing preparation
+record and qualifies managed publication/admission and signed input transfer;
+see [managed completion verification](managed-completion-verification.md).
+Task 3.3 qualifies recovery faults and late authorization checks; see
+[completion recovery and section review](completion-recovery-verification.md).
+
 ### 5. Provide bounded, provenance-bearing context
 
 The reviewed setup selects Project goals/rules/documents and their immutable

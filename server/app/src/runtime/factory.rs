@@ -142,6 +142,10 @@ impl FactoryRuntimeResources {
       super::FactorySourceWorkerDependencies {
         store: self.runs.clone(),
         bytes: self.objects.clone(),
+        project_inputs: Some(Arc::new(octacity_server_application::FactoryProjectInputReader::new(
+          self.runs.clone(),
+          self.objects.clone(),
+        ))),
         revisions: self.revisions.clone(),
         authorization,
         registry,

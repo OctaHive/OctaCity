@@ -112,6 +112,36 @@ async fn source_publication_is_atomic_owned_and_retains_exact_versions_in_both_s
     let extra = self::input(&configuration, &repository, provider);
     source_artifact_contract(&memory, &extra, &configuration, None).await;
     source_artifact_contract(&postgres, &extra, &configuration, Some(&postgres)).await;
+    let policy_input = self::input(&configuration, &repository, provider);
+    let expected = frozen_policy_contract(&memory, &policy_input).await;
+    let durable = frozen_policy_contract(&postgres, &policy_input).await;
+    assert_eq!(expected.policy, durable.policy);
+    let restored = PostgresStore::new(source_pool.clone())
+      .source_preparation(project, durable.id)
+      .await
+      .unwrap();
+    assert_eq!(restored.policy, durable.policy);
+    assert!(!format!("{restored:?}").contains("private-completion"));
+    for (backend, retained) in [
+      (
+        &memory as &dyn octacity_server_store::WorkSourceArtifactStore,
+        &expected,
+      ),
+      (&postgres, &durable),
+    ] {
+      let expired = octacity_server_store::SourcePreparationCleanup::from_preparation(retained, None);
+      let at = retained.snapshot_expires_at;
+      backend
+        .complete_source_preparation_cleanup(expired, at, time(at.unix_millis() + 1000))
+        .await
+        .unwrap();
+      let cleaned = backend.source_preparation(project, retained.id).await.unwrap();
+      assert!(cleaned.snapshot.is_empty());
+      assert!(
+        cleaned.policy.is_none(),
+        "private reviewed criteria expire with their snapshot"
+      );
+    }
     let polling_input = self::input(&configuration, &repository, provider);
     let expected_polling = polling_progress_contract(&postgres, &polling_input).await;
     assert_eq!(
@@ -167,6 +197,93 @@ async fn source_publication_is_atomic_owned_and_retains_exact_versions_in_both_s
   assert_eq!(counts, (20, 21, 21));
   source_pool.close().await;
   database.cleanup().await;
+}
+
+async fn frozen_policy_contract(
+  store: &dyn octacity_server_store::WorkSourceArtifactStore,
+  input: &WorkSourceInput,
+) -> octacity_server_store::WorkSourcePreparation {
+  use octacity_server_store::FreezeSourcePreparationPolicy;
+  store
+    .publish_work_sources(PublishWorkSources {
+      project_id: input.project_id(),
+      inputs: vec![WorkSourceInputChange {
+        expected_version: None,
+        input: input.clone(),
+      }],
+      group: None,
+    })
+    .await
+    .unwrap();
+  let claim = store
+    .claim_source_scan(ClaimWorkSourceScan {
+      project_id: input.project_id(),
+      target: WorkSourceScanTarget::Input {
+        id: input.id(),
+        version: input.version(),
+      },
+      owner: key("policy-owner"),
+      now: time(1),
+      until: time(100),
+    })
+    .await
+    .unwrap()
+    .unwrap()
+    .claim;
+  let preparation = store
+    .reserve_source_preparation(ReserveWorkSourcePreparation {
+      claim: claim.clone(),
+      input_id: input.id(),
+      item: WorkSourceItem {
+        resource: ExternalWorkIdentity::new("container").unwrap(),
+        item: ExternalWorkIdentity::new("policy-ticket").unwrap(),
+      },
+      snapshot: b"original title-only observation".to_vec(),
+      now: time(2),
+    })
+    .await
+    .unwrap();
+  // Historical JSON still deserializes with no invented preparation settings.
+  let mut legacy = serde_json::to_value(&preparation).unwrap();
+  legacy.as_object_mut().unwrap().remove("policy");
+  assert!(
+    serde_json::from_value::<octacity_server_store::WorkSourcePreparation>(legacy)
+      .unwrap()
+      .policy
+      .is_none()
+  );
+  let request = FreezeSourcePreparationPolicy {
+    claim,
+    preparation_id: preparation.id,
+    policy: br#"{"criteria":"private-completion\r\n","source":"reviewed","configuration":"original"}"#.to_vec(),
+    now: time(3),
+  };
+  for case in ["foreign", "stale", "expired", "oversized"] {
+    let mut invalid = request.clone();
+    match case {
+      "foreign" => invalid.claim.project_id = ProjectId::generate(),
+      "stale" => invalid.claim.fence += 1,
+      "expired" => invalid.now = time(100),
+      "oversized" => invalid.policy = vec![b'x'; octacity_server_store::MAX_SOURCE_INPUT_BYTES as usize + 1],
+      _ => unreachable!(),
+    }
+    assert!(store.freeze_source_preparation_policy(invalid).await.is_err(), "{case}");
+  }
+  let retained = store.freeze_source_preparation_policy(request.clone()).await.unwrap();
+  assert_eq!(retained.policy.as_ref(), Some(&request.policy));
+  assert_eq!(retained.snapshot, preparation.snapshot);
+  assert!(
+    store
+      .source_materialization(input.project_id(), preparation.id)
+      .await
+      .unwrap()
+      .is_none()
+  );
+  let mut substituted = request.clone();
+  substituted.policy = b"different-reviewed-policy".to_vec();
+  assert!(store.freeze_source_preparation_policy(substituted).await.is_err());
+  assert_eq!(store.freeze_source_preparation_policy(request).await.unwrap(), retained);
+  retained
 }
 
 async fn regrouped_preparation_contract(

@@ -3,7 +3,8 @@ use super::*;
 use crate::{AdmitPreparedSourceFactoryWorkCommand, FactorySourceAdmissionHandlers, FactorySourceAuthorization};
 use octacity_server_factory::{FactoryConfigurationId, WorkSourceInput, WorkSourceInputContext};
 use octacity_server_store::{
-  AdmitPreparedWorkSource, ClaimWorkSourceScan, PublishWorkSources, WorkSourceInputChange, WorkSourcePreparation,
+  AdmitPreparedWorkSource, ClaimWorkSourceScan, FactoryInputRole, PublishWorkSources, WorkSourceInputChange,
+  WorkSourcePreparation,
 };
 
 fn authorization(preparation: &WorkSourcePreparation) -> FactorySourceAuthorization {
@@ -31,6 +32,239 @@ fn prepared_command(
       now: time(12),
     },
   }
+}
+
+struct RevocableDocument(ManagementResource, Arc<AtomicBool>);
+#[async_trait]
+impl crate::ManagementAuthorizationPolicy for RevocableDocument {
+  async fn authorize(
+    &self,
+    _: &crate::ManagementRequestContext,
+    _: crate::ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<crate::ManagementAuthorizationGrant, crate::ManagementAuthorizationDenial> {
+    if resource == &self.0 && !self.1.load(Ordering::SeqCst) {
+      Err(crate::ManagementAuthorizationDenial::forbidden())
+    } else {
+      Ok(crate::ManagementAuthorizationGrant::new(
+        crate::ManagementVisibility::all(),
+      ))
+    }
+  }
+}
+struct RevokeDuringResolution(Arc<AtomicBool>, std::sync::atomic::AtomicUsize);
+struct RevocableSource(FactorySourceAuthorization, Arc<AtomicBool>);
+#[async_trait]
+impl crate::FactorySourceAuthorizer for RevocableSource {
+  async fn authorize(
+    &self,
+    _: WorkSourceInputId,
+    _: WorkSourceInputVersion,
+  ) -> Result<FactorySourceAuthorization, ApplicationError> {
+    if self.1.load(Ordering::SeqCst) {
+      Ok(self.0.clone())
+    } else {
+      Err(ApplicationError::capability_unavailable())
+    }
+  }
+}
+#[async_trait]
+impl crate::RevisionResolver for RevokeDuringResolution {
+  async fn resolve(
+    &self,
+    _: crate::RevisionResolutionRequest,
+  ) -> Result<octacity_server_domain::ImmutableRevision, crate::RevisionResolutionError> {
+    self.1.fetch_add(1, Ordering::SeqCst);
+    self.0.store(false, Ordering::SeqCst);
+    Ok(octacity_server_domain::ImmutableRevision::new("original-base").unwrap())
+  }
+}
+
+#[test]
+fn completion_admission_rechecks_source_authority_after_revision_resolution() {
+  run_ready(async {
+    let (store, preparation, claim) = reserved("github").await;
+    let mut selected = settings(&preparation);
+    selected.mapping.acceptance = crate::SourceAcceptanceMapping::ProcessCompletion(
+      crate::SourceCompletionDocument::review_preset(preparation.input.project_id(), crate::TRIAGE_COMPLETION_PRESET)
+        .unwrap(),
+    );
+    FactoryWorkSourcePreparer::new(
+      store.clone(),
+      Arc::new(Bytes::default()),
+      Arc::new(Clock(AtomicI64::new(11))),
+    )
+    .prepare(claim.clone(), preparation.id, selected)
+    .await
+    .unwrap();
+    let allowed = Arc::new(AtomicBool::new(true));
+    let resolver = Arc::new(RevokeDuringResolution(allowed.clone(), Default::default()));
+    let handler = FactorySourceAdmissionHandlers::new(
+      store.clone(),
+      resolver.clone(),
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(RevocableSource(authorization(&preparation), allowed)),
+    )
+    .with_clock(Arc::new(Clock(AtomicI64::new(12))));
+    assert!(
+      handler
+        .admit_prepared(prepared_command(&preparation, claim))
+        .await
+        .is_err(),
+      "a revoked installed Source grant cannot admit completion inputs after VCS I/O"
+    );
+    assert_eq!(resolver.1.load(Ordering::SeqCst), 1);
+    assert!(
+      store
+        .source_preparation(preparation.input.project_id(), preparation.id)
+        .await
+        .unwrap()
+        .admission
+        .is_none()
+    );
+  });
+}
+
+#[test]
+fn completion_admission_rechecks_each_generated_input_after_revision_resolution() {
+  run_ready(async {
+    for role in [FactoryInputRole::Task, FactoryInputRole::Acceptance] {
+      let (store, preparation, claim) = reserved("github").await;
+      let mut selected = settings(&preparation);
+      selected.mapping.acceptance = crate::SourceAcceptanceMapping::ProcessCompletion(
+        crate::SourceCompletionDocument::review_preset(preparation.input.project_id(), crate::TRIAGE_COMPLETION_PRESET)
+          .unwrap(),
+      );
+      let SourcePreparationOutcome::Prepared(intent) = FactoryWorkSourcePreparer::new(
+        store.clone(),
+        Arc::new(Bytes::default()),
+        Arc::new(Clock(AtomicI64::new(11))),
+      )
+      .prepare(claim.clone(), preparation.id, selected)
+      .await
+      .unwrap() else {
+        panic!("the reviewed completion must prepare");
+      };
+      let artifact = match role {
+        FactoryInputRole::Task => intent.artifacts.task(),
+        FactoryInputRole::Acceptance => intent.artifacts.acceptance(),
+      };
+      let resource = ManagementResource::instance(
+        ManagementResourceKind::Artifact,
+        ManagementResourceIdentity::new(artifact.artifact_id().to_string()).unwrap(),
+      )
+      .unwrap();
+      let visible = Arc::new(AtomicBool::new(true));
+      let resolver = Arc::new(RevokeDuringResolution(visible.clone(), Default::default()));
+      let handler = FactorySourceAdmissionHandlers::new(
+        store.clone(),
+        resolver.clone(),
+        Arc::new(RevocableDocument(resource, visible)),
+        Arc::new(InstalledSource(authorization(&preparation))),
+      )
+      .with_clock(Arc::new(Clock(AtomicI64::new(12))));
+      assert!(
+        handler
+          .admit_prepared(prepared_command(&preparation, claim))
+          .await
+          .is_err(),
+        "revoking the generated {role:?} artifact during VCS I/O must prevent admission"
+      );
+      assert_eq!(
+        resolver.1.load(Ordering::SeqCst),
+        1,
+        "initial visibility must allow revision resolution"
+      );
+      assert!(
+        store
+          .source_preparation(preparation.input.project_id(), preparation.id)
+          .await
+          .unwrap()
+          .admission
+          .is_none()
+      );
+      assert_eq!(store.mutation_evidence_counts().await.idempotency, 0);
+    }
+  });
+}
+
+#[test]
+fn prepared_completion_cannot_be_admitted_after_its_document_becomes_hidden() {
+  run_ready(async {
+    for during_resolution in [false, true] {
+      let (store, preparation, claim) = reserved("github").await;
+      let project = preparation.input.project_id();
+      let artifact = FactoryArtifactReference::new(
+        ArtifactId::generate(),
+        FactoryDigest::content_sha256(PRIVATE_CRITERIA),
+        PRIVATE_CRITERIA.len() as u64,
+      )
+      .unwrap();
+      let metadata = octacity_server_store::PublishedProjectInput {
+        project_id: project,
+        preparation_id: digest(18),
+        mapping: key("reviewed-completion.v1"),
+        object: octacity_server_store::FactoryInputObject {
+          role: octacity_server_store::FactoryInputRole::Acceptance,
+          artifact: artifact.clone(),
+          upload_id: octacity_server_domain::ArtifactUploadId::generate(),
+          media_type: octacity_server_store::ArtifactMediaType::new("text/plain").unwrap(),
+        },
+        published_at: time(1),
+        expires_at: time(2_592_000_100),
+      };
+      let mut selected = settings(&preparation);
+      let hidden = ManagementResource::instance(
+        ManagementResourceKind::Artifact,
+        ManagementResourceIdentity::new(artifact.artifact_id().to_string()).unwrap(),
+      )
+      .unwrap();
+      selected.mapping.acceptance =
+        crate::SourceAcceptanceMapping::ProcessCompletion(crate::SourceCompletionDocument::ProjectInput {
+          project_id: project,
+          artifact,
+        });
+      let visible = Arc::new(AtomicBool::new(true));
+      let bytes = Arc::new(Bytes::default());
+      FactoryWorkSourcePreparer::new(store.clone(), bytes, Arc::new(Clock(AtomicI64::new(11))))
+        .with_project_inputs(crate::FactoryProjectInputReader::new(
+          Arc::new(CompletionMetadata(metadata)),
+          Arc::new(RevokingCompletionRead {
+            visible: visible.clone(),
+            reads: Default::default(),
+          }),
+        ))
+        .prepare(claim.clone(), preparation.id, selected)
+        .await
+        .unwrap();
+      assert!(!visible.load(Ordering::SeqCst));
+      visible.store(during_resolution, Ordering::SeqCst);
+      let revisions = Arc::new(RevokeDuringResolution(visible.clone(), Default::default()));
+      let handler = FactorySourceAdmissionHandlers::new(
+        store.clone(),
+        revisions.clone(),
+        Arc::new(RevocableDocument(hidden, visible)),
+        Arc::new(InstalledSource(authorization(&preparation))),
+      )
+      .with_clock(Arc::new(Clock(AtomicI64::new(12))));
+      assert!(
+        handler
+          .admit_prepared(prepared_command(&preparation, claim))
+          .await
+          .is_err(),
+        "preparation cannot launder a now-hidden Project document into visible Work artifacts"
+      );
+      assert_eq!(revisions.1.load(Ordering::SeqCst), usize::from(during_resolution));
+      assert!(
+        store
+          .source_preparation(project, preparation.id)
+          .await
+          .unwrap()
+          .admission
+          .is_none()
+      );
+    }
+  });
 }
 
 #[test]
@@ -179,6 +413,82 @@ fn staged_prepared_admission_keeps_one_run_per_input_and_common_issue_for_every_
       assert_eq!(resolver.call_count(), 2);
       assert_eq!(store.mutation_evidence_counts().await.idempotency, 2);
     }
+  });
+}
+
+#[test]
+fn completion_admission_acknowledgement_loss_replays_the_original_work_and_criteria() {
+  run_ready(async {
+    let (store, preparation, claim) = reserved_with_snapshot("github", |snapshot| {
+      snapshot.body = None;
+      snapshot.fields.clear();
+    })
+    .await;
+    let bytes = Arc::new(Bytes::default());
+    let mut original = settings(&preparation);
+    original.mapping.require_body = false;
+    original.mapping.acceptance = crate::SourceAcceptanceMapping::ProcessCompletion(
+      crate::SourceCompletionDocument::review_preset(preparation.input.project_id(), crate::TRIAGE_COMPLETION_PRESET)
+        .unwrap(),
+    );
+    let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), Arc::new(Clock(AtomicI64::new(11))));
+    preparer
+      .prepare(claim.clone(), preparation.id, original.clone())
+      .await
+      .unwrap();
+    let resolver = Arc::new(RecordingResolver::default());
+    let handler = FactorySourceAdmissionHandlers::new(
+      store.clone(),
+      resolver.clone(),
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(InstalledSource(authorization(&preparation))),
+    )
+    .with_clock(Arc::new(Clock(AtomicI64::new(12))));
+    // The client loses the successful response before acknowledging progress.
+    // Recovery receives no original response IDs; the real admission store owns them.
+    handler
+      .admit_prepared(prepared_command(&preparation, claim.clone()))
+      .await
+      .unwrap();
+    let committed = store
+      .source_preparation(preparation.input.project_id(), preparation.id)
+      .await
+      .unwrap();
+    let association = committed.admission.clone().unwrap();
+    let snapshot = store.factory_run_snapshot(association.run_id).await.unwrap();
+    let mut replacement = original;
+    replacement.mapping.acceptance = SourceAcceptanceMapping::Body;
+    assert!(
+      preparer
+        .prepare(claim.clone(), preparation.id, replacement)
+        .await
+        .is_err()
+    );
+    let restarted = FactorySourceAdmissionHandlers::new(
+      store.clone(),
+      Arc::new(crate::factory_admission_tests::UnavailableResolver),
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(InstalledSource(authorization(&preparation))),
+    )
+    .with_clock(Arc::new(Clock(AtomicI64::new(13))));
+    for _ in 0..2 {
+      let replay = restarted
+        .admit_prepared(prepared_command(&preparation, claim.clone()))
+        .await
+        .unwrap();
+      assert_eq!(replay.factory_run_id, association.run_id);
+      assert_eq!(replay.work_envelope_id, association.work_id);
+      assert_eq!(replay.disposition, MutationDisposition::Replayed);
+    }
+    assert_eq!(store.factory_run_snapshot(association.run_id).await.unwrap(), snapshot);
+    assert_eq!(resolver.call_count(), 1);
+    assert_eq!(store.mutation_evidence_counts().await.idempotency, 1);
+    let objects = bytes.objects.lock().unwrap();
+    let artifact = snapshot.work.artifacts().acceptance();
+    let content: serde_json::Value = serde_json::from_slice(&objects[&artifact.artifact_id()].1).unwrap();
+    assert_eq!(content["purpose"], "process_completion");
+    let preset: serde_json::Value = serde_json::from_slice(crate::TRIAGE_COMPLETION_PRESET).unwrap();
+    assert_eq!(content["criteria"], preset["content"]);
   });
 }
 

@@ -14,6 +14,8 @@ use std::{
 use tokio_util::sync::CancellationToken;
 // Watchdogs bound test failures; process scheduling speed is not an admission contract.
 const TEST_WAIT: Duration = Duration::from_secs(30);
+#[path = "work_source_completion_tests.rs"]
+mod completion;
 #[path = "work_source_configuration_tests.rs"]
 mod configuration;
 #[path = "work_source_observation_tests.rs"]
@@ -31,6 +33,7 @@ async fn absent_inputs_and_precancelled_workers_never_require_a_provider_or_cred
   let root = tempfile::tempdir().unwrap();
   let worker = FactorySourceWorker::new(
     FactorySourceWorkerDependencies {
+      project_inputs: None,
       store,
       bytes: bytes.clone(),
       revisions: Arc::new(ExactRevisionResolver),
@@ -241,6 +244,7 @@ async fn source_installations_reject_unbounded_workers_and_ambiguous_or_foreign_
     assert!(
       FactorySourceWorker::new(
         FactorySourceWorkerDependencies {
+          project_inputs: None,
           store: fixture.store.clone(),
           bytes: fixture.bytes.clone(),
           revisions: Arc::new(ExactRevisionResolver),
@@ -321,6 +325,7 @@ async fn exclusive_group_ambiguity_is_durable_and_later_one_match_uses_its_exact
   std::fs::write(&path, serde_json::to_vec(&mode).unwrap()).unwrap();
   let worker = FactorySourceWorker::new(
     FactorySourceWorkerDependencies {
+      project_inputs: None,
       store: fixture.store.clone(),
       bytes: fixture.bytes.clone(),
       revisions: Arc::new(ExactRevisionResolver),
@@ -438,6 +443,7 @@ async fn source_batches_are_bounded_concurrent_and_advance_past_the_first_page()
   policy.worker=toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=60000\nbatch_size=2\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap();
   let worker = FactorySourceWorker::new(
     FactorySourceWorkerDependencies {
+      project_inputs: None,
       store: fixture.store.clone(),
       bytes: fixture.bytes.clone(),
       revisions: Arc::new(ExactRevisionResolver),
@@ -591,6 +597,7 @@ async fn a_source_pass_deadline_bounds_revision_resolution_and_leaves_original_i
   let resolving = Arc::new(tokio::sync::Notify::new());
   let worker = FactorySourceWorker::new(
     FactorySourceWorkerDependencies {
+      project_inputs: None,
       store: fixture.store.clone(),
       bytes: fixture.bytes.clone(),
       revisions: Arc::new(Stalled(resolving.clone())),
@@ -776,6 +783,7 @@ async fn unavailable_inputs_have_durable_finite_diagnostics_and_disabled_inputs_
     fixture.clock.0.store(at, Ordering::SeqCst);
     let worker = FactorySourceWorker::new(
       FactorySourceWorkerDependencies {
+        project_inputs: None,
         store: fixture.store.clone(),
         bytes: fixture.bytes.clone(),
         revisions: Arc::new(ExactRevisionResolver),

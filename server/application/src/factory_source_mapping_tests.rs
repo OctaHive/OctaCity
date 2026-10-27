@@ -9,6 +9,17 @@ async fn reserved(
   octacity_server_store::WorkSourcePreparation,
   WorkSourceScanClaim,
 ) {
+  reserved_with_snapshot(provider, |_| {}).await
+}
+
+async fn reserved_with_snapshot(
+  provider: &str,
+  edit: impl FnOnce(&mut WorkSourceSnapshot),
+) -> (
+  Arc<InMemoryFactoryConfigurationStore>,
+  octacity_server_store::WorkSourcePreparation,
+  WorkSourceScanClaim,
+) {
   let project = ProjectId::generate();
   let configuration = FactoryConfigurationId::generate();
   let repository_id = RepositoryId::generate();
@@ -22,7 +33,7 @@ async fn reserved(
     resource: authorized.resource_identity.clone(),
     item: ExternalWorkIdentity::new("native-42").unwrap(),
   };
-  let snapshot = WorkSourceSnapshot {
+  let mut snapshot = WorkSourceSnapshot {
     selection_matches: vec![],
     item: item.clone(),
     display_id: "TRACK-42".into(),
@@ -33,6 +44,7 @@ async fn reserved(
     labels: vec!["arbitrary-label".into()],
     state: "open".into(),
   };
+  edit(&mut snapshot);
   let request = ReserveWorkSourcePreparation {
     claim: WorkSourceScanClaim {
       project_id: project,
@@ -206,3 +218,154 @@ fn source_acceptance_uses_only_the_explicit_body_or_named_section_without_fetchi
 
 #[path = "factory_source_preparation_tests.rs"]
 mod publication;
+
+#[test]
+fn reviewed_process_completion_maps_a_title_only_ticket_without_inventing_ticket_acceptance() {
+  run_ready(async {
+    let mut retained = preparation("github").await;
+    let mut snapshot: serde_json::Value = serde_json::from_slice(&retained.snapshot).unwrap();
+    snapshot["title"] = serde_json::json!("A raw ticket without implementation requirements");
+    snapshot["body"] = serde_json::Value::Null;
+    snapshot["fields"] = serde_json::json!({});
+    retained.snapshot = serde_json::to_vec(&snapshot).unwrap();
+    let criteria = "Complete Project assessment and systems analysis; retain evidence or an explicit unresolved outcome. This does not certify implementation.";
+    let mut definition = serde_json::to_value(mapping(&retained)).unwrap();
+    definition["require_body"] = serde_json::json!(false);
+    definition["acceptance"] = serde_json::json!({"kind":"process_completion","value":{
+      "kind":"draft","project_id":retained.input.project_id(),
+      "preset":{"identity":"triage-completion","version":"v1","digest":FactoryDigest::content_sha256(criteria.as_bytes())},
+      "content":criteria
+    }});
+    let definition: WorkSourceMapping =
+      serde_json::from_value(definition).expect("reviewed process completion is an explicit preparation choice");
+    definition.validate().unwrap();
+    let mapped = map_work_source_snapshot(&retained, &definition).unwrap();
+    let task: serde_json::Value = serde_json::from_slice(&mapped.task).unwrap();
+    let completion: serde_json::Value = serde_json::from_slice(&mapped.acceptance).unwrap();
+    assert_eq!(task["body"], serde_json::Value::Null);
+    assert_eq!(task["fields"], serde_json::json!({}));
+    assert!(task.get("acceptance").is_none());
+    assert_eq!(completion["criteria"], criteria);
+    assert_eq!(completion["purpose"], "process_completion");
+    assert_eq!(
+      completion["completion_document"]["project_id"],
+      serde_json::to_value(retained.input.project_id()).unwrap()
+    );
+    assert_eq!(completion["completion_document"]["preset"]["version"], "v1");
+    assert_eq!(
+      completion["completion_document"]["preset"]["digest"],
+      FactoryDigest::content_sha256(criteria.as_bytes()).to_string()
+    );
+    assert_eq!(task["provenance"], completion["provenance"]);
+    let legacy = mapping(&retained);
+    assert!(matches!(
+      map_work_source_snapshot(&retained, &legacy),
+      Err(crate::SourceMappingFailure::MissingBody)
+    ));
+  });
+}
+
+#[test]
+fn completion_preset_review_is_versioned_project_scoped_and_does_not_publish() {
+  run_ready(async {
+    let retained = preparation("github").await;
+    let content = "Retain Project and analyst decisions; missing facts remain unresolved. Implementation acceptance is separate.\r\n";
+    let preset = serde_json::to_vec(&serde_json::json!({
+      "preset":{"identity":"triage-completion","version":"v1","digest":FactoryDigest::content_sha256(content.as_bytes())},
+      "content":content
+    })).unwrap();
+    let reviewed = crate::SourceCompletionDocument::review_preset(retained.input.project_id(), &preset)
+      .expect("preset review binds exact process bytes without an earlier Build or upload");
+    let json = serde_json::to_value(&reviewed).unwrap();
+    assert_eq!(json["kind"], "draft");
+    assert_eq!(
+      json["project_id"],
+      serde_json::to_value(retained.input.project_id()).unwrap()
+    );
+    assert_eq!(json["content"], content);
+    assert_eq!(json["preset"]["version"], "v1");
+    assert_eq!(
+      json["preset"]["digest"],
+      FactoryDigest::content_sha256(content.as_bytes()).to_string()
+    );
+    assert!(!format!("{reviewed:?}").contains(content));
+    let mut changed: serde_json::Value = serde_json::from_slice(&preset).unwrap();
+    changed["content"] = serde_json::json!("silently replaced criteria");
+    assert!(
+      crate::SourceCompletionDocument::review_preset(
+        retained.input.project_id(),
+        &serde_json::to_vec(&changed).unwrap()
+      )
+      .is_err()
+    );
+  });
+}
+
+#[test]
+fn process_completion_keeps_legacy_required_content_strict_and_rejects_invalid_bindings() {
+  run_ready(async {
+    let mut retained = preparation("github").await;
+    let mut snapshot: serde_json::Value = serde_json::from_slice(&retained.snapshot).unwrap();
+    snapshot["body"] = serde_json::Value::Null;
+    snapshot["fields"] = serde_json::json!({});
+    retained.snapshot = serde_json::to_vec(&snapshot).unwrap();
+    for acceptance in [
+      SourceAcceptanceMapping::Field("acceptance".into()),
+      SourceAcceptanceMapping::Body,
+      SourceAcceptanceMapping::BodySection("## Acceptance".into()),
+    ] {
+      let mut mapping = mapping(&retained);
+      mapping.require_body = false;
+      mapping.acceptance = acceptance;
+      assert!(matches!(
+        map_work_source_snapshot(&retained, &mapping),
+        Err(crate::SourceMappingFailure::MissingAcceptance)
+      ));
+    }
+    let document =
+      crate::SourceCompletionDocument::review_preset(retained.input.project_id(), crate::TRIAGE_COMPLETION_PRESET)
+        .unwrap();
+    for case in ["foreign_project", "changed_digest", "empty", "control", "oversized"] {
+      let mut mapping = mapping(&retained);
+      mapping.require_body = false;
+      let mut document = document.clone();
+      let crate::SourceCompletionDocument::Draft {
+        project_id,
+        preset,
+        content,
+      } = &mut document
+      else {
+        unreachable!()
+      };
+      match case {
+        "foreign_project" => *project_id = ProjectId::generate(),
+        "changed_digest" => {
+          *preset = ImmutableReference::new(
+            preset.identity().clone(),
+            preset.version().clone(),
+            FactoryDigest::from_bytes([7; 32]),
+          )
+        }
+        "empty" | "control" => {
+          *content = if case == "empty" {
+            " ".into()
+          } else {
+            "bad\0text".into()
+          };
+          *preset = ImmutableReference::new(
+            preset.identity().clone(),
+            preset.version().clone(),
+            FactoryDigest::content_sha256(content.as_bytes()),
+          );
+        }
+        "oversized" => mapping.max_body_bytes = 1,
+        _ => unreachable!(),
+      }
+      mapping.acceptance = SourceAcceptanceMapping::ProcessCompletion(document);
+      assert!(
+        map_work_source_snapshot(&retained, &mapping).is_err(),
+        "reject {case} without fabricated criteria"
+      );
+    }
+  });
+}

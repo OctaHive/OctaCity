@@ -1,5 +1,6 @@
 use super::*;
 use crate::{FactoryExecutionClock, FactoryWorkSourcePreparer, SourcePreparationOutcome, SourcePreparationSettings};
+use crate::{ManagementResource, ManagementResourceIdentity, ManagementResourceKind};
 use octacity_artifact_store::{
   ArtifactBytePublisher, ArtifactByteReader, ArtifactObject, ArtifactStoreError, ArtifactStoreOperation,
 };
@@ -58,6 +59,82 @@ fn settings(preparation: &octacity_server_store::WorkSourcePreparation) -> Sourc
       FactoryMetadata::default(),
     ),
   }
+}
+#[test]
+fn completion_policy_is_frozen_before_document_io_and_cannot_be_substituted() {
+  run_ready(async {
+    let (store, retained, claim) = reserved_with_snapshot("github", |snapshot| {
+      snapshot.body = None;
+      snapshot.fields.clear();
+    })
+    .await;
+    let project = retained.input.project_id();
+    let mut original = settings(&retained);
+    original.mapping.require_body = false;
+    original.mapping.acceptance =
+      crate::SourceAcceptanceMapping::ProcessCompletion(crate::SourceCompletionDocument::ProjectInput {
+        project_id: project,
+        artifact: FactoryArtifactReference::new(ArtifactId::generate(), digest(17), 100).unwrap(),
+      });
+    let bytes = Arc::new(Bytes::default());
+    let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), Arc::new(Clock(AtomicI64::new(11))));
+    assert!(
+      preparer
+        .prepare(claim.clone(), retained.id, original.clone())
+        .await
+        .is_err(),
+      "unavailable document reads cannot publish inputs"
+    );
+    let mut substituted = original.clone();
+    substituted.mapping.acceptance = crate::SourceAcceptanceMapping::ProcessCompletion(
+      crate::SourceCompletionDocument::review_preset(project, crate::TRIAGE_COMPLETION_PRESET).unwrap(),
+    );
+    assert!(
+      preparer.prepare(claim.clone(), retained.id, substituted).await.is_err(),
+      "a replacement policy cannot take over after the original document read failed"
+    );
+    assert!(bytes.objects.lock().unwrap().is_empty());
+    let frozen = store.source_preparation(project, retained.id).await.unwrap();
+    let value = serde_json::to_value(&frozen).unwrap();
+    let policy: Vec<u8> = serde_json::from_value(value["policy"].clone()).unwrap();
+    assert_eq!(policy, serde_json::to_vec(&original).unwrap());
+    assert_eq!(frozen.snapshot, retained.snapshot);
+  });
+}
+#[test]
+fn preparation_requires_current_visibility_before_publishing_private_source_inputs() {
+  run_ready(async {
+    for kind in [
+      ManagementResourceKind::Project,
+      ManagementResourceKind::FactoryConfiguration,
+      ManagementResourceKind::Repository,
+    ] {
+      let (store, retained, claim) = reserved("github").await;
+      let id = match kind {
+        ManagementResourceKind::Project => retained.input.project_id().to_string(),
+        ManagementResourceKind::FactoryConfiguration => retained.input.definition().target.id().to_string(),
+        ManagementResourceKind::Repository => retained.input.definition().repository.id.to_string(),
+        _ => unreachable!(),
+      };
+      let resource = ManagementResource::instance(kind, ManagementResourceIdentity::new(id).unwrap()).unwrap();
+      let bytes = Arc::new(Bytes::default());
+      let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), Arc::new(Clock(AtomicI64::new(11))))
+        .with_authorization(
+          Arc::new(crate::factory_admission_tests::HideSelectedDependency(resource)),
+          context(),
+        );
+      assert!(preparer.prepare(claim, retained.id, settings(&retained)).await.is_err());
+      assert!(bytes.objects.lock().unwrap().is_empty());
+      assert!(
+        store
+          .source_preparation(retained.input.project_id(), retained.id)
+          .await
+          .unwrap()
+          .policy
+          .is_none()
+      );
+    }
+  });
 }
 #[test]
 fn source_preparation_recovers_uncertain_bytes_and_keeps_original_inputs_after_restart_and_edits() {
@@ -741,5 +818,358 @@ fn existing_retention_worker_purges_expired_poll_pages_without_artifact_objects(
       .unwrap()
       .unwrap();
     assert!(next.progress.is_none());
+  });
+}
+
+struct CompletionMetadata(octacity_server_store::PublishedProjectInput);
+struct CompletionReadPolicy(Arc<AtomicBool>);
+#[async_trait]
+impl crate::ManagementAuthorizationPolicy for CompletionReadPolicy {
+  async fn authorize(
+    &self,
+    _: &crate::ManagementRequestContext,
+    _: crate::ManagementAction,
+    resource: &ManagementResource,
+  ) -> Result<crate::ManagementAuthorizationGrant, crate::ManagementAuthorizationDenial> {
+    if resource.kind() == ManagementResourceKind::Artifact && !self.0.load(Ordering::SeqCst) {
+      Err(crate::ManagementAuthorizationDenial::forbidden())
+    } else {
+      Ok(crate::ManagementAuthorizationGrant::new(
+        crate::ManagementVisibility::all(),
+      ))
+    }
+  }
+}
+struct RevokingCompletionRead {
+  visible: Arc<AtomicBool>,
+  reads: std::sync::atomic::AtomicUsize,
+}
+const PRIVATE_CRITERIA: &[u8] = b"Assess the ticket or explicitly request more information.\r\n";
+#[async_trait]
+impl ArtifactByteReader for RevokingCompletionRead {
+  async fn read_published(&self, _: &ArtifactObject, _: u64) -> Result<Vec<u8>, ArtifactStoreError> {
+    self.reads.fetch_add(1, Ordering::SeqCst);
+    self.visible.store(false, Ordering::SeqCst);
+    Ok(PRIVATE_CRITERIA.to_vec())
+  }
+}
+#[test]
+fn completion_document_read_rechecks_visibility_before_publication() {
+  run_ready(async {
+    let (store, retained, claim) = reserved("github").await;
+    let project = retained.input.project_id();
+    let artifact = FactoryArtifactReference::new(
+      ArtifactId::generate(),
+      FactoryDigest::content_sha256(PRIVATE_CRITERIA),
+      PRIVATE_CRITERIA.len() as u64,
+    )
+    .unwrap();
+    let input = octacity_server_store::PublishedProjectInput {
+      project_id: project,
+      preparation_id: digest(18),
+      mapping: key("reviewed-completion.v1"),
+      object: octacity_server_store::FactoryInputObject {
+        role: octacity_server_store::FactoryInputRole::Acceptance,
+        artifact: artifact.clone(),
+        upload_id: octacity_server_domain::ArtifactUploadId::generate(),
+        media_type: octacity_server_store::ArtifactMediaType::new("text/plain").unwrap(),
+      },
+      published_at: time(1),
+      expires_at: time(2_592_000_100),
+    };
+    let mut selected = settings(&retained);
+    selected.mapping.acceptance =
+      crate::SourceAcceptanceMapping::ProcessCompletion(crate::SourceCompletionDocument::ProjectInput {
+        project_id: project,
+        artifact,
+      });
+    let visible = Arc::new(AtomicBool::new(false));
+    let read = Arc::new(RevokingCompletionRead {
+      visible: visible.clone(),
+      reads: Default::default(),
+    });
+    let bytes = Arc::new(Bytes::default());
+    let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), Arc::new(Clock(AtomicI64::new(11))))
+      .with_authorization(Arc::new(CompletionReadPolicy(visible.clone())), context())
+      .with_project_inputs(crate::FactoryProjectInputReader::new(
+        Arc::new(CompletionMetadata(input)),
+        read.clone(),
+      ));
+    assert!(
+      preparer
+        .prepare(claim.clone(), retained.id, selected.clone())
+        .await
+        .is_err()
+    );
+    assert_eq!(
+      read.reads.load(Ordering::SeqCst),
+      0,
+      "hidden inputs must not be fetched"
+    );
+    visible.store(true, Ordering::SeqCst);
+    assert!(
+      preparer.prepare(claim, retained.id, selected).await.is_err(),
+      "revocation during a document read must prevent publication"
+    );
+    assert_eq!(read.reads.load(Ordering::SeqCst), 1);
+    assert!(bytes.objects.lock().unwrap().is_empty());
+    assert!(
+      store
+        .source_materialization(project, retained.id)
+        .await
+        .unwrap()
+        .is_none()
+    );
+  });
+}
+#[async_trait]
+impl octacity_server_store::ProjectInputQueryStore for CompletionMetadata {
+  async fn project_input_artifact(
+    &self,
+    _: ProjectId,
+    _: ArtifactId,
+  ) -> Result<Option<octacity_server_store::PublishedProjectInput>, octacity_server_store::StoreError> {
+    Ok(Some(self.0.clone()))
+  }
+}
+#[test]
+fn source_preparation_binds_an_exact_project_completion_document_without_build_provenance() {
+  run_ready(async {
+    for delayed in [false, true] {
+      // Each document choice owns a fresh preparation, so frozen policy cannot mask its validation.
+      for case in [
+        "short_retention",
+        "foreign_project",
+        "changed_digest",
+        "unknown_document",
+        "valid",
+      ] {
+        let (store, retained, claim) = reserved_with_snapshot("github", |snapshot| {
+          snapshot.body = None;
+          snapshot.fields.clear();
+        })
+        .await;
+        let project = retained.input.project_id();
+        let bytes = Arc::new(Bytes::default());
+        let now = if delayed { 172_800_010 } else { 11 };
+        let clock = Arc::new(Clock(AtomicI64::new(now)));
+        let claim = if delayed {
+          store
+            .claim_source_scan(octacity_server_store::ClaimWorkSourceScan {
+              project_id: project,
+              target: claim.target,
+              owner: claim.owner.clone(),
+              now: time(now),
+              until: time(now + 1000),
+            })
+            .await
+            .unwrap()
+            .unwrap()
+            .claim
+        } else {
+          claim
+        };
+        let settings = settings(&retained);
+        let criteria = "Assess project fit and classification; retain evidence or an unresolved outcome. No implementation acceptance is implied.";
+        let source = crate::ProjectTextIntake::new(
+          store.clone(),
+          bytes.clone(),
+          Arc::new(RecordingResolver::default()),
+          Arc::new(crate::TrustedNetworkManagementPolicy),
+          clock.clone(),
+        )
+        .submit(
+          &context(),
+          crate::ProjectTextSubmission {
+            intent: crate::ProjectTextIntent {
+              target: ReadFactoryAdmissionContext {
+                project_id: project,
+                configuration_id: retained.input.definition().target.id(),
+                configuration_version: retained.input.definition().target.version(),
+                repository_id: retained.input.definition().repository.id,
+                repository_version: retained.input.definition().repository.version,
+              },
+              external_identity: ExternalWorkIdentity::new("reviewed-completion").unwrap(),
+              source: settings.source.clone(),
+              classification: settings.classification.clone(),
+              mapping: FactoryKey::new("reviewed-process.v1").unwrap(),
+              idempotency_key: IdempotencyKey::new("completion-document").unwrap(),
+            },
+            documents: crate::ProjectTextDocuments::try_new("Reviewed process document", criteria).unwrap(),
+          },
+        )
+        .await
+        .unwrap();
+        let reference = source.admission.work.artifacts().acceptance().clone();
+        let mut mapping_json = serde_json::to_value(&settings.mapping).unwrap();
+        mapping_json["require_body"] = serde_json::json!(false);
+        mapping_json["acceptance"] = serde_json::json!({"kind":"process_completion","value":{
+          "kind":"project_input","project_id":project,"artifact":reference
+        }});
+        let mut settings = settings;
+        settings.mapping =
+          serde_json::from_value(mapping_json).expect("an exact same-Project completion is a reviewed choice");
+        if case == "short_retention" {
+          use octacity_server_store::ProjectInputQueryStore as _;
+          let mut short_lived = store
+            .project_input_artifact(project, reference.artifact_id())
+            .await
+            .unwrap()
+            .unwrap();
+          // It covers the snapshot's old reservation + one day, but not the actual new input publication.
+          short_lived.expires_at = time(86_400_010);
+          let short_reader =
+            crate::FactoryProjectInputReader::new(Arc::new(CompletionMetadata(short_lived)), bytes.clone());
+          let short_preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), clock.clone())
+            .with_project_inputs(short_reader);
+          assert!(
+            short_preparer
+              .prepare(claim.clone(), retained.id, settings.clone())
+              .await
+              .is_err(),
+            "a completion document must cover the actual retained Work input lifetime"
+          );
+          assert!(
+            store
+              .source_materialization(project, retained.id)
+              .await
+              .unwrap()
+              .is_none()
+          );
+          continue;
+        }
+        let reader = crate::FactoryProjectInputReader::new(store.clone(), bytes.clone());
+        let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), clock).with_project_inputs(reader);
+        if case != "valid" {
+          let mut invalid = settings.clone();
+          let crate::SourceAcceptanceMapping::ProcessCompletion(crate::SourceCompletionDocument::ProjectInput {
+            project_id,
+            artifact,
+          }) = &mut invalid.mapping.acceptance
+          else {
+            unreachable!()
+          };
+          match case {
+            "foreign_project" => *project_id = ProjectId::generate(),
+            "changed_digest" => {
+              *artifact = FactoryArtifactReference::new(
+                artifact.artifact_id(),
+                FactoryDigest::from_bytes([9; 32]),
+                artifact.encoded_size(),
+              )
+              .unwrap()
+            }
+            "unknown_document" => {
+              *artifact = FactoryArtifactReference::new(
+                ArtifactId::generate(),
+                artifact.content_digest(),
+                artifact.encoded_size(),
+              )
+              .unwrap()
+            }
+            _ => unreachable!(),
+          }
+          let failure = preparer
+            .prepare(claim.clone(), retained.id, invalid)
+            .await
+            .expect_err("an invalid selected document must fail");
+          let expected = match case {
+            "unknown_document" => crate::ApplicationFailure::CapabilityUnavailable,
+            _ => crate::ApplicationFailure::Invalid,
+          };
+          assert_eq!(
+            failure.classification(),
+            expected,
+            "reject {case} for its document failure"
+          );
+          assert!(
+            store
+              .source_materialization(project, retained.id)
+              .await
+              .unwrap()
+              .is_none()
+          );
+          assert_eq!(
+            bytes.objects.lock().unwrap().len(),
+            2,
+            "only the original Project input pair exists"
+          );
+          continue;
+        }
+        let SourcePreparationOutcome::Prepared(intent) = preparer.prepare(claim, retained.id, settings).await.unwrap()
+        else {
+          panic!("title-only triage prepares from its selected Project document");
+        };
+        let objects = bytes.objects.lock().unwrap();
+        let task: serde_json::Value =
+          serde_json::from_slice(&objects[&intent.artifacts.task().artifact_id()].1).unwrap();
+        let completion: serde_json::Value =
+          serde_json::from_slice(&objects[&intent.artifacts.acceptance().artifact_id()].1).unwrap();
+        assert_eq!(task["body"], serde_json::Value::Null);
+        assert_eq!(task["fields"], serde_json::json!({}));
+        assert_eq!(completion["purpose"], "process_completion");
+        assert_eq!(completion["criteria"], criteria);
+        assert_eq!(
+          completion["completion_document"]["artifact"],
+          serde_json::to_value(reference).unwrap()
+        );
+        assert_eq!(
+          completion["completion_document"]["project_id"],
+          serde_json::to_value(project).unwrap()
+        );
+        assert_eq!(completion["provenance"], task["provenance"]);
+      }
+    }
+  });
+}
+
+#[test]
+fn packaged_triage_completion_prepares_title_only_input_without_a_prior_build_or_upload() {
+  run_ready(async {
+    let (store, retained, claim) = reserved_with_snapshot("github", |snapshot| {
+      snapshot.body = None;
+      snapshot.fields.clear();
+    })
+    .await;
+    let preset = crate::TRIAGE_COMPLETION_PRESET;
+    let document = crate::SourceCompletionDocument::review_preset(retained.input.project_id(), preset).unwrap();
+    let mut settings = settings(&retained);
+    settings.mapping.require_body = false;
+    settings.mapping.acceptance = crate::SourceAcceptanceMapping::ProcessCompletion(document);
+    let bytes = Arc::new(Bytes::default());
+    let preparer = FactoryWorkSourcePreparer::new(store.clone(), bytes.clone(), Arc::new(Clock(AtomicI64::new(11))));
+    let SourcePreparationOutcome::Prepared(intent) = preparer.prepare(claim, retained.id, settings).await.unwrap()
+    else {
+      panic!("reviewed preset criteria permit title-only triage");
+    };
+    let objects = bytes.objects.lock().unwrap();
+    assert_eq!(
+      objects.len(),
+      2,
+      "only the ordinary task and acceptance-role inputs are published"
+    );
+    let task: serde_json::Value = serde_json::from_slice(&objects[&intent.artifacts.task().artifact_id()].1).unwrap();
+    let completion: serde_json::Value =
+      serde_json::from_slice(&objects[&intent.artifacts.acceptance().artifact_id()].1).unwrap();
+    assert!(task["body"].is_null());
+    assert_eq!(task["fields"], serde_json::json!({}));
+    assert!(task.get("acceptance").is_none());
+    assert_eq!(completion["purpose"], "process_completion");
+    assert_eq!(
+      completion["completion_document"]["preset"]["identity"],
+      "triage-completion"
+    );
+    assert_eq!(completion["completion_document"]["preset"]["version"], "v1");
+    let reviewed: serde_json::Value = serde_json::from_slice(preset).unwrap();
+    assert_eq!(completion["criteria"], reviewed["content"]);
+    assert_eq!(completion["completion_document"]["preset"], reviewed["preset"]);
+    assert!(completion["criteria"].as_str().unwrap().contains("Project"));
+    assert!(completion["criteria"].as_str().unwrap().contains("Systems analyst"));
+    assert!(
+      completion["criteria"]
+        .as_str()
+        .unwrap()
+        .contains("implementation acceptance")
+    );
   });
 }

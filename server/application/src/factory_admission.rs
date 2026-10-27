@@ -111,6 +111,18 @@ where
 }
 
 impl<S: FactoryAdmissionStore + 'static> FactoryAdmissionHandlers<S> {
+  pub(super) async fn authorize_source_preparation(
+    &self,
+    context: &crate::ManagementRequestContext,
+    preparation: &octacity_server_store::WorkSourcePreparation,
+  ) -> Result<(), ApplicationError> {
+    if let Some(policy) = &preparation.policy {
+      let settings: crate::SourcePreparationSettings =
+        serde_json::from_slice(policy).map_err(|_| ApplicationError::invalid())?;
+      settings.authorize(self.policy.as_ref(), context, preparation).await?;
+    }
+    Ok(())
+  }
   pub(super) async fn authorize_source_intent(
     &self,
     context: &crate::ManagementRequestContext,

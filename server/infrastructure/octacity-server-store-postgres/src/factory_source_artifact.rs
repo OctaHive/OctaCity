@@ -56,6 +56,18 @@ async fn save(tx: &mut Transaction<'_, Postgres>, manifest: &SourceMaterializati
 }
 #[async_trait]
 impl WorkSourceArtifactStore for PostgresStore {
+  async fn freeze_source_preparation_policy(
+    &self,
+    request: FreezeSourcePreparationPolicy,
+  ) -> Result<WorkSourcePreparation, StoreError> {
+    let mut tx = self.pool().begin().await.map_err(unavailable)?;
+    let preparation = owner(&mut tx, &request.claim, request.preparation_id, request.now).await?;
+    let current = load(&mut tx, request.claim.project_id, request.preparation_id).await?;
+    let retained = request.retain(preparation, current.as_ref())?;
+    crate::factory_source::save_preparation(&mut tx, &retained).await?;
+    tx.commit().await.map_err(unavailable)?;
+    Ok(retained)
+  }
   async fn reject_source_preparation(
     &self,
     request: RejectSourcePreparation,
@@ -144,6 +156,7 @@ impl WorkSourceArtifactStore for PostgresStore {
     // A scheduled recheck updates only its schedule, never the frozen preparation again.
     if !preparation.snapshot.is_empty() {
       preparation.snapshot.clear();
+      preparation.policy = None;
       crate::factory_source::save_preparation(&mut tx, &preparation).await?;
       sqlx::query("UPDATE factory_source_preparations SET snapshot_cleaned=TRUE WHERE id=$1")
         .bind(expected.preparation_id.as_bytes().as_slice())

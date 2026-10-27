@@ -25,7 +25,9 @@ impl ManagedFactorySource {
       cursor: tokio::sync::Mutex::new(Cursor::default()),
     }
   }
-  pub(super) fn worker<B: octacity_artifact_store::ArtifactBytePublisher + 'static>(
+  pub(super) fn worker<
+    B: octacity_artifact_store::ArtifactBytePublisher + octacity_artifact_store::ArtifactByteReader + 'static,
+  >(
     sources: Arc<SourceManagement>,
     bytes: Arc<B>,
     revisions: Arc<dyn RevisionResolver>,
@@ -35,6 +37,10 @@ impl ManagedFactorySource {
     let worker = FactorySourceWorker::new(
       FactorySourceWorkerDependencies {
         store: sources.store.clone(),
+        project_inputs: Some(Arc::new(FactoryProjectInputReader::new(
+          sources.store.clone(),
+          bytes.clone(),
+        ))),
         bytes,
         revisions,
         authorization: sources.policy.clone(),

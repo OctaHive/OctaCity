@@ -19,6 +19,27 @@ impl octacity_artifact_store::ArtifactBytePublisher for Bytes {
     Ok(())
   }
 }
+#[async_trait::async_trait]
+impl octacity_artifact_store::ArtifactByteReader for Bytes {
+  async fn read_published(
+    &self,
+    object: &octacity_artifact_store::ArtifactObject,
+    maximum: u64,
+  ) -> Result<Vec<u8>, octacity_artifact_store::ArtifactStoreError> {
+    self
+      .0
+      .lock()
+      .unwrap()
+      .iter()
+      .find(|bytes| {
+        bytes.len() as u64 <= maximum
+          && bytes.len() as u64 == object.size_bytes()
+          && FactoryDigest::content_sha256(bytes).to_string() == object.sha256()
+      })
+      .cloned()
+      .ok_or(octacity_artifact_store::ArtifactStoreError::NotFound)
+  }
+}
 pub(super) fn settings() -> FactorySourceWorkerSettings {
   FactorySourceWorkerSettings {
     worker: toml::from_str("poll_interval_milliseconds=10\nclaim_lifetime_milliseconds=60000\nbatch_size=4\nconcurrency=2\n[retry]\nmax_backoff_milliseconds=40\nconsecutive_failure_limit=3\ncircuit_open_milliseconds=200").unwrap(),
@@ -211,6 +232,7 @@ impl<S: WorkSourceArtifactStore + FactoryDiscoveryStore + 'static> Fixture<S> {
       FactorySourceWorkerDependencies {
         store: self.store.clone(),
         bytes: self.bytes.clone(),
+        project_inputs: None,
         revisions: Arc::new(ExactRevisionResolver),
         authorization: Arc::new(TrustedNetworkManagementPolicy),
         registry: Arc::new(octacity_server_work_source::WorkAdapterRegistry::discover(self.root.path()).unwrap()),

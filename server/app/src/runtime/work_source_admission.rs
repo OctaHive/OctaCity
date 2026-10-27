@@ -5,6 +5,7 @@ pub(super) struct SourceCandidateBridge<S, B> {
   pub(super) managed_connections: Option<ManagedIntegrationConnections>,
   pub(super) store: Arc<S>,
   pub(super) bytes: Arc<B>,
+  pub(super) project_inputs: Option<Arc<FactoryProjectInputReader>>,
   pub(super) revisions: Arc<dyn RevisionResolver>,
   pub(super) authorization: Arc<dyn ManagementAuthorizationPolicy>,
   pub(super) registry: Arc<WorkAdapterRegistry>,
@@ -132,7 +133,7 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
     }
     let authorizer = self.authority(claim.clone(), input)?;
     if retained.intent.is_none() {
-      authorizer.authorize(input.id(), input.version()).await?;
+      let authorized = authorizer.authorize(input.id(), input.version()).await?;
       let original = self
         .profiles
         .iter()
@@ -140,11 +141,20 @@ impl<S: WorkSourceArtifactStore + 'static, B: ArtifactBytePublisher + 'static> S
           p.read.project_id == retained.input.project_id() && p.read.binding == retained.input.definition().source
         })
         .ok_or_else(ApplicationError::capability_unavailable)?;
-      let preparer = FactoryWorkSourcePreparer::new(self.store.clone(), self.bytes.clone(), self.clock.clone());
+      let mut preparer = FactoryWorkSourcePreparer::new(self.store.clone(), self.bytes.clone(), self.clock.clone())
+        .with_authorization(self.authorization.clone(), authorized.context);
+      if let Some(reader) = &self.project_inputs {
+        preparer = preparer.with_project_inputs(reader.clone());
+      }
+      let settings = retained
+        .policy
+        .as_ref()
+        .map(|bytes| serde_json::from_slice(bytes))
+        .transpose()
+        .map_err(|_| ApplicationError::invalid())?
+        .unwrap_or_else(|| original.preparation.clone());
       if matches!(
-        preparer
-          .prepare(claim.clone(), retained.id, original.preparation.clone())
-          .await?,
+        preparer.prepare(claim.clone(), retained.id, settings).await?,
         SourcePreparationOutcome::Rejected(_)
       ) {
         return Ok(());

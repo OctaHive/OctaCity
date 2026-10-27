@@ -82,8 +82,10 @@ mod factory_build;
 mod factory_build_service;
 mod factory_candidate_context;
 mod factory_source_admission;
+mod factory_source_completion;
 mod factory_source_input_retention;
 mod factory_source_mapping;
+pub use factory_source_completion::{SourceCompletionDocument, TRIAGE_COMPLETION_PRESET};
 mod source_polling;
 pub use source_polling::source_scan_schedule;
 mod factory_source_polling;
@@ -113,7 +115,8 @@ mod factory_execution_input_publisher;
 mod factory_execution_input_retention;
 pub use factory_artifact_flow_inputs::FactoryArtifactFlowInputs;
 pub use factory_artifact_reader::{
-  FactoryArtifactReader, FactoryNodeContextSource, FactoryRetainedArtifact, FactoryRetainedInput, ReadFactoryArtifact,
+  FactoryArtifactReader, FactoryNodeContextSource, FactoryProjectInputReader, FactoryRetainedArtifact,
+  FactoryRetainedInput, ReadFactoryArtifact,
 };
 pub use factory_build_service::{FactoryBuildMaterializer, FactoryOrdinaryBuildService};
 pub use factory_candidate_context::{

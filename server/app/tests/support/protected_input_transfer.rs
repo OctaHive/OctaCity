@@ -52,11 +52,17 @@ pub fn retention_bytes() -> Arc<dyn ArtifactStore> {
 pub fn service<S: octacity_server_store::ArtifactRecordStore + 'static>(
   store: Arc<S>,
 ) -> Arc<dyn AgentArtifactTransferUseCases> {
+  service_with_bytes(store, Arc::new(Bytes))
+}
+pub fn service_with_bytes<S: octacity_server_store::ArtifactRecordStore + 'static, B: ArtifactStore + 'static>(
+  store: Arc<S>,
+  bytes: Arc<B>,
+) -> Arc<dyn AgentArtifactTransferUseCases> {
   Arc::new(
     ArtifactHandlers::new(
       Arc::new(Registrations),
       store,
-      Arc::new(Bytes),
+      bytes,
       Duration::from_secs(30),
       Duration::from_secs(30),
     )

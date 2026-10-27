@@ -29,6 +29,18 @@ impl SourceMemoryState {
 }
 #[async_trait]
 impl WorkSourceArtifactStore for InMemoryFactoryConfigurationStore {
+  async fn freeze_source_preparation_policy(
+    &self,
+    request: FreezeSourcePreparationPolicy,
+  ) -> Result<WorkSourcePreparation, StoreError> {
+    let mut state = self.lock()?;
+    let preparation = state
+      .sources
+      .artifact_owner(&request.claim, request.preparation_id, request.now)?;
+    let retained = request.retain(preparation, state.sources.materializations.get(&request.preparation_id))?;
+    state.sources.preparations.insert(retained.id, retained.clone());
+    Ok(retained)
+  }
   async fn reject_source_preparation(
     &self,
     request: RejectSourcePreparation,
@@ -103,13 +115,13 @@ impl WorkSourceArtifactStore for InMemoryFactoryConfigurationStore {
       manifest.cleaned_at.get_or_insert(now);
       manifest.next_cleanup_at = (!manifest.objects.is_empty()).then_some(recheck_at);
     }
-    state
+    let preparation = state
       .sources
       .preparations
       .get_mut(&expected.preparation_id)
-      .ok_or_else(source_conflict)?
-      .snapshot
-      .clear();
+      .ok_or_else(source_conflict)?;
+    preparation.snapshot.clear();
+    preparation.policy = None;
     Ok(())
   }
   async fn reserve_source_artifacts(

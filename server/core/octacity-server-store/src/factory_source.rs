@@ -455,6 +455,10 @@ pub struct WorkSourcePreparation {
   pub snapshot_expires_at: octacity_server_domain::Timestamp,
   /// Frozen private observation, at most one MiB.
   pub snapshot: Vec<u8>,
+  /// Private installed preparation choices frozen before document or publication I/O.
+  /// Historical preparations omit this field; cleanup removes it with the snapshot.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub policy: Option<Vec<u8>>,
   /// Complete normalized original command before mutable VCS resolution.
   pub intent: Option<crate::FactoryWorkAdmissionIntent>,
   /// Original authoritative admission association, once confirmed.
@@ -509,6 +513,7 @@ impl ReserveWorkSourcePreparation {
       )
       .map_err(|_| source_conflict())?,
       snapshot: self.snapshot,
+      policy: None,
       intent: None,
       admission: None,
     })
