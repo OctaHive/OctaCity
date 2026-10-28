@@ -26,6 +26,7 @@ CODEX_TOOL_AUTHORIZATION_CAPABILITY = "codex.blocking-pre-tool-authorization.v1"
 PUBLIC_OPERATION_OBSERVATIONS_CAPABILITY = "public-command-file-observations.v1"
 CODEX_RUNTIME_SETTINGS_CAPABILITY = "codex.task-runtime-settings.v1"
 MODEL_CATALOG_CAPABILITY = "model-catalog.v1"
+CODEX_NATIVE_MCP_EVIDENCE_CAPABILITY = "codex.native-mcp-evidence.v1"
 CODEX_TOOL_AUTHORIZER_ENVIRONMENT = "OCTA_CODEX_TOOL_AUTHORIZER"
 MAX_RELEASE_METADATA_BYTES = 1024 * 1024
 
@@ -93,11 +94,20 @@ def validate(path: Path) -> None:
         raise ValueError("Octa release contract does not match the supported artifact contract")
 
 
-def validate_codex_compatibility(path: Path, octa_version: str) -> None:
+def validate_codex_compatibility(
+    path: Path, octa_version: str, *, require_native_capture: bool = False
+) -> None:
     """Require exact plugin and Codex CLI compatibility metadata."""
 
     document = _load_object(path, "Octa Codex compatibility metadata")
-    if document != expected_codex_compatibility(octa_version):
+    expected = expected_codex_compatibility(octa_version)
+    if require_native_capture:
+        plugin = document.get("plugin")
+        capabilities = plugin.get("capabilities") if isinstance(plugin, dict) else None
+        if not isinstance(capabilities, list) or CODEX_NATIVE_MCP_EVIDENCE_CAPABILITY not in capabilities:
+            raise ValueError("Octa release lacks the required native MCP capture capability")
+        expected["plugin"]["capabilities"].append(CODEX_NATIVE_MCP_EVIDENCE_CAPABILITY)
+    if document != expected:
         raise ValueError("Octa Codex compatibility metadata does not match the supported identity")
 
 

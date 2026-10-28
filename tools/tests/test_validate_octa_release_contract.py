@@ -111,6 +111,31 @@ class OctaReleaseContractTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "exceeds"):
                 VALIDATOR.validate(path)
 
+    def test_native_capture_qualification_requires_the_advertised_capability(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "codex-compatibility.json"
+            document = VALIDATOR.expected_codex_compatibility("candidate")
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "native MCP capture capability"):
+                VALIDATOR.validate_codex_compatibility(path, "candidate", require_native_capture=True)
+
+            document["plugin"]["capabilities"].append("codex.native-mcp-evidence.v1")
+            path.write_text(json.dumps(document), encoding="utf-8")
+            VALIDATOR.validate_codex_compatibility(path, "candidate", require_native_capture=True)
+            document["plugin"]["capabilities"].append("unknown-tool-capture")
+            path.write_text(json.dumps(document), encoding="utf-8")
+            with self.assertRaisesRegex(ValueError, "supported identity"):
+                VALIDATOR.validate_codex_compatibility(path, "candidate", require_native_capture=True)
+
+    def test_native_capture_qualification_rejects_malformed_plugin_metadata(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "codex-compatibility.json"
+            for plugin in (None, "codex", {"capabilities": None}, {"capabilities": "codex.native-mcp-evidence.v1"}):
+                with self.subTest(plugin=plugin):
+                    path.write_text(json.dumps({"plugin": plugin}), encoding="utf-8")
+                    with self.assertRaises(ValueError):
+                        VALIDATOR.validate_codex_compatibility(path, "candidate", require_native_capture=True)
+
     def test_rejects_release_metadata_symlinks(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

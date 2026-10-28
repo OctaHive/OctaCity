@@ -146,12 +146,12 @@ class NativeStandStagingTests(unittest.TestCase):
         (octa_root / "octa-release-contract.json").write_text(
             json.dumps(STAGER.release_contract.EXPECTED_CONTRACT), encoding="utf-8"
         )
+        compatibility = STAGER.release_contract.expected_codex_compatibility(
+            document["native"]["octa"]["version"]
+        )
+        compatibility["plugin"]["capabilities"].append("codex.native-mcp-evidence.v1")
         (octa_root / "codex-compatibility.json").write_text(
-            json.dumps(
-                STAGER.release_contract.expected_codex_compatibility(
-                    document["native"]["octa"]["version"]
-                )
-            ),
+            json.dumps(compatibility),
             encoding="utf-8",
         )
         (octa_root / "octa-runner-capabilities.json").write_text(
@@ -242,12 +242,30 @@ class NativeStandStagingTests(unittest.TestCase):
         name = STAGER.input_set_name(self.document, REVISION)
         self.assertEqual(
             name,
-            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.7.2-msb-0.7.6",
+            "inputs-agent-0.1.0-aaaaaaaaaaaa-octa-0.8.0-msb-0.7.6",
         )
         self.assertEqual(
             STAGER.installation_name(self.document, REVISION),
-            "agent-0.1.0-aaaaaaaaaaaa-octa-0.7.2-msb-0.7.6",
+            "agent-0.1.0-aaaaaaaaaaaa-octa-0.8.0-msb-0.7.6",
         )
+
+    def test_octa_bundle_requires_native_capture_even_with_valid_checksums(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            document = self.create_inputs(root)
+            unpacked = root / "unpacked"
+            STAGER.extract_tar_archive(
+                root / self.entries["octa"]["filename"], unpacked,
+                max_expanded_bytes=1024 * 1024, max_file_bytes=1024 * 1024,
+                max_members=64,
+            )
+            path = unpacked / "codex-compatibility.json"
+            compatibility = json.loads(path.read_text())
+            compatibility["plugin"]["capabilities"].remove("codex.native-mcp-evidence.v1")
+            path.write_text(json.dumps(compatibility))
+            write_checksums(unpacked)
+            with self.assertRaisesRegex(ValueError, "native MCP capture capability"):
+                STAGER.verify_octa_bundle(unpacked, document)
 
     def test_prepare_proves_microsandbox_release_and_asset_identity(self):
         with tempfile.TemporaryDirectory() as temporary:

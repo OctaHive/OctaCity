@@ -35,19 +35,24 @@ class LocalStandInputTests(unittest.TestCase):
         VERIFIER.validate_repository_pins(self.document, tags, REPOSITORY)
         self.assertEqual(set(tags), VERIFIER.EXPECTED_IMAGE_ROLES)
 
-    def test_pins_the_released_model_catalog_capable_octa(self):
+    def test_pins_the_released_native_mcp_qualified_octa(self):
         octa = self.document["native"]["octa"]
-        self.assertEqual(octa["version"], "0.7.2")
-        self.assertEqual(octa["source_revision"], "c60202e90eb8b99eaab9ba46b446a3cde7f846a8")
+        self.assertEqual(octa["version"], "0.8.0")
+        self.assertEqual(octa["source_revision"], "590ecfe4a8de4c2e7d54a9a60b7075781ab0cac4")
         self.assertEqual(
             octa["sha256"],
-            "aab5b8147741cf4081206e3f066b776273a77c1c3b3ad7afe925fa18abc6101c",
+            "7fd1fcc88c9d3cac16c9d2e9ac9abd67a104507fdb110dc9840ea9d3784cfa0d",
+        )
+        self.assertEqual(
+            octa["source_archive_sha256"],
+            "51c1d18ca85eb1cbc480e8bad12d420dc8d95225076e92c6c3d04b385835dae5",
         )
         self.assertEqual(octa["codex"]["required_capabilities"], [
             "codex.blocking-pre-tool-authorization.v1",
             "public-command-file-observations.v1",
             "codex.task-runtime-settings.v1",
             "model-catalog.v1",
+            "codex.native-mcp-evidence.v1",
         ])
         tags = self.validate()
         VERIFIER.validate_repository_pins(self.document, tags, REPOSITORY)

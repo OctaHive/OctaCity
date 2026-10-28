@@ -89,7 +89,8 @@
         "codex.blocking-pre-tool-authorization.v1",
         "public-command-file-observations.v1",
         "codex.task-runtime-settings.v1",
-        "model-catalog.v1"
+        "model-catalog.v1",
+        "codex.native-mcp-evidence.v1"
       ],
       "selection_environment": "OCTA_CODEX_EXECUTABLE",
         "supported_cli_versions": [
@@ -99,18 +100,18 @@
       "license": "MIT",
       "platform": "linux-arm64",
       "provenance": "github-build-provenance",
-      "release_name": "octa-linux-arm64-v0.7.2",
-      "release_url": "https://github.com/OctaHive/octa/releases/download/v0.7.2/octa-Linux-arm64.tar.gz",
+      "release_name": "octa-linux-arm64-v0.8.0",
+      "release_url": "https://github.com/OctaHive/octa/releases/download/v0.8.0/octa-Linux-arm64.tar.gz",
       "repository": "https://github.com/OctaHive/octa",
-      "sha256": "aab5b8147741cf4081206e3f066b776273a77c1c3b3ad7afe925fa18abc6101c",
+      "sha256": "7fd1fcc88c9d3cac16c9d2e9ac9abd67a104507fdb110dc9840ea9d3784cfa0d",
       "source_archive_expanded_max_bytes": 536870912,
       "source_archive_file_max_bytes": 67108864,
       "source_archive_max_bytes": 67108864,
       "source_archive_member_max_count": 32768,
-      "source_archive_sha256": "e865063279aed25c6dc20b54a9fbc6498b8e2d19fcef6527718ad751c64d9e42",
-      "source_archive_url": "https://codeload.github.com/OctaHive/octa/tar.gz/c60202e90eb8b99eaab9ba46b446a3cde7f846a8",
-      "source_revision": "c60202e90eb8b99eaab9ba46b446a3cde7f846a8",
-      "version": "0.7.2"
+      "source_archive_sha256": "51c1d18ca85eb1cbc480e8bad12d420dc8d95225076e92c6c3d04b385835dae5",
+      "source_archive_url": "https://codeload.github.com/OctaHive/octa/tar.gz/590ecfe4a8de4c2e7d54a9a60b7075781ab0cac4",
+      "source_revision": "590ecfe4a8de4c2e7d54a9a60b7075781ab0cac4",
+      "version": "0.8.0"
     },
     "octacity_agent": {
       "platform": "macos-arm64",

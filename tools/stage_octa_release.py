@@ -262,7 +262,7 @@ def stage(version: str, platform: str, revision: str, destination: Path) -> Path
         contract = temporary / "octa-release-contract.json"
         release_contract.validate(contract)
         release_contract.validate_codex_compatibility(
-            temporary / "codex-compatibility.json", version
+            temporary / "codex-compatibility.json", version, require_native_capture=True
         )
         capabilities = temporary / "octa-runner-capabilities.json"
         if not capabilities.is_file():

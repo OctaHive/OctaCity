@@ -379,7 +379,7 @@ def verify_octa_bundle(root: Path, document: dict[str, Any]) -> None:
     release_contract.validate(contract_path)
     octa = document["native"]["octa"]
     release_contract.validate_codex_compatibility(
-        root / "codex-compatibility.json", octa["version"]
+        root / "codex-compatibility.json", octa["version"], require_native_capture=True
     )
     required = {
         Path("Octa.lock"),

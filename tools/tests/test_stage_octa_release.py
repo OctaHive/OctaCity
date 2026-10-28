@@ -38,7 +38,7 @@ class _Response(io.BytesIO):
         self.close()
 
 
-def _release_tar(version: str, revision: str, platform: str) -> bytes:
+def _release_tar(version: str, revision: str, platform: str, *, native_capture: bool = True) -> bytes:
     payload = io.BytesIO()
     files = {
         "octa-runner-capabilities.json": {
@@ -51,6 +51,8 @@ def _release_tar(version: str, revision: str, platform: str) -> bytes:
             version
         ),
     }
+    if native_capture:
+        files["codex-compatibility.json"]["plugin"]["capabilities"].append("codex.native-mcp-evidence.v1")
     with tarfile.open(fileobj=payload, mode="w:gz") as archive:
         for name, document in files.items():
             contents = json.dumps(document).encode()
@@ -61,6 +63,19 @@ def _release_tar(version: str, revision: str, platform: str) -> bytes:
 
 
 class StageOctaReleaseTests(unittest.TestCase):
+    def test_stage_rejects_missing_native_capture_without_publishing(self):
+        version, revision = "0.8.0", "a" * 40
+        asset = "octa-Linux-amd64.tar.gz"
+        archive = _release_tar(version, revision, "linux-x86_64", native_capture=False)
+        checksum = f"{STAGE.hashlib.sha256(archive).hexdigest()}  {asset}\n".encode()
+        with tempfile.TemporaryDirectory() as temporary, mock.patch.object(
+            STAGE, "download_release_assets", return_value={asset: archive, f"{asset}.sha256": checksum}
+        ):
+            destination = Path(temporary) / "release"
+            with self.assertRaisesRegex(ValueError, "native MCP capture capability"):
+                STAGE.stage(version, "linux-amd64", revision, destination)
+            self.assertFalse(destination.exists())
+
     def test_stage_falls_back_to_exact_api_assets_after_browser_download_500(self):
         version = "1.2.3"
         revision = "a" * 40
@@ -147,6 +162,7 @@ class StageOctaReleaseTests(unittest.TestCase):
         asset = "octa-Linux-amd64.tar.gz"
         archive = io.BytesIO()
         compatibility = STAGE.release_contract.expected_codex_compatibility(version)
+        compatibility["plugin"]["capabilities"].append("codex.native-mcp-evidence.v1")
         compatibility["executable"]["supported_versions"] = ["9.9.9"]
         files = {
             "octa-runner-capabilities.json": {

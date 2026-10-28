@@ -21,7 +21,7 @@
     },
     {
       "role": "octa",
-      "filename": "octa-linux-arm64-v0.7.2.tar.gz",
+      "filename": "octa-linux-arm64-v0.8.0.tar.gz",
       "manifest_entry": "native.octa",
       "integrity": "release-manifest-and-sha256-sidecar",
       "max_bytes": 268435456,
