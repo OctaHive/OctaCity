@@ -3,7 +3,6 @@
 #[allow(dead_code)]
 mod fixture;
 use fixture::*;
-use octacity_server_adapter_host::{ProcessRequest, execute_process, verify_installed_program};
 use octacity_work_source_protocol::{Request, Response, preview::SelectionMismatch as Reason, source};
 use serde_json::json;
 use tokio_util::sync::CancellationToken;
@@ -53,33 +52,15 @@ async fn strictly_unlabeled_scan_and_preview_share_group_selection_and_initial_w
     }
     let primary = payload["selection"].clone();
     let request: Request = octacity_work_source_protocol::decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
-    // Reuse the shared verified process mechanics without selecting another concrete adapter.
-    let program = installation.root.path().join("plugin");
-    let binary = std::fs::read(env!("CARGO_BIN_EXE_octacity-github")).unwrap();
-    let binary_digest = hex::encode(Sha256::digest(&binary));
-    std::fs::write(&program, binary).unwrap();
-    use std::os::unix::fs::PermissionsExt as _;
-    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o700)).unwrap();
-    let executable = verify_installed_program(&program, "github", &binary_digest).unwrap();
-    let Request::Source(source_request) = &request else {
-      unreachable!()
-    };
-    let process = ProcessRequest::new(
-      &executable,
-      &source_request.request_id,
-      serde_json::to_vec(&request).unwrap(),
-      None,
-      request.max_response_bytes(),
-    );
-    let response = execute_process(
-      process,
-      std::time::Duration::from_secs(5),
-      std::time::Duration::from_secs(1),
-      CancellationToken::new(),
-      |frame| octacity_work_source_protocol::decode_response(frame, &request).map_err(|error| error.to_string()),
-    )
+    let output = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+      source_process(&installation, &request).await.wait_with_output().await
+    })
     .await
+    .expect("the native source operation must finish within its deadline")
     .unwrap();
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let response = octacity_work_source_protocol::decode_response(&output.stdout, &request).unwrap();
     response.validate_for(&request).unwrap();
     match response {
       Response::Source(source::Response {

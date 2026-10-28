@@ -147,3 +147,62 @@ Cargo build jobs:
 
 Free disk space stayed about 14–15 GiB, above the 10 GB cleanup threshold.
 No live GitHub request, personal stand change or commit was made for this fix.
+
+## Native Source timeout correction
+
+The strict scan/preview/group test also exercised the shared host's repeated
+whole-executable SHA-256 checks inside its five-second operation deadline.
+Consequently its selection assertions depended on debug/coverage binary size
+and processor hashing speed. Normal and instrumented local runs passed, so a
+controlled size probe was used before changing the implementation.
+
+With software SHA-256 and coverage, the same executable was extended with inert
+trailing bytes to 192 MiB, below the host's 256 MiB limit. It still executed
+normally; the test computed its actual digest. The first in-deadline verification
+took 3.772 seconds and the second timed out. The unchanged strict-selection test
+failed with the reported `TimedOut { adapter: "github" }` in 12.53 seconds. This
+reproduces the size-dependent mechanism; the failing CI artifact itself was not
+available for inspection. Temporary hash timing diagnostics were then removed.
+
+The selection test now shares the existing native Source process launcher with
+the listing/cancellation tests. It still runs the real GitHub binary with a
+cleared environment, isolated installation, hermetic HTTPS peer, checked exit
+status, empty stderr and decoded/correlated response. Its five-second timeout
+covers process startup, request and response. All four operation/group cases and
+window/label assertions remain unchanged. Executable pinning and replacement
+checks stay at their shared-host boundary; production verification and timeouts
+are unchanged. The now-unused host dev-dependency was removed rather than kept
+as an unused architectural edge.
+
+The same 192 MiB/software-SHA/coverage probe then passed all three preview tests
+in 0.20 seconds. The ordinary preview suite passed all three in 0.82 seconds.
+The coverage command, run before and after the correction, was:
+
+```shell
+RUSTFLAGS='--cfg sha2_backend="soft"' \
+  CARGO_TARGET_DIR=/tmp/octacity-github-timeout-cov \
+  CARGO_BUILD_JOBS=2 CARGO_INCREMENTAL=0 \
+  CARGO_PROFILE_TEST_DEBUG=1 CARGO_PROFILE_DEV_DEBUG=1 \
+  cargo llvm-cov test --locked -p octacity-github --all-features \
+    --test issue_preview --no-report
+```
+
+The size probe ran the resulting test executable with the temporary enlarged
+GitHub binary and restored it afterward. Red/Green output is retained in
+`/tmp/octacity-github-timeout-large-binary-{red,green}.log`. Only the dedicated
+coverage target and its raw profiles were removed after verification; retained
+logs, ordinary build artifacts and stand data were preserved.
+
+Final regression commands:
+
+```shell
+cargo test --locked -p octacity-github -p octacity-server-adapter-host --all-features
+cargo clippy --locked -p octacity-github -p octacity-server-adapter-host --all-targets --all-features -- -D warnings
+```
+
+All 135 tests passed with none ignored, including native Source process
+cancellation and host digest rejection. Clippy passed with warnings denied.
+Architecture validation passed with 63 packages and 260 dependency edges;
+Rust formatting, strict triage OpenSpec validation and diff whitespace passed.
+Build jobs stayed at two with incremental compilation disabled. Final free space
+was approximately 12.6 GB. No production adapter/host behavior or timeout changed.

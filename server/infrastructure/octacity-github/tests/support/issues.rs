@@ -80,3 +80,21 @@ pub fn issue(id: u64, number: u64) -> Value {
     "updated_at":"2026-10-16T08:00:00Z","state":"open","labels":[],
     "comments_url":"https://forbidden.invalid/do-not-fetch", "unknown_future_field":true})
 }
+
+/// Exercise the real provider protocol without coupling its tests to host executable hashing.
+pub async fn source_process(installation: &Installation, request: &Request) -> tokio::process::Child {
+  use tokio::io::AsyncWriteExt as _;
+  let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_octacity-github"))
+    .current_dir(installation.root.path())
+    .env_clear()
+    .kill_on_drop(true)
+    .stdin(std::process::Stdio::piped())
+    .stdout(std::process::Stdio::piped())
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .unwrap();
+  let mut bytes = serde_json::to_vec(request).unwrap();
+  bytes.push(b'\n');
+  child.stdin.as_mut().unwrap().write_all(&bytes).await.unwrap();
+  child
+}

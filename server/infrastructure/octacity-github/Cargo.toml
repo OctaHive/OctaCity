@@ -35,6 +35,5 @@ url.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
-octacity-server-adapter-host = { path = "../octacity-server-adapter-host" }
 rcgen.workspace = true
 tokio-rustls.workspace = true

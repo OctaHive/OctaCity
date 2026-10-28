@@ -4271,7 +4271,6 @@ dependencies = [
  "http-body-util",
  "octacity-delivery-protocol",
  "octacity-protocol",
- "octacity-server-adapter-host",
  "octacity-server-secrets",
  "octacity-work-source-protocol",
  "octocrab",
