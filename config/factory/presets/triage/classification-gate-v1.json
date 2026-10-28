@@ -1,0 +1,850 @@
+{
+  "nodes": [
+    {
+      "key": "classification_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "classification_gate_input",
+      "outcomes": [
+        {
+          "key": "escalation",
+          "kind": "success",
+          "schema": "summary",
+          "public_result": true
+        },
+        {
+          "key": "rejection",
+          "kind": "success",
+          "schema": "summary",
+          "public_result": true
+        },
+        {
+          "key": "already_fixed",
+          "kind": "success",
+          "schema": "summary",
+          "public_result": true
+        },
+        {
+          "key": "verification_only",
+          "kind": "success",
+          "schema": "summary",
+          "public_result": true
+        },
+        {
+          "key": "defect_research",
+          "kind": "success",
+          "schema": "summary",
+          "public_result": true
+        },
+        {
+          "key": "feature_research",
+          "kind": "success",
+          "schema": "summary",
+          "public_result": true
+        },
+        {
+          "key": "requirements",
+          "kind": "success",
+          "schema": "summary",
+          "public_result": true
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "observations": {
+            "source": "predecessor",
+            "path": "",
+            "view": "payload"
+          },
+          "proof": {
+            "source": "predecessor",
+            "path": "/build/outputs/facts/data/payload/value",
+            "view": "metadata"
+          },
+          "identity": {
+            "source": "predecessor",
+            "path": "/input_digest",
+            "view": "metadata"
+          },
+          "freshness": {
+            "source": "predecessor",
+            "path": "/build/outputs/facts/fresh_until",
+            "view": "metadata"
+          },
+          "primary": {
+            "source": "predecessor",
+            "path": "/build/outputs/codex-run-result/producer",
+            "view": "metadata"
+          },
+          "evidence": {
+            "source": "predecessor",
+            "path": "/build/outputs/facts/producer",
+            "view": "metadata"
+          },
+          "priority": {
+            "source": "work",
+            "path": "/priority"
+          },
+          "risk": {
+            "source": "work",
+            "path": "/risk"
+          },
+          "result_freshness": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/codex-run-result/fresh_until"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "assessment": {
+                "mapping": "pointer",
+                "path": "/observations"
+              },
+              "verified_assessment": {
+                "mapping": "pointer",
+                "path": "/proof/assessment"
+              },
+              "expected_input": {
+                "mapping": "pointer",
+                "path": "/identity"
+              },
+              "evidence_input": {
+                "mapping": "pointer",
+                "path": "/proof/input_digest"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/freshness"
+              },
+              "admission_priority": {
+                "mapping": "pointer",
+                "path": "/priority"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/risk"
+              },
+              "reproduced_verified": {
+                "mapping": "pointer",
+                "path": "/proof/reproduced"
+              },
+              "already_fixed_verified": {
+                "mapping": "pointer",
+                "path": "/proof/already_fixed"
+              },
+              "verification_only_verified": {
+                "mapping": "pointer",
+                "path": "/proof/verification_only"
+              },
+              "producer": {
+                "mapping": "object",
+                "fields": {
+                  "build_id": {
+                    "mapping": "pointer",
+                    "path": "/primary/build_id"
+                  },
+                  "attempt_id": {
+                    "mapping": "pointer",
+                    "path": "/primary/attempt_id"
+                  },
+                  "job_id": {
+                    "mapping": "pointer",
+                    "path": "/primary/job_id"
+                  }
+                }
+              },
+              "evidence_producer": {
+                "mapping": "object",
+                "fields": {
+                  "build_id": {
+                    "mapping": "pointer",
+                    "path": "/evidence/build_id"
+                  },
+                  "attempt_id": {
+                    "mapping": "pointer",
+                    "path": "/evidence/attempt_id"
+                  },
+                  "job_id": {
+                    "mapping": "pointer",
+                    "path": "/evidence/job_id"
+                  }
+                }
+              },
+              "result_fresh_until": {
+                "mapping": "pointer",
+                "path": "/result_freshness"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "precondition": {
+          "operation": "all",
+          "predicates": [
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/expected_input"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/evidence_input"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/fresh_until"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/producer/build_id"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/evidence_producer/build_id"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/producer/attempt_id"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/evidence_producer/attempt_id"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/assessment"
+              },
+              "comparison": "exact_value",
+              "right": {
+                "source": "path",
+                "path": "/verified_assessment"
+              }
+            },
+            {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/work_kind"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "feature_request"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/reproducibility"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "not_applicable"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/severity"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "advisory"
+                      }
+                    },
+                    {
+                      "operation": "not",
+                      "predicate": {
+                        "operation": "any",
+                        "predicates": [
+                          {
+                            "operation": "compare",
+                            "left": {
+                              "source": "path",
+                              "path": "/assessment/recommended_route"
+                            },
+                            "comparison": "equal",
+                            "right": {
+                              "source": "literal",
+                              "value": "already_fixed"
+                            }
+                          },
+                          {
+                            "operation": "compare",
+                            "left": {
+                              "source": "path",
+                              "path": "/assessment/recommended_route"
+                            },
+                            "comparison": "equal",
+                            "right": {
+                              "source": "literal",
+                              "value": "verification_only"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/work_kind"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "defect"
+                      }
+                    },
+                    {
+                      "operation": "not",
+                      "predicate": {
+                        "operation": "compare",
+                        "left": {
+                          "source": "path",
+                          "path": "/assessment/reproducibility"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "not_applicable"
+                        }
+                      }
+                    },
+                    {
+                      "operation": "not",
+                      "predicate": {
+                        "operation": "compare",
+                        "left": {
+                          "source": "path",
+                          "path": "/assessment/reproducibility"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "not_reproduced"
+                        }
+                      }
+                    },
+                    {
+                      "operation": "any",
+                      "predicates": [
+                        {
+                          "operation": "not",
+                          "predicate": {
+                            "operation": "compare",
+                            "left": {
+                              "source": "path",
+                              "path": "/assessment/reproducibility"
+                            },
+                            "comparison": "equal",
+                            "right": {
+                              "source": "literal",
+                              "value": "reproduced"
+                            }
+                          }
+                        },
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/reproduced_verified"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": true
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/result_fresh_until"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            }
+          ]
+        },
+        "rules": [
+          {
+            "when": {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "not",
+                  "predicate": {
+                    "operation": "all",
+                    "predicates": [
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "path",
+                          "path": "/expected_input"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "path",
+                          "path": "/evidence_input"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "path",
+                          "path": "/fresh_until"
+                        },
+                        "comparison": "greater",
+                        "right": {
+                          "source": "observation_time"
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "high"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "critical"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/admission_risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "high"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/admission_risk"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "critical"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "escalation"
+                  }
+                }
+              ]
+            },
+            "outcome": "escalation"
+          },
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/assessment/recommended_route"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "rejection"
+              }
+            },
+            "outcome": "rejection"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "already_fixed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/already_fixed_verified"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                }
+              ]
+            },
+            "outcome": "already_fixed"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "verification_only"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/verification_only_verified"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                }
+              ]
+            },
+            "outcome": "verification_only"
+          },
+          {
+            "when": {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "already_fixed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "verification_only"
+                  }
+                },
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/work_kind"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "defect"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/reproducibility"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "needs_input"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "escalation"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/work_kind"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "defect"
+                  }
+                },
+                {
+                  "operation": "any",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/recommended_route"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "research"
+                      }
+                    },
+                    {
+                      "operation": "not",
+                      "predicate": {
+                        "operation": "all",
+                        "predicates": [
+                          {
+                            "operation": "compare",
+                            "left": {
+                              "source": "path",
+                              "path": "/assessment/reproducibility"
+                            },
+                            "comparison": "equal",
+                            "right": {
+                              "source": "literal",
+                              "value": "reproduced"
+                            }
+                          },
+                          {
+                            "operation": "compare",
+                            "left": {
+                              "source": "path",
+                              "path": "/reproduced_verified"
+                            },
+                            "comparison": "equal",
+                            "right": {
+                              "source": "literal",
+                              "value": true
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "outcome": "defect_research"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/work_kind"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "feature_request"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "research"
+                  }
+                }
+              ]
+            },
+            "outcome": "feature_research"
+          },
+          {
+            "when": {
+              "operation": "any",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "requirements"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "development"
+                  }
+                }
+              ]
+            },
+            "outcome": "requirements"
+          }
+        ],
+        "fallback": "escalation",
+        "default_output": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "assessment": {
+                "mapping": "pointer",
+                "path": "/assessment"
+              },
+              "admission_priority": {
+                "mapping": "pointer",
+                "path": "/admission_priority"
+              },
+              "admission_risk": {
+                "mapping": "pointer",
+                "path": "/admission_risk"
+              },
+              "accepted": {
+                "mapping": "constant",
+                "value": true
+              }
+            }
+          }
+        },
+        "outputs": {
+          "escalation": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "assessment": {
+                  "mapping": "pointer",
+                  "path": "/assessment"
+                },
+                "admission_priority": {
+                  "mapping": "pointer",
+                  "path": "/admission_priority"
+                },
+                "admission_risk": {
+                  "mapping": "pointer",
+                  "path": "/admission_risk"
+                },
+                "accepted": {
+                  "mapping": "constant",
+                  "value": false
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

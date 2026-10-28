@@ -235,6 +235,10 @@ pub struct FactoryNodeCompletionProjection {
   pub output_schema: octacity_server_factory::ImmutableReference,
   /// Complete retained record identity, without its bytes.
   pub output_digest: octacity_server_factory::FactoryDigest,
+  /// Original schema-checked payload only when the admitted outcome explicitly permits disclosure.
+  /// Inputs, Context and Build evidence are never expanded by this read.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub public_result: Option<serde_json::Value>,
   /// Measured bounded resource consumption.
   pub usage: octacity_server_factory::BudgetUsage,
   /// Trusted completion time.
@@ -280,6 +284,7 @@ impl From<&octacity_server_factory::NodeAttemptCompletion> for FactoryNodeComple
       outcome: row.outcome().clone(),
       output_schema: row.output_schema().clone(),
       output_digest: row.output_digest(),
+      public_result: None,
       usage: row.usage(),
       observed_at: row.observed_at(),
     }
@@ -563,6 +568,14 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
         }
       }
     }
+    if query.collection() == FactoryDiagnosticCollection::NodeCompletions {
+      let snapshot = self.store.factory_run_snapshot(query.run_id()).await?;
+      for item in &mut items {
+        if let FactoryDiagnosticRecord::NodeCompletion(projection) = item {
+          projection.public_result = public_result(projection, &snapshot)?;
+        }
+      }
+    }
     Ok(FactoryDiagnosticPage {
       items,
       next_cursor: page
@@ -571,6 +584,46 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
     })
   }
 }
+
+fn public_result(
+  completion: &FactoryNodeCompletionProjection,
+  snapshot: &octacity_server_store::FactoryRunSnapshot,
+) -> Result<Option<serde_json::Value>, ApplicationError> {
+  let unavailable = ApplicationError::unavailable;
+  let Some(record) = snapshot
+    .flow
+    .data
+    .records
+    .iter()
+    .find(|record| record.node_attempt_id() == completion.node_attempt_id)
+  else {
+    return Ok(None);
+  };
+  let outcome = snapshot
+    .admitted_flow
+    .closure()
+    .definition(record.input().definition())
+    .and_then(|definition| definition.node(&completion.node_key))
+    .and_then(|node| node.outcome(&completion.outcome))
+    .ok_or_else(unavailable)?;
+  if !outcome.public_result() {
+    return Ok(None);
+  }
+  if record.input().factory_run_id() != snapshot.run.id()
+    || record.outcome() != &completion.outcome
+    || record.input().node() != &completion.node_key
+    || record.payload().schema() != &completion.output_schema
+    || outcome.schema() != &completion.output_schema
+    || record.digest().map_err(|_| unavailable())? != completion.output_digest
+  {
+    return Err(unavailable());
+  }
+  Ok(Some(record.payload().value().clone()))
+}
+
+#[cfg(test)]
+#[path = "../factory_public_result_tests.rs"]
+mod public_results;
 
 #[cfg(test)]
 mod tests {

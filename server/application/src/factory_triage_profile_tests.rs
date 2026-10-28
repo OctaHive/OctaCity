@@ -6,6 +6,80 @@ use octacity_server_store::{
 };
 use std::sync::atomic::{AtomicBool, Ordering};
 
+#[test]
+fn triage_analyst_compiled_prompt_explains_the_classification_contract_and_a_valid_example() {
+  let seed: FactoryRoleTemplate = serde_json::from_slice(
+    &std::fs::read(
+      std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../config/factory/presets/triage/analyst-role-v1.json"),
+    )
+    .unwrap(),
+  )
+  .unwrap();
+  let schema = fixtures::supplied_triage_template()
+    .unwrap()
+    .data_schemas()
+    .unwrap()
+    .remove(&key("classification_observations"))
+    .unwrap();
+  let verifier = reference("codex-cli", 11);
+  let (intent, admitted, installed, package, context) = fixture_for_work_mode_with_context(
+    fixtures::work(),
+    |profile| profile.instructions = seed.profiles[&key("default")].instructions.clone(),
+    Default::default(),
+    factory_role_task_digest,
+    false,
+    RoleFixtureOptions {
+      role_definition: Some(&seed.role),
+      result_contract: Some((&schema, &verifier)),
+      ..Default::default()
+    },
+  );
+  let role = FactoryRoleInvocation::new(package, None, Default::default()).unwrap();
+  let compiled = compile_codex_flow_task_with_options(
+    &intent,
+    &admitted,
+    &installed.instructions,
+    &installed.credentials,
+    installed.consumer,
+    &installed.usage_policy,
+    FactoryCodexFlowCompilationOptions {
+      role: Some(&role),
+      context: Some(&context),
+      ..Default::default()
+    },
+  )
+  .unwrap();
+  let prompt = std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap();
+  for required in [
+    "priority_assessment",
+    "Work.priority",
+    "not_applicable",
+    "needs_research",
+    "needs_input",
+    "dependencies",
+  ] {
+    assert!(
+      prompt.contains(required),
+      "executed analyst instructions must explain {required}"
+    );
+  }
+  let example: Value = serde_json::from_str(
+    prompt
+      .lines()
+      .find_map(|line| line.strip_prefix("Example result: "))
+      .expect("the executable seed must include a complete result example"),
+  )
+  .unwrap();
+  FlowPayload::new(&schema, example.clone()).unwrap();
+  assert_eq!(example["work_kind"], "feature_request");
+  assert_eq!(example["reproducibility"], "not_applicable");
+  assert!(example.get("labels").is_none());
+  let result_schema: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::ResultSchema).bytes()).unwrap();
+  assert_eq!(result_schema["properties"]["priority_assessment"]["maximum"], 100);
+  assert!(result_schema["properties"]["recommended_route"]["enum"].is_array());
+}
+
 struct CurrentConnection {
   role: FactoryRoleInvocation,
   allowed: Arc<AtomicBool>,

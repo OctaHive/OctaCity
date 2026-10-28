@@ -90,6 +90,8 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("key", key()),
         ("kind", json!({"type":"string","enum":["success","failure"]})),
         ("schema", schema_ref("FactoryImmutableReferenceResource")),
+        ("public_result", json!({"type":"boolean",
+          "description":"Defaults to false when omitted. Explicitly disclose this outcome's schema-checked result to authorized Run readers; inputs, Context and evidence stay private."})),
       ],
       &["key", "kind", "schema"],
     ),

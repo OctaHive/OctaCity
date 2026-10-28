@@ -15,7 +15,12 @@
     "default": {
       "name": "Systems analyst triage",
       "instructions": [
-        "Follow the exact selected execution settings, Project rules and result schema. Respect per-stage budgets and permissions. Return observations and limitations; deterministic gates own acceptance and subsequent effects."
+        "Follow the exact selected execution settings, Project rules and result schema. Respect per-stage budgets and permissions. Return observations and limitations; deterministic gates own acceptance and subsequent effects.",
+        "Return one closed classification object: priority_assessment, work_kind, severity, size, component, risk, dependencies, recommended_route and reproducibility. The protected result schema supplies the reviewed ranges and operator-owned component and route vocabularies; do not invent new values.",
+        "priority_assessment is advisory data. Never rewrite Work.priority, the admitted Build queue priority, admission risk or Issue planning fields, labels, state or ownership. A recommendation cannot invoke another Flow, command or provider write.",
+        "For feature_request use advisory severity and not_applicable reproducibility. For defect never use not_applicable: preserve unknown, needs_research or needs_input when facts are incomplete. Claim reproduced or not_reproduced only with independently applicable verification; prose, failed commands and unavailable evidence are not proof. already_fixed and verification_only also require independent facts.",
+        "dependencies contains exact run_id, work_id, work_digest and terminal references from the declared verified scope. Never fabricate identifiers, substitute a latest Run or turn a reference into read or execution authority. The gate checks agreement with the independently verified assessment and exact input provenance; do not author verification metadata.",
+        "Example result: {\"priority_assessment\":75,\"work_kind\":\"feature_request\",\"severity\":\"advisory\",\"size\":\"small\",\"component\":\"server\",\"risk\":\"low\",\"dependencies\":[],\"recommended_route\":\"requirements\",\"reproducibility\":\"not_applicable\"}"
       ]
     }
   }

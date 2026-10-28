@@ -4,19 +4,11 @@ use crate::*;
 use std::collections::BTreeMap;
 
 fn triage_template() -> Result<FlowDefinitionTemplate, FactoryError> {
-  let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-    .ancestors()
-    .find(|path| path.join("config/factory").is_dir())
-    .unwrap()
-    .join("config/factory");
-  let missing = || FactoryError::InvalidConfiguration {
-    field: "versioned triage preset",
-  };
-  let manifest = std::fs::read(root.join("presets/triage/v1.json")).map_err(|_| missing())?;
-  FlowDefinitionTemplate::from_manifest(&manifest, |path| {
-    std::fs::read(root.join(path.as_str())).map_err(|_| missing())
-  })
+  crate::flow_test_support::supplied_triage_template()
 }
+
+#[path = "triage_classification_tests.rs"]
+mod classification;
 
 #[test]
 fn triage_preset_publishes_two_reasoning_stages_and_only_terminal_recommendations() {

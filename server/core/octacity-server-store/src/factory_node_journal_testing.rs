@@ -30,6 +30,14 @@ pub struct FactoryNodeJournalContractFixture {
 pub fn factory_node_journal_contract_fixture() -> FactoryNodeJournalContractFixture {
   factory_node_journal_contract_fixture_with_retries(0)
 }
+/// Qualifies explicit disclosure using an arbitrary configured result schema.
+#[must_use]
+pub fn factory_public_result_journal_fixture(
+  schema: FlowDataSchema,
+  public: bool,
+) -> FactoryNodeJournalContractFixture {
+  journal_fixture(public_result_execution_fixture(schema, public))
+}
 /// Constructs the existing typed verification contract for projection qualification.
 #[must_use]
 pub fn factory_verification_journal_contract_fixture() -> FactoryNodeJournalContractFixture {

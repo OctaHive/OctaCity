@@ -62,6 +62,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("outcome", key()),
         ("output_schema", schema_ref("FactoryImmutableReferenceResource")),
         ("output_digest", schema_ref("FactoryDigest")),
+        ("public_result", json!({
+          "description":"Original result value, validated by output_schema, present only for an explicitly public admitted outcome.",
+          "x-max-encoded-bytes":octacity_server_application::factory_configuration_document_bounds().value_bytes
+        })),
         ("usage", schema_ref("FactoryBudgetUsage")),
         ("observed_at", integer()),
       ],

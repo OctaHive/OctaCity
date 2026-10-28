@@ -3,16 +3,7 @@ use super::*;
 use octacity_server_factory::{FlowDefinitionTemplate, FlowGateProgram, FlowPayload};
 
 fn template() -> FlowDefinitionTemplate {
-  let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-    .ancestors()
-    .find(|path| path.join("config/factory").is_dir())
-    .unwrap()
-    .join("config/factory");
-  FlowDefinitionTemplate::from_manifest(&std::fs::read(root.join("presets/triage/v1.json")).unwrap(), |path| {
-    std::fs::read(root.join(path.as_str()))
-      .map_err(|_| octacity_server_factory::FactoryError::InvalidConfiguration { field: "triage part" })
-  })
-  .unwrap()
+  fixtures::supplied_triage_template().unwrap()
 }
 
 fn assessment() -> Value {

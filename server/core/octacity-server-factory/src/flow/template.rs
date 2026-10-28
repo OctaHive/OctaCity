@@ -27,6 +27,9 @@ pub struct FlowTemplateOutcome {
   pub kind: FlowOutcomeKind,
   /// Schema choice resolved at publication.
   pub schema: FactoryKey,
+  /// Explicitly disclose only this outcome's bounded payload to authorized Run readers.
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  pub public_result: bool,
 }
 /// An inline policy or explicit local choice resolved before immutable publication.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -198,11 +201,10 @@ impl FlowDefinitionTemplate {
             .outcomes
             .iter()
             .map(|outcome| {
-              Ok(FlowOutcomeDefinition::new(
-                outcome.key.clone(),
-                outcome.kind,
-                resolve(&outcome.schema)?,
-              ))
+              Ok(
+                FlowOutcomeDefinition::new(outcome.key.clone(), outcome.kind, resolve(&outcome.schema)?)
+                  .with_public_result(outcome.public_result),
+              )
             })
             .collect::<Result<Vec<_>, FactoryError>>()?,
           budget: choice.budget,

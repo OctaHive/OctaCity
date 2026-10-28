@@ -15,6 +15,39 @@ use serde::{Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
 
 #[test]
+fn factory_public_result_contract_is_optional_and_keeps_the_exact_schema_reference() {
+  let document = octacity_server_api_rest::v1::openapi_document();
+  let schemas = &document["components"]["schemas"];
+  let outcome = &schemas["FactoryFlowOutcome"];
+  assert_eq!(outcome["properties"]["public_result"]["type"], "boolean");
+  assert!(
+    outcome["properties"]["public_result"].get("default").is_none(),
+    "a schema default makes this optional field required in generated clients"
+  );
+  assert!(
+    !outcome["required"]
+      .as_array()
+      .unwrap()
+      .contains(&json!("public_result"))
+  );
+  let completion = &schemas["FactoryNodeCompletionDiagnostic"];
+  assert_eq!(
+    completion["properties"]["public_result"]["x-max-encoded-bytes"],
+    octacity_server_application::factory_configuration_document_bounds().value_bytes
+  );
+  assert!(
+    !completion["required"]
+      .as_array()
+      .unwrap()
+      .contains(&json!("public_result"))
+  );
+  assert_eq!(
+    completion["properties"]["output_schema"]["$ref"],
+    "#/components/schemas/FactoryImmutableReferenceResource"
+  );
+}
+
+#[test]
 fn signal_diagnostics_publish_bounded_typed_answers_without_provider_input() {
   let document = octacity_server_api_rest::v1::openapi_document();
   let signal = document["components"]["schemas"]["FactoryDomainFacts"]["oneOf"]

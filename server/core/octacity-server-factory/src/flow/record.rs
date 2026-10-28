@@ -312,6 +312,11 @@ impl FlowNodeRecord {
   pub const fn node_attempt_id(&self) -> NodeAttemptId {
     self.node_attempt_id
   }
+  /// Returns the finite outcome covered by the retained record digest and completion.
+  #[must_use]
+  pub const fn outcome(&self) -> &FactoryKey {
+    &self.outcome
+  }
   /// Returns the trusted observation time bound into the complete record digest.
   #[must_use]
   pub const fn observed_at(&self) -> Timestamp {

@@ -1,5 +1,21 @@
 use super::factory::*;
 
+#[allow(dead_code)] // Release-template contracts are shared by core and application owners.
+pub(crate) fn supplied_triage_template() -> Result<FlowDefinitionTemplate, FactoryError> {
+  let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+    .ancestors()
+    .find(|path| path.join("config/factory").is_dir())
+    .unwrap()
+    .join("config/factory");
+  let missing = || FactoryError::InvalidConfiguration {
+    field: "versioned triage preset",
+  };
+  let manifest = std::fs::read(root.join("presets/triage/v1.json")).map_err(|_| missing())?;
+  FlowDefinitionTemplate::from_manifest(&manifest, |path| {
+    std::fs::read(root.join(path.as_str())).map_err(|_| missing())
+  })
+}
+
 #[allow(dead_code)] // Shared core/application contracts load the supplied editable example.
 pub(crate) fn supplied_base_flow_template() -> FlowDefinitionTemplate {
   supplied_flow_template("base-flow.json")
@@ -326,7 +342,10 @@ pub(crate) fn execution_fixture_with_retry_policy(
     selection,
     pool,
     output_schema,
-    maximum,
+    ExecutionFixtureOptions {
+      maximum,
+      public_result: false,
+    },
     FactoryPermissionSet::deny_all(),
   )
 }
@@ -338,17 +357,54 @@ pub(crate) fn execution_fixture_with_permissions(
   output_schema: Option<FlowDataSchema>,
   permissions: FactoryPermissionSet,
 ) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
-  execution_fixture_with_authority(kind, work, selection, None, output_schema, 0, permissions)
+  execution_fixture_with_authority(
+    kind,
+    work,
+    selection,
+    None,
+    output_schema,
+    ExecutionFixtureOptions::default(),
+    permissions,
+  )
 }
+
+#[allow(dead_code)] // Read contracts vary explicit public disclosure of the same retained payload.
+pub(crate) fn public_result_execution_fixture(
+  schema: FlowDataSchema,
+  public_result: bool,
+) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  let work = work();
+  let selection = binding(work.subject().project_id());
+  execution_fixture_with_authority(
+    FlowNodeKind::Reasoning,
+    work,
+    selection,
+    None,
+    Some(schema),
+    ExecutionFixtureOptions {
+      maximum: 0,
+      public_result,
+    },
+    FactoryPermissionSet::deny_all(),
+  )
+}
+
+#[derive(Default)]
+struct ExecutionFixtureOptions {
+  maximum: u16,
+  public_result: bool,
+}
+
 fn execution_fixture_with_authority(
   kind: FlowNodeKind,
   work: WorkEnvelope,
   selection: FlowBuildBinding,
   pool: Option<FactoryKey>,
   output_schema: Option<FlowDataSchema>,
-  maximum: u16,
+  options: ExecutionFixtureOptions,
   permissions: FactoryPermissionSet,
 ) -> (WorkEnvelope, AdmittedFlow, FlowDataSchema, FlowNodeInput, NodeAttempt) {
+  let maximum = options.maximum;
   let limits = FlowAdmissionLimits::product_defaults(
     4,
     BudgetLimit::new(16, 10000, 1000, 10000, 10000 * (1 + u64::from(maximum))).unwrap(),
@@ -375,11 +431,14 @@ fn execution_fixture_with_authority(
     key: key("accessibility_audit"),
     kind,
     input_schema: Some(schema.reference().clone()),
-    outcomes: vec![FlowOutcomeDefinition::new(
-      selection.result_outcome.clone(),
-      FlowOutcomeKind::Success,
-      output_schema.reference().clone(),
-    )],
+    outcomes: vec![
+      FlowOutcomeDefinition::new(
+        selection.result_outcome.clone(),
+        FlowOutcomeKind::Success,
+        output_schema.reference().clone(),
+      )
+      .with_public_result(options.public_result),
+    ],
     budget,
     permissions: permissions.clone(),
     required: true,

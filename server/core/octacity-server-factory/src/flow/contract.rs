@@ -46,13 +46,34 @@ pub struct FlowOutcomeDefinition {
   key: FactoryKey,
   kind: FlowOutcomeKind,
   schema: ImmutableReference,
+  #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+  public_result: bool,
 }
 
 impl FlowOutcomeDefinition {
   /// Constructs one declared typed outcome.
   #[must_use]
   pub const fn new(key: FactoryKey, kind: FlowOutcomeKind, schema: ImmutableReference) -> Self {
-    Self { key, kind, schema }
+    Self {
+      key,
+      kind,
+      schema,
+      public_result: false,
+    }
+  }
+
+  /// Explicitly publishes this outcome's schema-checked payload to authorized Run readers.
+  /// This never publishes its input, Context, Build evidence or execution ownership.
+  #[must_use]
+  pub const fn with_public_result(mut self, public: bool) -> Self {
+    self.public_result = public;
+    self
+  }
+
+  /// Whether the immutable operator-reviewed outcome permits result body reads.
+  #[must_use]
+  pub const fn public_result(&self) -> bool {
+    self.public_result
   }
 
   /// Returns the finite outcome key.

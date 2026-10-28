@@ -40,19 +40,12 @@
     "presets/triage/inputs-v1.json",
     "presets/triage/eligibility-results-v1.json",
     "flows/base-flow/schemas/artifact_reference.json",
-    "flows/base-flow/schemas/classification_facts.json",
-    "flows/base-flow/schemas/classification_gate_input.json",
-    "flows/base-flow/schemas/classification_observations.json",
-    "flows/base-flow/schemas/declared_requirements.json",
-    "flows/base-flow/schemas/spec_handoff.json",
-    "flows/base-flow/schemas/spec_manifest.json",
-    "flows/base-flow/schemas/spec_result.json",
-    "flows/base-flow/schemas/summary.json",
+    "presets/triage/classification-results-v1.json",
     "flows/base-flow/schemas/work.json",
     "presets/triage/eligibility-v1.json",
     "presets/triage/eligibility-gate-v1.json",
     "presets/triage/classification-v1.json",
-    "flows/base-flow/nodes/classification_gate.json",
+    "presets/triage/classification-gate-v1.json",
     "presets/triage/routing-v1.json"
   ]
 }
