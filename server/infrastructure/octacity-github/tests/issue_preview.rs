@@ -53,7 +53,10 @@ async fn strictly_unlabeled_scan_and_preview_share_group_selection_and_initial_w
     let primary = payload["selection"].clone();
     let request: Request = octacity_work_source_protocol::decode_request(&serde_json::to_vec(&wire).unwrap()).unwrap();
     let output = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-      source_process(&installation, &request).await.wait_with_output().await
+      source_process(env!("CARGO_BIN_EXE_octacity-github"), &installation, &request)
+        .await
+        .wait_with_output()
+        .await
     })
     .await
     .expect("the native source operation must finish within its deadline")

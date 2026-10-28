@@ -82,9 +82,14 @@ pub fn issue(id: u64, number: u64) -> Value {
 }
 
 /// Exercise the real provider protocol without coupling its tests to host executable hashing.
-pub async fn source_process(installation: &Installation, request: &Request) -> tokio::process::Child {
+/// The owning integration test supplies the executable; this module is also reused by server library tests.
+pub async fn source_process(
+  executable: impl AsRef<std::ffi::OsStr>,
+  installation: &Installation,
+  request: &Request,
+) -> tokio::process::Child {
   use tokio::io::AsyncWriteExt as _;
-  let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_octacity-github"))
+  let mut child = tokio::process::Command::new(executable)
     .current_dir(installation.root.path())
     .env_clear()
     .kill_on_drop(true)

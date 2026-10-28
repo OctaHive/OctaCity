@@ -700,7 +700,9 @@ async fn the_actual_source_process_returns_a_checked_issue_page() {
   let request = installation.request();
   let output = tokio::time::timeout(
     std::time::Duration::from_secs(5),
-    source_process(&installation, &request).await.wait_with_output(),
+    source_process(env!("CARGO_BIN_EXE_octacity-github"), &installation, &request)
+      .await
+      .wait_with_output(),
   )
   .await
   .unwrap()
@@ -727,7 +729,7 @@ async fn the_source_process_honors_only_its_original_scan_cancellation() {
     let installation = Installation::new(&forge, selector());
     let mut request = installation.request();
     let original = intent(&mut request).scan_id.clone();
-    let mut child = source_process(&installation, &request).await;
+    let mut child = source_process(env!("CARGO_BIN_EXE_octacity-github"), &installation, &request).await;
     forge.wait_for_requests(2).await;
     let cancellation = json!({"family":family,"message":{"protocol_version":1,"request_id":"cancel-original","command":{"operation":"cancel","payload":{target:original}}}});
     let mut bytes = serde_json::to_vec(&cancellation).unwrap();
