@@ -11,6 +11,24 @@ use std::{collections::BTreeMap, sync::Arc};
 fn key(value: &str) -> FactoryKey {
   FactoryKey::new(value).unwrap()
 }
+
+/// Optional variations of the shared role fixture, with common defaults in one place.
+struct RoleFixtureOptions<'a> {
+  extra_context: &'a [(ContextSourceKind, FactoryKey, Vec<u8>)],
+  role_name: &'a str,
+  additional_credentials: &'a [&'a str],
+}
+
+impl Default for RoleFixtureOptions<'_> {
+  fn default() -> Self {
+    Self {
+      extra_context: &[],
+      role_name: "Custom reviewer",
+      additional_credentials: &[],
+    }
+  }
+}
+
 fn fixture_for_work(
   original: WorkEnvelope,
   edit: impl FnOnce(&mut FactoryRoleProfileDefinition),
@@ -38,7 +56,14 @@ fn fixture_for_work_mode(
   FactoryRoleExecutionPackage,
   BTreeMap<ArtifactId, Vec<u8>>,
 ) {
-  fixture_for_work_mode_with_context(original, edit, skills, bind_task, selected, &[], "Custom reviewer", &[])
+  fixture_for_work_mode_with_context(
+    original,
+    edit,
+    skills,
+    bind_task,
+    selected,
+    RoleFixtureOptions::default(),
+  )
 }
 fn fixture_for_work_mode_with_context(
   original: WorkEnvelope,
@@ -46,9 +71,7 @@ fn fixture_for_work_mode_with_context(
   skills: BTreeMap<FactoryKey, FactoryRoleSkillBundle>,
   bind_task: fn(FactoryDigest, &FactoryRoleProfile) -> FactoryDigest,
   selected: bool,
-  extra_context: &[(ContextSourceKind, FactoryKey, Vec<u8>)],
-  role_name: &str,
-  additional_credentials: &[&str],
+  options: RoleFixtureOptions<'_>,
 ) -> (
   FlowBuildIntent,
   AdmittedFlow,
@@ -56,6 +79,11 @@ fn fixture_for_work_mode_with_context(
   FactoryRoleExecutionPackage,
   BTreeMap<ArtifactId, Vec<u8>>,
 ) {
+  let RoleFixtureOptions {
+    extra_context,
+    role_name,
+    additional_credentials,
+  } = options;
   let task_bytes = b"Measure the selected code.".to_vec();
   let task = FactoryArtifactReference::new(
     ArtifactId::generate(),
@@ -1250,9 +1278,11 @@ fn role_mcp_authentication_compiles_separate_private_profiles_and_transport_dest
     BTreeMap::new(),
     factory_role_task_digest,
     false,
-    &[],
-    "MCP investigator",
-    &["mcp-http-read", "mcp-stdio-read"],
+    RoleFixtureOptions {
+      role_name: "MCP investigator",
+      additional_credentials: &["mcp-http-read", "mcp-stdio-read"],
+      ..Default::default()
+    },
   );
   let role = FactoryRoleInvocation::new(
     package,
@@ -1361,9 +1391,11 @@ fn stored_role_source_resolves_only_installed_mcp_secret_locators_for_the_select
         BTreeMap::new(),
         factory_role_task_digest,
         true,
-        &[],
-        "MCP investigator",
-        &["mcp-read"],
+        RoleFixtureOptions {
+          role_name: "MCP investigator",
+          additional_credentials: &["mcp-read"],
+          ..Default::default()
+        },
       );
       installed.mcp_configurations = vec![configuration.try_into().unwrap()];
       let store = publish_package_roles(&expected).await;
@@ -1475,9 +1507,11 @@ fn mcp_tokens_cannot_use_native_inherited_bootstrap_environment_names() {
       BTreeMap::new(),
       factory_role_task_digest,
       false,
-      &[],
-      "MCP reader",
-      &["mcp-read"],
+      RoleFixtureOptions {
+        role_name: "MCP reader",
+        additional_credentials: &["mcp-read"],
+        ..Default::default()
+      },
     );
     let role =
       FactoryRoleInvocation::new(package, None, BTreeMap::from([("OCTACITY_MCP_TOKEN".into(), secret)])).unwrap();
@@ -1822,9 +1856,10 @@ fn selected_role_first_package_uses_exact_published_content_and_real_prompt_dige
         BTreeMap::new(),
         factory_role_task_digest,
         true,
-        &extra,
-        "Custom reviewer",
-        &[],
+        RoleFixtureOptions {
+          extra_context: &extra,
+          ..Default::default()
+        },
       );
       let content = expected.inputs();
       let store = publish_package_roles(&expected).await;

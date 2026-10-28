@@ -39,9 +39,11 @@ fn triage_roles_keep_project_rules_and_tools_independent_of_their_display_names(
       BTreeMap::new(),
       factory_role_task_digest,
       false,
-      &extra,
-      name,
-      &[],
+      RoleFixtureOptions {
+        extra_context: &extra,
+        role_name: name,
+        ..Default::default()
+      },
     );
     let role = FactoryRoleInvocation::new(package.clone(), None, BTreeMap::new()).unwrap();
     let compiled = compile_codex_flow_task_with_options(
