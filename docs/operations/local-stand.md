@@ -356,7 +356,7 @@ identical inputs does not stop the stand for replacement. For an ordinary later
 `down` followed by `up` needs no reset. Installation updates do not publish profile
 versions, repin models/transports, change reviewed Runtime settings or replay demo
 Work. Existing qualification and revocation rules still govern retained profiles.
-The [packaged MCP qualification](../../openspec/changes/enable-local-stand-runtime-mcp/packaged-mcp-verification.md)
+The [packaged MCP qualification](../../openspec/changes/archive/2026-10-28-enable-local-stand-runtime-mcp/packaged-mcp-verification.md)
 records the tested macOS ARM64 → Microsandbox 0.7.6 → Linux ARM64 Codex 0.161.0
 composition with Octa 0.8.0. It covers authenticated HTTP/stdio, peer-enforced
 read/resource restrictions, revocation, cancellation and retained native records
@@ -379,7 +379,7 @@ An unmatched authentication binding requires installation qualification. Expand
 **Installation prerequisites** for catalog/Agent setup, network/executable limits
 and the required native-client authentication/enforcement/capture checks. Saving
 confirms configuration only; it does not test connectivity or start execution.
-See the [Console qualification](../../openspec/changes/enable-local-stand-runtime-mcp/runtime-profile-guidance-verification.md)
+See the [Console qualification](../../openspec/changes/archive/2026-10-28-enable-local-stand-runtime-mcp/runtime-profile-guidance-verification.md)
 for the tested English/Russian narrow-keyboard path.
 
 ### GitHub connections in the personal Factory stand

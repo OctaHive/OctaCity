@@ -171,7 +171,7 @@ unassigned. Final VM qualification runs separately from those load tests.
 
 ## Operator and triage handoff
 
-Use the [ordinary explicit installation and update path](../../../docs/operations/local-stand.md#select-an-operator-owned-factory-installation),
+Use the [ordinary explicit installation and update path](../../../../docs/operations/local-stand.md#select-an-operator-owned-factory-installation),
 then publish Project Runtime settings, explicitly select the exact MCP pins in a
 new role/profile version, and admit an ordinary Factory Run. Configuration
 success alone is not proof of connectivity or tool execution.

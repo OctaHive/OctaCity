@@ -1148,9 +1148,9 @@ bearer variable or an allowed hostname does not grant a credential destination.
 Agent private files are reread for new work, so removal or invalid rotation blocks
 execution without falling back to another profile. The native plugin and actual
 server/issuer must enforce the selected read/resource limits. See the
-[credential qualification and dependency status](../../openspec/changes/enable-local-stand-runtime-mcp/mcp-execution-verification.md#task-14-independent-mcp-credentials)
+[credential qualification and dependency status](../../openspec/changes/archive/2026-10-28-enable-local-stand-runtime-mcp/mcp-execution-verification.md#task-14-independent-mcp-credentials)
 for the qualified HTTP/stdio methods. The stand pins published Octa 0.8.0 with the
 required native-client compatibility fixes and MCP capture. See the
-[native evidence qualification](../../openspec/changes/enable-local-stand-runtime-mcp/mcp-evidence-verification.md)
+[native evidence qualification](../../openspec/changes/archive/2026-10-28-enable-local-stand-runtime-mcp/mcp-evidence-verification.md)
 for call/result provenance and cancellation coverage; full stand qualification
 remains task 3.1.

@@ -159,7 +159,7 @@ Existing stands continue to start in their current metadata-only mode until the 
 
 `factory-stand` now forwards an explicit complete catalog, optional Runtime bundle
 and independent Agent policy to the existing ordinary installer, keeping its
-preflight and lifecycle owners. See the [operator setup instructions](../../../docs/operations/local-stand.md#select-an-operator-owned-factory-installation).
+preflight and lifecycle owners. See the [operator setup instructions](../../../../docs/operations/local-stand.md#select-an-operator-owned-factory-installation).
 No-selection demo startup remains on the original path. Subsequent work records
 [native MCP materialization](mcp-execution-verification.md) and
 [non-destructive installation replacement](installation-update-verification.md);
