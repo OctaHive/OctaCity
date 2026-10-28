@@ -128,6 +128,21 @@ owns duplicate interpretation and accepted business effects. Server Source/Repor
 installation remains with its existing owner; connecting an MCP server requires no
 unrelated Source installation. Do not mark another change complete from this handoff.
 
+Qualification exposed a distinction between unavailable terminal usage and a
+failed shared owner pass. The operator approved correcting this in task 3.1.
+Once an ordinary execution has stopped, unknown consumption keeps the exact
+execution and its reservation in the existing waiting state. It must neither
+become zero usage nor prevent reconciliation/cancellation of other Runs. No new
+accounting journal or result is introduced; later trustworthy usage follows the
+existing settlement path. Actual process stop and verified partial MCP capture
+remain independently inspectable while settlement waits.
+
+Cancellation reuses the existing admission validator for the retained static or
+selected-role intent. Reconstructing a static intent would discard the selected
+profile and reject an otherwise valid stop. A peer Run failure also cannot skip
+other already claimed Runs: the bounded reconciler finishes that queue and
+reports the first error through its existing retry owner.
+
 ## Risks / Trade-offs
 
 - **Operator setup remains necessary** → Document one concrete invocation using existing installation inputs and expose that prerequisite in Console; do not label a metadata-only Runtime executable.

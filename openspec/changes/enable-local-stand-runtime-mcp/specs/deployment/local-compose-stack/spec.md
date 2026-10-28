@@ -39,6 +39,15 @@ The qualified AI plugin/native-client path SHALL expose actual MCP calls and con
 - **WHEN** a qualified native client performs permitted tool calls and a later call is cancelled or fails
 - **THEN** ordinary retained evidence distinguishes consumed results and their exact invocation from the interrupted call without treating failure as empty search or exposing credentials
 
+#### Scenario: A stopped execution has unknown terminal consumption
+- **WHEN** a failed or cancelled native execution retains capture but cannot supply trustworthy terminal usage
+- **THEN** its exact execution and budget reservation remain waiting without a semantic result or invented zero consumption, while other Runs can still reconcile and stop their owned executions
+- **AND** later verified consumption can settle the original execution without dispatching another attempt
+
+#### Scenario: A selected AI profile is cancelled during an MCP call
+- **WHEN** the operator cancels an admitted native execution with an explicitly selected immutable AI profile
+- **THEN** the owner validates the original selected intent and stops its already accepted ordinary Build without changing the profile, recreating a static intent or dispatching another attempt
+
 ### Requirement: Local Runtime setup updates preserve operator state
 Applying or replacing an explicitly selected Runtime installation SHALL reuse existing private-file verification, bounded staging and lifecycle mechanisms. Failed preflight SHALL leave the previous usable installation unchanged. Successful setup and ordinary restart SHALL retain PostgreSQL settings/receipts, exact transport and role/profile history, admitted execution content and worker identity without destructive reset or replaying demonstration Work. Installation changes SHALL NOT adopt new model, transport or permission selections into existing profiles automatically; stale or revoked pins SHALL follow the existing qualification and revocation rules.
 

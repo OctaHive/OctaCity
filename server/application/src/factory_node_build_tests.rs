@@ -1033,11 +1033,14 @@ fn failed_build_executor_requires_measured_consumption_without_provider_results(
           matches!(observed.unwrap(), FactoryNodeExecutionStep::ExecutionStopped { usage, .. } if usage.tokens == 23 && usage.elapsed_millis == 2)
         );
       } else {
-        assert_eq!(
-          observed.unwrap_err().classification(),
-          ApplicationFailure::Unavailable,
-          "missing failure usage must remain unavailable, never zero"
-        );
+        let FactoryNodeExecutionStep::Waiting {
+          execution: Some(execution),
+        } = observed.unwrap()
+        else {
+          panic!("unknown usage must hold this execution without failing the shared owner");
+        };
+        assert_eq!(execution.build_id(), builds.acceptance.build_id);
+        assert_eq!(execution.attempt_id(), builds.acceptance.attempt_id);
       }
     }
     assert_eq!(builds.requests.lock().unwrap().len(), 1);
@@ -1164,12 +1167,16 @@ fn node_build_executor_cancellation_requires_actual_terminal_consumption_without
         available: false,
       }),
     );
-    assert!(
-      FactoryNodeExecutor::cancel(&unavailable, request(33), time(32))
-        .await
-        .is_err(),
-      "missing measurement cannot produce a stop receipt with invented zero consumption"
-    );
+    let FactoryNodeCancellationStep::Waiting {
+      execution: Some(pending),
+    } = FactoryNodeExecutor::cancel(&unavailable, request(33), time(32))
+      .await
+      .unwrap()
+    else {
+      panic!("unknown usage must retain the stopped execution without failing other cancellations");
+    };
+    assert_eq!(pending.build_id(), builds.acceptance.build_id);
+    assert_eq!(pending.attempt_id(), builds.acceptance.attempt_id);
     let FactoryNodeCancellationStep::Stopped {
       execution: Some(execution),
       usage,

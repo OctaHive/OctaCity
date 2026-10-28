@@ -188,9 +188,9 @@ where
           first_error.get_or_insert(error);
         }
       }
-      if first_error.is_none() {
-        outcome.shutdown_skipped += queue.fill(shutdown);
-      }
+      // Each claimed Run has independent fenced authority. Retain the first
+      // error for retry reporting without stranding unrelated work or stops.
+      outcome.shutdown_skipped += queue.fill(shutdown);
     }
     first_error.map_or(Ok(outcome), Err)
   }

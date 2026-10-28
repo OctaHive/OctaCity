@@ -287,19 +287,21 @@ impl FactoryRunStore for MeasuredStore {
 }
 
 #[test]
-fn an_in_flight_transition_finishes_after_a_peer_snapshot_fails() {
+fn a_run_failure_does_not_skip_other_claimed_runs() {
   run_to_completion(async {
-    let measured = Arc::new(MeasuredStore::with_snapshot_failure(seeded_store(2)));
-    let worker = reconciler(measured.clone(), "worker.failure", 2, 2, 11);
+    for concurrency in [1, 2] {
+      let measured = Arc::new(MeasuredStore::with_snapshot_failure(seeded_store(3)));
+      let worker = reconciler(measured.clone(), "worker.failure", 3, concurrency, 11);
 
-    assert!(matches!(
-      worker
-        .run_once(time(10), time(20), &FactoryReconciliationShutdown::new())
-        .await,
-      Err(FactoryReconciliationError::Store(StoreError::Unavailable))
-    ));
-    assert_eq!(measured.committed.load(Ordering::SeqCst), 1);
-    assert_eq!(measured.active.load(Ordering::SeqCst), 0);
+      assert!(matches!(
+        worker
+          .run_once(time(10), time(20), &FactoryReconciliationShutdown::new())
+          .await,
+        Err(FactoryReconciliationError::Store(StoreError::Unavailable))
+      ));
+      assert_eq!(measured.committed.load(Ordering::SeqCst), 2);
+      assert_eq!(measured.active.load(Ordering::SeqCst), 0);
+    }
   });
 }
 

@@ -282,19 +282,11 @@ where
     requested_at: Timestamp,
     at: Timestamp,
   ) -> Result<FactoryNodeBuildCancellation, ApplicationError> {
-    if requested_at > at
-      || FlowBuildIntent::new(
-        intent.input().clone(),
-        admitted,
-        intent.node().clone(),
-        intent.usage_before(),
-        intent.priority(),
-      )
-      .map_err(invalid)?
-        != *intent
-    {
+    if requested_at > at {
       return Err(ApplicationError::invalid());
     }
+    // Recheck the retained contract, including any pinned profile selection.
+    intent.verify_admission(admitted).map_err(invalid)?;
     intent.node().verify_observer(&ownership, at).map_err(invalid)?;
     let request = factory_build_request(intent, ownership.clone())?;
     let Some(accepted) = self
@@ -903,11 +895,15 @@ where
       }),
       FactoryNodeBuildCancellation::Stopped { execution } => {
         let usage = match &execution {
-          Some(row) => self
-            .outputs
-            .terminal_usage(row.build_id(), row.attempt_id())
-            .await
-            .map_err(build_error)?,
+          Some(row) => match self.outputs.terminal_usage(row.build_id(), row.attempt_id()).await {
+            Ok(usage) => usage,
+            // The owned Job has stopped, but settlement still needs real usage.
+            // Keep its reservation without blocking unrelated Run cancellation.
+            Err(crate::OrdinaryBuildApplicationError::Unavailable) => {
+              return Ok(crate::FactoryNodeCancellationStep::Waiting { execution });
+            }
+            Err(error) => return Err(build_error(error)),
+          },
           None => BudgetUsage::default(), // No operation was ever accepted; no execution resources were consumed.
         };
         if usage.attempts != 0 {
@@ -963,11 +959,21 @@ where
         }
         let usage = match usage {
           Some(usage) => usage,
-          None => self
+          None => match self
             .outputs
             .terminal_usage(execution.build_id(), execution.attempt_id())
             .await
-            .map_err(build_error)?,
+          {
+            Ok(usage) => usage,
+            // Preserve this execution and its reservation. Unknown consumption
+            // is a local wait, not a failure of the shared reconciliation pass.
+            Err(crate::OrdinaryBuildApplicationError::Unavailable) => {
+              return Ok(crate::FactoryNodeExecutionStep::Waiting {
+                execution: Some(execution),
+              });
+            }
+            Err(error) => return Err(build_error(error)),
+          },
         };
         Ok(crate::FactoryNodeExecutionStep::ExecutionStopped {
           execution: Some(execution),

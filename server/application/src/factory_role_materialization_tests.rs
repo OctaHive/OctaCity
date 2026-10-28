@@ -358,6 +358,54 @@ fn fixture() -> (
 ) {
   fixture_with(|_| {}, BTreeMap::new())
 }
+
+#[test]
+fn selected_role_cancellation_stops_the_original_ordinary_build() {
+  crate::factory_admission_tests::run_ready(async {
+    let work = fixtures::work();
+    let (intent, admitted, _, _, _) =
+      fixture_for_work_mode(work.clone(), |_| {}, BTreeMap::new(), factory_role_task_digest, true);
+    assert!(intent.selected_profile().is_some());
+    let mut builds = crate::factory_node_test_support::Builds::new();
+    builds.acceptance.effective_policy_digest = intent.permissions().digest();
+    let builds = Arc::new(builds);
+    let adapter = FactoryNodeBuildAdapter::new(
+      builds.clone(),
+      Arc::new(crate::factory_node_test_support::Outputs(None)),
+    );
+    let request = |millis| FactoryNodeExecutionRequest {
+      run_id: intent.input().factory_run_id(),
+      work: &work,
+      admitted: &admitted,
+      input: intent.input(),
+      attempt: intent.node(),
+      build: Some(&intent),
+      ownership: FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim()),
+      observed_at: Timestamp::from_unix_millis(millis).unwrap(),
+    };
+    let FactoryNodeExecutionStep::Waiting {
+      execution: Some(original),
+    } = adapter.observe(request(31)).await.unwrap()
+    else {
+      panic!("the selected role must dispatch its ordinary Build");
+    };
+    let FactoryNodeCancellationStep::Waiting {
+      execution: Some(stopping),
+    } = FactoryNodeExecutor::cancel(&adapter, request(32), Timestamp::from_unix_millis(32).unwrap())
+      .await
+      .unwrap()
+    else {
+      panic!("cancellation must retain the original execution until its usage is settled");
+    };
+    assert_eq!(stopping, original);
+    assert_eq!(
+      *builds.state.lock().unwrap(),
+      octacity_server_orchestrator::BuildState::Cancelled
+    );
+    assert_eq!(builds.requests.lock().unwrap().len(), 1);
+  });
+}
+
 #[test]
 fn role_package_compiles_ordered_instructions_model_settings_and_exact_provenance() {
   let (intent, admitted, installed, package, bytes) = fixture();
