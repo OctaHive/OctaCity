@@ -2,6 +2,10 @@
 use std::{collections::BTreeMap, fmt};
 
 use octacity_protocol::{MAX_FACTORY_PERMISSION_ENTRIES, MAX_FACTORY_WIRE_IDENTITY_BYTES, ProtectedInputV3};
+use serde::{
+  Deserialize, Deserializer,
+  de::{MapAccess, Visitor},
+};
 use serde_json::Value;
 use sha2::{Digest as _, Sha256};
 use zeroize::Zeroize as _;
@@ -26,17 +30,65 @@ pub struct RunnerPrivateVariables {
 }
 
 impl RunnerPrivateVariables {
+  /// Reads current private values from an operator-owned file without caching.
+  /// Duplicate keys, unsafe paths/modes and decoder diagnostics fail closed.
+  pub fn from_private_file(path: &std::path::Path) -> Result<Self, RunnerSupervisionError> {
+    let read = || -> Result<Self, Box<dyn std::error::Error>> {
+      let parent = path.parent().ok_or("private file has no parent")?;
+      octacity_private_fs::validate_trusted_directory_chain(parent)?;
+      octacity_private_fs::validate_private_access(parent)?;
+      octacity_private_fs::validate_trusted_owner(path)?;
+      octacity_private_fs::validate_private_access(path)?;
+      // Encoded JSON can escape the 1 MiB decoded variable set.
+      let bytes = Zeroizing::new(octacity_private_fs::read_bounded_regular_file(path, 8 * 1024 * 1024)?);
+      let values: PrivateValues = serde_json::from_slice(&bytes)?;
+      Ok(Self::new(
+        values
+          .0
+          .into_iter()
+          .map(|(key, mut value)| (key, std::mem::take(&mut *value)))
+          .collect(),
+      )?)
+    };
+    read().map_err(|_| error())
+  }
+
+  /// Adds one independently selected credential without exposing its value.
+  /// A dedicated MCP profile supplies one opaque credential, renamed to the
+  /// signed compiler variable. Operators never need to encode internal names
+  /// into private files; extra inputs cannot hitchhike through this selection.
+  pub fn with_selected_credential(&self, name: &str, profile: &Self) -> Result<Self, RunnerSupervisionError> {
+    if profile.values.len() != 1 || self.values.contains_key(name) {
+      return invalid();
+    }
+    let value = profile.values.values().next().ok_or_else(error)?;
+    if self.values.values().any(|existing| existing == value) {
+      return invalid();
+    }
+    let mut selected = self.clone();
+    selected.values.insert(name.to_owned(), value.clone());
+    selected.validate()?;
+    Ok(selected)
+  }
+
   /// Freezes one finite named set, without selecting any provider or model.
   pub fn new(values: BTreeMap<String, String>) -> Result<Self, RunnerSupervisionError> {
     let values = values
       .into_iter()
       .map(|(name, value)| (name, Zeroizing::new(value)))
       .collect::<BTreeMap<_, _>>();
+    let selected = Self { values };
+    selected.validate()?;
+    Ok(selected)
+  }
+
+  fn validate(&self) -> Result<(), RunnerSupervisionError> {
+    let values = &self.values;
     if values.is_empty() || values.len() > MAX_FACTORY_PERMISSION_ENTRIES {
       return invalid();
     }
     let mut total = 0_usize;
-    for (name, value) in &values {
+    for (name, value) in values {
       if name.is_empty()
         || name.len() > MAX_FACTORY_WIRE_IDENTITY_BYTES
         || name.chars().any(char::is_control)
@@ -53,7 +105,7 @@ impl RunnerPrivateVariables {
         return invalid();
       }
     }
-    Ok(Self { values })
+    Ok(())
   }
 
   /// Verifies exact protected bytes and authorizes only secret required inputs.
@@ -228,4 +280,37 @@ fn error() -> RunnerSupervisionError {
 }
 fn invalid<T>() -> Result<T, RunnerSupervisionError> {
   Err(error())
+}
+
+// Already decoded values, including a partially decoded map on error, are
+// erased on drop. Neither serde errors nor file paths reach public diagnostics.
+struct PrivateValue(Zeroizing<String>);
+impl<'de> Deserialize<'de> for PrivateValue {
+  fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    String::deserialize(deserializer).map(|value| Self(Zeroizing::new(value)))
+  }
+}
+
+struct PrivateValues(BTreeMap<String, Zeroizing<String>>);
+impl<'de> Deserialize<'de> for PrivateValues {
+  fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+    struct ValuesVisitor;
+    impl<'de> Visitor<'de> for ValuesVisitor {
+      type Value = PrivateValues;
+      fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str("a bounded private named string map")
+      }
+      fn visit_map<M: MapAccess<'de>>(self, mut map: M) -> Result<Self::Value, M::Error> {
+        let mut values = BTreeMap::new();
+        while let Some((key, PrivateValue(value))) = map.next_entry::<String, PrivateValue>()? {
+          if values.len() >= MAX_FACTORY_PERMISSION_ENTRIES || values.contains_key(&key) {
+            return Err(serde::de::Error::custom("private map exceeds its bound"));
+          }
+          values.insert(key, value);
+        }
+        Ok(PrivateValues(values))
+      }
+    }
+    deserializer.deserialize_map(ValuesVisitor)
+  }
 }

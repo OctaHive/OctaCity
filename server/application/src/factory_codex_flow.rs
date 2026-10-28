@@ -283,12 +283,19 @@ fn compile_flow_task(
   if intent.selected_profile().is_some() && options.role.is_none() {
     return Err(CodexCompilationError::NodeBindings);
   }
+  let mcp_credentials = options
+    .role
+    .map(|role| {
+      crate::factory_codex_mcp::credential_bindings(role, options.mcp_configurations.unwrap_or_default(), profiles)
+    })
+    .transpose()?
+    .unwrap_or_default();
   let selected_digest = if let Some(role) = options.role {
     role
       .verify_intent(intent)
       .map_err(|_| CodexCompilationError::NodeBindings)?;
     role
-      .verify_consumer(consumer, profiles)
+      .verify_consumer(consumer, profiles, &mcp_credentials)
       .map_err(|_| CodexCompilationError::MissingAuthority)?;
     crate::factory_role_task_digest(selected_digest, &role.package().inputs().profile)
   } else {
@@ -322,9 +329,16 @@ fn compile_flow_task(
     FactoryCredentialConsumer::ReadOnlyReview | FactoryCredentialConsumer::ToolReasoning => false,
     _ => return Err(CodexCompilationError::CredentialProfile),
   };
-  let mut secrets = permissions.secret_profiles();
-  let credential_profile = secrets.next().ok_or(CodexCompilationError::CredentialProfile)?;
-  if secrets.next().is_some() {
+  let credential_profile = profiles.profile(consumer.purpose());
+  let selected_profiles = std::iter::once(credential_profile.as_str())
+    .chain(mcp_credentials.values().map(String::as_str))
+    .collect::<BTreeSet<_>>();
+  if permissions
+    .secret_profiles()
+    .map(FactoryKey::as_str)
+    .collect::<BTreeSet<_>>()
+    != selected_profiles
+  {
     return Err(CodexCompilationError::CredentialProfile);
   }
   profiles
@@ -514,6 +528,7 @@ fn compile_flow_task(
         &mut public_environment,
         &mut secret_environment,
         &mut variables,
+        &mcp_credentials,
       )
     })
     .transpose()?
@@ -528,8 +543,7 @@ fn compile_flow_task(
         &secret_environment,
       )
     })
-    .transpose()?
-    .flatten();
+    .transpose()?;
   let task_name = if writable || protected_tools {
     "execute"
   } else {
@@ -607,6 +621,7 @@ fn compile_flow_task(
     result_schema_bytes: serde_json::to_vec(&result_schema).map_err(|_| CodexCompilationError::Serialization)?,
     task_envelope,
   })?;
+  compiled.mcp_credentials = mcp_credentials;
   if let Some(role) = options.role {
     compiled.additional_inputs = role.skills().map_or_else(Vec::new, |skills| skills.inputs.clone());
     compiled.documents.push(document(

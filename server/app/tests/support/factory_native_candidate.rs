@@ -318,6 +318,7 @@ pub(super) async fn precomplete_producer(
           workspace_root: None,
           octafile_input: protected.inputs[0].artifact_id.clone(),
           tasks: vec!["retained".to_owned()],
+          mcp_credentials: Default::default(),
           credential_profile: Some(
             profile
               .credentials

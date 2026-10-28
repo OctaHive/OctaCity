@@ -97,6 +97,7 @@ impl FactoryRoleInvocation {
     &self,
     consumer: octacity_server_factory::FactoryCredentialConsumer,
     credentials: &octacity_server_factory::FactoryCredentialProfiles,
+    mcp_credentials: &BTreeMap<String, String>,
   ) -> Result<(), ApplicationError> {
     if consumer != octacity_server_factory::FactoryCredentialConsumer::ReadOnlyReview {
       return Ok(());
@@ -104,6 +105,9 @@ impl FactoryRoleInvocation {
     let inputs = self.0.package.inputs();
     let permissions = &inputs.profile.definition().permissions;
     for profile in permissions.secret_profiles() {
+      if mcp_credentials.values().any(|selected| selected == profile.as_str()) {
+        continue;
+      }
       credentials
         .authorize(inputs.task.node_attempt_id(), consumer, profile)
         .map_err(|_| ApplicationError::invalid())?;

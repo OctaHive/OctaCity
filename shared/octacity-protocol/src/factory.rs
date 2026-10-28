@@ -701,6 +701,10 @@ pub struct ManagedOctaExecutionV3 {
   /// Single logical secret profile selected for a credentialed configured node.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub credential_profile: Option<String>,
+  /// Independent read-only MCP credentials: compiler-owned private variable to
+  /// local credential profile. Values are absent from signed execution intent.
+  #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+  pub mcp_credentials: std::collections::BTreeMap<String, String>,
   /// Optional protected tool-control contract for tasks that may invoke tools.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub tool_control: Option<FactoryToolControlV3>,
@@ -761,6 +765,34 @@ pub struct FactoryToolControlV3 {
 }
 
 impl ManagedOctaExecutionV3 {
+  /// Exact signed credential selection, with no cross-purpose profile reuse.
+  /// The legacy node profile remains independent of each selected MCP profile.
+  pub fn credential_profiles(&self) -> Result<std::collections::BTreeSet<&str>, String> {
+    let mut profiles = std::collections::BTreeSet::new();
+    if let Some(profile) = &self.credential_profile {
+      bounded_key("execution.credential_profile", profile)?;
+      profiles.insert(profile.as_str());
+    }
+    if self.mcp_credentials.len() > MAX_FACTORY_PERMISSION_ENTRIES
+      || (!self.mcp_credentials.is_empty() && self.credential_profile.is_none())
+    {
+      return Err("invalid independent MCP credential selection".to_owned());
+    }
+    for (variable, profile) in &self.mcp_credentials {
+      bounded_key("execution.mcp_credentials.profile", profile)?;
+      if variable.len() > MAX_FACTORY_WIRE_IDENTITY_BYTES
+        || !variable.starts_with("OCTACITY_MCP_")
+        || !variable
+          .bytes()
+          .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+        || !profiles.insert(profile.as_str())
+      {
+        return Err("invalid independent MCP credential selection".to_owned());
+      }
+    }
+    Ok(profiles)
+  }
+
   pub(crate) fn validate(&self, inputs: &ProtectedInputManifestV3) -> Result<(), String> {
     if self
       .workspace_root
@@ -783,9 +815,7 @@ impl ManagedOctaExecutionV3 {
         return Err("managed task names must not contain duplicates".to_owned());
       }
     }
-    if let Some(profile) = &self.credential_profile {
-      bounded_key("execution.credential_profile", profile)?;
-    }
+    self.credential_profiles()?;
     if let Some(control) = &self.tool_control {
       bounded_key("execution.tool_control.plugin", &control.plugin)?;
       bounded_key("execution.tool_control.capability", &control.capability)?;
@@ -1208,12 +1238,14 @@ pub(crate) fn validate_factory_execution(
   {
     return Err("runtime workload identity is absent from Factory permissions".to_owned());
   }
-  match &execution.credential_profile {
-    Some(profile) if permissions.secret_profiles.as_slice() == [profile.as_str()] => {}
-    None if permissions.secret_profiles.is_empty() => {}
-    Some(_) | None => {
-      return Err("managed execution must select exactly its node-scoped Factory credential profile".to_owned());
-    }
+  if execution.credential_profiles()?.into_iter().collect::<Vec<_>>()
+    != permissions
+      .secret_profiles
+      .iter()
+      .map(String::as_str)
+      .collect::<Vec<_>>()
+  {
+    return Err("managed execution must select exactly its node-scoped Factory credential profiles".to_owned());
   }
   let permitted = &permissions.outputs;
   if permitted.max_artifact_count > outputs.artifact_count

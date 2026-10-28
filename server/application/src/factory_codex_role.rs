@@ -10,6 +10,7 @@ pub(super) fn apply<'a>(
   public: &mut BTreeMap<String, String>,
   secret: &mut BTreeMap<String, String>,
   variables: &mut BTreeMap<String, Value>,
+  mcp_credentials: &BTreeMap<String, String>,
 ) -> Result<Option<&'a str>, CodexCompilationError> {
   let inputs = role.package().inputs();
   let profile = inputs.profile.definition();
@@ -90,6 +91,45 @@ pub(super) fn apply<'a>(
         variables.insert(variable, json!(value));
       }
       FactoryRoleEnvironmentValue::Secret { reference } => {
+        // The native client forwards these bootstrap variables to every stdio
+        // peer, independently of the selected peer's explicit env_vars.
+        if [
+          "LOGNAME",
+          "SHELL",
+          "USER",
+          "__CF_USER_TEXT_ENCODING",
+          "LANG",
+          "LC_ALL",
+          "TERM",
+          "TMPDIR",
+          "TZ",
+          "WINDIR",
+          "SYSTEMDRIVE",
+          "USERNAME",
+          "USERDOMAIN",
+          "HOMEDRIVE",
+          "HOMEPATH",
+          "PROGRAMFILES",
+          "PROGRAMFILES(X86)",
+          "PROGRAMW6432",
+          "PROGRAMDATA",
+          "TEMP",
+          "TMP",
+          "POWERSHELL",
+          "PWSH",
+          "REQUESTS_CA_BUNDLE",
+          "CURL_CA_BUNDLE",
+          "NODE_EXTRA_CA_CERTS",
+          "GIT_SSL_CAINFO",
+          "CARGO_HTTP_CAINFO",
+          "PIP_CERT",
+          "BUNDLE_SSL_CA_CERT",
+          "NPM_CONFIG_CAFILE",
+        ]
+        .contains(&upper.as_str())
+        {
+          return Err(unsupported);
+        }
         let variable = role
           .secret_variables()
           .iter()
@@ -98,9 +138,10 @@ pub(super) fn apply<'a>(
           .ok_or(unsupported)?;
         // The installed purpose-bound credential boundary supplies this variable;
         // arbitrary new credential locators cannot be resolved by this adapter.
-        if variable != CODEX_AUTH_VARIABLE {
+        if variable != CODEX_AUTH_VARIABLE && !mcp_credentials.contains_key(variable) {
           return Err(unsupported);
         }
+        variables.insert(variable.clone(), json!({"required":true,"secret":true}));
         secret.insert(name.clone(), variable.clone());
       }
     }
@@ -116,7 +157,7 @@ pub(super) fn mcp(
   configurations: &[crate::FactoryCodexMcpConfiguration],
   public: &BTreeMap<String, String>,
   secret: &BTreeMap<String, String>,
-) -> Result<Option<BTreeMap<String, crate::FactoryCodexMcpServer>>, CodexCompilationError> {
+) -> Result<BTreeMap<String, crate::FactoryCodexMcpServer>, CodexCompilationError> {
   let execution = &role.package().inputs().profile.definition().execution;
   let invalid = CodexCompilationError::UnsupportedToolchain;
   let mut used = BTreeSet::new();
@@ -143,5 +184,7 @@ pub(super) fn mcp(
   if used.len() != execution.integrations.len() {
     return Err(invalid);
   }
-  Ok((!servers.is_empty()).then_some(servers))
+  // An explicit empty selection tells the native client to disable ambient MCP
+  // configuration too. Absence is reserved for the legacy non-Role compiler path.
+  Ok(servers)
 }

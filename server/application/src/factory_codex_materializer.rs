@@ -10,7 +10,8 @@ use octacity_artifact_store::ArtifactBytePublisher;
 use octacity_server_domain::{PipelineNodeId, Timestamp};
 use octacity_server_factory::{
   AdmittedFlow, BuildConfigurationRef, FactoryClaimOwnership, FactoryCredentialConsumer, FactoryCredentialProfiles,
-  FactoryPermissionSet, FactoryTaskToolchain, FactoryText, FlowBuildIntent, LocalPermissionCeiling,
+  FactoryCredentialPurpose, FactoryPermissionSet, FactoryTaskToolchain, FactoryText, FlowBuildIntent,
+  LocalPermissionCeiling,
 };
 use octacity_server_store::{AcceptFactoryBuild, FactoryExecutionInputStore};
 use std::{collections::BTreeMap, sync::Arc};
@@ -256,8 +257,20 @@ impl FactoryCodexBuildProfile {
       (FactoryCredentialConsumer::CodingNode, Some(_)) => true,
       _ => return Err(CodexCompilationError::CredentialProfile),
     };
+    let model_profile = self.credentials.profile(self.consumer.purpose());
+    // Installation grants the possible independent MCP profiles. Compilation
+    // subsequently requires exactly the selected qualified peer bindings.
+    let profiles = permissions.secret_profiles().collect::<std::collections::BTreeSet<_>>();
     if (self.tool_risk.is_some() && !protected_tools)
-      || permissions.secret_profiles().collect::<Vec<_>>() != [self.credentials.profile(self.consumer.purpose())]
+      || !profiles.contains(model_profile)
+      || [
+        FactoryCredentialPurpose::Model,
+        FactoryCredentialPurpose::Evaluator,
+        FactoryCredentialPurpose::Source,
+        FactoryCredentialPurpose::Delivery,
+      ]
+      .into_iter()
+      .any(|purpose| purpose != self.consumer.purpose() && profiles.contains(self.credentials.profile(purpose)))
     {
       return Err(CodexCompilationError::CredentialProfile);
     }
@@ -459,6 +472,14 @@ impl<
           .execution
           .integrations
           .is_empty()
+          || !role
+            .package()
+            .inputs()
+            .profile
+            .definition()
+            .execution
+            .mcp_servers
+            .is_empty()
         {
           self
             .role

@@ -8,7 +8,7 @@
 //! confirms protocol compatibility again during its `Hello` handshake.
 
 use std::{
-  collections::BTreeMap,
+  collections::{BTreeMap, BTreeSet},
   fs,
   io::Read as _,
   path::{Path, PathBuf},
@@ -93,7 +93,8 @@ pub struct RunnerPlugin {
 /// Operator configuration for one executable consumed by a trusted task plugin.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfiguredExternalExecutable {
-  /// Provider-neutral product identity declared by release compatibility metadata.
+  /// Operator-selected product identity; plugin-owned products must also occur
+  /// in the installed release compatibility metadata.
   pub product: String,
   /// Version claimed for the configured executable digest.
   pub version: String,
@@ -111,7 +112,8 @@ pub struct ConfiguredExternalExecutable {
 pub struct VerifiedExternalExecutable {
   /// Provider-neutral product identity.
   pub product: String,
-  /// Verified product version.
+  /// Operator-reviewed version paired with the verified digest. Plugin-owned
+  /// products additionally satisfy the release compatibility/version contract.
   pub version: String,
   /// Verified Octa runtime platform.
   pub platform: String,
@@ -338,7 +340,24 @@ impl RunnerInstallation {
     &self,
     configured: &[ConfiguredExternalExecutable],
   ) -> Result<BTreeMap<String, VerifiedExternalExecutable>, RunnerInstallationError> {
+    self.verify_external_executables_with_standalone(configured, &BTreeSet::new())
+  }
+
+  /// Also inventories explicitly operator-approved standalone tools such as MCP
+  /// servers. Their digest/platform are authoritative; they cannot replace a
+  /// release-owned plugin executable or add workload permission by themselves.
+  pub fn verify_external_executables_with_standalone(
+    &self,
+    configured: &[ConfiguredExternalExecutable],
+    standalone: &BTreeSet<String>,
+  ) -> Result<BTreeMap<String, VerifiedExternalExecutable>, RunnerInstallationError> {
     let requirements = load_external_executable_requirements(&self.root, &self.plugins)?;
+    if standalone
+      .iter()
+      .any(|product| !configured.iter().any(|executable| &executable.product == product))
+    {
+      return Err(invalid("standalone approval names an unconfigured executable"));
+    }
     let mut verified = BTreeMap::new();
     for executable in configured {
       if verified.contains_key(&executable.product) {
@@ -347,18 +366,40 @@ impl RunnerInstallation {
           executable.product
         )));
       }
-      let requirement = requirements.get(&executable.product).ok_or_else(|| {
-        invalid(format!(
-          "external executable product '{}' is not declared by the installed Octa release",
-          executable.product
-        ))
-      })?;
-      if !requirement.supported_versions.contains(&executable.version) {
-        return Err(invalid(format!(
-          "external executable '{}' version '{}' is not supported by the installed Octa release",
-          executable.product, executable.version
-        )));
-      }
+      let is_standalone = standalone.contains(&executable.product);
+      let selection_environment = if is_standalone {
+        if requirements.contains_key(&executable.product)
+          || !logical_name(&executable.product)
+          || executable.product.len() > 64
+          || executable.version.is_empty()
+          || executable.version.len() > 256
+          || executable.version.trim() != executable.version
+          || executable.version.chars().any(char::is_control)
+        {
+          return Err(invalid(
+            "standalone executable identity is invalid or owned by a plugin",
+          ));
+        }
+        // Hash the identity rather than normalizing punctuation into colliding selectors.
+        format!(
+          "OCTA_TOOL_{}",
+          hex::encode(Sha256::digest(executable.product.as_bytes()))
+        )
+      } else {
+        let requirement = requirements.get(&executable.product).ok_or_else(|| {
+          invalid(format!(
+            "external executable product '{}' is not declared by the installed Octa release",
+            executable.product
+          ))
+        })?;
+        if !requirement.supported_versions.contains(&executable.version) {
+          return Err(invalid(format!(
+            "external executable '{}' version '{}' is not supported by the installed Octa release",
+            executable.product, executable.version
+          )));
+        }
+        requirement.selection_environment.clone()
+      };
       if executable.platform != self.capabilities.platform {
         return Err(invalid(format!(
           "external executable '{}' platform '{}' differs from Octa runner platform '{}'",
@@ -398,14 +439,16 @@ impl RunnerInstallation {
         )));
       }
       let actual_platform = executable_platform(&path)?;
-      if actual_platform != "portable-script" && actual_platform != executable.platform {
+      if (is_standalone && actual_platform == "portable-script")
+        || (actual_platform != "portable-script" && actual_platform != executable.platform)
+      {
         return Err(invalid(format!(
           "external executable '{}' binary platform '{}' differs from configured platform '{}'",
           executable.product, actual_platform, executable.platform
         )));
       }
       let version_marker = executable.version.as_bytes();
-      if !file_contains(&path, version_marker)? {
+      if !is_standalone && !file_contains(&path, version_marker)? {
         return Err(invalid(format!(
           "external executable '{}' bytes do not contain the configured version identity",
           executable.product
@@ -419,7 +462,7 @@ impl RunnerInstallation {
           platform: executable.platform.clone(),
           executable: path,
           sha256: digest,
-          selection_environment: requirement.selection_environment.clone(),
+          selection_environment,
         },
       );
     }

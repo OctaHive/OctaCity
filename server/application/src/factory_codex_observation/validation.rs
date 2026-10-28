@@ -82,7 +82,7 @@ pub(super) fn validate_codex_run<T: DeserializeOwned>(
   }
   let result: CodexResultRecord<T> = parse_record(&result_document.bytes, base_usage)?;
   let provenance: CodexProvenanceRecord = parse_record(&provenance_document.bytes, base_usage)?;
-  if !valid_provenance(envelope, &result, &provenance) || !valid_trace(&trace_document.bytes) {
+  if !valid_provenance(envelope, &result, &provenance) || !valid_trace(&trace_document.bytes, &provenance) {
     return Err(failure(FactoryCodexObservationStatus::InvalidSchema, base_usage));
   }
   let tokens = result

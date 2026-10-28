@@ -145,11 +145,19 @@ fn verify_secret_profile_selection(
   execution: &ManagedOctaExecutionV3,
   permissions: &FactoryPermissionSetV3,
 ) -> Result<(), FactoryPreflightError> {
-  match &execution.credential_profile {
-    Some(profile) if permissions.secret_profiles.as_slice() == [profile.as_str()] => Ok(()),
-    None if permissions.secret_profiles.is_empty() => Ok(()),
-    Some(_) | None => Err(FactoryPreflightError::SecretProfile),
+  let profiles = execution
+    .credential_profiles()
+    .map_err(|_| FactoryPreflightError::SecretProfile)?;
+  if profiles.into_iter().collect::<Vec<_>>()
+    != permissions
+      .secret_profiles
+      .iter()
+      .map(String::as_str)
+      .collect::<Vec<_>>()
+  {
+    return Err(FactoryPreflightError::SecretProfile);
   }
+  Ok(())
 }
 
 fn verify_transfers(
@@ -485,6 +493,7 @@ mod tests {
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
       credential_profile: Some("model-coding".to_owned()),
+      mcp_credentials: Default::default(),
       tool_control: None,
     };
     let permissions = permissions();

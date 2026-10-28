@@ -483,10 +483,11 @@ pub use factory_codex::{
 };
 pub use factory_codex_observation::{
   CodexHarnessOutcome, FactoryCodexEvaluationObservation, FactoryCodexImplementationObservation,
-  FactoryCodexNodeRunContract, FactoryCodexNodeRunObservation, FactoryCodexObservationStatus,
-  FactoryCodexOutputDocument, FactoryCodexReviewerBinding, FactoryCodexTerminalObservation,
-  FactoryImplementationReport, observe_codex_evaluation, observe_codex_implementation, verify_codex_node_run,
-  verify_codex_review_node_run,
+  FactoryCodexNativeCapture, FactoryCodexNativeCaptureContract, FactoryCodexNodeRunContract,
+  FactoryCodexNodeRunObservation, FactoryCodexObservationStatus, FactoryCodexOutputDocument,
+  FactoryCodexProvenanceContract, FactoryCodexReviewerBinding, FactoryCodexTerminalObservation,
+  FactoryImplementationReport, FactoryNativeCaptureStatus, observe_codex_evaluation, observe_codex_implementation,
+  verify_codex_native_capture, verify_codex_node_run, verify_codex_review_node_run,
 };
 pub use factory_configuration_choices::{
   FactoryChoiceIdentity, FactoryChoiceMetadata, FactoryChoiceReferenceProjection,

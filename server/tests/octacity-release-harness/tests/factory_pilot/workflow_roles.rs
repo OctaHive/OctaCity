@@ -116,6 +116,7 @@ impl RolePilot {
       mcp_servers: [(
         FactoryKey::new("reader").unwrap(),
         FactoryRuntimeMcpEntry {
+          authorization: None,
           server,
           integration: Some(FactoryKey::new("reader").unwrap()),
         },

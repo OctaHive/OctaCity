@@ -42,6 +42,28 @@ pub(super) struct CodexResultRecord<T> {
   pub(super) usage: BTreeMap<String, u64>,
 }
 
+/// Lifecycle of captured native events; it grants no semantic execution result.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryNativeCaptureStatus {
+  /// A validated native terminal event and result were consumed.
+  Complete,
+  /// The owned client was cancelled; an unfinished remote operation stays unknown.
+  Cancelled,
+  /// Native execution or result validation failed; recorded observations remain partial.
+  Failed,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct NativeCaptureMetadata {
+  pub(super) status: FactoryNativeCaptureStatus,
+  pub(super) coverage: String,
+  pub(super) terminal_observed: bool,
+  pub(super) record_count: u64,
+  pub(super) trace_digest: DigestIdentity,
+}
+
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct EvaluationReportWire {
@@ -92,6 +114,8 @@ pub(super) struct CodexProvenanceRecord {
   pub(super) timing: Timing,
   pub(super) outcome: HarnessOutcomeWire,
   pub(super) usage: BTreeMap<String, u64>,
+  #[serde(default)]
+  pub(super) capture: Option<NativeCaptureMetadata>,
 }
 
 #[derive(Deserialize)]

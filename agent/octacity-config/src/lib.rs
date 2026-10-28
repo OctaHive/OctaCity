@@ -59,7 +59,8 @@ pub struct AgentConfig {
   /// Operator-installed executables available to trusted Octa task plugins.
   ///
   /// Keys are provider-neutral product identities. The installed Octa release
-  /// must declare a matching compatibility contract. JobSpec v1/v2 have no
+  /// must declare a matching compatibility contract unless the operator marks
+  /// a separately pinned standalone tool. JobSpec v1/v2 have no
   /// per-Job selector, so configured tools require a dedicated Agent profile.
   #[serde(default)]
   pub tool_executables: BTreeMap<String, ToolExecutableConfig>,
@@ -188,10 +189,15 @@ pub struct AgentConfig {
   pub max_accounting_failures: usize,
 }
 
-/// Immutable identity claimed for one operator-installed plugin executable.
+/// Immutable identity claimed for one operator-installed executable.
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolExecutableConfig {
+  /// Explicit operator opt-in for a standalone tool (for example a stdio MCP
+  /// server), independently pinned rather than selected by a task plugin.
+  /// This supplies inventory only and grants no Job execution authority.
+  #[serde(default)]
+  pub standalone: bool,
   /// Absolute path to the operator-installed executable.
   pub path: PathBuf,
   /// Product version bound to the configured digest.
@@ -660,6 +666,9 @@ impl AgentConfig {
       )?;
     }
     if let Some(capture) = &mut self.change_set_capture {
+      if capture.executable.standalone {
+        return invalid("ChangeSet capture uses its own provider contract, not a standalone tool selection");
+      }
       validate_operator_tool(
         "ChangeSet capture executable",
         &mut capture.executable,

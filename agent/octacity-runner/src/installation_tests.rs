@@ -185,6 +185,78 @@ fn verifies_external_executable_against_release_compatibility() {
 }
 
 #[test]
+fn explicitly_installed_standalone_mcp_program_is_projected_without_a_plugin_contract() {
+  let (_release, installation, codex) = codex_release();
+  let executable = codex.with_file_name("issue-reader");
+  write_executable(&executable, &linux_x86_64_executable_with_version("finite MCP peer"));
+  let configured = ConfiguredExternalExecutable {
+    product: "issue-reader".into(),
+    version: "1.2.0".into(),
+    platform: "linux-x86_64".into(),
+    executable: executable.clone(),
+    sha256: file_sha256(&executable).unwrap(),
+  };
+  assert!(
+    installation
+      .verify_external_executables(std::slice::from_ref(&configured))
+      .is_err()
+  );
+  let verified = installation
+    .verify_external_executables_with_standalone(
+      &[configured],
+      &std::collections::BTreeSet::from(["issue-reader".into()]),
+    )
+    .unwrap();
+  installation.revalidate_files(&verified).unwrap();
+  let program = installation.program_with_external_executables(&verified);
+  let projections = program.external_executable_projections();
+  assert_eq!(projections.len(), 1);
+  assert_eq!(projections[0].source, executable.canonicalize().unwrap());
+  assert_eq!(
+    projections[0].destination(Path::new("/opt/octacity/tools")),
+    Path::new("/opt/octacity/tools/tool-0")
+  );
+  fs::write(
+    &executable,
+    linux_x86_64_executable_with_version("substituted MCP peer"),
+  )
+  .unwrap();
+  assert!(installation.revalidate_files(&verified).is_err());
+}
+
+#[test]
+fn standalone_approval_cannot_name_an_absent_program() {
+  let (_release, installation, _) = codex_release();
+  assert!(
+    installation
+      .verify_external_executables_with_standalone(&[], &std::collections::BTreeSet::from(["missing-peer".into()]))
+      .is_err()
+  );
+}
+
+#[test]
+fn standalone_mcp_program_requires_native_guest_bytes() {
+  let (_release, installation, codex) = codex_release();
+  let executable = codex.with_file_name("unqualified-script");
+  write_executable(&executable, b"#!/bin/sh\n# version 1.2.0\n");
+  let configured = ConfiguredExternalExecutable {
+    product: "issue-reader".into(),
+    version: "1.2.0".into(),
+    platform: "linux-x86_64".into(),
+    sha256: file_sha256(&executable).unwrap(),
+    executable,
+  };
+  assert!(
+    installation
+      .verify_external_executables_with_standalone(
+        &[configured],
+        &std::collections::BTreeSet::from(["issue-reader".into()]),
+      )
+      .is_err()
+  );
+}
+
+#[test]
 fn revalidation_rejects_plugin_and_executable_drift_before_spawn() {
   let (_release, installation, executable) = codex_release();
   let configured = ConfiguredExternalExecutable {

@@ -401,6 +401,11 @@ administration are rechecked before dispatch, including retained-package replay.
 MCP receives only environment names explicitly declared
 by that profile; the implicit model credential is not inherited. A declaration
 for another adapter does not install its runtime support.
+Role-selected execution always supplies an explicit MCP server map, including an
+empty map when none is selected. The qualified Codex adapter consequently disables
+ambient client MCP configuration for that invocation. Standalone stdio programs
+use the existing independently approved Agent executable inventory; see
+[local installation and guest projection](local-stand.md#optional-factory-installation).
 Keep the installation's exact identities and retained old bindings available for
 existing Runs. Roll back by preventing new role-selected admissions and draining or
 cancelling them with a compatible binary; preserve retained packages/history and
@@ -1134,3 +1139,18 @@ contract; the explicit identifier is passed unchanged to the runtime and checked
 against observations. Exact token-rate pricing cannot be reused for a different
 identifier; the installed accounting policy must support the selected model.
 Refresh does not rewrite profiles, pending manual choices or retained runs.
+
+Authenticated Agent MCP connections use a dedicated one-value private credential
+profile per connection, separate from model login and server Source/Reporter
+profiles. The existing installed Runtime support must approve the exact
+transport, secret locator, `mcp_read` purpose and resource; saving an arbitrary
+bearer variable or an allowed hostname does not grant a credential destination.
+Agent private files are reread for new work, so removal or invalid rotation blocks
+execution without falling back to another profile. The native plugin and actual
+server/issuer must enforce the selected read/resource limits. See the
+[credential qualification and dependency status](../../openspec/changes/enable-local-stand-runtime-mcp/mcp-execution-verification.md#task-14-independent-mcp-credentials)
+for the qualified HTTP/stdio methods. The stand pins published Octa 0.8.0 with the
+required native-client compatibility fixes and MCP capture. See the
+[native evidence qualification](../../openspec/changes/enable-local-stand-runtime-mcp/mcp-evidence-verification.md)
+for call/result provenance and cancellation coverage; full stand qualification
+remains task 3.1.

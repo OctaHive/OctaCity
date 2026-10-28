@@ -624,6 +624,32 @@ fn role_package_passes_only_exact_installed_mcp_settings() {
 }
 
 #[test]
+fn role_without_selected_mcp_explicitly_disables_ambient_client_servers() {
+  let (intent, admitted, installed, package, bytes) = fixture_with(|_| {}, BTreeMap::new());
+  let role = FactoryRoleInvocation::new(package, None, BTreeMap::new()).unwrap();
+  let compiled = compile_codex_flow_task_with_options(
+    &intent,
+    &admitted,
+    &installed.instructions,
+    &installed.credentials,
+    installed.consumer,
+    &installed.usage_policy,
+    FactoryCodexFlowCompilationOptions {
+      role: Some(&role),
+      context: Some(&bytes),
+      ..Default::default()
+    },
+  )
+  .unwrap();
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  assert_eq!(
+    octafile["tasks"]["observe"]["cmds"][0]["codex"]["mcp_servers"],
+    json!({})
+  );
+}
+
+#[test]
 fn role_mcp_server_name_obeys_the_runtime_boundary() {
   let server = FactoryCodexMcpServer::Stdio {
     command: "/usr/bin/true".into(),
@@ -1152,6 +1178,330 @@ fn logical_secret(name: &str) -> octacity_server_secrets::LogicalSecretReference
   )
   .unwrap()
 }
+
+#[test]
+fn role_mcp_authentication_compiles_separate_private_profiles_and_transport_destinations() {
+  let configurations = [
+    (
+      "remote",
+      "HTTP_READ_TOKEN",
+      "OCTACITY_MCP_HTTP",
+      "mcp-http-read",
+      FactoryMcpServer::Http {
+        url: "https://mcp.example/tools".into(),
+        bearer_token_env_var: Some("HTTP_READ_TOKEN".into()),
+        enabled_tools: Some(vec!["read".into()]),
+      },
+    ),
+    (
+      "local",
+      "STDIO_READ_TOKEN",
+      "OCTACITY_MCP_STDIO",
+      "mcp-stdio-read",
+      FactoryMcpServer::Stdio {
+        command: "/runtime/mcp-reader".into(),
+        args: vec!["--read-only".into()],
+        env_vars: vec!["STDIO_READ_TOKEN".into()],
+        enabled_tools: Some(vec!["read".into()]),
+      },
+    ),
+  ]
+  .into_iter()
+  .map(|(alias, environment, variable, profile, server)| {
+    let secret = logical_secret(&format!("project/{profile}"));
+    let configuration = FactoryMcpConfiguration::new(key(alias), key("v1"), server, None)
+      .unwrap()
+      .with_authorization(FactoryMcpAuthorization {
+        credential_profile: key(profile),
+        secret: secret.clone(),
+        environment: environment.into(),
+        purpose: FactoryMcpCredentialPurpose::McpRead,
+        resource: reference("permitted-resource", 91),
+      })
+      .unwrap();
+    (
+      alias,
+      environment,
+      variable,
+      secret,
+      FactoryCodexMcpConfiguration::try_from(configuration).unwrap(),
+    )
+  })
+  .collect::<Vec<_>>();
+  let (intent, admitted, installed, package, bytes) = fixture_for_work_mode_with_context(
+    fixtures::work(),
+    |profile| {
+      for (alias, environment, _, secret, configuration) in &configurations {
+        profile.execution.environment.insert(
+          (*environment).into(),
+          FactoryRoleEnvironmentValue::Secret {
+            reference: secret.clone(),
+          },
+        );
+        profile.execution.mcp_servers.insert(
+          key(alias),
+          FactoryRoleMcpBinding {
+            configuration: configuration.reference().clone(),
+            integration: None,
+          },
+        );
+      }
+    },
+    BTreeMap::new(),
+    factory_role_task_digest,
+    false,
+    &[],
+    "MCP investigator",
+    &["mcp-http-read", "mcp-stdio-read"],
+  );
+  let role = FactoryRoleInvocation::new(
+    package,
+    None,
+    configurations
+      .iter()
+      .map(|(_, _, variable, secret, _)| ((*variable).into(), secret.clone()))
+      .collect(),
+  )
+  .unwrap();
+  let configurations = configurations
+    .into_iter()
+    .map(|(_, _, _, _, configuration)| configuration)
+    .collect::<Vec<_>>();
+  let compiled = compile_codex_flow_task_with_options(
+    &intent,
+    &admitted,
+    &installed.instructions,
+    &installed.credentials,
+    installed.consumer,
+    &installed.usage_policy,
+    FactoryCodexFlowCompilationOptions {
+      context: Some(&bytes),
+      role: Some(&role),
+      mcp_configurations: Some(&configurations),
+      ..Default::default()
+    },
+  )
+  .expect("qualified MCP tokens must not borrow model authentication");
+  let octafile: Value =
+    serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::Octafile).bytes()).unwrap();
+  let task = &octafile["tasks"]["observe"]["cmds"][0]["codex"];
+  assert_eq!(task["environment"]["secret"]["HTTP_READ_TOKEN"], "OCTACITY_MCP_HTTP");
+  assert_eq!(task["environment"]["secret"]["STDIO_READ_TOKEN"], "OCTACITY_MCP_STDIO");
+  assert_eq!(task["mcp_servers"]["local"]["env_vars"], json!(["STDIO_READ_TOKEN"]));
+  assert_eq!(
+    octafile["vars"]["OCTACITY_MCP_HTTP"],
+    json!({"required":true,"secret":true})
+  );
+  assert_eq!(compiled.credential_profile().as_str(), "model-evaluation");
+  let mut inputs = compiled
+    .documents()
+    .iter()
+    .map(|document| octacity_protocol::ProtectedInputV3 {
+      artifact_id: ArtifactId::generate().to_string(),
+      size_bytes: document.bytes().len() as u64,
+      sha256: document.content_digest().to_string(),
+      media_type: document.media_type().into(),
+      destination: document.destination().into(),
+    })
+    .collect::<Vec<_>>();
+  inputs.sort_by(|left, right| left.artifact_id.cmp(&right.artifact_id));
+  let program = compiled
+    .managed_program(octacity_protocol::ProtectedInputManifestV3 { inputs })
+    .unwrap();
+  assert_eq!(
+    program.execution.mcp_credentials,
+    BTreeMap::from([
+      ("OCTACITY_MCP_HTTP".into(), "mcp-http-read".into()),
+      ("OCTACITY_MCP_STDIO".into(), "mcp-stdio-read".into()),
+    ])
+  );
+}
+
+#[test]
+fn stored_role_source_resolves_only_installed_mcp_secret_locators_for_the_selected_profile() {
+  for alias in ["issues", "issues-read"] {
+    crate::factory_admission_tests::run_ready(async {
+      let secret = logical_secret("project/issue-read");
+      let configuration = FactoryMcpConfiguration::new(
+        key(alias),
+        key("v1"),
+        FactoryMcpServer::Http {
+          url: "https://mcp.example/tools".into(),
+          bearer_token_env_var: Some("ISSUE_TOKEN".into()),
+          enabled_tools: Some(vec!["read".into()]),
+        },
+        None,
+      )
+      .unwrap()
+      .with_authorization(FactoryMcpAuthorization {
+        credential_profile: key("mcp-read"),
+        secret: secret.clone(),
+        environment: "ISSUE_TOKEN".into(),
+        purpose: FactoryMcpCredentialPurpose::McpRead,
+        resource: reference("repository", 91),
+      })
+      .unwrap();
+      let (intent, _, mut installed, expected, context) = fixture_for_work_mode_with_context(
+        fixtures::work(),
+        |profile| {
+          profile.execution.environment.insert(
+            "ISSUE_TOKEN".into(),
+            FactoryRoleEnvironmentValue::Secret {
+              reference: secret.clone(),
+            },
+          );
+          profile.execution.mcp_servers.insert(
+            key(alias),
+            FactoryRoleMcpBinding {
+              configuration: configuration.reference().clone(),
+              integration: None,
+            },
+          );
+        },
+        BTreeMap::new(),
+        factory_role_task_digest,
+        true,
+        &[],
+        "MCP investigator",
+        &["mcp-read"],
+      );
+      installed.mcp_configurations = vec![configuration.try_into().unwrap()];
+      let store = publish_package_roles(&expected).await;
+      store
+        .enable_project(
+          expected.inputs().profile.reference().project_id,
+          FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries::default()).unwrap(),
+        )
+        .unwrap();
+      let source = FactoryStoredCodexRoleInvocationSource::new(
+        store.clone(),
+        Arc::new(crate::factory_skill_import_tests::Bytes::default()),
+        Arc::new(ContextBytes(context)),
+        vec![installed],
+      );
+      let invocation = source
+        .invocation(
+          &intent,
+          Timestamp::from_unix_millis(41).unwrap(),
+          intent.node().deadline(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+      assert_eq!(
+        invocation.secret_variables().values().cloned().collect::<Vec<_>>(),
+        vec![secret]
+      );
+      assert!(invocation.secret_variables().keys().all(
+        |name| name.starts_with("OCTACITY_MCP_") && name.len() <= octacity_protocol::MAX_FACTORY_WIRE_IDENTITY_BYTES
+      ));
+      source.authorize_dependencies(&invocation).await.unwrap();
+      store
+        .disable_project(expected.inputs().profile.reference().project_id)
+        .unwrap();
+      assert!(
+        source.authorize_dependencies(&invocation).await.is_err(),
+        "a retained role must not restore withdrawn local MCP authority"
+      );
+      assert!(
+        source
+          .invocation(
+            &intent,
+            Timestamp::from_unix_millis(42).unwrap(),
+            intent.node().deadline()
+          )
+          .await
+          .is_err()
+      );
+    });
+  }
+}
+
+#[test]
+fn mcp_tokens_cannot_use_native_inherited_bootstrap_environment_names() {
+  for environment in [
+    "LANG",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "LC_ALL",
+    "TZ",
+    "TERM",
+    "__CF_USER_TEXT_ENCODING",
+    "USERNAME",
+    "HOMEDRIVE",
+    "TEMP",
+    "PWSH",
+    "REQUESTS_CA_BUNDLE",
+  ] {
+    let secret = logical_secret("project/mcp-read");
+    let configuration = FactoryMcpConfiguration::new(
+      key("reader"),
+      key("v1"),
+      FactoryMcpServer::Http {
+        url: "https://mcp.example/tools".into(),
+        bearer_token_env_var: Some(environment.into()),
+        enabled_tools: Some(vec!["read".into()]),
+      },
+      None,
+    )
+    .unwrap()
+    .with_authorization(FactoryMcpAuthorization {
+      credential_profile: key("mcp-read"),
+      secret: secret.clone(),
+      environment: environment.into(),
+      purpose: FactoryMcpCredentialPurpose::McpRead,
+      resource: reference("repository", 91),
+    })
+    .unwrap();
+    let (intent, admitted, installed, package, bytes) = fixture_for_work_mode_with_context(
+      fixtures::work(),
+      |profile| {
+        profile.execution.environment.insert(
+          environment.into(),
+          FactoryRoleEnvironmentValue::Secret {
+            reference: secret.clone(),
+          },
+        );
+        profile.execution.mcp_servers.insert(
+          key("reader"),
+          FactoryRoleMcpBinding {
+            configuration: configuration.reference().clone(),
+            integration: None,
+          },
+        );
+      },
+      BTreeMap::new(),
+      factory_role_task_digest,
+      false,
+      &[],
+      "MCP reader",
+      &["mcp-read"],
+    );
+    let role =
+      FactoryRoleInvocation::new(package, None, BTreeMap::from([("OCTACITY_MCP_TOKEN".into(), secret)])).unwrap();
+    assert!(
+      compile_codex_flow_task_with_options(
+        &intent,
+        &admitted,
+        &installed.instructions,
+        &installed.credentials,
+        installed.consumer,
+        &installed.usage_policy,
+        FactoryCodexFlowCompilationOptions {
+          context: Some(&bytes),
+          role: Some(&role),
+          mcp_configurations: Some(&[configuration.try_into().unwrap()]),
+          ..Default::default()
+        }
+      )
+      .is_err(),
+      "secret {environment} would be inherited by an unrelated native MCP child"
+    );
+  }
+}
+
 #[test]
 fn role_package_maps_only_selected_qualified_secret_references_without_materializing_values() {
   let reference = logical_secret("project/model-auth");
@@ -1810,6 +2160,7 @@ fn configured_mcp_materialization_recovers_exact_transport_after_runtime_replace
         mcp_servers: [(
           key("reader"),
           FactoryRuntimeMcpEntry {
+            authorization: None,
             server: FactoryMcpServer::Stdio {
               command: "/usr/bin/true".into(),
               args: vec![],

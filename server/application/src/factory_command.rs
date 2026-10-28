@@ -410,6 +410,7 @@ impl CompiledFactoryCommandTask {
           .credential_profile
           .as_ref()
           .map(|key| key.as_str().to_owned()),
+        mcp_credentials: Default::default(),
         tool_control: None,
       },
       protected_inputs: manifest,

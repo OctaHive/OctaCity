@@ -12,11 +12,18 @@ pub struct FactoryRuntimeSettingsSupport {
   pub mcp_transports: BTreeSet<FactoryMcpTransport>,
   /// Qualified executable paths and exact identities for stdio, never client-installed binaries.
   pub mcp_executables: BTreeMap<String, ImmutableReference>,
+  /// Exact qualified authenticated peers. Settings cannot redirect their tokens,
+  /// select another secret or widen the installed read-only resource contract.
+  #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+  pub authenticated_mcp: BTreeMap<FactoryKey, FactoryMcpConfiguration>,
 }
 /// Named configured MCP entry, with an optional alias in the same integration selection.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryRuntimeMcpEntry {
+  /// Exact independent credential-purpose/resource binding, with no secret value.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub authorization: Option<FactoryMcpAuthorization>,
   /// Existing structured transport contract, without secret values.
   pub server: FactoryMcpServer,
   /// Required managed integration alias, when applicable.
@@ -69,12 +76,18 @@ impl FactoryRuntimeSettingsDefinition {
           .as_ref()
           .map(|name| self.integrations.get(name).cloned().ok_or_else(invalid))
           .transpose()?;
-        FactoryMcpConfiguration::new(
+        let configuration = FactoryMcpConfiguration::new(
           alias.clone(),
           FactoryKey::new(format!("v{}", version.get()))?,
           entry.server.clone(),
           integration,
-        )
+        )?;
+        entry
+          .authorization
+          .as_ref()
+          .map_or(Ok(configuration.clone()), |authorization| {
+            configuration.with_authorization(authorization.clone())
+          })
       })
       .transpose()
   }

@@ -313,6 +313,13 @@ impl FactoryConfigurationChoices {
   ) -> Result<Self, FactoryError> {
     if !self.role_profiles.contains_key(&alias)
       || support.mcp_executables.len() > crate::MAX_FACTORY_ROLE_PROFILE_ENTRIES
+      || support.authenticated_mcp.len() > crate::MAX_FACTORY_ROLE_PROFILE_ENTRIES
+      || support.authenticated_mcp.iter().any(|(name, configuration)| {
+        crate::validate_factory_mcp_server_name(name.as_str()).is_err()
+          || configuration.validate().is_err()
+          || configuration.authorization().is_none()
+          || !support.mcp_transports.contains(&configuration.server().transport())
+      })
       || support.mcp_executables.iter().any(|(path, reference)| {
         crate::FactoryPath::new(path).is_err()
           || !self
@@ -355,7 +362,20 @@ impl FactoryConfigurationChoices {
       let server = &settings.definition().mcp_servers[name].server;
       authority_preserved
         && self.runtime_settings.get(settings.runtime()).is_some_and(|support| {
+          let entry = &settings.definition().mcp_servers[name];
+          let authorization_current = entry.authorization.as_ref().is_none_or(|authorization| {
+            support.authenticated_mcp.get(name).is_some_and(|approved| {
+              approved.authorization() == Some(authorization)
+                && approved.server() == server
+                && approved.integration()
+                  == entry
+                    .integration
+                    .as_ref()
+                    .and_then(|alias| settings.definition().integrations.get(alias))
+            })
+          });
           support.mcp_transports.contains(&server.transport())
+            && authorization_current
             && match server {
               crate::FactoryMcpServer::Http { .. } => true,
               crate::FactoryMcpServer::Stdio { command, .. } => {

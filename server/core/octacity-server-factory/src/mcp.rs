@@ -1,6 +1,32 @@
 //! Shared structured MCP transports and immutable pins; adapters own execution and secret resolution.
 use crate::{FactoryDigest, FactoryError, FactoryKey, FactoryRoleIntegrationBinding, ImmutableReference};
+use octacity_server_secrets::LogicalSecretReference;
 use serde::{Deserialize, Serialize};
+
+/// Supported investigation credential purpose; it cannot authorize a business write.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FactoryMcpCredentialPurpose {
+  /// A separately issued read-only, resource-scoped MCP credential.
+  McpRead,
+}
+
+/// Installed connection authority. Values stay with the existing private credential owner.
+/// Resource and read-only restrictions must also be enforced by the qualified peer/token.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct FactoryMcpAuthorization {
+  /// Independent Agent credential profile; never the model or Source/Reporter profile.
+  pub credential_profile: FactoryKey,
+  /// Exact logical locator approved in the Role capability.
+  pub secret: LogicalSecretReference,
+  /// Only this transport's named environment entry receives the selected value.
+  pub environment: String,
+  /// Supported credential consumer purpose, distinct from model and delivery authority.
+  pub purpose: FactoryMcpCredentialPurpose,
+  /// Immutable resource scope of the operator-qualified read credential.
+  pub resource: ImmutableReference,
+}
 
 // Shared finite transport selection bounds, also used by the existing compiler.
 /// Maximum explicit tool or environment names in one MCP transport.
@@ -92,6 +118,8 @@ pub struct FactoryMcpConfiguration {
   server: FactoryMcpServer,
   #[serde(default, skip_serializing_if = "Option::is_none")]
   integration: Option<FactoryRoleIntegrationBinding>,
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  authorization: Option<FactoryMcpAuthorization>,
 }
 impl FactoryMcpConfiguration {
   /// Pins the transport bytes and exact existing Project connection selection together.
@@ -114,6 +142,7 @@ impl FactoryMcpConfiguration {
       reference: ImmutableReference::new(identity, version, FactoryDigest::content_sha256(&bytes)),
       server,
       integration,
+      authorization: None,
     })
   }
   /// Exact pin selected by the provider-independent Role/Profile contract.
@@ -122,12 +151,15 @@ impl FactoryMcpConfiguration {
   }
   /// Rejects substituted deployment bytes before this configuration can be installed.
   pub fn validate(&self) -> Result<(), FactoryError> {
-    let expected = Self::new(
+    let mut expected = Self::new(
       self.reference.identity().clone(),
       self.reference.version().clone(),
       self.server.clone(),
       self.integration.clone(),
     )?;
+    if let Some(authorization) = &self.authorization {
+      expected = expected.with_authorization(authorization.clone())?;
+    }
     if expected.reference != self.reference {
       return Err(FactoryError::InvalidConfiguration {
         field: "MCP configuration",
@@ -156,6 +188,50 @@ impl FactoryMcpServer {
   }
 }
 impl FactoryMcpConfiguration {
+  /// Pins independently approved authentication together with the exact transport.
+  /// Legacy unauthenticated configuration digests retain their original encoding.
+  pub fn with_authorization(mut self, authorization: FactoryMcpAuthorization) -> Result<Self, FactoryError> {
+    let invalid = || FactoryError::InvalidConfiguration {
+      field: "MCP authorization",
+    };
+    let name = &authorization.environment;
+    let mut chars = name.chars();
+    if name.len() > crate::MAX_FACTORY_KEY_BYTES
+      || !chars.next().is_some_and(|ch| ch.is_ascii_alphabetic() || ch == '_')
+      || !chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+      || self
+        .integration
+        .as_ref()
+        .is_some_and(|binding| binding.resource != authorization.resource)
+    {
+      return Err(invalid());
+    }
+    let mapped = match &self.server {
+      FactoryMcpServer::Http {
+        bearer_token_env_var, ..
+      } => bearer_token_env_var.as_ref() == Some(name),
+      FactoryMcpServer::Stdio { env_vars, .. } => env_vars.contains(name),
+    };
+    if !mapped {
+      return Err(invalid());
+    }
+    let bytes = serde_json::to_vec(&(&self.server, &self.integration, &authorization)).map_err(|_| invalid())?;
+    if bytes.len() > MAX_FACTORY_MCP_CONFIGURATION_BYTES {
+      return Err(invalid());
+    }
+    self.reference = ImmutableReference::new(
+      self.reference.identity().clone(),
+      self.reference.version().clone(),
+      FactoryDigest::content_sha256(&bytes),
+    );
+    self.authorization = Some(authorization);
+    Ok(self)
+  }
+  /// Exact connection credential/scope selection; absent means no authenticated MCP grant.
+  pub const fn authorization(&self) -> Option<&FactoryMcpAuthorization> {
+    self.authorization.as_ref()
+  }
+
   /// Structured retained transport; contains no credential values.
   pub const fn server(&self) -> &FactoryMcpServer {
     &self.server

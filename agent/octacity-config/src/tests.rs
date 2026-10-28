@@ -151,6 +151,7 @@ fn validates_operator_installed_tool_executable_identity() {
   fixture.config.tool_executables.insert(
     "codex-cli".to_owned(),
     ToolExecutableConfig {
+      standalone: false,
       path: executable.clone(),
       version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
@@ -175,6 +176,7 @@ fn validates_provider_selected_change_set_capture_identity() {
   fixture.config.change_set_capture = Some(ChangeSetCaptureConfig {
     provider: ChangeSetCaptureProvider::Git,
     executable: ToolExecutableConfig {
+      standalone: false,
       path: executable.clone(),
       version: "2.51.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
@@ -194,6 +196,7 @@ fn rejects_absent_or_job_writable_tool_executables() {
   absent.config.tool_executables.insert(
     "codex-cli".to_owned(),
     ToolExecutableConfig {
+      standalone: false,
       path: absent._temp.path().join("missing-codex"),
       version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
@@ -220,6 +223,7 @@ fn rejects_absent_or_job_writable_tool_executables() {
   writable.config.tool_executables.insert(
     "codex-cli".to_owned(),
     ToolExecutableConfig {
+      standalone: false,
       path: executable,
       version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),
@@ -248,6 +252,7 @@ fn rejects_tool_executable_writable_by_an_untrusted_local_user() {
   fixture.config.tool_executables.insert(
     "codex-cli".to_owned(),
     ToolExecutableConfig {
+      standalone: false,
       path: executable,
       version: "0.161.0".to_owned(),
       platform: "linux-x86_64".to_owned(),

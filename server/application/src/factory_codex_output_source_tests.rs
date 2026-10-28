@@ -507,6 +507,7 @@ async fn prepared_role_source_with_mcp(
         mcp_servers: [(
           fixtures::key("reader"),
           FactoryRuntimeMcpEntry {
+            authorization: None,
             server,
             integration: None,
           },
@@ -642,6 +643,7 @@ async fn prepared_role_source_with_mcp(
         .with_runtime_settings_support(
           settings.runtime().clone(),
           FactoryRuntimeSettingsSupport {
+            authenticated_mcp: Default::default(),
             mcp_transports: settings
               .definition()
               .mcp_servers
@@ -1814,6 +1816,44 @@ fn installed_capture_observations_cannot_reuse_model_publication_names() {
     );
   }
 }
+#[test]
+fn installed_model_policy_accepts_independent_mcp_profiles_and_rejects_other_consumers() {
+  crate::factory_admission_tests::run_ready(async {
+    let mut profile = prepared_source().await.profile;
+    let mut spec = crate::factory_job_test_support::canonical_v3_spec();
+    spec
+      .octa
+      .plugin_digests
+      .insert("codex".into(), profile.toolchain.plugin.digest().to_string());
+    let approved = crate::JobSpecToolchainPolicy {
+      source: octacity_server_job::SourcePluginPolicy::new(
+        spec.source.provider,
+        spec.source.plugin_version,
+        spec.source.plugin_sha256,
+        "url",
+      )
+      .unwrap(),
+      octa: spec.octa,
+      validity: octacity_server_job::JobSpecValidity::new(60).unwrap(),
+    };
+    let base = serde_json::to_value(&profile.project_permissions).unwrap();
+    for extra in ["mcp-read", "source-only", "delivery-only", "author-only"] {
+      let mut grants = base.clone();
+      grants["secret_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .push(serde_json::json!(extra));
+      profile.project_permissions = serde_json::from_value(grants).unwrap();
+      profile.local_permissions = LocalPermissionCeiling::fully_enforced(profile.project_permissions.clone());
+      assert_eq!(
+        profile.validate_installation(&approved).is_ok(),
+        extra == "mcp-read",
+        "{extra}"
+      );
+    }
+  });
+}
+
 #[test]
 fn installed_reviewer_policy_repins_the_task_and_qualifies_only_readonly_evaluation_with_candidate() {
   crate::factory_admission_tests::run_ready(async {

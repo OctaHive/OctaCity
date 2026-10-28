@@ -27,6 +27,19 @@ pub struct FactoryCodexNodeRunContract<'a> {
   /// original signed deadline. A provider cannot extend this window.
   pub execution_window: std::ops::RangeInclusive<Timestamp>,
 }
+
+impl FactoryCodexNodeRunContract<'_> {
+  pub(super) fn provenance_expectation(&self) -> CodexProvenanceExpectation<'_> {
+    CodexProvenanceExpectation {
+      plugin: &self.profile.plugin,
+      executable: &self.profile.tool,
+      model: &self.profile.model_or_tool,
+      model_identifier: self.model_identifier,
+      prompt_digest: self.prompt_digest,
+      source_revision: self.source_revision.as_str(),
+    }
+  }
+}
 /// Bounded typed facts with private harness identifiers and trace content removed.
 pub struct FactoryCodexNodeRunObservation {
   /// Harness execution status, independent of a configured semantic outcome.
@@ -197,35 +210,19 @@ fn verified_records(
   let result_document = documents.get(CODEX_RUN_RESULT).ok_or_else(invalid)?;
   let trace_document = documents.get(CODEX_RUN_TRACE).ok_or_else(invalid)?;
   let provenance_document = documents.get(CODEX_RUN_PROVENANCE).ok_or_else(invalid)?;
-  if !record_output_types(result_document, trace_document, provenance_document) || !valid_trace(&trace_document.bytes) {
+  if !record_output_types(result_document, trace_document, provenance_document) {
     return Err(invalid());
   }
   let result: CodexResultRecord<serde_json::Value> =
     serde_json::from_slice(&result_document.bytes).map_err(|_| invalid())?;
   let provenance: CodexProvenanceRecord = serde_json::from_slice(&provenance_document.bytes).map_err(|_| invalid())?;
-  let started = i64::try_from(provenance.timing.started_unix_millis)
-    .ok()
-    .and_then(|value| Timestamp::from_unix_millis(value).ok())
-    .ok_or_else(invalid)?;
-  let finished = i64::try_from(provenance.timing.finished_unix_millis)
-    .ok()
-    .and_then(|value| Timestamp::from_unix_millis(value).ok())
-    .ok_or_else(invalid)?;
-  if !expected.execution_window.contains(&started) || !expected.execution_window.contains(&finished) {
+  if !valid_trace(&trace_document.bytes, &provenance) {
     return Err(invalid());
   }
-  if !valid_provenance_for(
-    CodexProvenanceExpectation {
-      plugin: &expected.profile.plugin,
-      executable: &expected.profile.tool,
-      model: &expected.profile.model_or_tool,
-      model_identifier: expected.model_identifier,
-      prompt_digest: expected.prompt_digest,
-      source_revision: expected.source_revision.as_str(),
-    },
-    &result,
-    &provenance,
-  ) {
+  if !valid_provenance_window(&provenance, &expected.execution_window) {
+    return Err(invalid());
+  }
+  if !valid_provenance_for(expected.provenance_expectation(), &result, &provenance) {
     return Err(invalid());
   }
   let usage = BudgetUsage {

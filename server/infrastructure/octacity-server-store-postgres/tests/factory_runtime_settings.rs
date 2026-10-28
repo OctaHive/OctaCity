@@ -36,6 +36,7 @@ fn fixture(project: ProjectId) -> FactoryRuntimeSettingsIntent {
       mcp_servers: [(
         key("reader"),
         FactoryRuntimeMcpEntry {
+          authorization: None,
           server: FactoryMcpServer::Http {
             url: "https://mcp.example/tools".into(),
             bearer_token_env_var: None,
@@ -317,6 +318,7 @@ async fn configured_catalog_keeps_installation_separate_and_serializes_aggregate
       .with_runtime_settings_support(
         alias.clone(),
         FactoryRuntimeSettingsSupport {
+          authenticated_mcp: Default::default(),
           mcp_transports: [FactoryMcpTransport::Http].into(),
           mcp_executables: Default::default(),
         },

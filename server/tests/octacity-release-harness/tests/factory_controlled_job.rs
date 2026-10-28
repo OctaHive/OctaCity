@@ -328,6 +328,7 @@ async fn signed_controlled_job_reads_hidden_source_only_through_the_current_leas
       octafile_input: input.artifact_id.clone(),
       tasks: vec!["controlled".to_owned()],
       credential_profile: None,
+      mcp_credentials: Default::default(),
       tool_control: Some(FactoryToolControlV3 {
         plugin: "codex".to_owned(),
         capability: "codex.blocking-pre-tool-authorization.v1".to_owned(),

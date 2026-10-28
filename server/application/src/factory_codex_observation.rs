@@ -16,9 +16,14 @@ use crate::{FactoryBuildObservation, factory_codex_contract::CODEX_STAGE_SUMMARY
 
 mod evaluation;
 mod evidence;
+mod native_capture;
 mod node;
 mod records;
 mod validation;
+
+pub use evidence::FactoryCodexProvenanceContract;
+pub use native_capture::{FactoryCodexNativeCapture, FactoryCodexNativeCaptureContract, verify_codex_native_capture};
+pub use records::FactoryNativeCaptureStatus;
 
 pub use node::{
   FactoryCodexNodeRunContract, FactoryCodexNodeRunObservation, verify_codex_node_run, verify_codex_review_node_run,

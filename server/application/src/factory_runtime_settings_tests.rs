@@ -40,6 +40,7 @@ fn fixture() -> (Arc<InMemoryFactoryConfigurationStore>, FactoryRuntimeSettingsI
     .with_runtime_settings_support(
       runtime.clone(),
       FactoryRuntimeSettingsSupport {
+        authenticated_mcp: Default::default(),
         mcp_transports: [FactoryMcpTransport::Http].into(),
         mcp_executables: Default::default(),
       },
@@ -57,6 +58,7 @@ fn fixture() -> (Arc<InMemoryFactoryConfigurationStore>, FactoryRuntimeSettingsI
         mcp_servers: [(
           key("review"),
           FactoryRuntimeMcpEntry {
+            authorization: None,
             server: FactoryMcpServer::Http {
               url: "https://mcp.example/tools".into(),
               bearer_token_env_var: None,
@@ -72,6 +74,181 @@ fn fixture() -> (Arc<InMemoryFactoryConfigurationStore>, FactoryRuntimeSettingsI
     },
   )
 }
+#[test]
+fn authenticated_runtime_settings_require_exact_installed_peer_secret_and_resource_approval() {
+  run_ready(async {
+    let (store, mut intent) = fixture();
+    let FactoryConfigurationAvailability::Available(installed) = store
+      .factory_configuration_installation(intent.project_id)
+      .await
+      .unwrap()
+    else {
+      panic!("installed Runtime");
+    };
+    let secret = octacity_server_secrets::LogicalSecretReference::new(
+      octacity_server_secrets::SecretProviderId::new("agent-private").unwrap(),
+      "project/issue-read",
+    )
+    .unwrap();
+    let resource = ImmutableReference::new(key("repository"), key("v1"), FactoryDigest::from_bytes([7; 32]));
+    let authorization = FactoryMcpAuthorization {
+      credential_profile: key("mcp-read"),
+      secret: secret.clone(),
+      environment: "ISSUE_TOKEN".into(),
+      purpose: FactoryMcpCredentialPurpose::McpRead,
+      resource,
+    };
+    let entry = intent.definition.mcp_servers.get_mut(&key("review")).unwrap();
+    entry.server = FactoryMcpServer::Http {
+      url: "https://mcp.example/read".into(),
+      bearer_token_env_var: Some("ISSUE_TOKEN".into()),
+      enabled_tools: Some(vec!["read".into()]),
+    };
+    entry.authorization = Some(authorization.clone());
+    let approved = FactoryMcpConfiguration::new(key("review"), key("v1"), entry.server.clone(), None)
+      .unwrap()
+      .with_authorization(authorization)
+      .unwrap();
+    let mut cap = installed.role_profile_capabilities()[&intent.runtime].clone();
+    cap.ceiling.execution.environment.insert(
+      "ISSUE_TOKEN".into(),
+      FactoryRoleEnvironmentValue::Secret { reference: secret },
+    );
+    let mut grants = serde_json::to_value(&cap.ceiling.permissions).unwrap();
+    grants["secret_profiles"] = serde_json::json!(["mcp-read"]);
+    cap.ceiling.permissions = serde_json::from_value(grants).unwrap();
+    cap.local_permissions = LocalPermissionCeiling::fully_enforced(cap.ceiling.permissions.clone());
+    intent.definition.permissions = cap.ceiling.permissions.clone();
+    intent
+      .settings()
+      .expect("authenticated Runtime intent must be structurally valid");
+    let mut entries = installed.entries();
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::SecretProfile,
+      alias: key("mcp-read"),
+      reference: ImmutableReference::new(key("mcp-read"), key("v1"), FactoryDigest::from_bytes([8; 32])),
+    });
+    let installed = FactoryConfigurationChoices::try_new(entries)
+      .unwrap()
+      .with_role_profile_capability(intent.runtime.clone(), cap)
+      .unwrap()
+      .with_runtime_settings_support(
+        intent.runtime.clone(),
+        FactoryRuntimeSettingsSupport {
+          mcp_transports: [FactoryMcpTransport::Http].into(),
+          ..Default::default()
+        },
+      )
+      .unwrap();
+    store.enable_project(intent.project_id, installed.clone()).unwrap();
+    let commands = AuthorizedCommandHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
+    );
+    let command = |intent: FactoryRuntimeSettingsIntent, key_name: &str| PublishFactoryRuntimeSettingsCommand {
+      intent,
+      idempotency_key: IdempotencyKey::new(key_name).unwrap(),
+      published_at: Timestamp::from_unix_millis(1).unwrap(),
+    };
+    assert!(
+      commands
+        .handle_command(&context(), command(intent.clone(), "unqualified-auth"))
+        .await
+        .is_err(),
+      "a secret name alone must not approve a peer/resource credential destination"
+    );
+    let support = serde_json::from_value(
+      serde_json::json!({"mcp_transports":["http"],"mcp_executables":{},"authenticated_mcp":{"review":approved}}),
+    )
+    .unwrap();
+    store
+      .enable_project(
+        intent.project_id,
+        installed
+          .with_runtime_settings_support(intent.runtime.clone(), support)
+          .unwrap(),
+      )
+      .unwrap();
+    let saved = commands
+      .handle_command(&context(), command(intent.clone(), "qualified-auth"))
+      .await
+      .unwrap();
+    assert_eq!(
+      saved
+        .settings
+        .mcp_configuration(&key("review"))
+        .unwrap()
+        .unwrap()
+        .authorization(),
+      intent.definition.mcp_servers[&key("review")].authorization.as_ref()
+    );
+    let queries = AuthorizedQueryHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
+    );
+    let FactoryConfigurationAvailability::Available(current) = store
+      .factory_configuration_installation(intent.project_id)
+      .await
+      .unwrap()
+    else {
+      unreachable!()
+    };
+    let withdrawn = current
+      .with_runtime_settings_support(
+        intent.runtime.clone(),
+        FactoryRuntimeSettingsSupport {
+          mcp_transports: [FactoryMcpTransport::Http].into(),
+          ..Default::default()
+        },
+      )
+      .unwrap();
+    store.enable_project(intent.project_id, withdrawn).unwrap();
+    let details = queries
+      .handle_query(
+        &context(),
+        GetFactoryRoleProfileCapabilityQuery {
+          project_id: intent.project_id,
+          capability: intent.runtime.clone(),
+        },
+      )
+      .await
+      .unwrap();
+    assert!(
+      !details.definition.execution.mcp_servers.contains_key(&key("review")),
+      "withdrawing peer authority must remove it from new profile choices without erasing history"
+    );
+    assert!(
+      store
+        .factory_runtime_mcp_configuration(
+          intent.project_id,
+          saved
+            .settings
+            .mcp_configuration(&key("review"))
+            .unwrap()
+            .unwrap()
+            .reference()
+        )
+        .await
+        .unwrap()
+        .is_some()
+    );
+
+    let FactoryMcpServer::Http { url, .. } = &mut intent.definition.mcp_servers.get_mut(&key("review")).unwrap().server
+    else {
+      unreachable!()
+    };
+    *url = "https://mcp.example/another-peer".into();
+    intent.expected_version = Some(saved.settings.version());
+    assert!(
+      commands
+        .handle_command(&context(), command(intent, "redirect-auth"))
+        .await
+        .is_err(),
+      "saving settings must not redirect a credential even within an allowed host"
+    );
+  });
+}
+
 #[test]
 fn runtime_settings_publish_and_read_through_project_authorization_without_changing_installation() {
   run_ready(async {
@@ -430,6 +607,7 @@ fn runtime_settings_reuse_managed_integration_grants_and_exact_installed_stdio_c
     intent.definition.mcp_servers.insert(
       key("local"),
       FactoryRuntimeMcpEntry {
+        authorization: None,
         server: FactoryMcpServer::Stdio {
           command: "/runtime/mcp-reader".into(),
           args: vec!["--read".into()],
@@ -455,6 +633,7 @@ fn runtime_settings_reuse_managed_integration_grants_and_exact_installed_stdio_c
       .with_runtime_settings_support(
         intent.runtime.clone(),
         FactoryRuntimeSettingsSupport {
+          authenticated_mcp: Default::default(),
           mcp_transports: [FactoryMcpTransport::Http, FactoryMcpTransport::Stdio].into(),
           mcp_executables: [("/runtime/mcp-reader".into(), executable)].into(),
         },
@@ -701,7 +880,33 @@ fn configured_runtime_choices_are_shared_by_profile_details_and_validation() {
     };
     let executable = intent.definition.toolchain.executable.clone();
     let mut cap = installed.role_profile_capabilities()[&intent.runtime].clone();
+    let secret = octacity_server_secrets::LogicalSecretReference::new(
+      octacity_server_secrets::SecretProviderId::new("agent-private").unwrap(),
+      "project/mcp-read",
+    )
+    .unwrap();
+    let authorization = FactoryMcpAuthorization {
+      credential_profile: key("mcp-read"),
+      secret: secret.clone(),
+      environment: "MCP_AUTH".into(),
+      purpose: FactoryMcpCredentialPurpose::McpRead,
+      resource: ImmutableReference::new(key("repository"), key("v1"), FactoryDigest::from_bytes([7; 32])),
+    };
+    let authenticated = FactoryMcpServer::Http {
+      url: "https://mcp.example/authenticated".into(),
+      bearer_token_env_var: Some("MCP_AUTH".into()),
+      enabled_tools: None,
+    };
+    let approved = FactoryMcpConfiguration::new(key("authenticated"), key("v1"), authenticated.clone(), None)
+      .unwrap()
+      .with_authorization(authorization.clone())
+      .unwrap();
+    cap.ceiling.execution.environment.insert(
+      "MCP_AUTH".into(),
+      FactoryRoleEnvironmentValue::Secret { reference: secret },
+    );
     let permissions = FactoryPermissionSet::try_new(FactoryPermissionDraft {
+      secret_profiles: vec![key("mcp-read")],
       network_hosts: vec![NetworkHost::new("mcp.example").unwrap()],
       executables: vec![executable.clone()],
       commands: vec![CommandPermission::try_new(executable.clone(), vec![]).unwrap()],
@@ -710,6 +915,13 @@ fn configured_runtime_choices_are_shared_by_profile_details_and_validation() {
     .unwrap();
     cap.ceiling.permissions = permissions.clone();
     cap.local_permissions = LocalPermissionCeiling::fully_enforced(permissions.clone());
+    let mut entries = installed.entries();
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::SecretProfile,
+      alias: key("mcp-read"),
+      reference: ImmutableReference::new(key("mcp-read"), key("v1"), FactoryDigest::from_bytes([8; 32])),
+    });
+    let installed = FactoryConfigurationChoices::try_new(entries).unwrap();
     store
       .enable_project(
         intent.project_id,
@@ -719,6 +931,7 @@ fn configured_runtime_choices_are_shared_by_profile_details_and_validation() {
           .with_runtime_settings_support(
             intent.runtime.clone(),
             FactoryRuntimeSettingsSupport {
+              authenticated_mcp: [(key("authenticated"), approved)].into(),
               mcp_transports: [FactoryMcpTransport::Http, FactoryMcpTransport::Stdio].into(),
               mcp_executables: [("/runtime/mcp-reader".into(), executable)].into(),
             },
@@ -730,6 +943,7 @@ fn configured_runtime_choices_are_shared_by_profile_details_and_validation() {
     intent.definition.mcp_servers.insert(
       key("local"),
       FactoryRuntimeMcpEntry {
+        authorization: None,
         server: FactoryMcpServer::Stdio {
           command: "/runtime/mcp-reader".into(),
           args: vec![],
@@ -742,11 +956,8 @@ fn configured_runtime_choices_are_shared_by_profile_details_and_validation() {
     intent.definition.mcp_servers.insert(
       key("authenticated"),
       FactoryRuntimeMcpEntry {
-        server: FactoryMcpServer::Http {
-          url: "https://mcp.example/authenticated".into(),
-          bearer_token_env_var: Some("MODEL_AUTH".into()),
-          enabled_tools: None,
-        },
+        authorization: Some(authorization),
+        server: authenticated,
         integration: None,
       },
     );
@@ -824,7 +1035,7 @@ fn configured_runtime_choices_are_shared_by_profile_details_and_validation() {
     let validation = queries.handle_query(&context(), candidate.clone()).await.unwrap();
     assert_eq!(validation.incompatibility, None);
     assert_eq!(validation.profile.unwrap().definition(), &details.definition);
-    for required in ["LANGUAGE", "MODEL_AUTH"] {
+    for required in ["LANGUAGE", "MCP_AUTH"] {
       let mut incomplete = candidate.clone();
       incomplete.definition.execution.environment.remove(required);
       let rejected = queries.handle_query(&context(), incomplete.clone()).await.unwrap();

@@ -893,6 +893,7 @@ fn oci_v3_specification(ordinary: &JobSpecV2, runner: &RunnerInstallation, octaf
       octafile_input: protected_input.artifact_id.clone(),
       tasks: vec!["contract".to_owned()],
       credential_profile: None,
+      mcp_credentials: Default::default(),
       tool_control: None,
     },
     runtime: ordinary.runtime.clone(),

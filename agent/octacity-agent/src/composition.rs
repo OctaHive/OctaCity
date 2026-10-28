@@ -82,7 +82,14 @@ impl Components {
         sha256: executable.sha256.clone(),
       })
       .collect::<Vec<_>>();
-    let tool_executables = runner.verify_external_executables(&configured_executables)?;
+    let standalone = validated
+      .config
+      .tool_executables
+      .iter()
+      .filter(|(_, executable)| executable.standalone)
+      .map(|(product, _)| product.clone())
+      .collect();
+    let tool_executables = runner.verify_external_executables_with_standalone(&configured_executables, &standalone)?;
     #[cfg(unix)]
     let (tool_executables, reader) = factory_reader::load(&validated.config, tool_executables)?;
     #[cfg(unix)]

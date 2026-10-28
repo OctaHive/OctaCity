@@ -298,12 +298,16 @@ impl Fixture {
   }
 
   fn replace_document(&mut self, name: &str, value: Value) {
+    self.replace_document_bytes(name, serde_json::to_vec(&value).unwrap());
+  }
+
+  fn replace_document_bytes(&mut self, name: &str, bytes: Vec<u8>) {
     let document = self
       .documents
       .iter_mut()
       .find(|document| document.identity.logical_name.as_str() == name)
       .unwrap();
-    document.bytes = serde_json::to_vec(&value).unwrap();
+    document.bytes = bytes;
     document.identity.size_bytes = document.bytes.len() as u64;
     document.identity.digest = digest(&document.bytes);
     let output = self
@@ -652,6 +656,202 @@ fn invalid_json_schema_and_missing_deliverables_are_not_collapsed() {
     .status(),
     FactoryCodexObservationStatus::MissingDeliverable
   );
+}
+
+#[test]
+fn native_capture_handoff_keeps_partial_evidence_without_creating_a_model_result() {
+  use crate::{FactoryNativeCaptureStatus, verify_codex_native_capture};
+  let (_, profile, _) = node_observation_fixture();
+  for (status, count, expected) in [
+    ("complete", 3, FactoryNativeCaptureStatus::Complete),
+    ("cancelled", 1, FactoryNativeCaptureStatus::Cancelled),
+    ("failed", 0, FactoryNativeCaptureStatus::Failed),
+  ] {
+    let mut fixture = native_capture_fixture("retained MCP facts");
+    let trace = std::str::from_utf8(&fixture.documents[1].bytes)
+      .unwrap()
+      .lines()
+      .take(count)
+      .flat_map(|line| line.bytes().chain(std::iter::once(b'\n')))
+      .collect::<Vec<_>>();
+    let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+    provenance["capture"]["status"] = json!(status);
+    provenance["capture"]["record_count"] = json!(count);
+    provenance["capture"]["terminal_observed"] = json!(status == "complete");
+    provenance["capture"]["trace_digest"]["value"] = json!(FactoryDigest::content_blake3(&trace).to_string());
+    if status != "complete" {
+      provenance["outcome"] = json!("failed");
+      provenance["usage"] = json!({});
+    }
+    fixture.replace_document_bytes("codex-run-trace", trace);
+    fixture.replace_document("codex-run-provenance", provenance);
+    fixture
+      .documents
+      .retain(|document| document.identity.logical_name.as_str() != "codex-run-result");
+    let captured =
+      verify_codex_native_capture(native_capture_contract(&fixture, &profile), &fixture.documents).unwrap();
+    assert_eq!(captured.status(), expected);
+    assert_eq!(captured.record_count(), count as u64);
+    assert_eq!(captured.trace(), &fixture.documents[0].identity);
+    assert_eq!(captured.provenance(), &fixture.documents[1].identity);
+  }
+}
+
+fn native_capture_contract<'a>(
+  fixture: &'a Fixture,
+  profile: &'a octacity_server_factory::FlowBuildProfile,
+) -> crate::FactoryCodexNativeCaptureContract<'a> {
+  let identity = &fixture.documents[0].identity;
+  crate::FactoryCodexNativeCaptureContract {
+    build_id: identity.build_id,
+    attempt_id: identity.attempt_id,
+    job_id: identity.job_id,
+    provenance: crate::FactoryCodexProvenanceContract {
+      model_identifier: None,
+      plugin: &profile.plugin,
+      executable: &profile.tool,
+      model: &profile.model_or_tool,
+      prompt_digest: fixture.envelope.digests().prompt_provenance,
+      source_revision: fixture.envelope.subject().exact().base_revision().as_str(),
+    },
+    maximum_bytes: fixture.envelope.budget().max_output_bytes(),
+    execution_window: Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1010).unwrap(),
+  }
+}
+
+#[test]
+fn native_capture_handoff_rejects_unsupported_or_misbound_evidence() {
+  use crate::{ApplicationFailure, verify_codex_native_capture};
+  let (_, profile, _) = node_observation_fixture();
+  for mutation in [
+    "legacy",
+    "job",
+    "profile",
+    "window",
+    "count",
+    "digest",
+    "coverage",
+    "post_terminal",
+  ] {
+    let mut fixture = if mutation == "legacy" {
+      Fixture::successful()
+    } else {
+      native_capture_fixture("facts")
+    };
+    match mutation {
+      "job" => fixture.documents[1].identity.job_id = JobId::generate(),
+      "profile" | "count" | "digest" | "coverage" => {
+        let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+        match mutation {
+          "profile" => provenance["plugin"]["version"] = json!("another-plugin"),
+          "count" => provenance["capture"]["record_count"] = json!(99),
+          "digest" => provenance["capture"]["trace_digest"]["value"] = json!("00".repeat(32)),
+          _ => provenance["capture"]["coverage"] = json!("all_remote_issues"),
+        }
+        fixture.replace_document("codex-run-provenance", provenance);
+      }
+      "post_terminal" => {
+        let mut trace = fixture.documents[1].bytes.clone();
+        trace.extend_from_slice(b"{\"format_version\":2,\"sequence\":3,\"observed_at_unix_millis\":1010,\"event\":{\"type\":\"item.started\",\"item\":{\"type\":\"mcp_tool_call\"}}}\n");
+        let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+        provenance["capture"]["record_count"] = json!(4);
+        provenance["capture"]["trace_digest"]["value"] = json!(FactoryDigest::content_blake3(&trace).to_string());
+        fixture.replace_document_bytes("codex-run-trace", trace);
+        fixture.replace_document("codex-run-provenance", provenance);
+      }
+      _ => {}
+    }
+    let mut contract = native_capture_contract(&fixture, &profile);
+    if mutation == "window" {
+      contract.execution_window =
+        Timestamp::from_unix_millis(1000).unwrap()..=Timestamp::from_unix_millis(1004).unwrap();
+    }
+    let expected = if mutation == "legacy" {
+      ApplicationFailure::CapabilityUnavailable
+    } else {
+      ApplicationFailure::Invalid
+    };
+    match verify_codex_native_capture(contract, &fixture.documents) {
+      Ok(_) => panic!("{mutation} must not establish native capture"),
+      Err(error) => assert_eq!(error.classification(), expected, "{mutation}"),
+    }
+  }
+}
+
+#[test]
+fn native_capture_v2_preserves_verified_mcp_trace_provenance() {
+  let fixture = native_capture_fixture("candidate evidence");
+  let observed = observe_codex_implementation(
+    &fixture.envelope,
+    &fixture.build,
+    10,
+    &fixture.runner_events,
+    &fixture.documents,
+  );
+  assert_eq!(observed.status(), FactoryCodexObservationStatus::Succeeded);
+  assert!(observed.trace().is_some());
+  assert!(observed.provenance().is_some());
+}
+
+#[test]
+fn native_capture_preserves_multiline_mcp_results() {
+  let fixture = native_capture_fixture("issue title\nretained details\tand a quoted line\r\n");
+  let observed = observe_codex_implementation(
+    &fixture.envelope,
+    &fixture.build,
+    10,
+    &fixture.runner_events,
+    &fixture.documents,
+  );
+  assert_eq!(observed.status(), FactoryCodexObservationStatus::Succeeded);
+}
+
+fn native_capture_fixture(result_text: &str) -> Fixture {
+  let mut fixture = Fixture::successful();
+  let item = json!({"id":"call-1","type":"mcp_tool_call","server":"issues","tool":"lookup",
+    "arguments":{"query":"candidate"},"status":"in_progress","result":null,"error":null});
+  let mut completed = item.clone();
+  completed["status"] = json!("completed");
+  completed["result"] = json!({"content":[{"type":"text","text":result_text}],"structured_content":null});
+  let records = [
+    json!({"format_version":2,"sequence":0,"observed_at_unix_millis":1001,"event":{"type":"item.started","item":item}}),
+    json!({"format_version":2,"sequence":1,"observed_at_unix_millis":1005,"event":{"type":"item.completed","item":completed}}),
+    json!({"format_version":2,"sequence":2,"observed_at_unix_millis":1009,"event":{"type":"turn.completed"}}),
+  ];
+  let trace = records
+    .iter()
+    .flat_map(|record| {
+      let mut bytes = serde_json::to_vec(record).unwrap();
+      bytes.push(b'\n');
+      bytes
+    })
+    .collect::<Vec<_>>();
+  let mut provenance: Value = serde_json::from_slice(&fixture.documents[2].bytes).unwrap();
+  provenance["format_version"] = json!(2);
+  provenance["trace_format_version"] = json!(2);
+  provenance["capture"] = json!({"status":"complete","coverage":"emitted_native_events",
+    "terminal_observed":true,"record_count":3,"trace_digest":{"algorithm":"blake3","value":FactoryDigest::content_blake3(&trace).to_string()}});
+  fixture.replace_document_bytes("codex-run-trace", trace);
+  fixture.replace_document("codex-run-provenance", provenance);
+  // The implementation summary is independently bound to the exact provenance
+  // bytes, so publishing the v2 document also requires its new summary identity.
+  let provenance_digest = FactoryDigest::from_bytes(fixture.documents[2].identity.digest.as_bytes());
+  let summary = BoundedSummary::new(
+    fixture.envelope.subject().clone(),
+    FactorySafeText::new("Implemented the bounded change").unwrap(),
+    provenance_digest,
+  )
+  .canonical_bytes()
+  .unwrap();
+  let output = fixture
+    .build
+    .outputs_mut()
+    .iter_mut()
+    .find(|output| output.logical_name.as_str() == "stage-summary")
+    .unwrap();
+  output.digest = digest(&summary);
+  output.size_bytes = summary.len() as u64;
+  fixture
 }
 
 #[test]

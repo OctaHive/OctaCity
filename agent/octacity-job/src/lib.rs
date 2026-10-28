@@ -632,14 +632,7 @@ impl JobExecutor {
       // A signed logical allowlist cannot resolve a credential from repository
       // contents. Refuse credentialed work until its private local installation
       // is composed; staging and Source I/O must not run first.
-      if intent
-        .execution
-        .credential_profile
-        .as_ref()
-        .is_some_and(|profile| !self.factory_credential_profiles.contains_key(profile))
-      {
-        return Err(JobError::FactoryPreflight(FactoryPreflightError::SecretProfile).into());
-      }
+      self.resolve_factory_credentials(intent)?;
       if self.protected_input_stager.is_none() {
         return Err(JobError::ProtectedInputs(ProtectedInputError::Policy).into());
       }

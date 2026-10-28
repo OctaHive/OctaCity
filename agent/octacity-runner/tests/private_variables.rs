@@ -6,6 +6,28 @@ use octacity_runner::RunnerPrivateVariables;
 use sha2::{Digest as _, Sha256};
 
 #[test]
+fn independent_credential_selection_cannot_reuse_values_or_exceed_the_private_budget() {
+  let model = RunnerPrivateVariables::new(BTreeMap::from([("MODEL".into(), "model-only-canary".into())])).unwrap();
+  let reused = RunnerPrivateVariables::new(BTreeMap::from([("TOKEN".into(), "model-only-canary".into())])).unwrap();
+  assert!(
+    model.with_selected_credential("OCTACITY_MCP_ONE", &reused).is_err(),
+    "a renamed model token is not an independent MCP credential"
+  );
+  let full = RunnerPrivateVariables::new(BTreeMap::from([("MODEL".into(), "x".repeat(1024 * 1024 - 6))])).unwrap();
+  let extra = RunnerPrivateVariables::new(BTreeMap::from([("TOKEN".into(), "other-credential".into())])).unwrap();
+  assert!(
+    full.with_selected_credential("OCTACITY_MCP_ONE", &extra).is_err(),
+    "merging profiles cannot multiply the existing private-byte limit"
+  );
+  let ambiguous = RunnerPrivateVariables::new(BTreeMap::from([
+    ("ONE".into(), "one".into()),
+    ("TWO".into(), "two".into()),
+  ]))
+  .unwrap();
+  assert!(model.with_selected_credential("OCTACITY_MCP_ONE", &ambiguous).is_err());
+}
+
+#[test]
 fn private_variables_authorize_only_declared_secret_required_inputs() {
   let octafile = br#"{"version":1,"vars":{"PRIVATE_AUTH":{"required":true,"secret":true},"PUBLIC_PROMPT":"immutable public instruction"},"tasks":{"execute":{"cmds":[{"id":"fixture","fixture":{"operation":"bounded"}}]}}}"#;
   let input = ProtectedInputV3 {

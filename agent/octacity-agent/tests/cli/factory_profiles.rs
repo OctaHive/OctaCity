@@ -139,6 +139,35 @@ fn disabled_factory_does_not_load_a_missing_private_profile() {
 }
 
 #[test]
+fn validates_an_explicit_standalone_mcp_program_without_a_release_plugin_contract() {
+  let mut installation = Installation::new();
+  let executable = installation.temporary.path().join("mcp-peer");
+  let mut bytes = vec![0_u8; 64];
+  bytes[..6].copy_from_slice(b"\x7fELF\x02\x01");
+  bytes[18..20].copy_from_slice(&183_u16.to_le_bytes());
+  bytes.extend_from_slice(b"finite standalone MCP peer");
+  fs::write(&executable, bytes).unwrap();
+  fs::set_permissions(&executable, fs::Permissions::from_mode(0o700)).unwrap();
+  let tools: toml::Value = toml::from_str(&format!(
+    "[issue-reader]\npath = {:?}\nversion = \"1.2.0\"\nplatform = \"linux-aarch64\"\nsha256 = \"cffdc6641e7796a7adb21fcc054b904d2f6252bd467cec50dfaba23da62dec3f\"\nstandalone = true\n",
+    executable.to_str().unwrap()
+  )).unwrap();
+  installation
+    .document
+    .as_table_mut()
+    .unwrap()
+    .insert("tool_executables".into(), tools);
+  let output = installation.validate();
+  let diagnostic = format!(
+    "{}{}",
+    String::from_utf8_lossy(&output.stdout),
+    String::from_utf8_lossy(&output.stderr)
+  );
+  assert!(output.status.success(), "{diagnostic}");
+  assert!(diagnostic.contains("1 tool executable(s)"), "{diagnostic}");
+}
+
+#[test]
 fn disabled_factory_does_not_require_an_optional_private_profile_directory() {
   let mut installation = Installation::new();
   let missing_parent = installation.temporary.path().join("not-provisioned-private-values");

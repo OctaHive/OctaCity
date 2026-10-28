@@ -58,6 +58,16 @@ pub(crate) async fn configurations(
   Ok(configurations)
 }
 impl FactoryCodexMcpConfiguration {
+  pub(crate) fn same_authority(&self, approved: &FactoryMcpConfiguration) -> bool {
+    self.0.server() == approved.server()
+      && self.0.authorization() == approved.authorization()
+      && self.0.integration() == approved.integration()
+  }
+
+  /// Exact independently installed credential/scope contract for this connection.
+  pub const fn authorization(&self) -> Option<&octacity_server_factory::FactoryMcpAuthorization> {
+    self.0.authorization()
+  }
   /// Reuses common transport pinning without a provider-specific content format.
   pub fn new(
     identity: FactoryKey,
@@ -82,6 +92,65 @@ impl FactoryCodexMcpConfiguration {
   }
 }
 
+pub(crate) fn credential_bindings(
+  role: &crate::FactoryRoleInvocation,
+  configurations: &[FactoryCodexMcpConfiguration],
+  profiles: &octacity_server_factory::FactoryCredentialProfiles,
+) -> Result<std::collections::BTreeMap<String, String>, CodexCompilationError> {
+  use octacity_server_factory::{FactoryCredentialPurpose as Purpose, FactoryRoleEnvironmentValue};
+  let invalid = CodexCompilationError::UnsupportedToolchain;
+  let execution = &role.package().inputs().profile.definition().execution;
+  let mut selected = std::collections::BTreeMap::new();
+  let mut secrets = std::collections::BTreeSet::new();
+  let mut credential_profiles = std::collections::BTreeSet::new();
+  for binding in execution.mcp_servers.values() {
+    let configuration = configurations
+      .iter()
+      .find(|entry| entry.reference() == &binding.configuration)
+      .ok_or(invalid)?;
+    let Some(authorization) = configuration.authorization() else {
+      continue;
+    };
+    configuration.validate()?;
+    if [Purpose::Model, Purpose::Evaluator, Purpose::Source, Purpose::Delivery]
+      .into_iter()
+      .any(|purpose| profiles.profile(purpose) == &authorization.credential_profile)
+      || !credential_profiles.insert(&authorization.credential_profile)
+      || !secrets.insert(&authorization.secret)
+      || execution.environment.get(&authorization.environment)
+        != Some(&FactoryRoleEnvironmentValue::Secret {
+          reference: authorization.secret.clone(),
+        })
+    {
+      return Err(invalid);
+    }
+    let variable = role
+      .secret_variables()
+      .iter()
+      .find(|(_, reference)| *reference == &authorization.secret)
+      .map(|(variable, _)| variable)
+      .ok_or(invalid)?;
+    if !variable.starts_with("OCTACITY_MCP_")
+      || !variable
+        .bytes()
+        .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+      || selected
+        .insert(variable.clone(), authorization.credential_profile.as_str().to_owned())
+        .is_some()
+    {
+      return Err(invalid);
+    }
+  }
+  if role
+    .secret_variables()
+    .keys()
+    .any(|variable| variable.starts_with("OCTACITY_MCP_") && !selected.contains_key(variable))
+  {
+    return Err(invalid);
+  }
+  Ok(selected)
+}
+
 pub(crate) fn resolve(
   configuration: &FactoryCodexMcpConfiguration,
   integration: Option<&FactoryRoleIntegrationBinding>,
@@ -100,10 +169,14 @@ pub(crate) fn resolve(
       bearer_token_env_var, ..
     } => {
       if bearer_token_env_var.as_ref().is_some_and(|name| {
-        !matches!(
-          declared.get(name),
-          Some(octacity_server_factory::FactoryRoleEnvironmentValue::Secret { .. })
-        ) || !secret.contains_key(name)
+        configuration
+          .authorization()
+          .is_none_or(|authorization| &authorization.environment != name)
+          || !matches!(
+            declared.get(name),
+            Some(octacity_server_factory::FactoryRoleEnvironmentValue::Secret { .. })
+          )
+          || !secret.contains_key(name)
       }) {
         return Err(Invalid);
       }
@@ -113,6 +186,14 @@ pub(crate) fn resolve(
         .iter()
         .any(|name| !declared.contains_key(name) || (!public.contains_key(name) && !secret.contains_key(name)))
       {
+        return Err(Invalid);
+      }
+      if env_vars.iter().any(|name| {
+        secret.contains_key(name)
+          && configuration
+            .authorization()
+            .is_none_or(|authorization| &authorization.environment != name)
+      }) {
         return Err(Invalid);
       }
     }

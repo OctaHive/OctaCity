@@ -215,11 +215,54 @@ impl<
       }
     }
     let support = choices.runtime_settings_support(&intent.runtime);
-    for entry in definition.mcp_servers.values() {
+    for (alias, entry) in &definition.mcp_servers {
       let support = support
         .filter(|s| s.mcp_transports.contains(&entry.server.transport()))
         .ok_or_else(ApplicationError::capability_unavailable)?;
       let endpoint = crate::factory_mcp::validate_transport(&entry.server).map_err(|_| ApplicationError::invalid())?;
+      let secret_names = match &entry.server {
+        FactoryMcpServer::Http {
+          bearer_token_env_var, ..
+        } => bearer_token_env_var.iter().collect::<Vec<_>>(),
+        FactoryMcpServer::Stdio { env_vars, .. } => env_vars
+          .iter()
+          .filter(|name| {
+            matches!(
+              cap.ceiling.execution.environment.get(*name),
+              Some(FactoryRoleEnvironmentValue::Secret { .. })
+            )
+          })
+          .collect(),
+      };
+      if !secret_names.is_empty() || entry.authorization.is_some() {
+        let approved = support
+          .authenticated_mcp
+          .get(alias)
+          .ok_or_else(ApplicationError::capability_unavailable)?;
+        let authorization = entry
+          .authorization
+          .as_ref()
+          .ok_or_else(ApplicationError::capability_unavailable)?;
+        let integration = entry
+          .integration
+          .as_ref()
+          .and_then(|name| definition.integrations.get(name));
+        if approved.server() != &entry.server
+          || approved.authorization() != Some(authorization)
+          || approved.integration() != integration
+          || secret_names != [&authorization.environment]
+          || !definition
+            .permissions
+            .secret_profiles()
+            .any(|profile| profile == &authorization.credential_profile)
+          || cap.ceiling.execution.environment.get(&authorization.environment)
+            != Some(&FactoryRoleEnvironmentValue::Secret {
+              reference: authorization.secret.clone(),
+            })
+        {
+          return Err(ApplicationError::capability_unavailable());
+        }
+      }
       match &entry.server {
         FactoryMcpServer::Http {
           bearer_token_env_var, ..

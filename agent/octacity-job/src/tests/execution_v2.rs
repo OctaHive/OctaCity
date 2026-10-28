@@ -14,9 +14,12 @@ struct CredentialJobFixture {
   starts: Arc<AtomicUsize>,
 }
 async fn credential_job_fixture() -> CredentialJobFixture {
+  credential_job_fixture_with_document(b"version: 1\nvars:\n  PRIVATE_AUTH:\n    required: true\n    secret: true\ntasks:\n  implement:\n    shell: echo managed\n").await
+}
+
+async fn credential_job_fixture_with_document(octafile: &'static [u8]) -> CredentialJobFixture {
   use sha2::Digest as _;
   use tokio::io::AsyncReadExt as _;
-  let octafile = b"version: 1\nvars:\n  PRIVATE_AUTH:\n    required: true\n    secret: true\ntasks:\n  implement:\n    shell: echo managed\n";
   let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
   let origin = format!("http://{}", listener.local_addr().unwrap());
   let downloads = Arc::new(AtomicUsize::new(0));
@@ -194,6 +197,139 @@ async fn installed_private_credentials_obey_rooted_read_support_and_stay_redacte
   drain.abort();
   let _ = fixture.server.await;
   let _ = drain.await;
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn independent_mcp_credentials_materialize_only_their_signed_private_variables() {
+  let mut fixture = credential_job_fixture_with_document(
+    br#"version: 1
+vars:
+  PRIVATE_AUTH: {required: true, secret: true}
+  OCTACITY_MCP_HTTP: {required: true, secret: true}
+  OCTACITY_MCP_STDIO: {required: true, secret: true}
+tasks:
+  implement:
+    shell: echo managed
+"#,
+  )
+  .await;
+  fixture.spec.execution.mcp_credentials = BTreeMap::from([
+    ("OCTACITY_MCP_HTTP".into(), "mcp-http-read".into()),
+    ("OCTACITY_MCP_STDIO".into(), "mcp-stdio-read".into()),
+  ]);
+  fixture.spec.permissions.secret_profiles = vec![
+    "author-private-profile".into(),
+    "mcp-http-read".into(),
+    "mcp-stdio-read".into(),
+  ];
+  fixture.executor.factory_permissions = Some(fixture.spec.permissions.clone());
+  let profiles = [
+    ("author-private-profile", "PRIVATE_AUTH", "model-token-canary"),
+    ("mcp-http-read", "HTTP_TOKEN", "http-token-canary"),
+    ("mcp-stdio-read", "STDIO_TOKEN", "stdio-token-canary"),
+    ("unselected-reporter", "REPORTER_TOKEN", "reporter-token-canary"),
+  ]
+  .into_iter()
+  .map(|(profile, variable, value)| {
+    FactoryCredentialProfile::new(profile.into(), BTreeMap::from([(variable.into(), value.into())])).unwrap()
+  });
+  fixture.executor = fixture.executor.with_factory_credential_profiles(profiles).unwrap();
+  let (events, mut receiver) = mpsc::channel(128);
+  let drain =
+    tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move { while receiver.recv().await.is_some() {} }));
+  let completion = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .expect("separate approved MCP credentials must materialize");
+  assert_eq!(
+    completion.runner().results,
+    vec![serde_json::json!({
+      "variables":{"PRIVATE_AUTH":"[redacted]","OCTACITY_MCP_HTTP":"[redacted]","OCTACITY_MCP_STDIO":"[redacted]"}, "secrets_profile":null
+    })]
+  );
+  for value in [
+    "model-token-canary",
+    "http-token-canary",
+    "stdio-token-canary",
+    "reporter-token-canary",
+  ] {
+    assert!(!format!("{:?}", completion.runner()).contains(value));
+  }
+  completion.cleanup().await.unwrap();
+  fixture.server.abort();
+  drain.abort();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn removed_mcp_credential_blocks_new_work_before_inputs_without_model_fallback() {
+  use std::os::unix::fs::PermissionsExt as _;
+  let mut fixture = credential_job_fixture_with_document(
+    br#"version: 1
+vars:
+  PRIVATE_AUTH: {required: true, secret: true}
+  OCTACITY_MCP_HTTP: {required: true, secret: true}
+tasks:
+  implement:
+    shell: echo managed
+"#,
+  )
+  .await;
+  let private = fixture.root.path().join("private-credentials");
+  octacity_private_fs::create_private_directory(&private).unwrap();
+  let file = private.canonicalize().unwrap().join("mcp-private.json");
+  fs::write(&file, br#"{"OCTACITY_MCP_HTTP":"revoked-mcp-token-canary"}"#).unwrap();
+  fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+  let mcp = FactoryCredentialProfile::from_private_file("mcp-read".into(), file.clone()).unwrap();
+  let model = FactoryCredentialProfile::new(
+    "author-private-profile".into(),
+    BTreeMap::from([("PRIVATE_AUTH".into(), "model-fallback-canary".into())]),
+  )
+  .unwrap();
+  fixture.executor = fixture.executor.with_factory_credential_profiles([model, mcp]).unwrap();
+  fixture
+    .spec
+    .execution
+    .mcp_credentials
+    .insert("OCTACITY_MCP_HTTP".into(), "mcp-read".into());
+  fixture.spec.permissions.secret_profiles.push("mcp-read".into());
+  fixture.executor.factory_permissions = Some(fixture.spec.permissions.clone());
+  fs::remove_file(file).unwrap();
+  let (events, _receiver) = mpsc::channel(128);
+  let failure = fixture
+    .executor
+    .execute(
+      ExecuteJobRequest {
+        spec: fixture.spec.into(),
+        source_credentials: BTreeMap::new(),
+        cache_grant: None,
+        protected_inputs: fixture.inputs,
+      },
+      CancellationToken::new(),
+      &events,
+    )
+    .await
+    .expect_err("a credential removed after Agent startup must not be cached or borrowed");
+  assert!(matches!(
+    failure.error(),
+    JobError::FactoryPreflight(FactoryPreflightError::SecretProfile)
+  ));
+  assert_eq!(fixture.downloads.load(Ordering::SeqCst), 0);
+  assert_eq!(fixture.starts.load(Ordering::SeqCst), 0);
+  assert!(!format!("{failure:?}").contains("canary"));
+  failure.cleanup().await.unwrap();
+  fixture.server.abort();
 }
 
 #[tokio::test]
@@ -1477,6 +1613,7 @@ fn factory_spec() -> JobSpecV3 {
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
       credential_profile: None,
+      mcp_credentials: Default::default(),
       tool_control: None,
     },
     runtime: current.runtime,

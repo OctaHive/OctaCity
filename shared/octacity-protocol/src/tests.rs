@@ -142,6 +142,7 @@ fn v3_spec() -> JobSpecV3 {
       octafile_input: "managed-octafile".to_owned(),
       tasks: vec!["implement".to_owned()],
       credential_profile: Some("model-coding".to_owned()),
+      mcp_credentials: Default::default(),
       tool_control: None,
     },
     runtime: RuntimeSpecV2 {
@@ -664,6 +665,40 @@ fn v3_allows_source_free_execution_but_never_source_capture_or_write_overlays() 
   assert!(
     value.validate(&binding(&spec())).is_err(),
     "source materialization cannot leak into a source-free job"
+  );
+}
+
+#[test]
+fn v3_binds_independent_mcp_credentials_to_exact_variables_and_signed_profile_grants() {
+  let mut wire = serde_json::to_value(v3_spec()).unwrap();
+  wire["execution"]["mcp_credentials"] = serde_json::json!({
+    "OCTACITY_MCP_HTTP": "http-read", "OCTACITY_MCP_STDIO": "stdio-read",
+  });
+  wire["permissions"]["secret_profiles"] = serde_json::json!(["http-read", "model-coding", "stdio-read"]);
+  let approved: JobSpecV3 =
+    serde_json::from_value(wire.clone()).expect("MCP credentials need independent signed selections");
+  approved.validate(&binding(&spec())).unwrap();
+  for (variable, profile) in [
+    ("OCTACITY_MCP_HTTP", "model-coding"),
+    ("OCTACITY_MCP_HTTP", "stdio-read"),
+    ("OPENAI_API_KEY", "http-read"),
+  ] {
+    let mut substituted = wire.clone();
+    substituted["execution"]["mcp_credentials"] =
+      serde_json::json!({variable: profile, "OCTACITY_MCP_STDIO":"stdio-read"});
+    assert!(
+      serde_json::from_value::<JobSpecV3>(substituted)
+        .unwrap()
+        .validate(&binding(&spec()))
+        .is_err()
+    );
+  }
+  wire["permissions"]["secret_profiles"] = serde_json::json!(["model-coding"]);
+  assert!(
+    serde_json::from_value::<JobSpecV3>(wire)
+      .unwrap()
+      .validate(&binding(&spec()))
+      .is_err()
   );
 }
 

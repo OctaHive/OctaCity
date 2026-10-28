@@ -7,8 +7,8 @@ use octacity_artifact_store::ArtifactByteReader;
 use octacity_server_domain::Timestamp;
 use octacity_server_factory::*;
 use octacity_server_store::{
-  FactoryRoleProfileStore, IntegrationAdministrationStore, IntegrationConnectionStore, IntegrationProjectAccessStore,
-  ProjectSkillImportStore,
+  FactoryConfigurationAvailability, FactoryConfigurationStore, FactoryRoleProfileStore, FactoryRuntimeSettingsStore,
+  IntegrationAdministrationStore, IntegrationConnectionStore, IntegrationProjectAccessStore, ProjectSkillImportStore,
 };
 use std::{
   collections::{BTreeMap, BTreeSet},
@@ -41,7 +41,9 @@ impl<S, B> FactoryStoredCodexRoleInvocationSource<S, B> {
 }
 #[async_trait::async_trait]
 impl<
-  S: FactoryRoleProfileStore
+  S: FactoryConfigurationStore
+    + FactoryRoleProfileStore
+    + FactoryRuntimeSettingsStore
     + ProjectSkillImportStore
     + IntegrationProjectAccessStore
     + IntegrationConnectionStore
@@ -50,7 +52,15 @@ impl<
 > FactoryRoleInvocationSource for FactoryStoredCodexRoleInvocationSource<S, B>
 {
   async fn authorize_dependencies(&self, invocation: &FactoryRoleInvocation) -> Result<(), ApplicationError> {
-    self.authorize_profile(&invocation.package().inputs().profile).await
+    self.authorize_profile(&invocation.package().inputs().profile).await?;
+    let installed = self
+      .profiles
+      .iter()
+      .flat_map(|profile| profile.mcp_configurations.iter().cloned())
+      .collect::<Vec<_>>();
+    let configurations =
+      crate::factory_codex_mcp::configurations(&installed, Some(invocation), Some(self.store.as_ref())).await?;
+    self.authorize_mcp(invocation, &configurations).await
   }
   async fn invocation(
     &self,
@@ -196,6 +206,41 @@ impl<
       BTreeMap::new(),
     )
     .await?;
+    let configurations = crate::factory_codex_mcp::configurations(
+      &installed.mcp_configurations,
+      Some(&invocation),
+      Some(self.store.as_ref()),
+    )
+    .await?;
+    self.authorize_mcp(&invocation, &configurations).await?;
+    let mut secret_variables = BTreeMap::new();
+    for (alias, binding) in &invocation.package().inputs().profile.definition().execution.mcp_servers {
+      let configuration = configurations
+        .iter()
+        .find(|configuration| configuration.reference() == &binding.configuration)
+        .ok_or_else(invalid)?;
+      if let Some(authorization) = configuration.authorization() {
+        let variable = format!(
+          "OCTACITY_MCP_{}",
+          FactoryDigest::content_sha256(alias.as_str().as_bytes())
+            .to_string()
+            .to_ascii_uppercase()
+        );
+        if secret_variables
+          .insert(variable, authorization.secret.clone())
+          .is_some()
+        {
+          return Err(invalid());
+        }
+      }
+    }
+    let invocation = FactoryRoleInvocation::new(
+      invocation.package().clone(),
+      invocation.skills().cloned(),
+      secret_variables,
+    )?;
+    crate::factory_codex_mcp::credential_bindings(&invocation, &configurations, &installed.credentials)
+      .map_err(|_| invalid())?;
     invocation.verify_intent(intent)?;
     Ok(Some(invocation))
   }
@@ -207,6 +252,57 @@ impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + Integration
   async fn authorize_profile(&self, profile: &FactoryRoleProfile) -> Result<(), ApplicationError> {
     for binding in profile.definition().execution.integrations.values() {
       if !crate::factory_role_profile_catalog::factory_role_integration_available(self.store.as_ref(), binding).await? {
+        return Err(ApplicationError::capability_unavailable());
+      }
+    }
+    Ok(())
+  }
+}
+
+impl<S: FactoryConfigurationStore, B> FactoryStoredCodexRoleInvocationSource<S, B> {
+  // Reuse current installation authority without replacing immutable transport
+  // history. Static compiler inventory and configurable Runtime peers retain
+  // their existing owners; neither a retained package nor a secret locator grants access.
+  async fn authorize_mcp(
+    &self,
+    invocation: &FactoryRoleInvocation,
+    configurations: &[crate::FactoryCodexMcpConfiguration],
+  ) -> Result<(), ApplicationError> {
+    let profile = &invocation.package().inputs().profile;
+    let selected = profile
+      .definition()
+      .execution
+      .mcp_servers
+      .values()
+      .map(|binding| &binding.configuration)
+      .collect::<BTreeSet<_>>();
+    let authenticated = configurations
+      .iter()
+      .filter(|configuration| selected.contains(configuration.reference()) && configuration.authorization().is_some())
+      .collect::<Vec<_>>();
+    if authenticated.is_empty() {
+      return Ok(());
+    }
+    let FactoryConfigurationAvailability::Available(choices) = self
+      .store
+      .factory_configuration_installation(profile.reference().project_id)
+      .await?
+    else {
+      return Err(ApplicationError::capability_unavailable());
+    };
+    for configuration in authenticated {
+      let static_approval = self
+        .profiles
+        .iter()
+        .flat_map(|profile| &profile.mcp_configurations)
+        .any(|installed| installed.reference() == configuration.reference());
+      let runtime_approval = choices
+        .role_profile_capabilities()
+        .keys()
+        .filter_map(|alias| choices.runtime_settings_support(alias))
+        .flat_map(|support| support.authenticated_mcp.values())
+        .any(|approved| configuration.same_authority(approved));
+      if !static_approval && !runtime_approval {
         return Err(ApplicationError::capability_unavailable());
       }
     }

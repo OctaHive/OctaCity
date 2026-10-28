@@ -291,9 +291,9 @@ pub use role_profile_capability::{
 
 mod mcp;
 pub use mcp::{
-  FactoryMcpConfiguration, FactoryMcpServer, FactoryMcpTransport, MAX_FACTORY_MCP_ARGUMENT_BYTES,
-  MAX_FACTORY_MCP_CONFIGURATION_BYTES, MAX_FACTORY_MCP_SELECTION_ENTRIES, MAX_FACTORY_MCP_SERVER_NAME_BYTES,
-  MAX_FACTORY_MCP_TOOL_NAME_BYTES, validate_factory_mcp_server_name,
+  FactoryMcpAuthorization, FactoryMcpConfiguration, FactoryMcpCredentialPurpose, FactoryMcpServer, FactoryMcpTransport,
+  MAX_FACTORY_MCP_ARGUMENT_BYTES, MAX_FACTORY_MCP_CONFIGURATION_BYTES, MAX_FACTORY_MCP_SELECTION_ENTRIES,
+  MAX_FACTORY_MCP_SERVER_NAME_BYTES, MAX_FACTORY_MCP_TOOL_NAME_BYTES, validate_factory_mcp_server_name,
 };
 mod runtime_settings;
 pub use runtime_settings::*;

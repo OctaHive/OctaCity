@@ -7,7 +7,10 @@ use octacity_server_artifacts::{ArtifactIdentity, ArtifactType};
 use octacity_server_factory::{FactoryArtifactReference, FactoryDigest, FactoryTaskEnvelope};
 use serde::Deserialize;
 
-use super::{FactoryCodexOutputDocument, records::CodexProvenanceRecord, records::CodexResultRecord};
+use super::{
+  FactoryCodexOutputDocument,
+  records::{CodexProvenanceRecord, CodexResultRecord, FactoryNativeCaptureStatus},
+};
 use crate::factory_codex_contract::{
   CODEX_EXECUTABLE_IDENTITY, CODEX_PLUGIN_PROVENANCE_IDENTITY, CODEX_RESULT_FORMAT, JSON_MEDIA_TYPE, TRACE_MEDIA_TYPE,
 };
@@ -101,26 +104,56 @@ pub(super) fn valid_provenance<T>(
   )
 }
 
-pub(super) struct CodexProvenanceExpectation<'a> {
-  pub(super) plugin: &'a octacity_server_factory::ImmutableReference,
-  pub(super) executable: &'a octacity_server_factory::ImmutableReference,
-  pub(super) model: &'a octacity_server_factory::ImmutableReference,
-  pub(super) model_identifier: Option<&'a str>,
-  pub(super) prompt_digest: FactoryDigest,
-  pub(super) source_revision: &'a str,
+/// Exact invocation identity established from frozen execution inputs.
+/// Capturing evidence does not require a semantic result schema or cost policy.
+pub struct FactoryCodexProvenanceContract<'a> {
+  /// Executed immutable plugin.
+  pub plugin: &'a octacity_server_factory::ImmutableReference,
+  /// Executed immutable native client.
+  pub executable: &'a octacity_server_factory::ImmutableReference,
+  /// Installed immutable model/accounting identity.
+  pub model: &'a octacity_server_factory::ImmutableReference,
+  /// Exact optional model identifier selected by the retained Role Profile.
+  pub model_identifier: Option<&'a str>,
+  /// Digest of the actual protected prompt.
+  pub prompt_digest: FactoryDigest,
+  /// Revision actually materialized for the Job.
+  pub source_revision: &'a str,
 }
+pub(super) type CodexProvenanceExpectation<'a> = FactoryCodexProvenanceContract<'a>;
 
 pub(super) fn valid_provenance_for<T>(
   expected: CodexProvenanceExpectation<'_>,
   result: &CodexResultRecord<T>,
   provenance: &CodexProvenanceRecord,
 ) -> bool {
-  provenance.format_version == 1
+  let supported_format = match (
+    provenance.format_version,
+    provenance.trace_format_version,
+    &provenance.capture,
+  ) {
+    (1, 1, None) => true,
+    (2, 2, Some(capture)) => {
+      capture.status == FactoryNativeCaptureStatus::Complete
+        && capture.terminal_observed
+        && capture.coverage == "emitted_native_events"
+    }
+    _ => false,
+  };
+  supported_format
     && result.format_version == 1
     && valid_identifiers(&result.harness_identifiers)
     && valid_usage(&result.usage)
-    && provenance.trace_format_version == 1
-    && provenance.result_format_version == 1
+    && valid_provenance_identity(expected, provenance)
+    && provenance.outcome == result.outcome
+    && provenance.usage == result.usage
+}
+
+pub(super) fn valid_provenance_identity(
+  expected: CodexProvenanceExpectation<'_>,
+  provenance: &CodexProvenanceRecord,
+) -> bool {
+  provenance.result_format_version == 1
     && provenance.plugin.name == CODEX_PLUGIN_PROVENANCE_IDENTITY
     && provenance.plugin.version == expected.plugin.version().as_str()
     && provenance.codex.name == CODEX_EXECUTABLE_IDENTITY
@@ -138,8 +171,23 @@ pub(super) fn valid_provenance_for<T>(
     && provenance.timing.finished_unix_millis >= provenance.timing.started_unix_millis
     && provenance.timing.finished_unix_millis - provenance.timing.started_unix_millis
       == provenance.timing.duration_millis
-    && provenance.outcome == result.outcome
-    && provenance.usage == result.usage
+}
+
+pub(super) fn valid_provenance_window(
+  provenance: &CodexProvenanceRecord,
+  window: &std::ops::RangeInclusive<octacity_server_domain::Timestamp>,
+) -> bool {
+  [
+    provenance.timing.started_unix_millis,
+    provenance.timing.finished_unix_millis,
+  ]
+  .into_iter()
+  .all(|value| {
+    i64::try_from(value)
+      .ok()
+      .and_then(|value| octacity_server_domain::Timestamp::from_unix_millis(value).ok())
+      .is_some_and(|value| window.contains(&value))
+  })
 }
 
 fn expected_revision(envelope: &FactoryTaskEnvelope) -> &str {
@@ -180,11 +228,13 @@ fn control_free(value: &str) -> bool {
   value.chars().all(|character| !character.is_control())
 }
 
-pub(super) fn valid_trace(bytes: &[u8]) -> bool {
-  if bytes.is_empty() || !bytes.ends_with(b"\n") {
+pub(super) fn valid_trace(bytes: &[u8], provenance: &CodexProvenanceRecord) -> bool {
+  if !bytes.is_empty() && !bytes.ends_with(b"\n") {
     return false;
   }
   let mut expected_sequence = 0_u64;
+  let mut last_observed = provenance.timing.started_unix_millis;
+  let mut terminal_observed = false;
   for (index, line) in bytes
     .split(|byte| *byte == b'\n')
     .filter(|line| !line.is_empty())
@@ -196,12 +246,44 @@ pub(super) fn valid_trace(bytes: &[u8]) -> bool {
     let Ok(record) = serde_json::from_slice::<CodexTraceRecord>(line) else {
       return false;
     };
-    if record.format_version != 1 || record.sequence != expected_sequence || !valid_trace_event(&record.event) {
+    if record.format_version == 2 && terminal_observed {
       return false;
     }
+    if record.format_version != provenance.trace_format_version
+      || record.sequence != expected_sequence
+      || !valid_trace_event(&record.event)
+    {
+      return false;
+    }
+    match (record.format_version, record.observed_at_unix_millis) {
+      (1, None) => {}
+      (2, Some(observed)) if observed >= last_observed && observed <= provenance.timing.finished_unix_millis => {
+        last_observed = observed
+      }
+      _ => return false,
+    }
+    terminal_observed |= matches!(
+      record.event.get("type").and_then(serde_json::Value::as_str),
+      Some("turn.completed" | "turn.failed")
+    );
     expected_sequence = expected_sequence.saturating_add(1);
   }
-  expected_sequence > 0
+  match (
+    provenance.format_version,
+    provenance.trace_format_version,
+    &provenance.capture,
+  ) {
+    (1, 1, None) => expected_sequence > 0,
+    (2, 2, Some(capture)) => {
+      (capture.status != FactoryNativeCaptureStatus::Complete || terminal_observed)
+        && capture.coverage == "emitted_native_events"
+        && capture.record_count == expected_sequence
+        && capture.terminal_observed == terminal_observed
+        && capture.trace_digest.algorithm == "blake3"
+        && capture.trace_digest.value == FactoryDigest::content_blake3(bytes).to_string()
+    }
+    _ => false,
+  }
 }
 
 fn valid_trace_event(event: &serde_json::Value) -> bool {
@@ -236,7 +318,9 @@ fn valid_trace_value(value: &serde_json::Value, depth: usize, remaining: &mut us
     serde_json::Value::Null | serde_json::Value::Bool(_) | serde_json::Value::Number(_) => true,
     serde_json::Value::String(value) => {
       value.len() <= MAX_TRACE_STRING_BYTES
-        && control_free(value)
+        && value
+          .chars()
+          .all(|character| !character.is_control() || matches!(character, '\n' | '\r' | '\t'))
         && !octacity_server_factory::contains_sensitive_material(value)
     }
     serde_json::Value::Array(values) => values
@@ -340,5 +424,7 @@ pub(super) fn valid_provider_unavailable_events(events: &[RunnerEventPayload]) -
 struct CodexTraceRecord {
   format_version: u16,
   sequence: u64,
+  #[serde(default)]
+  observed_at_unix_millis: Option<u64>,
   event: serde_json::Value,
 }
