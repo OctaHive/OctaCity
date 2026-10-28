@@ -26,11 +26,43 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       ("enabled_tools",tools())
     ], &["command"])
   ]}));
+  schemas.insert(
+    "FactoryMcpAuthorization".into(),
+    object(
+      [
+        ("credential_profile", key()),
+        (
+          "secret",
+          object(
+            [("provider", non_empty_string()), ("reference", non_empty_string())],
+            &["provider", "reference"],
+          ),
+        ),
+        ("environment", environment()),
+        ("purpose", json!({"type":"string","enum":["mcp_read"]})),
+        ("resource", schema_ref("FactoryImmutableReferenceResource")),
+      ],
+      &["credential_profile", "secret", "environment", "purpose", "resource"],
+    ),
+  );
+  schemas.insert(
+    "FactoryMcpConfiguration".into(),
+    object(
+      [
+        ("reference", schema_ref("FactoryImmutableReferenceResource")),
+        ("server", schema_ref("FactoryMcpServer")),
+        ("integration", nullable(schema_ref("FactoryRoleIntegrationBinding"))),
+        ("authorization", nullable(schema_ref("FactoryMcpAuthorization"))),
+      ],
+      &["reference", "server"],
+    ),
+  );
   let mut servers = bounded_map(
     object(
       [
         ("server", schema_ref("FactoryMcpServer")),
         ("integration", nullable(key())),
+        ("authorization", nullable(schema_ref("FactoryMcpAuthorization"))),
       ],
       &["server"],
     ),
@@ -99,6 +131,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   schemas.insert("FactoryRuntimeSettingsSupport".into(),object([
     ("mcp_transports",json!({"type":"array","uniqueItems":true,"maxItems":2,"items":{"type":"string","enum":["http","stdio"]}})),
     ("mcp_executables",json!({"type":"object","maxProperties":bounds.role_entries,"propertyNames":{"type":"string","minLength":1,"maxLength":MAX_PERMISSION_PATH_BYTES,"pattern":"^/"},"additionalProperties":schema_ref("FactoryImmutableReferenceResource")})),
+    ("authenticated_mcp", bounded_map(schema_ref("FactoryMcpConfiguration"), bounds.role_entries)),
   ], &["mcp_transports","mcp_executables"]));
   schemas.insert("FactoryRuntimeChoice".into(),object([
     ("alias",key()),("toolchain",schema_ref("FactoryRoleToolchain")),("support",schema_ref("FactoryRuntimeSettingsSupport")),

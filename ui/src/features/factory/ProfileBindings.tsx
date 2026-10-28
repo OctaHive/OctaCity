@@ -1,5 +1,6 @@
 import type { components } from '../../../.generated/api/schema';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
+import { McpAuthorizationSummary } from './McpAuthorizationSummary';
 
 type Schema = components['schemas'];
 type Execution = Schema['FactoryRoleProfileExecution'];
@@ -29,10 +30,12 @@ function bindingKey(binding: Binding | undefined) {
 export function ProfileBindings({
   value,
   choices,
+  configurations,
   onChange,
 }: {
   value: Execution;
   choices: Execution;
+  configurations?: Schema['FactoryRoleProfileCapabilityDetails']['mcp_configurations'];
   onChange: (patch: Partial<Execution>) => void;
 }) {
   const { t } = usePresentation();
@@ -54,20 +57,29 @@ export function ProfileBindings({
           <fieldset>
             <legend>{t(field === 'mcp_servers' ? 'factory.mcp' : 'factory.integrations')}</legend>
             {Object.entries(available).map(([name, entry]) => (
-              <label key={name}>
-                <input
-                  type="checkbox"
-                  checked={bindingKey(selected[name]) === bindingKey(entry)}
-                  onChange={(event) => select(name, event.target.checked ? entry : undefined)}
-                />
-                {name}
-                {'configuration' in entry && entry.integration ? (
-                  <>
-                    {' '}
-                    · <span>{t('factory.mcpIntegration', { integration: entry.integration })}</span>
-                  </>
+              <div key={name}>
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={bindingKey(selected[name]) === bindingKey(entry)}
+                    onChange={(event) => select(name, event.target.checked ? entry : undefined)}
+                  />
+                  {name}
+                  {'configuration' in entry && entry.integration ? (
+                    <>
+                      {' '}
+                      ·{' '}
+                      <span>{t('factory.mcpIntegration', { integration: entry.integration })}</span>
+                    </>
+                  ) : null}
+                </label>
+                {'configuration' in entry &&
+                configurations?.[name]?.authorization &&
+                JSON.stringify(referenceKey(configurations[name].reference)) ===
+                  JSON.stringify(referenceKey(entry.configuration)) ? (
+                  <McpAuthorizationSummary authorization={configurations[name].authorization} />
                 ) : null}
-              </label>
+              </div>
             ))}
           </fieldset>
         ) : (

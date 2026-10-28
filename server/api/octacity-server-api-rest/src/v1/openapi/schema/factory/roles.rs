@@ -400,6 +400,10 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     "FactoryRoleProfileCapabilityDetails".into(),
     object(
       [
+        (
+          "mcp_configurations",
+          bounded_map(schema_ref("FactoryMcpConfiguration"), b.role_entries),
+        ),
         ("model_catalog", nullable(schema_ref("FactoryRoleModelCatalog"))),
         ("definition", schema_ref("FactoryRoleProfileDefinition")),
         ("parameters", schema_ref("FactoryFlowDataSchema")),

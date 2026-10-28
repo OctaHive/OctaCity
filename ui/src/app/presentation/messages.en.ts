@@ -59,6 +59,32 @@ export const enMessages = {
   'runtime.removeTool': 'Remove tool name {index}',
   'runtime.help':
     'Configure installed Runtime choices for this Project. Saving does not start a Build, MCP process or model request.',
+  'runtime.profileHelp':
+    'Runtime prepares shared MCP choices and permission limits. Choose an AI agent and edit or create its profile to select a model, plugin-supported reasoning and budget. Your open profile draft is preserved.',
+  'runtime.configureProfile': 'Choose model and reasoning',
+  'runtime.installedMcp': 'Installed MCP connection',
+  'runtime.authorityHelp':
+    'AI login, MCP read access and server Reporter writes use separate credentials. Select an installed connection to use its exact transport, credential reference and resource scope. Tokens are supplied privately by the Agent; never enter them here.',
+  'runtime.credentialProfile': 'Credential profile',
+  'runtime.accessScope': 'Access scope',
+  'runtime.readOnlyAccess': 'Read-only MCP access',
+  'runtime.authenticationUnavailable':
+    'No matching installed MCP authentication and read-only resource binding. Ask an administrator to qualify this exact connection, or select its unchanged installed settings. Model login and Reporter credentials cannot be used here.',
+  'runtime.integrationUnavailable':
+    'Restore the exact required Project integration binding before review. Add the authorized integration and select it for this MCP connection.',
+  'runtime.installationPrerequisites': 'Installation prerequisites',
+  'runtime.installationHelp':
+    'An administrator installs a reviewed Factory catalog and independent Agent policy. This screen configures Project choices; it cannot install programs or grant worker access.',
+  'runtime.installationUpdate':
+    'For an existing stand, add --update-factory-installation to preserve its data. Then reload Runtime choices and explicitly select the new bindings in a profile.',
+  'runtime.pluginQualification':
+    'Have the administrator qualify the selected AI plugin and native client for the required HTTP/stdio transport, separate authentication, enforced read-only resource scope and native MCP call/result capture. The choices shown here do not verify worker readiness, connectivity or capture support.',
+  'runtime.noPluginPermission':
+    'No plugin execution permission is installed. Model discovery can remain available; enabling execution requires an approved installation and independent Agent policy.',
+  'runtime.noNetworkPermission':
+    'No network hosts are approved. An administrator must install network authority before an HTTP MCP endpoint can be used.',
+  'runtime.noStdioExecutable':
+    'No stdio MCP executable is installed. Install and qualify the native guest executable and its arguments before selecting it here.',
   'runtime.noInstalled':
     'No installed Runtimes are available. Ask an administrator to configure installation support.',
   'runtime.editor': 'Runtime settings editor',
@@ -76,8 +102,9 @@ export const enMessages = {
   'runtime.review': 'Review Runtime settings',
   'runtime.publish': 'Publish reviewed settings',
   'runtime.publishConsequence':
-    'Publish reviewed settings for {alias}. Existing profiles and retained executions keep their exact pins.',
-  'runtime.published': 'Runtime settings published.',
+    'Configuration validation only; no MCP connection was tested. Publish reviewed settings for {alias}. Existing profiles and retained executions keep their exact pins.',
+  'runtime.published':
+    'Runtime settings published. No MCP connection was tested or execution started.',
   'section.aiSettings': 'AI settings',
   'runtime.runtimes': 'Runtimes',
   'runtime.chooseProject': 'Choose a Project to configure AI agents and Runtimes.',

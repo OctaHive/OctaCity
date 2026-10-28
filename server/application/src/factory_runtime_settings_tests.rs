@@ -75,6 +75,111 @@ fn fixture() -> (Arc<InMemoryFactoryConfigurationStore>, FactoryRuntimeSettingsI
   )
 }
 #[test]
+fn profile_details_include_exact_installed_mcp_authority_before_runtime_publication() {
+  run_ready(async {
+    let (store, intent) = fixture();
+    let FactoryConfigurationAvailability::Available(installed) = store
+      .factory_configuration_installation(intent.project_id)
+      .await
+      .unwrap()
+    else {
+      panic!("installed Runtime");
+    };
+    let secret = octacity_server_secrets::LogicalSecretReference::new(
+      octacity_server_secrets::SecretProviderId::new("agent-private").unwrap(),
+      "project/static-reader",
+    )
+    .unwrap();
+    let configuration = FactoryMcpConfiguration::new(
+      key("review"),
+      key("installed"),
+      FactoryMcpServer::Http {
+        url: "https://mcp.example/read".into(),
+        bearer_token_env_var: Some("ISSUE_TOKEN".into()),
+        enabled_tools: Some(vec!["read".into()]),
+      },
+      None,
+    )
+    .unwrap()
+    .with_authorization(FactoryMcpAuthorization {
+      credential_profile: key("mcp-read"),
+      secret: secret.clone(),
+      environment: "ISSUE_TOKEN".into(),
+      purpose: FactoryMcpCredentialPurpose::McpRead,
+      resource: ImmutableReference::new(key("repository"), key("v1"), FactoryDigest::from_bytes([7; 32])),
+    })
+    .unwrap();
+    let mut cap = installed.role_profile_capabilities()[&intent.runtime].clone();
+    cap.ceiling.execution.environment.insert(
+      "ISSUE_TOKEN".into(),
+      FactoryRoleEnvironmentValue::Secret { reference: secret },
+    );
+    cap.ceiling.execution.mcp_servers.insert(
+      key("review"),
+      FactoryRoleMcpBinding {
+        configuration: configuration.reference().clone(),
+        integration: None,
+      },
+    );
+    let mut permissions = serde_json::to_value(&cap.ceiling.permissions).unwrap();
+    permissions["secret_profiles"] = serde_json::json!(["mcp-read"]);
+    cap.ceiling.permissions = serde_json::from_value(permissions).unwrap();
+    cap.local_permissions = LocalPermissionCeiling::fully_enforced(cap.ceiling.permissions.clone());
+    let mut entries = installed.entries();
+    entries.references.extend([
+      FactoryReferenceChoice {
+        kind: FactoryChoiceKind::NodeCapability,
+        alias: key("review"),
+        reference: configuration.reference().clone(),
+      },
+      FactoryReferenceChoice {
+        kind: FactoryChoiceKind::SecretProfile,
+        alias: key("mcp-read"),
+        reference: ImmutableReference::new(key("mcp-read"), key("v1"), FactoryDigest::from_bytes([8; 32])),
+      },
+    ]);
+    store
+      .enable_project(
+        intent.project_id,
+        FactoryConfigurationChoices::try_new(entries)
+          .unwrap()
+          .with_role_profile_capability(intent.runtime.clone(), cap)
+          .unwrap()
+          .with_runtime_settings_support(
+            intent.runtime.clone(),
+            FactoryRuntimeSettingsSupport {
+              mcp_transports: [FactoryMcpTransport::Http].into(),
+              authenticated_mcp: [(key("review"), configuration.clone())].into(),
+              ..Default::default()
+            },
+          )
+          .unwrap(),
+      )
+      .unwrap();
+    let query = AuthorizedQueryHandler::new(
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(FactoryRoleProfileHandlers::new(store)),
+    );
+    let details = query
+      .handle_query(
+        &context(),
+        GetFactoryRoleProfileCapabilityQuery {
+          project_id: intent.project_id,
+          capability: intent.runtime,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      &details.definition.execution.mcp_servers[&key("review")].configuration,
+      configuration.reference(),
+      "the installed connection must remain selectable without Runtime settings"
+    );
+    assert_eq!(details.mcp_configurations.get(&key("review")), Some(&configuration));
+  });
+}
+
+#[test]
 fn authenticated_runtime_settings_require_exact_installed_peer_secret_and_resource_approval() {
   run_ready(async {
     let (store, mut intent) = fixture();
@@ -186,6 +291,22 @@ fn authenticated_runtime_settings_require_exact_installed_peer_secret_and_resour
       Arc::new(TrustedNetworkManagementPolicy),
       Arc::new(FactoryRoleProfileHandlers::new(store.clone())),
     );
+    let available = queries
+      .handle_query(
+        &context(),
+        GetFactoryRoleProfileCapabilityQuery {
+          project_id: intent.project_id,
+          capability: intent.runtime.clone(),
+        },
+      )
+      .await
+      .unwrap();
+    let metadata = serde_json::to_value(&available).unwrap();
+    assert_eq!(
+      metadata["mcp_configurations"]["review"]["authorization"],
+      serde_json::to_value(&intent.definition.mcp_servers[&key("review")].authorization).unwrap(),
+      "profile authoring must show the exact selected connection's credential reference and read scope"
+    );
     let FactoryConfigurationAvailability::Available(current) = store
       .factory_configuration_installation(intent.project_id)
       .await
@@ -216,6 +337,12 @@ fn authenticated_runtime_settings_require_exact_installed_peer_secret_and_resour
     assert!(
       !details.definition.execution.mcp_servers.contains_key(&key("review")),
       "withdrawing peer authority must remove it from new profile choices without erasing history"
+    );
+    assert!(
+      serde_json::to_value(&details).unwrap()["mcp_configurations"]
+        .get("review")
+        .is_none(),
+      "withdrawn connections cannot remain offered as credential metadata"
     );
     assert!(
       store

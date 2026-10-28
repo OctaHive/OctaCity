@@ -45,6 +45,54 @@ async fn json(response: axum::response::Response) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn runtime_mcp_authority_is_documented_without_accepting_uninstalled_credentials() {
+  let (router, _, project, mut body) = runtime_router(Arc::new(TrustedNetworkManagementPolicy));
+  let authorization = serde_json::json!({
+    "credential_profile":"mcp-read", "secret":{"provider":"agent-private","reference":"project/issues-read"},
+    "environment":"ISSUE_TOKEN", "purpose":"mcp_read", "resource":body["definition"]["toolchain"]["model"]
+  });
+  body["definition"]["mcp_servers"]["reader"]["authorization"] = authorization.clone();
+  body["definition"]["mcp_servers"]["reader"]["server"]["env_vars"] = serde_json::json!(["ISSUE_TOKEN"]);
+  assert_json_matches_component(&openapi_document(), "FactoryRuntimeSettingsRequest", &body);
+  let metadata = serde_json::json!({
+    "mcp_transports":["stdio"], "mcp_executables":{},
+    "authenticated_mcp":{"reader":{
+      "reference":body["definition"]["toolchain"]["model"],
+      "server":body["definition"]["mcp_servers"]["reader"]["server"],
+      "authorization":authorization
+    }}
+  });
+  assert_json_matches_component(&openapi_document(), "FactoryRuntimeSettingsSupport", &metadata);
+  let path = format!("/api/v1/projects/{project}/factory-runtimes/dependency-1/validate");
+  let rejected = router
+    .clone()
+    .oneshot(json_request("POST", &path, "unused", None, &body.to_string()))
+    .await
+    .unwrap();
+  assert_eq!(rejected.status(), StatusCode::UNPROCESSABLE_ENTITY);
+  let mut token_input = body;
+  token_input["definition"]["mcp_servers"]["reader"]["authorization"]["token"] =
+    serde_json::json!("secret-value-canary");
+  // Actual request parsing already rejects token fields; the public schema must agree.
+  let rejected = std::panic::catch_unwind(|| {
+    assert_json_matches_component(&openapi_document(), "FactoryRuntimeSettingsRequest", &token_input)
+  });
+  assert!(rejected.is_err());
+  let rejected = router
+    .oneshot(json_request(
+      "POST",
+      &path,
+      "unused-token",
+      None,
+      &token_input.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(rejected.status(), StatusCode::BAD_REQUEST);
+  assert!(!json(rejected).await.to_string().contains("secret-value-canary"));
+}
+
+#[tokio::test]
 async fn runtime_http_reads_and_publishes_reviewed_settings_through_the_existing_owner() {
   let policy = Arc::new(RuntimePolicy(std::sync::atomic::AtomicBool::new(true)));
   let (router, _, project, body) = runtime_router(policy.clone());

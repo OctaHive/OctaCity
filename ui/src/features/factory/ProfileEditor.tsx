@@ -339,6 +339,7 @@ export function ProfileEditor({
                   value={definition}
                   ceiling={capability.data.definition}
                   environment={capability.data.public_environment}
+                  mcpConfigurations={capability.data.mcp_configurations}
                   onChange={setDefinition}
                 />
               </>
@@ -410,11 +411,13 @@ function ProfileSettings({
   value,
   ceiling,
   environment,
+  mcpConfigurations,
   onChange,
 }: {
   value: Definition;
   ceiling: Definition;
   environment: Schema['FactoryRoleProfileCapabilityDetails']['public_environment'];
+  mcpConfigurations?: Schema['FactoryRoleProfileCapabilityDetails']['mcp_configurations'];
   onChange: (value: Definition) => void;
 }) {
   const { t } = usePresentation();
@@ -487,6 +490,7 @@ function ProfileSettings({
       <ProfileBindings
         value={execution}
         choices={ceiling.execution ?? {}}
+        configurations={mcpConfigurations}
         onChange={setExecution}
       />
       <BudgetEditor

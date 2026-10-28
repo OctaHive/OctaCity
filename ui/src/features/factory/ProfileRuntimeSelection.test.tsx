@@ -118,14 +118,36 @@ it('returns from Runtime setup with its profile draft intact and adopts refreshe
   roles.getCapability.mockResolvedValue({
     ...capability,
     model_catalog: catalog,
+    mcp_configurations: {
+      reviewer: {
+        reference: mcp.configuration,
+        server: {
+          transport: 'http',
+          url: 'https://mcp.example/tools',
+          bearer_token_env_var: 'ISSUE_TOKEN',
+        },
+        authorization: {
+          credential_profile: 'mcp-read',
+          secret: { provider: 'agent-private', reference: 'project/issues-read' },
+          environment: 'ISSUE_TOKEN',
+          purpose: 'mcp_read',
+          resource: { identity: 'issues-repository', version: 'v1', digest: 'c'.repeat(64) },
+        },
+      },
+    },
     definition: {
       ...capability.definition,
       permissions: { ...capability.definition.permissions, network_hosts: ['mcp.example'] },
       execution: { ...capability.definition.execution, mcp_servers: { reviewer: mcp } },
     },
   });
-  await act(() => router.navigate(-1));
+  const handoff = screen.getByRole('link', { name: 'Choose model and reasoning' });
+  expect(handoff.getAttribute('href')).toBe(aiSettingsPath(profile.role.project_id, 'agents'));
+  expect(screen.getByText(/Choose an AI agent and edit or create its profile/)).toBeTruthy();
+  await userEvent.click(handoff);
   const reviewer = await editor.findByRole('checkbox', { name: 'reviewer' });
+  expect(editor.getByText('agent-private · project/issues-read')).toBeTruthy();
+  expect(editor.getByText('issues-repository · v1')).toBeTruthy();
   expect(reviewer).toHaveProperty('checked', false);
   const host = editor.getByRole('checkbox', { name: 'Network host · mcp.example' });
   expect(host).toHaveProperty('checked', false);
@@ -138,6 +160,7 @@ it('returns from Runtime setup with its profile draft intact and adopts refreshe
     'value',
     'Unsaved instruction',
   );
+  expect(roles.publish).not.toHaveBeenCalled();
   await userEvent.click(editor.getByRole('button', { name: 'Review profile' }));
   expect(roles.validateProfile).toHaveBeenLastCalledWith(
     profile.role.project_id,

@@ -3,8 +3,8 @@ use crate::*;
 use octacity_server_domain::ProjectId;
 use octacity_server_factory::*;
 use octacity_server_store::{
-  FactoryConfigurationStore, FactoryRoleProfileStore, IntegrationAdministrationStore, IntegrationConnectionStore,
-  IntegrationProjectAccessStore, IntegrationResourceAccess,
+  FactoryConfigurationStore, FactoryRoleProfileStore, FactoryRuntimeSettingsStore, IntegrationAdministrationStore,
+  IntegrationConnectionStore, IntegrationProjectAccessStore, IntegrationResourceAccess,
 };
 use std::collections::BTreeMap;
 
@@ -186,7 +186,7 @@ impl<
     }
     let profile = FactoryRoleProfile::publish(query.id, query.project_id, &role, query.definition)
       .map_err(|_| ApplicationError::invalid())?;
-    let cap = self
+    let (cap, _) = self
       .profile_capability(context, query.project_id, &query.capability)
       .await?;
     let incompatibility = cap.validate(&profile).err();
@@ -268,6 +268,9 @@ impl ManagementAuthorizationTarget for GetFactoryRoleProfileCapabilityQuery {
 /// Complete installed authoring settings; not a credential resolution or execution grant.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct FactoryRoleProfileCapabilityDetails {
+  /// Exact currently selectable retained MCP content, including logical read authority; never token values.
+  #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+  pub mcp_configurations: BTreeMap<FactoryKey, FactoryMcpConfiguration>,
   /// Cached plugin model choices; no discovery is performed by this content read.
   pub model_catalog: Option<FactoryRoleModelCatalog>,
   /// Shared ordinary profile shape, including approved argv and logical secret references.
@@ -280,6 +283,7 @@ pub struct FactoryRoleProfileCapabilityDetails {
 #[async_trait::async_trait]
 impl<
   S: FactoryConfigurationStore
+    + FactoryRuntimeSettingsStore
     + IntegrationProjectAccessStore
     + IntegrationConnectionStore
     + IntegrationAdministrationStore
@@ -294,10 +298,47 @@ impl<
     query: GetFactoryRoleProfileCapabilityQuery,
   ) -> Result<FactoryRoleProfileCapabilityDetails, ApplicationError> {
     super::factory_role_profiles::require_project_visibility(grant, query.project_id)?;
-    let cap = self
+    let (cap, choices) = self
       .profile_capability(context, query.project_id, &query.capability)
       .await?;
+    // Resolve exact static pins from the same authorized catalog snapshot;
+    // only remaining references need a retained Runtime settings read.
+    let mut configurations = choices
+      .runtime_settings_support(&query.capability)
+      .into_iter()
+      .flat_map(|support| support.authenticated_mcp.values())
+      .map(|configuration| (configuration.reference().clone(), configuration.clone()))
+      .collect::<BTreeMap<_, _>>();
+    let references = cap
+      .ceiling
+      .execution
+      .mcp_servers
+      .values()
+      .map(|binding| binding.configuration.clone())
+      .filter(|reference| !configurations.contains_key(reference))
+      .collect::<Vec<_>>();
+    if !references.is_empty() {
+      configurations.extend(
+        self
+          .store
+          .factory_runtime_mcp_configurations(query.project_id, &references)
+          .await?,
+      );
+    }
+    let mcp_configurations = cap
+      .ceiling
+      .execution
+      .mcp_servers
+      .iter()
+      .filter_map(|(name, binding)| {
+        configurations
+          .get(&binding.configuration)
+          .cloned()
+          .map(|configuration| (name.clone(), configuration))
+      })
+      .collect();
     Ok(FactoryRoleProfileCapabilityDetails {
+      mcp_configurations,
       model_catalog: cap.model_catalog,
       definition: cap.ceiling,
       parameters: cap.parameters,
@@ -317,7 +358,7 @@ impl<
     context: &ManagementRequestContext,
     project: ProjectId,
     alias: &FactoryKey,
-  ) -> Result<FactoryRoleProfileCapability, ApplicationError> {
+  ) -> Result<(FactoryRoleProfileCapability, FactoryConfigurationChoices), ApplicationError> {
     let choices = crate::factory_configuration_choices::visible_factory_choices(
       self.store.as_ref(),
       self.policy.as_ref(),
@@ -329,7 +370,8 @@ impl<
       .role_profile_capabilities()
       .get(alias)
       .ok_or_else(ApplicationError::capability_unavailable)?;
-    self.available_profile_capability(context, project, cap.clone()).await
+    let cap = self.available_profile_capability(context, project, cap.clone()).await?;
+    Ok((cap, choices))
   }
 }
 
@@ -398,6 +440,7 @@ impl ManagementAuthorizationTarget for RefreshFactoryRoleProfileCapabilityQuery 
 #[async_trait::async_trait]
 impl<
   S: FactoryConfigurationStore
+    + FactoryRuntimeSettingsStore
     + IntegrationProjectAccessStore
     + IntegrationConnectionStore
     + IntegrationAdministrationStore

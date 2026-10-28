@@ -11,7 +11,7 @@ for (const language of ['en', 'ru'] as const) {
     page,
   }) => {
     await installOperatorFixture(page);
-    await page.setViewportSize({ width: language === 'ru' ? 390 : 1280, height: 844 });
+    await page.setViewportSize({ width: 390, height: 844 });
     await page.addInitScript(
       ({ key, preferences }) => localStorage.setItem(key, JSON.stringify(preferences)),
       {
@@ -22,6 +22,19 @@ for (const language of ['en', 'ru'] as const) {
     const m = language === 'en' ? enMessages : ruMessages;
     const { role, profile, capability, choice: profileChoice } = factoryRoleFixture();
     const project = profile.role.project_id;
+    const authorization: components['schemas']['FactoryMcpAuthorization'] = {
+      credential_profile: 'mcp-read',
+      secret: { provider: 'agent-private', reference: 'project/issues-read' },
+      environment: 'ISSUE_TOKEN',
+      purpose: 'mcp_read',
+      resource: { identity: 'issues-repository', version: 'v1', digest: 'e'.repeat(64) },
+    };
+    const server: components['schemas']['FactoryMcpServer'] = {
+      transport: 'http',
+      url: 'https://mcp.example/tools',
+      bearer_token_env_var: 'ISSUE_TOKEN',
+      enabled_tools: ['read'],
+    };
     const choice: components['schemas']['FactoryRuntimeChoice'] = {
       alias: 'installed-runtime',
       toolchain: profile.definition.toolchain,
@@ -44,9 +57,19 @@ for (const language of ['en', 'ru'] as const) {
         'elapsed_time',
         'outputs',
       ],
-      environment_names: [],
-      secret_environment_names: [],
-      support: { mcp_transports: ['http'], mcp_executables: {} },
+      environment_names: ['ISSUE_TOKEN'],
+      secret_environment_names: ['ISSUE_TOKEN'],
+      support: {
+        mcp_transports: ['http'],
+        mcp_executables: {},
+        authenticated_mcp: {
+          reader: {
+            reference: { identity: 'installed-reader', version: 'v1', digest: 'f'.repeat(64) },
+            server,
+            authorization,
+          },
+        },
+      },
     };
     let settings: components['schemas']['FactoryRuntimeSettings'] | null = null;
     const publications: components['schemas']['FactoryRuntimeSettingsRequest'][] = [];
@@ -143,6 +166,14 @@ for (const language of ['en', 'ru'] as const) {
       return route.fulfill({
         json: {
           ...capability,
+          mcp_configurations: settings?.definition.mcp_servers.reader
+            ? {
+                reader: {
+                  reference: reader.configuration,
+                  ...settings.definition.mcp_servers.reader,
+                },
+              }
+            : {},
           model_catalog: { available: true, manual_model: true, models: [] },
           definition: {
             ...capability.definition,
@@ -156,6 +187,9 @@ for (const language of ['en', 'ru'] as const) {
       });
     });
     await page.goto(`/ai-settings?project_id=${project}&view=agents`);
+    const storageBefore = await page.evaluate(() =>
+      JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }),
+    );
     await page.getByRole('button', { name: role.definition.name, exact: true }).click();
     await page.getByRole('button', { name: 'default', exact: true }).click();
     await page.getByRole('button', { name: m['factory.editProfile'], exact: true }).click();
@@ -176,10 +210,18 @@ for (const language of ['en', 'ru'] as const) {
     await expect(page.getByRole('heading', { name: 'Factory Project', exact: true })).toBeVisible();
     await page.getByRole('button', { name: choice.alias, exact: true }).click();
     await page.getByRole('button', { name: m['runtime.addMcp'] }).click();
-    await page.getByRole('textbox', { name: m['runtime.mcpName'], exact: true }).fill('reader');
+    await page.getByRole('combobox', { name: m['runtime.installedMcp'], exact: true }).click();
+    await page.getByRole('option', { name: 'reader', exact: true }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.getByText('agent-private · project/issues-read')).toBeVisible();
+    await page.getByText(m['runtime.installationPrerequisites'], { exact: true }).click();
+    await expect(page.getByText(m['runtime.pluginQualification'], { exact: true })).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
     await page
-      .getByRole('textbox', { name: m['runtime.endpoint'], exact: true })
-      .fill('https://mcp.example/tools');
+      .getByRole('region', { name: m['runtime.editor'], exact: true })
+      .screenshot({ path: `/tmp/runtime-settings-editor-${language}.png` });
     await page.getByRole('button', { name: m['runtime.review'], exact: true }).focus();
     await page.keyboard.press('Enter');
     const review = page.getByRole('dialog', { name: m['runtime.review'] });
@@ -189,15 +231,23 @@ for (const language of ['en', 'ru'] as const) {
     await page.keyboard.press('Enter');
     await expect(review.getByText(m['runtime.published'])).toBeVisible();
     expect(publications).toHaveLength(1);
-    expect(publications[0]?.definition.mcp_servers.reader?.server).toEqual({
-      transport: 'http',
-      url: 'https://mcp.example/tools',
+    expect(publications[0]?.definition.mcp_servers.reader).toEqual({
+      server,
+      authorization,
+      integration: null,
     });
     expect(page.url()).not.toContain('mcp.example');
     await review.getByRole('button', { name: m['common.close'], exact: true }).click();
-    await page.getByRole('button', { name: m['factory.agents'], exact: true }).click();
+    await page.getByRole('link', { name: m['runtime.configureProfile'], exact: true }).focus();
+    await page.keyboard.press('Enter');
+    expect(new URL(page.url()).searchParams.get('project_id')).toBe(project);
     const selection = editor.getByRole('checkbox', { name: 'reader', exact: true });
     await expect(selection).not.toBeChecked();
+    await expect(editor.getByText('issues-repository · v1')).toBeVisible();
+    expect(
+      await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
+    ).toBe(true);
+    await editor.screenshot({ path: `/tmp/runtime-profile-editor-${language}.png` });
     await expect(
       editor.getByRole('textbox', { name: m['factory.profileName'], exact: true }),
     ).toHaveValue('My pro');
@@ -224,6 +274,11 @@ for (const language of ['en', 'ru'] as const) {
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
+    expect(
+      await page.evaluate(() =>
+        JSON.stringify({ local: { ...localStorage }, session: { ...sessionStorage } }),
+      ),
+    ).toBe(storageBefore);
     await page.screenshot({
       path: `/tmp/runtime-settings-profile-${language}.png`,
       fullPage: true,

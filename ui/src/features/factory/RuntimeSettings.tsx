@@ -1,15 +1,23 @@
 import { useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from 'react-router-dom';
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { usePresentation } from '../../app/presentation/PresentationProvider';
 import { queryKeys } from '../../app/query';
+import { aiSettingsPath } from '../../app/routes';
 import { ConfirmedCommand } from '../../shared/ConfirmedCommand';
 import { PagedExplorerBranch, useCursorPage } from '../../shared/PagedExplorerBranch';
 import { QueryFailureNotice, QueryLoadingNotice } from '../../shared/QueryStateNotice';
 import { RuntimeIntegrations, type RuntimeIntegrationApi } from './RuntimeIntegrations';
 import { SelectMenu } from '../../shared/SelectMenu';
 import { RuntimeMcpFields, newMcpServer } from './RuntimeMcpFields';
+import { RuntimeSetupGuidance } from './RuntimeSetupGuidance';
+import {
+  RuntimeMcpAuthority,
+  mcpAuthorizationUnavailable,
+  type RuntimeMcpRow,
+} from './RuntimeMcpAuthority';
 import { useDraftRowKeys } from '../../shared/useDraftRowKeys';
 import { catalogLabels } from './catalogLabels';
 import { PermissionEditor } from './ResourceEditors';
@@ -20,7 +28,7 @@ type Choice = Schema['FactoryRuntimeChoice'];
 type Settings = Schema['FactoryRuntimeSettings'];
 type Request = Schema['FactoryRuntimeSettingsRequest'];
 export type RuntimeApi = typeof factoryRuntimeApi;
-type McpRow = Schema['FactoryRuntimeSettingsDefinition']['mcp_servers'][string] & { name: string };
+type McpRow = RuntimeMcpRow;
 
 export function RuntimeSettings({
   project,
@@ -40,6 +48,8 @@ export function RuntimeSettings({
   return (
     <section aria-label={t('runtime.runtimes')}>
       <p>{t('runtime.help')}</p>
+      <p>{t('runtime.profileHelp')}</p>
+      <Link to={aiSettingsPath(project, 'agents')}>{t('runtime.configureProfile')}</Link>
       <PagedExplorerBranch
         query={choices}
         empty={t('runtime.noInstalled')}
@@ -150,8 +160,11 @@ function RuntimeEditor({
     ),
   );
   const namesUnique = new Set(rows.map((row) => row.name)).size === rows.length;
+  const authorizationUnavailable = rows.some((row) =>
+    mcpAuthorizationUnavailable(row, choice, definition.integrations),
+  );
   async function validate(target: HTMLElement) {
-    if (!namesUnique || installationChanged) return;
+    if (!namesUnique || installationChanged || authorizationUnavailable) return;
     setPending(true);
     setError(null);
     const request: Request = {
@@ -178,6 +191,7 @@ function RuntimeEditor({
       <h3>{choice.alias}</h3>
       <p>{t('factory.memoryDraft')}</p>
       <p>{t('runtime.permissionsHelp')}</p>
+      <RuntimeSetupGuidance choice={choice} />
       {!choice.support.mcp_transports.length ? <p>{t('runtime.unsupportedMcp')}</p> : null}
       {installationChanged ? (
         <div>
@@ -242,6 +256,12 @@ function RuntimeEditor({
                 choice={choice}
                 onChange={(server) => update(index, { server })}
               />
+              <RuntimeMcpAuthority
+                row={row}
+                choice={choice}
+                integrations={definition.integrations}
+                onChange={(patch) => update(index, patch)}
+              />
               <button type="button" onClick={() => setRows(rows.filter((_, at) => at !== index))}>
                 {t('runtime.removeMcp', { index: index + 1 })}
               </button>
@@ -278,7 +298,7 @@ function RuntimeEditor({
           <button
             ref={reviewButtonRef}
             type="submit"
-            disabled={!namesUnique || installationChanged}
+            disabled={!namesUnique || installationChanged || authorizationUnavailable}
           >
             {t('runtime.review')}
           </button>

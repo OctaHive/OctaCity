@@ -159,8 +159,161 @@ it('explains when installation support prevents configuring MCP', async () => {
   expect(screen.queryByRole('textbox', { name: 'MCP name' })).toBeNull();
 });
 
-it('reviews and explicitly saves a supported named HTTP MCP through the shared REST owner', async () => {
-  const { api, choice, projectId, router } = setup();
+it('gives installation steps for metadata-only Runtime without hiding profile authoring', async () => {
+  const { choice, api } = setup([]);
+  choice.permissions.plugins = [];
+  choice.permissions.executables = [];
+  choice.permissions.commands = [];
+  choice.permissions.network_hosts = [];
+  await userEvent.click(await screen.findByRole('button', { name: 'installed-runtime' }));
+  await userEvent.click(screen.getByText('Installation prerequisites', { selector: 'summary' }));
+  expect(screen.getByText(/--factory-profiles/)).toBeTruthy();
+  expect(screen.getByText(/--factory-agent-profile/)).toBeTruthy();
+  expect(screen.getByText(/No plugin execution permission is installed/)).toBeTruthy();
+  expect(screen.getByText(/No network hosts are approved/)).toBeTruthy();
+  expect(screen.getByText(/native MCP call\/result capture/)).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Choose model and reasoning' })).toBeTruthy();
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
+});
+
+it('explicitly selects installed MCP read authority and publishes references instead of token values', async () => {
+  const { api, choice } = setup();
+  const authorization: Schema['FactoryMcpAuthorization'] = {
+    credential_profile: 'mcp-issues-read',
+    secret: { provider: 'agent-private', reference: 'project/issues-read' },
+    environment: 'ACCESS_TOKEN',
+    purpose: 'mcp_read',
+    resource: { identity: 'issues-repository', version: 'v1', digest: 'a'.repeat(64) },
+  };
+  const server: Schema['FactoryMcpServer'] = {
+    transport: 'http',
+    url: 'https://mcp.example/tools',
+    bearer_token_env_var: 'ACCESS_TOKEN',
+    enabled_tools: ['read'],
+  };
+  choice.support.authenticated_mcp = {
+    reader: {
+      reference: { identity: 'reader', version: 'v1', digest: 'b'.repeat(64) },
+      server,
+      authorization,
+    },
+  };
+  await userEvent.click(await screen.findByRole('button', { name: 'installed-runtime' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Add MCP server' }));
+  const select = screen.getByRole('combobox', { name: 'Installed MCP connection' });
+  await userEvent.click(select);
+  await userEvent.click(screen.getByRole('option', { name: 'reader' }));
+  expect(screen.getByRole('textbox', { name: 'MCP name' })).toHaveProperty('value', 'reader');
+  expect(screen.getByText('agent-private · project/issues-read')).toBeTruthy();
+  expect(screen.getByText('mcp-issues-read')).toBeTruthy();
+  expect(screen.getByText('issues-repository · v1')).toBeTruthy();
+  expect(screen.getByText('Read-only MCP access')).toBeTruthy();
+  expect(screen.getByText(/AI login, MCP read access and server Reporter writes/)).toBeTruthy();
+  expect(screen.queryByRole('textbox', { name: /token value/i })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Review Runtime settings' }));
+  await screen.findByRole('dialog', { name: 'Review Runtime settings' });
+  expect(api.validate.mock.calls[0]?.[2].definition.mcp_servers.reader).toEqual({
+    server,
+    authorization,
+    integration: null,
+  });
+  expect(api.publish).not.toHaveBeenCalled();
+});
+
+it.each(['clear requirement', 'replace requirement', 'remove binding'])(
+  'blocks installed MCP review when its required integration changes: %s',
+  async (change) => {
+    const { api, choice, projectId, connection, access, resources } = setup();
+    const resource = resources.resources[0]!;
+    const integration: Schema['FactoryRoleIntegrationBinding'] = {
+      project_id: projectId,
+      connection_id: connection.id,
+      connection_version: access.connection_version,
+      access_version: access.version,
+      resource: resource.reference,
+      capability: resource.capabilities[0]!.capability,
+    };
+    const server: Schema['FactoryMcpServer'] = {
+      transport: 'http',
+      url: 'https://mcp.example/read',
+      bearer_token_env_var: 'ACCESS_TOKEN',
+    };
+    const authorization: Schema['FactoryMcpAuthorization'] = {
+      credential_profile: 'mcp-read',
+      secret: { provider: 'agent-private', reference: 'project/read' },
+      environment: 'ACCESS_TOKEN',
+      purpose: 'mcp_read',
+      resource: resource.reference,
+    };
+    choice.support.authenticated_mcp = {
+      reader: {
+        reference: { identity: 'reader', version: 'v1', digest: 'b'.repeat(64) },
+        server,
+        authorization,
+        integration,
+      },
+    };
+    api.current.mockResolvedValueOnce({
+      settings: {
+        project_id: projectId,
+        runtime: choice.alias,
+        version: 1,
+        digest: 'c'.repeat(64),
+        definition: {
+          toolchain: choice.toolchain,
+          permissions: choice.permissions,
+          integrations: {
+            tracker: integration,
+            other: { ...integration, access_version: integration.access_version + 1 },
+          },
+          mcp_servers: { reader: { server, authorization, integration: 'tracker' } },
+        },
+      },
+    });
+    await userEvent.click(await screen.findByRole('button', { name: 'installed-runtime' }));
+    const review = await screen.findByRole('button', { name: 'Review Runtime settings' });
+    expect(review).toHaveProperty('disabled', false);
+    if (change === 'remove binding') {
+      await userEvent.click(screen.getByRole('button', { name: 'Remove integration tracker' }));
+    } else {
+      await userEvent.click(screen.getByRole('combobox', { name: 'Required integration' }));
+      await userEvent.click(
+        screen.getByRole('option', {
+          name: change === 'clear requirement' ? 'None' : 'other',
+        }),
+      );
+    }
+    expect(review).toHaveProperty('disabled', true);
+    expect(screen.getByRole('alert').textContent).toContain(
+      'Restore the exact required Project integration binding before review',
+    );
+    expect(api.validate).not.toHaveBeenCalled();
+    expect(api.publish).not.toHaveBeenCalled();
+    if (change === 'remove binding') {
+      await userEvent.type(screen.getByRole('textbox', { name: 'Integration alias' }), 'tracker');
+      await userEvent.click(screen.getByRole('combobox', { name: 'Integration connection' }));
+      await userEvent.click(
+        await screen.findByRole('option', { name: connection.definition.name }),
+      );
+      await userEvent.click(
+        await screen.findByRole('combobox', { name: 'Authorized resource and capability' }),
+      );
+      await userEvent.click(
+        await screen.findByRole('option', { name: `${resource.locator} · Task reading` }),
+      );
+      await userEvent.click(screen.getByRole('button', { name: 'Add integration binding' }));
+    } else {
+      await userEvent.click(screen.getByRole('combobox', { name: 'Required integration' }));
+      await userEvent.click(screen.getByRole('option', { name: 'tracker' }));
+    }
+    expect(review).toHaveProperty('disabled', false);
+    expect(screen.queryByRole('alert')).toBeNull();
+  },
+);
+
+it('blocks an unqualified MCP bearer mapping without borrowing model credentials', async () => {
+  const { api } = setup();
   await userEvent.click(await screen.findByRole('button', { name: 'installed-runtime' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Add MCP server' }));
   await userEvent.type(screen.getByRole('textbox', { name: 'MCP name' }), 'reader');
@@ -170,8 +323,30 @@ it('reviews and explicitly saves a supported named HTTP MCP through the shared R
   );
   await userEvent.click(screen.getByRole('combobox', { name: 'Bearer environment name' }));
   await userEvent.click(screen.getByRole('option', { name: 'ACCESS_TOKEN' }));
+  expect(screen.getByRole('alert').textContent).toContain(
+    'No matching installed MCP authentication',
+  );
+  const review = screen.getByRole('button', { name: 'Review Runtime settings' });
+  expect(review).toHaveProperty('disabled', true);
+  await userEvent.click(review);
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
+});
+
+it('reviews and explicitly saves a supported named HTTP MCP through the shared REST owner', async () => {
+  const { api, choice, projectId, router } = setup();
+  await userEvent.click(await screen.findByRole('button', { name: 'installed-runtime' }));
+  await userEvent.click(await screen.findByRole('button', { name: 'Add MCP server' }));
+  await userEvent.type(screen.getByRole('textbox', { name: 'MCP name' }), 'reader');
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'HTTPS endpoint' }),
+    'https://mcp.example/tools',
+  );
   await userEvent.click(screen.getByRole('button', { name: 'Review Runtime settings' }));
   const review = await screen.findByRole('dialog', { name: 'Review Runtime settings' });
+  expect(
+    within(review).getByText(/Configuration validation only; no MCP connection was tested/),
+  ).toBeTruthy();
   expect(api.publish).not.toHaveBeenCalled();
   expect(api.validate).toHaveBeenCalledWith(projectId, choice.alias, {
     expected_version: null,
@@ -184,7 +359,6 @@ it('reviews and explicitly saves a supported named HTTP MCP through the shared R
           server: {
             transport: 'http',
             url: 'https://mcp.example/tools',
-            bearer_token_env_var: 'ACCESS_TOKEN',
           },
           integration: null,
         },
@@ -192,7 +366,11 @@ it('reviews and explicitly saves a supported named HTTP MCP through the shared R
     },
   });
   await userEvent.click(within(review).getByRole('button', { name: 'Publish reviewed settings' }));
-  expect(await within(review).findByText('Runtime settings published.')).toBeTruthy();
+  expect(
+    await within(review).findByText(
+      'Runtime settings published. No MCP connection was tested or execution started.',
+    ),
+  ).toBeTruthy();
   expect(api.publish).toHaveBeenCalledWith(
     projectId,
     choice.alias,
@@ -347,7 +525,11 @@ it('keeps the Runtime draft after a version conflict and requires explicit refre
   dialog = await screen.findByRole('dialog', { name: 'Review Runtime settings' });
   expect(api.validate.mock.calls[1]?.[2].expected_version).toBe(8);
   await userEvent.click(within(dialog).getByRole('button', { name: 'Publish reviewed settings' }));
-  expect(await within(dialog).findByText('Runtime settings published.')).toBeTruthy();
+  expect(
+    await within(dialog).findByText(
+      'Runtime settings published. No MCP connection was tested or execution started.',
+    ),
+  ).toBeTruthy();
   expect(api.publish.mock.calls[1]?.[2].expected_version).toBe(8);
 });
 
