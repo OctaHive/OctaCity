@@ -252,7 +252,7 @@ test('retains a tight asset count for the complete console with Factory diagnost
   );
 });
 
-test('admits measured workflow canvas and rejects unplanned aggregate growth', async (context) => {
+test('admits measured workflow canvas within the current aggregate budgets', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
@@ -266,15 +266,6 @@ test('admits measured workflow canvas and rejects unplanned aggregate growth', a
   await write(root, 'dist/assets/features.js', 'x'.repeat(997_162));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(90_943));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
-  assert.equal(policy.bundleBudgets.entryJavaScriptBytes, 460_800);
-  assert.equal(policy.bundleBudgets.totalJavaScriptBytes, 1_321_472);
-  assert.equal(policy.bundleBudgets.totalCssBytes, 91_136);
-  assert.equal(policy.bundleBudgets.totalStaticBytes, 1_413_120);
-  assert.equal(policy.bundleBudgets.assetCount, 57);
-  await write(root, 'dist/assets/unplanned.js', 'x'.repeat(24_576));
-  const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });
-  assert.ok(rejected.some((message) => message.includes('total JavaScript')));
-  assert.ok(rejected.some((message) => message.includes('total static output')));
 });
 
 test('admits bounded Agent diagnostics and retains the CSS ceiling', async (context) => {
@@ -295,7 +286,7 @@ test('admits bounded Agent diagnostics and retains the CSS ceiling', async (cont
   );
 });
 
-test('admits measured Source label-presence editing and rejects another KiB of aggregate growth', async (context) => {
+test('admits measured Runtime MCP guidance and rejects another KiB near aggregate ceilings', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
@@ -306,8 +297,19 @@ test('admits measured Source label-presence editing and rejects another KiB of a
     '<script type="module" src="./assets/index.js"></script>'.padEnd(622, ' '),
   );
   await write(root, 'dist/assets/index.js', 'x'.repeat(304_779));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(1_016_343));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(1_027_369));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(90_943));
+  assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
+  assert.deepEqual(policy.bundleBudgets, {
+    entryJavaScriptBytes: 460_800,
+    totalJavaScriptBytes: 1_337_856,
+    totalCssBytes: 91_136,
+    totalStaticBytes: 1_429_504,
+    assetCount: 57,
+  });
+  // Exercise the ceiling independently of the measured bundle's remaining headroom:
+  // 1,337,344 JS bytes and 1,428,909 total bytes fit; one more KiB exceeds both.
+  await write(root, 'dist/assets/features.js', 'x'.repeat(1_032_565));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   await write(root, 'dist/assets/unplanned.js', 'x'.repeat(1_024));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });

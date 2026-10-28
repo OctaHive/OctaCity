@@ -57,7 +57,8 @@ No paid model call, live MCP/provider mutation or personal stand change was used
 
 ## Regression and inspection
 
-- `pnpm test:unit`: 36 Node tests and 848 Vitest tests passed (106 Vitest files).
+- Vitest regression: 848 tests passed across 106 files. The separate Node
+  architecture tests needed the budget-fixture correction recorded below.
 - Focused Runtime/profile component regression: 22 passed.
 - `pnpm exec playwright test tests/browser/runtime-settings.spec.ts tests/browser/factory-profiles.spec.ts`:
   7 passed. Both Runtime locales use 390 px, keyboard confirmation/navigation,
@@ -127,3 +128,21 @@ passed. Final regression commands and observed results:
 Behavioral Red/Green logs and final check output are retained under
 `/tmp/octacity-review-*.log`. Documentation-only evidence updates do not require
 an executable TDD cycle.
+
+### Aggregate budget regression correction
+
+CI exposed two stale architecture-test expectations after the documented 16 KiB
+feature allowance: an old exact budget assertion and a historical Source fixture
+whose extra KiB no longer crossed the new ceiling. Running
+`node --test scripts/verify-architecture.test.mjs` reproduced both failures
+(23 passed, 2 failed). The tests now admit the measured Runtime MCP bundle,
+retain the exact approved budgets, and separately fill the remaining headroom
+before asserting rejection of another KiB. Historical workflow output remains
+covered as an accepted bundle. Neither policy limits nor verifier behavior changed.
+
+The same command then passed all 25 tests. The complete Node script regression
+also passed all 36 tests:
+
+```shell
+node --test scripts/verify-architecture.test.mjs scripts/factory-authoring-schemas.test.mjs scripts/issue-workflow-constraints.test.mjs scripts/issue-constraints.test.mjs scripts/issue-source-constraints.test.mjs
+```
