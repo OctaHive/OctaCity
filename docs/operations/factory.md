@@ -484,6 +484,12 @@ tiers or provider-specific fields. Profiles, execution references, policy inputs
 criteria, candidate mappings, selection allowance and failure behavior are covered
 by the existing immutable Flow definition digest and retained admission closure.
 
+Editable `FlowDefinitionTemplate` nodes accept this same `profile_selection`
+contract instead of a `build_profile` alias. Clear that alias before assigning
+the selection; instantiation preserves the exact candidates and delegates to the
+ordinary node validator. The [versioned triage preset](../../config/factory/presets/triage/README.md)
+documents independent stage selections and normal publication prerequisites.
+
 All candidates use the node's task and outcome schemas. They must preserve the
 same result output, category, outcome, verifier, evidence and capture/deliverable
 contract. Their toolchain and Build configuration must match their complete

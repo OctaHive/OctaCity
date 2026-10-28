@@ -36,6 +36,10 @@ impl EvidenceFixture {
   }
 }
 fn fixture(result_text: &str) -> EvidenceFixture {
+  fixture_with_tools(result_text, vec!["lookup".into()])
+}
+
+fn fixture_with_tools(result_text: &str, enabled_tools: Vec<String>) -> EvidenceFixture {
   let secret = logical_secret("project/issue-reader");
   let configuration = FactoryMcpConfiguration::new(
     key("issues"),
@@ -43,7 +47,7 @@ fn fixture(result_text: &str) -> EvidenceFixture {
     FactoryMcpServer::Http {
       url: "https://octacity.example/mcp/issues".into(),
       bearer_token_env_var: Some("ISSUE_TOKEN".into()),
-      enabled_tools: Some(vec!["lookup".into()]),
+      enabled_tools: Some(enabled_tools),
     },
     None,
   )
@@ -308,3 +312,6 @@ fn mcp_conclusion_schema_and_verifier_share_the_flow_pointer_boundary() {
     "the advertised schema must not promise pointers the verifier rejects"
   );
 }
+
+#[path = "factory_triage_eligibility_tests.rs"]
+mod triage_eligibility;

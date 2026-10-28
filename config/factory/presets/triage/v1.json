@@ -1,0 +1,58 @@
+{
+  "input_schema": "project_input",
+  "entry": "eligibility",
+  "execution": {
+    "budget": {
+      "max_attempts": 4,
+      "max_elapsed_millis": 240000,
+      "max_tokens": 40000,
+      "max_cost_micro_units": 4000000,
+      "max_output_bytes": 4194304
+    },
+    "permissions": {
+      "plugins": [],
+      "executables": [],
+      "tools": [],
+      "commands": [],
+      "max_descendants": 0,
+      "mounts": [],
+      "network_hosts": [],
+      "secret_profiles": [],
+      "workload_identity_profiles": [],
+      "resources": {
+        "cpu_millis": 0,
+        "memory_bytes": 0,
+        "disk_bytes": 0,
+        "process_count": 0,
+        "elapsed_millis": 0
+      },
+      "outputs": {
+        "kinds": [],
+        "max_artifact_count": 0,
+        "max_artifact_bytes": 0,
+        "max_report_count": 0,
+        "max_report_bytes": 0
+      }
+    },
+    "max_active_nodes": 1
+  },
+  "parts": [
+    "presets/triage/inputs-v1.json",
+    "presets/triage/eligibility-results-v1.json",
+    "flows/base-flow/schemas/artifact_reference.json",
+    "flows/base-flow/schemas/classification_facts.json",
+    "flows/base-flow/schemas/classification_gate_input.json",
+    "flows/base-flow/schemas/classification_observations.json",
+    "flows/base-flow/schemas/declared_requirements.json",
+    "flows/base-flow/schemas/spec_handoff.json",
+    "flows/base-flow/schemas/spec_manifest.json",
+    "flows/base-flow/schemas/spec_result.json",
+    "flows/base-flow/schemas/summary.json",
+    "flows/base-flow/schemas/work.json",
+    "presets/triage/eligibility-v1.json",
+    "presets/triage/eligibility-gate-v1.json",
+    "presets/triage/classification-v1.json",
+    "flows/base-flow/nodes/classification_gate.json",
+    "presets/triage/routing-v1.json"
+  ]
+}

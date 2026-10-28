@@ -1,0 +1,616 @@
+{
+  "schemas": {
+    "eligibility_observations": {
+      "identity": "factory.triage.eligibility_observations",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "assessment": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "fit": {
+                  "required": true,
+                  "value": {
+                    "type": "enum",
+                    "values": [
+                      "fits",
+                      "out_of_scope",
+                      "inconclusive"
+                    ]
+                  }
+                },
+                "uncertainty": {
+                  "required": true,
+                  "value": {
+                    "type": "enum",
+                    "values": [
+                      "clear",
+                      "needs_input",
+                      "review"
+                    ]
+                  }
+                },
+                "reason": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 2048
+                  }
+                },
+                "duplicate": {
+                  "required": true,
+                  "value": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          },
+          "evidence": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "reference",
+                "schema": "mcp_reference"
+              },
+              "min_items": 0,
+              "max_items": 64
+            }
+          },
+          "claims": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "reference",
+                "schema": "mcp_claim"
+              },
+              "min_items": 0,
+              "max_items": 2
+            }
+          },
+          "verification": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "mcp_verification"
+            }
+          }
+        }
+      }
+    },
+    "eligibility_gate_input": {
+      "identity": "factory.triage.eligibility_gate_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "conclusion": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "eligibility_observations"
+            }
+          },
+          "producer": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "build_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 36
+                  }
+                },
+                "attempt_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 36
+                  }
+                },
+                "job_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 36
+                  }
+                },
+                "tool": {
+                  "required": true,
+                  "value": {
+                    "type": "reference",
+                    "schema": "mcp_pin"
+                  }
+                },
+                "plugin": {
+                  "required": true,
+                  "value": {
+                    "type": "reference",
+                    "schema": "mcp_pin"
+                  }
+                }
+              }
+            }
+          },
+          "fresh_until": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          }
+        }
+      }
+    },
+    "eligibility_accepted": {
+      "identity": "factory.triage.eligibility_accepted",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "accepted": {
+            "required": true,
+            "value": {
+              "type": "boolean"
+            }
+          },
+          "decision": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "eligible",
+                "duplicate",
+                "out_of_scope",
+                "needs_input",
+                "review"
+              ]
+            }
+          },
+          "reason": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 2048
+            }
+          },
+          "evidence": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "reference",
+                "schema": "mcp_reference"
+              },
+              "min_items": 0,
+              "max_items": 64
+            }
+          }
+        }
+      }
+    },
+    "mcp_artifact": {
+      "identity": "factory.triage.mcp_artifact",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "artifact_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 36
+            }
+          },
+          "content_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "encoded_size": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          }
+        }
+      }
+    },
+    "mcp_pin": {
+      "identity": "factory.triage.mcp_pin",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "identity": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "version": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    },
+    "mcp_reference": {
+      "identity": "factory.triage.mcp_reference",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "trace": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "mcp_artifact"
+            }
+          },
+          "sequence": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          },
+          "call_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "result_digest": {
+            "required": false,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          }
+        }
+      }
+    },
+    "mcp_claim": {
+      "identity": "factory.triage.mcp_claim",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "reference": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "mcp_reference"
+            }
+          },
+          "connection": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "tool": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "arguments_json": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 65536
+            }
+          },
+          "pointer": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 0,
+              "max_bytes": 256
+            }
+          },
+          "value_json": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 65536
+            }
+          },
+          "json_text": {
+            "required": false,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          }
+        }
+      }
+    },
+    "mcp_observation": {
+      "identity": "factory.triage.mcp_observation",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "reference": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "mcp_reference"
+            }
+          },
+          "connection": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "configuration": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "mcp_pin"
+            }
+          },
+          "tool": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 256
+            }
+          },
+          "arguments_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "started_sequence": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          },
+          "observed_at": {
+            "required": true,
+            "value": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9223372036854775807
+            }
+          },
+          "status": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "completed",
+                "failed",
+                "interrupted",
+                "malformed"
+              ]
+            }
+          },
+          "coverage": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "unknown"
+              ]
+            }
+          },
+          "resource": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "mcp_pin"
+            }
+          }
+        }
+      }
+    },
+    "mcp_verification": {
+      "identity": "factory.triage.mcp_verification",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "status": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "observed",
+                "needs_review"
+              ]
+            }
+          },
+          "coverage": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "unknown"
+              ]
+            }
+          },
+          "global_absence_proven": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                false
+              ]
+            }
+          },
+          "duplicate_proven": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                false
+              ]
+            }
+          },
+          "invocation": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "node_attempt_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 36
+            }
+          },
+          "producer": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "build_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 36
+                  }
+                },
+                "attempt_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 36
+                  }
+                },
+                "job_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 1,
+                    "max_bytes": 36
+                  }
+                }
+              }
+            }
+          },
+          "trace_artifact_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 36
+            }
+          },
+          "trace_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "provenance_artifact_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 36
+            }
+          },
+          "provenance_digest": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 64
+            }
+          },
+          "capture_status": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "complete",
+                "cancelled",
+                "failed"
+              ]
+            }
+          },
+          "observations": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "item": {
+                "type": "reference",
+                "schema": "mcp_observation"
+              },
+              "min_items": 0,
+              "max_items": 64
+            }
+          }
+        }
+      }
+    }
+  }
+}

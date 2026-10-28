@@ -1,0 +1,71 @@
+{
+  "schemas": {
+    "project_input": {
+      "identity": "factory.triage.project_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "task": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "completion": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "work": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "work"
+            }
+          }
+        }
+      }
+    },
+    "analyst_input": {
+      "identity": "factory.triage.analyst_input",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "task": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "completion": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "artifact_reference"
+            }
+          },
+          "work": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "work"
+            }
+          },
+          "eligibility": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "eligibility_accepted"
+            }
+          }
+        }
+      }
+    }
+  }
+}

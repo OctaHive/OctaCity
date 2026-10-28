@@ -79,6 +79,10 @@ pub struct FlowTemplateNode {
   /// Installed command/reasoning profile choice.
   #[serde(default)]
   pub build_profile: Option<FactoryKey>,
+  /// Exact reviewed Role/Profile candidates and selection policy, using the same
+  /// ordinary reasoning-node contract as immutable definitions. No live aliases.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub profile_selection: Option<crate::FlowProfileSelectionBinding>,
   /// Optional disjoint writable directory scope for capture jobs; narrows the selected profile.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub capture_write_paths: Option<Vec<crate::FactoryRepositoryPath>>,
@@ -247,6 +251,9 @@ impl FlowDefinitionTemplate {
           }
           node = node.with_build(binding)?;
         }
+        if let Some(selection) = &choice.profile_selection {
+          node = node.with_profile_selection(selection.clone())?;
+        }
         if let Some(program) = &choice.gate {
           node = node.with_gate(program.binding()?)?;
         }
@@ -261,7 +268,9 @@ impl FlowDefinitionTemplate {
         {
           return Err(invalid());
         }
-        if matches!(choice.kind, FlowNodeKind::BuildCommand | FlowNodeKind::Reasoning) && choice.build_profile.is_none()
+        if matches!(choice.kind, FlowNodeKind::BuildCommand | FlowNodeKind::Reasoning)
+          && choice.build_profile.is_none()
+          && choice.profile_selection.is_none()
           || choice.kind == FlowNodeKind::DeterministicGate && choice.gate.is_none()
           || matches!(choice.kind, FlowNodeKind::TrustedAction | FlowNodeKind::DecisionSignal)
             && choice.action.is_none()

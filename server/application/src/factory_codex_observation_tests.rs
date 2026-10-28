@@ -304,7 +304,7 @@ impl Fixture {
     self.replace_document_bytes(name, serde_json::to_vec(&value).unwrap());
   }
 
-  fn replace_document_bytes(&mut self, name: &str, bytes: Vec<u8>) {
+  pub(crate) fn replace_document_bytes(&mut self, name: &str, bytes: Vec<u8>) {
     let document = self
       .documents
       .iter_mut()

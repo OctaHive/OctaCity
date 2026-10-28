@@ -1,0 +1,617 @@
+{
+  "nodes": [
+    {
+      "key": "eligibility_gate",
+      "kind": "deterministic_gate",
+      "input_schema": "eligibility_gate_input",
+      "outcomes": [
+        {
+          "key": "classify",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        },
+        {
+          "key": "duplicate",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        },
+        {
+          "key": "review",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        },
+        {
+          "key": "out_of_scope",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        },
+        {
+          "key": "needs_input",
+          "kind": "success",
+          "schema": "eligibility_accepted"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 10000,
+        "max_cost_micro_units": 1000000,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "conclusion": {
+            "source": "predecessor",
+            "view": "payload",
+            "path": ""
+          },
+          "producer": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/codex-run-result/producer"
+          },
+          "fresh_until": {
+            "source": "predecessor",
+            "view": "metadata",
+            "path": "/build/outputs/codex-run-result/fresh_until"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "conclusion": {
+                "mapping": "pointer",
+                "path": "/conclusion"
+              },
+              "producer": {
+                "mapping": "pointer",
+                "path": "/producer"
+              },
+              "fresh_until": {
+                "mapping": "pointer",
+                "path": "/fresh_until"
+              }
+            }
+          }
+        }
+      },
+      "gate": {
+        "precondition": {
+          "operation": "all",
+          "predicates": [
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/producer/tool/identity"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "native-mcp-evidence"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/producer/tool/version"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "v1"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/producer/tool/digest"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "6921e3ae725944f5f3969ea11dc7a264d12e205774e4b92195f2f82933c08886"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/fresh_until"
+              },
+              "comparison": "greater",
+              "right": {
+                "source": "observation_time"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/conclusion/verification/status"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "observed"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/conclusion/verification/capture_status"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "complete"
+              }
+            },
+            {
+              "operation": "for_each",
+              "collection": {
+                "source": "path",
+                "path": "/conclusion/verification/observations"
+              },
+              "quantifier": "every",
+              "predicate": {
+                "operation": "compare",
+                "left": {
+                  "source": "item",
+                  "path": "/status"
+                },
+                "comparison": "equal",
+                "right": {
+                  "source": "literal",
+                  "value": "completed"
+                }
+              }
+            },
+            {
+              "operation": "for_each",
+              "collection": {
+                "source": "path",
+                "path": "/conclusion/claims"
+              },
+              "quantifier": "any",
+              "predicate": {
+                "operation": "all",
+                "predicates": [
+                  {
+                    "operation": "compare",
+                    "left": {
+                      "source": "item",
+                      "path": "/connection"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "literal",
+                      "value": "issues"
+                    }
+                  },
+                  {
+                    "operation": "compare",
+                    "left": {
+                      "source": "item",
+                      "path": "/tool"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "literal",
+                      "value": "search_issues"
+                    }
+                  },
+                  {
+                    "operation": "compare",
+                    "left": {
+                      "source": "item",
+                      "path": "/pointer"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "literal",
+                      "value": "/coverage/has_more"
+                    }
+                  },
+                  {
+                    "operation": "compare",
+                    "left": {
+                      "source": "item",
+                      "path": "/json_text"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "literal",
+                      "value": 0
+                    }
+                  },
+                  {
+                    "operation": "compare",
+                    "left": {
+                      "source": "item",
+                      "path": "/value_json"
+                    },
+                    "comparison": "equal",
+                    "right": {
+                      "source": "literal",
+                      "value": "false"
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/producer/build_id"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/conclusion/verification/producer/build_id"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/producer/attempt_id"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/conclusion/verification/producer/attempt_id"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/producer/job_id"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "path",
+                "path": "/conclusion/verification/producer/job_id"
+              }
+            }
+          ]
+        },
+        "rules": [
+          {
+            "when": {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/conclusion/assessment/uncertainty"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "needs_input"
+              }
+            },
+            "outcome": "needs_input"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/uncertainty"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "clear"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/fit"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "fits"
+                  }
+                },
+                {
+                  "operation": "for_each",
+                  "collection": {
+                    "source": "path",
+                    "path": "/conclusion/claims"
+                  },
+                  "quantifier": "any",
+                  "predicate": {
+                    "operation": "all",
+                    "predicates": [
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/connection"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "issues"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/tool"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "read_issue"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/pointer"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": "/issue"
+                        }
+                      },
+                      {
+                        "operation": "compare",
+                        "left": {
+                          "source": "item",
+                          "path": "/json_text"
+                        },
+                        "comparison": "equal",
+                        "right": {
+                          "source": "literal",
+                          "value": 0
+                        }
+                      }
+                    ]
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/duplicate"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": true
+                  }
+                }
+              ]
+            },
+            "outcome": "duplicate"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/uncertainty"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "clear"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/fit"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "fits"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/duplicate"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": false
+                  }
+                }
+              ]
+            },
+            "outcome": "classify"
+          },
+          {
+            "when": {
+              "operation": "all",
+              "predicates": [
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/uncertainty"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "clear"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/fit"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "out_of_scope"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/conclusion/assessment/duplicate"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": false
+                  }
+                }
+              ]
+            },
+            "outcome": "out_of_scope"
+          }
+        ],
+        "fallback": "review",
+        "outputs": {
+          "duplicate": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "constant",
+                  "value": false
+                },
+                "decision": {
+                  "mapping": "constant",
+                  "value": "duplicate"
+                },
+                "reason": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/assessment/reason"
+                },
+                "evidence": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/evidence"
+                }
+              }
+            }
+          },
+          "review": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "constant",
+                  "value": false
+                },
+                "decision": {
+                  "mapping": "constant",
+                  "value": "review"
+                },
+                "reason": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/assessment/reason"
+                },
+                "evidence": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/evidence"
+                }
+              }
+            }
+          },
+          "classify": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "constant",
+                  "value": true
+                },
+                "decision": {
+                  "mapping": "constant",
+                  "value": "eligible"
+                },
+                "reason": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/assessment/reason"
+                },
+                "evidence": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/evidence"
+                }
+              }
+            }
+          },
+          "out_of_scope": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "constant",
+                  "value": false
+                },
+                "decision": {
+                  "mapping": "constant",
+                  "value": "out_of_scope"
+                },
+                "reason": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/assessment/reason"
+                },
+                "evidence": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/evidence"
+                }
+              }
+            }
+          },
+          "needs_input": {
+            "value": {
+              "mapping": "object",
+              "fields": {
+                "accepted": {
+                  "mapping": "constant",
+                  "value": false
+                },
+                "decision": {
+                  "mapping": "constant",
+                  "value": "needs_input"
+                },
+                "reason": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/assessment/reason"
+                },
+                "evidence": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/evidence"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

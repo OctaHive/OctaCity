@@ -1,0 +1,150 @@
+{
+  "transitions": [
+    {
+      "predecessor": "eligibility",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "eligibility_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "classify",
+      "target": {
+        "kind": "node",
+        "key": "classification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "duplicate",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "review",
+      "target": {
+        "kind": "terminal",
+        "key": "project_review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "classification_gate"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "escalation",
+      "target": {
+        "kind": "terminal",
+        "key": "human_review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "rejection",
+      "target": {
+        "kind": "terminal",
+        "key": "triaged"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "already_fixed",
+      "target": {
+        "kind": "terminal",
+        "key": "triaged"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "verification_only",
+      "target": {
+        "kind": "terminal",
+        "key": "triaged"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "defect_research",
+      "target": {
+        "kind": "terminal",
+        "key": "triaged"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "feature_research",
+      "target": {
+        "kind": "terminal",
+        "key": "triaged"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "classification_gate",
+      "outcome": "requirements",
+      "target": {
+        "kind": "terminal",
+        "key": "triaged"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "out_of_scope",
+      "target": {
+        "kind": "terminal",
+        "key": "rejected"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "needs_input",
+      "target": {
+        "kind": "terminal",
+        "key": "project_review"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ],
+  "terminals": {
+    "rejected": "eligibility_accepted",
+    "project_review": "eligibility_accepted",
+    "human_review": "summary",
+    "triaged": "summary"
+  }
+}

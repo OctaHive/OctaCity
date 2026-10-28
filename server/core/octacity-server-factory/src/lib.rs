@@ -298,3 +298,6 @@ pub use mcp::{
 };
 mod runtime_settings;
 pub use runtime_settings::*;
+
+#[cfg(test)]
+mod triage_template_tests;

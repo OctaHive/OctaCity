@@ -17,6 +17,8 @@ struct RoleFixtureOptions<'a> {
   extra_context: &'a [(ContextSourceKind, FactoryKey, Vec<u8>)],
   role_name: &'a str,
   additional_credentials: &'a [&'a str],
+  role_definition: Option<&'a FactoryRoleDefinition>,
+  result_contract: Option<(&'a FlowDataSchema, &'a ImmutableReference)>,
 }
 
 impl Default for RoleFixtureOptions<'_> {
@@ -25,6 +27,8 @@ impl Default for RoleFixtureOptions<'_> {
       extra_context: &[],
       role_name: "Custom reviewer",
       additional_credentials: &[],
+      role_definition: None,
+      result_contract: None,
     }
   }
 }
@@ -83,6 +87,8 @@ fn fixture_for_work_mode_with_context(
     extra_context,
     role_name,
     additional_credentials,
+    role_definition,
+    result_contract,
   } = options;
   let task_bytes = b"Measure the selected code.".to_vec();
   let task = FactoryArtifactReference::new(
@@ -127,6 +133,7 @@ fn fixture_for_work_mode_with_context(
   binding.tool = toolchain.executable.clone();
   binding.model_or_tool = toolchain.model.clone();
   binding.result_output = key("codex-run-result");
+  binding.result_tool = result_contract.map(|(_, verifier)| verifier.clone());
   let installed = FactoryCodexBuildProfile {
     mcp_configurations: vec![],
     toolchain: toolchain.clone(),
@@ -148,11 +155,11 @@ fn fixture_for_work_mode_with_context(
   let role = FactoryRole::publish(
     FactoryRoleId::generate(),
     work.subject().project_id(),
-    serde_json::from_value(
+    role_definition.cloned().unwrap_or_else(|| serde_json::from_value(
       json!({"name":role_name, "instructions":["Shared responsibility.", "Shared second rule."],
         "skills": skills.iter().map(|(alias, bundle)| (alias.clone(), bundle.reference().clone())).collect::<BTreeMap<_,_>>()}),
     )
-    .unwrap(),
+    .unwrap()),
   )
   .unwrap();
   let mut definition = octacity_server_store::testing::role_profile_contract_definition(work.subject().project_id());
@@ -179,8 +186,13 @@ fn fixture_for_work_mode_with_context(
   )
   .unwrap();
   binding.task_digest = bind_task(installed.task_digest(), &profile);
-  let (_, admitted, _, input, node) =
-    fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work.clone(), binding, None, grants.clone());
+  let (_, admitted, _, input, node) = fixtures::execution_fixture_with_permissions(
+    FlowNodeKind::Reasoning,
+    work.clone(),
+    binding,
+    result_contract.map(|(schema, _)| schema.clone()),
+    grants.clone(),
+  );
   let admitted = if selected {
     fixtures::with_selected_profile(
       &work,
