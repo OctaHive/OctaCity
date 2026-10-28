@@ -228,6 +228,49 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
     &self,
     resources: FactoryRuntimeResources,
   ) -> Result<FactoryRuntimeInstallation, FactoryRuntimeInstallationError> {
+    let mut projects = self.catalog.projects.clone();
+    for selector in &self.catalog.profile_selectors {
+      for (project, choices) in &mut projects {
+        if *project != selector.project_id {
+          continue;
+        }
+        for entry in choices.entries().references {
+          if entry.kind == FactoryChoiceKind::DecisionSignalPolicy && entry.reference == selector.selection_policy {
+            let mut metadata = choices
+              .choice_metadata(entry.kind, &entry.alias)
+              .cloned()
+              .unwrap_or_default();
+            let installed = selector
+              .choice_metadata()
+              .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+            metadata.node_kinds.extend(installed.node_kinds);
+            metadata.signal_purposes.extend(installed.signal_purposes);
+            metadata.profile_selection = installed.profile_selection;
+            *choices = choices
+              .clone()
+              .with_choice_metadata(entry.kind, entry.alias, metadata)
+              .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+          }
+        }
+      }
+    }
+    let capabilities = Arc::new(ProjectCatalog {
+      projects: tokio::sync::RwLock::new(projects),
+      discovery: self.model_discovery.clone(),
+    });
+    // Executors must consult the same installed authority as management reads.
+    // The input resource store predates this installation and deliberately has
+    // no capability catalog; retaining it would reject every authenticated MCP.
+    let resources = FactoryRuntimeResources {
+      runs: Arc::new(
+        resources
+          .runs
+          .as_ref()
+          .clone()
+          .with_factory_capability_source(capabilities.clone()),
+      ),
+      ..resources
+    };
     let mut executors = self.catalog.executors.clone();
     for (identity, profile) in &self.catalog.review_planning {
       let action = FactoryReviewPlanningAction::new(
@@ -290,40 +333,10 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
     } else {
       Some(resources.profile_selectors(self.catalog.profile_selectors.clone())?)
     };
-    let mut projects = self.catalog.projects.clone();
-    for selector in &self.catalog.profile_selectors {
-      for (project, choices) in &mut projects {
-        if *project != selector.project_id {
-          continue;
-        }
-        for entry in choices.entries().references {
-          if entry.kind == FactoryChoiceKind::DecisionSignalPolicy && entry.reference == selector.selection_policy {
-            let mut metadata = choices
-              .choice_metadata(entry.kind, &entry.alias)
-              .cloned()
-              .unwrap_or_default();
-            let installed = selector
-              .choice_metadata()
-              .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
-            metadata.node_kinds.extend(installed.node_kinds);
-            metadata.signal_purposes.extend(installed.signal_purposes);
-            metadata.profile_selection = installed.profile_selection;
-            *choices = choices
-              .clone()
-              .with_choice_metadata(entry.kind, entry.alias, metadata)
-              .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
-          }
-        }
-      }
-    }
-    let capabilities = ProjectCatalog {
-      projects: tokio::sync::RwLock::new(projects),
-      discovery: self.model_discovery.clone(),
-    };
     // Advisory model discovery belongs to explicit refresh. Waiting here could consume
     // the installation deadline and discard otherwise usable authoring/execution capabilities.
     Ok(FactoryRuntimeInstallation {
-      capabilities: Arc::new(capabilities),
+      capabilities,
       executors,
       inputs: Arc::new(FactoryArtifactFlowInputs::new(
         reader,

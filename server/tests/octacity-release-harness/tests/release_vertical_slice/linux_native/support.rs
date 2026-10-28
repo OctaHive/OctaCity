@@ -114,6 +114,7 @@ pub(super) async fn start_matrix_agent(input: AgentStartInput<'_>) -> MatrixAgen
       cache_write: true,
       remote_cache_origin: Some(&input.cache_proxy.origin),
       cache_ca_certificate: Some(&input.cache_proxy.ca_certificate),
+      allowed_network_hosts: &[],
       unrestricted_network: true,
       upload_origins: &upload_origins,
       output_limits: Some(output_limits),

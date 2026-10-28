@@ -700,6 +700,7 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     .coder
     .map(|coder| coder.profile.capture.as_ref().unwrap().tool().digest().to_string());
   let capture = s.coder.map(|coder| agent::AgentToolExecutable {
+    standalone: false,
     product: "git",
     path: coder.capture_executable.as_ref().unwrap(),
     version: coder.profile.capture.as_ref().unwrap().tool().version().as_str(),
@@ -713,6 +714,7 @@ pub(super) async fn run(s: AuthorScenario<'_>) {
     .coder
     .into_iter()
     .map(|coder| agent::AgentToolExecutable {
+      standalone: false,
       product: "codex-cli",
       path: &coder.executable,
       version: "0.161.0",

@@ -58,10 +58,10 @@ impl InstalledModel {
     let exact = |argument: &str| CommandArgumentPattern::Exact(FactoryText::new(argument).unwrap());
     let run_directory = format!("run-{}", blake3::hash(b"codex").to_hex());
     let arguments = [
+      "--ask-for-approval=never".to_owned(),
       "exec".to_owned(),
       "--json".to_owned(),
       "--sandbox=workspace-write".to_owned(),
-      "--ask-for-approval=never".to_owned(),
       format!("--model={}", model.identity()),
       format!("--output-schema=/workspace/output/codex-runs/{run_directory}/.records.tmp/.result-schema.json"),
       "-".to_owned(),

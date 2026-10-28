@@ -10,6 +10,12 @@ try {
     console.log('codex-cli 0.161.0');
     process.exit(0);
   }
+  // The native CLI owns approval at the root; normalize only this fixed prefix
+  // for the finite program parser below (never change forwarded MCP settings).
+  if (args[0] === '--ask-for-approval=never' && args[1] === 'exec') {
+    args.splice(0, 1);
+    args.splice(3, 0, '--ask-for-approval=never');
+  }
   let reader;
   if (args[4] === '--dangerously-bypass-hook-trust') {
     if (args[4] !== '--dangerously-bypass-hook-trust' || args[5] !== '--config=features.hooks=true') throw new Error();

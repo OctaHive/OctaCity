@@ -29,9 +29,55 @@ TOKENS = {"model": "fixture-model-only", "http": "fixture-http-read-alpha", "std
           "source": "fixture-source-only", "reporter": "fixture-reporter-only"}
 
 
+def compose_packaged_installation(request_path):
+    """Compose the packaged journey's authority with the ordinary stand owners.
+
+    Service addresses and enrollment are supplied by the existing harness; all
+    Factory catalog, inventory, credential references and ceilings come back
+    from these generated installation files without additional fixture grants.
+    """
+    import hashlib
+    import tomllib
+    sys.path.insert(0, str(REPOSITORY / "tools"))
+    import configure_local_stand_agent as agent
+    import configure_local_stand_server as server
+    import init_local_stand as initializer
+    import local_stand_state as state
+    request = json.loads(Path(request_path).read_text())
+    root, native = Path(request["root"]), Path(request["native"])
+    initializer.initialize(root)
+    native.mkdir(mode=0o700)
+    for name in ("agent", "octa", "microsandbox"):
+        shutil.copytree(request[name], native / name)
+    with (native / "job-spec-policy.json").open("wb") as policy_output:
+        subprocess.run([request["policy_helper"], "job-spec-policy", "--agent-root", str(native / "agent"),
+            "--octa-root", str(native / "octa"), "--agent-platform", "macos-arm64", "--octa-platform", "linux-aarch64"],
+            check=True, stdout=policy_output, stderr=subprocess.PIPE, timeout=20)
+    files = {path.relative_to(native).as_posix(): hashlib.sha256(path.read_bytes()).hexdigest()
+             for path in native.rglob("*") if path.is_file()}
+    state.publish_exclusive_private_file(native / "installation-manifest.json", json.dumps({
+        "schema_version": 1, "agent_version": "0.1.0", "microsandbox_version": "0.7.6", "files": files}).encode())
+    (native / "job-spec-policy.json").chmod(0o600)
+    enrollment = root / "agent"; enrollment.mkdir(mode=0o700)
+    state.publish_exclusive_private_file(enrollment / "credential", b"private-qualification-enrollment")
+    policy = root / "operator-agent.toml"
+    state.publish_exclusive_private_file(policy, ("\n".join(f"{key} = {agent._toml_value(value)}" for key, value in request["agent_policy"].items()) + "\n").encode())
+    receipt = server.generate_server_configuration(root, native, factory_profiles=Path(request["catalog"]))
+    generated = agent.generate_agent_configuration(root, native, factory_agent_profile=policy)
+    configuration = tomllib.loads(Path(generated["config"]).read_text())
+    authority = {name: configuration[name] for name in ("factory_permissions", "tool_executables", "factory_credential_profiles", "allowed_network_hosts")}
+    for name, expected in request["agent_policy"].items():
+        if name != "version":
+            if authority[name] != expected:
+                raise AssertionError("stand composition changed the reviewed Factory authority")
+    authority["catalog"] = receipt["factory_profiles"]
+    state.publish_exclusive_private_file(Path(request["result"]), json.dumps(authority).encode())
+    shutil.rmtree(agent.microsandbox_state_root(root))
+
+
 @contextmanager
-def serving(handler, certificate=None):
-    server = ThreadingHTTPServer(("127.0.0.1", 0), handler)
+def serving(handler, certificate=None, *, host="127.0.0.1"):
+    server = ThreadingHTTPServer((host, 0), handler)
     if certificate:
         context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         context.load_cert_chain(*certificate)
@@ -46,6 +92,64 @@ def serving(handler, certificate=None):
         thread.join(timeout=3)
 
 
+def finite_peers(calls, model_requests, plan, call_started, release_call, *, cancel_during_mcp=False, peer_mode="facts", control=None):
+    def cancelling():
+        return cancel_during_mcp or control is not None and control.read_text() == "cancel"
+    class Peer(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def do_POST(self):
+            if self.headers.get("Authorization") != "Bearer " + TOKENS["http"] or control is not None and control.read_text() == "revoked":
+                calls.append({"peer": "remote", "authenticated": False})
+                self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            if "id" not in request:
+                self.send_response(202); self.send_header("Content-Length", "0"); self.end_headers(); return
+            method = request["method"]
+            if method == "initialize":
+                result = {"protocolVersion": request["params"]["protocolVersion"], "capabilities": {"tools": {}}, "serverInfo": {"name": "read-peer", "version": "1"}}
+            elif method == "tools/list":
+                result = {"tools": [{"name": "facts", "description": "Finite read", "annotations": {"readOnlyHint": True}, "inputSchema": {"type": "object", "properties": {"resource": {"type": "string"}}, "required": ["resource"], "additionalProperties": False}}]}
+            else:
+                params = request["params"]
+                allowed = params["name"] == "facts" and params.get("arguments", {}).get("resource") == "alpha"
+                calls.append({"peer": "remote", "tool": params["name"], "resource": params.get("arguments", {}).get("resource"), "allowed": allowed})
+                if cancelling():
+                    call_started.set()
+                    if control is not None:
+                        control.with_suffix(".started").touch()
+                    release_call.wait(timeout=60 if control is not None else 20)
+                    return
+                if peer_mode == "unavailable":
+                    self.send_response(503); self.send_header("Content-Length", "0"); self.end_headers(); return
+                if peer_mode == "malformed":
+                    result = {"content": "invalid MCP content"}
+                elif peer_mode == "empty" and allowed:
+                    result = {"content": [], "isError": False}
+                else:
+                    result = {"content": [{"type": "text", "text": "retained alpha facts" if allowed else "credential does not permit this resource"}], "isError": not allowed}
+            body = json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode()
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+    class Model(BaseHTTPRequestHandler):
+        def log_message(self, *_): pass
+        def do_POST(self):
+            request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+            model_requests.append({"authorization": self.headers.get("Authorization"), "model": request.get("model"), "reasoning": request.get("reasoning"), "tools": [tool for tool in request.get("tools", []) if tool.get("name", "").startswith("mcp__")]})
+            index = 0 if cancelling() else len(model_requests) - 1
+            if index < len(plan):
+                peer, tool, resource = plan[index]
+                item = {"type": "function_call", "id": f"item-{index}", "call_id": f"call-{index}", "namespace": f"mcp__{peer}", "name": tool, "arguments": json.dumps({"resource": resource})}
+            else:
+                item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": "true", "annotations": []}]}
+            events = [{"type": "response.created", "response": {"id": f"response-{index}", "status": "in_progress", "output": []}},
+                      {"type": "response.output_item.done", "output_index": 0, "item": item},
+                      {"type": "response.completed", "response": {"id": f"response-{index}", "status": "completed", "output": [item], "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "input_tokens_details": {"cached_tokens": 0}}}}]
+            body = "".join("event: " + event["type"] + "\ndata: " + json.dumps(event) + "\n\n" for event in events).encode()
+            self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+
+    return Peer, Model
+
+
 @unittest.skipUnless(os.name == "posix" and NATIVE and PLUGIN, "select pinned native Codex and plugin binaries explicitly")
 class NativeMcpCredentialTests(unittest.TestCase):
     def invoke(self, token=TOKENS["http"], *, cancel_during_mcp=False, peer_mode="facts"):
@@ -57,55 +161,7 @@ class NativeMcpCredentialTests(unittest.TestCase):
         plan = [("remote", "facts", "alpha"), ("local", "facts", "alpha"),
                 ("remote", "facts", "beta"), ("local", "write", "alpha")]
 
-        class Peer(BaseHTTPRequestHandler):
-            def log_message(self, *_): pass
-            def do_POST(self):
-                if self.headers.get("Authorization") != "Bearer " + TOKENS["http"]:
-                    calls.append({"peer": "remote", "authenticated": False})
-                    self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return
-                request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                if "id" not in request:
-                    self.send_response(202); self.send_header("Content-Length", "0"); self.end_headers(); return
-                method = request["method"]
-                if method == "initialize":
-                    result = {"protocolVersion": request["params"]["protocolVersion"], "capabilities": {"tools": {}}, "serverInfo": {"name": "read-peer", "version": "1"}}
-                elif method == "tools/list":
-                    result = {"tools": [{"name": "facts", "description": "Finite read", "annotations": {"readOnlyHint": True}, "inputSchema": {"type": "object", "properties": {"resource": {"type": "string"}}, "required": ["resource"], "additionalProperties": False}}]}
-                else:
-                    params = request["params"]
-                    allowed = params["name"] == "facts" and params.get("arguments", {}).get("resource") == "alpha"
-                    calls.append({"peer": "remote", "tool": params["name"], "resource": params.get("arguments", {}).get("resource"), "allowed": allowed})
-                    if cancel_during_mcp:
-                        call_started.set()
-                        release_call.wait(timeout=20)
-                        return
-                    if peer_mode == "unavailable":
-                        self.send_response(503); self.send_header("Content-Length", "0"); self.end_headers(); return
-                    if peer_mode == "malformed":
-                        result = {"content": "invalid MCP content"}
-                    elif peer_mode == "empty" and allowed:
-                        result = {"content": [], "isError": False}
-                    else:
-                        result = {"content": [{"type": "text", "text": "retained alpha facts" if allowed else "credential does not permit this resource"}], "isError": not allowed}
-                body = json.dumps({"jsonrpc": "2.0", "id": request["id"], "result": result}).encode()
-                self.send_response(200); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
-
-        class Model(BaseHTTPRequestHandler):
-            def log_message(self, *_): pass
-            def do_POST(self):
-                request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-                model_requests.append({"authorization": self.headers.get("Authorization"), "tools": [tool for tool in request.get("tools", []) if tool.get("name", "").startswith("mcp__")]})
-                index = len(model_requests) - 1
-                if index < len(plan):
-                    peer, tool, resource = plan[index]
-                    item = {"type": "function_call", "id": f"item-{index}", "call_id": f"call-{index}", "namespace": f"mcp__{peer}", "name": tool, "arguments": json.dumps({"resource": resource})}
-                else:
-                    item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": "true", "annotations": []}]}
-                events = [{"type": "response.created", "response": {"id": f"response-{index}", "status": "in_progress", "output": []}},
-                          {"type": "response.output_item.done", "output_index": 0, "item": item},
-                          {"type": "response.completed", "response": {"id": f"response-{index}", "status": "completed", "output": [item], "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "input_tokens_details": {"cached_tokens": 0}}}}]
-                body = "".join("event: " + event["type"] + "\ndata: " + json.dumps(event) + "\n\n" for event in events).encode()
-                self.send_response(200); self.send_header("Content-Type", "text/event-stream"); self.send_header("Content-Length", str(len(body))); self.end_headers(); self.wfile.write(body)
+        Peer, Model = finite_peers(calls, model_requests, plan, call_started, release_call, cancel_during_mcp=cancel_during_mcp, peer_mode=peer_mode)
 
         with tempfile.TemporaryDirectory(prefix="ocmcp-", dir=Path("/tmp").resolve()) as temporary:
             root = Path(temporary)
@@ -260,3 +316,55 @@ class NativeMcpCredentialTests(unittest.TestCase):
                 for value in TOKENS.values():
                     self.assertNotIn(value, json.dumps(responses))
                     self.assertNotIn(value.encode(), retained)
+
+
+@unittest.skipUnless(os.environ.get("OCTACITY_TEST_PACKAGED_MCP") == "1", "requires the existing packaged pilot's verified Server/Agent/Octa and Microsandbox environment")
+class PackagedMcpTests(unittest.TestCase):
+    def test_reviewed_runtime_executes_both_native_transports_and_retains_evidence_after_restart(self):
+        """Use the existing role journey and finite peers, with a real guest CLI."""
+        native = Path(os.environ["OCTACITY_FACTORY_PILOT_CLI"])
+        stdio = Path(os.environ["OCTACITY_FACTORY_MCP_STDIO_EXECUTABLE"])
+        self.assertTrue(native.is_file())
+        self.assertTrue(stdio.is_file())
+        calls, requests = [], []
+        plan = [("reader", "facts", "alpha"), ("local", "facts", "alpha"),
+                ("reader", "facts", "beta"), ("local", "write", "alpha")]
+        started, release = threading.Event(), threading.Event()
+        with tempfile.TemporaryDirectory(prefix="ocmcp-packaged-", dir=Path("/tmp").resolve()) as directory:
+            root = Path(directory)
+            control = root / "control"
+            control.write_text("complete")
+            Peer, Model = finite_peers(calls, requests, plan, started, release, control=control)
+            selected_native = root / "codex-native"
+            shutil.copyfile(native, selected_native)
+            selected_native.chmod(0o755)
+            certificate, key = root / "ca.pem", root / "key.pem"
+            subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(certificate), "-days", "1", "-subj", "/CN=host.microsandbox.internal", "-addext", "subjectAltName=DNS:host.microsandbox.internal", "-addext", "basicConstraints=critical,CA:FALSE"], check=True, capture_output=True, timeout=20)
+            with serving(Peer, (certificate, key), host="0.0.0.0") as peer_port, serving(Model, host="0.0.0.0") as model_port:
+                inputs = json.loads((REPOSITORY / "deployment/local-stand/inputs.json").read_text())
+                fixture = PEER.with_name("native-model-cli.rs")
+                launcher = root / "native-model-cli"
+                subprocess.run(["docker", "run", "--rm", "--network", "none", "--mount", f"type=bind,src={fixture.parent},dst=/fixture,readonly",
+                    "--mount", f"type=bind,src={root},dst=/out", "--env", "OCTACITY_FINITE_CODEX_PATH=/opt/octacity/tools/tool-1", "--env", f"OCTACITY_FINITE_MODEL_URL=http://host.microsandbox.internal:{model_port}/v1",
+                    inputs["images"]["rust"]["reference"], "rustc", "--edition=2024", "-C", "strip=symbols", "/fixture/native-model-cli.rs", "-o", "/out/native-model-cli"],
+                    check=True, capture_output=True, timeout=60)
+                configuration = root / "peers.json"
+                configuration.write_text(json.dumps({"native_guest":"/opt/octacity/tools/tool-1", "stdio_guest":"/opt/octacity/tools/tool-2", "control": str(control), "native_executable": str(selected_native), "stdio_executable": str(stdio), "certificate": str(certificate),
+                    "peer_url": f"https://host.microsandbox.internal:{peer_port}/mcp",
+                    "model_url": f"http://host.microsandbox.internal:{model_port}/v1"}))
+                configuration.chmod(0o600)
+                completed = subprocess.run(["cargo", "test", "--locked", "-p", "octacity-release-harness", "--test", "factory_pilot",
+                    "packaged_factory_pilot_runs_real_jobs_before_work_admission", "--", "--ignored", "--exact", "--nocapture"],
+                    cwd=REPOSITORY, env={**os.environ, "OCTACITY_FACTORY_PILOT_CLI": str(launcher), "OCTACITY_FACTORY_PILOT_NATIVE_MCP": str(configuration),
+                        "OCTACITY_FACTORY_MCP_POLICY_HELPER": os.environ["OCTACITY_FACTORY_MCP_POLICY_HELPER"]},
+                    text=True, capture_output=True, timeout=600)
+                self.assertEqual(completed.returncode, 0, completed.stdout[-6000:] + completed.stderr[-6000:])
+        self.assertEqual([(call["tool"], call["resource"], call["allowed"]) for call in calls if "tool" in call],
+                         [("facts", "alpha", True), ("facts", "beta", False), ("facts", "alpha", True)])
+        self.assertTrue(any(call.get("authenticated") is False for call in calls), "the revoked token must reach its own peer without credential fallback")
+        self.assertEqual(len(requests), 6, "revocation starts no model call; restart preserves the original call without replay")
+        for request in requests:
+            self.assertEqual(request["authorization"], "Bearer " + TOKENS["model"])
+            self.assertEqual(request["model"], "finite-json-model-pro")
+            self.assertEqual(request["reasoning"]["effort"], "high")
+            self.assertTrue(all(tool.get("name", "").startswith(("mcp__reader", "mcp__local")) for tool in request["tools"]))

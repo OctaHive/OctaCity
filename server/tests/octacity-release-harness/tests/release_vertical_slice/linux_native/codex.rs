@@ -44,6 +44,7 @@ pub(super) async fn run(input: CodexScenarioInput<'_>) -> Option<Value> {
   let fixture = Path::new(env!("CARGO_BIN_EXE_octacity-codex-fixture"));
   let digest = hex::encode(Sha256::digest(fs::read(fixture).unwrap()));
   let tool = AgentToolExecutable {
+    standalone: false,
     product: "codex-cli",
     path: fixture,
     version: "0.161.0",

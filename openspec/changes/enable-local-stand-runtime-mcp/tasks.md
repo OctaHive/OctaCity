@@ -16,8 +16,16 @@ this change's plugin/credential/capture qualification without a dependency cycle
 
 ## 2. Runtime-to-profile guidance
 
-- [ ] 2.1 Through Console TDD, add a clear Project-scoped handoff from Runtime settings to the existing AI-agent profile model/reasoning editor and actionable installation guidance. Show safe per-connection credential-reference/read-only scope metadata and distinguish AI login, MCP read authority and server Reporter writes; no token values in Runtime/profile content. Verify unsupported plugin/transport/auth/capture reasons, preservation of the open profile draft, explicit selection and configuration-only success feedback. Reuse the existing English/Russian narrow-keyboard browser loop and form components rather than adding another editor.
+- [x] 2.1 Through Console TDD, add a clear Project-scoped handoff from Runtime settings to the existing AI-agent profile model/reasoning editor and actionable installation guidance. Show safe per-connection credential-reference/read-only scope metadata and distinguish AI login, MCP read authority and server Reporter writes; no token values in Runtime/profile content. Verify unsupported plugin/transport/auth/capture reasons, preservation of the open profile draft, explicit selection and configuration-only success feedback. Reuse the existing English/Russian narrow-keyboard browser loop and form components rather than adding another editor. Evidence: [Runtime/profile guidance, typed authority metadata and Red/Green verification](runtime-profile-guidance-verification.md).
 
 ## 3. Focused end-to-end qualification
 
-- [ ] 3.1 Extend the existing finite packaged/stand journey to configure and execute HTTP/stdio MCP through 1.1–1.5 and the real selected AI plugin/native client, with no out-of-band fixture grants. Observe exact selected settings, independent credential destinations, read-only/resource refusal, revocation, bounded cancellation, retained tool evidence, secret redaction and state after restart. Document setup/use and the exact qualified plugin/server capabilities, plus the handoff to triage 4.3–4.4. Run relevant existing regression/format/lint/build and strict OpenSpec checks, recording Red/Green commands and disk use; add no paid model call, live repository write, release pipeline or duplicate test matrix.
+- [x] 3.1 Extend the existing finite packaged/stand journey to configure and execute HTTP/stdio MCP through 1.1–1.5 and the real selected AI plugin/native client, with no out-of-band fixture grants. Observe exact selected settings, independent credential destinations, read-only/resource refusal, revocation, bounded cancellation, retained tool evidence, secret redaction and state after restart. Document setup/use and the exact qualified plugin/server capabilities, plus the handoff to triage 4.3–4.4. Run relevant existing regression/format/lint/build and strict OpenSpec checks, recording Red/Green commands and disk use; add no paid model call, live repository write, release pipeline or duplicate test matrix. Evidence: [packaged native qualification, repairs, Red/Green and disk results](packaged-mcp-verification.md).
+
+  Approved qualification repair: when a stopped ordinary execution has no
+  trustworthy terminal usage, retain its exact execution and budget reservation
+  through the existing waiting state. Do not invent zero consumption, create a
+  semantic result, dispatch another attempt or fail the shared owner in a way
+  that prevents other Runs from stopping. Exercise observation and cancellation
+  Red/Green at the existing node adapter boundary and in this same packaged
+  journey. Late verified consumption must still permit normal settlement.

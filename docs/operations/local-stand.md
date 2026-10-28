@@ -356,7 +356,31 @@ identical inputs does not stop the stand for replacement. For an ordinary later
 `down` followed by `up` needs no reset. Installation updates do not publish profile
 versions, repin models/transports, change reviewed Runtime settings or replay demo
 Work. Existing qualification and revocation rules still govern retained profiles.
-MCP credential and capture qualification remains separate work in this change.
+The [packaged MCP qualification](../../openspec/changes/enable-local-stand-runtime-mcp/packaged-mcp-verification.md)
+records the tested macOS ARM64 → Microsandbox 0.7.6 → Linux ARM64 Codex 0.161.0
+composition with Octa 0.8.0. It covers authenticated HTTP/stdio, peer-enforced
+read/resource restrictions, revocation, cancellation and retained native records
+after restart. Its finite peers do not certify a particular GitHub/GitLab/Jira
+MCP server; qualify each real server's authentication and read-only resource
+authority independently. If a stopped Job has no trustworthy terminal usage,
+its Run retains the budget reservation until measured usage can settle it;
+this does not block stopping other Runs or create a successful business result.
+
+In Console, open **AI settings → Runtime** under the intended Project. Runtime
+settings prepare shared MCP choices and permission limits. **Choose model and
+reasoning** opens that Project's existing AI-agent/profile editor; choose an
+agent and edit or create its profile there. An open profile draft survives the
+round trip, and new bindings still require explicit selection and publication.
+
+For authenticated MCP, choose an **Installed MCP connection** rather than entering
+a token. Runtime and profile controls show its logical credential reference and
+read-only resource scope separately from model login and server Reporter writes.
+An unmatched authentication binding requires installation qualification. Expand
+**Installation prerequisites** for catalog/Agent setup, network/executable limits
+and the required native-client authentication/enforcement/capture checks. Saving
+confirms configuration only; it does not test connectivity or start execution.
+See the [Console qualification](../../openspec/changes/enable-local-stand-runtime-mcp/runtime-profile-guidance-verification.md)
+for the tested English/Russian narrow-keyboard path.
 
 ### GitHub connections in the personal Factory stand
 

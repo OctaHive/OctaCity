@@ -60,7 +60,17 @@ pub(super) async fn run_model(
   if let Some(role) = role {
     role.catalog(&mut catalog);
   }
-  let profiles = private_file(directory, "profiles.json", &catalog.to_string());
+  let mut profiles = private_file(directory, "profiles.json", &catalog.to_string());
+  let installed_authority = if let Some(role) = role {
+    role
+      .compose_installation(directory, model, release, backend, &profiles)
+      .await
+  } else {
+    None
+  };
+  if let Some(authority) = &installed_authority {
+    profiles = PathBuf::from(authority["catalog"].as_str().unwrap());
+  }
   let connectors = tools.map_or_else(
     || private_file(directory, "connectors.json", r#"{"version":1,"connectors":[]}"#),
     |tools| tools.connectors(directory),
@@ -109,25 +119,58 @@ pub(super) async fn run_model(
   }
 
   let installation = directory.join("observer");
-  fs::create_dir(&installation).unwrap();
+  fs::create_dir_all(&installation).unwrap();
   set_mode(&installation, 0o700);
-  let credential = private_file(
-    &installation,
-    "evaluator.json",
-    &json!({"OCTACITY_CODEX_AUTH":if tools.is_some(){workflow_tools::MODEL_CANARY}else{"finite-evaluator-private-canary"}}).to_string(),
-  );
-  let credential_profiles = BTreeMap::from([(credential_profile.as_str().to_owned(), credential)]);
-  let grants = octacity_server_store::factory_job_permissions(&profile.project_permissions).unwrap();
-  let tool = agent::AgentToolExecutable {
-    product: "codex-cli",
-    path: &model.executable,
-    version: "0.161.0",
-    platform: &model.platform,
-    sha256: &profile.toolchain.executable.digest().to_string(),
+  let credential_profiles = if let Some(authority) = &installed_authority {
+    serde_json::from_value(authority["factory_credential_profiles"].clone()).unwrap()
+  } else {
+    let credential = private_file(
+      &installation,
+      "evaluator.json",
+      &json!({"OCTACITY_CODEX_AUTH":if tools.is_some(){workflow_tools::MODEL_CANARY}else{"finite-evaluator-private-canary"}}).to_string(),
+    );
+    BTreeMap::from([(credential_profile.as_str().to_owned(), credential)])
   };
-  let executables = [tool];
+  let grants = installed_authority.as_ref().map_or_else(
+    || octacity_server_store::factory_job_permissions(&profile.project_permissions).unwrap(),
+    |authority| serde_json::from_value(authority["factory_permissions"].clone()).unwrap(),
+  );
+  let tool_digest = profile.toolchain.executable.digest().to_string();
+  let executables = if let Some(authority) = &installed_authority {
+    authority["tool_executables"]
+      .as_object()
+      .unwrap()
+      .iter()
+      .map(|(product, tool)| agent::AgentToolExecutable {
+        product,
+        path: Path::new(tool["path"].as_str().unwrap()),
+        version: tool["version"].as_str().unwrap(),
+        platform: tool["platform"].as_str().unwrap(),
+        sha256: tool["sha256"].as_str().unwrap(),
+        standalone: tool["standalone"].as_bool().unwrap(),
+      })
+      .collect::<Vec<_>>()
+  } else {
+    vec![agent::AgentToolExecutable {
+      standalone: false,
+      product: "codex-cli",
+      path: &model.executable,
+      version: "0.161.0",
+      platform: &model.platform,
+      sha256: &tool_digest,
+    }]
+  };
+  let hosts = installed_authority.as_ref().map_or_else(Vec::new, |authority| {
+    authority["allowed_network_hosts"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .map(|host| host.as_str().unwrap())
+      .collect::<Vec<_>>()
+  });
   let origins = [objects.as_str()];
   let mut overrides = agent::AgentConfigOverrides::restricted_without_outputs(&origins);
+  overrides.allowed_network_hosts = &hosts;
   overrides.factory = Some(agent::AgentFactoryOverrides {
     permissions: &grants,
     credential_profiles: &credential_profiles,
@@ -157,6 +200,21 @@ pub(super) async fn run_model(
     backend,
     &overrides,
   );
+  if let Some(authority) = &installed_authority {
+    let configured: toml::Value = toml::from_str(&fs::read_to_string(&agent_config).unwrap()).unwrap();
+    for field in [
+      "factory_permissions",
+      "factory_credential_profiles",
+      "tool_executables",
+      "allowed_network_hosts",
+    ] {
+      assert_eq!(
+        serde_json::to_value(&configured[field]).unwrap(),
+        authority[field],
+        "the actual worker must retain the ordinary installer's {field}"
+      );
+    }
+  }
   let mut worker = agent::spawn_agent(
     &release.agent_binary,
     &agent_config,
@@ -261,18 +319,19 @@ pub(super) async fn run_model(
       .unwrap();
     json!({"artifact_id":artifact["id"],"content_digest":artifact["sha256"],"encoded_size":artifact["size_bytes"]})
   };
+  let admission_input = json!({
+    "configuration_id":configuration["resource"]["configuration"]["reference"]["id"],"configuration_version":1,
+    "repository_id":resources.repository,"repository_version":1,"external_identity":format!("pilot/{identity}"),
+    "source":{"kind":"exact_revision","value":revision},
+    "artifacts":{"task":artifact("task"),"acceptance":artifact("acceptance"),"specifications":[]},
+    "classification":{"priority":40,"risk":"low","metadata":{}}
+  });
   let admission = post_management(
     &client,
     &origin,
     &format!("/api/v1/projects/{}/factory-work", resources.project),
     &format!("work-{identity}"),
-    json!({
-      "configuration_id":configuration["resource"]["configuration"]["reference"]["id"],"configuration_version":1,
-      "repository_id":resources.repository,"repository_version":1,"external_identity":format!("pilot/{identity}"),
-      "source":{"kind":"exact_revision","value":revision},
-      "artifacts":{"task":artifact("task"),"acceptance":artifact("acceptance"),"specifications":[]},
-      "classification":{"priority":40,"risk":"low","metadata":{}}
-    }),
+    admission_input.clone(),
   )
   .await;
   let run = string(&admission, "factory_run_id");
@@ -349,6 +408,20 @@ pub(super) async fn run_model(
     "actual nested closure"
   );
 
+  let native_evidence = if let Some(role) = role {
+    role.native_evidence(&client, &origin, &builds).await
+  } else {
+    None
+  };
+  let runtime_path = format!(
+    "{origin}/api/v1/projects/{}/factory-runtimes/pilot-selected",
+    resources.project
+  );
+  let runtime_settings = if role.is_some() {
+    Some(get_json(&client, runtime_path.clone()).await)
+  } else {
+    None
+  };
   let retained = if let Some(role) = role {
     let snapshot = role.retained(postgres, &builds).await;
     role.replace_catalog(&client, &origin, &resources.project).await;
@@ -374,6 +447,16 @@ pub(super) async fn run_model(
   );
   if let Some(role) = role {
     assert_eq!(
+      Some(get_json(&client, runtime_path).await),
+      runtime_settings,
+      "restart preserves the exact reviewed Runtime settings"
+    );
+    assert_eq!(
+      role.native_evidence(&client, &origin, &builds).await,
+      native_evidence,
+      "native evidence survives Server/Agent restart without another model call"
+    );
+    assert_eq!(
       Some(role.retained(postgres, &builds).await),
       retained,
       "retained package survives catalog replacement and process restart exactly"
@@ -394,6 +477,24 @@ pub(super) async fn run_model(
     calls,
     "restart preserves frozen call identity"
   );
+  if let Some(role) = role {
+    if installed_authority.is_some() {
+      post_management(
+        &client,
+        &origin,
+        &format!(
+          "/api/v1/projects/{}/factory-profile-capabilities/pilot-selected/refresh",
+          resources.project
+        ),
+        "native-restart-model-refresh",
+        json!({}),
+      )
+      .await;
+    }
+    role
+      .exercise_negative_runs(&client, &origin, &resources.project, &admission_input)
+      .await;
+  }
   let detail = client
     .get(format!("{origin}/api/v1/factory-runs/{run}"))
     .send()

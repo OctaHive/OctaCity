@@ -372,6 +372,9 @@ async fn run_pilot(scenario: Scenario) {
   let objects = required_string("OCTACITY_MINIO_ENDPOINT");
   let upload_origins = [objects.as_str()];
   let mut overrides = agent::AgentConfigOverrides::restricted_without_outputs(&upload_origins);
+  if env::var_os("OCTACITY_FACTORY_PILOT_NATIVE_MCP").is_some() {
+    overrides.allowed_network_hosts = &["host.microsandbox.internal"];
+  }
   overrides.output_limits = Some(octacity_protocol::OutputLimits {
     artifact_count: 16,
     artifact_bytes: 4 * 1024 * 1024,
@@ -555,8 +558,12 @@ async fn run_pilot(scenario: Scenario) {
   );
   assert_eq!(
     model.profile.project_permissions.secret_profiles().count(),
-    1,
-    "the observer has only its independently installed evaluator credential"
+    if role.as_ref().is_some_and(|role| role.uses_native_mcp()) {
+      3
+    } else {
+      1
+    },
+    "the observer has only the independently installed model and selected MCP credentials"
   );
   workflow::run_model(
     &fixture_root,

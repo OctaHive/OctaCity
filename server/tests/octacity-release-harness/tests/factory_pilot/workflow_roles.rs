@@ -3,12 +3,16 @@ use super::*;
 use octacity_server_factory::*;
 use std::collections::BTreeMap;
 
+#[path = "workflow_mcp.rs"]
+mod native_mcp;
+
 pub(super) struct RolePilot {
   role: FactoryRole,
   profile: FactoryRoleProfile,
   default: FactoryRoleProfile,
   settings: FactoryRuntimeSettingsDefinition,
   model_discovery: Value,
+  native: Option<native_mcp::NativeMcp>,
 }
 impl RolePilot {
   pub(super) async fn prepare(
@@ -60,7 +64,17 @@ impl RolePilot {
         {"path":"server.mjs", "sha256":FactoryDigest::content_sha256(MCP_SERVER), "bytes":MCP_SERVER}
       ]})).await;
     let skill: ImmutableReference = serde_json::from_value(imported["bundle"].clone()).unwrap();
-    let integration = managed_reader(postgres, project).await;
+    let native_configuration = env::var_os("OCTACITY_FACTORY_PILOT_NATIVE_MCP");
+    let integration = if native_configuration.is_some() {
+      None
+    } else {
+      Some(managed_reader(postgres, project).await)
+    };
+    let integration_alias = integration.as_ref().map(|_| FactoryKey::new("reader").unwrap());
+    let integrations: BTreeMap<_, _> = integration
+      .iter()
+      .map(|binding| (FactoryKey::new("reader").unwrap(), binding.clone()))
+      .collect();
     let server = FactoryMcpServer::Stdio {
       command: MCP_EXECUTABLE.into(),
       args: vec!["--mcp".into(), "/octacity/protected/skills/review/server.mjs".into()],
@@ -118,11 +132,11 @@ impl RolePilot {
         FactoryRuntimeMcpEntry {
           authorization: None,
           server,
-          integration: Some(FactoryKey::new("reader").unwrap()),
+          integration: integration_alias.clone(),
         },
       )]
       .into(),
-      integrations: [(FactoryKey::new("reader").unwrap(), integration.clone())].into(),
+      integrations: integrations.clone(),
       permissions: model.profile.project_permissions.clone(),
     };
     let retained = octacity_server_store::FactoryRuntimeSettingsIntent {
@@ -144,7 +158,7 @@ impl RolePilot {
     let profile = FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, serde_json::from_value(json!({
       "name":"pro","model_identifier":"finite-json-model-pro","instructions":["Keep the result bounded."],"toolchain":model.profile.toolchain,
       "model_parameters":{"reasoning_effort":"high"},"thinking_parameter":"reasoning_effort",
-      "execution":{"environment":{"LANGUAGE":{"kind":"public","value":"ru"}},"cli_arguments":["--ephemeral"],"mcp_servers":{"reader":{"configuration":mcp.reference(),"integration":"reader"}},"integrations":{"reader":integration}},"skills":{"review":skill},"context_requirements":["task","project-rules"],
+      "execution":{"environment":{"LANGUAGE":{"kind":"public","value":"ru"}},"cli_arguments":["--ephemeral"],"mcp_servers":{"reader":{"configuration":mcp.reference(),"integration":integration_alias}},"integrations":integrations},"skills":{"review":skill},"context_requirements":["task","project-rules"],
       "build_configuration":resources.configuration,"credential_purpose":"evaluator",
       "permissions":model.profile.project_permissions,"budget":BudgetLimit::new(1,120_000,1000,1000,16*1024*1024).unwrap()
     })).unwrap()).unwrap();
@@ -156,13 +170,18 @@ impl RolePilot {
       .insert(FactoryKey::new("reasoning_effort").unwrap(), json!("low"));
     let default =
       FactoryRoleProfile::publish(FactoryRoleProfileId::generate(), project, &role, default_definition).unwrap();
-    Self {
+    let mut pilot = Self {
       role,
       profile,
       default,
       settings,
       model_discovery,
+      native: None,
+    };
+    if let Some(configuration) = native_configuration {
+      native_mcp::configure(&mut pilot, model, client, origin, project, Path::new(&configuration)).await;
     }
+    pilot
   }
   pub(super) async fn configure_and_check_catalog(&self, client: &Client, origin: &str, project: &str) {
     let builds_path = format!("{origin}/api/v1/projects/{project}/builds?limit=25");
@@ -217,17 +236,28 @@ impl RolePilot {
     )
     .await;
     let available = get_json(client, format!("{origin}{path}")).await;
+    let refreshed = post_management(
+      client,
+      origin,
+      &format!("{path}/refresh"),
+      "pilot-initial-model-refresh",
+      json!({}),
+    )
+    .await;
+    assert_eq!(
+      refreshed["model_catalog"]["available"], true,
+      "native model discovery must finish before reviewing a manual model"
+    );
     assert_eq!(
       available["definition"]["execution"]["mcp_servers"]["reader"],
       json!(profile.definition().execution.mcp_servers[&FactoryKey::new("reader").unwrap()])
     );
     let available_execution: FactoryRoleProfileExecution =
       serde_json::from_value(available["definition"]["execution"].clone()).unwrap();
-    let reader = FactoryKey::new("reader").unwrap();
     for selected in [profile, default] {
       let mut definition = selected.definition().clone();
-      definition.execution.mcp_servers = [(reader.clone(), available_execution.mcp_servers[&reader].clone())].into();
-      definition.execution.integrations = [(reader.clone(), available_execution.integrations[&reader].clone())].into();
+      definition.execution.mcp_servers = available_execution.mcp_servers.clone();
+      definition.execution.integrations = available_execution.integrations.clone();
       let checked = post_management(
         client,
         origin,
@@ -362,7 +392,10 @@ impl RolePilot {
       .expect("native compiler retained the first package");
     assert_eq!(retained.package.inputs().role, self.role);
     assert_eq!(retained.package.inputs().profile, self.profile);
-    assert_eq!(retained.skills.as_ref().unwrap().inputs.len(), 3);
+    assert_eq!(
+      retained.skills.as_ref().unwrap().inputs.len(),
+      if self.native.is_some() { 4 } else { 3 }
+    );
     pool.close().await;
     serde_json::to_vec(&retained).unwrap()
   }
@@ -376,12 +409,52 @@ impl RolePilot {
       "ceiling":ceiling,"parameters":FlowDataSchema::new(FactoryKey::new("pilot.parameters").unwrap(),FactoryKey::new("v1").unwrap(),FlowValueSchema::Object{fields:BTreeMap::from([(FactoryKey::new("reasoning_effort").unwrap(),FlowFieldSchema::required(FlowValueSchema::Enum{values:vec!["high".into()]}))])}).unwrap(),
       "public_environment":{"LANGUAGE":FlowDataSchema::new(FactoryKey::new("pilot.language").unwrap(),FactoryKey::new("v1").unwrap(),FlowValueSchema::Enum{values:vec!["ru".into()]}).unwrap()},"enforcement":PermissionCategory::ALL
     }});
+    if let Some(native) = &self.native {
+      native.catalog(catalog, &self.settings);
+    }
     catalog["projects"][0]["references"].as_array_mut().unwrap().push(json!({"kind":"node_capability","alias":"pilot-selected","reference":self.profile.definition().toolchain.executable}));
     for reference in self.profile.definition().skills.values() {
       catalog["projects"][0]["references"]
         .as_array_mut()
         .unwrap()
         .push(json!({"kind":"node_capability","alias":reference.identity(),"reference":reference}));
+    }
+  }
+
+  pub(super) const fn uses_native_mcp(&self) -> bool {
+    self.native.is_some()
+  }
+
+  pub(super) async fn compose_installation(
+    &self,
+    directory: &Path,
+    model: &models::InstalledModel,
+    release: &octacity_release_harness::InstalledRelease,
+    backend: &ReleaseBackend,
+    catalog: &Path,
+  ) -> Option<Value> {
+    Some(
+      self
+        .native
+        .as_ref()?
+        .compose(directory, model, release, backend, catalog)
+        .await,
+    )
+  }
+
+  pub(super) async fn native_evidence(
+    &self,
+    client: &Client,
+    origin: &str,
+    builds: &Value,
+  ) -> Option<BTreeMap<String, Vec<u8>>> {
+    self.native.as_ref()?;
+    Some(native_mcp::evidence(client, origin, builds, true).await)
+  }
+
+  pub(super) async fn exercise_negative_runs(&self, client: &Client, origin: &str, project: &str, admission: &Value) {
+    if let Some(native) = &self.native {
+      native.exercise_negative_runs(client, origin, project, admission).await;
     }
   }
   pub(super) fn select(

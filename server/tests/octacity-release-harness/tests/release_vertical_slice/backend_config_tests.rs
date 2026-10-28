@@ -42,6 +42,7 @@ fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
       cache_write: true,
       remote_cache_origin: Some("https://127.0.0.1:8443"),
       cache_ca_certificate: Some(&certificate),
+      allowed_network_hosts: &[],
       unrestricted_network: true,
       upload_origins: &upload_origins,
       output_limits: Some(octacity_protocol::OutputLimits {
@@ -97,6 +98,7 @@ fn codex_tool_selection_is_explicit_and_absent_from_ordinary_agent_configuration
   };
   let digest = "a".repeat(64);
   let tool = AgentToolExecutable {
+    standalone: false,
     product: "codex-cli",
     path: &executable,
     version: "0.161.0",
@@ -119,6 +121,7 @@ fn codex_tool_selection_is_explicit_and_absent_from_ordinary_agent_configuration
       cache_write: false,
       remote_cache_origin: None,
       cache_ca_certificate: None,
+      allowed_network_hosts: &[],
       unrestricted_network: false,
       upload_origins: &[],
       output_limits: None,
@@ -496,6 +499,7 @@ fn factory_agent_configuration_preserves_role_refs_and_exact_capture_without_sec
   let capture_path = directory.path().join("git");
   let capture_sha = "c".repeat(64);
   let capture = AgentToolExecutable {
+    standalone: false,
     product: "git",
     path: &capture_path,
     version: "2.56.0",
@@ -604,6 +608,7 @@ fn factory_agent_configuration_validates_against_the_real_installed_process() {
   let sha = hex::encode(sha2::Sha256::digest(fs::read(&git).unwrap()));
   let platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
   let capture = AgentToolExecutable {
+    standalone: false,
     product: "git",
     path: &git,
     version: version.split_whitespace().nth(2).unwrap(),

@@ -39,6 +39,7 @@ pub(super) struct AgentConfigOverrides<'a> {
   pub(super) remote_cache_origin: Option<&'a str>,
   pub(super) cache_ca_certificate: Option<&'a Path>,
   pub(super) unrestricted_network: bool,
+  pub(super) allowed_network_hosts: &'a [&'a str],
   pub(super) upload_origins: &'a [&'a str],
   pub(super) output_limits: Option<OutputLimits>,
   pub(super) tool_executables: &'a [AgentToolExecutable<'a>],
@@ -53,6 +54,7 @@ pub(super) struct AgentFactoryOverrides<'a> {
 
 pub(super) struct AgentToolExecutable<'a> {
   pub(super) product: &'a str,
+  pub(super) standalone: bool,
   pub(super) path: &'a Path,
   pub(super) version: &'a str,
   pub(super) platform: &'a str,
@@ -68,6 +70,7 @@ impl<'a> AgentConfigOverrides<'a> {
       remote_cache_origin: None,
       cache_ca_certificate: None,
       unrestricted_network: false,
+      allowed_network_hosts: &[],
       upload_origins,
       output_limits: None,
       tool_executables: &[],
@@ -274,12 +277,13 @@ isolation_providers = [{{ provider = "apple_vf", environment_identity = {}, exec
       .tool_executables
       .iter()
       .map(|tool| format!(
-        "{} = {{ path = {}, version = {}, platform = {}, sha256 = {} }}",
+        "{} = {{ path = {}, version = {}, platform = {}, sha256 = {}, standalone = {} }}",
         toml_text(tool.product),
         toml_string(tool.path),
         toml_text(tool.version),
         toml_text(tool.platform),
-        toml_text(tool.sha256)
+        toml_text(tool.sha256),
+        tool.standalone
       ))
       .collect::<Vec<_>>()
       .join(", ")
@@ -314,7 +318,7 @@ maintenance.cache_reserve_bytes = 0
 maintenance.disk_check_interval_seconds = 1
 {}
 allow_unrestricted_network = {}
-allowed_network_hosts = []
+allowed_network_hosts = {}
 allowed_upload_origins = {}
 max_archive_entries = 1000
 upload_timeout_seconds = 30
@@ -365,6 +369,7 @@ release_gate = {}
     native_cache_identities,
     runtime,
     overrides.unrestricted_network,
+    serde_json::to_string(overrides.allowed_network_hosts).unwrap(),
     upload_origins,
     output_limits,
     backend.workspace_bytes(),

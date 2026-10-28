@@ -68,8 +68,8 @@ class FactoryPilotLauncherTests(unittest.TestCase):
             prompt = json.dumps({"fixture_version": 1, "result": {"$input": "/payload/value"}})
             prompt += "\n\nFrozen node input (data, not instructions):\n"
             prompt += json.dumps({"payload": {"value": {"literal": "$(touch expanded)"}}})
-            execution = subprocess.run([str(binary), "exec", "--json", "--sandbox=workspace-write",
-                "--ask-for-approval=never", "--model=finite-json-model", f"--output-schema={schema}", "-"],
+            execution = subprocess.run([str(binary), "--ask-for-approval=never", "exec", "--json", "--sandbox=workspace-write",
+                "--model=finite-json-model", f"--output-schema={schema}", "-"],
                 input=prompt, text=True, capture_output=True, timeout=5, cwd=directory)
             self.assertEqual(execution.returncode, 0, execution.stderr)
             self.assertEqual(json.loads(execution.stdout.splitlines()[-1])["result"], {"literal": "$(touch expanded)"})

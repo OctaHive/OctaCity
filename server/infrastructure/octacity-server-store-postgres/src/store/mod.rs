@@ -48,6 +48,14 @@ impl PostgresStore {
     }
   }
 
+  /// Binds an existing runtime store to its installed authority, preserving the
+  /// database pool and sharing subsequent catalog refreshes with management.
+  #[must_use]
+  pub fn with_factory_capability_source(mut self, source: Arc<dyn FactoryCapabilitySource>) -> Self {
+    self.factory_capabilities = source;
+    self
+  }
+
   pub(crate) const fn pool(&self) -> &PgPool {
     &self.pool
   }

@@ -351,6 +351,7 @@ impl Verifier {
     let tool = coder.profile.capture.as_ref().unwrap().tool();
     let capture_platform = format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH);
     let capture = agent::AgentToolExecutable {
+      standalone: false,
       product: "git",
       path: coder.capture_executable.as_ref().unwrap(),
       version: tool.version().as_str(),
@@ -358,6 +359,7 @@ impl Verifier {
       sha256: &tool.digest().to_string(),
     };
     let executable = agent::AgentToolExecutable {
+      standalone: false,
       product: "codex-cli",
       path: &self.model.executable,
       version: "0.161.0",
