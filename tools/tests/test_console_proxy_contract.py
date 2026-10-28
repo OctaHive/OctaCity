@@ -55,7 +55,7 @@ class ConsoleProxyContractTests(unittest.TestCase):
         for prefix in ("/api/v1", "/health"):
             self.assertIn(f"location = {prefix}", routes)
             self.assertIn(f"location ^~ {prefix}/", routes)
-        self.assertEqual(routes.count("proxy_pass http://octacity_management;"), 4)
+        self.assertEqual(routes.count("proxy_pass http://octacity_management;"), 5)
         api_end = routes.index("# Static files")
         self.assertNotIn("index.html", routes[:api_end])
 
@@ -139,6 +139,18 @@ class ConsoleProxyContractTests(unittest.TestCase):
         self.assertIn("Deploying the console does not add login", threat_model)
         self.assertIn("Access to this origin is management authority", guide)
         self.assertIn("The console remains optional", " ".join(guide.split()))
+
+class IssueMcpProxyContractTests(unittest.TestCase):
+    def test_native_issue_mcp_has_an_exact_authenticated_route_before_spa_fallback(self):
+        routes = ROUTES.read_text(encoding="utf-8")
+        start = routes.index("location = /mcp/issues {")
+        endpoint = routes[start:routes.index("}", start)]
+        self.assertIn("proxy_pass http://octacity_management;", endpoint)
+        self.assertIn("proxy_set_header Authorization $http_authorization;", endpoint)
+        self.assertIn('proxy_set_header X-Forwarded-User "";', endpoint)
+        self.assertIn('proxy_set_header X-Remote-User "";', endpoint)
+        self.assertNotIn("try_files", endpoint)
+        self.assertLess(start, routes.index("# Static files"))
 
 
 if __name__ == "__main__":

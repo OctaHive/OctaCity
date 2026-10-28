@@ -440,6 +440,9 @@ impl ServerRuntime {
         config.cache().max_blob_bytes() as usize,
       )
     });
+    let issue_mcp_router = super::issue_mcp::router(&config, registration_store.clone())
+      .await
+      .map_err(ServerRuntimeError::Assembly)?;
     Self::start_with_components(
       config,
       resources.readiness,
@@ -463,6 +466,7 @@ impl ServerRuntime {
           api_config,
         ),
         cache_router,
+        issue_mcp_router,
         management_application: Some(management_application),
         webhook_router,
         workers: Some(DurableWorkers {

@@ -9,6 +9,8 @@ mod factory;
 pub use factory::{FactoryRetryPolicy, FactoryRuntimeConfig};
 mod infrastructure;
 mod integrations;
+mod issue_mcp;
+pub(crate) use issue_mcp::IssueMcpReader;
 mod loading;
 mod validation;
 mod workers;
@@ -27,6 +29,8 @@ pub(crate) use workers::{RetentionWorkerPolicy, RetryingWorkerPolicy, WebhookWor
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct ServerConfig {
+  #[serde(default)]
+  issue_mcp_readers: Vec<IssueMcpReader>,
   #[serde(default)]
   integration_management: Option<LocalIntegrationManagement>,
   #[serde(default)]

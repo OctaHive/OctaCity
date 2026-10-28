@@ -219,7 +219,7 @@ class LocalStandGatewayBuildTests(unittest.TestCase):
         ):
             self.assertIn(location, routes)
         self.assertIn("location = /metrics", console)
-        self.assertEqual(routes.count("proxy_pass http://octacity_management;"), 4)
+        self.assertEqual(routes.count("proxy_pass http://octacity_management;"), 5)
         self.assertEqual(console.count("proxy_pass http://octacity_management;"), 1)
         self.assertNotIn("return 404", console)
 

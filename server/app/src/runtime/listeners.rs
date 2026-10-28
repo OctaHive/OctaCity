@@ -20,6 +20,7 @@ use crate::{
 
 pub(super) struct RuntimeComponents {
   pub(super) agent_router: axum::Router,
+  pub(super) issue_mcp_router: Option<axum::Router>,
   pub(super) cache_router: Option<axum::Router>,
   pub(super) management_application: Option<ManagementApplication>,
   pub(super) webhook_router: Option<axum::Router>,
@@ -43,6 +44,7 @@ impl ServerRuntime {
       RuntimeComponents {
         agent_router: axum::Router::new(),
         cache_router: None,
+        issue_mcp_router: None,
         management_application: None,
         webhook_router: None,
         workers: None,
@@ -63,6 +65,7 @@ impl ServerRuntime {
     let RuntimeComponents {
       agent_router,
       cache_router,
+      issue_mcp_router,
       management_application,
       webhook_router,
       workers,
@@ -148,6 +151,7 @@ impl ServerRuntime {
     let management_router = management_router.merge(octacity_server_api_rest::factory_readiness_routes(move || {
       factory_readiness.factory_readiness()
     }));
+    let management_router = management_router.merge(issue_mcp_router.unwrap_or_default());
     let management_router = admission.protect_management(management_router);
     let mut listener_tasks = JoinSet::new();
     #[cfg(unix)]

@@ -1,4 +1,4 @@
-//! Integration credentials are transient administrative input, separate from Job grants.
+//! Integration credentials are transient private input, separate from Job grants.
 use std::fmt;
 use zeroize::Zeroizing;
 
@@ -31,7 +31,7 @@ impl ProviderCredentialValue {
     }
     Ok(Self(bytes))
   }
-  /// Borrows the transient input only for the private installation writer.
+  /// Borrows transient input only for a private installation writer or connection verifier.
   #[must_use]
   pub fn expose_for_installation(&self) -> &[u8] {
     &self.0

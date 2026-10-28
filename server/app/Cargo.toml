@@ -21,6 +21,7 @@ octacity-artifact-store = { path = "../core/octacity-artifact-store" }
 octacity-observability = { path = "../../shared/octacity-observability" }
 octacity-server-api-agent = { path = "../api/octacity-server-api-agent" }
 octacity-server-api-cache = { path = "../api/octacity-server-api-cache" }
+octacity-server-api-mcp = { path = "../api/octacity-server-api-mcp" }
 octacity-server-api-rest = { path = "../api/octacity-server-api-rest" }
 octacity-server-api-webhook = { path = "../api/octacity-server-api-webhook" }
 octacity-server-application = { path = "../application" }

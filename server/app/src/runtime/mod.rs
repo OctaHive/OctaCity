@@ -43,6 +43,7 @@ mod integration_check;
 mod integration_management;
 #[cfg(all(test, unix))]
 mod integration_management_tests;
+mod issue_mcp;
 mod issue_source_worker;
 #[cfg(test)]
 mod issue_tests;

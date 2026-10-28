@@ -7,6 +7,10 @@ use super::{
 };
 
 impl ServerConfig {
+  pub(crate) fn issue_mcp_readers(&self) -> &[super::IssueMcpReader] {
+    &self.issue_mcp_readers
+  }
+
   pub(crate) fn integration_management(&self) -> Option<&super::LocalIntegrationManagement> {
     self.integration_management.as_ref()
   }
@@ -40,6 +44,9 @@ impl ServerConfig {
         .map_err(|_| format!("runtime-file path has no portable root: {}", path.display()))?;
       *path = root.join(relative);
       Ok(())
+    }
+    for reader in &mut self.issue_mcp_readers {
+      rebase(&mut reader.credential_file, root)?;
     }
     rebase(&mut self.postgres.url_file, root)?;
     rebase(&mut self.object_storage.access_key_file, root)?;

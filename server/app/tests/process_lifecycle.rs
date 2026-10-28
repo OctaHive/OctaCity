@@ -384,6 +384,10 @@ async fn configured_dependency_failure_keeps_only_readiness_unavailable() {
 }
 
 fn production_test_config(directory: &std::path::Path, unavailable_port: u16) -> ServerConfig {
+  ServerConfig::parse_toml(&production_test_config_source(directory, unavailable_port)).unwrap()
+}
+
+fn production_test_config_source(directory: &std::path::Path, unavailable_port: u16) -> String {
   let postgres_url = directory.join("postgres-url");
   let access_key = directory.join("object-access-key");
   let secret_key = directory.join("object-secret-key");
@@ -420,7 +424,7 @@ fn production_test_config(directory: &std::path::Path, unavailable_port: u16) ->
   }
 
   let path = |path: &std::path::Path| path.display().to_string().replace('\\', "\\\\");
-  ServerConfig::parse_toml(&format!(
+  format!(
     r#"
 management_bind = "127.0.0.1:0"
 agent_bind = "127.0.0.1:0"
@@ -461,6 +465,191 @@ policy_file = "{}"
     path(&enrollment_key),
     path(&cache_key),
     path(&job_spec_policy),
+  )
+}
+
+#[test]
+fn issue_mcp_connections_require_explicit_project_read_scope_and_private_credential_references() {
+  let reader = r#"
+[[issue_mcp_readers]]
+id = "project-triage"
+project_id = "0199a6f4-d56c-7440-9aa2-6a320f862795"
+credential_file = "/run/secrets/issue-mcp-triage"
+expires_at_unix_ms = 2000000000000
+issue_ids = ["0199a6f4-d56c-7440-9aa2-6a320f862799"]
+"#;
+  assert!(ServerConfig::parse_toml(&format!("{}{reader}", valid_configuration())).is_ok());
+  for invalid in [
+    reader.replace("project-triage", "invalid reader"),
+    reader.replace("/run/secrets/issue-mcp-triage", "relative-token"),
+    reader.replace("expires_at_unix_ms = 2000000000000", "expires_at_unix_ms = 0"),
+    reader.replace("project_id = \"0199a6f4-d56c-7440-9aa2-6a320f862795\"", ""),
+    format!("{reader}{reader}"),
+    format!("{reader}write = true\n"),
+    format!("{reader}token = \"must-never-be-inline\"\n"),
+  ] {
+    assert!(ServerConfig::parse_toml(&format!("{}{invalid}", valid_configuration())).is_err());
+  }
+}
+
+#[tokio::test]
+async fn configured_issue_mcp_verifies_its_own_private_tokens_expiry_rotation_and_revocation() {
+  let unavailable = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+  let directory = tempfile::tempdir().unwrap();
+  let source = production_test_config_source(directory.path(), unavailable.local_addr().unwrap().port());
+  let active_path = directory.path().join("issue-mcp-active");
+  let expired_path = directory.path().join("issue-mcp-expired");
+  let active = format!("ocmcp.project-triage.{}", "a".repeat(64));
+  let rotated = format!("ocmcp.project-triage.{}", "b".repeat(64));
+  let expired = format!("ocmcp.expired-reader.{}", "c".repeat(64));
+  for (path, token) in [(&active_path, &active), (&expired_path, &expired)] {
+    std::fs::write(path, format!("{token}\n")).unwrap();
+    #[cfg(unix)]
+    {
+      use std::os::unix::fs::PermissionsExt as _;
+      std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+  }
+  let mut source = source;
+  for (id, path, expiry) in [
+    ("project-triage", &active_path, 2_000_000_000_000_i64),
+    ("expired-reader", &expired_path, 1),
+  ] {
+    source.push_str(&format!(
+      r#"
+[[issue_mcp_readers]]
+id = "{id}"
+project_id = "0199a6f4-d56c-7440-9aa2-6a320f862795"
+credential_file = '{}'
+expires_at_unix_ms = {expiry}
+issue_ids = []
+"#,
+      path.display()
+    ));
+  }
+  let config = ServerConfig::parse_toml(&source).unwrap();
+  let runtime = ServerRuntime::start(config).await.unwrap();
+  let client = reqwest::Client::new();
+  let url = format!("http://{}/mcp/issues", runtime.management_addr());
+  let initialize = serde_json::json!({"jsonrpc":"2.0","id":1,"method":"initialize",
+    "params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"runtime-test","version":"1"}}});
+  for token in [
+    "fixture-source-token",
+    "fixture-ai-token",
+    expired.as_str(),
+    rotated.as_str(),
+  ] {
+    let response = client
+      .post(&url)
+      .bearer_auth(token)
+      .json(&initialize)
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    assert!(response.bytes().await.unwrap().is_empty());
+  }
+  let response: serde_json::Value = client
+    .post(&url)
+    .bearer_auth(&active)
+    .json(&initialize)
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(response["result"]["capabilities"], serde_json::json!({"tools":{}}));
+  assert!(!response.to_string().contains(&active));
+  // An explicitly empty resource scope denies a detail read before the unavailable DB is consulted.
+  let detail: serde_json::Value = client
+    .post(&url)
+    .bearer_auth(&active)
+    .json(&serde_json::json!({
+    "jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"read_issue",
+      "arguments":{"issue_id":"0199a6f4-d56c-7440-9aa2-6a320f862799"}}}))
+    .send()
+    .await
+    .unwrap()
+    .error_for_status()
+    .unwrap()
+    .json()
+    .await
+    .unwrap();
+  assert_eq!(detail["result"]["structuredContent"]["status"], "not_available");
+  std::fs::write(&active_path, &rotated).unwrap();
+  assert_eq!(
+    client
+      .post(&url)
+      .bearer_auth(&active)
+      .json(&initialize)
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::UNAUTHORIZED
+  );
+  assert_eq!(
+    client
+      .post(&url)
+      .bearer_auth(&rotated)
+      .json(&initialize)
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::OK
+  );
+  std::fs::remove_file(&active_path).unwrap();
+  assert_eq!(
+    client
+      .post(&url)
+      .bearer_auth(&rotated)
+      .json(&initialize)
+      .send()
+      .await
+      .unwrap()
+      .status(),
+    StatusCode::UNAUTHORIZED
+  );
+  runtime.shutdown().await.unwrap();
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn offline_issue_mcp_validation_reads_only_rebased_private_files() {
+  use std::os::unix::fs::PermissionsExt as _;
+  let directory = tempfile::tempdir().unwrap();
+  let source = production_test_config_source(directory.path(), 1);
+  let token_path = directory.path().join("issue-mcp-token");
+  std::fs::write(&token_path, format!("ocmcp.offline-reader.{}", "d".repeat(64))).unwrap();
+  std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600)).unwrap();
+  let mut config = ServerConfig::parse_toml(&format!(
+    r#"{source}
+[[issue_mcp_readers]]
+id = "offline-reader"
+project_id = "0199a6f4-d56c-7440-9aa2-6a320f862795"
+credential_file = '{}'
+expires_at_unix_ms = 2000000000000
+"#,
+    token_path.display()
   ))
-  .unwrap()
+  .unwrap();
+  let root = directory.path().join("offline-root");
+  for file in std::fs::read_dir(directory.path()).unwrap() {
+    let file = file.unwrap().path();
+    if file.is_file() {
+      let rebased = root.join(file.strip_prefix("/").unwrap());
+      std::fs::create_dir_all(rebased.parent().unwrap()).unwrap();
+      std::fs::copy(&file, &rebased).unwrap();
+      std::fs::set_permissions(&rebased, std::fs::Permissions::from_mode(0o600)).unwrap();
+    }
+  }
+  config.rebase_runtime_files(&root).unwrap();
+  std::fs::remove_file(&token_path).unwrap();
+  octacity_server::validate_runtime_files(&config)
+    .await
+    .expect("offline validation must not read the former live token path");
 }

@@ -564,7 +564,8 @@ pub use management_input::{
 };
 pub use management_security::{
   AuthorizedCommandHandler, AuthorizedManagementCommandHandler, AuthorizedManagementQueryHandler,
-  AuthorizedQueryHandler, MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES, MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES,
+  AuthorizedQueryHandler, IssueReadPrincipal, IssueTitleSearchPage, MAX_ISSUE_TITLE_CURSOR_BYTES,
+  MAX_ISSUE_TITLE_QUERY_BYTES, MAX_MANAGEMENT_ACTOR_IDENTITY_BYTES, MAX_MANAGEMENT_RESOURCE_IDENTITY_BYTES,
   MAX_MANAGEMENT_SECURITY_SCOPE_BYTES, MAX_MANAGEMENT_VISIBILITY_RESOURCES, ManagementAction, ManagementActor,
   ManagementActorKind, ManagementAuthorizationDenial, ManagementAuthorizationFailure, ManagementAuthorizationGrant,
   ManagementAuthorizationMapping, ManagementAuthorizationPolicy, ManagementAuthorizationTarget, ManagementClientKind,

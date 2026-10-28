@@ -975,6 +975,7 @@ management workflow available to headless REST clients.
 | Crate | Owns | Explicitly does not own |
 | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `octacity-server` | Process composition and concrete adapter selection | Domain decisions or reusable transport contracts |
+| `octacity-server-api-mcp` | Read-only Issue MCP wire protocol, bounded native tools and connection/session correlation | Credential persistence, Issue mutation, provider search or duplicate decisions |
 | `octacity-server-api-rest` | Management REST DTOs, decoding, routing, OpenAPI, HTTP error mapping | Transactions, domain state, database rows |
 | `octacity-server-api-webhook` | Exact-body public webhook routing, bounded decoding, and mapping to typed application delivery commands | Provider SDKs, adapter process supervision, Trigger persistence |
 | `octacity-server-api-agent` | HTTP adaptation of the shared server-Agent protocol | Agent execution or placement decisions |
@@ -1584,3 +1585,16 @@ quickstart. The quickstart handoff remains
 this work does not complete that change's preset/readiness tasks or the future
 editable role-profile work. Source/Reporter and read-only review adapters remain
 separately installed capabilities, with their own live qualification requirements.
+
+### Read-only Issue MCP ownership
+
+The optional [Issue MCP endpoint](../reference/issue-mcp.md) composes a closed
+`IssueReadPrincipal` with existing authorized Issue queries and store visibility.
+Its Project and Issue scope are installation-derived; model arguments cannot
+choose another Project or a mutation. The composition root reuses private runtime
+files for independent per-connection bearer verification and expiry, including a
+fresh verification after asynchronous reads. Transport sessions retain only
+bounded correlation metadata and never replace that verification. Title search
+examines one visible page and reports page-local coverage without an index,
+server-side duplicate decision or provider wrapper. Source and Reporter continue
+to use their own server-side connectors and authority.

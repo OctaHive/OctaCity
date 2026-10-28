@@ -32,6 +32,7 @@ const MAX_VCS_OPERATION_MILLISECONDS: u64 = 5 * 60 * 1000;
 
 impl ServerConfig {
   pub(super) fn validate(&self) -> Result<(), ServerConfigError> {
+    super::IssueMcpReader::validate_all(&self.issue_mcp_readers)?;
     if let Some(local) = &self.integration_management
       && (!cfg!(unix)
         || !local.socket_path.is_absolute()

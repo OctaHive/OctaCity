@@ -4541,6 +4541,7 @@ dependencies = [
  "octacity-server-adapter-host",
  "octacity-server-api-agent",
  "octacity-server-api-cache",
+ "octacity-server-api-mcp",
  "octacity-server-api-rest",
  "octacity-server-api-webhook",
  "octacity-server-application",
@@ -4630,6 +4631,20 @@ dependencies = [
  "serde_json",
  "tokio",
  "tower",
+]
+
+[[package]]
+name = "octacity-server-api-mcp"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "axum",
+ "octacity-server-application",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tower",
+ "uuid",
 ]
 
 [[package]]

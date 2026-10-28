@@ -25,8 +25,13 @@ mod audit;
 mod authorization;
 mod context;
 mod dispatch;
+mod issue_read;
 mod policy;
 mod visibility;
+
+pub use issue_read::{
+  IssueReadPrincipal, IssueTitleSearchPage, MAX_ISSUE_TITLE_CURSOR_BYTES, MAX_ISSUE_TITLE_QUERY_BYTES,
+};
 
 pub(crate) use audit::audited_mutation;
 
