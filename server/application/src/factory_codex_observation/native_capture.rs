@@ -40,9 +40,27 @@ pub struct FactoryCodexNativeCapture {
   provenance: ArtifactIdentity,
   status: FactoryNativeCaptureStatus,
   record_count: u64,
+  calls: Vec<super::FactoryMcpCallObservation>,
+  pub(super) prompt_digest: octacity_server_factory::FactoryDigest,
+  pub(super) toolchain: octacity_server_factory::FactoryTaskToolchain,
 }
 
 impl FactoryCodexNativeCapture {
+  /// Resolves only the exact captured Artifact, record and sanitized response identity.
+  pub fn resolve_evidence(
+    &self,
+    reference: &super::FactoryMcpEvidenceReference,
+  ) -> Result<&super::FactoryMcpCallObservation, ApplicationError> {
+    self
+      .calls
+      .iter()
+      .find(|call| call.reference() == *reference)
+      .ok_or_else(ApplicationError::invalid)
+  }
+  /// Actual paired native calls in invocation order; no model-authored call is added.
+  pub fn mcp_calls(&self) -> &[super::FactoryMcpCallObservation] {
+    &self.calls
+  }
   /// Exact ordinary Artifact, including an empty trace when no valid event arrived.
   #[must_use]
   pub const fn trace(&self) -> &ArtifactIdentity {
@@ -74,6 +92,8 @@ pub fn verify_codex_native_capture(
   documents: &[FactoryCodexOutputDocument],
 ) -> Result<FactoryCodexNativeCapture, ApplicationError> {
   let invalid = ApplicationError::invalid;
+  let toolchain = super::mcp_binding::toolchain(&expected.provenance);
+  let prompt_digest = expected.provenance.prompt_digest;
   let total = documents
     .iter()
     .try_fold(0_u64, |total, document| total.checked_add(document.identity.size_bytes))
@@ -119,6 +139,9 @@ pub fn verify_codex_native_capture(
     return Err(invalid());
   }
   Ok(FactoryCodexNativeCapture {
+    toolchain,
+    prompt_digest,
+    calls: super::mcp::observations(&trace.identity, &trace.bytes)?,
     trace: trace.identity.clone(),
     provenance: provenance.identity.clone(),
     status: capture.status,

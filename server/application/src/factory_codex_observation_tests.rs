@@ -19,6 +19,9 @@ use crate::{
 
 use super::factory_codex_tests::{credential_profiles, permissions, reference, standard_deliverables, task_envelope};
 
+#[path = "factory_mcp_evidence_tests.rs"]
+mod mcp_evidence;
+
 fn node_observation_fixture() -> (
   Fixture,
   octacity_server_factory::FlowBuildProfile,
@@ -142,10 +145,10 @@ fn codex_node_execution_failure_keeps_measured_usage_without_a_semantic_result()
   assert_eq!(observed.usage.cost_micro_units, 2);
 }
 
-struct Fixture {
+pub(crate) struct Fixture {
   envelope: octacity_server_factory::FactoryTaskEnvelope,
   build: FactoryBuildObservation,
-  documents: Vec<FactoryCodexOutputDocument>,
+  pub(crate) documents: Vec<FactoryCodexOutputDocument>,
   runner_events: Vec<RunnerEventPayload>,
 }
 
@@ -297,7 +300,7 @@ impl Fixture {
     }
   }
 
-  fn replace_document(&mut self, name: &str, value: Value) {
+  pub(crate) fn replace_document(&mut self, name: &str, value: Value) {
     self.replace_document_bytes(name, serde_json::to_vec(&value).unwrap());
   }
 
@@ -806,7 +809,7 @@ fn native_capture_preserves_multiline_mcp_results() {
   assert_eq!(observed.status(), FactoryCodexObservationStatus::Succeeded);
 }
 
-fn native_capture_fixture(result_text: &str) -> Fixture {
+pub(crate) fn native_capture_fixture(result_text: &str) -> Fixture {
   let mut fixture = Fixture::successful();
   let item = json!({"id":"call-1","type":"mcp_tool_call","server":"issues","tool":"lookup",
     "arguments":{"query":"candidate"},"status":"in_progress","result":null,"error":null});

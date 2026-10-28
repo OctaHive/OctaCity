@@ -496,6 +496,17 @@ fn materializer_with_inputs(
   bytes: BTreeMap<ArtifactId, Vec<u8>>,
   inputs: Arc<Inputs>,
 ) -> TestMaterializer {
+  materializer_with_context_source(intent, installed, Arc::new(ContextBytes(bytes)), inputs)
+}
+fn materializer_with_context_source<S>(
+  intent: &FlowBuildIntent,
+  installed: &FactoryCodexBuildProfile,
+  context_bytes: Arc<dyn FactoryNodeContextSource>,
+  inputs: Arc<S>,
+) -> FactoryCodexBuildMaterializer<Context, S, Bytes>
+where
+  S: octacity_server_store::FactoryExecutionInputStore + FactoryRoleInvocationStore,
+{
   let mut context = managed_context(
     &installed.build_configuration,
     &installed.pipeline_node,
@@ -527,7 +538,7 @@ fn materializer_with_inputs(
       Arc::new(Clock),
     )),
     vec![installed.clone()],
-    Arc::new(ContextBytes(bytes)),
+    context_bytes,
     Arc::new(Clock),
   )
   .unwrap()
@@ -1968,6 +1979,9 @@ fn selected_role_first_package_uses_exact_published_content_and_real_prompt_dige
 #[path = "factory_triage_profile_tests.rs"]
 mod triage;
 
+#[path = "factory_mcp_binding_tests.rs"]
+mod mcp_evidence;
+
 #[test]
 fn selected_role_first_package_materializes_shared_skills_from_the_agent() {
   crate::factory_admission_tests::run_ready(async {
@@ -2226,6 +2240,21 @@ fn role_compiler_preserves_plugin_declared_thinking_without_a_second_value_enum(
 
 #[test]
 fn configured_mcp_materialization_recovers_exact_transport_after_runtime_replacement() {
+  struct AuthorityOnly(Arc<dyn FactoryRoleInvocationSource>);
+  #[async_trait::async_trait]
+  impl FactoryRoleInvocationSource for AuthorityOnly {
+    async fn invocation(
+      &self,
+      _: &FlowBuildIntent,
+      _: Timestamp,
+      _: Timestamp,
+    ) -> Result<Option<FactoryRoleInvocation>, ApplicationError> {
+      panic!("retained recovery must not reload the role catalog")
+    }
+    async fn authorize_dependencies(&self, role: &FactoryRoleInvocation) -> Result<(), ApplicationError> {
+      self.0.authorize_dependencies(role).await
+    }
+  }
   crate::factory_admission_tests::run_ready(async {
     use octacity_server_store::{
       FactoryRuntimeSettingsIntent, FactoryRuntimeSettingsStore, PublishFactoryRuntimeSettings,
@@ -2298,7 +2327,7 @@ fn configured_mcp_materialization_recovers_exact_transport_after_runtime_replace
     ));
     let (materializer, inputs) = materializer_fixture(&intent, &installed, bytes.clone());
     let materializer = materializer
-      .with_role_invocation_source(source)
+      .with_role_invocation_source(source.clone())
       .with_runtime_settings_store(store.clone());
     let owner = FactoryClaimOwnership::new(intent.node().owner().clone(), intent.node().claim());
     let at = Timestamp::from_unix_millis(41).unwrap();
@@ -2335,7 +2364,7 @@ fn configured_mcp_materialization_recovers_exact_transport_after_runtime_replace
       .await
       .unwrap();
     let restarted = materializer_with_inputs(&intent, &installed, bytes, inputs)
-      .with_role_invocation_source(Arc::new(UnavailableRoleSource(std::sync::atomic::AtomicUsize::new(0))))
+      .with_role_invocation_source(Arc::new(AuthorityOnly(source)))
       .with_runtime_settings_store(store);
     let recovered = restarted
       .materialize(&intent, &admitted, owner, at)

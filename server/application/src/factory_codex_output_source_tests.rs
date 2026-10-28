@@ -12,6 +12,8 @@ use std::{
   collections::BTreeMap,
   sync::{Arc, Mutex},
 };
+#[path = "factory_mcp_output_tests.rs"]
+mod mcp_evidence;
 fn at(value: i64) -> Timestamp {
   Timestamp::from_unix_millis(value).unwrap()
 }
@@ -361,6 +363,26 @@ async fn prepared_role_source_with_mcp(
   selected_role: bool,
   mcp: Option<FactoryMcpServer>,
 ) -> SourceFixture {
+  prepared_role_source_with_mcp_evidence(
+    capture,
+    capture_paths,
+    observation_override,
+    selected_role,
+    mcp,
+    false,
+    false,
+  )
+  .await
+}
+async fn prepared_role_source_with_mcp_evidence(
+  capture: Option<FactoryCodexCapturePolicy>,
+  capture_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
+  observation_override: Option<serde_json::Value>,
+  selected_role: bool,
+  mcp: Option<FactoryMcpServer>,
+  verify_mcp: bool,
+  native_mcp: bool,
+) -> SourceFixture {
   let capture_schema = capture
     .as_ref()
     .and_then(|capture| capture.instruction().observation.as_ref())
@@ -426,6 +448,9 @@ async fn prepared_role_source_with_mcp(
   binding.plugin = crate::factory_job_test_support::reference("codex", "0.5.0");
   binding.tool = crate::factory_job_test_support::reference("codex-cli", "0.116.0");
   binding.result_output = FactoryKey::new("codex-run-result").unwrap();
+  if verify_mcp {
+    binding.result_tool = Some(mcp_verifier());
+  }
   let base = authoritative_store_contract_fixture();
   let profile = FactoryCodexBuildProfile {
     mcp_configurations: vec![],
@@ -497,6 +522,11 @@ async fn prepared_role_source_with_mcp(
   binding.task_digest = profile.task_digest();
   let (_, admitted, schema, input, _) =
     fixtures::execution_fixture_with_permissions(FlowNodeKind::Reasoning, work.clone(), binding, None, grants.clone());
+  let (admitted, schema, input) = if verify_mcp {
+    mcp_evidence::conclusion_admission(&work, admitted, schema, input)
+  } else {
+    (admitted, schema, input)
+  };
   let runtime_settings = mcp.map(|server| {
     FactoryRuntimeSettings::new(
       work.subject().project_id(),
@@ -775,6 +805,41 @@ async fn prepared_role_source_with_mcp(
     },
   )
   .unwrap();
+  if verify_mcp {
+    let schema: serde_json::Value =
+      serde_json::from_slice(compiled.document(FactoryProtectedDocumentKind::ResultSchema).bytes()).unwrap();
+    assert_eq!(
+      schema["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      ["assessment", "claims"],
+      "only model-authored fields belong in the emitted schema"
+    );
+    assert_eq!(schema["required"], serde_json::json!(["assessment", "claims"]));
+    assert_eq!(
+      schema["properties"]["claims"]["items"]["properties"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+      [
+        "arguments_json",
+        "connection",
+        "json_text",
+        "pointer",
+        "tool",
+        "value_json"
+      ]
+    );
+    assert_eq!(
+      schema["properties"]["claims"]["items"]["required"],
+      serde_json::json!(["arguments_json", "connection", "pointer", "tool", "value_json"])
+    );
+  }
   let mut fixture = finish_prepared_source(PreparedSourceInput {
     runs,
     base,
@@ -787,6 +852,7 @@ async fn prepared_role_source_with_mcp(
     capture_paths,
     observation_override,
     model_result: serde_json::json!({"count":9}),
+    native_mcp,
   })
   .await;
   fixture.role = selected_role.then_some(retained);
@@ -803,6 +869,7 @@ struct PreparedSourceInput {
   capture_paths: Vec<octacity_protocol::CapturedChangeSetPathV1>,
   observation_override: Option<serde_json::Value>,
   model_result: serde_json::Value,
+  native_mcp: bool,
   source: Option<(
     octacity_protocol::ChangeSetMaterializationV3,
     Vec<octacity_protocol::ProtectedInputV3>,
@@ -821,6 +888,7 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     capture_paths,
     observation_override,
     model_result,
+    native_mcp,
   } = input;
   let canonical = crate::factory_job_test_support::canonical_v3_spec();
   let grants = profile.project_permissions.clone();
@@ -959,15 +1027,27 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     expires_at: at(5000),
   }));
   let usage = serde_json::json!({"input_tokens":2,"output_tokens":3,"cost_micro_units":1});
-  let result=serde_json::to_vec(&serde_json::json!({"format_version":1,"outcome":"completed","structured_result":model_result,"harness_identifiers":{"session_id":"private-session-canary"},"usage":usage})).unwrap();
+  let mut result=serde_json::to_vec(&serde_json::json!({"format_version":1,"outcome":"completed","structured_result":model_result,"harness_identifiers":{"session_id":"private-session-canary"},"usage":usage})).unwrap();
   let prompt = std::str::from_utf8(compiled.document(FactoryProtectedDocumentKind::Prompt).bytes()).unwrap();
   let selected_revision = intent
     .input()
     .context()
     .and_then(|context| context.subject().candidate())
     .map_or(&build.immutable_revision, |candidate| candidate.candidate_revision());
-  let provenance=serde_json::to_vec(&serde_json::json!({"format_version":1,"trace_format_version":1,"result_format_version":1,"plugin":{"name":"octa_plugin_codex","version":profile.toolchain.plugin.version()},"codex":{"name":"codex-cli","version":profile.toolchain.executable.version()},"settings":{"model":profile.toolchain.model.identity(),"reasoning_effort":null},"prompt_digest":{"algorithm":"blake3","value":codex_prompt_provenance_digest(prompt)},"source_revision":selected_revision,"timing":{"started_unix_millis":started_at,"finished_unix_millis":completed_at,"duration_millis":4},"outcome":"completed","usage":usage})).unwrap();
-  let trace = b"{\"format_version\":1,\"sequence\":0,\"event\":{\"type\":\"turn.completed\"}}\n".to_vec();
+  let mut provenance=serde_json::to_vec(&serde_json::json!({"format_version":1,"trace_format_version":1,"result_format_version":1,"plugin":{"name":"octa_plugin_codex","version":profile.toolchain.plugin.version()},"codex":{"name":"codex-cli","version":profile.toolchain.executable.version()},"settings":{"model":profile.toolchain.model.identity(),"reasoning_effort":null},"prompt_digest":{"algorithm":"blake3","value":codex_prompt_provenance_digest(prompt)},"source_revision":selected_revision,"timing":{"started_unix_millis":started_at,"finished_unix_millis":completed_at,"duration_millis":4},"outcome":"completed","usage":usage})).unwrap();
+  let mut trace = b"{\"format_version\":1,\"sequence\":0,\"event\":{\"type\":\"turn.completed\"}}\n".to_vec();
+  let trace_id = ArtifactId::generate();
+  if native_mcp {
+    (result, trace, provenance) = mcp_evidence::native_records(
+      trace_id,
+      result,
+      provenance,
+      started_at,
+      observation_override
+        .as_ref()
+        .and_then(|value| value["native_case"].as_str()),
+    );
+  }
   let bytes = Arc::new(Bytes::default());
   let mut publications = vec![
     (
@@ -1047,7 +1127,11 @@ async fn finish_prepared_source(input: PreparedSourceInput) -> SourceFixture {
     ]);
   }
   for (name, content, kind, media) in publications {
-    let id = ArtifactId::generate();
+    let id = if name == "codex-run-trace" {
+      trace_id
+    } else {
+      ArtifactId::generate()
+    };
     let captured = matches!(
       name,
       octacity_protocol::CHANGE_SET_BUNDLE_OUTPUT | octacity_protocol::CHANGE_SET_MANIFEST_OUTPUT
@@ -1257,6 +1341,7 @@ async fn prepared_candidate_source() -> (SourceFixture, Arc<dyn FactoryRetainedC
     capture_paths: Vec::new(),
     observation_override: None,
     model_result: serde_json::json!({"count":9}),
+    native_mcp: false,
   })
   .await;
   let source = Arc::new(FactoryStoredCandidateContextSource::new(
@@ -1949,6 +2034,46 @@ fn selected_role_outputs_recover_the_original_package_and_verify_the_ordinary_jo
         &serde_json::json!({"count":9})
       );
     }
+  });
+}
+
+fn mcp_verifier() -> ImmutableReference {
+  ImmutableReference::new(
+    fixtures::key("native-mcp-evidence"),
+    fixtures::key("v1"),
+    FactoryDigest::content_sha256(b"octacity.factory.native-mcp-evidence.v1"),
+  )
+}
+
+#[test]
+fn ordinary_mcp_evidence_result_requires_observable_native_capture_instead_of_accepting_model_only_output() {
+  crate::factory_admission_tests::run_ready(async {
+    let f = prepared_role_source_with_mcp_evidence(
+      None,
+      vec![],
+      None,
+      true,
+      Some(FactoryMcpServer::Http {
+        url: "https://reader.example.test/mcp".into(),
+        bearer_token_env_var: None,
+        enabled_tools: Some(vec!["lookup".into()]),
+      }),
+      true,
+      false,
+    )
+    .await;
+    let source = f.source(f.query.clone()).with_runtime_settings_store(f.runs.clone());
+    assert!(
+      source
+        .published_outputs(
+          f.query.build.build.id,
+          f.query.attempt.id,
+          f.intent.budget().max_output_bytes()
+        )
+        .await
+        .is_err(),
+      "legacy/model-only capture cannot satisfy the explicitly selected MCP evidence verifier"
+    );
   });
 }
 

@@ -140,18 +140,11 @@ impl FactoryRoleInvocation {
 /// original pins, never current defaults.
 #[async_trait::async_trait]
 pub trait FactoryRoleInvocationSource: Send + Sync {
-  /// Rechecks current managed access for a retained package without reading authoring catalogs.
-  /// Sources without that authority may recover packages with no managed connections.
+  /// Rechecks current managed/MCP access without reading authoring catalogs.
+  /// Sources without that authority may recover packages with no external connections.
   async fn authorize_dependencies(&self, invocation: &FactoryRoleInvocation) -> Result<(), ApplicationError> {
-    if invocation
-      .package()
-      .inputs()
-      .profile
-      .definition()
-      .execution
-      .integrations
-      .is_empty()
-    {
+    let execution = &invocation.package().inputs().profile.definition().execution;
+    if execution.integrations.is_empty() && execution.mcp_servers.is_empty() {
       Ok(())
     } else {
       Err(ApplicationError::capability_unavailable())

@@ -6,7 +6,7 @@ use octacity_server_factory::{
   AssessmentOutcome, EvaluationResultFinding, FactoryRepositoryPath, FactorySafeText, FindingSeverity,
   ImplementationOutcome,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{CodexHarnessOutcome, FactoryImplementationReport};
 
@@ -43,7 +43,7 @@ pub(super) struct CodexResultRecord<T> {
 }
 
 /// Lifecycle of captured native events; it grants no semantic execution result.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactoryNativeCaptureStatus {
   /// A validated native terminal event and result were consumed.

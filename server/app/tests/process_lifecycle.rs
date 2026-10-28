@@ -470,18 +470,24 @@ policy_file = "{}"
 
 #[test]
 fn issue_mcp_connections_require_explicit_project_read_scope_and_private_credential_references() {
-  let reader = r#"
+  let directory = tempfile::tempdir().unwrap();
+  let credential_file =
+    toml::Value::String(directory.path().join("issue-mcp-triage").display().to_string()).to_string();
+  let reader = format!(
+    r#"
 [[issue_mcp_readers]]
 id = "project-triage"
 project_id = "0199a6f4-d56c-7440-9aa2-6a320f862795"
-credential_file = "/run/secrets/issue-mcp-triage"
+credential_file = {credential_file}
 expires_at_unix_ms = 2000000000000
 issue_ids = ["0199a6f4-d56c-7440-9aa2-6a320f862799"]
-"#;
-  assert!(ServerConfig::parse_toml(&format!("{}{reader}", valid_configuration())).is_ok());
+"#
+  );
+  ServerConfig::parse_toml(&format!("{}{reader}", valid_configuration()))
+    .expect("an absolute credential reference and explicit Project/read scope must be valid");
   for invalid in [
     reader.replace("project-triage", "invalid reader"),
-    reader.replace("/run/secrets/issue-mcp-triage", "relative-token"),
+    reader.replace(&credential_file, "\"relative-token\""),
     reader.replace("expires_at_unix_ms = 2000000000000", "expires_at_unix_ms = 0"),
     reader.replace("project_id = \"0199a6f4-d56c-7440-9aa2-6a320f862795\"", ""),
     format!("{reader}{reader}"),

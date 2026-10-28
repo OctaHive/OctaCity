@@ -18,6 +18,8 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.error
+import urllib.request
 
 from tools.tests.fixture_environment import fixture_environment
 
@@ -92,12 +94,29 @@ def serving(handler, certificate=None, *, host="127.0.0.1"):
         thread.join(timeout=3)
 
 
-def finite_peers(calls, model_requests, plan, call_started, release_call, *, cancel_during_mcp=False, peer_mode="facts", control=None):
+def finite_peers(calls, model_requests, plan, call_started, release_call, *, cancel_during_mcp=False, peer_mode="facts", control=None, issue_origin=None):
     def cancelling():
         return cancel_during_mcp or control is not None and control.read_text() == "cancel"
     class Peer(BaseHTTPRequestHandler):
         def log_message(self, *_): pass
         def do_POST(self):
+            if issue_origin and self.path == "/mcp/issues":
+                body = self.rfile.read(int(self.headers["Content-Length"]))
+                request = urllib.request.Request(issue_origin + self.path, data=body,
+                    headers={name: value for name, value in self.headers.items() if name.lower() not in {"host", "content-length"}})
+                try:
+                    response = urllib.request.urlopen(request, timeout=10)
+                except urllib.error.HTTPError as error:
+                    response = error
+                with response:
+                    body = response.read()
+                    self.send_response(response.status)
+                    for name, value in response.headers.items():
+                        if name.lower() not in {"content-length", "transfer-encoding", "connection", "server", "date"}:
+                            self.send_header(name, value)
+                    self.send_header("Content-Length", str(len(body)))
+                    self.end_headers(); self.wfile.write(body)
+                return
             if self.headers.get("Authorization") != "Bearer " + TOKENS["http"] or control is not None and control.read_text() == "revoked":
                 calls.append({"peer": "remote", "authenticated": False})
                 self.send_response(401); self.send_header("Content-Length", "0"); self.end_headers(); return
@@ -138,7 +157,8 @@ def finite_peers(calls, model_requests, plan, call_started, release_call, *, can
             index = 0 if cancelling() else len(model_requests) - 1
             if index < len(plan):
                 peer, tool, resource = plan[index]
-                item = {"type": "function_call", "id": f"item-{index}", "call_id": f"call-{index}", "namespace": f"mcp__{peer}", "name": tool, "arguments": json.dumps({"resource": resource})}
+                arguments = resource if isinstance(resource, dict) else {"resource": resource}
+                item = {"type": "function_call", "id": f"item-{index}", "call_id": f"call-{index}", "namespace": f"mcp__{peer}", "name": tool, "arguments": json.dumps(arguments)}
             else:
                 item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": "true", "annotations": []}]}
             events = [{"type": "response.created", "response": {"id": f"response-{index}", "status": "in_progress", "output": []}},
@@ -152,16 +172,16 @@ def finite_peers(calls, model_requests, plan, call_started, release_call, *, can
 
 @unittest.skipUnless(os.name == "posix" and NATIVE and PLUGIN, "select pinned native Codex and plugin binaries explicitly")
 class NativeMcpCredentialTests(unittest.TestCase):
-    def invoke(self, token=TOKENS["http"], *, cancel_during_mcp=False, peer_mode="facts"):
+    def invoke(self, token=TOKENS["http"], *, cancel_during_mcp=False, peer_mode="facts", issue_origin=None, plan=None, export_directory=None):
         self.assertEqual(subprocess.check_output([NATIVE, "--version"], text=True).strip(), "codex-cli 0.161.0")
         node = shutil.which("node")
         self.assertIsNotNone(node)
         calls, model_requests = [], []
         call_started, release_call = threading.Event(), threading.Event()
-        plan = [("remote", "facts", "alpha"), ("local", "facts", "alpha"),
+        plan = plan if plan is not None else [("remote", "facts", "alpha"), ("local", "facts", "alpha"),
                 ("remote", "facts", "beta"), ("local", "write", "alpha")]
 
-        Peer, Model = finite_peers(calls, model_requests, plan, call_started, release_call, cancel_during_mcp=cancel_during_mcp, peer_mode=peer_mode)
+        Peer, Model = finite_peers(calls, model_requests, plan, call_started, release_call, cancel_during_mcp=cancel_during_mcp, peer_mode=peer_mode, issue_origin=issue_origin)
 
         with tempfile.TemporaryDirectory(prefix="ocmcp-", dir=Path("/tmp").resolve()) as temporary:
             root = Path(temporary)
@@ -173,6 +193,10 @@ class NativeMcpCredentialTests(unittest.TestCase):
                 launcher.write_text(f'#!{sys.executable}\nimport os,sys\nargs=sys.argv[1:]\nif "exec" in args: args=args[:-1]+[\'--config=model_provider="finite"\',{provider!r}]+args[-1:]\nos.execv({NATIVE!r},[{NATIVE!r}]+args)\n')
                 launcher.chmod(0o700)
                 home = root / "home"; home.mkdir(mode=0o700)
+                if issue_origin:
+                    ambient = home / ".codex"; ambient.mkdir(mode=0o700)
+                    (ambient / "config.toml").write_text(
+                        f'[mcp_servers.ambient]\ncommand = {json.dumps(node)}\nargs = [{json.dumps(str(PEER))}]\n')
                 audit = root / "stdio-audit.jsonl"
                 values = {"MODEL": TOKENS["model"], "HTTP": token, "STDIO": TOKENS["stdio"], "SOURCE": TOKENS["source"], "REPORTER": TOKENS["reporter"], "HOME_DIR": str(home), "CA": str(certificate), "AUDIT": str(audit)}
                 secret = {"OPENAI_API_KEY": "MODEL", "HTTP_READ_TOKEN": "HTTP", "STDIO_READ_TOKEN": "STDIO"}
@@ -182,6 +206,10 @@ class NativeMcpCredentialTests(unittest.TestCase):
                           "mcp_servers": {"remote": {"transport": "http", "url": f"https://localhost:{peer_port}/mcp", "bearer_token_env_var": "HTTP_READ_TOKEN", "enabled_tools": ["facts"]},
                                           "local": {"transport": "stdio", "command": node, "args": [str(PEER)], "env_vars": ["STDIO_READ_TOKEN", "PEER_RESOURCE", "PEER_AUDIT_FILE"], "enabled_tools": ["facts", "write"]}},
                           "environment": {"secret": secret, "public": {"HOME": "HOME_DIR", "SSL_CERT_FILE": "CA", "PEER_AUDIT_FILE": "AUDIT", "PEER_RESOURCE": "RESOURCE", "HTTP_PROXY": "PROXY", "HTTPS_PROXY": "PROXY", "ALL_PROXY": "PROXY", "NO_PROXY": "DIRECT"}}}
+                if issue_origin:
+                    params["mcp_servers"]["remote"].update(url=f"https://localhost:{peer_port}/mcp/issues", enabled_tools=["search_issues", "read_issue"])
+                if export_directory:
+                    params["source_revision"] = "a" * 40
                 values.update(RESOURCE="alpha", PROXY="http://127.0.0.1:9", DIRECT="localhost,127.0.0.1")
                 path = root / "p.sock"
                 process = subprocess.Popen([PLUGIN, "--socket-path", str(path), "--log-dir", str(root / "logs")], cwd=root, env=fixture_environment(OCTA_CODEX_EXECUTABLE=str(launcher)), stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
@@ -211,6 +239,11 @@ class NativeMcpCredentialTests(unittest.TestCase):
                         self.assertEqual(cancelled, cancel_during_mcp)
                         send({"type": "Shutdown"})
                     retained = b"".join(file.read_bytes() for file in root.rglob("*") if file.is_file() and "codex-runs" in file.parts)
+                    if export_directory:
+                        destination = Path(export_directory)
+                        for file in root.rglob("*"):
+                            if file.is_file() and "codex-runs" in file.parts and file.name in {"trace.jsonl", "provenance.json"}:
+                                (destination / file.name).write_bytes(file.read_bytes())
                     local = [json.loads(line) for line in audit.read_text().splitlines()] if audit.exists() else []
                     return responses, calls, local, model_requests, retained
                 finally:

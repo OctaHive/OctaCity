@@ -292,6 +292,7 @@ async fn prepared_review_source() -> (
     .unwrap()
     .schema();
   let fixture = finish_prepared_source(PreparedSourceInput {
+    native_mcp: false,
     runs: candidate.runs.clone(),
     base: authoritative_store_contract_fixture(),
     profile,

@@ -58,6 +58,10 @@ pub(crate) async fn configurations(
   Ok(configurations)
 }
 impl FactoryCodexMcpConfiguration {
+  /// Exact validated native transport metadata; contains references rather than token values.
+  pub fn server(&self) -> &FactoryCodexMcpServer {
+    self.0.server()
+  }
   pub(crate) fn same_authority(&self, approved: &FactoryMcpConfiguration) -> bool {
     self.0.server() == approved.server()
       && self.0.authorization() == approved.authorization()

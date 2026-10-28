@@ -36,6 +36,7 @@ pub use human::{FlowHumanDisposition, FlowHumanGateBinding, FlowHumanOperation};
 mod predicate;
 pub use predicate::{
   FlowComparison, FlowGateProgram, FlowGateRule, FlowOperand, FlowPredicate, FlowPredicateFailure, FlowQuantifier,
+  MAX_FLOW_POINTER_BYTES,
 };
 mod incoming;
 mod input;

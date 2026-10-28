@@ -220,3 +220,30 @@ local documentation links passed. Free disk remained above 13 GB during these
 corrections; no cache or stand-data cleanup was necessary.
 
 The existing 4.3/4.4 and packaged qualification limits above remain unchanged.
+
+## Windows fixture correction — 2026-10-29
+
+The reported Windows CI run supplied Red for
+`issue_mcp_connections_require_explicit_project_read_scope_and_private_credential_references`:
+the positive fixture used `/run/secrets/issue-mcp-triage`, which has no drive or
+UNC prefix and therefore is not absolute on Windows. The production
+`Path::is_absolute` requirement was correct and remains unchanged.
+
+The fixture now obtains a native absolute reference from a test-owned temporary
+directory and serializes it with the existing TOML string serializer. The
+relative-path, scope, expiry, duplicate-reader, inline-token and write-field
+negative cases remain intact. The original test passed on macOS before this
+test-only correction. Afterward:
+
+```sh
+CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0 CARGO_INCREMENTAL=0 \
+  cargo test --locked -j2 -p octacity-server --test process_lifecycle
+# 11 passed, 0 failed, 0 ignored on macOS.
+cargo fmt --all -- --check
+git diff --check
+# Both passed.
+```
+
+Windows execution is unavailable on this host; the supplied CI failure is the
+Windows Red observation, and Windows Green still requires rerunning that job.
+Approximately 40 GiB remained available; no cleanup or commit was performed.

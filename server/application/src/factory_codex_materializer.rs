@@ -407,6 +407,23 @@ impl<C, S, B> FactoryCodexBuildMaterializer<C, S, B> {
     self
   }
 
+  async fn authorize_role_dependencies(
+    &self,
+    role: &crate::FactoryRoleInvocation,
+  ) -> Result<(), OrdinaryBuildApplicationError> {
+    let execution = &role.package().inputs().profile.definition().execution;
+    if !execution.integrations.is_empty() || !execution.mcp_servers.is_empty() {
+      self
+        .role
+        .as_ref()
+        .ok_or(OrdinaryBuildApplicationError::Unavailable)?
+        .authorize_dependencies(role)
+        .await
+        .map_err(|_| OrdinaryBuildApplicationError::Unavailable)?;
+    }
+    Ok(())
+  }
+
   /// Resolves selected immutable MCP content alongside installation-owned transports.
   #[must_use]
   pub fn with_runtime_settings_store(
@@ -464,31 +481,7 @@ impl<
       (profile, None)
     } else {
       let role = if let Some(role) = self.publisher.role_invocation(intent).await.map_err(|_| Unavailable)? {
-        if !role
-          .package()
-          .inputs()
-          .profile
-          .definition()
-          .execution
-          .integrations
-          .is_empty()
-          || !role
-            .package()
-            .inputs()
-            .profile
-            .definition()
-            .execution
-            .mcp_servers
-            .is_empty()
-        {
-          self
-            .role
-            .as_ref()
-            .ok_or(Unavailable)?
-            .authorize_dependencies(&role)
-            .await
-            .map_err(|_| Unavailable)?;
-        }
+        self.authorize_role_dependencies(&role).await?;
         role
       } else {
         self
@@ -601,6 +594,9 @@ impl<
     )
     .await
     .map_err(|_| Unavailable)?;
+    if let Some(role) = &role {
+      self.authorize_role_dependencies(role).await?;
+    }
     let compiled = compile_codex_flow_task_with_options(
       intent,
       admitted,
@@ -643,6 +639,9 @@ impl<
     manifest.inputs.extend_from_slice(compiled.additional_inputs());
     manifest.inputs.sort_by(|a, b| a.artifact_id.cmp(&b.artifact_id));
     let program = compiled.managed_program(manifest).map_err(|_| Invalid)?;
+    if let Some(role) = &role {
+      self.authorize_role_dependencies(role).await?;
+    }
     let now = self.clock.now().map_err(|_| Unavailable)?;
     if now >= intent.node().deadline() || intent.node().verify_observer(&ownership, now).is_err() {
       return Err(Conflict);

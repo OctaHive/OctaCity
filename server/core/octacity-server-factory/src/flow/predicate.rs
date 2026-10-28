@@ -11,7 +11,8 @@ use std::collections::BTreeMap;
 const MAX_RULES: usize = 64;
 const MAX_DEPTH: usize = 16;
 const MAX_PREDICATES: usize = 128;
-const MAX_POINTER_BYTES: usize = 256;
+/// Maximum UTF-8 bytes in an RFC 6901 pointer shared by Flow predicates and data mappings.
+pub const MAX_FLOW_POINTER_BYTES: usize = 256;
 // Hard CPU ceiling across every rule, including nested rescans of root arrays.
 pub(super) const MAX_EVALUATION_STEPS: usize = 16_384;
 const POLICY: &str = "factory.declarative-gate";
@@ -399,7 +400,7 @@ impl FlowOperand {
   }
 }
 pub(super) fn validate_pointer(path: &str) -> Result<(), FactoryError> {
-  if path.len() > MAX_POINTER_BYTES || (!path.is_empty() && !path.starts_with('/')) {
+  if path.len() > MAX_FLOW_POINTER_BYTES || (!path.is_empty() && !path.starts_with('/')) {
     return Err(invalid());
   }
   let mut bytes = path.bytes();

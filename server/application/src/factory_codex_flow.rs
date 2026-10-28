@@ -445,7 +445,25 @@ fn compile_flow_task(
     .outcome(intent.result_outcome())
     .and_then(|outcome| admitted.data_schema(outcome.schema()))
     .ok_or(CodexCompilationError::NodeBindings)?;
-  let result_schema = if options.reviewer.is_some() {
+  let result_schema = if intent.profile().result_tool() == &crate::factory_mcp_evidence_verifier() {
+    if options.reviewer.is_some()
+      || options.role.is_none_or(|role| {
+        role
+          .package()
+          .inputs()
+          .profile
+          .definition()
+          .execution
+          .mcp_servers
+          .is_empty()
+      })
+    {
+      return Err(CodexCompilationError::UnsupportedToolchain);
+    }
+    let model_shape = crate::factory_codex_observation::model_conclusion_shape(schema.shape())
+      .ok_or(CodexCompilationError::NodeBindings)?;
+    json_schema(&model_shape)?
+  } else if options.reviewer.is_some() {
     result_schema(FactoryTaskResultSchema::EvaluationV1)?
   } else {
     json_schema(schema.shape())?

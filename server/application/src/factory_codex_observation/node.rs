@@ -50,6 +50,61 @@ pub struct FactoryCodexNodeRunObservation {
   pub usage: BudgetUsage,
 }
 
+/// Original execution/Job expectations for a stage selecting native MCP evidence verification.
+pub struct FactoryCodexMcpNodeRunContract<'a> {
+  /// Frozen model execution and output contract.
+  pub execution: FactoryCodexNodeRunContract<'a>,
+  /// Original ordinary Build, never selected from model output.
+  pub build_id: octacity_server_domain::BuildId,
+  /// Original observed Attempt.
+  pub attempt_id: octacity_server_domain::AttemptId,
+  /// Original single executed Job.
+  pub job_id: octacity_server_domain::JobId,
+  /// Exact retained private Role package.
+  pub role: &'a crate::FactoryRoleInvocation,
+  /// Compiler documents already matched to the executed protected manifest.
+  pub compiled: &'a crate::CompiledCodexTask,
+  /// Exact retained selected transport/authentication configurations.
+  pub configurations: &'a [crate::FactoryCodexMcpConfiguration],
+}
+
+/// Verifies actual native observations before producing a common stage conclusion.
+pub fn verify_codex_mcp_node_run(
+  expected: FactoryCodexMcpNodeRunContract<'_>,
+  documents: &[FactoryCodexOutputDocument],
+) -> Result<FactoryCodexNodeRunObservation, ApplicationError> {
+  let execution = &expected.execution;
+  if execution.profile.result_tool() != &super::mcp_conclusion::factory_mcp_evidence_verifier() {
+    return Err(ApplicationError::invalid());
+  }
+  let capture = super::verify_codex_native_capture(
+    super::FactoryCodexNativeCaptureContract {
+      build_id: expected.build_id,
+      attempt_id: expected.attempt_id,
+      job_id: expected.job_id,
+      provenance: execution.provenance_expectation(),
+      maximum_bytes: execution.budget.max_output_bytes(),
+      execution_window: execution.execution_window.clone(),
+    },
+    documents,
+  )?;
+  let bound = capture.bind_mcp_connections(expected.role, expected.compiled, expected.configurations)?;
+  let records = verified_records(execution, documents)?;
+  let data = if records.outcome == CodexHarnessOutcome::Completed {
+    Some(
+      FlowVerifiedBuildData::new(execution.schema.clone(), bound.verify_conclusion(records.value)?)
+        .map_err(|_| ApplicationError::invalid())?,
+    )
+  } else {
+    None
+  };
+  Ok(FactoryCodexNodeRunObservation {
+    outcome: records.outcome,
+    data,
+    usage: records.usage,
+  })
+}
+
 /// Verifies retained output identity, exact invocation provenance and measured usage.
 /// This adapter-local boundary performs no I/O and selects no Flow transition.
 pub fn verify_codex_node_run(

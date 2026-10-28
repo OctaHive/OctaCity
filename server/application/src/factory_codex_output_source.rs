@@ -499,13 +499,31 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       budget: intent.budget(),
       execution_window: job.created_at..=terminal.completed_at.min(intent.node().deadline()),
     };
-    let observed = if let Some(review) = review {
+    let verifies_mcp = intent.profile().result_tool() == &factory_mcp_evidence_verifier();
+    let observed = if verifies_mcp {
+      if review.is_some() {
+        return Err(Invalid);
+      }
+      verify_codex_mcp_node_run(
+        FactoryCodexMcpNodeRunContract {
+          execution: contract,
+          build_id,
+          attempt_id,
+          job_id: job.id(),
+          role: role.as_ref().ok_or(Invalid)?,
+          compiled: &compiled,
+          configurations: &mcp_configurations,
+        },
+        &documents,
+      )
+    } else if let Some(review) = review {
       verify_codex_review_node_run(contract, intent, review, &compiled, &documents)
     } else {
       verify_codex_node_run(contract, &documents)
     }
     .map_err(|error| match error {
       ApplicationError::Store(StoreError::Unavailable) => Unavailable,
+      ApplicationError::CapabilityUnavailable => Unavailable,
       _ => Invalid,
     })?;
     if candidate.is_some() || capture.is_some() {
@@ -576,7 +594,11 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         bytes: document.bytes,
         data: Some(data),
         schema: schema.reference().clone(),
-        tool: profile.toolchain.executable.clone(),
+        tool: if verifies_mcp {
+          factory_mcp_evidence_verifier()
+        } else {
+          profile.toolchain.executable.clone()
+        },
         plugin: profile.toolchain.plugin.clone(),
       }],
       usage,

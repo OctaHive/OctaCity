@@ -16,17 +16,27 @@ use crate::{FactoryBuildObservation, factory_codex_contract::CODEX_STAGE_SUMMARY
 
 mod evaluation;
 mod evidence;
+mod mcp;
+mod mcp_binding;
+mod mcp_conclusion;
+mod mcp_schema;
 mod native_capture;
 mod node;
 mod records;
 mod validation;
 
 pub use evidence::FactoryCodexProvenanceContract;
+pub use mcp::{FactoryMcpCallObservation, FactoryMcpCallStatus, FactoryMcpEvidenceReference};
+pub use mcp_binding::{FactoryMcpBoundCapture, FactoryMcpObservationBinding};
+pub use mcp_conclusion::factory_mcp_evidence_verifier;
+pub use mcp_schema::factory_mcp_conclusion_shape;
+pub(crate) use mcp_schema::model_conclusion_shape;
 pub use native_capture::{FactoryCodexNativeCapture, FactoryCodexNativeCaptureContract, verify_codex_native_capture};
 pub use records::FactoryNativeCaptureStatus;
 
 pub use node::{
-  FactoryCodexNodeRunContract, FactoryCodexNodeRunObservation, verify_codex_node_run, verify_codex_review_node_run,
+  FactoryCodexMcpNodeRunContract, FactoryCodexNodeRunContract, FactoryCodexNodeRunObservation,
+  verify_codex_mcp_node_run, verify_codex_node_run, verify_codex_review_node_run,
 };
 
 pub use evaluation::{
