@@ -90,6 +90,18 @@ shared/*/*
 shared/protocol-fixtures/coordinator/*
 !shared/protocol-fixtures/coordinator/register-request-v1.json
 
+# Canonical Factory inputs compiled into the server; operator catalogs stay out.
+!config/
+config/*
+!config/factory/
+config/factory/*
+!config/factory/presets/
+config/factory/presets/*
+!config/factory/presets/triage/
+config/factory/presets/triage/*
+!config/factory/presets/triage/completion-v1.json
+!config/factory/presets/triage/ticket-input-v1.json
+
 # Locked UI production build inputs. The ignored OpenAPI schema is generated
 # inside the builder from the checked-in Rust contract and generator script.
 # Tests remain because the checked-in TypeScript project includes them in its

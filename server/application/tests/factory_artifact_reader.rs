@@ -15,7 +15,7 @@ use std::{
   future::Future,
   sync::{
     Arc,
-    atomic::{AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
   },
   task::{Context, Poll, Waker},
 };
@@ -38,7 +38,7 @@ impl BuildQueryStore for Builds {
   }
 }
 
-struct Bytes(AtomicUsize, Vec<u8>, &'static str);
+struct Bytes(AtomicUsize, Vec<u8>, &'static str, AtomicBool);
 #[async_trait]
 impl ArtifactByteReader for Bytes {
   async fn read_published(&self, object: &ArtifactObject, maximum: u64) -> Result<Vec<u8>, ArtifactStoreError> {
@@ -51,6 +51,9 @@ impl ArtifactByteReader for Bytes {
     );
     assert!((5..=octacity_artifact_store::MAX_ARTIFACT_READ_BYTES).contains(&maximum));
     self.0.fetch_add(1, Ordering::SeqCst);
+    if self.3.load(Ordering::SeqCst) {
+      return Err(ArtifactStoreError::NotFound);
+    }
     Ok(self.1.clone())
   }
 }
@@ -97,6 +100,88 @@ fn factory_reads_only_exact_published_project_owned_inputs_within_the_declared_c
       1,
       "rejected selection must not read protected bytes"
     );
+  });
+}
+
+#[test]
+fn triage_goal_context_reports_the_unavailable_selection_without_disclosing_foreign_or_changed_bytes() {
+  use octacity_server_application::TriageProjectContextDraft;
+  use octacity_server_factory::*;
+  ready(async {
+    for case in ["foreign", "changed_digest", "unavailable"] {
+      let fixture = octacity_server_store::testing::factory_node_journal_contract_fixture();
+      let project = fixture.input.subject().project_id();
+      let owner = if case == "foreign" {
+        ProjectId::generate()
+      } else {
+        project
+      };
+      let (reader, request, bytes) = prepared_reader(Some(owner)).await;
+      bytes.3.store(case == "unavailable", Ordering::SeqCst);
+      let goals = if case == "changed_digest" {
+        FactoryArtifactReference::new(
+          request.artifact.artifact_id(),
+          FactoryDigest::from_bytes([9; 32]),
+          request.artifact.encoded_size(),
+        )
+        .unwrap()
+      } else {
+        request.artifact.clone()
+      };
+      let draft = TriageProjectContextDraft {
+        project_id: project,
+        goals: Some(goals.clone()),
+        rules: Some(request.artifact),
+        documents: Default::default(),
+      };
+      draft.bind(project).unwrap(); // Pure compilation confers no publication ownership.
+      let subject = FactoryTaskSubject::Exact(fixture.input.subject().clone());
+      let context = ContextManifest::new(
+        ContextManifestId::generate(),
+        subject.clone(),
+        FactoryDigest::from_bytes([1; 32]),
+        vec![
+          ContextManifestEntry::new(
+            ContextSourceKind::Specification,
+            FactoryKey::new("project-goals").unwrap(),
+            subject,
+            FactoryContextReference::Artifact(goals.clone()),
+            goals.content_digest(),
+            goals.encoded_size(),
+            FactorySafeText::new("Required reviewed Project goals").unwrap(),
+            FactoryDigest::from_bytes([2; 32]),
+          )
+          .unwrap(),
+        ],
+      )
+      .unwrap();
+      let input = fixture.input.with_context(context, vec![]).unwrap();
+      let error = reader.read_context(&input, at(103), at(1000)).await.unwrap_err();
+      let (class, diagnostic, reads) = if case == "unavailable" {
+        (
+          octacity_server_application::ApplicationFailure::Unavailable,
+          "required Context input project-goals is unavailable (Unavailable)",
+          1,
+        )
+      } else {
+        (
+          octacity_server_application::ApplicationFailure::Invalid,
+          "required Context input project-goals is unavailable (Invalid)",
+          0,
+        )
+      };
+      assert_eq!(error.classification(), class);
+      assert_eq!(
+        error.to_string(),
+        diagnostic,
+        "{case} must identify the reviewed selection to repair"
+      );
+      assert_eq!(
+        bytes.0.load(Ordering::SeqCst),
+        reads,
+        "invalid context cannot reach protected bytes; missing backend bytes retain retryable failure"
+      );
+    }
   });
 }
 
@@ -177,7 +262,12 @@ async fn prepared_reader_with_media(
     .finish_artifact_verification(verification, ArtifactVerificationResult::Verified)
     .await
     .unwrap();
-  let bytes = Arc::new(Bytes(AtomicUsize::new(0), body.to_vec(), transport_media_type));
+  let bytes = Arc::new(Bytes(
+    AtomicUsize::new(0),
+    body.to_vec(),
+    transport_media_type,
+    AtomicBool::new(false),
+  ));
   let reader = FactoryArtifactReader::new(artifacts, builds, bytes.clone());
   let request = ReadFactoryArtifact {
     project_id: fixture.request.build.project_id,
@@ -208,121 +298,148 @@ fn configured_context_uses_only_declared_verified_artifacts_for_arbitrary_nodes(
     }
   }
   ready(async {
-    let fixture = factory_node_journal_contract_fixture();
-    let (reader, request, bytes) = prepared_reader(Some(fixture.admission.work.subject().project_id())).await;
-    let original = fixture
-      .admission
-      .flow
-      .closure()
-      .definition(fixture.admission.flow.closure().root())
+    for altered in [false, true] {
+      let fixture = factory_node_journal_contract_fixture();
+      let (reader, request, bytes) = prepared_reader(Some(fixture.admission.work.subject().project_id())).await;
+      let original = fixture
+        .admission
+        .flow
+        .closure()
+        .definition(fixture.admission.flow.closure().root())
+        .unwrap();
+      let alias = FactoryKey::new(if altered {
+        "project-goals"
+      } else {
+        "selected-document-42"
+      })
       .unwrap();
-    let alias = FactoryKey::new("selected-document-42").unwrap();
-    let context = FlowContextBinding::new(
-      None,
-      BTreeMap::from([(
-        alias.clone(),
-        FlowContextSelection {
-          when_present: None,
-          source_kind: ContextSourceKind::Task,
-          source: FlowDataMapping::new(FlowValueMapping::Constant {
-            value: serde_json::to_value(FactoryContextReference::Artifact(request.artifact.clone())).unwrap(),
-          })
-          .unwrap(),
-        },
-      )]),
-    )
-    .unwrap();
-    let node = original.nodes()[0]
-      .clone()
-      .with_input_binding(
-        FlowInputBinding::new(
-          BTreeMap::new(),
-          FlowDataMapping::new(FlowValueMapping::Constant {
-            value: serde_json::json!({"count":3}),
-          })
+      let selected = if altered {
+        FactoryArtifactReference::new(
+          request.artifact.artifact_id(),
+          FactoryDigest::from_bytes([9; 32]),
+          request.artifact.encoded_size(),
+        )
+        .unwrap()
+      } else {
+        request.artifact.clone()
+      };
+      let context = FlowContextBinding::new(
+        None,
+        BTreeMap::from([(
+          alias.clone(),
+          FlowContextSelection {
+            when_present: None,
+            source_kind: ContextSourceKind::Task,
+            source: FlowDataMapping::new(FlowValueMapping::Constant {
+              value: serde_json::to_value(FactoryContextReference::Artifact(selected)).unwrap(),
+            })
+            .unwrap(),
+          },
+        )]),
+      )
+      .unwrap();
+      let node = original.nodes()[0]
+        .clone()
+        .with_input_binding(
+          FlowInputBinding::new(
+            BTreeMap::new(),
+            FlowDataMapping::new(FlowValueMapping::Constant {
+              value: serde_json::json!({"count":3}),
+            })
+            .unwrap(),
+          )
           .unwrap(),
         )
-        .unwrap(),
+        .unwrap()
+        .with_context_binding(context)
+        .unwrap();
+      let definition = FlowDefinition::new(FlowDefinitionInput {
+        id: original.reference().id(),
+        version: original.reference().version(),
+        input_schema: original.input_schema().cloned(),
+        entry: node.key().clone(),
+        nodes: vec![node],
+        transitions: original.transitions().to_vec(),
+        terminals: original.terminals().to_vec(),
+        context_projections: vec![],
+        data_projections: vec![],
+        execution: original.execution().clone(),
+      })
+      .unwrap();
+      let flow = FlowRun::root(&fixture.admission.run, definition.reference()).unwrap();
+      let cycle = WorkflowCycle::initial(&flow).unwrap();
+      let admitted = AdmittedFlow::new(
+        PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
+        fixture.admission.flow.limits().clone(),
+        flow,
+        cycle,
+        fixture.admission.flow.wip_limits(),
       )
       .unwrap()
-      .with_context_binding(context)
+      .with_data_schemas(vec![fixture.schema.clone()])
       .unwrap();
-    let definition = FlowDefinition::new(FlowDefinitionInput {
-      id: original.reference().id(),
-      version: original.reference().version(),
-      input_schema: original.input_schema().cloned(),
-      entry: node.key().clone(),
-      nodes: vec![node],
-      transitions: original.transitions().to_vec(),
-      terminals: original.terminals().to_vec(),
-      context_projections: vec![],
-      data_projections: vec![],
-      execution: original.execution().clone(),
-    })
-    .unwrap();
-    let flow = FlowRun::root(&fixture.admission.run, definition.reference()).unwrap();
-    let cycle = WorkflowCycle::initial(&flow).unwrap();
-    let admitted = AdmittedFlow::new(
-      PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap(),
-      fixture.admission.flow.limits().clone(),
-      flow,
-      cycle,
-      fixture.admission.flow.wip_limits(),
-    )
-    .unwrap()
-    .with_data_schemas(vec![fixture.schema.clone()])
-    .unwrap();
-    let store = InMemoryFactoryConfigurationStore::new();
-    store
-      .seed_factory_run(
-        PublishedFactoryAdmission {
-          flow: admitted,
-          ..fixture.admission.clone()
-        },
-        FactoryDigest::from_bytes([1; 32]),
-        management_mutation_with_request((), "context-owner").audit(),
-      )
-      .unwrap();
-    let snapshot = store.factory_run_snapshot(fixture.admission.run.id()).await.unwrap();
-    let reader = Arc::new(reader);
-    let inputs = FactoryArtifactFlowInputs::new(reader.clone(), Arc::new(Clock));
-    let target = FactoryNodeTarget {
-      flow_run_id: snapshot.admitted_flow.root_run().id(),
-      cycle_id: snapshot.admitted_flow.initial_cycle().id(),
-      node: original.entry().clone(),
-    };
-    let prepared = inputs.prepare(&snapshot, &target).await.unwrap();
-    assert_eq!(
-      prepared,
-      inputs.prepare(&snapshot, &target).await.unwrap(),
-      "the same immutable selection and construction policy must produce identical manifest bytes"
-    );
-    assert_eq!(prepared.payload().value(), &serde_json::json!({"count":3}));
-    let manifest = prepared.context().unwrap();
-    assert_eq!(
-      manifest.subject(),
-      &FactoryTaskSubject::Exact(snapshot.work.subject().clone())
-    );
-    assert_eq!(
-      manifest.entries().len(),
-      1,
-      "ordering and Work contents must not add implicit context"
-    );
-    assert_eq!(manifest.entries()[0].logical_identity(), &alias);
-    assert_eq!(
-      manifest.entries()[0].source(),
-      &FactoryContextReference::Artifact(request.artifact.clone())
-    );
-    assert_eq!(bytes.0.load(Ordering::SeqCst), 2);
-    let context_bytes = reader.read_context(&prepared, at(103), at(1103)).await.unwrap();
-    assert_eq!(context_bytes.len(), 1);
-    assert_eq!(
-      context_bytes.get(&request.artifact.artifact_id()),
-      Some(&b"hello".to_vec())
-    );
-    assert_eq!(bytes.0.load(Ordering::SeqCst), 3);
-    assert!(reader.read_context(&prepared, at(103), at(103)).await.is_err());
-    assert_eq!(bytes.0.load(Ordering::SeqCst), 3, "expired context must not read bytes");
+      let store = InMemoryFactoryConfigurationStore::new();
+      store
+        .seed_factory_run(
+          PublishedFactoryAdmission {
+            flow: admitted,
+            ..fixture.admission.clone()
+          },
+          FactoryDigest::from_bytes([1; 32]),
+          management_mutation_with_request((), "context-owner").audit(),
+        )
+        .unwrap();
+      let snapshot = store.factory_run_snapshot(fixture.admission.run.id()).await.unwrap();
+      let reader = Arc::new(reader);
+      let inputs = FactoryArtifactFlowInputs::new(reader.clone(), Arc::new(Clock));
+      let target = FactoryNodeTarget {
+        flow_run_id: snapshot.admitted_flow.root_run().id(),
+        cycle_id: snapshot.admitted_flow.initial_cycle().id(),
+        node: original.entry().clone(),
+      };
+      let prepared = inputs.prepare(&snapshot, &target).await;
+      if altered {
+        let error = prepared.unwrap_err();
+        assert_eq!(
+          error.to_string(),
+          "required Context input project-goals is unavailable (Invalid)"
+        );
+        assert_eq!(bytes.0.load(Ordering::SeqCst), 0);
+        continue;
+      }
+      let prepared = prepared.unwrap();
+      assert_eq!(
+        prepared,
+        inputs.prepare(&snapshot, &target).await.unwrap(),
+        "the same immutable selection and construction policy must produce identical manifest bytes"
+      );
+      assert_eq!(prepared.payload().value(), &serde_json::json!({"count":3}));
+      let manifest = prepared.context().unwrap();
+      assert_eq!(
+        manifest.subject(),
+        &FactoryTaskSubject::Exact(snapshot.work.subject().clone())
+      );
+      assert_eq!(
+        manifest.entries().len(),
+        1,
+        "ordering and Work contents must not add implicit context"
+      );
+      assert_eq!(manifest.entries()[0].logical_identity(), &alias);
+      assert_eq!(
+        manifest.entries()[0].source(),
+        &FactoryContextReference::Artifact(request.artifact.clone())
+      );
+      assert_eq!(bytes.0.load(Ordering::SeqCst), 2);
+      let context_bytes = reader.read_context(&prepared, at(103), at(1103)).await.unwrap();
+      assert_eq!(context_bytes.len(), 1);
+      assert_eq!(
+        context_bytes.get(&request.artifact.artifact_id()),
+        Some(&b"hello".to_vec())
+      );
+      assert_eq!(bytes.0.load(Ordering::SeqCst), 3);
+      assert!(reader.read_context(&prepared, at(103), at(103)).await.is_err());
+      assert_eq!(bytes.0.load(Ordering::SeqCst), 3, "expired context must not read bytes");
+    }
   });
 }
 

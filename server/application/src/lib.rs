@@ -83,6 +83,8 @@ mod factory_build_service;
 mod factory_candidate_context;
 mod factory_source_admission;
 mod factory_source_completion;
+mod factory_triage_context;
+pub use factory_triage_context::{TriageContextProblem, TriageProjectContextDraft};
 mod factory_source_input_retention;
 mod factory_source_mapping;
 pub use factory_source_completion::{SourceCompletionDocument, TRIAGE_COMPLETION_PRESET};

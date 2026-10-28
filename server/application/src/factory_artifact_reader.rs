@@ -248,7 +248,8 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryN
             observed_at,
             required_until: deadline,
           })
-          .await?;
+          .await
+          .map_err(|error| ApplicationError::context_input(entry.logical_identity().clone(), &error))?;
         remaining = remaining
           .checked_sub(artifact.encoded_size())
           .ok_or_else(ApplicationError::invalid)?;

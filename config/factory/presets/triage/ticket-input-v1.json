@@ -1,0 +1,7 @@
+{
+  "sources": {
+    "task": { "source": "work", "path": "/artifacts/task" },
+    "completion": { "source": "work", "path": "/artifacts/acceptance" }
+  },
+  "mapping": { "value": { "mapping": "pointer", "path": "" } }
+}

@@ -15,6 +15,12 @@ tickets. GitHub label choices are currently immutable installation snapshots.
 The recently fixed startup path keeps advisory model discovery out of Factory
 registration; readiness must not reintroduce that dependency.
 
+The 2026-10-28 MCP decision separates server-owned synchronization from agent-side
+investigation. The dependency baseline is historical evidence; its generic
+"lookup attachment" wording is refined by decision 5 and tasks 4.2–4.4 below.
+Transport authoring/pins already exist, but neither a configured transport nor
+model discovery proves a scoped OctaCity MCP service or actual AI-client use.
+
 ## Goals / Non-Goals
 
 **Goals:** Publish and run one complete, inspectable two-agent triage through the
@@ -30,6 +36,9 @@ GitHub Projects column management, PR/merge/deploy, or execution of the recommen
 downstream implementation pipeline. Priority assessment does not rewrite an
 already admitted Work or Build's scheduling priority. A preset does not introduce
 another owner for authoritative Issue planning fields.
+There is no dedicated duplicate-search REST API, custom wrapper per external
+MCP server, common provider query language or additional MCP client in the server
+or Agent when the selected AI executor already supplies one.
 
 ## Decisions
 
@@ -75,7 +84,9 @@ including current environment limitations.
 | Dependency | Required boundary and handoff |
 | --- | --- |
 | `complete-factory-source-runtime` | Completed shared Source/Reporter, import, admission, association and ordered delivery baseline. Re-run its relevant public contracts; completed tasks do not prove an AI triage deployment. |
-| `enable-local-stand-runtime-mcp` | Hard prerequisite for the standard stand's real reasoning execution, qualified Agent policy, tool materialization, permitted HTTP/stdio MCP and non-destructive Runtime installation updates. Consume it; do not implement another launcher or loosen the deny-all default here. |
+| `enable-local-stand-runtime-mcp` | Hard prerequisite for real reasoning execution, qualified Agent policy, AI-plugin materialization of selected HTTP/stdio MCP connections for the executor's native client and non-destructive installation updates. Its 1.2/3.1 handoff must qualify per-connection credential/purpose isolation, actual read-only enforcement, cancellation and tool-result capture; these details are required acceptance evidence, not claims that its current tasks are complete. Consume the existing owner; do not implement another launcher/client or loosen deny-all defaults here. |
+| OctaCity MCP and scoped Issue authority | Triage 4.2 delivers the server-side MCP search/read boundary over existing authorized Issue services/storage. Authenticate each connection with a server-verified principal and explicit Project/read scope under existing authorization/credential owners. Missing token verification, revocation or scoped identity support is a prerequisite to implement/qualify here, not permission to reuse an unrestricted trusted-network management principal. No separate MCP credential registry is introduced. |
+| Ready-made external MCP servers | Select compatible servers through ordinary retained Runtime/Profile configuration; the official GitHub MCP is the initial external lookup candidate. GitLab/Jira can follow through configuration and qualification without a triage provider adapter. Each server's transport, auth method, tool schema and actual scope remain its own contract; compatibility and read-only access must be observed before readiness, not inferred from the protocol name. |
 | `simplify-integration-setup` | Owns authenticated resource enrollment, private-repository setup and connection lifecycle. Coordinate an explicit state-preserving existing-label vocabulary refresh through that installation owner. A preinstalled compatible public connection remains a valid pilot path; arbitrary private-resource setup cannot be claimed before this dependency is qualified. |
 | `add-factory-bugfix-quickstart` | Not an execution prerequisite. Its planned generic `factory-presets` resolution and exact Configuration/Repository readiness contracts overlap this setup. Implement/reuse one minimal shared boundary, document the handoff, and leave its bugfix preset, text-intake certification and candidate/hidden-test pilot in that change. |
 | Generic Factory/Agent release qualification | Verify the exact installed backend/toolchain needed by the selected profiles. Existing generic contracts are reused, but an unqualified backend remains a blocker regardless of a preset or health response. |
@@ -151,19 +162,67 @@ Task 3.3 qualifies recovery faults and late authorization checks; see
 
 The reviewed setup selects Project goals/rules/documents and their immutable
 references, the ticket source scope and independently selected code Repository.
-Project assessment receives the frozen ticket and declared Project context plus
-bounded duplicate candidates. It cannot see a different Project or arbitrary
-ticket body supplied by an ungranted MCP endpoint.
+Project assessment receives the frozen ticket and declared Project context, then
+uses selected read-only MCP tools to investigate duplicates. The model chooses
+and refines queries and reads candidate details across the permitted sources.
+Candidate discovery is not a server-planned list fixed before the invocation.
 
-Use existing authorized canonical Issue reads/search and Source observations for
-duplicate candidate acquisition. Implement only the missing bounded read-only
-tool attachment through the existing MCP/tool host and management/integration
-authorization. Return exact candidate identity, source/revision, observation time,
-search scope and truncation/coverage; recheck grants after asynchronous reads.
-Freeze consumed candidate facts into existing Context/input provenance. A global
-embedding store, full external index or new credential broker is unnecessary.
-If the installed scopes cannot supply the required lookup, readiness identifies
-that tool/source blocker rather than supplying an empty successful search.
+Keep the two execution locations separate:
+
+| Location | Responsibility |
+| --- | --- |
+| OctaCity server | Existing Source connectors poll/import/admit tickets; existing Reporter/outbox applies accepted effects. The OctaCity MCP server exposes authorized Issue search and exact candidate reads for agent investigation. |
+| Agent and selected AI plugin | The ordinary execution package selects exact reviewed MCP connections. The plugin supplies only those settings to the selected Codex/Claude/other qualified executor in its supported native format. It does not inherit workstation MCP configuration. |
+| AI executor and its native MCP client | Discover and call the selected servers' native tools. Ready-made GitHub/GitLab/Jira MCP servers retain their own names and parameter/result schemas; adding a compatible server requires configuration and qualification rather than an OctaCity wrapper for that provider. |
+
+The OctaCity MCP service reuses existing Issue read authorization and storage,
+with bounded query, pagination and detail retrieval. It must authenticate a scoped
+principal and enforce Project/Issue read visibility, including a current grant
+recheck after asynchronous reads. Reject foreign entities without revealing their
+existence. It exposes no mutation tool for this use case. This is an MCP interface
+to our tasks, not a duplicate-decision engine or a new search REST service.
+
+Each MCP connection has its own authorized credential binding and access scope,
+independent of the AI-provider credential and server Source/Reporter connection.
+Secret references/purpose and exact transport/tool choices are reviewed settings;
+values are resolved only through existing secret owners at authorized execution.
+Pass them only to the selected client/server process or approved transport, never
+into prompts, skill/context files, generic logs or public retained evidence.
+Read-only mode must be enforced by actual server/tool and credential permissions;
+a model instruction or tool annotation alone is insufficient. A prompt repository
+filter likewise does not replace credential/server-enforced resource scope.
+External-server revocation follows that server's enforcement; local connection
+revocation blocks newly unauthorized execution under existing dispatch rules.
+Do not promise a cross-provider atomic authorization snapshot or erasure of data
+already delivered before revocation.
+
+Consume generic connection installation/materialization from
+`enable-local-stand-runtime-mcp`; record any missing per-plugin transport/auth,
+secret isolation, cancellation or result-capture support in its handoff. Triage
+4.3 qualifies the selected executor's composition, not a second generic MCP host.
+Do not require every executor to support every authentication method. Unsupported
+required bindings are readiness blockers; adding another AI executor requires its
+plugin support, while adding another compatible MCP server requires no new
+triage dispatch branch. Supporting Codex does not by itself certify Claude.
+
+Use a small configured tool set, bounded result sizes/pages, execution deadline
+and query/candidate budget. Prefer summaries before selected detailed reads;
+allow independent lookups to overlap where supported and reuse already read facts
+within the same authorized invocation. Never put the complete ticket database in
+model context. New indexing/caching infrastructure requires measured need.
+
+Retain actual tool calls/results through existing execution/result/Artifact and
+Context provenance, bound to the exact invocation, connection/tool, query/scope,
+observation time and content digest. Keep native candidate identity and revision
+when supplied; otherwise retain the observed bytes/digest/time without inventing
+an immutable provider version. Preserve coverage, pagination, truncation and
+unavailable/failed/cancelled outcomes. The common contract is the bounded stage
+conclusion with evidence references to those retained observations, not a uniform
+search signature or parser for every external server. Unverifiable references or
+unknown required coverage follow review/needs-input policy, never guessed proof.
+No new duplicate index, credential broker or tool-result journal is introduced.
+If a required MCP scope/client/capture capability is unavailable, readiness or the
+stage reports that blocker rather than returning an empty successful search.
 
 The analyst receives the original ticket, explicitly projected accepted handoff
 and its own permitted repository/tool context. It does not inherit private stage
@@ -172,6 +231,13 @@ candidate descriptions are untrusted data, never role instructions or authority.
 Goals missing from required Context, unresolved candidates and incomplete required
 coverage follow declared review/needs-input policy. No bounded search claims a
 global proof that duplicates do not exist.
+
+Task 4.1 supplies the reviewed Project-context draft and ordinary ticket input
+projection, with safe named-input diagnostics at the existing Artifact collectors;
+see [Project context compilation and verification](project-context-verification.md).
+OctaCity MCP, actual isolated AI/MCP execution and consumed lookup provenance remain
+tasks 4.2, 4.3 and 4.4 respectively. Their unchecked status is unchanged by this
+planning revision; task 4.1's context work is preserved.
 
 ### 6. Separate assessment from accepted facts and reproduction evidence
 
@@ -254,6 +320,14 @@ never guessed from a successful read. Readiness performs no provider/model call,
 secret-value read, execution, publication, lease or budget reservation. Separate
 explicit connection checks may collect current read observations.
 
+Include the required OctaCity MCP endpoint/auth scope and selected AI plugin's
+MCP transport, per-connection secret bindings, read-only enforcement and evidence
+capture in those observations. Distinguish an MCP read token from AI-provider
+authentication and server Reporter write authority. Unknown required MCP facts
+block executable-ready claims; discovery/configuration success alone is not
+proof of an actual permitted call. Reuse Runtime/Profile/secret-reference editors
+and upstream setup guidance rather than adding a triage credential form.
+
 Console composes existing Role/Profile, Source, workflow, effect and publication
 editors into Project -> Triage setup -> review -> publish -> preview -> independently
 enable intake. Existing input editing/disablement remains the lifecycle owner.
@@ -270,6 +344,14 @@ compiler, materializer, permissions, Context selection, result verification or
 outbox. Retain two distinct stage invocations/profile identities and actual
 reproduction-command evidence. Run the same setup through HTTP and Console,
 including narrow keyboard navigation and English/Russian.
+
+Exercise actual native MCP client calls from the selected AI executor to the
+OctaCity MCP server and a separately configured protocol-correct external MCP
+peer. Observe independent credentials and resource scope, refusal of write tools,
+tool-result retention and omission of unselected connections. The finite external
+peer qualifies the generic transport/auth boundary, not all GitHub/GitLab/Jira
+versions; separately qualify the exact ready-made server selected for deployment.
+Readiness and setup must not imply every AI plugin or MCP server is certified.
 
 Required cases include accepted defect/feature, duplicate, out-of-scope,
 uncertainty, missing goals, title-only/no-acceptance input, labeled/PR exclusion,
@@ -293,6 +375,12 @@ check or a claim about semantic model accuracy.
   mappings and explicit bounds; no unbounded effect expansion or arbitrary model labels.
 - **Search/reproduction coverage is incomplete** -> Retain coverage and exact evidence;
   route uncertainty explicitly rather than assert absence, duplication or reproduction.
+- **MCP configuration is mistaken for enforced access** -> Qualify the actual
+  AI-plugin/client/server chain with distinct credential bindings and server-enforced
+  read/resource scope; prompts and tool annotations cannot supply authority.
+- **Provider extensibility becomes a wrapper framework** -> Pass native MCP tools
+  through the selected AI client; share execution limits and provenance, and keep
+  the accepted stage conclusion independent of provider-specific query schemas.
 - **A Source edit or another producer changes the same fields** -> Preserve frozen
   mapping/subject and use existing producer conflicts, ordering and version fences.
 - **Current specs and overlapping changes drift** -> Record shared-contract ownership
@@ -301,7 +389,10 @@ check or a claim about semantic model accuracy.
 
 ## Migration Plan
 
-1. Verify upstream execution and Source contracts on the exact current baseline.
+1. Verify upstream execution, AI-plugin MCP/auth/capture and server Source contracts
+   on the exact current baseline. Deliver the scoped OctaCity MCP read service and
+   qualify the selected external MCP server; do not replace Source/Reporter with
+   agent tool calls or silently reuse their credentials.
    Add compatible optional predicate/preparation fields and the trusted preset;
    existing omitted settings retain their old behavior. Reject unsupported new
    settings explicitly. Any persistence change uses additive/reentrant migrations

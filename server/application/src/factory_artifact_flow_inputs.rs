@@ -84,7 +84,8 @@ impl<A: ArtifactRecordStore, S: BuildQueryStore, B: ArtifactByteReader> FactoryF
           observed_at: self.clock.now()?,
           required_until,
         })
-        .await?;
+        .await
+        .map_err(|error| ApplicationError::context_input(alias.clone(), &error))?;
       remaining = remaining
         .checked_sub(artifact.encoded_size())
         .ok_or_else(ApplicationError::invalid)?;

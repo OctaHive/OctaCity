@@ -5,6 +5,8 @@ The supported local setup SHALL be able to run the triage preset using explicitl
 
 Packaged qualification SHALL exercise the normal Console/gateway/server, persistent stores, verified adapter, ordinary reasoning Build/Agent path and real context/evidence/reporting boundaries. It SHALL retain evidence of two distinct AI-stage invocations and exact reporting effects using finite hermetic model/provider endpoints. Configuration-only stubs, REST interception, private extra fixture grants and server health SHALL NOT substitute for this execution. Default qualification SHALL require neither paid model calls nor live repository writes, and optional live qualification SHALL require separate explicit authorization.
 
+Agent MCP execution setup SHALL consume the supported `enable-local-stand-runtime-mcp` installation path and qualified AI-plugin/native-client capabilities. Triage qualification SHALL exercise actual calls to OctaCity MCP and a compatible finite external MCP peer with independent per-connection credentials, enforced read-only/resource scope and retained tool evidence. Unselected servers, ambient settings and AI-provider/Reporter credentials SHALL remain unavailable to those connections. Missing plugin/authentication/capture support SHALL remain an explicit execution blocker. Hermetic protocol qualification SHALL NOT claim compatibility with every external server or AI executor; deployment claims SHALL identify and qualify the selected ready-made server and plugin versions.
+
 #### Scenario: The operator updates an already configured stand
 - **WHEN** approved execution/context or existing-label scope setup is applied through the supported installation path
 - **THEN** preflight failure leaves the usable installation intact and successful restart preserves operator settings, accepted executions, original effects and Agent identity without a destructive reset
@@ -16,3 +18,7 @@ Packaged qualification SHALL exercise the normal Console/gateway/server, persist
 #### Scenario: Qualification restarts after a committed effect
 - **WHEN** a controlled restart occurs after provider mutation but before its acknowledgement is retained
 - **THEN** observation/recovery preserves the same intake and logical effect identity without redispatching either AI stage or erasing accepted history
+
+#### Scenario: The AI executor investigates through separate MCP connections
+- **WHEN** the supported Agent setup selects OctaCity and external read-only MCP connections for the Project stage
+- **THEN** native client calls use only their respective approved credentials/scopes, retain consumed evidence and refuse writes while server Reporter delivery retains its separate authority

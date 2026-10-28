@@ -38,7 +38,7 @@ fn fixture_for_work_mode(
   FactoryRoleExecutionPackage,
   BTreeMap<ArtifactId, Vec<u8>>,
 ) {
-  fixture_for_work_mode_with_context(original, edit, skills, bind_task, selected, &[])
+  fixture_for_work_mode_with_context(original, edit, skills, bind_task, selected, &[], "Custom reviewer", &[])
 }
 fn fixture_for_work_mode_with_context(
   original: WorkEnvelope,
@@ -47,6 +47,8 @@ fn fixture_for_work_mode_with_context(
   bind_task: fn(FactoryDigest, &FactoryRoleProfile) -> FactoryDigest,
   selected: bool,
   extra_context: &[(ContextSourceKind, FactoryKey, Vec<u8>)],
+  role_name: &str,
+  additional_credentials: &[&str],
 ) -> (
   FlowBuildIntent,
   AdmittedFlow,
@@ -87,6 +89,10 @@ fn fixture_for_work_mode_with_context(
   grants["outputs"]["max_artifact_bytes"] = json!(1024);
   grants["outputs"]["max_report_count"] = json!(4);
   grants["outputs"]["max_report_bytes"] = json!(1024);
+  grants["secret_profiles"]
+    .as_array_mut()
+    .unwrap()
+    .extend(additional_credentials.iter().map(|name| json!(name)));
   let grants: FactoryPermissionSet = serde_json::from_value(grants).unwrap();
   let mut binding = fixtures::binding(work.subject().project_id());
   binding.plugin = toolchain.plugin.clone();
@@ -115,7 +121,7 @@ fn fixture_for_work_mode_with_context(
     FactoryRoleId::generate(),
     work.subject().project_id(),
     serde_json::from_value(
-      json!({"name":"Custom reviewer", "instructions":["Shared responsibility.", "Shared second rule."],
+      json!({"name":role_name, "instructions":["Shared responsibility.", "Shared second rule."],
         "skills": skills.iter().map(|(alias, bundle)| (alias.clone(), bundle.reference().clone())).collect::<BTreeMap<_,_>>()}),
     )
     .unwrap(),
@@ -1467,6 +1473,8 @@ fn selected_role_first_package_uses_exact_published_content_and_real_prompt_dige
         factory_role_task_digest,
         true,
         &extra,
+        "Custom reviewer",
+        &[],
       );
       let content = expected.inputs();
       let store = publish_package_roles(&expected).await;
@@ -1523,6 +1531,9 @@ fn selected_role_first_package_uses_exact_published_content_and_real_prompt_dige
     }
   });
 }
+
+#[path = "factory_triage_profile_tests.rs"]
+mod triage;
 
 #[test]
 fn selected_role_first_package_materializes_shared_skills_from_the_agent() {

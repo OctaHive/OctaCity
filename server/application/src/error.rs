@@ -25,6 +25,15 @@ pub enum ApplicationFailure {
 /// Transport-independent failure from a typed application handler.
 #[derive(Debug, Error)]
 pub enum ApplicationError {
+  /// A required declared Context input could not be read or verified.
+  /// Only the configured logical name and safe failure class reach diagnostics.
+  #[error("required Context input {input} is unavailable ({failure:?})")]
+  ContextInputUnavailable {
+    /// Selected logical identity; never a document body, backend path or remote diagnostic.
+    input: octacity_server_factory::FactoryKey,
+    /// Original transport-neutral failure class, preserving retry and authorization behavior.
+    failure: ApplicationFailure,
+  },
   /// Safe terminal Reporter outcome; no remote diagnostics or retry authority.
   #[error("reporter rejected the projection: {0:?}")]
   ReporterRejected(octacity_server_store::FactoryOutboxFailure),
@@ -60,6 +69,12 @@ pub enum ApplicationError {
 }
 
 impl ApplicationError {
+  pub(crate) fn context_input(input: octacity_server_factory::FactoryKey, cause: &Self) -> Self {
+    Self::ContextInputUnavailable {
+      input,
+      failure: cause.classification(),
+    }
+  }
   /// Constructs a transport-neutral invalid-input failure.
   #[must_use]
   pub const fn invalid() -> Self {
@@ -82,6 +97,7 @@ impl ApplicationError {
   #[must_use]
   pub const fn classification(&self) -> ApplicationFailure {
     match self {
+      Self::ContextInputUnavailable { failure, .. } => *failure,
       Self::ReporterRejected(octacity_server_store::FactoryOutboxFailure::Unsupported) => {
         ApplicationFailure::CapabilityUnavailable
       }
