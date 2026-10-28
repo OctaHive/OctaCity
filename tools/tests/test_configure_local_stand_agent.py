@@ -642,7 +642,12 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
     def test_explicit_standalone_mcp_inventory_preserves_independent_workload_grants(self):
         policy, permissions, _ = self._factory_profile()
         program = Path(self.temporary.name) / "issue-reader"
-        program.write_bytes(b"explicit operator MCP installation")
+        # Inventory validation inspects native format/platform; no guest program runs here.
+        elf = bytearray(64)
+        elf[:7] = b"\x7fELF\x02\x01\x01"  # ELF64, little endian, version 1.
+        elf[16:24] = b"\x02\x00\xb7\x00\x01\x00\x00\x00"  # Executable, AArch64, version 1.
+        elf[52:54] = (64).to_bytes(2, "little")
+        program.write_bytes(elf)
         program.chmod(0o755)
         entry = (
             f'"issue-reader" = {{ path = {json.dumps(str(program))}, version = "1.2.0", '

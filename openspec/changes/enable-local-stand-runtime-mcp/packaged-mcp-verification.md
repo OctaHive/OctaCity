@@ -233,3 +233,28 @@ Clippy passed with warnings denied. Native before/after logs remain under
 volume, copied bundles and VM state were removed after verification; source
 runtime installations and user stand data were preserved. Approximately 12.6 GB
 remained free after the final Rust checks.
+
+## Real Agent inventory fixture correction
+
+The standalone MCP inventory test originally supplied plain text as an executable.
+Its shell validator accepted that fixture, but the real Agent correctly rejected
+it with `external executable format is unsupported`. Before changing the fixture,
+the reported test was reproduced with the actual Agent:
+
+```shell
+OCTACITY_AGENT_BIN="$PWD/target/debug/octacity-agent" \
+  python3 -m unittest tools.tests.test_configure_local_stand_agent.LocalStandAgentConfigurationTests.test_explicit_standalone_mcp_inventory_preserves_independent_workload_grants
+```
+
+It failed before the correction and passed afterward. The fixture now supplies
+an ELF64 little-endian AArch64 header matching its declared `linux-aarch64`
+inventory platform. This boundary inspects inventory format and identity; it
+does not execute a guest program. The existing permission/network assertions
+remain unchanged, as do production validation and private diagnostic redaction.
+
+With the real Agent selected, `python3 -m unittest
+tools.tests.test_configure_local_stand_agent -v` passed all 27 tests. With the real
+Server and Agent selected, `python3 -m unittest
+tools.tests.test_configure_local_stand_server -v` passed 18 tests with one opt-in
+case skipped. Architecture, strict OpenSpec and diff whitespace checks passed.
+Approximately 12.6 GB remained free; no stand data or installed runtime was removed.
