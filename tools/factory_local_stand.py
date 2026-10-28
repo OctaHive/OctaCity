@@ -343,16 +343,38 @@ def main(arguments=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path,
                         default=Path(os.environ.get("OCTACITY_LOCAL_STAND_ROOT", state.DEFAULT_ROOT)))
-    parser.add_argument("--source-repository", default="https://github.com/OctaHive/OctaCity")
+    parser.add_argument("--source-repository", help="demo source repository; defaults to https://github.com/OctaHive/OctaCity")
     parser.add_argument("--source-revision", help="published exact revision; defaults to the remote HEAD")
     parser.add_argument("--github-repository", help="explicit owner/repository to install as a ticket source; credentials are entered in Integrations")
+    parser.add_argument("--factory-profiles", type=Path,
+                        help="complete private operator catalog; uses ordinary setup without seeding demo Runs")
+    parser.add_argument("--factory-runtime-bundle", type=Path, help="private installed AI Runtime directory")
+    parser.add_argument("--factory-agent-profile", type=Path, help="independently approved private Agent policy")
+    parser.add_argument("--update-factory-installation", action="store_true", help="update an existing installation without resetting stand data")
     args = parser.parse_args(arguments)
+    if args.update_factory_installation and (args.factory_profiles is None or args.factory_agent_profile is None):
+        parser.error("--update-factory-installation requires --factory-profiles and --factory-agent-profile")
+    if args.factory_profiles is None and (args.factory_runtime_bundle is not None or args.factory_agent_profile is not None):
+        parser.error("--factory-runtime-bundle and --factory-agent-profile require --factory-profiles")
+    if args.factory_profiles is not None:
+        if args.source_repository is not None or args.source_revision is not None:
+            parser.error("demo source options cannot be combined with --factory-profiles")
+        # Reuse the ordinary installer, preflight and lifecycle; never merge demo authority.
+        selected = ["up", "--root", str(args.root), "--factory-profiles", str(args.factory_profiles)]
+        if args.update_factory_installation:
+            selected.append("--update-factory-installation")
+        for option in ("factory_runtime_bundle", "factory_agent_profile", "github_repository"):
+            value = getattr(args, option)
+            if value is not None:
+                selected.extend(("--" + option.replace("_", "-"), str(value)))
+        return launcher.main(selected)
     try:
         installed = args.root / "config/integrations/server.toml"
         if args.github_repository is None and not (installed.exists() or installed.is_symlink()):
             fixture = json.loads((launcher.REPOSITORY / "deployment/local-stand/fixtures/factory-demo.json").read_text())
             args.github_repository = fixture["github_repository"]
-        receipt = run_stand(args.root, args.source_repository, args.source_revision, github_repository=args.github_repository)
+        receipt = run_stand(args.root, args.source_repository or "https://github.com/OctaHive/OctaCity",
+                            args.source_revision, github_repository=args.github_repository)
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
         print(f"Factory stand failed: {error}", file=sys.stderr)
         return 1

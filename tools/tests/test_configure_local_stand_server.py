@@ -87,6 +87,33 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
             openssl=self.openssl,
         )
 
+    def test_initial_explicit_installation_rejects_packaged_catalog_before_service_activation(self):
+        import types
+        import local_stand_launcher as launcher
+        import local_stand_state as state
+
+        profiles = Path(self.temporary.name) / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[],"unknown_field":true}\n')
+        profiles.chmod(0o600)
+        native = launcher.NativeInstallation(self.installation, {"sources": {}})
+        with (
+            patch.object(launcher, "_prepare_native_installation", return_value=native),
+            patch.object(launcher, "_build_images"),
+            patch.object(launcher.installation_update, "validate_factory_installation",
+                         side_effect=state.StateError("packaged server rejected the Factory installation")) as preflight,
+            patch.object(launcher, "_run_compose") as compose,
+            patch.object(launcher.bootstrapper, "bootstrap", return_value=types.SimpleNamespace(state="enrolled")) as bootstrap,
+            patch.object(launcher.agent_starter, "start_agent", return_value=types.SimpleNamespace(state="registered", pid=1)) as start,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "packaged server rejected"):
+                launcher.run(launcher.parse_arguments([
+                    "up", "--root", str(self.root), "--factory-profiles", str(profiles),
+                ]))
+            preflight.assert_called_once_with(self.root.resolve(), launcher.SERVER_IMAGE)
+            compose.assert_not_called()
+            bootstrap.assert_not_called()
+            start.assert_not_called()
+
     def validation_root(self, receipt: dict[str, str]) -> Path:
         root = Path(self.temporary.name) / "validation-root"
         octacity_secrets = root / "run/octacity-secrets"
@@ -289,6 +316,22 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         self.assertEqual(stat.S_IMODE(retained_auth.stat().st_mode), 0o600)
         self.assertEqual(stat.S_IMODE(installed.stat().st_mode), 0o700)
         self.assertEqual(Path(receipt["factory_profiles"]).read_bytes(), profiles.read_bytes())
+
+    @unittest.skipUnless(os.environ.get("OCTACITY_TEST_SERVER_IMAGE"), "requires an explicitly selected local server image")
+    def test_packaged_factory_preflight_accepts_valid_files_and_rejects_invalid_native_catalog(self):
+        import local_stand_installation_update as updates
+
+        profiles = Path(self.temporary.name) / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[{"project_id":"10000000-0000-4000-8000-000000000001","references":[],"build_configurations":[]}],"codex":[]}\n')
+        profiles.chmod(0o600)
+        CONFIGURATOR.generate_server_configuration(self.root, self.installation, factory_profiles=profiles)
+        updates.validate_factory_installation(self.root, os.environ["OCTACITY_TEST_SERVER_IMAGE"])
+        installed = self.root / "config/server/factory-profiles.json"
+        installed.write_text('{"version":1,"projects":[],"codex":[],"private-canary":"secret"}')
+        with self.assertRaisesRegex(RuntimeError, "packaged server rejected") as error:
+            updates.validate_factory_installation(self.root, os.environ["OCTACITY_TEST_SERVER_IMAGE"])
+        self.assertNotIn("private-canary", str(error.exception))
+        self.assertFalse(list(self.root.glob(".factory-preflight-*")))
 
     def test_factory_is_explicit_and_copies_the_private_profile_without_interpreting_flow(self):
         profiles = Path(self.temporary.name) / "operator-profiles.json"

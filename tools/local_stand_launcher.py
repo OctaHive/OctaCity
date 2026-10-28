@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from contextlib import nullcontext
 from dataclasses import dataclass
 import json
 import os
@@ -25,6 +26,7 @@ import configure_local_stand_server as server_configurator
 import init_local_stand as initializer
 import factory_integrations as integration_configurator
 import local_stand_lifecycle as lifecycle
+import local_stand_installation_update as installation_update
 import local_stand_state as state
 import stage_local_stand_native as native_stager
 import start_local_stand_agent as agent_starter
@@ -333,6 +335,8 @@ def _stop_halves(
 
 
 def _up(arguments: argparse.Namespace) -> dict[str, object]:
+    if arguments.update_factory_installation and (arguments.factory_profiles is None or arguments.factory_agent_profile is None):
+        raise LocalStandError("--update-factory-installation requires --factory-profiles and --factory-agent-profile")
     if (arguments.factory_signal_connectors is not None or arguments.factory_delivery_bundle is not None or arguments.factory_runtime_bundle is not None) and arguments.factory_profiles is None:
         raise LocalStandError("Factory connectors require an explicit Factory profile")
     root = state.resolve_safe_root(arguments.root, REPOSITORY, Path.home())
@@ -348,69 +352,89 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
     initializer.initialize(root, repository=REPOSITORY, openssl=arguments.openssl)
     with lifecycle.LifecycleState(root) as owner:
         native = _prepare_native_installation(root)
-        if arguments.factory_agent_profile is not None:
-            try:
-                agent_configurator.preflight_factory_agent_profile(root, native.path, arguments.factory_agent_profile)
-            except agent_configurator.AgentConfigurationError as error:
-                raise LocalStandError(str(error)) from error
-        server_configurator.generate_server_configuration(
-            root,
-            native.path,
-            repository=REPOSITORY,
-            openssl=arguments.openssl,
-            factory_profiles=arguments.factory_profiles,
-            factory_signal_connectors=arguments.factory_signal_connectors,
-            factory_delivery_bundle=arguments.factory_delivery_bundle,
-            factory_runtime_bundle=arguments.factory_runtime_bundle,
-        )
-        _build_images(native)
-        if arguments.github_repository is not None:
-            try:
-                integration_configurator.install_repository(root, arguments.github_repository)
-            except ValueError as error:
-                raise LocalStandError(str(error)) from error
-        _run_compose(root, arguments.https_port, ("config", "--quiet"))
-        try:
-            _run_compose(
-                root,
-                arguments.https_port,
-                (
-                    "up",
-                    "--build",
-                    "--detach",
-                    "--wait",
-                    "--wait-timeout",
-                    str(arguments.compose_wait_seconds),
-                    "--remove-orphans",
-                ),
-                timeout_seconds=arguments.compose_wait_seconds + 60,
-            )
-            bootstrap_result = bootstrapper.bootstrap(
-                root,
-                origin=origin,
-                lifecycle_state=owner,
-                repository=REPOSITORY,
-            )
-            agent_result = agent_starter.start_agent(
-                root,
-                native.path,
-                origin=origin,
-                lifecycle_state=owner,
-                repository=REPOSITORY,
-                openssl=arguments.openssl,
-                startup_timeout_seconds=arguments.agent_wait_seconds,
+        update = nullcontext()
+        if arguments.update_factory_installation:
+            def preflight(staging: Path) -> None:
+                _build_images(native)
+                installation_update.validate_factory_installation(staging, SERVER_IMAGE)
+
+            update = installation_update.factory_installation_update(
+                root, native.path, owner=owner,
+                factory_profiles=arguments.factory_profiles,
                 factory_agent_profile=arguments.factory_agent_profile,
+                factory_runtime_bundle=arguments.factory_runtime_bundle,
+                factory_delivery_bundle=arguments.factory_delivery_bundle,
+                factory_signal_connectors=arguments.factory_signal_connectors,
+                openssl=arguments.openssl, preflight=preflight,
+                stop=lambda: _stop_halves(owner, root, arguments.https_port, remove_volumes=False),
             )
-        except BaseException as cause:
-            try:
-                _stop_halves(
-                    owner, root, arguments.https_port, remove_volumes=False
+        with update:
+            if not arguments.update_factory_installation:
+                if arguments.factory_agent_profile is not None:
+                    try:
+                        agent_configurator.preflight_factory_agent_profile(root, native.path, arguments.factory_agent_profile)
+                    except agent_configurator.AgentConfigurationError as error:
+                        raise LocalStandError(str(error)) from error
+                server_configurator.generate_server_configuration(
+                    root,
+                    native.path,
+                    repository=REPOSITORY,
+                    openssl=arguments.openssl,
+                    factory_profiles=arguments.factory_profiles,
+                    factory_signal_connectors=arguments.factory_signal_connectors,
+                    factory_delivery_bundle=arguments.factory_delivery_bundle,
+                    factory_runtime_bundle=arguments.factory_runtime_bundle,
                 )
-            except LocalStandError as cleanup_error:
-                raise LocalStandError(
-                    f"stand startup failed ({cause}); cleanup also failed: {cleanup_error}"
-                ) from cause
-            raise
+                _build_images(native)
+                if arguments.factory_profiles is not None:
+                    installation_update.validate_factory_installation(root, SERVER_IMAGE)
+            if arguments.github_repository is not None:
+                try:
+                    integration_configurator.install_repository(root, arguments.github_repository)
+                except ValueError as error:
+                    raise LocalStandError(str(error)) from error
+            _run_compose(root, arguments.https_port, ("config", "--quiet"))
+            try:
+                _run_compose(
+                    root,
+                    arguments.https_port,
+                    (
+                        "up",
+                        "--build",
+                        "--detach",
+                        "--wait",
+                        "--wait-timeout",
+                        str(arguments.compose_wait_seconds),
+                        "--remove-orphans",
+                    ),
+                    timeout_seconds=arguments.compose_wait_seconds + 60,
+                )
+                bootstrap_result = bootstrapper.bootstrap(
+                    root,
+                    origin=origin,
+                    lifecycle_state=owner,
+                    repository=REPOSITORY,
+                )
+                agent_result = agent_starter.start_agent(
+                    root,
+                    native.path,
+                    origin=origin,
+                    lifecycle_state=owner,
+                    repository=REPOSITORY,
+                    openssl=arguments.openssl,
+                    startup_timeout_seconds=arguments.agent_wait_seconds,
+                    factory_agent_profile=arguments.factory_agent_profile,
+                )
+            except BaseException as cause:
+                try:
+                    _stop_halves(
+                        owner, root, arguments.https_port, remove_volumes=False
+                    )
+                except LocalStandError as cleanup_error:
+                    raise LocalStandError(
+                        f"stand startup failed ({cause}); cleanup also failed: {cleanup_error}"
+                    ) from cause
+                raise
     return {
         "schema_version": 1,
         "state": "running",
@@ -731,6 +755,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     )
     up.add_argument("--factory-runtime-bundle", type=Path, help="separate private installed model runtime directory")
     up.add_argument("--factory-agent-profile", type=Path, help="separate private local Factory Agent policy")
+    up.add_argument("--update-factory-installation", action="store_true", help="preflight and replace the generated installation while preserving durable state")
     up.add_argument("--factory-signal-connectors", type=Path, help="separate private installed Decision Signal connector catalog")
     up.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")
     up.add_argument(
@@ -781,6 +806,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         bootstrapper.BootstrapError,
         lifecycle.LifecycleError,
         native_stager.NativeStageError,
+        agent_configurator.AgentConfigurationError,
         server_configurator.ServerConfigurationError,
         state.StateError,
         subprocess.CalledProcessError,

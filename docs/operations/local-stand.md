@@ -295,6 +295,69 @@ stand. Restart and refill it with `tools/factory-stand`; no profile files need
 to be prepared by hand. The separate integration verifier remains available
 for its wider ordinary CI/CD checks.
 
+### Select an operator-owned Factory installation
+
+To start with a complete operator-reviewed Factory catalog instead of generated
+demonstration data, use the existing ordinary installer through `factory-stand`:
+
+```shell
+tools/factory-stand \
+  --factory-profiles /absolute/private/factory-profiles.json \
+  --factory-runtime-bundle /absolute/private/runtime \
+  --factory-agent-profile /absolute/private/agent-policy.toml
+```
+
+The catalog and Agent policy use the same private file contracts as
+`tools/local-stand up`. The optional Runtime bundle supplies explicitly installed
+programs. Agent executable identities and independent policy are validated by the
+ordinary configurator/preflight; selecting a catalog does not grant worker access.
+Before the first explicit installation starts Compose, bootstrap or the Agent,
+the packaged server also validates the installed catalog offline, using the same
+validator as installation updates. A rejected catalog prevents service activation.
+The same `--root` and `OCTACITY_LOCAL_STAND_ROOT` selection applies to this path.
+
+This path installs the selected catalog without merging generated demo profiles,
+downloading the demonstration Codex runtime or seeding demonstration Runs. A GitHub
+Source connection is installed only when explicitly selected with
+`--github-repository`; an MCP endpoint does not require an unrelated Source
+connection. Runtime-bundle and Agent-policy flags require `--factory-profiles`.
+Demo-only `--source-repository` and `--source-revision` flags cannot be combined
+with the explicit catalog; the catalog and ordinary Build definitions own its
+execution inputs.
+
+Omitting these installation flags retains the original demonstration startup.
+Ordinary startup still refuses to replace a different installation implicitly.
+
+To update an existing initialized stand, explicitly review and supply its complete
+catalog and independent Agent policy, then add `--update-factory-installation`:
+
+```shell
+tools/factory-stand \
+  --factory-profiles /absolute/private/factory-profiles.json \
+  --factory-runtime-bundle /absolute/private/runtime \
+  --factory-agent-profile /absolute/private/agent-policy.toml \
+  --update-factory-installation
+```
+
+`tools/local-stand up` accepts the same update flag. Both catalog and Agent policy
+are required. The existing installation must be recognizable by the ordinary
+configurators; edited generated files are rejected. The installer stages private
+server and Agent files under the shared lifecycle lock, validates the native
+Agent and the packaged server offline, and only then stops the stand. Activation
+atomically exchanges the generated configuration directory. Startup failure
+restores the previous configuration after stopping candidate services; it leaves
+the stand stopped so the operator can retry its previous explicit setup.
+
+Updates preserve PostgreSQL/object volumes, registration credentials, Agent work
+and cache, integration authority and demonstration receipts. Optional installed
+Runtime/Delivery/Signal bundles are retained when omitted from an update. Repeating
+identical inputs does not stop the stand for replacement. For an ordinary later
+`up`, repeat the installed catalog, Agent policy and optional bundle selections;
+`down` followed by `up` needs no reset. Installation updates do not publish profile
+versions, repin models/transports, change reviewed Runtime settings or replay demo
+Work. Existing qualification and revocation rules still govern retained profiles.
+MCP credential and capture qualification remains separate work in this change.
+
 ### GitHub connections in the personal Factory stand
 
 The ordinary `tools/factory-stand` command also prepares integration management
@@ -465,6 +528,24 @@ The Agent policy is an owner-only regular TOML file with `version = 1`,
 `factory_permissions`, `tool_executables`, and `allowed_network_hosts`, plus
 optional `change_set_capture`, `factory_credential_profiles`, and
 `protected_reader`, using the existing Agent configuration types.
+
+An explicitly installed stdio MCP program can set `standalone = true` in its
+existing `tool_executables` entry, alongside `path`, `version`, `platform` and
+`sha256`. Omission retains the installed plugin compatibility contract. Standalone
+mode verifies a native binary for the runner's guest platform, trusted ownership,
+exact file digest and pre-execution byte revalidation; it cannot replace the
+plugin-owned Codex executable. A shell script alone does not qualify its guest
+interpreter. For a script-based server, install and qualify the native interpreter
+and retain reviewed script/supporting bytes through the existing input mechanisms.
+
+Inventory is separate from workload authority: explicit command/executable,
+network and resource grants are still required. The server Runtime's
+`settings_support.mcp_executables` and the selected MCP command must name the
+verified guest projection, not the host path. Microsandbox exposes inventoried
+programs read-only under `/opt/octacity/tools/tool-N`; the mapping belongs to the
+exact installed tool set and must be requalified when that installation changes.
+Dependencies such as shared libraries still belong to the qualified guest image.
+
 Permission references and tool entries must agree on exact executable identity, version and SHA-256. Tool
 paths are absolute and verified before use. The file supplies credential
 aliases through `factory_permissions.secret_profiles`. Install private JSON

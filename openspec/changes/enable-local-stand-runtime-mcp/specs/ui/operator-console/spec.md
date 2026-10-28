@@ -10,6 +10,8 @@ The AI settings Runtime view SHALL explain that it prepares shared MCP/integrati
 ### Requirement: Runtime setup explains installation prerequisites and validation outcomes
 Runtime settings SHALL distinguish an absent installation capability, an unsupported transport, missing executable/network authority and an unconfigured Project choice. Empty permission states SHALL identify the installation prerequisite and its supported setup path rather than telling the operator to configure unavailable controls on the same screen. HTTP/stdio entry and permission controls SHALL reflect qualified server choices. Configuration validation/publication feedback SHALL state its scope and SHALL NOT imply that an MCP connection was tested or that execution succeeded. Existing integration setup SHALL remain a separate optional flow rather than a prerequisite for every MCP server.
 
+Existing Runtime/Profile editors SHALL expose safe per-connection credential-reference and enforced access-scope metadata, distinguishing MCP authentication from AI-provider login and server Source/Reporter authority. Token values SHALL NOT be accepted as Runtime/profile content or exposed in diagnostics. Missing qualified AI-plugin transport/authentication, read-only/resource enforcement or required tool-evidence capture SHALL have actionable unsupported or installation reasons. Compatible ready-made MCP choices SHALL NOT require a provider-specific editor, wrapper or unrelated Source connection.
+
 #### Scenario: Stand provides model discovery but no execution policy
 - **WHEN** an operator opens Runtime settings on the existing metadata-only installation
 - **THEN** the view keeps model/profile authoring reachable, explains the explicit local installation prerequisite and does not present empty permission controls as configurable execution authority
@@ -17,3 +19,7 @@ Runtime settings SHALL distinguish an absent installation capability, an unsuppo
 #### Scenario: Operator reviews settings without starting execution
 - **WHEN** reviewed Runtime settings pass validation or publication
 - **THEN** the outcome confirms configuration only and does not claim an MCP process or remote connectivity check occurred
+
+#### Scenario: An MCP connection lacks qualified authentication or evidence support
+- **WHEN** an operator selects a connection that the installed AI plugin cannot authenticate, restrict or observe as required
+- **THEN** the editor identifies the missing capability using safe connection metadata without requesting a token in profile content or claiming executable readiness

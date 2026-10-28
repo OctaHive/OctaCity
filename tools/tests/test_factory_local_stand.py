@@ -55,6 +55,85 @@ class FactoryStandTestDependencyTests(unittest.TestCase):
 
 
 class FactoryLocalStandTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix", "private stand setup requires POSIX ownership")
+    def test_explicit_update_uses_ordinary_preflight_without_seeding_work(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            policy = base / "agent.toml"
+            policy.write_text('version = 1\nprivate_canary = "never-print-this-token"\n')
+            policy.chmod(0o600)
+            root = base / "stand"
+            result = subprocess.run([
+                sys.executable, str(Path(demo.__file__).with_name("factory-stand")),
+                "--root", str(root), "--factory-profiles", str(base / "profiles.json"),
+                "--factory-agent-profile", str(policy), "--update-factory-installation",
+            ], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("Factory Agent profile is invalid", result.stderr)
+            self.assertNotIn("never-print-this-token", result.stderr + result.stdout)
+            self.assertFalse(root.exists())
+
+    def test_explicit_installation_does_not_silently_ignore_demo_source_options(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            policy = root / "invalid-agent.toml"
+            policy.write_text("version = 1\n")
+            policy.chmod(0o600)
+            for option, value in (("--source-repository", "https://github.com/Example/Code"),
+                                  ("--source-revision", "a" * 40)):
+                with self.subTest(option=option):
+                    result = subprocess.run([
+                        sys.executable, str(Path(demo.__file__).with_name("factory-stand")),
+                        "--root", str(root / "stand"), "--factory-profiles", str(root / "catalog.json"),
+                        "--factory-agent-profile", str(policy), option, value,
+                    ], capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("demo source options cannot be combined with --factory-profiles", result.stderr)
+                    self.assertFalse((root / "stand").exists())
+
+    def test_execution_bundle_or_agent_policy_requires_an_explicit_catalog(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            retained = root / "config/server/retained"
+            retained.parent.mkdir(parents=True)
+            retained.write_text("operator state")
+            for option in ("--factory-runtime-bundle", "--factory-agent-profile"):
+                with self.subTest(option=option):
+                    result = subprocess.run([
+                        sys.executable, str(Path(demo.__file__).with_name("factory-stand")),
+                        "--root", str(root), option, str(root / "operator-input"),
+                    ], capture_output=True, text=True, timeout=5)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("require --factory-profiles", result.stderr)
+                    self.assertEqual(retained.read_text(), "operator state")
+
+    @unittest.skipUnless(os.name == "posix", "private stand setup requires POSIX ownership")
+    def test_explicit_execution_setup_rejects_invalid_agent_policy_before_mutating_stand(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary)
+            root = base / "stand"
+            server = root / "config/server/server.toml"
+            server.parent.mkdir(parents=True)
+            server.write_text("retained operator installation\n")
+            catalog = base / "profiles.json"
+            catalog.write_text('{"version":1,"projects":[],"codex":[]}\n')
+            catalog.chmod(0o600)
+            policy = base / "agent.toml"
+            policy.write_text('version = 1\nprivate_canary = "never-print-this-token"\n')
+            policy.chmod(0o600)
+            runtime = base / "runtime"
+            runtime.mkdir(mode=0o700)
+            result = subprocess.run([
+                sys.executable, str(Path(demo.__file__).with_name("factory-stand")),
+                "--root", str(root), "--factory-profiles", str(catalog),
+                "--factory-runtime-bundle", str(runtime), "--factory-agent-profile", str(policy),
+            ], capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 1, result.stderr)
+            self.assertIn("Factory Agent profile is invalid", result.stderr)
+            self.assertNotIn("never-print-this-token", result.stdout + result.stderr)
+            self.assertEqual(server.read_text(), "retained operator installation\n")
+            self.assertEqual(list(root.rglob("*")), [root / "config", server.parent, server])
+
     def test_plain_command_installs_the_demo_issue_repository_without_an_extra_flag(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.dict(os.environ, {"OCTACITY_LOCAL_STAND_ROOT": temporary}), \

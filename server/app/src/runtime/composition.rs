@@ -530,7 +530,7 @@ impl ServerRuntime {
 }
 
 // Both public entry points use the same optional Factory profile installation policy.
-async fn configured_factory_installer(
+pub(super) async fn configured_factory_installer(
   config: &ServerConfig,
 ) -> Result<Option<Arc<dyn super::FactoryRuntimeInstaller>>, ServerRuntimeError> {
   let installer = match config.factory_profiles_file() {

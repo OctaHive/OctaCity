@@ -201,6 +201,42 @@ fn runtime_catalog_document(
 }
 
 #[tokio::test]
+async fn offline_validation_verifies_installed_discovery_identity_without_invoking_the_model() {
+  use std::os::unix::fs::PermissionsExt as _;
+  let (_directory, program, reference) = plugin_fixture_with_script(
+    json!({"available":true,"manual_model":true,"models":[],"parameters":{"type":"object","additionalProperties":false,"properties":{}}}),
+    ": > \"$DISCOVERY_MARKER\"",
+  );
+  let (mut document, _, _, _) = runtime_catalog_document(&program, &reference);
+  let root = tempfile::tempdir().unwrap();
+  let marker = root.path().join("invoked");
+  document["projects"][0]["role_profiles"]["runtime-profile"]["model_discovery"]["environment"] =
+    json!({"DISCOVERY_MARKER":marker});
+  let profiles = root.path().join("profiles.json");
+  std::fs::write(&profiles, serde_json::to_vec(&document).unwrap()).unwrap();
+  std::fs::set_permissions(&profiles, std::fs::Permissions::from_mode(0o600)).unwrap();
+  let source = format!(
+    "factory_profiles_file={}\n{}",
+    serde_json::to_string(&profiles).unwrap(),
+    super::test_runtime_config::runtime_config_source(
+      root.path(),
+      "postgres://fixture:fixture@127.0.0.1:9/postgres",
+      "http://127.0.0.1:9",
+      "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n"
+    ),
+  );
+  let config = crate::ServerConfig::parse_toml(&source).unwrap();
+  super::validate_runtime_files(&config).await.unwrap();
+  assert!(!marker.exists(), "offline validation must not invoke discovery");
+  std::fs::write(&program, "substituted-program-canary").unwrap();
+  let error = super::validate_runtime_files(&config)
+    .await
+    .expect_err("unverified discovery programs must fail before shutdown");
+  assert_eq!(error.to_string(), "Factory runtime installation failed");
+  assert!(!format!("{error:?}").contains("canary"));
+}
+
+#[tokio::test]
 async fn model_refresh_is_independent_and_rejects_overlapping_requests_without_queueing() {
   use super::FactoryRuntimeInstaller;
   use std::time::Duration;

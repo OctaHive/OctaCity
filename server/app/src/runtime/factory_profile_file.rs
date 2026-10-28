@@ -51,7 +51,11 @@ impl FileProfileInstaller {
     let bytes = super::assembly::read_private_bytes("Factory profiles", path, MAX_PROFILE_BYTES as u64)
       .await
       .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
-    Self::parse_json(&bytes, providers)
+    let installer = Self::parse_json(&bytes, providers)?;
+    // Verify native program identities offline; discovery remains lazy and
+    // must never invoke the model client during installation preflight.
+    installer.model_discovery()?;
+    Ok(installer)
   }
   pub(super) fn parse_json(
     bytes: &[u8],
@@ -171,9 +175,26 @@ impl super::FactoryRuntimeInstaller for FileProfileInstaller {
     for binding in &self.bindings.delivery {
       catalog.executors.push(binding.install(&resources)?);
     }
+    let mut installed = super::FactoryProfileRuntimeInstaller::new(catalog, readiness, vec![])?
+      .with_model_discovery(self.model_discovery()?)
+      .install(resources)
+      .await?;
+    installed.output_finalizer = output_finalizer;
+    Ok(installed)
+  }
+}
+
+impl FileProfileInstaller {
+  fn model_discovery(
+    &self,
+  ) -> Result<
+    BTreeMap<(ProjectId, FactoryKey), super::factory_model_catalog::PluginModelDiscovery>,
+    FactoryRuntimeInstallationError,
+  > {
     let mut model_discovery = BTreeMap::new();
     for (project, alias, declaration) in &self.bindings.model_discovery {
-      let plugin = &catalog
+      let plugin = &self
+        .catalog
         .projects
         .iter()
         .find(|(id, _)| id == project)
@@ -194,12 +215,7 @@ impl super::FactoryRuntimeInstaller for FileProfileInstaller {
       .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
       model_discovery.insert((*project, alias.clone()), source);
     }
-    let mut installed = super::FactoryProfileRuntimeInstaller::new(catalog, readiness, vec![])?
-      .with_model_discovery(model_discovery)
-      .install(resources)
-      .await?;
-    installed.output_finalizer = output_finalizer;
-    Ok(installed)
+    Ok(model_discovery)
   }
 }
 

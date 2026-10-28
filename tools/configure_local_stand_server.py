@@ -8,7 +8,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import shutil
 import tempfile
 from typing import Any
@@ -187,6 +186,36 @@ def _expected_bundle(password: str, policy: bytes, profiles: bytes | None, *, si
     return expected
 
 
+def _connector_files(index: int) -> tuple[tuple[str, str, int], ...]:
+    return (
+        ("configuration_file", f"factory-signal-{index:04d}-configuration", MAX_FACTORY_PROFILE_BYTES),
+        ("credential_file", f"factory-signal-{index:04d}-credential", 64 * 1024),
+    )
+
+
+def export_installed_signal_connectors(bundle: Path, destination: Path) -> Path | None:
+    """Export installed connector inputs for a state-preserving reconfiguration.
+
+    This configurator owns both directions of its private file-name and runtime
+    reference encoding. The lifecycle only chooses the private staging target.
+    """
+    catalog = bundle / "factory-signal-connectors.json"
+    if not catalog.exists():
+        return None
+    document = state.load_json_object(state.read_regular_file(
+        catalog, "installed signal connectors", max_bytes=MAX_FACTORY_PROFILE_BYTES,
+        modes=frozenset({state.PRIVATE_FILE_MODE}),
+    ), "installed signal connectors")
+    for index, connector in enumerate(document.get("connectors", [])):
+        for field, name, _ in _connector_files(index):
+            if connector.get(field) != f"/run/octacity-secrets/{name}":
+                raise state.StateError("installed signal connector reference is not recognized")
+            connector[field] = str(bundle / name)
+    destination.write_text(json.dumps(document))
+    destination.chmod(PRIVATE_FILE_MODE)
+    return destination
+
+
 def _connector_bundle(catalog: Path) -> dict[str, bytes]:
     """Copy opaque adapter files while rewriting only trusted runtime references."""
     try:
@@ -207,14 +236,10 @@ def _connector_bundle(catalog: Path) -> dict[str, bytes]:
                     or not all(isinstance(value, str) and value for value in connector.values())):
                 raise ServerConfigurationError("invalid connector files")
             rewritten = {"kind": connector["kind"], "credential_profile": connector["credential_profile"]}
-            for field, suffix, limit in (
-                ("configuration_file", "configuration", MAX_FACTORY_PROFILE_BYTES),
-                ("credential_file", "credential", 64 * 1024),
-            ):
+            for field, name, limit in _connector_files(index):
                 source = Path(connector[field])
                 if not source.is_absolute():
                     raise ServerConfigurationError("connector files must be absolute")
-                name = f"factory-signal-{index:04d}-{suffix}"
                 files[name] = _validate_regular_file(
                     source, "Factory connector input", limit,
                     frozenset({PRIVATE_FILE_MODE}),
@@ -232,37 +257,15 @@ def _connector_bundle(catalog: Path) -> dict[str, bytes]:
 def _executable_bundle(root: Path, name: str) -> tuple[dict[str, bytes | None], frozenset[str]]:
     """Copy a bounded opaque executable installation, never interpreting its protocol."""
     try:
-        files: dict[str, bytes | None] = {name: None}
+        records = state.map_private_tree(root, lambda _name, source, size: source.read(size + 1),
+            max_depth=4, max_entries=1024, max_bytes=512 * 1024 * 1024)
+        files: dict[str, bytes | None] = {}
         executables = set()
-        pending = [(root, name, 0)]
-        total = 0
-        while pending:
-            directory, relative, depth = pending.pop()
-            state.validate_private_directory(directory)
-            if depth > 4:
-                raise ValueError("depth")
-            for path in directory.iterdir():
-                if len(files) >= 1024 or path.name in {".", ".."} or not re.fullmatch(r"[A-Za-z0-9_.][A-Za-z0-9_.-]{0,127}", path.name):
-                    raise ValueError("entry")
-                name = f"{relative}/{path.name}"
-                metadata = path.lstat()
-                if path.is_symlink():
-                    raise ValueError("link")
-                if path.is_dir():
-                    files[name] = None
-                    pending.append((path, name, depth + 1))
-                else:
-                    executable = bool(metadata.st_mode & 0o111)
-                    contents = state.read_regular_file(
-                        path, "Factory executable input", max_bytes=256 * 1024 * 1024 if executable else 4 * 1024 * 1024,
-                        modes=frozenset({0o500, 0o700, 0o755}) if executable else frozenset({PRIVATE_FILE_MODE}),
-                    )
-                    total += len(contents)
-                    if total > 512 * 1024 * 1024:
-                        raise ValueError("size")
-                    files[name] = contents
-                    if executable:
-                        executables.add(name)
+        for relative, record in records.items():
+            target = (Path(name) / relative).as_posix()
+            files[target] = None if record is None else record[1]
+            if record is not None and record[0] & 0o111:
+                executables.add(target)
         return files, frozenset(executables)
     except (OSError, ValueError, state.StateError):
         raise ServerConfigurationError("Factory executable installation is invalid") from None

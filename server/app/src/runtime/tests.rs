@@ -338,6 +338,40 @@ async fn startup_reads_explicit_factory_catalog_before_resources_with_safe_diagn
 }
 
 #[tokio::test]
+async fn offline_validation_checks_factory_catalog_with_the_startup_parser() {
+  let directory = tempfile::tempdir().unwrap();
+  let path = directory.path().join("profiles.json");
+  std::fs::write(&path, r#"{"version":1,"projects":[{"project_id":"10000000-0000-4000-8000-000000000001","references":[],"build_configurations":[]}],"codex":[]}"#).unwrap();
+  #[cfg(unix)]
+  {
+    use std::os::unix::fs::PermissionsExt as _;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+  }
+  let source = format!(
+    "factory_profiles_file={}\n{}",
+    serde_json::to_string(&path).unwrap(),
+    super::test_runtime_config::runtime_config_source(
+      directory.path(),
+      "postgres://fixture:fixture@127.0.0.1:9/postgres",
+      "http://127.0.0.1:9",
+      "[factory]\npoll_interval_milliseconds=10\nclaim_lifetime_milliseconds=1000\nbatch_size=4\nconcurrency=2\n",
+    )
+  );
+  let config = ServerConfig::parse_toml(&source).unwrap();
+  validate_runtime_files(&config).await.unwrap();
+  std::fs::write(
+    &path,
+    r#"{"version":1,"projects":[],"codex":[],"private-canary":"secret"}"#,
+  )
+  .unwrap();
+  let error = validate_runtime_files(&config)
+    .await
+    .expect_err("unknown native catalog fields must fail preflight");
+  assert_eq!(error.to_string(), "Factory runtime installation failed");
+  assert!(!format!("{error:?}").contains("canary"));
+}
+
+#[tokio::test]
 async fn startup_separates_ingress_and_exposes_health_checks() {
   let _listener_guard = LISTENER_TEST_LOCK.lock().await;
   let runtime = ServerRuntime::start_with_readiness(test_config(), healthy_checks())

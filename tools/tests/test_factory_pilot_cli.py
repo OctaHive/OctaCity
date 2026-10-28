@@ -14,6 +14,26 @@ NODE = shutil.which("node")
 
 
 class FactoryPilotCliTests(unittest.TestCase):
+    def test_role_mcp_read_credential_enforces_resource_and_write_limits_at_the_peer(self):
+        self.assertIsNotNone(NODE)
+        requests = [
+            {"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"facts","arguments":{"resource":"alpha"}}},
+            {"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"facts","arguments":{"resource":"beta"}}},
+            {"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"write","arguments":{"resource":"alpha"}}},
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            server = Path(directory) / "server.mjs"
+            server.write_bytes(FIXTURE.with_name("role-mcp.mjs").read_bytes())
+            (Path(directory) / "supporting.txt").write_text("retained facts")
+            result = subprocess.run([NODE, str(server)], input="\n".join(map(json.dumps, requests))+"\n", text=True, capture_output=True, timeout=10,
+                env=fixture_environment(PEER_RESOURCE="alpha", STDIO_READ_TOKEN="fixture-stdio-read-alpha", LANGUAGE="en"))
+            self.assertEqual(result.returncode, 0, result.stderr)
+            replies = list(map(json.loads, result.stdout.splitlines()))
+            self.assertFalse(replies[0]["result"]["isError"])
+            self.assertTrue(replies[1]["result"]["isError"], "token scope must reject a foreign resource")
+            self.assertTrue(replies[2]["result"]["isError"], "a read credential cannot authorize a write")
+            self.assertNotIn("fixture-stdio-read-alpha", result.stdout+result.stderr)
+
     def invoke(self, directory, instructions, value, hook=None, *, prefix="", options=(), environment=None, model="installed-fixture"):
         self.assertIsNotNone(NODE, "restore the Node test environment before implementing the CLI")
         schema = Path(directory) / "schema.json"

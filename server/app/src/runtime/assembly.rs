@@ -42,6 +42,9 @@ struct RuntimeFileInputs {
 
 /// Validate every runtime file and its credential or policy contents offline.
 pub async fn validate_runtime_files(config: &ServerConfig) -> Result<(), RuntimeAssemblyError> {
+  super::composition::configured_factory_installer(config)
+    .await
+    .map_err(|_| RuntimeAssemblyError::InvalidFactoryInstallation)?;
   load_runtime_file_inputs(config).await?;
   super::integration_management::validate_source_profiles(config).await
 }
@@ -423,6 +426,9 @@ fn validate_unix_credential_metadata(mode: u32, owner_uid: u32, effective_uid: u
 /// Failure to assemble the server's static runtime resources safely.
 #[derive(Debug, Error)]
 pub enum RuntimeAssemblyError {
+  /// The trusted Factory catalog or connector installation failed startup validation.
+  #[error("Factory runtime installation failed")]
+  InvalidFactoryInstallation,
   /// The trusted Source profile document is malformed or uses an unsupported version.
   #[error("installed Source profiles are invalid")]
   InvalidSourceProfiles,

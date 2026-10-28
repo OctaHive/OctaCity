@@ -12,6 +12,7 @@ import stat
 import sys
 import tempfile
 import tomllib
+import types
 import unittest
 from unittest import mock
 
@@ -335,6 +336,328 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         self.assertEqual(configuration["tool_executables"]["codex-cli"]["sha256"], digest)
         self.assertEqual(len(configuration["virtualization_providers"]), 1)
         CONFIGURATOR.validated_launch_plan(self.root.resolve(), self.installation, receipt)
+
+    def test_stages_updated_factory_policy_without_replacing_identity_or_live_configuration(self):
+        policy, _, _ = self._factory_profile()
+        original = CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        configuration = Path(original["config"])
+        installed_policy = Path(original["factory_agent_profile"])
+        before = (configuration.read_bytes(), installed_policy.read_bytes(), self.credential.read_bytes())
+        policy.write_text(policy.read_text().replace('["api.openai.com"]', '["api.openai.com", "mcp.example"]'))
+        with tempfile.TemporaryDirectory(prefix=".factory-update-", dir=self.root / "config") as temporary:
+            staged = CONFIGURATOR.generate_agent_configuration(
+                self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+                host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+                staging_directory=Path(temporary),
+            )
+            candidate = tomllib.loads(Path(staged["config"]).read_text())
+            self.assertEqual(candidate["allowed_network_hosts"], ["api.openai.com", "mcp.example"])
+            self.assertEqual(candidate["credential_file"], str(self.credential.resolve()))
+            self.assertEqual(candidate["work_root"], original["work_root"])
+            self.assertEqual(Path(staged["config"]).parent, Path(temporary).resolve())
+            self.assertEqual(stat.S_IMODE(Path(staged["config"]).stat().st_mode), 0o600)
+        self.assertEqual((configuration.read_bytes(), installed_policy.read_bytes(), self.credential.read_bytes()), before)
+
+    def _factory_update_inputs(self):
+        import configure_local_stand_server as server
+
+        job_policy = self.installation / "job-spec-policy.json"
+        job_policy.write_text(json.dumps({"source": {}, "octa": {}, "validity": 900}))
+        job_policy.chmod(0o600)
+        self._write_manifest()
+        policy, _, _ = self._factory_profile()
+        CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        profiles = Path(self.temporary.name) / "profiles.json"
+        catalog = {"version": 1, "projects": [{
+            "project_id": "10000000-0000-4000-8000-000000000001",
+            "references": [], "build_configurations": [],
+        }], "codex": []}
+        profiles.write_text(json.dumps(catalog))
+        profiles.chmod(0o600)
+        server.generate_server_configuration(self.root, self.installation, factory_profiles=profiles)
+        policy.write_text(policy.read_text().replace('["api.openai.com"]', '["api.openai.com", "mcp.example"]'))
+        catalog["commands"] = []
+        profiles.write_text(json.dumps(catalog))
+        return profiles, policy
+
+    def test_updates_factory_installation_and_reuses_it_without_touching_retained_state(self):
+        import local_stand_installation_update as updates
+        import local_stand_lifecycle as lifecycle
+
+        profiles, policy = self._factory_update_inputs()
+        retained = {self.credential: self.credential.read_bytes()}
+        # These files belong to other owners, not to the generated installation.
+        for name in ("config/integrations/settings.json", "evidence/factory-demo.json", "agent/cache/receipt"):
+            path = self.root / name
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            path.write_bytes(b"retained operator data\n")
+            path.chmod(0o600)
+            retained[path] = path.read_bytes()
+        events = []
+
+        def preflight(candidate):
+            self.assertEqual(json.loads((candidate / "config/server/factory-profiles.json").read_bytes())["commands"], [])
+            self.assertNotIn(b"mcp.example", (self.root / "config/agent.toml").read_bytes())
+            events.append("preflight")
+
+        with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
+            with updates.factory_installation_update(
+                self.root, self.installation, owner=owner, factory_profiles=profiles,
+                factory_agent_profile=policy, preflight=preflight, stop=lambda: events.append("stop"),
+            ):
+                self.assertEqual(events, ["preflight", "stop"])
+                self.assertIn(b"mcp.example", (self.root / "config/agent.toml").read_bytes())
+            snapshot = (self.root / "config/agent.toml").stat().st_mtime_ns
+            with updates.factory_installation_update(
+                self.root, self.installation, owner=owner, factory_profiles=profiles,
+                factory_agent_profile=policy, preflight=lambda _: None,
+                stop=lambda: self.fail("unchanged installation must not be stopped"),
+            ):
+                self.assertEqual((self.root / "config/agent.toml").stat().st_mtime_ns, snapshot)
+        for path, contents in retained.items():
+            self.assertEqual(path.read_bytes(), contents)
+        self.assertFalse(list(self.root.glob(".factory-update-*")))
+
+    def test_restores_usable_factory_installation_when_candidate_startup_fails(self):
+        import local_stand_installation_update as updates
+        import local_stand_lifecycle as lifecycle
+
+        profiles, policy = self._factory_update_inputs()
+        original = {path.relative_to(self.root): path.read_bytes()
+                    for path in (self.root / "config").rglob("*") if path.is_file()}
+        credential = self.credential.read_bytes()
+        with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
+            with self.assertRaisesRegex(RuntimeError, "registration failed"):
+                with updates.factory_installation_update(
+                    self.root, self.installation, owner=owner, factory_profiles=profiles,
+                    factory_agent_profile=policy, preflight=lambda _: None, stop=lambda: None,
+                ):
+                    self.assertIn(b"mcp.example", (self.root / "config/agent.toml").read_bytes())
+                    raise RuntimeError("registration failed")
+        self.assertEqual({path.relative_to(self.root): path.read_bytes()
+                          for path in (self.root / "config").rglob("*") if path.is_file()}, original)
+        self.assertEqual(self.credential.read_bytes(), credential)
+
+    def test_factory_update_does_not_retain_executable_contents_during_preflight(self):
+        import tracemalloc
+        import local_stand_installation_update as updates
+        import local_stand_lifecycle as lifecycle
+
+        profiles, policy = self._factory_update_inputs()
+        program = self.root / "config/retained-program"
+        with program.open("wb") as output:
+            for _ in range(256):
+                output.write(b"reviewed-program".ljust(64 * 1024, b"."))
+        program.chmod(0o700)
+        with program.open("rb") as source:
+            expected = hashlib.file_digest(source, "sha256").hexdigest()
+
+        def preflight(candidate):
+            retained_bytes, _ = tracemalloc.get_traced_memory()
+            self.assertLess(retained_bytes - baseline, 4 * 1024 * 1024,
+                            "preflight must retain metadata rather than the 16 MiB executable")
+            with (candidate / "config/retained-program").open("rb") as source:
+                self.assertEqual(hashlib.file_digest(source, "sha256").hexdigest(), expected)
+
+        with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
+            already_tracing = tracemalloc.is_tracing()
+            tracemalloc.start()
+            baseline, _ = tracemalloc.get_traced_memory()
+            try:
+                with updates.factory_installation_update(
+                    self.root, self.installation, owner=owner, factory_profiles=profiles,
+                    factory_agent_profile=policy, preflight=preflight, stop=lambda: None,
+                ):
+                    pass
+            finally:
+                if not already_tracing:
+                    tracemalloc.stop()
+        with program.open("rb") as source:
+            self.assertEqual(hashlib.file_digest(source, "sha256").hexdigest(), expected)
+
+    def test_failed_factory_preflight_keeps_the_usable_installation_running(self):
+        import local_stand_installation_update as updates
+        import local_stand_lifecycle as lifecycle
+
+        profiles, policy = self._factory_update_inputs()
+        original = {path.relative_to(self.root): (path.read_bytes(), path.stat().st_mtime_ns)
+                    for path in (self.root / "config").rglob("*") if path.is_file()}
+
+        def reject(candidate):
+            self.assertIn(b"mcp.example", (candidate / "config/agent.toml").read_bytes())
+            raise RuntimeError("packaged preflight rejected the candidate")
+
+        with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
+            with self.assertRaisesRegex(RuntimeError, "preflight rejected"):
+                with updates.factory_installation_update(
+                    self.root, self.installation, owner=owner, factory_profiles=profiles,
+                    factory_agent_profile=policy, preflight=reject,
+                    stop=lambda: self.fail("preflight failure must not stop the stand"),
+                ):
+                    self.fail("invalid candidate must not reach startup")
+        self.assertEqual({path.relative_to(self.root): (path.read_bytes(), path.stat().st_mtime_ns)
+                          for path in (self.root / "config").rglob("*") if path.is_file()}, original)
+        self.assertFalse(list(self.root.glob(".factory-update-*")))
+
+    def test_factory_update_refuses_concurrent_operator_edits_before_stopping(self):
+        import local_stand_installation_update as updates
+        import local_stand_lifecycle as lifecycle
+        import local_stand_state as state
+
+        profiles, policy = self._factory_update_inputs()
+        configuration = self.root / "config/agent.toml"
+        reviewed = configuration.read_bytes() + b"\n# operator edited during preflight\n"
+
+        def edit(_):
+            configuration.write_bytes(reviewed)
+
+        with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
+            with self.assertRaisesRegex(state.StateError, "installation changed during preflight"):
+                with updates.factory_installation_update(
+                    self.root, self.installation, owner=owner, factory_profiles=profiles,
+                    factory_agent_profile=policy, preflight=edit,
+                    stop=lambda: self.fail("concurrent edits must fail before shutdown"),
+                ):
+                    self.fail("changed live inputs must not activate")
+        self.assertEqual(configuration.read_bytes(), reviewed)
+
+    def test_factory_update_refreshes_generated_integration_config_and_retains_its_authority(self):
+        import local_stand_installation_update as updates
+        import local_stand_lifecycle as lifecycle
+
+        profiles, policy = self._factory_update_inputs()
+        bundle = self.root / "config/integrations"
+        bundle.mkdir(mode=0o700)
+        suffix = b'\n[integration_management]\nsocket_path="/run/octacity-management/management.sock"\npeer_uid=101\nprincipal="local-stand-gateway"\ncatalog_file="/var/lib/octacity-integrations/retained/catalog.json"\n'
+        integrated = bundle / "server.toml"
+        integrated.write_bytes((self.root / "config/server/server.toml").read_bytes() + suffix)
+        integrated.chmod(0o600)
+        connectors = Path(self.temporary.name) / "connectors.json"
+        connectors.write_text('{"version":1,"connectors":[]}\n')
+        connectors.chmod(0o600)
+        with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
+            with updates.factory_installation_update(
+                self.root, self.installation, owner=owner, factory_profiles=profiles,
+                factory_agent_profile=policy, factory_signal_connectors=connectors,
+                preflight=lambda _: None, stop=lambda: None,
+            ):
+                actual = tomllib.loads(integrated.read_text())
+                self.assertEqual(actual["factory_signal_connectors_file"], "/run/octacity-secrets/factory-signal-connectors.json")
+                self.assertTrue(integrated.read_bytes().endswith(suffix))
+
+    def test_factory_update_preserves_installed_connector_inputs_when_omitted(self):
+        import configure_local_stand_server as server
+        import local_stand_installation_update as updates
+        import local_stand_lifecycle as lifecycle
+
+        profiles, policy = self._factory_update_inputs()
+        directory = Path(self.temporary.name)
+        configuration, credential = directory / "adapter.json", directory / "adapter.key"
+        configuration.write_bytes(b'{"reviewed":"adapter configuration"}\n')
+        credential.write_bytes(b"private-adapter-credential\n")
+        connectors = directory / "connectors.json"
+        connectors.write_text(json.dumps({"version": 1, "connectors": [{
+            "kind": "operator-adapter", "credential_profile": "adapter-profile",
+            "configuration_file": str(configuration), "credential_file": str(credential),
+        }]}))
+        for path in (configuration, credential, connectors):
+            path.chmod(0o600)
+        shutil.rmtree(self.root / "config/server")
+        server.generate_server_configuration(self.root, self.installation,
+            factory_profiles=profiles, factory_signal_connectors=connectors)
+        installed = self.root / "config/server"
+        retained = {path.name: path.read_bytes() for path in installed.glob("factory-signal-*")}
+        with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
+            with updates.factory_installation_update(
+                self.root, self.installation, owner=owner, factory_profiles=profiles,
+                factory_agent_profile=policy, preflight=lambda _: None, stop=lambda: None,
+            ):
+                pass
+        self.assertEqual({path.name: path.read_bytes() for path in installed.glob("factory-signal-*")}, retained)
+        self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in installed.glob("factory-signal-*")))
+
+    def test_factory_update_retains_runtime_support_files_at_the_existing_installation_depth_limit(self):
+        import local_stand_installation_update as updates
+        import local_stand_lifecycle as lifecycle
+        import configure_local_stand_server as server
+
+        profiles, policy = self._factory_update_inputs()
+        runtime = Path(self.temporary.name) / "runtime"
+        support = runtime / "one/two/three/four/support.json"
+        support.parent.mkdir(mode=0o700, parents=True)
+        for directory in (runtime, *support.parents):
+            if directory.is_relative_to(runtime):
+                directory.chmod(0o700)
+        support.write_text('{"reviewed":"retained runtime support"}')
+        support.chmod(0o600)
+        shutil.rmtree(self.root / "config/server")
+        server.generate_server_configuration(self.root, self.installation, factory_profiles=profiles, factory_runtime_bundle=runtime)
+        with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
+            with updates.factory_installation_update(
+                self.root, self.installation, owner=owner, factory_profiles=profiles,
+                factory_agent_profile=policy, preflight=lambda _: None, stop=lambda: None,
+            ):
+                retained = self.root / "config/server/factory-runtime/one/two/three/four/support.json"
+                self.assertEqual(retained.read_bytes(), support.read_bytes())
+
+    def test_ordinary_launcher_applies_explicit_update_then_restarts_with_the_same_identity(self):
+        import local_stand_launcher as launcher
+
+        profiles, policy = self._factory_update_inputs()
+        credential = self.credential.read_bytes()
+        with (
+            mock.patch.object(CONFIGURATOR, "_require_apple_silicon"),
+            mock.patch.object(launcher, "_prepare_native_installation", return_value=launcher.NativeInstallation(self.installation, {})),
+            mock.patch.object(launcher, "_build_images"),
+            mock.patch.object(launcher.installation_update, "validate_factory_installation"),
+            mock.patch.object(launcher, "_run_compose"),
+            mock.patch.object(launcher, "_stop_halves") as stop,
+            mock.patch.object(launcher.bootstrapper, "bootstrap", return_value=types.SimpleNamespace(state="already_enrolled")),
+            mock.patch.object(launcher.agent_starter, "start_agent", side_effect=[
+                types.SimpleNamespace(state="registered", pid=4242),
+                types.SimpleNamespace(state="already_running", pid=4242),
+            ]),
+        ):
+            arguments = ["up", "--root", str(self.root), "--factory-profiles", str(profiles),
+                         "--factory-agent-profile", str(policy)]
+            updated = launcher.run(launcher.parse_arguments([*arguments, "--update-factory-installation"]))
+            self.assertIn(b"mcp.example", (self.root / "config/agent.toml").read_bytes())
+            restarted = launcher.run(launcher.parse_arguments(arguments))
+            self.assertEqual(updated["state"], "running")
+            self.assertEqual(updated["agent"], "registered")
+            self.assertEqual(restarted["state"], "running")
+            self.assertEqual(restarted["agent"], "already_running")
+            self.assertEqual(restarted["bootstrap"], "already_enrolled")
+            self.assertEqual(restarted["agent_pid"], 4242)
+            self.assertEqual(stop.call_count, 1)
+            self.assertFalse(stop.call_args.kwargs["remove_volumes"])
+        self.assertEqual(self.credential.read_bytes(), credential)
+
+    def test_explicit_standalone_mcp_inventory_preserves_independent_workload_grants(self):
+        policy, permissions, _ = self._factory_profile()
+        program = Path(self.temporary.name) / "issue-reader"
+        program.write_bytes(b"explicit operator MCP installation")
+        program.chmod(0o755)
+        entry = (
+            f'"issue-reader" = {{ path = {json.dumps(str(program))}, version = "1.2.0", '
+            f'platform = "linux-aarch64", sha256 = "{hashlib.sha256(program.read_bytes()).hexdigest()}", '
+            'standalone = true }, '
+        )
+        policy.write_text(policy.read_text().replace("tool_executables = {", "tool_executables = { " + entry, 1))
+        receipt = CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        configuration = tomllib.loads(Path(receipt["config"]).read_text())
+        self.assertTrue(configuration["tool_executables"]["issue-reader"]["standalone"])
+        self.assertEqual(configuration["factory_permissions"], permissions)
+        self.assertEqual(configuration["allowed_network_hosts"], ["api.openai.com"])
 
     def test_factory_credential_references_remain_agent_owned_across_restart(self):
         policy, _, _ = self._factory_profile()

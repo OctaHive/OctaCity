@@ -7,9 +7,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 import json
 import os
+import re
 from pathlib import Path
 import stat
 import tempfile
+from typing import BinaryIO, Callable, TypeVar
 
 
 DEFAULT_ROOT = Path.home() / "Library/Application Support/OctaCity/local-stand"
@@ -182,6 +184,59 @@ def open_regular_file(
     except BaseException:
         os.close(descriptor)
         raise
+
+
+_PrivateFileValue = TypeVar("_PrivateFileValue")
+
+
+def map_private_tree(
+    root: Path,
+    read_file: Callable[[Path, BinaryIO, int], _PrivateFileValue],
+    *,
+    max_depth: int,
+    max_entries: int,
+    max_bytes: int,
+) -> dict[str, tuple[int, _PrivateFileValue] | None]:
+    """Read one bounded private installation through validated stable handles.
+
+    The trusted reader consumes each entire file and may return bytes or a
+    fingerprint. It receives the relative path, open stream and exact size;
+    every handle is closed before return. Directories map to None; files retain
+    the stand's normalized private/executable publication mode and reader value.
+    """
+    files: dict[str, tuple[int, _PrivateFileValue] | None] = {".": None}
+    pending = [(Path(), 0)]
+    total = 0
+    while pending:
+        relative, depth = pending.pop()
+        parent = root / relative
+        validate_private_directory(parent)
+        if depth > max_depth:
+            raise StateError("private installation exceeds its depth bound")
+        for path in parent.iterdir():
+            if len(files) >= max_entries or not re.fullmatch(r"[A-Za-z0-9_.][A-Za-z0-9_.-]{0,127}", path.name):
+                raise StateError("private installation has invalid entries")
+            name = relative / path.name
+            metadata = path.lstat()
+            if stat.S_ISDIR(metadata.st_mode):
+                files[name.as_posix()] = None
+                pending.append((name, depth + 1))
+                continue
+            if not stat.S_ISREG(metadata.st_mode):
+                raise StateError("private installation contains a non-regular file")
+            executable = bool(metadata.st_mode & 0o111)
+            modes = frozenset({0o500, 0o700, 0o755}) if executable else frozenset({PRIVATE_FILE_MODE})
+            descriptor, metadata = open_regular_file(path, "private installation input",
+                max_bytes=256 * 1024 * 1024 if executable else 4 * 1024 * 1024, modes=modes)
+            with os.fdopen(descriptor, "rb") as source:
+                total += metadata.st_size
+                if total > max_bytes:
+                    raise StateError("private installation exceeds its byte bound")
+                value = read_file(name, source, metadata.st_size)
+                if source.tell() != metadata.st_size or file_state(os.fstat(source.fileno())) != file_state(metadata):
+                    raise StateError("private installation changed while being read")
+                files[name.as_posix()] = (0o700 if executable else PRIVATE_FILE_MODE, value)
+    return files
 
 
 def load_json_object(contents: bytes, description: str) -> dict[str, object]:

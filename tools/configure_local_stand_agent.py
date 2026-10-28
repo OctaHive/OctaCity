@@ -128,11 +128,14 @@ class AgentConfigurationError(RuntimeError):
     """The native local-stand Agent configuration cannot be trusted."""
 
 
-def _verify_factory_executable(tool: Any) -> None:
+def _verify_factory_executable(tool: Any, *, allow_standalone: bool = False) -> None:
     """Verify one immutable operator executable, independently of its purpose."""
-    if not isinstance(tool, dict) or set(tool) != {"path", "version", "platform", "sha256"}:
+    required = {"path", "version", "platform", "sha256"}
+    if not isinstance(tool, dict) or not required <= set(tool) or set(tool) - required - ({"standalone"} if allow_standalone else set()):
         raise ValueError("tool")
-    if not all(isinstance(value, str) and value for value in tool.values()) or not VERSION_PATTERN.fullmatch(tool["version"]) or not re.fullmatch("[a-z0-9_-]+", tool["platform"]) or not re.fullmatch("[0-9a-f]{64}", tool["sha256"]):
+    if "standalone" in tool and type(tool["standalone"]) is not bool:
+        raise ValueError("tool kind")
+    if not all(isinstance(tool[key], str) and tool[key] for key in required) or not VERSION_PATTERN.fullmatch(tool["version"]) or not re.fullmatch("[a-z0-9_-]+", tool["platform"]) or not re.fullmatch("[0-9a-f]{64}", tool["sha256"]):
         raise ValueError("tool")
     executable = Path(tool["path"])
     if not executable.is_absolute():
@@ -161,7 +164,7 @@ def read_factory_agent_profile(path: Path) -> dict[str, Any]:
         for product, tool in tools.items():
             if not product:
                 raise ValueError("tool")
-            _verify_factory_executable(tool)
+            _verify_factory_executable(tool, allow_standalone=True)
         if "change_set_capture" in document:
             capture = document["change_set_capture"]
             if not isinstance(capture, dict) or set(capture) != {"provider", "executable"} or capture["provider"] != "git":
@@ -719,8 +722,13 @@ def generate_agent_configuration(
     host_system: str | None = None,
     host_machine: str | None = None,
     factory_agent_profile: Path | None = None,
+    staging_directory: Path | None = None,
 ) -> dict[str, str]:
-    """Validate all trust inputs and publish one fail-closed Agent configuration."""
+    """Validate and publish a configuration, optionally staging it for an update.
+
+    Staging changes only the output directory; credential, trust and work paths
+    always refer to the existing installation.
+    """
 
     _require_apple_silicon(host_system, host_machine)
     factory_profile = read_factory_agent_profile(factory_agent_profile) if factory_agent_profile is not None else None
@@ -751,6 +759,13 @@ def generate_agent_configuration(
     )
 
     root = Path(initialized["root"])
+    configuration_directory = root / "config"
+    if staging_directory is not None:
+        state.validate_private_directory(staging_directory)
+        staging_directory = staging_directory.resolve()
+        if not staging_directory.is_relative_to(root) or staging_directory == root:
+            raise AgentConfigurationError("Agent staging directory must be a private directory inside the stand root")
+        configuration_directory = staging_directory
     agent_root = root / "agent"
     with state.private_umask():
         state.ensure_private_directory(agent_root)
@@ -804,7 +819,7 @@ def generate_agent_configuration(
             microsandbox_version=manifest["microsandbox_version"],
             factory_profile=factory_profile,
         )
-        destination = root / "config/agent.toml"
+        destination = configuration_directory / "agent.toml"
         if destination.exists() or destination.is_symlink():
             _ensure_exact_private_file(destination, contents, "generated Agent configuration")
         else:
@@ -832,7 +847,7 @@ def generate_agent_configuration(
                 temporary.unlink(missing_ok=True)
         if factory_profile is not None:
             normalized = "\n".join(f"{json.dumps(name)} = {_toml_value(value)}" for name, value in factory_profile.items()).encode("utf-8") + b"\n"
-            _ensure_exact_private_file(root / "config/factory-agent-profile.toml", normalized, "installed Factory Agent profile")
+            _ensure_exact_private_file(configuration_directory / "factory-agent-profile.toml", normalized, "installed Factory Agent profile")
 
     receipt = {
         "config": str(destination),
@@ -844,7 +859,7 @@ def generate_agent_configuration(
         "ca_certificate": str(trusted_ca),
     }
     if factory_profile is not None:
-        receipt["factory_agent_profile"] = str(root / "config/factory-agent-profile.toml")
+        receipt["factory_agent_profile"] = str(configuration_directory / "factory-agent-profile.toml")
     return receipt
 
 

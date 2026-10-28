@@ -143,6 +143,42 @@ class LocalStandLauncherTests(unittest.TestCase):
     def arguments(self, command: str, *extra: str):  # type: ignore[no-untyped-def]
         return launcher.parse_arguments((command, "--root", str(self.root), *extra))
 
+    def test_factory_update_preflight_validates_packaged_files_offline_without_durable_mounts(self):
+        import local_stand_installation_update as updates
+
+        (self.root / "config/server").mkdir(parents=True)
+        (self.root / "secrets").mkdir()
+        for name in ("object-access-key", "object-secret-key", "signing-key", "agent-enrollment-key", "cache-credential-key"):
+            (self.root / "secrets" / name).write_text("private-canary")
+        (self.root / "config/server/postgres-url").write_text("private-database-canary")
+        (self.root / "config/server/factory-profiles.json").write_text('{"version":1,"projects":[],"codex":[]}')
+        with mock.patch.object(updates.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "server configuration is valid", "")) as run:
+            updates.validate_factory_installation(self.root, launcher.SERVER_IMAGE)
+        command = run.call_args.args[0]
+        self.assertEqual(command[:5], ["docker", "run", "--rm", "--network", "none"])
+        self.assertIn("--read-only", command)
+        self.assertEqual(command[-3:], [launcher.SERVER_IMAGE, "validate", "/run/octacity/server.toml"])
+        self.assertNotIn("--volume", command)
+        self.assertNotIn("--volumes-from", command)
+        self.assertNotIn("private-canary", " ".join(command))
+        self.assertLessEqual(run.call_args.kwargs["timeout"], 300)
+        with mock.patch.object(updates.subprocess, "run", return_value=subprocess.CompletedProcess([], 1, "", "private-canary")):
+            with self.assertRaisesRegex(RuntimeError, "rejected.*installation") as error:
+                updates.validate_factory_installation(self.root, launcher.SERVER_IMAGE)
+        self.assertNotIn("private-canary", str(error.exception))
+        with mock.patch.object(updates.subprocess, "run", side_effect=[
+            subprocess.TimeoutExpired("private-canary", 120),
+            subprocess.CompletedProcess([], 0, "", ""),
+        ]) as run:
+            with self.assertRaisesRegex(RuntimeError, "preflight timed out") as error:
+                updates.validate_factory_installation(self.root, launcher.SERVER_IMAGE)
+            launch, cleanup = [call.args[0] for call in run.call_args_list]
+            name = launch[launch.index("--name") + 1]
+            self.assertTrue(name.startswith("octacity-factory-preflight-"))
+            self.assertEqual(cleanup, ["docker", "rm", "--force", name])
+            self.assertNotIn("private-canary", str(error.exception))
+        self.assertFalse(list(self.root.glob(".factory-preflight-*")))
+
     def test_up_orders_complete_convergence_and_validates_compose(self):
         events: list[object] = []
         native = launcher.NativeInstallation(Path("/verified/native"), {"sources": {}})
@@ -268,6 +304,7 @@ class LocalStandLauncherTests(unittest.TestCase):
             mock.patch.object(launcher, "_prepare_native_installation", return_value=native),
             mock.patch.object(launcher.server_configurator, "generate_server_configuration") as configure,
             mock.patch.object(launcher, "_build_images"),
+            mock.patch.object(launcher.installation_update, "validate_factory_installation") as preflight,
             mock.patch.object(launcher, "_run_compose"),
             mock.patch.object(launcher.bootstrapper, "bootstrap", return_value=types.SimpleNamespace(state="enrolled")),
             mock.patch.object(launcher.agent_starter, "start_agent", return_value=types.SimpleNamespace(state="registered", pid=42)),
@@ -277,6 +314,7 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertEqual(configure.call_args.kwargs["factory_signal_connectors"], connectors)
         self.assertEqual(configure.call_args.kwargs["factory_delivery_bundle"], delivery)
         self.assertEqual(configure.call_args.kwargs["factory_runtime_bundle"], runtime)
+        preflight.assert_called_once_with(self.root.resolve(), launcher.SERVER_IMAGE)
 
     def test_running_default_stand_does_not_ignore_requested_factory_installation(self):
         profiles = self.root.parent / "profiles.json"
