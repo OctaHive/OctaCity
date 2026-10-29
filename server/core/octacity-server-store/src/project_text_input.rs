@@ -6,10 +6,10 @@ use octacity_server_factory::{
 };
 use serde::{Deserialize, Serialize};
 
-const PREPARATION_LEASE_MILLIS: i64 = 30_000;
+pub(crate) const PREPARATION_LEASE_MILLIS: i64 = 30_000;
 /// Hard deadline shared by recoverable Project input preparations.
 pub const PROJECT_INPUT_PREPARATION_DEADLINE_MILLIS: i64 = 300_000;
-const MAX_PREPARATION_ATTEMPTS: u16 = 16;
+pub(crate) const MAX_PREPARATION_ATTEMPTS: u16 = 16;
 /// Only explicitly mapped Work inputs are published; no implicit specification fetch.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -18,6 +18,8 @@ pub enum FactoryInputRole {
   Task,
   /// Explicit required acceptance document.
   Acceptance,
+  /// A separately reviewed named Project context document; never an implicit task or acceptance input.
+  Document,
 }
 /// Immutable private byte identity reserved before storage I/O.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -143,6 +145,16 @@ pub struct ProjectTextPreparation {
   pub admission: Option<PublishedFactoryAdmission>,
 }
 impl ProjectTextPreparation {
+  fn lease(&self) -> crate::project_input_policy::InputLease {
+    crate::project_input_policy::InputLease {
+      generation: self.generation,
+      attempts: self.attempts,
+      claimed_at: self.claimed_at,
+      lease_until: self.lease_until,
+      preparation_deadline: self.preparation_deadline,
+      expires_at: self.expires_at,
+    }
+  }
   /// Compares exact intent using retained byte identities even after private body retirement.
   pub fn matches_submission(&self, submitted: &ProjectTextSubmission) -> bool {
     self.intent == submitted.intent
@@ -172,11 +184,7 @@ impl ProjectTextPreparation {
   pub fn require_owner(&self, guard: &ProjectTextGuard) -> Result<(), StoreError> {
     if guard.id != self.id
       || guard.project_id != self.intent.target.project_id
-      || guard.generation != self.generation
-      || guard.now < self.claimed_at
-      || guard.now >= self.lease_until
-      || guard.now >= self.preparation_deadline
-      || guard.now >= self.expires_at
+      || !self.lease().is_current(guard.generation, guard.now)
     {
       return Err(project_text_conflict());
     }
@@ -346,13 +354,13 @@ pub(crate) fn project_text_conflict() -> StoreError {
   }
 }
 
-fn deserialize_retained_scope<'de, D: serde::Deserializer<'de>>(
+pub(crate) fn deserialize_retained_scope<'de, D: serde::Deserializer<'de>>(
   deserializer: D,
 ) -> Result<ManagementSecurityScope, D::Error> {
   let value = String::deserialize(deserializer)?;
   ManagementSecurityScope::new(value).map_err(serde::de::Error::custom)
 }
-fn serialize_retained_scope<S: serde::Serializer>(
+pub(crate) fn serialize_retained_scope<S: serde::Serializer>(
   scope: &ManagementSecurityScope,
   serializer: S,
 ) -> Result<S::Ok, S::Error> {
@@ -363,43 +371,27 @@ impl ProjectTextPreparation {
   /// Reserves deterministic private identities and original preparation bounds before I/O.
   pub fn reserve(s: ProjectTextSubmission, scope: ManagementSecurityScope, now: Timestamp) -> Result<Self, StoreError> {
     s.documents.validate()?;
-    let id = FactoryDigest::sha256(
-      "octacity.project-text.v1",
-      &[
-        s.intent.target.project_id.to_string().as_bytes(),
-        scope.as_str().as_bytes(),
-        s.intent.idempotency_key.as_str().as_bytes(),
-      ],
-    );
-    let mut objects = Vec::new();
-    for (role, name, bytes) in [
-      (FactoryInputRole::Task, "task", s.documents.task()),
-      (FactoryInputRole::Acceptance, "acceptance", s.documents.acceptance()),
-    ] {
-      let namespace = uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, &id.as_bytes());
-      let artifact =
-        ArtifactId::from_uuid(uuid::Uuid::new_v5(&namespace, name.as_bytes())).map_err(|_| project_text_conflict())?;
-      objects.push(FactoryInputObject {
-        role,
-        artifact: FactoryArtifactReference::new(artifact, FactoryDigest::content_sha256(bytes), bytes.len() as u64)
-          .map_err(|_| project_text_conflict())?,
-        upload_id: ArtifactUploadId::from_uuid(uuid::Uuid::new_v5(&artifact.as_uuid(), b"project-input.v1"))
-          .map_err(|_| project_text_conflict())?,
-        media_type: ArtifactMediaType::new("text/plain").map_err(|_| project_text_conflict())?,
-      });
-    }
+    let id = crate::project_input_policy::operation_id(s.intent.target.project_id, &scope, &s.intent.idempotency_key);
+    let lease = crate::project_input_policy::InputLease::reserve(now).ok_or_else(project_text_conflict)?;
+    let objects = [
+      (FactoryInputRole::Task, s.documents.task()),
+      (FactoryInputRole::Acceptance, s.documents.acceptance()),
+    ]
+    .into_iter()
+    .map(|(role, bytes)| crate::project_input_policy::input_object(id, role, bytes).ok_or_else(project_text_conflict))
+    .collect::<Result<Vec<_>, _>>()?;
     let result = Self {
       id,
       security_scope: scope,
-      generation: 1,
-      attempts: 1,
-      claimed_at: now,
-      lease_until: advance(now, PREPARATION_LEASE_MILLIS)?,
-      preparation_deadline: advance(now, PROJECT_INPUT_PREPARATION_DEADLINE_MILLIS)?,
+      generation: lease.generation,
+      attempts: lease.attempts,
+      claimed_at: lease.claimed_at,
+      lease_until: lease.lease_until,
+      preparation_deadline: lease.preparation_deadline,
       intent: s.intent,
       objects,
       reserved_at: now,
-      expires_at: advance(now, MAX_SOURCE_RETENTION_MILLIS as i64)?,
+      expires_at: lease.expires_at,
       frozen_revision: None,
       published_at: None,
       admission: None,
@@ -408,28 +400,12 @@ impl ProjectTextPreparation {
   }
   /// Claims an elapsed/released lease without renewing original deadlines or identities.
   pub fn reclaim(&self, now: Timestamp) -> Result<Self, StoreError> {
-    if now < self.claimed_at
-      || now < self.lease_until
-      || now >= self.preparation_deadline
-      || self.attempts >= MAX_PREPARATION_ATTEMPTS
-    {
-      return Err(project_text_conflict());
-    }
+    let lease = self.lease().reclaim(now).ok_or_else(project_text_conflict)?;
     let mut next = self.clone();
-    next.generation = next.generation.checked_add(1).ok_or_else(project_text_conflict)?;
-    next.attempts += 1;
-    next.claimed_at = now;
-    next.lease_until = advance(now, PREPARATION_LEASE_MILLIS)?.min(next.preparation_deadline);
+    next.generation = lease.generation;
+    next.attempts = lease.attempts;
+    next.claimed_at = lease.claimed_at;
+    next.lease_until = lease.lease_until;
     Ok(next)
   }
-}
-
-fn advance(now: Timestamp, millis: i64) -> Result<Timestamp, StoreError> {
-  Timestamp::from_unix_millis(
-    now
-      .unix_millis()
-      .checked_add(millis)
-      .ok_or_else(project_text_conflict)?,
-  )
-  .map_err(|_| project_text_conflict())
 }

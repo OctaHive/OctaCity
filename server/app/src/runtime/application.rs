@@ -193,6 +193,13 @@ pub(super) fn management_application(
   let log_search = Arc::new(BuildLogSearch::new(store.clone(), log_search_index));
   let operational_metadata = Arc::new(OperationalMetadataQueries::new(operational_metadata));
   let project_commands = authorized_commands(&management_policy, projects.clone());
+  let project_documents = Arc::new(octacity_server_application::ProjectTextIntake::new(
+    store.clone(),
+    object_storage.clone(),
+    revision_resolver.clone(),
+    management_policy.clone(),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+  ));
   let pipeline_commands = authorized_commands(&management_policy, pipelines.clone());
   let configuration_commands = authorized_commands(&management_policy, configurations.clone());
   let pool_commands = authorized_commands(&management_policy, pools.clone());
@@ -438,6 +445,10 @@ pub(super) fn management_application(
     ),
   )
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?
+  .with_project_documents(
+    authorized_commands(&management_policy, project_documents.clone()),
+    authorized_queries(&management_policy, project_documents),
+  )
   .with_factory_readiness(
     octacity_server_api_rest::v1::FactoryReadinessManagementApplication::new(authorized_queries(
       &management_policy,

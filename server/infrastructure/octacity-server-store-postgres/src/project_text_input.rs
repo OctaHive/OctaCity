@@ -2,6 +2,7 @@
 use crate::{PostgresStore, database::unavailable};
 use octacity_server_domain::{ArtifactId, EntityKind, ImmutableRevision, ProjectId};
 use octacity_server_store::*;
+use serde_json::Value;
 use sqlx::{PgConnection, types::Json};
 
 pub(crate) fn conflict() -> StoreError {
@@ -9,17 +10,22 @@ pub(crate) fn conflict() -> StoreError {
     entity: EntityKind::FactoryRun,
   }
 }
+// Both purposes share a journal key. A different purpose is an immutable replay conflict,
+// rather than a retryable SQL decoding failure.
+fn decode_work(document: Json<Value>) -> Result<ProjectTextPreparation, StoreError> {
+  serde_json::from_value(document.0).map_err(|_| conflict())
+}
 pub(crate) async fn load(
   connection: &mut PgConnection,
   id: octacity_server_factory::FactoryDigest,
 ) -> Result<ProjectTextPreparation, StoreError> {
-  let document: Option<Json<ProjectTextPreparation>> =
+  let document: Option<Json<Value>> =
     sqlx::query_scalar("SELECT document FROM project_text_preparations WHERE id=$1 FOR UPDATE")
       .bind(id.as_bytes().as_slice())
       .fetch_optional(connection)
       .await
       .map_err(unavailable)?;
-  document.map(|v| v.0).ok_or_else(conflict)
+  decode_work(document.ok_or_else(conflict)?)
 }
 pub(crate) async fn save(connection: &mut PgConnection, record: &ProjectTextPreparation) -> Result<(), StoreError> {
   sqlx::query("UPDATE project_text_preparations SET document=$2 WHERE id=$1")
@@ -48,7 +54,7 @@ impl ProjectTextInputStore for PostgresStore {
     scope: &ManagementSecurityScope,
     key: &IdempotencyKey,
   ) -> Result<Option<ProjectTextPreparation>, StoreError> {
-    let document: Option<Json<ProjectTextPreparation>> = sqlx::query_scalar(
+    let document: Option<Json<Value>> = sqlx::query_scalar(
       "SELECT document FROM project_text_preparations WHERE project_id=$1 AND security_scope=$2 AND replay_key=$3",
     )
     .bind(project.as_uuid())
@@ -57,7 +63,7 @@ impl ProjectTextInputStore for PostgresStore {
     .fetch_optional(self.pool())
     .await
     .map_err(unavailable)?;
-    Ok(document.map(|v| v.0))
+    document.map(decode_work).transpose()
   }
   async fn reserve_project_text(
     &self,
@@ -75,13 +81,14 @@ impl ProjectTextInputStore for PostgresStore {
       .execute(&mut *tx)
       .await
       .map_err(unavailable)?;
-    let retained: Option<Json<ProjectTextPreparation>> =
+    let retained: Option<Json<Value>> =
       sqlx::query_scalar("SELECT document FROM project_text_preparations WHERE id=$1 FOR UPDATE")
         .bind(proposed.id.as_bytes().as_slice())
         .fetch_optional(&mut *tx)
         .await
         .map_err(unavailable)?;
-    if let Some(Json(original)) = retained {
+    if let Some(document) = retained {
+      let original = decode_work(document)?;
       if !original.matches_submission(&request.submission) {
         return Err(conflict());
       }
@@ -121,6 +128,7 @@ impl ProjectTextInputStore for PostgresStore {
       .bind(match object.role {
         FactoryInputRole::Task => "task",
         FactoryInputRole::Acceptance => "acceptance",
+        FactoryInputRole::Document => "document",
       })
       .execute(&mut *tx)
       .await

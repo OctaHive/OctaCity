@@ -81,6 +81,7 @@ fn private_metadata(
     name: match object.role {
       octacity_server_store::FactoryInputRole::Task => "task",
       octacity_server_store::FactoryInputRole::Acceptance => "acceptance",
+      octacity_server_store::FactoryInputRole::Document => "document",
     }
     .to_owned(),
     media_type: object.media_type.as_str().to_owned(),

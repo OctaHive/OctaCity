@@ -45,6 +45,33 @@ pub(super) fn insert_common_schemas(schemas: &mut Map<String, Value>) {
 }
 
 pub(super) fn insert_project_schemas(schemas: &mut Map<String, Value>) {
+  schemas.insert("PublishProjectDocumentRequest".into(), object([
+    ("name", json!({"type":"string", "minLength":1, "maxLength":octacity_server_application::MAX_PROJECT_DOCUMENT_NAME_BYTES})),
+    ("content", json!({"type":"string", "minLength":1, "maxLength":octacity_server_application::MAX_PROJECT_DOCUMENT_BYTES})),
+  ], &["name", "content"]));
+  schemas.insert(
+    "ProjectDocumentResource".into(),
+    object(
+      [
+        ("project_id", non_empty_string()),
+        ("name", non_empty_string()),
+        ("artifact", schema_ref("FactoryArtifactReference")),
+        ("published_at", integer()),
+        ("expires_at", integer()),
+      ],
+      &["project_id", "name", "artifact", "published_at", "expires_at"],
+    ),
+  );
+  schemas.insert(
+    "ProjectDocumentPage".into(),
+    object(
+      [
+        ("items", array(schema_ref("ProjectDocumentResource"))),
+        ("next_cursor", nullable(non_empty_string())),
+      ],
+      &["items", "next_cursor"],
+    ),
+  );
   schemas.insert(
     "CreateProjectRequest".to_owned(),
     object(

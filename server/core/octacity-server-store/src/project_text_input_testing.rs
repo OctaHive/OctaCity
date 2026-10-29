@@ -5,8 +5,8 @@ use octacity_server_factory::FactoryDigest;
 use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct ProjectTextMemoryState {
-  records: BTreeMap<FactoryDigest, ProjectTextPreparation>,
-  documents: BTreeMap<FactoryDigest, ProjectTextDocuments>,
+  records: BTreeMap<FactoryDigest, RetainedProjectInput>,
+  documents: BTreeMap<FactoryDigest, RetainedProjectInputBody>,
   keys: BTreeMap<(ProjectId, ManagementIdempotencyKey), FactoryDigest>,
 }
 #[async_trait::async_trait]
@@ -22,17 +22,7 @@ impl ProjectInputQueryStore for crate::testing::InMemoryFactoryConfigurationStor
         .project_text
         .records
         .values()
-        .filter(|p| p.intent.target.project_id == project)
-        .find_map(|p| {
-          Some(PublishedProjectInput {
-            project_id: project,
-            preparation_id: p.id,
-            mapping: p.intent.mapping.clone(),
-            object: p.objects.iter().find(|o| o.artifact.artifact_id() == artifact)?.clone(),
-            published_at: p.published_at?,
-            expires_at: p.expires_at,
-          })
-        }),
+        .find_map(|record| record.published_input(project, artifact)),
     )
   }
 }
@@ -51,7 +41,8 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
         .keys
         .get(&(project, ManagementIdempotencyKey::new(scope.clone(), key.clone())))
         .and_then(|id| state.project_text.records.get(id))
-        .cloned(),
+        .map(|record| record.work().cloned())
+        .transpose()?,
     )
   }
   async fn reserve_project_text(
@@ -67,7 +58,7 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
     );
     let mut state = self.lock()?;
     if let Some(id) = state.project_text.keys.get(&key).copied() {
-      let original = &state.project_text.records[&id];
+      let original = state.project_text.records[&id].work()?;
       if !original.matches_submission(&s) {
         return Err(project_text_conflict());
       }
@@ -75,14 +66,23 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
         return Ok(original.clone());
       }
       let next = original.reclaim(request.now)?;
-      state.project_text.records.insert(id, next.clone());
+      state
+        .project_text
+        .records
+        .insert(id, RetainedProjectInput::Work(Box::new(next.clone())));
       return Ok(next);
     }
     let documents = s.documents.clone();
     let result = ProjectTextPreparation::reserve(s, audit.security_scope().clone(), request.now)?;
     let id = result.id;
-    state.project_text.documents.insert(id, documents);
-    state.project_text.records.insert(id, result.clone());
+    state
+      .project_text
+      .documents
+      .insert(id, RetainedProjectInputBody::Work(documents));
+    state
+      .project_text
+      .records
+      .insert(id, RetainedProjectInput::Work(Box::new(result.clone())));
     state.project_text.keys.insert(key, id);
     Ok(result)
   }
@@ -99,7 +99,11 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
         .keys
         .get(&(project, ManagementIdempotencyKey::new(scope.clone(), key.clone())))
         .and_then(|id| state.project_text.documents.get(id))
-        .cloned(),
+        .map(|body| match body {
+          RetainedProjectInputBody::Work(documents) => Ok(documents.clone()),
+          RetainedProjectInputBody::Document(_) => Err(project_text_conflict()),
+        })
+        .transpose()?,
     )
   }
   async fn require_project_text_owner(&self, guard: ProjectTextGuard) -> Result<(), StoreError> {
@@ -109,11 +113,16 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
       .records
       .get(&guard.id)
       .ok_or_else(project_text_conflict)?
+      .work()?
       .require_owner(&guard)
   }
   async fn release_project_text(&self, guard: ProjectTextGuard) -> Result<(), StoreError> {
     let mut state = self.lock()?;
-    if let Some(record) = state.project_text.records.get_mut(&guard.id)
+    if let Some(record) = state
+      .project_text
+      .records
+      .get_mut(&guard.id)
+      .and_then(|record| record.work_mut().ok())
       && record.generation == guard.generation
       && record.intent.target.project_id == guard.project_id
     {
@@ -131,7 +140,8 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
       .project_text
       .records
       .get_mut(&guard.id)
-      .ok_or_else(project_text_conflict)?;
+      .ok_or_else(project_text_conflict)?
+      .work_mut()?;
     record.require_owner(&guard)?;
     if record.frozen_revision.as_ref().is_some_and(|r| r != &revision) {
       return Err(project_text_conflict());
@@ -145,7 +155,8 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
       .project_text
       .records
       .get_mut(&guard.id)
-      .ok_or_else(project_text_conflict)?;
+      .ok_or_else(project_text_conflict)?
+      .work_mut()?;
     record.require_owner(&guard)?;
     if record.frozen_revision.is_none() {
       return Err(project_text_conflict());
@@ -164,6 +175,7 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
       .records
       .get(&guard.id)
       .ok_or_else(project_text_conflict)?
+      .work()?
       .validate_admission(&guard, &request)?;
     let outcome = crate::factory_configuration_testing::admit_factory_work_locked(&mut state, request)?;
     state
@@ -171,7 +183,75 @@ impl ProjectTextInputStore for crate::testing::InMemoryFactoryConfigurationStore
       .records
       .get_mut(&guard.id)
       .ok_or_else(project_text_conflict)?
+      .work_mut()?
       .admission = Some(outcome.admission.clone());
     Ok(outcome)
   }
 }
+
+// Both input kinds occupy the same journal, private-body map and scoped replay key space.
+enum RetainedProjectInput {
+  Work(Box<ProjectTextPreparation>),
+  Document(Box<ProjectDocumentPreparation>),
+}
+enum RetainedProjectInputBody {
+  Work(ProjectTextDocuments),
+  Document(String),
+}
+impl RetainedProjectInput {
+  fn work(&self) -> Result<&ProjectTextPreparation, StoreError> {
+    match self {
+      Self::Work(record) => Ok(record),
+      Self::Document(_) => Err(project_text_conflict()),
+    }
+  }
+  fn work_mut(&mut self) -> Result<&mut ProjectTextPreparation, StoreError> {
+    match self {
+      Self::Work(record) => Ok(record),
+      Self::Document(_) => Err(project_text_conflict()),
+    }
+  }
+  fn document(&self) -> Result<&ProjectDocumentPreparation, StoreError> {
+    match self {
+      Self::Document(record) => Ok(record),
+      Self::Work(_) => Err(crate::project_input_document::document_conflict()),
+    }
+  }
+  fn document_mut(&mut self) -> Result<&mut ProjectDocumentPreparation, StoreError> {
+    match self {
+      Self::Document(record) => Ok(record),
+      Self::Work(_) => Err(crate::project_input_document::document_conflict()),
+    }
+  }
+  fn published_input(&self, project: ProjectId, artifact: ArtifactId) -> Option<PublishedProjectInput> {
+    let (owner, id, mapping, objects, published_at, expires_at) = match self {
+      Self::Work(p) => (
+        p.intent.target.project_id,
+        p.id,
+        &p.intent.mapping,
+        &p.objects,
+        p.published_at,
+        p.expires_at,
+      ),
+      Self::Document(p) => (
+        p.intent.project_id,
+        p.id,
+        &p.intent.mapping,
+        &p.objects,
+        p.published_at,
+        p.expires_at,
+      ),
+    };
+    (owner == project).then_some(())?;
+    Some(PublishedProjectInput {
+      project_id: owner,
+      preparation_id: id,
+      mapping: mapping.clone(),
+      object: objects.iter().find(|o| o.artifact.artifact_id() == artifact)?.clone(),
+      published_at: published_at?,
+      expires_at,
+    })
+  }
+}
+#[path = "project_input_document_testing.rs"]
+mod documents;

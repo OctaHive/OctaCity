@@ -781,3 +781,138 @@ async fn timeline_execution_membership_retains_original_request_references_after
   assert_eq!(last.boundary, first.boundary);
   database.cleanup().await;
 }
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn standalone_project_documents_use_the_existing_input_journal_without_admission() {
+  let database = TestDatabase::migrated().await;
+  let store = PostgresStore::new(database.pool.clone());
+  let project = ProjectId::generate();
+  store
+    .create_project(management_mutation(CreateProject {
+      id: project,
+      parent_id: None,
+      name: "Context only".parse().unwrap(),
+      idempotency_key: key("create-context-project"),
+      created_at: at(1),
+    }))
+    .await
+    .unwrap();
+  let request = ProjectDocumentSubmission {
+    project_id: project,
+    name: "Project rules".parse().unwrap(),
+    content: "Private controlling rules\r\n".into(),
+    idempotency_key: key("context-document"),
+  };
+  let first = store
+    .reserve_project_document(management_mutation(ReserveProjectDocument {
+      submission: request.clone(),
+      now: at(10),
+    }))
+    .await
+    .unwrap();
+  assert_eq!(first.objects.len(), 1);
+  assert_eq!(first.objects[0].role, FactoryInputRole::Document);
+  assert!(
+    matches!(
+      store
+        .project_text_preparation(
+          project,
+          &ManagementSecurityScope::trusted_network(),
+          &request.idempotency_key
+        )
+        .await,
+      Err(StoreError::Conflict {
+        entity: EntityKind::FactoryRun
+      })
+    ),
+    "a document replay key cannot be mistaken for an unavailable Work submission"
+  );
+  let artifact = first.objects[0].artifact.clone();
+  assert!(
+    store
+      .project_input_artifact(project, artifact.artifact_id())
+      .await
+      .unwrap()
+      .is_none()
+  );
+  let restarted = PostgresStore::new(database.pool.clone());
+  assert_eq!(
+    restarted
+      .project_document_content(
+        project,
+        &ManagementSecurityScope::trusted_network(),
+        &request.idempotency_key
+      )
+      .await
+      .unwrap()
+      .as_deref(),
+    Some(request.content.as_str())
+  );
+  let retained = restarted
+    .project_document_preparation(
+      project,
+      &ManagementSecurityScope::trusted_network(),
+      &request.idempotency_key,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(retained.objects, first.objects);
+  let published = restarted
+    .publish_project_document(octacity_server_store::testing::management_mutation(first.guard(at(11))))
+    .await
+    .unwrap();
+  let resource = published.resource().unwrap();
+  assert_eq!(resource.name, request.name);
+  assert_eq!(resource.artifact, artifact);
+  assert_eq!(resource.published_at, at(11));
+  assert_eq!(resource.expires_at, first.expires_at);
+  let metadata = restarted
+    .project_input_artifact(project, artifact.artifact_id())
+    .await
+    .unwrap()
+    .unwrap();
+  assert_eq!(metadata.object.role, FactoryInputRole::Document);
+  assert_eq!(metadata.object.artifact, artifact);
+  let page_request = ListProjectDocuments {
+    project_id: project,
+    after: None,
+    limit: 1,
+    visibility: ArtifactListVisibility::all(),
+    observed_at: at(12),
+  };
+  let page = restarted.list_project_documents(page_request.clone()).await.unwrap();
+  assert_eq!(page.items, vec![resource]);
+  assert!(page.next_cursor.is_none());
+  assert!(
+    restarted
+      .list_project_documents(ListProjectDocuments {
+        visibility: ArtifactListVisibility::none(),
+        ..page_request.clone()
+      })
+      .await
+      .unwrap()
+      .items
+      .is_empty()
+  );
+  assert!(
+    restarted
+      .list_project_documents(ListProjectDocuments {
+        observed_at: first.expires_at,
+        ..page_request
+      })
+      .await
+      .unwrap()
+      .items
+      .is_empty()
+  );
+  assert!(
+    restarted
+      .project_input_artifact(ProjectId::generate(), artifact.artifact_id())
+      .await
+      .unwrap()
+      .is_none()
+  );
+  database.cleanup().await;
+}

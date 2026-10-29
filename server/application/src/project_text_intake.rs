@@ -1,10 +1,16 @@
 //! One Project-owned text publication path for Issue execution and quickstart ingress.
 use crate::*;
 use octacity_artifact_store::{ArtifactBytePublisher, ArtifactByteReader, ArtifactObject};
+/// Existing logical Artifact name ceiling; named Project inputs use the same value.
+pub use octacity_server_domain::MAX_ARTIFACT_NAME_BYTES as MAX_PROJECT_DOCUMENT_NAME_BYTES;
+/// Existing private input byte ceiling, shared with named document transports.
+pub use octacity_server_store::MAX_SOURCE_INPUT_BYTES as MAX_PROJECT_DOCUMENT_BYTES;
 use octacity_server_store::{
   FactoryAdmissionMutationOutcome, FactoryInputRole, ProjectTextInputStore, ReserveProjectText,
 };
-pub use octacity_server_store::{ProjectTextDocuments, ProjectTextIntent, ProjectTextSubmission};
+pub use octacity_server_store::{
+  ProjectDocumentResource, ProjectDocumentSubmission, ProjectTextDocuments, ProjectTextIntent, ProjectTextSubmission,
+};
 use std::sync::Arc;
 /// Shared recoverable publication; no Issue, installed Source or Build prerequisite.
 pub struct ProjectTextIntake<S, B> {
@@ -114,47 +120,29 @@ impl<S: ProjectTextInputStore + 'static, B: ArtifactBytePublisher + ArtifactByte
         let bytes = match object.role {
           FactoryInputRole::Task => documents.task(),
           FactoryInputRole::Acceptance => documents.acceptance(),
+          FactoryInputRole::Document => return Err(ApplicationError::invalid()),
         };
-        let description = ArtifactObject::new(
-          object.artifact.artifact_id(),
-          object.upload_id,
-          object.artifact.encoded_size(),
-          object.artifact.content_digest().to_string(),
-          object.media_type.as_str(),
-        )
-        .map_err(|_| ApplicationError::invalid())?;
         self
           .store
           .require_project_text_owner(record.guard(self.clock.now()?))
           .await?;
-        let observed = match self.bytes.read_published(&description, description.size_bytes()).await {
-          Ok(observed) => observed,
-          Err(octacity_artifact_store::ArtifactStoreError::NotFound) => {
-            self
-              .store
-              .require_project_text_owner(record.guard(self.clock.now()?))
-              .await?;
-            self
-              .bytes
-              .publish_verified(&description, bytes.to_vec())
-              .await
-              .map_err(|_| ApplicationError::unavailable())?;
-            self
-              .store
-              .require_project_text_owner(record.guard(self.clock.now()?))
-              .await?;
-            self
-              .bytes
-              .read_published(&description, description.size_bytes())
-              .await
-              .map_err(|_| ApplicationError::unavailable())?
+        if !publication::is_input_published(self.bytes.as_ref(), object).await? {
+          self
+            .store
+            .require_project_text_owner(record.guard(self.clock.now()?))
+            .await?;
+          self
+            .bytes
+            .publish_verified(&publication::input_object(object)?, bytes.to_vec())
+            .await
+            .map_err(|_| ApplicationError::unavailable())?;
+          self
+            .store
+            .require_project_text_owner(record.guard(self.clock.now()?))
+            .await?;
+          if !publication::is_input_published(self.bytes.as_ref(), object).await? {
+            return Err(ApplicationError::unavailable());
           }
-          Err(_) => return Err(ApplicationError::unavailable()),
-        };
-        if observed.len() as u64 != object.artifact.encoded_size()
-          || octacity_server_factory::FactoryDigest::content_sha256(&observed) != object.artifact.content_digest()
-        {
-          return Err(ApplicationError::unavailable());
         }
       }
       record = self.store.publish_project_text(record.guard(self.clock.now()?)).await?;
@@ -202,3 +190,11 @@ pub(crate) async fn authorize_project_text(
   .await?;
   Ok(())
 }
+
+#[path = "project_input_document.rs"]
+mod documents;
+
+pub use documents::{ListProjectInputDocumentsQuery, ProjectDocumentPage, PublishProjectDocumentCommand};
+
+#[path = "project_input_publication.rs"]
+mod publication;

@@ -83,6 +83,9 @@ pub use factory_admission_intent::{
 };
 mod factory_admission_model;
 mod factory_admission_port;
+mod project_input_document;
+mod project_input_policy;
+pub use project_input_document::*;
 mod project_text_input;
 pub use project_text_input::*;
 mod factory_source_artifact;

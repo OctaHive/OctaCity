@@ -922,3 +922,232 @@ fn issue_artifact_reader_describes_project_input_origin_and_expiry_without_byte_
     );
   });
 }
+
+#[test]
+fn project_input_owner_publishes_a_named_context_document_without_build_or_admission() {
+  use testing::MutationEvidenceProbe;
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let resolver = Arc::new(RecordingResolver::default());
+    let bytes = Arc::new(DocumentBytes::default());
+    let owner = ProjectTextIntake::new(
+      store.clone(),
+      bytes.clone(),
+      resolver.clone(),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    );
+    let submission = ProjectDocumentSubmission {
+      project_id: project,
+      name: "Reviewed Project goals".parse().unwrap(),
+      content: "Independent Project goals\r\nKeep this exact document.\n".into(),
+      idempotency_key: "project-goals".parse().unwrap(),
+    };
+    let before = store.mutation_evidence_counts().await;
+    let resource = owner.publish_document(&context(), submission.clone()).await.unwrap();
+    assert_eq!(resource.project_id, submission.project_id);
+    assert_eq!(resource.name.as_str(), "Reviewed Project goals");
+    assert_eq!(resource.published_at, time(20));
+    assert!(resource.expires_at > resource.published_at);
+    let reader = FactoryProjectInputReader::new(store.clone(), bytes);
+    let retained = reader
+      .read(ReadFactoryArtifact {
+        project_id: submission.project_id,
+        artifact: resource.artifact.clone(),
+        maximum_bytes: 4096,
+        observed_at: time(20),
+        required_until: time(30),
+      })
+      .await
+      .unwrap();
+    assert_eq!(retained.bytes(), submission.content.as_bytes());
+    assert_eq!(resolver.call_count(), 0);
+    let after = store.mutation_evidence_counts().await;
+    assert_eq!(
+      after.audit,
+      before.audit + 1,
+      "one accepted document publication has one management audit fact"
+    );
+    assert_eq!(after.idempotency, before.idempotency + 1);
+    assert_eq!(after.outbox, before.outbox + 1);
+  });
+}
+
+#[derive(Default)]
+struct DocumentBytes {
+  objects: Mutex<BTreeMap<ArtifactId, (ArtifactObject, Vec<u8>)>>,
+  writes: AtomicUsize,
+  reads: AtomicUsize,
+  lose_ack: AtomicBool,
+}
+#[async_trait::async_trait]
+impl ArtifactBytePublisher for DocumentBytes {
+  async fn publish_verified(&self, object: &ArtifactObject, bytes: Vec<u8>) -> Result<(), ArtifactStoreError> {
+    self
+      .objects
+      .lock()
+      .unwrap()
+      .insert(object.artifact_id(), (object.clone(), bytes));
+    self.writes.fetch_add(1, Ordering::SeqCst);
+    if self.lose_ack.swap(false, Ordering::SeqCst) {
+      return Err(ArtifactStoreError::Backend {
+        operation: octacity_artifact_store::ArtifactStoreOperation::PublishVerified,
+      });
+    }
+    Ok(())
+  }
+}
+#[async_trait::async_trait]
+impl ArtifactByteReader for DocumentBytes {
+  async fn read_published(&self, object: &ArtifactObject, _: u64) -> Result<Vec<u8>, ArtifactStoreError> {
+    self.reads.fetch_add(1, Ordering::SeqCst);
+    let objects = self.objects.lock().unwrap();
+    let (retained, bytes) = objects.get(&object.artifact_id()).ok_or(ArtifactStoreError::NotFound)?;
+    assert_eq!(object, retained);
+    Ok(bytes.clone())
+  }
+}
+
+struct DocumentClock(Timestamp);
+impl FactoryExecutionClock for DocumentClock {
+  fn now(&self) -> Result<Timestamp, ApplicationError> {
+    Ok(self.0)
+  }
+}
+#[test]
+fn named_project_document_recovers_an_unknown_write_and_replays_without_renewing_its_identity_or_retention() {
+  use testing::ManagementAuditProbe;
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(DocumentBytes::default());
+    bytes.lose_ack.store(true, Ordering::SeqCst);
+    let resolver = Arc::new(RecordingResolver::default());
+    let owner = |at| {
+      ProjectTextIntake::new(
+        store.clone(),
+        bytes.clone(),
+        resolver.clone(),
+        Arc::new(TrustedNetworkManagementPolicy),
+        Arc::new(DocumentClock(time(at))),
+      )
+    };
+    let request = ProjectDocumentSubmission {
+      project_id: project,
+      name: "Reviewed rules".parse().unwrap(),
+      content: "Private Project rules\n".into(),
+      idempotency_key: "context-rules".parse().unwrap(),
+    };
+    assert!(owner(20).publish_document(&context(), request.clone()).await.is_err());
+    let recovered = owner(50).publish_document(&context(), request.clone()).await.unwrap();
+    let replayed = owner(75).publish_document(&context(), request).await.unwrap();
+    assert_eq!(recovered, replayed);
+    assert_eq!(recovered.published_at, time(50));
+    assert_eq!(recovered.expires_at, time(20 + MAX_SOURCE_RETENTION_MILLIS as i64));
+    assert_eq!(
+      bytes.writes.load(Ordering::SeqCst),
+      1,
+      "recovery verifies retained bytes instead of repeating the accepted write"
+    );
+    assert_eq!(resolver.call_count(), 0);
+    let facts = store.management_audit_facts().await;
+    assert_eq!(
+      facts.len(),
+      1,
+      "accepted publication is audited once across recovery and replay"
+    );
+    assert_eq!(facts[0].operation, StoreOperation::PublishProjectDocument);
+  });
+}
+
+#[test]
+fn project_document_management_lists_only_metadata_without_execution_or_private_byte_reads() {
+  run(async {
+    let project = ProjectId::generate();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store.seed_project(project).unwrap();
+    let bytes = Arc::new(DocumentBytes::default());
+    let resolver = Arc::new(RecordingResolver::default());
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let owner = Arc::new(ProjectTextIntake::new(
+      store,
+      bytes.clone(),
+      resolver.clone(),
+      policy.clone(),
+      Arc::new(Clock),
+    ));
+    let resource = AuthorizedCommandHandler::new(policy.clone(), owner.clone())
+      .handle_command(
+        &context(),
+        PublishProjectDocumentCommand {
+          submission: ProjectDocumentSubmission {
+            project_id: project,
+            name: "First Project goals".parse().unwrap(),
+            content: "Private goals not in discovery".into(),
+            idempotency_key: "first-document".parse().unwrap(),
+          },
+        },
+      )
+      .await
+      .unwrap();
+    let reads = bytes.reads.load(Ordering::SeqCst);
+    let page = AuthorizedQueryHandler::new(policy, owner)
+      .handle_query(
+        &context(),
+        ListProjectInputDocumentsQuery {
+          page: CurrentDefinitionPageInput::try_new(project, None, 25).unwrap(),
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      bytes.reads.load(Ordering::SeqCst),
+      reads,
+      "metadata discovery cannot read private object bytes"
+    );
+    assert_eq!(page.items, vec![resource]);
+    assert!(page.next_cursor.is_none());
+    assert!(
+      !serde_json::to_string(&page)
+        .unwrap()
+        .contains("Private goals not in discovery")
+    );
+    assert_eq!(resolver.call_count(), 0);
+  });
+}
+
+#[test]
+fn named_project_document_rejects_an_absent_project_before_private_byte_effects() {
+  run(async {
+    let bytes = Arc::new(DocumentBytes::default());
+    let owner = ProjectTextIntake::new(
+      Arc::new(InMemoryFactoryConfigurationStore::new()),
+      bytes.clone(),
+      Arc::new(RecordingResolver::default()),
+      Arc::new(TrustedNetworkManagementPolicy),
+      Arc::new(Clock),
+    );
+    let result = owner
+      .publish_document(
+        &context(),
+        ProjectDocumentSubmission {
+          project_id: ProjectId::generate(),
+          name: "Goals".parse().unwrap(),
+          content: "Reviewed goals".into(),
+          idempotency_key: "absent-project".parse().unwrap(),
+        },
+      )
+      .await;
+    assert!(matches!(
+      result,
+      Err(ApplicationError::Store(StoreError::NotFound {
+        entity: octacity_server_domain::EntityKind::Project
+      }))
+    ));
+    assert_eq!(bytes.writes.load(Ordering::SeqCst), 0);
+    assert_eq!(bytes.reads.load(Ordering::SeqCst), 0);
+  });
+}

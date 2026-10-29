@@ -181,6 +181,7 @@ where
     ),
   )
   .unwrap()
+  .with_project_documents(workflow_commands.clone(), workflow_queries.clone())
   .with_factory_roles(
     octacity_server_api_rest::v1::FactoryRoleManagementApplication::new(role_commands.clone(), role_queries.clone())
       .with_runtime_settings(role_commands.clone(), role_queries.clone())

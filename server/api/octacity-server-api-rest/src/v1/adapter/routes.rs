@@ -466,6 +466,14 @@ fn registered_routes() -> ManagementRoutes {
     .get::<ListOperatorAttentionQuery, _, _>("listOperatorAttention", list_operator_attention)
     .post::<CreateProjectCommand, _, _>("createProject", create_project)
     .get::<ListProjectsQuery, _, _>("listProjects", list_projects)
+    .post::<octacity_server_application::PublishProjectDocumentCommand, _, _>(
+      "publishProjectDocument",
+      super::project_documents::publish,
+    )
+    .get::<octacity_server_application::ListProjectInputDocumentsQuery, _, _>(
+      "listProjectInputDocuments",
+      super::project_documents::list,
+    )
     .get::<GetProjectQuery, _, _>("getProject", get_project)
     .get::<ListProjectPipelinesQuery, _, _>("listProjectPipelines", list_project_pipelines)
     .get::<ListProjectRepositoriesQuery, _, _>("listProjectRepositories", list_project_repositories)

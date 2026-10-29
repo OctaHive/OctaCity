@@ -567,3 +567,11 @@ project_catalog_visibility!(
   crate::ListFactoryRuntimeChoicesQuery,
   crate::ListProjectSkillsQuery,
 );
+
+impl ManagementVisibilityTarget for crate::ListProjectInputDocumentsQuery {
+  type Visibility = ArtifactListVisibility;
+  const RESTRICTED_RESOURCE_KINDS: &'static [ManagementResourceKind] = &[ManagementResourceKind::Artifact];
+  fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
+    <ListBuildArtifactsQuery as ManagementVisibilityTarget>::visibility_from(grant)
+  }
+}

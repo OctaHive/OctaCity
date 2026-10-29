@@ -84,6 +84,7 @@ mod pipeline_row;
 mod pool_mutation;
 mod pool_query;
 mod pool_row;
+mod project_input_document;
 mod project_mutation;
 mod project_policy_query;
 mod project_query;

@@ -345,6 +345,7 @@ pub(crate) enum MutationKind {
   DeleteFactoryRole,
   ReserveProjectSkillImport,
   PublishProjectSkillImport,
+  PublishProjectDocument,
   PublishIntegrationConnection,
   PublishIntegrationProjectAccess,
   PublishWorkSourceConfiguration,
@@ -663,6 +664,12 @@ impl MutationKind {
         "publish-project-skill-import",
         "project",
         "factory.skill-import-published"
+      ),
+      Self::PublishProjectDocument => metadata!(
+        b"octacity.publish-project-document.v1\0",
+        "publish-project-document",
+        "artifact",
+        "project.input-document-published"
       ),
       Self::DeleteFactoryRole => metadata!(
         b"octacity.delete-factory-role.v1\0",

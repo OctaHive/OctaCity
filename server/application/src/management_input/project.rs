@@ -1,6 +1,41 @@
 use super::*;
 
 impl ManagementInputFactory {
+  /// Builds one immutable named Project input without execution or admission fields.
+  pub fn publish_project_document(
+    &self,
+    project: &str,
+    name: String,
+    content: String,
+    key: &str,
+  ) -> Result<crate::PublishProjectDocumentCommand, ManagementInputError> {
+    let submission = crate::ProjectDocumentSubmission {
+      project_id: parse(project, "project id")?,
+      name: parse(&name, "document name")?,
+      content,
+      idempotency_key: parse(key, "idempotency key")?,
+    };
+    submission
+      .validate()
+      .map_err(|_| ManagementInputError::Invalid("project document"))?;
+    Ok(crate::PublishProjectDocumentCommand { submission })
+  }
+  /// Builds bounded Project input metadata discovery with a typed Artifact cursor.
+  pub fn list_project_input_documents(
+    &self,
+    project: &str,
+    after: Option<&str>,
+    limit: u16,
+  ) -> Result<crate::ListProjectInputDocumentsQuery, ManagementInputError> {
+    Ok(crate::ListProjectInputDocumentsQuery {
+      page: crate::CurrentDefinitionPageInput::try_new(
+        parse(project, "project id")?,
+        optional_parse(after, "document cursor")?,
+        limit,
+      )
+      .map_err(|_| ManagementInputError::Invalid("project document page"))?,
+    })
+  }
   /// Creates a typed Project-create command.
   pub fn create_project(
     &self,

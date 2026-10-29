@@ -148,6 +148,7 @@ impl OperatorAttentionManagementApplication {
 
 /// Type-erased Project handlers consumed by REST.
 pub struct ProjectManagementApplication {
+  pub(super) documents: Option<super::project_documents::Endpoints>,
   pub(super) create: Arc<ProjectCreate>,
   pub(super) rename: Arc<ProjectRename>,
   pub(super) move_project: Arc<ProjectMove>,
@@ -170,6 +171,7 @@ impl ProjectManagementApplication {
       + 'static,
   {
     Self {
+      documents: None,
       create: commands.clone(),
       rename: commands.clone(),
       move_project: commands.clone(),

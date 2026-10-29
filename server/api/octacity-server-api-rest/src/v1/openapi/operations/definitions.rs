@@ -10,6 +10,34 @@ use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::PublishProjectDocumentCommand,
+    "POST",
+    "/api/v1/projects/{project_id}/input-documents",
+    "publishProjectDocument",
+    "Projects",
+    "Publish one immutable private Project input document",
+    Some("PublishProjectDocumentRequest"),
+    "ProjectDocumentResource",
+    "201",
+    true,
+    false
+  ),
+  operation!(
+    octacity_server_application::ListProjectInputDocumentsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/input-documents",
+    "listProjectInputDocuments",
+    "Projects",
+    "List visible retained Project input document metadata",
+    None,
+    "ProjectDocumentPage",
+    "200",
+    false,
+    false
+  )
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_visibility::<octacity_server_application::ListProjectInputDocumentsQuery>(),
+  operation!(
     CreateProjectCommand,
     "POST",
     "/api/v1/projects",

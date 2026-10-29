@@ -32,6 +32,10 @@ pub enum StoreOperation {
   SetIssueSourcePull,
   /// Retain one Project-owned private text input operation.
   ReserveProjectTextInput,
+  /// Discover complete live named Project input documents.
+  ListProjectInputDocuments,
+  /// Publish a reviewed standalone Project context document.
+  PublishProjectDocument,
   /// Reserve one exact reviewed Issue execution.
   RequestIssueExecution,
   /// Link an existing immutable Work and its original Run to one Issue.

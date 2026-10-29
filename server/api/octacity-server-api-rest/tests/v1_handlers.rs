@@ -77,6 +77,8 @@ mod log_search;
 mod openapi_drift;
 #[path = "v1_handlers/operator_attention.rs"]
 mod operator_attention;
+#[path = "v1_handlers/project_documents.rs"]
+mod project_documents;
 #[path = "v1_handlers/resource_search.rs"]
 mod resource_search;
 #[path = "v1_handlers/retention.rs"]
@@ -429,6 +431,14 @@ unavailable_command!(MoveProjectCommand, "move_project");
 unavailable_command!(DeleteProjectCommand, "delete_project");
 unavailable_query!(GetProjectQuery, "get_project");
 unavailable_query!(ListProjectsQuery, "list_projects");
+unavailable_command!(
+  octacity_server_application::PublishProjectDocumentCommand,
+  "publish_project_document"
+);
+unavailable_query!(
+  octacity_server_application::ListProjectInputDocumentsQuery,
+  "list_project_input_documents"
+);
 unavailable_command!(PublishPipelineVersionCommand, "publish_pipeline");
 unavailable_query!(GetPipelineQuery, "get_pipeline");
 unavailable_command!(PublishRepositoryVersionCommand, "publish_repository");
@@ -1311,6 +1321,8 @@ fn management_contract_requests() -> Vec<Request<Body>> {
     ),
     empty_request("GET", &format!("/api/v1/projects/{project_id}"), None),
     empty_request("GET", "/api/v1/projects?limit=10", None),
+    json_request("POST", &format!("/api/v1/projects/{project_id}/input-documents"), "project-document", None, r#"{"name":"Goals","content":"Reviewed goals"}"#),
+    empty_request("GET", &format!("/api/v1/projects/{project_id}/input-documents?limit=10"), None),
     empty_request(
       "GET",
       &format!("/api/v1/projects/{project_id}/pipelines?limit=10"),
@@ -1745,6 +1757,8 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "delete_project",
       "get_project",
       "list_projects",
+      "publish_project_document",
+      "list_project_input_documents",
       "list_project_pipelines",
       "list_project_repositories",
       "list_project_build_configurations",
