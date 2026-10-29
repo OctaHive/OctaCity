@@ -576,6 +576,52 @@
                     "source": "literal",
                     "value": "needs_input"
                   }
+                },
+                {
+                  "operation": "all",
+                  "predicates": [
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/work_kind"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "defect"
+                      }
+                    },
+                    {
+                      "operation": "any",
+                      "predicates": [
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/command_status"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "environment_unavailable"
+                          }
+                        },
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/command_status"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "needs_input"
+                          }
+                        }
+                      ]
+                    }
+                  ]
                 }
               ]
             },

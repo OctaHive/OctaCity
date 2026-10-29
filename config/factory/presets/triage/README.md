@@ -60,8 +60,9 @@ The closed analyst contract includes advisory `priority_assessment` (integer
 `recommended_route` and preliminary `reproducibility`. Component and route
 vocabularies live in the editable schema; all projections reuse that exact shape.
 Changing a vocabulary or priority range requires a reviewed new publication.
-Dependencies are bounded to 64 exact Run/Work/digest/terminal references. A
-reference is advisory data, never an implicit read grant or scheduling dependency.
+Both dependency lists reuse the `dependency_reference` schema and are bounded to
+64 exact Run/Work/digest/terminal references. A reference is advisory data, never
+an implicit read grant or scheduling dependency.
 
 Classification is an advisory analyst assessment. The default dependency scope
 is empty; nonempty
@@ -147,8 +148,11 @@ both command/model freshness deadlines before accepting either finding.
 A feature may use `not_applicable`; a defect without applicable proof can remain
 `unknown`, `needs_research` or `needs_input`. A negative finding concerns only its
 reviewed criterion; it does not prove already-fixed, verification-only or global
-absence. Unsupported claims go to review. No route starts deep research or another
-pipeline implicitly.
+absence. Unsupported claims go to review. For defects, command status
+`environment_unavailable` or `needs_input` requires `human_review` before any
+model-recommended route, including rejection. A feature with `not_applicable`
+reproduction does not require a defect reproduction environment. No route starts
+deep research or another pipeline implicitly.
 
 A wrapper that completes its qualified preflight can publish an indeterminate
 unavailable/input report. A killed/timed-out command, checkout/dependency error or

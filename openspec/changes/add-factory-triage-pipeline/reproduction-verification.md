@@ -100,3 +100,53 @@ environment. Actual packaged qualified-Agent execution and probe/environment
 qualification remain task 8.1; no paid model or live GitHub write was performed.
 The user requested stopping after this task; section 6 and later tasks remain
 unchecked.
+
+## Review follow-up: unavailable reproduction and shared dependencies
+
+The 5.3–5.4 review found that a completed wrapper reporting an unavailable
+environment could reach accepted rejection when the analyst recommended it.
+The released gate now sends defects with `environment_unavailable` or `needs_input`
+command status to human review before considering model route recommendations.
+Feature N/A and completed applicable command reports preserve their route policy.
+
+TDD at the existing public `FlowGateProgram::select_at` boundary:
+`cargo test --locked -j2 -p octacity-server-factory --lib triage_unavailable_defect_reproduction`
+first failed with `rejection` instead of `escalation` for
+`environment_unavailable/unknown/rejection`. After the declarative guard was added,
+the same test passed. It covers both unavailable/input statuses, all seven route
+recommendations, three unresolved defect assessments and the declared human-review
+terminal, with feature N/A and completed-command controls.
+
+The duplicated dependency-item shape was then extracted to the existing named
+schema-reference mechanism. This is a behavior-preserving refactor, so it uses
+Green-before/Green-after characterization rather than a fabricated Red. Before
+extraction, 17 triage tests passed, including a new test that checks both dependency
+scopes at 0/1/64/65 items, required members, closed fields and field-size bounds.
+After extraction they still pass. A temporary probe calling the public
+`FlowDefinitionTemplate::data_schemas` captured all 23 existing expanded schema
+digests before extraction and verified exact agreement afterward; only the new
+shared alias was added. Published/admitted schema identities remain unaffected.
+
+Cargo verification uses `CARGO_PROFILE_DEV_DEBUG=0 CARGO_PROFILE_TEST_DEBUG=0
+CARGO_INCREMENTAL=0` and `--locked -j2`. Final scoped checks are recorded below.
+These review fixes were initially verified without commits; the user subsequently
+authorized committing them.
+
+Final follow-up verification:
+
+- `cargo test --locked -j2 -p octacity-server-factory --lib --quiet`:
+  **320 passed**.
+- `cargo test --locked -j2 -p octacity-server-application --lib triage_ --quiet`:
+  **20 passed**.
+- `cargo test --locked -j2 -p octacity-server-application --lib retained_public_results_read_classification_without_mutation_or_private_context --quiet`:
+  **1 passed**, preserving authorized public result reads without mutation.
+- `cargo clippy --locked -j2 -p octacity-server-factory --all-targets -- -D warnings`:
+  passed. Application emitted only its pre-existing unused fixture warning.
+- Architecture check: **64 packages / 263 edges**, passed. Rust formatting,
+  scoped Prettier, strict OpenSpec validation and `git diff --check` passed.
+
+Disk monitoring observed **56 GiB initially, 54–56 GiB during checks, and
+55 GiB on the final reading**. Debug symbols and incremental compilation remained disabled, with
+`-j2`; no user data was deleted. The fixes change only the released template,
+characterization/regression tests and documentation. Commit creation was
+authorized separately after this verification.

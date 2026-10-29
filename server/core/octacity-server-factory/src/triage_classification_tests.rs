@@ -55,6 +55,45 @@ fn unobserved_gate_input() -> serde_json::Value {
 }
 
 #[test]
+fn triage_dependency_references_preserve_bounds_and_closed_fields_in_both_scopes() {
+  let schemas = triage_template().unwrap().data_schemas().unwrap();
+  let schema = &schemas[&key("classification_gate_input")];
+  let dependency = serde_json::json!({
+    "run_id":"00000000-0000-0000-0000-000000000001",
+    "work_id":"00000000-0000-0000-0000-000000000002",
+    "work_digest":"ab".repeat(32),"terminal":"completed"
+  });
+  for path in ["/assessment/dependencies", "/allowed_dependencies"] {
+    for (count, valid) in [(0, true), (1, true), (64, true), (65, false)] {
+      let mut input = unobserved_gate_input();
+      *input.pointer_mut(path).unwrap() = serde_json::json!(vec![dependency.clone(); count]);
+      assert_eq!(FlowPayload::new(schema, input).is_ok(), valid, "{path}/{count}");
+    }
+    for (field, invalid) in [
+      ("run_id", serde_json::json!("short")),
+      ("work_id", serde_json::json!("x".repeat(37))),
+      ("work_digest", serde_json::json!("ab".repeat(31))),
+      ("terminal", serde_json::json!("")),
+      ("terminal", serde_json::json!("x".repeat(129))),
+      ("unreviewed", serde_json::json!(true)),
+    ] {
+      let mut changed = dependency.clone();
+      changed[field] = invalid;
+      let mut input = unobserved_gate_input();
+      *input.pointer_mut(path).unwrap() = serde_json::json!([changed]);
+      assert!(FlowPayload::new(schema, input).is_err(), "{path}/{field}");
+    }
+    for field in ["run_id", "work_id", "work_digest", "terminal"] {
+      let mut incomplete = dependency.clone();
+      incomplete.as_object_mut().unwrap().remove(field);
+      let mut input = unobserved_gate_input();
+      *input.pointer_mut(path).unwrap() = serde_json::json!([incomplete]);
+      assert!(FlowPayload::new(schema, input).is_err(), "missing {path}/{field}");
+    }
+  }
+}
+
+#[test]
 fn triage_without_command_preserves_truthful_feature_and_unresolved_results() {
   for (kind, severity, reproduction, expected) in [
     ("feature_request", "advisory", "not_applicable", "requirements"),
@@ -142,6 +181,57 @@ fn triage_accepts_only_applicable_completed_command_findings() {
       );
     }
   }
+}
+
+#[test]
+fn triage_unavailable_defect_reproduction_requires_review_before_any_model_route() {
+  let template = triage_template().unwrap();
+  for status in ["environment_unavailable", "needs_input"] {
+    for reproduction in ["unknown", "needs_research", "needs_input"] {
+      for route in [
+        "rejection",
+        "requirements",
+        "development",
+        "research",
+        "escalation",
+        "already_fixed",
+        "verification_only",
+      ] {
+        let mut input = observed_gate_input("indeterminate");
+        input["command_status"] = status.into();
+        input["evidence"]["observed"]["status"] = status.into();
+        input["assessment"]["reproducibility"] = reproduction.into();
+        input["assessment"]["recommended_route"] = route.into();
+        let selected = select_classification(input).unwrap();
+        assert_eq!(selected, key("escalation"), "{status}/{reproduction}/{route}");
+        let transition = template
+          .transitions
+          .iter()
+          .find(|edge| edge.predecessor() == &key("classification_gate") && edge.outcome() == &selected)
+          .unwrap();
+        assert_eq!(
+          transition.target(),
+          &FlowTransitionTarget::Terminal(key("human_review"))
+        );
+      }
+    }
+    let mut feature = observed_gate_input("indeterminate");
+    feature["command_status"] = status.into();
+    feature["evidence"]["observed"]["status"] = status.into();
+    feature["assessment"] = analyst_assessment();
+    assert_eq!(
+      select_classification(feature).unwrap(),
+      key("requirements"),
+      "feature N/A does not require a defect reproduction environment"
+    );
+  }
+  let mut completed = observed_gate_input("matched");
+  completed["assessment"]["recommended_route"] = "rejection".into();
+  assert_eq!(
+    select_classification(completed).unwrap(),
+    key("rejection"),
+    "a completed applicable report preserves independently reviewed route policy"
+  );
 }
 
 #[test]
