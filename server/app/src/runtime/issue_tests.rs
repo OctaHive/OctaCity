@@ -292,6 +292,7 @@ async fn runtime_installs_issue_sources_independently_and_provider_outages_prese
         source,
         native_resource: octacity_server_factory::ExternalWorkIdentity::new("board-9").unwrap(),
         readable: octacity_server_factory::WorkSourceReportingPolicy {
+          ownership: None,
           states: vec!["Waiting for native review".into()],
           labels: vec![],
         },

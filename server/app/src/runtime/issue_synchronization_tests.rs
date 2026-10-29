@@ -119,10 +119,12 @@ async fn issue_synchronization_pages_exact_original_receipts_under_current_scope
         },
         native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
         readable: WorkSourceReportingPolicy {
+          ownership: None,
           labels: vec![],
           states: vec![],
         },
         writable: Some(WorkSourceReportingPolicy {
+          ownership: None,
           labels: vec!["custom-ready".into()],
           states: vec![],
         }),

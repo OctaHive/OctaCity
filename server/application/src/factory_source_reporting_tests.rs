@@ -6,6 +6,7 @@ fn mapping() -> WorkSourceStatusMapping {
 }
 fn policy() -> WorkSourceReportingPolicy {
   WorkSourceReportingPolicy {
+    ownership: None,
     labels: vec!["ready / review".into(), "needs context".into()],
     states: vec!["native-closed".into()],
   }
@@ -24,6 +25,7 @@ fn stage_source_effects_require_current_separate_write_authority_and_installed_e
       let mut connection = fixture.intent.inputs[0].definition.connection.clone().unwrap();
       connection.reporter_configuration = Some(writer.binding.configuration.clone());
       let update = FactoryStageSourceUpdate {
+        ownership_scopes: None,
         source: fixture.capability.binding.clone(),
         reporter: writer.binding,
         connection: Some(connection.clone()),
@@ -33,6 +35,15 @@ fn stage_source_effects_require_current_separate_write_authority_and_installed_e
         .validate_source_update(&context(), fixture.intent.project_id, &update)
         .await
         .unwrap();
+      let mut substituted = update.clone();
+      substituted.ownership_scopes = Some(["invented-independent-scope".parse().unwrap()].into());
+      assert!(
+        handlers
+          .validate_source_update(&context(), fixture.intent.project_id, &substituted)
+          .await
+          .is_err(),
+        "authoring cannot invent independent ownership absent from the installed Reporter"
+      );
       let mut invalid = update.clone();
       invalid.effects.add = vec!["outside-authority".into()];
       assert!(

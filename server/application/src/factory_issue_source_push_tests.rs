@@ -288,6 +288,7 @@ pub(crate) async fn install_push_mapping(
         expected_issue_version: issue.version,
         expected_mapping: expected,
         definition: IssueSourceMappingDefinition {
+          reporter_ownership: None,
           source: source.clone(),
           reporter: Some(WorkSourceBinding {
             capability: reference("native-reporter"),
@@ -315,10 +316,12 @@ pub(crate) async fn install_push_mapping(
       },
       native_resource: ExternalWorkIdentity::new("opaque-container").unwrap(),
       readable: WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec![],
         states: vec![],
       },
       writable: Some(WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec!["managed-effect".into()],
         states: vec![],
       }),

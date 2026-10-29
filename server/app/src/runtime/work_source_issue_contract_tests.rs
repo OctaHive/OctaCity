@@ -79,6 +79,7 @@ async fn github_fixture_and_second_source_share_native_task_contracts_and_isolat
       source: source.clone(),
       native_resource: ExternalWorkIdentity::new(&native).unwrap(),
       readable: WorkSourceReportingPolicy {
+        ownership: None,
         states: vec![if provider == "github" { "open" } else { "native-state" }.into()],
         labels: vec!["arbitrary".into()],
       },

@@ -147,6 +147,7 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
     }
     let stage_mapping = if let Some(update) = stage_update {
       update.validate_for_input(preparation.input.definition())?;
+      update.validate_policy(draft.reporting_policy.as_ref().ok_or_else(ApplicationError::invalid)?)?;
       if update.effects.status != request.status.as_str() {
         return Err(ApplicationError::invalid());
       }

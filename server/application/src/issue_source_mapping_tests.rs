@@ -16,6 +16,7 @@ fn installed(project_id: ProjectId) -> InstalledIssueSourceMapping {
     source: selection(project_id).source,
     native_resource: selection(project_id).item.resource,
     readable: octacity_server_factory::WorkSourceReportingPolicy {
+      ownership: None,
       labels: vec!["native-ready".into(), "native-other".into()],
       states: vec!["opaque-state".into(), "closed".into()],
     },
@@ -100,6 +101,7 @@ fn mapping_command(issue: &octacity_server_store::IssueRevision, identity: &str)
       expected_issue_version: issue.version,
       expected_mapping: None,
       definition: IssueSourceMappingDefinition {
+        reporter_ownership: None,
         source: selection(issue.project_id).source,
         reporter: None,
         push_enabled: false,
@@ -552,6 +554,7 @@ fn issue_source_mapping_publication_installs_reviewed_ownership_without_editing_
         source: selection(project_id).source,
         native_resource: selection(project_id).item.resource,
         readable: octacity_server_factory::WorkSourceReportingPolicy {
+          ownership: None,
           labels: vec![],
           states: vec![],
         },
@@ -573,6 +576,7 @@ fn issue_source_mapping_publication_installs_reviewed_ownership_without_editing_
         expected_issue_version: before.version,
         expected_mapping: None,
         definition: IssueSourceMappingDefinition {
+          reporter_ownership: None,
           source: selection(project_id).source,
           reporter: None,
           push_enabled: false,

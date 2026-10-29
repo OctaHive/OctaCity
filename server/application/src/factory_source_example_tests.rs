@@ -14,6 +14,7 @@ async fn publish_examples(provider: &str, names: &[&str]) -> PublishWorkSources 
   let fixture = Fixture::with_writer(provider, true).await;
   let reporter = fixture.reporter.clone().unwrap();
   let policy = WorkSourceReportingPolicy {
+    ownership: None,
     labels: [
       "approved",
       "rejected",

@@ -242,6 +242,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   );
   schemas.insert("IssueSourceMappingDefinition".into(),object([
     ("source",schema_ref("WorkSourceBinding")),("reporter",nullable(schema_ref("WorkSourceBinding"))),
+    ("reporter_ownership",nullable(schema_ref("WorkSourceReportingOwnership"))),
     ("push_enabled",boolean()),
     ("fields",json!({"type":"object","maxProperties":fields["enum"].as_array().expect("closed Issue fields").len(),"propertyNames":fields,"additionalProperties":schema_ref("IssueSourceFieldAuthority")})),
     ("status",nullable(schema_ref("IssueSourceStatusMapping")))

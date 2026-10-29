@@ -91,6 +91,7 @@ async fn writer(
       plugin,
       access: ManagedIntegrationAccess::new(store.clone(), connection, IntegrationVersion::INITIAL),
       effects: octacity_server_factory::WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec!["native-ready".into()],
         states: vec!["closed".into()],
       },
@@ -420,12 +421,13 @@ fn issue_source_push_requires_one_producer_for_overlapping_native_fields() {
     ..source.clone()
   };
   let status_id = octacity_server_domain::IssueStatusId::generate();
-  let mapping = octacity_server_store::PublishedIssueSourceMapping {
+  let mut mapping = octacity_server_store::PublishedIssueSourceMapping {
     project_id: ProjectId::generate(),
     issue_id: octacity_server_domain::IssueId::generate(),
     version: octacity_server_domain::IssueSourceMappingVersion::INITIAL,
     published_at: at(1),
     definition: IssueSourceMappingDefinition {
+      reporter_ownership: None,
       source: source.clone(),
       reporter: Some(reporter.clone()),
       push_enabled: true,
@@ -448,6 +450,7 @@ fn issue_source_push_requires_one_producer_for_overlapping_native_fields() {
     },
   };
   let mut direct = FactoryStageSourceUpdate {
+    ownership_scopes: None,
     source,
     reporter,
     connection: None,
@@ -458,8 +461,20 @@ fn issue_source_push_requires_one_producer_for_overlapping_native_fields() {
       state: None,
     },
   };
+  mapping.definition.reporter_ownership = Some(
+    serde_json::from_value(serde_json::json!({
+      "labels":{"owned-label":["native-group"]},"state":["native-state"]
+    }))
+    .unwrap(),
+  );
+  direct.ownership_scopes = Some(["native-group".parse().unwrap()].into());
   assert!(validate_issue_push_producers(&mapping, status_id, &[Some(direct.clone())]).is_err());
   direct.effects.remove = vec!["unrelated-label".into()];
+  assert!(
+    validate_issue_push_producers(&mapping, status_id, &[Some(direct.clone())]).is_err(),
+    "different literal labels still conflict when they replace the same installed native group"
+  );
+  direct.ownership_scopes = Some(["independent-native-group".parse().unwrap()].into());
   assert!(validate_issue_push_producers(&mapping, status_id, &[Some(direct.clone())]).is_ok());
   direct.effects.state = Some("another-opaque-state".into());
   assert!(validate_issue_push_producers(&mapping, status_id, &[Some(direct.clone())]).is_err());
@@ -482,4 +497,78 @@ fn issue_source_push_requires_one_producer_for_overlapping_native_fields() {
   effect.add.clear();
   effect.state = None;
   assert!(validate_issue_push_producers(&no_effects, status_id, &[None]).is_ok());
+}
+
+#[test]
+fn issue_source_mapping_freezes_installed_native_ownership_and_rejects_substitution() {
+  run_ready(async {
+    let store = Arc::new(InMemoryProjectStore::new());
+    let project_id = project(&store).await;
+    let policy = Arc::new(TrustedNetworkManagementPolicy);
+    let (mut writer, _, _) = writer(project_id).await;
+    let ownership = serde_json::json!({"labels":{"native-ready":["native-group"]},"state":["native-state"]});
+    writer.effects.ownership = Some(serde_json::from_value(ownership.clone()).unwrap());
+    let binding = writer.binding.clone();
+    let mut capability = installed(project_id);
+    capability.writer = Some(writer);
+    let commands = AuthorizedCommandHandler::new(
+      policy.clone(),
+      Arc::new(
+        source_handlers(store.clone(), Arc::new(Reader::default()), policy)
+          .with_source_mappings(vec![capability])
+          .unwrap(),
+      ),
+    );
+    let link = linked(
+      commands
+        .handle_command(&context(), import(selection(project_id), "native-ownership-link"))
+        .await
+        .unwrap(),
+    );
+    let issue = store.issue(project_id, link.issue_id, None).await.unwrap();
+    let mut command = mapping_command(&issue, "native-ownership-mapping");
+    command.intent.definition.reporter = Some(binding);
+    command.intent.definition.push_enabled = true;
+    command
+      .intent
+      .definition
+      .fields
+      .insert(IssueField::Status, IssueSourceFieldAuthority::OctacityOwnedPush);
+    command.intent.definition.status.as_mut().unwrap().push = Some(
+      serde_json::from_value(serde_json::json!({"statuses":[{
+        "status":issue.status_id.to_string(),"add":["native-ready"],"remove":[],"state":null
+      }]}))
+      .unwrap(),
+    );
+    let published = commands
+      .handle_command(&context(), command.clone())
+      .await
+      .unwrap()
+      .mapping;
+    assert_eq!(
+      serde_json::to_value(&published.definition).unwrap()["reporter_ownership"],
+      ownership,
+      "the existing immutable mapping pin must retain installed group ownership"
+    );
+    assert_eq!(
+      commands
+        .handle_command(&context(), command.clone())
+        .await
+        .unwrap()
+        .mapping,
+      published
+    );
+    command.intent.expected_mapping = Some(published.reference());
+    command.idempotency_key = key("substituted-native-ownership");
+    command.intent.definition.reporter_ownership = Some(
+      serde_json::from_value(serde_json::json!({
+        "labels":{"native-ready":["invented-disjoint-group"]},"state":["native-state"]
+      }))
+      .unwrap(),
+    );
+    assert!(
+      commands.handle_command(&context(), command).await.is_err(),
+      "a management body cannot redefine installed ownership"
+    );
+  });
 }

@@ -248,6 +248,14 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("reporter", schema_ref("WorkSourceBinding")),
         ("connection", nullable(schema_ref("WorkSourceConnectionReference"))),
         ("effects", schema_ref("WorkSourceStatusEffects")),
+        (
+          "ownership_scopes",
+          nullable(bounded_array(
+            key(),
+            octacity_server_application::MAX_SOURCE_REPORTING_CHOICES
+              * (2 * octacity_server_application::MAX_SOURCE_REPORTING_EFFECT_LABELS + 1),
+          )),
+        ),
       ],
       &["source", "reporter", "connection", "effects"],
     ),

@@ -144,10 +144,12 @@ async fn issue_reporter_resolver_preserves_an_explicit_connection_pin_against_an
       },
       native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
       readable: WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec![],
         states: vec![],
       },
       writable: Some(WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec!["custom-ready".into()],
         states: vec![],
       }),
@@ -349,10 +351,12 @@ async fn replace_with_removal(
       },
       native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
       readable: WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec![],
         states: vec![],
       },
       writable: Some(WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec!["custom-ready".into()],
         states: vec![],
       }),
@@ -427,6 +431,7 @@ async fn manual_issue<S>(
         budget: BudgetLimit::new(1, 5000, 0, 0, 10000).unwrap(),
       }),
       reporting_policy: Some(WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec!["custom-ready".into()],
         states: vec![],
       }),
@@ -501,6 +506,7 @@ async fn manual_issue<S>(
         expected_issue_version: issue.version,
         expected_mapping: None,
         definition: IssueSourceMappingDefinition {
+          reporter_ownership: None,
           source,
           reporter: Some(profile.binding().clone()),
           push_enabled: true,
@@ -524,10 +530,12 @@ async fn manual_issue<S>(
       },
       native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
       readable: WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec![],
         states: vec![],
       },
       writable: Some(WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec!["custom-ready".into()],
         states: vec![],
       }),

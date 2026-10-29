@@ -22,9 +22,24 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   statuses["minItems"] = json!(1);
   let status_mapping = object(json!({"statuses":statuses}), &["statuses"]);
   let reporting_policy = object(
-    json!({"labels":array(literal(),octacity_server_application::MAX_SOURCE_REPORTING_CHOICES),"states":array(literal(),octacity_server_application::MAX_SOURCE_REPORTING_CHOICES)}),
+    json!({"labels":array(literal(),octacity_server_application::MAX_SOURCE_REPORTING_CHOICES),"states":array(literal(),octacity_server_application::MAX_SOURCE_REPORTING_CHOICES),"ownership":nullable(reference("WorkSourceReportingOwnership"))}),
     &["labels", "states"],
   );
+  let mut scopes = array(
+    super::super::factory::key(),
+    octacity_server_application::MAX_SOURCE_REPORTING_CHOICES,
+  );
+  scopes["uniqueItems"] = json!(true);
+  let mut label_scopes = scopes.clone();
+  label_scopes["minItems"] = json!(1);
+  let mut ownership = object(
+    json!({
+      "labels":{"type":"object","maxProperties":octacity_server_application::MAX_SOURCE_REPORTING_CHOICES,
+        "propertyNames":literal(),"additionalProperties":label_scopes},"state":scopes
+    }),
+    &["labels", "state"],
+  );
+  ownership["x-max-utf8-bytes"] = json!(octacity_server_application::MAX_SOURCE_REPORTING_OWNERSHIP_BYTES);
   let reporting_choice = object(
     json!({"mapping":reference("WorkSourceStatusMapping"),"editable":nullable(reference("WorkSourceReportingPolicy"))}),
     &["mapping", "editable"],
@@ -104,6 +119,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     ("WorkSourceStatusEffects", effects),
     ("WorkSourceStatusMapping", status_mapping),
     ("WorkSourceReportingPolicy", reporting_policy),
+    ("WorkSourceReportingOwnership", ownership),
     ("WorkSourceReportingChoice", reporting_choice),
     ("WorkSourcePredicate", predicate),
     ("WorkSourceSelectionLabels", labels),

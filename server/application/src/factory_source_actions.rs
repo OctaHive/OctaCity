@@ -45,14 +45,11 @@ impl<
     {
       return Err(ApplicationError::invalid());
     }
-    writer
+    let policy = writer
       .reporting
       .as_ref()
       .and_then(|r| r.editable.as_ref())
-      .ok_or_else(ApplicationError::capability_unavailable)?
-      .validate_mapping(&WorkSourceStatusMapping {
-        statuses: vec![update.effects.clone()],
-      })
-      .map_err(|_| ApplicationError::invalid())
+      .ok_or_else(ApplicationError::capability_unavailable)?;
+    update.validate_policy(policy)
   }
 }

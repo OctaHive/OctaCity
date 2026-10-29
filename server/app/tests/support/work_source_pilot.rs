@@ -384,6 +384,7 @@ pub(super) fn handlers<S: PilotStore>(
       }],
     },
     Some(WorkSourceReportingPolicy {
+      ownership: None,
       labels: labels.iter().map(|s| (*s).into()).collect(),
       states: vec![],
     }),
@@ -428,6 +429,7 @@ pub(super) async fn pipeline(provider: &str, labels: &[&str; 2]) -> Pilot {
     provider,
     None,
     Some(WorkSourceReportingPolicy {
+      ownership: None,
       labels: labels.iter().map(|s| (*s).into()).collect(),
       states: vec![],
     }),

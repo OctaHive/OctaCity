@@ -356,6 +356,7 @@ async fn import_title_only_issue(fixture: &Fixture<octacity_server_store_postgre
     source: selection.source.clone(),
     native_resource: selection.item.resource.clone(),
     readable: WorkSourceReportingPolicy {
+      ownership: None,
       states: vec!["native-state".into()],
       labels: vec![],
     },

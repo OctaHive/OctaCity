@@ -39,6 +39,7 @@ pub(super) async fn qualify(
       expected_issue_version: issue.version,
       expected_mapping: Some(mapping.reference()),
       definition: IssueSourceMappingDefinition {
+        reporter_ownership: None,
         source: mapping.definition.source.clone(),
         reporter: Some(profile.binding().clone()),
         push_enabled: true,
@@ -66,10 +67,12 @@ pub(super) async fn qualify(
     },
     native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
     readable: WorkSourceReportingPolicy {
+      ownership: None,
       states: vec![],
       labels: vec![],
     },
     writable: Some(WorkSourceReportingPolicy {
+      ownership: None,
       states: vec![],
       labels: labels.iter().map(|s| (*s).into()).collect(),
     }),

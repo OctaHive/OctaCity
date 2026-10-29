@@ -135,6 +135,7 @@ fn collect_source_update(
     if let Some(mapping) = &input.reporting {
       if let Some(effects) = mapping.effects(parameters.status.as_str()) {
         updates.push(Some(crate::FactoryStageSourceUpdate {
+          ownership_scopes: None,
           source: input.source.clone(),
           reporter: reporter.clone(),
           connection: input.connection.clone(),

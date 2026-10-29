@@ -22,6 +22,7 @@ async fn imported_card_keeps_independent_work_across_reporter_restart_and_second
       provider,
       None,
       Some(WorkSourceReportingPolicy {
+        ownership: None,
         labels: labels.iter().map(|s| (*s).into()).collect(),
         states: vec![],
       }),

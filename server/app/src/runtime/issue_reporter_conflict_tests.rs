@@ -67,6 +67,7 @@ async fn issue_reporter_resolution_rechecks_current_writer_grant_before_acceptin
     source: mapping.definition.source.clone(),
     native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
     readable: WorkSourceReportingPolicy {
+      ownership: None,
       labels: vec![],
       states: vec![],
     },
@@ -75,6 +76,7 @@ async fn issue_reporter_resolution_rechecks_current_writer_grant_before_acceptin
       plugin: fixture.profile.read.plugin.clone(),
       access,
       effects: WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec!["custom-ready".into()],
         states: vec![],
       },
@@ -269,10 +271,12 @@ async fn issue_reporter_resolution_publishes_one_reviewed_policy_intent_without_
       },
       native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
       readable: WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec![],
         states: vec![],
       },
       writable: Some(WorkSourceReportingPolicy {
+        ownership: None,
         labels: vec!["custom-ready".into()],
         states: vec![],
       }),

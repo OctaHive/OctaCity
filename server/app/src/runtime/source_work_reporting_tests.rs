@@ -91,6 +91,7 @@ impl FactoryFlowInputPreparer for StatusInputs {
 #[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
 async fn normal_work_actions_deliver_intermediate_and_terminal_effects_with_original_provenance() {
   let policy = WorkSourceReportingPolicy {
+    ownership: None,
     labels: vec!["custom-ready".into(), "custom-finished".into(), "arbitrary".into()],
     states: vec!["native-closed".into()],
   };

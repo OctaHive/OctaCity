@@ -120,6 +120,7 @@ where
         source: selection.source.clone(),
         native_resource: selection.item.resource.clone(),
         readable: WorkSourceReportingPolicy {
+          ownership: None,
           states: vec!["open".into(), "closed".into()],
           labels: vec![],
         },
@@ -258,6 +259,7 @@ where
           expected_issue_version: issue.version,
           expected_mapping: None,
           definition: IssueSourceMappingDefinition {
+            reporter_ownership: None,
             source: selection.source,
             reporter: None,
             push_enabled: false,

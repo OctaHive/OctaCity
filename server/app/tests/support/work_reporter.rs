@@ -123,6 +123,7 @@ pub(super) async fn fixture_with_reporting(
     provider,
     omit,
     custom.then(|| WorkSourceReportingPolicy {
+      ownership: None,
       labels: vec!["custom-ready".into()],
       states: vec![],
     }),

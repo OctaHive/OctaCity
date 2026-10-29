@@ -113,6 +113,7 @@ fn ownership(
       expected_issue_version: issue.version,
       expected_mapping: None,
       definition: IssueSourceMappingDefinition {
+        reporter_ownership: None,
         source: imported.selection.source.clone(),
         reporter: None,
         push_enabled: false,
@@ -122,6 +123,7 @@ fn ownership(
     },
     native_resource: imported.selection.item.resource.clone(),
     readable: octacity_server_factory::WorkSourceReportingPolicy {
+      ownership: None,
       labels: vec![],
       states: vec![],
     },
@@ -273,6 +275,7 @@ async fn source_mapping_publication_and_transition_survive_restart_as_one_origin
       expected_issue_version: before.version,
       expected_mapping: None,
       definition: IssueSourceMappingDefinition {
+        reporter_ownership: None,
         source: imported.selection.source.clone(),
         reporter: None,
         push_enabled: false,
@@ -302,6 +305,7 @@ async fn source_mapping_publication_and_transition_survive_restart_as_one_origin
     },
     native_resource: imported.selection.item.resource.clone(),
     readable: octacity_server_factory::WorkSourceReportingPolicy {
+      ownership: None,
       labels: vec![],
       states: vec!["opaque-native".into()],
     },
@@ -553,6 +557,7 @@ async fn source_push_freezes_original_desired_effects_in_the_existing_mutation_o
     }),
   });
   publication.writable = Some(octacity_server_factory::WorkSourceReportingPolicy {
+    ownership: None,
     labels: vec!["native-ready".into()],
     states: vec!["native-state".into()],
   });

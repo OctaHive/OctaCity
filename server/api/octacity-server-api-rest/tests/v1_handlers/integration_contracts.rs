@@ -3,6 +3,41 @@ use super::*;
 use serde_json::json;
 
 #[test]
+fn reporting_native_ownership_is_bounded_and_optional_in_public_contracts() {
+  let document = openapi_document();
+  let policy = json!({"labels":["component:server","size:small"],"states":[],"ownership":{
+    "labels":{"component:server":["shared-native-group"],"size:small":["shared-native-group"]},"state":[]}});
+  assert_json_matches_component(&document, "WorkSourceReportingPolicy", &policy);
+  let schemas = &document["components"]["schemas"];
+  assert_eq!(schemas["WorkSourceReportingOwnership"]["additionalProperties"], false);
+  assert_eq!(
+    schemas["WorkSourceReportingOwnership"]["properties"]["labels"]["maxProperties"],
+    128
+  );
+  assert_eq!(
+    schemas["WorkSourceReportingOwnership"]["properties"]["labels"]["additionalProperties"]["maxItems"],
+    128
+  );
+  for (component, field) in [
+    ("WorkSourceReportingPolicy", "ownership"),
+    ("FactoryStageSourceUpdate", "ownership_scopes"),
+    ("IssueSourceMappingDefinition", "reporter_ownership"),
+  ] {
+    assert!(
+      schemas[component]["properties"].get(field).is_some(),
+      "{component}.{field}"
+    );
+    assert!(
+      !schemas[component]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!(field)),
+      "legacy pins keep their serialized shape"
+    );
+  }
+}
+
+#[test]
 fn reporting_progress_exposes_exact_stage_outcome_and_action_without_private_payloads() {
   let document = openapi_document();
   assert_component_exists(&document, "WorkSourceReportingOrigin");

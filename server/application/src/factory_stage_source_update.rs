@@ -18,8 +18,26 @@ pub struct FactoryStageSourceUpdate {
   pub connection: Option<WorkSourceConnectionRef>,
   /// Literal bounded effects; unrelated fields are preserved.
   pub effects: WorkSourceStatusEffects,
+  /// Reviewed installed native ownership, checked again against the selected Reporter.
+  /// Absent for legacy actions; never inferred from literal label names.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub ownership_scopes: Option<std::collections::BTreeSet<octacity_server_factory::FactoryKey>>,
 }
 impl FactoryStageSourceUpdate {
+  /// Rechecks the literal ceiling and any frozen independence claim under installed policy.
+  pub fn validate_policy(
+    &self,
+    policy: &octacity_server_factory::WorkSourceReportingPolicy,
+  ) -> Result<(), ApplicationError> {
+    self.validate()?;
+    let actual = policy
+      .ownership_for(&self.effects)
+      .map_err(|_| ApplicationError::invalid())?;
+    if self.ownership_scopes.is_some() && self.ownership_scopes != actual {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
   /// Checks the closed shape without granting provider authority.
   pub fn validate(&self) -> Result<(), ApplicationError> {
     WorkSourceStatusMapping {
@@ -151,12 +169,17 @@ pub fn validate_issue_push_producers(
     };
     update.validate()?;
     if update.reporter.installation.identity() == reporter.installation.identity()
+      && (!update.effects.add.is_empty() || !update.effects.remove.is_empty() || update.effects.state.is_some())
       && ((effects.state.is_some() && update.effects.state.is_some())
         || effects
           .add
           .iter()
           .chain(&effects.remove)
-          .any(|label| update.effects.add.contains(label) || update.effects.remove.contains(label)))
+          .any(|label| update.effects.add.contains(label) || update.effects.remove.contains(label))
+        || match (&mapping.definition.reporter_ownership, &update.ownership_scopes) {
+          (Some(ownership), Some(scopes)) => !ownership.scopes(effects).is_disjoint(scopes),
+          _ => true, // Missing installed ownership cannot prove independent producers.
+        })
     {
       return Err(crate::FactoryValidationDiagnostics::invalid(
         "/action/source_update/producer",

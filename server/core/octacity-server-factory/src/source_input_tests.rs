@@ -21,6 +21,7 @@ fn input_reporting_maps_arbitrary_statuses_only_within_the_installed_effect_ceil
   ]}))
   .unwrap();
   let policy = crate::WorkSourceReportingPolicy {
+    ownership: None,
     labels: vec!["ready / review".into(), "needs context".into()],
     states: vec!["native-closed".into()],
   };
@@ -666,5 +667,82 @@ fn input_predicate_is_immutable_bounded_and_uses_literal_normalized_labels() {
     let invalid: crate::WorkSourcePredicate =
       serde_json::from_value(serde_json::json!({"state":null,"all_of":all,"any_of":any,"none_of":none})).unwrap();
     assert!(invalid.validate().is_err());
+  }
+}
+#[test]
+fn installed_reporting_ownership_resolves_native_groups_without_changing_legacy_policy_bytes() {
+  let policy: crate::WorkSourceReportingPolicy = serde_json::from_value(serde_json::json!({
+    "labels":["component:server","priority:high","size:small"],"states":["open","closed"],
+    "ownership":{"labels":{
+      "component:server":["native-triage-group"],"priority:high":["native-triage-group"],"size:small":["native-size-group"]
+    },"state":["native-state"]}
+  })).unwrap();
+  policy.validate().unwrap();
+  let effect = |label: &str| crate::WorkSourceStatusEffects {
+    status: "reviewed".into(),
+    add: vec![label.into()],
+    remove: vec![],
+    state: None,
+  };
+  let component = policy.ownership_for(&effect("component:server")).unwrap().unwrap();
+  let priority = policy.ownership_for(&effect("priority:high")).unwrap().unwrap();
+  let size = policy.ownership_for(&effect("size:small")).unwrap().unwrap();
+  assert_eq!(
+    component, priority,
+    "different labels can own the same installed native field"
+  );
+  assert!(component.is_disjoint(&size));
+  let legacy = serde_json::json!({"labels":["component:server"],"states":[]});
+  let legacy_policy: crate::WorkSourceReportingPolicy = serde_json::from_value(legacy.clone()).unwrap();
+  assert_eq!(serde_json::to_value(&legacy_policy).unwrap(), legacy);
+  assert!(
+    legacy_policy
+      .ownership_for(&effect("component:server"))
+      .unwrap()
+      .is_none(),
+    "missing metadata is unknown, never inferred singleton ownership"
+  );
+}
+
+#[test]
+fn installed_reporting_ownership_requires_complete_bounded_native_scopes() {
+  let valid = serde_json::json!({"labels":["ready"],"states":["open"],
+    "ownership":{"labels":{"ready":["labels-group"]},"state":["state"]}});
+  for change in [
+    "missing_label",
+    "foreign_label",
+    "empty_label",
+    "empty_state",
+    "foreign_state",
+    "too_many_scopes",
+  ] {
+    let mut value = valid.clone();
+    match change {
+      "missing_label" => {
+        value["ownership"]["labels"] = serde_json::json!({});
+      }
+      "foreign_label" => {
+        value["ownership"]["labels"]["foreign"] = serde_json::json!(["foreign"]);
+      }
+      "empty_label" => {
+        value["ownership"]["labels"]["ready"] = serde_json::json!([]);
+      }
+      "empty_state" => {
+        value["ownership"]["state"] = serde_json::json!([]);
+      }
+      "foreign_state" => {
+        value["states"] = serde_json::json!([]);
+      }
+      "too_many_scopes" => {
+        value["ownership"]["labels"]["ready"] =
+          serde_json::json!((0..129).map(|i| format!("scope-{i}")).collect::<Vec<_>>());
+      }
+      _ => unreachable!(),
+    }
+    let policy: crate::WorkSourceReportingPolicy = serde_json::from_value(value).unwrap();
+    assert!(
+      policy.validate().is_err(),
+      "{change} must not assert independent native ownership"
+    );
   }
 }

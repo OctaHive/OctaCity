@@ -31,6 +31,9 @@ pub struct IssueSourceMappingDefinition {
   pub source: WorkSourceBinding,
   /// Separately installed writer; absent for pull-only mappings.
   pub reporter: Option<WorkSourceBinding>,
+  /// Installed native field ownership frozen by publication, covered by this mapping's digest.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub reporter_ownership: Option<octacity_server_factory::WorkSourceReportingOwnership>,
   /// Explicit outbound opt-in; publication itself dispatches no provider effect.
   pub push_enabled: bool,
   /// Absent fields are unsynchronized.
@@ -273,13 +276,28 @@ impl PublishIssueSourceMapping {
     {
       return Err(invalid_source_mapping());
     }
+    let mut definition = i.definition.clone();
+    let installed_ownership = has_push
+      .then(|| self.writable.as_ref().and_then(|policy| policy.ownership.clone()))
+      .flatten();
+    if definition.reporter_ownership.is_some() && definition.reporter_ownership != installed_ownership {
+      return Err(invalid_source_mapping());
+    }
+    definition.reporter_ownership = installed_ownership;
+    if serde_json::to_vec(&definition)
+      .map_err(|_| invalid_source_mapping())?
+      .len()
+      > MAX_ISSUE_SOURCE_MAPPING_BYTES
+    {
+      return Err(invalid_source_mapping());
+    }
     Ok(PublishedIssueSourceMapping {
       project_id: current.project_id,
       issue_id: current.id,
       version: previous
         .map_or(Ok(IssueSourceMappingVersion::INITIAL), |p| p.version.next())
         .map_err(|_| mapping_conflict())?,
-      definition: i.definition.clone(),
+      definition,
       published_at: self.published_at,
     })
   }

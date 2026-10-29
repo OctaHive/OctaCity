@@ -138,6 +138,7 @@ fn automatic_input_rejects_a_stage_connection_revision_that_cannot_report_for_it
         .reporter_configuration = Some(writer.binding.configuration.clone());
       let original = fixture.intent.inputs[0].definition.clone();
       let update = FactoryStageSourceUpdate {
+        ownership_scopes: None,
         source: original.source.clone(),
         reporter: writer.binding.clone(),
         connection: original.connection.clone(),
@@ -276,6 +277,7 @@ fn automatic_input_checks_exact_source_and_reporter_pins_in_nested_stage_effects
           .reporter_configuration = Some(writer.binding.configuration.clone());
         let original = fixture.intent.inputs[0].definition.clone();
         let update = FactoryStageSourceUpdate {
+          ownership_scopes: None,
           source: original.source.clone(),
           reporter: writer.binding.clone(),
           connection: original.connection.clone(),
