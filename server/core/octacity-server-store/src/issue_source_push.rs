@@ -168,6 +168,16 @@ pub struct IssuePushProjection {
 /// Narrow Reporter read over already committed Issue effects; no metadata mutation or admission.
 #[async_trait::async_trait]
 pub trait IssueSourceProjectionStore: Send + Sync {
+  /// Private current producer policy for the canonical native ticket of an admitted Source Work.
+  /// Derive native identity/security partition from retained admission, never a caller-selected card.
+  /// This read grants no write authority and must not import, attach or refresh an Issue.
+  async fn work_source_issue_push_mapping(
+    &self,
+    _project: octacity_server_domain::ProjectId,
+    _work: octacity_server_factory::WorkEnvelopeId,
+  ) -> Result<Option<crate::PublishedIssueSourceMapping>, StoreError> {
+    Err(StoreError::Unavailable)
+  }
   /// Bounded live membership in operation-identity order, restricted to the original native partition.
   /// Returned material is private; public readers must project an explicit safe allowlist.
   async fn issue_push_projections(
@@ -190,4 +200,13 @@ pub trait IssueSourceProjectionStore: Send + Sync {
 }
 // This fixture backend owns Factory records only; it cannot invent an Issue publication.
 #[cfg(any(test, feature = "test-support"))]
-impl IssueSourceProjectionStore for crate::factory_configuration_testing::InMemoryFactoryConfigurationStore {}
+#[async_trait::async_trait]
+impl IssueSourceProjectionStore for crate::factory_configuration_testing::InMemoryFactoryConfigurationStore {
+  async fn work_source_issue_push_mapping(
+    &self,
+    _: octacity_server_domain::ProjectId,
+    _: octacity_server_factory::WorkEnvelopeId,
+  ) -> Result<Option<crate::PublishedIssueSourceMapping>, StoreError> {
+    Ok(None)
+  }
+}

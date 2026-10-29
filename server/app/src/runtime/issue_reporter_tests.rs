@@ -6,6 +6,8 @@ use octacity_server_store::testing::management_mutation;
 mod conflicts;
 #[path = "issue_synchronization_tests.rs"]
 mod synchronization;
+#[path = "factory_triage_reporting_tests.rs"]
+mod triage;
 
 #[tokio::test]
 #[ignore = "requires disposable OCTACITY_POSTGRES_URL"]
@@ -396,24 +398,56 @@ async fn manual_issue<S>(
   store: &octacity_server_store_postgres::PostgresStore,
   fixture: &Fixture<S>,
 ) -> (IssueRevision, FactoryReporterProfile, TransitionIssue) {
+  manual_issue_in_scope(
+    store,
+    fixture,
+    &octacity_server_store::ManagementSecurityScope::trusted_network(),
+  )
+  .await
+}
+
+fn scoped_issue_mutation<T>(
+  scope: &octacity_server_store::ManagementSecurityScope,
+  mutation: T,
+) -> octacity_server_store::ManagementMutation<T> {
+  let audit = management_mutation(()).audit().clone();
+  octacity_server_store::ManagementMutation::new(
+    mutation,
+    octacity_server_store::MutationAuditContext::try_new(
+      audit.actor().clone(),
+      scope.clone(),
+      audit.request_identity(),
+    )
+    .unwrap(),
+  )
+}
+
+async fn manual_issue_in_scope<S>(
+  store: &octacity_server_store_postgres::PostgresStore,
+  fixture: &Fixture<S>,
+  scope: &octacity_server_store::ManagementSecurityScope,
+) -> (IssueRevision, FactoryReporterProfile, TransitionIssue) {
   let project = fixture.input.project_id();
   let issue = store
-    .create_issue(management_mutation(CreateIssue {
-      id: IssueId::generate(),
-      intent: CreateIssueIntent {
-        project_id: project,
-        planning: Default::default(),
-        content: IssueContent {
-          title: "Manual requirements".into(),
-          description: "No Factory target".into(),
-          acceptance: None,
-          priority: None,
+    .create_issue(scoped_issue_mutation(
+      scope,
+      CreateIssue {
+        id: IssueId::generate(),
+        intent: CreateIssueIntent {
+          project_id: project,
+          planning: Default::default(),
+          content: IssueContent {
+            title: "Manual requirements".into(),
+            description: "No Factory target".into(),
+            acceptance: None,
+            priority: None,
+          },
         },
+        assignees: Default::default(),
+        idempotency_key: IdempotencyKey::new("manual").unwrap(),
+        created_at: time(1),
       },
-      assignees: Default::default(),
-      idempotency_key: IdempotencyKey::new("manual").unwrap(),
-      created_at: time(1),
-    }))
+    ))
     .await
     .unwrap()
     .issue;
@@ -459,34 +493,37 @@ async fn manual_issue<S>(
   )
   .unwrap();
   store
-    .attach_issue_source(management_mutation(AttachIssueSource {
-      intent: AttachIssueSourceIntent {
-        selection: IssueSourceSelection {
-          connection: None,
-          project_id: project,
-          source: source.clone(),
-          item: WorkSourceItem {
-            resource: ExternalWorkIdentity::new("native-container").unwrap(),
-            item: ExternalWorkIdentity::new("TASK-native").unwrap(),
+    .attach_issue_source(scoped_issue_mutation(
+      scope,
+      AttachIssueSource {
+        intent: AttachIssueSourceIntent {
+          selection: IssueSourceSelection {
+            connection: None,
+            project_id: project,
+            source: source.clone(),
+            item: WorkSourceItem {
+              resource: ExternalWorkIdentity::new("native-container").unwrap(),
+              item: ExternalWorkIdentity::new("TASK-native").unwrap(),
+            },
           },
+          issue_id: issue.id,
+          expected_version: issue.version,
+          expected_field_policy: Default::default(),
         },
-        issue_id: issue.id,
-        expected_version: issue.version,
-        expected_field_policy: Default::default(),
+        observation: IssueSourceObservation {
+          display_id: Some("TASK-7".into()),
+          source: source.clone(),
+          plugin: fixture.profile.read.plugin.clone(),
+          provider_configuration: FactoryDigest::from_bytes([1; 32]),
+          selection_digest: FactoryDigest::from_bytes([2; 32]),
+          snapshot_digest: FactoryDigest::from_bytes([3; 32]),
+          observed_at: time(2),
+          expires_at: time(100),
+        },
+        idempotency_key: IdempotencyKey::new("attach").unwrap(),
+        attached_at: time(2),
       },
-      observation: IssueSourceObservation {
-        display_id: Some("TASK-7".into()),
-        source: source.clone(),
-        plugin: fixture.profile.read.plugin.clone(),
-        provider_configuration: FactoryDigest::from_bytes([1; 32]),
-        selection_digest: FactoryDigest::from_bytes([2; 32]),
-        snapshot_digest: FactoryDigest::from_bytes([3; 32]),
-        observed_at: time(2),
-        expires_at: time(100),
-      },
-      idempotency_key: IdempotencyKey::new("attach").unwrap(),
-      attached_at: time(2),
-    }))
+    ))
     .await
     .unwrap();
   let edge = store
@@ -498,50 +535,53 @@ async fn manual_issue<S>(
     .transitions[0]
     .clone();
   store
-    .publish_issue_source_mapping(management_mutation(PublishIssueSourceMapping {
-      writer_access: None,
-      intent: PublishIssueSourceMappingIntent {
-        project_id: project,
-        issue_id: issue.id,
-        expected_issue_version: issue.version,
-        expected_mapping: None,
-        definition: IssueSourceMappingDefinition {
-          reporter_ownership: None,
-          source,
-          reporter: Some(profile.binding().clone()),
-          push_enabled: true,
-          fields: [(IssueField::Status, IssueSourceFieldAuthority::OctacityOwnedPush)].into(),
-          status: Some(IssueSourceStatusMapping {
-            workflow: IssueWorkflowPin {
-              id: issue.workflow_id,
-              version: issue.workflow_version,
-            },
-            pull: vec![],
-            push: Some(WorkSourceStatusMapping {
-              statuses: vec![WorkSourceStatusEffects {
-                status: edge.to.to_string(),
-                add: vec!["custom-ready".into()],
-                remove: vec![],
-                state: None,
-              }],
+    .publish_issue_source_mapping(scoped_issue_mutation(
+      scope,
+      PublishIssueSourceMapping {
+        writer_access: None,
+        intent: PublishIssueSourceMappingIntent {
+          project_id: project,
+          issue_id: issue.id,
+          expected_issue_version: issue.version,
+          expected_mapping: None,
+          definition: IssueSourceMappingDefinition {
+            reporter_ownership: None,
+            source,
+            reporter: Some(profile.binding().clone()),
+            push_enabled: true,
+            fields: [(IssueField::Status, IssueSourceFieldAuthority::OctacityOwnedPush)].into(),
+            status: Some(IssueSourceStatusMapping {
+              workflow: IssueWorkflowPin {
+                id: issue.workflow_id,
+                version: issue.workflow_version,
+              },
+              pull: vec![],
+              push: Some(WorkSourceStatusMapping {
+                statuses: vec![WorkSourceStatusEffects {
+                  status: edge.to.to_string(),
+                  add: vec!["custom-ready".into()],
+                  remove: vec![],
+                  state: None,
+                }],
+              }),
             }),
-          }),
+          },
         },
+        native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
+        readable: WorkSourceReportingPolicy {
+          ownership: None,
+          labels: vec![],
+          states: vec![],
+        },
+        writable: Some(WorkSourceReportingPolicy {
+          ownership: None,
+          labels: vec!["custom-ready".into()],
+          states: vec![],
+        }),
+        idempotency_key: IdempotencyKey::new("mapping").unwrap(),
+        published_at: time(3),
       },
-      native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
-      readable: WorkSourceReportingPolicy {
-        ownership: None,
-        labels: vec![],
-        states: vec![],
-      },
-      writable: Some(WorkSourceReportingPolicy {
-        ownership: None,
-        labels: vec!["custom-ready".into()],
-        states: vec![],
-      }),
-      idempotency_key: IdempotencyKey::new("mapping").unwrap(),
-      published_at: time(3),
-    }))
+    ))
     .await
     .unwrap();
   let command = TransitionIssue::manual(
@@ -561,6 +601,43 @@ async fn manual_issue<S>(
 
   (issue, profile, command)
 }
+async fn disable_issue_push(store: &octacity_server_store_postgres::PostgresStore, issue: &IssueRevision) {
+  let scope = octacity_server_store::ManagementSecurityScope::trusted_network();
+  let previous = store
+    .issue_source_mapping(issue.project_id, issue.id, &scope, None)
+    .await
+    .unwrap()
+    .unwrap();
+  let mut definition = previous.definition.clone();
+  definition.push_enabled = false;
+  store
+    .publish_issue_source_mapping(management_mutation(PublishIssueSourceMapping {
+      writer_access: None,
+      intent: PublishIssueSourceMappingIntent {
+        project_id: issue.project_id,
+        issue_id: issue.id,
+        expected_issue_version: issue.version,
+        expected_mapping: Some(previous.reference()),
+        definition,
+      },
+      native_resource: ExternalWorkIdentity::new("native-container").unwrap(),
+      readable: WorkSourceReportingPolicy {
+        ownership: None,
+        labels: vec![],
+        states: vec![],
+      },
+      writable: Some(WorkSourceReportingPolicy {
+        ownership: None,
+        labels: vec!["custom-ready".into()],
+        states: vec![],
+      }),
+      idempotency_key: IdempotencyKey::new("disable-independent-issue-push").unwrap(),
+      published_at: time(116),
+    }))
+    .await
+    .unwrap();
+}
+
 fn issue_worker<S>(
   fixture: &Fixture<S>,
   store: Arc<octacity_server_store_postgres::PostgresStore>,
@@ -684,6 +761,37 @@ async fn issue_and_factory_effects_share_native_order_and_preserve_independent_f
       .transition_issue(management_mutation(command))
       .await
       .unwrap();
+    let retained = fixture
+      .store
+      .issue_push_projections(
+        issue.project_id,
+        issue.id,
+        &octacity_server_store::ManagementSecurityScope::trusted_network(),
+        None,
+        4,
+      )
+      .await
+      .unwrap();
+    // Switch current ownership explicitly. The already accepted Issue intent remains historical
+    // ordered material; an active second producer is rejected by the separate triage tests.
+    disable_issue_push(&fixture.store, &accepted.issue).await;
+    let after_review = fixture
+      .store
+      .issue_push_projections(
+        issue.project_id,
+        issue.id,
+        &octacity_server_store::ManagementSecurityScope::trusted_network(),
+        None,
+        4,
+      )
+      .await
+      .unwrap();
+    assert_eq!(after_review.len(), retained.len());
+    for (after, before) in after_review.iter().zip(&retained) {
+      assert_eq!(after.intent, before.intent);
+      assert_eq!(after.record, before.record);
+      assert_eq!(after.accepted_at, before.accepted_at);
+    }
     let directory = fixture.root.path().join("mixed-tracker");
     let field = if scope == "overlap" {
       "a".repeat(64)

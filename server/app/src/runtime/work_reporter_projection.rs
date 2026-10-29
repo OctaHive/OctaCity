@@ -157,28 +157,28 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
     } else {
       None
     };
-    let intent = reporter::ProjectionIntent {
-      effects: if let Some(mapping) = stage_mapping
-        .as_ref()
-        .or(preparation.input.definition().reporting.as_ref())
-      {
+    let mapping = stage_mapping
+      .as_ref()
+      .or(preparation.input.definition().reporting.as_ref());
+    let effects = mapping
+      .map(|mapping| {
         draft
           .reporting_policy
           .as_ref()
           .ok_or_else(ApplicationError::invalid)?
           .validate_mapping(mapping)
           .map_err(|_| ApplicationError::invalid())?;
-        let effects = mapping
+        mapping
           .effects(request.status.as_str())
-          .ok_or_else(ApplicationError::invalid)?;
-        Some(reporter::ProjectionEffects {
-          add: effects.add.clone(),
-          remove: effects.remove.clone(),
-          state: effects.state.clone(),
-        })
-      } else {
-        None
-      },
+          .ok_or_else(ApplicationError::invalid)
+      })
+      .transpose()?;
+    let intent = reporter::ProjectionIntent {
+      effects: effects.map(|effects| reporter::ProjectionEffects {
+        add: effects.add.clone(),
+        remove: effects.remove.clone(),
+        state: effects.state.clone(),
+      }),
       projection_id: request.operation_id.to_string(),
       configuration_digest: draft.provider_configuration.to_string(),
       resource: draft.access.clone(),
@@ -189,6 +189,42 @@ impl<S: FactorySourceStore + FactoryRunStore + IssueSourceProjectionStore> Hoste
       network_hosts: draft.network_hosts.clone(),
     };
     intent.validate().map_err(|_| ApplicationError::invalid())?;
+    if let Some(mapping) = self
+      .store
+      .work_source_issue_push_mapping(request.subject.project_id(), request.work_id)
+      .await?
+    {
+      let update = effects
+        .map(|effects| {
+          Ok::<_, ApplicationError>(octacity_server_application::FactoryStageSourceUpdate {
+            ownership_scopes: draft
+              .reporting_policy
+              .as_ref()
+              .ok_or_else(ApplicationError::invalid)?
+              .ownership_for(effects)
+              .map_err(|_| ApplicationError::invalid())?,
+            source: preparation.input.definition().source.clone(),
+            reporter: binding.clone(),
+            connection: preparation.input.definition().connection.clone(),
+            effects: effects.clone(),
+          })
+        })
+        .transpose()?;
+      // Every configured Issue push choice owns its fields, even before a local move.
+      // A missing finite legacy mapping is opaque and must not bypass this review.
+      for effects in mapping
+        .definition
+        .status
+        .as_ref()
+        .and_then(|status| status.push.as_ref())
+        .into_iter()
+        .flat_map(|mapping| &mapping.statuses)
+      {
+        let status = effects.status.parse().map_err(|_| ApplicationError::invalid())?;
+        octacity_server_application::validate_issue_push_producers(&mapping, status, std::slice::from_ref(&update))
+          .map_err(|_| ApplicationError::ReporterRejected(octacity_server_store::FactoryOutboxFailure::Conflict))?;
+      }
+    }
     if let Some(connection) = &preparation.input.definition().connection {
       if profile.managed_access.as_ref().is_some_and(|access| {
         !access.matches_work_connection(connection, octacity_server_store::IntegrationPurpose::TaskUpdate)

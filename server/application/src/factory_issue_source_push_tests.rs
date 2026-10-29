@@ -1,6 +1,63 @@
 //! Configured Issue actions retain their reporting review through the real node/command owner.
 use super::*;
 use octacity_server_domain::*;
+use octacity_server_store::testing::MutationEvidenceProbe;
+
+#[test]
+fn issue_status_action_without_reviewed_association_refuses_a_move_or_push() {
+  crate::factory_admission_tests::run_ready(async {
+    let selection = IssuePipelineStatusSelection {
+      workflow_id: IssueWorkflowId::generate(),
+      workflow_version: IssueWorkflowVersion::INITIAL,
+      transition_id: IssueTransitionId::generate(),
+      outcome: key("done"),
+    };
+    let h = harness(
+      binding(
+        "issue-action",
+        "transition_issue",
+        serde_json::to_value(selection).unwrap(),
+      ),
+      permissions("issue-action"),
+    );
+    let issues = Arc::new(store_testing::InMemoryProjectStore::new());
+    let evidence = issues.mutation_evidence_counts().await;
+    let before = h.store.factory_run_snapshot(h.run).await.unwrap();
+    let action = FactoryIssueStatusAction::new(
+      reference("issue-action"),
+      issues.clone(),
+      h.store.clone(),
+      ManagementRequestContext::trusted_network(ManagementRequestId::new(uuid::Uuid::new_v4()).unwrap()),
+      Arc::new(TrustedNetworkManagementPolicy),
+      crate::factory_node_test_support::clock(),
+    );
+    let runner = FactoryNodeRunner::new(
+      h.store.clone(),
+      Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
+      crate::factory_node_test_support::clock(),
+    );
+    assert_eq!(
+      runner
+        .run_once(h.run, h.claim, h.target.clone(), Some(h.input), at(11))
+        .await
+        .unwrap(),
+      FactoryNodeStep::Advanced
+    );
+    assert!(matches!(
+      runner.run_once(h.run, h.claim, h.target, None, at(12)).await,
+      Err(ApplicationError::CapabilityUnavailable)
+    ));
+    let after = h.store.factory_run_snapshot(h.run).await.unwrap();
+    assert_eq!(after.work, before.work);
+    assert!(
+      after.flow.data.records.is_empty(),
+      "a technical stop cannot invent a business result"
+    );
+    assert!(issues.retained_issue_push_intents().unwrap().is_empty());
+    assert_eq!(issues.mutation_evidence_counts().await, evidence);
+  });
+}
+
 #[test]
 fn configured_issue_action_retains_exact_push_review_and_origin_without_provider_io() {
   crate::factory_admission_tests::run_ready(async {

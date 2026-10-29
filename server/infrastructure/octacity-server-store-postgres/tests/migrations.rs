@@ -16,6 +16,34 @@ use support::TestDatabase;
 
 #[tokio::test]
 #[ignore = "requires an explicitly configured disposable PostgreSQL service"]
+async fn source_work_producer_review_has_bounded_native_lookup_indexes() {
+  let database = TestDatabase::migrated().await;
+  let definitions: Vec<String> =
+    sqlx::query_scalar("SELECT indexdef FROM pg_indexes WHERE schemaname='public' AND tablename=ANY($1::text[])")
+      .bind(["factory_source_preparations", "issue_source_links"].as_slice())
+      .fetch_all(&database.pool)
+      .await
+      .unwrap();
+  assert!(
+    definitions.iter().any(
+      |definition| definition.contains("ON public.factory_source_preparations")
+        && definition.contains("(project_id, work_id)")
+        && definition.contains("WHERE settled")
+    ),
+    "retained Work lookup must not scan a Project's preparation history"
+  );
+  assert!(
+    definitions
+      .iter()
+      .any(|definition| definition.contains("ON public.issue_source_links")
+        && definition.contains("(project_id, native_correlation)")),
+    "partition-qualified correlation lookup must not scan a Project's canonical links"
+  );
+  database.cleanup().await;
+}
+
+#[tokio::test]
+#[ignore = "requires an explicitly configured disposable PostgreSQL service"]
 async fn completed_issue_publication_recovery_does_not_read_history_on_readiness_or_claim() {
   let database = TestDatabase::migrated().await;
   let reader = sqlx::postgres::PgPoolOptions::new()

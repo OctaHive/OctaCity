@@ -53,6 +53,53 @@ pub(crate) async fn read(
 }
 #[async_trait::async_trait]
 impl IssueSourceProjectionStore for PostgresStore {
+  async fn work_source_issue_push_mapping(
+    &self,
+    project: octacity_server_domain::ProjectId,
+    work: octacity_server_factory::WorkEnvelopeId,
+  ) -> Result<Option<PublishedIssueSourceMapping>, StoreError> {
+    let mut tx = self.pool().begin().await.map_err(unavailable)?;
+    let identities: Vec<(Vec<u8>, Vec<u8>)> = sqlx::query_as(
+      "SELECT p.issue,w.security_scope_digest FROM factory_source_preparations p \
+       JOIN factory_work_envelopes w ON w.id=p.work_id AND w.project_id=p.project_id \
+       WHERE p.project_id=$1 AND p.work_id=$2 AND p.settled LIMIT 2",
+    )
+    .bind(project.as_uuid())
+    .bind(work.as_uuid())
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    if identities.len() != 1 {
+      return Err(source_conflict());
+    }
+    let (native, partition) = &identities[0];
+    let digest = |value: &Vec<u8>| {
+      value
+        .as_slice()
+        .try_into()
+        .map(FactoryDigest::from_bytes)
+        .map_err(|_| StoreError::Unavailable)
+    };
+    let correlation = source_native_correlation(digest(native)?, digest(partition)?);
+    let links: Vec<Json<IssueSourceLink>> = sqlx::query_scalar(
+      "SELECT document FROM issue_source_links WHERE project_id=$1 AND native_correlation=$2 LIMIT 2",
+    )
+    .bind(project.as_uuid())
+    .bind(correlation.as_bytes().as_slice())
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(unavailable)?;
+    if links.len() > 1 {
+      return Err(source_conflict());
+    }
+    let mapping = if let Some(Json(link)) = links.first() {
+      crate::issue_source_mapping::read(&mut tx, project, link.issue_id, None).await?
+    } else {
+      None
+    };
+    tx.commit().await.map_err(unavailable)?;
+    Ok(mapping)
+  }
   async fn issue_push_projections(
     &self,
     project: octacity_server_domain::ProjectId,
