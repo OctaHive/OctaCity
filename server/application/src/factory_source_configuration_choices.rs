@@ -70,6 +70,30 @@ pub struct WorkSourceInputChoices {
   /// Installed and currently granted profiles only.
   pub items: Vec<WorkSourceInputChoice>,
 }
+impl WorkSourceInputChoices {
+  // Shared exact current authority matching for read and write purposes.
+  pub(crate) fn for_binding(
+    &self,
+    connection: &WorkSourceConnectionRef,
+    binding: &WorkSourceBinding,
+    purpose: IntegrationPurpose,
+  ) -> Option<&WorkSourceInputChoice> {
+    if self.connection_id != connection.id
+      || self.connection_version != connection.version
+      || self.access_version != connection.access_version
+    {
+      return None;
+    }
+    let configuration = match purpose {
+      IntegrationPurpose::TaskRead => Some(&connection.source_configuration),
+      IntegrationPurpose::TaskUpdate => connection.reporter_configuration.as_ref(),
+      _ => None,
+    }?;
+    self.items.iter().find(|choice| {
+      choice.purpose == purpose && &choice.binding == binding && &choice.connection_configuration == configuration
+    })
+  }
+}
 /// Bounded installed choice discovery, without provider reads, task import or input publication.
 #[derive(Clone, Debug)]
 pub struct ListWorkSourceInputChoicesQuery {
@@ -324,4 +348,32 @@ impl ManagementVisibilityTarget for ListWorkSourceInputChoicesQuery {
   fn visibility_from(grant: &ManagementAuthorizationGrant) -> Result<Self::Visibility, ManagementVisibilityError> {
     <ListProjectsQuery as ManagementVisibilityTarget>::visibility_from(grant)
   }
+}
+
+// Prospective preset drafts and ordinary publication share these pure installed ceilings.
+pub(crate) fn validate_source_predicate(
+  predicate: &WorkSourcePredicate,
+  allowed_states: Option<&[FactoryKey]>,
+  label_presence_supported: bool,
+) -> Result<(), ApplicationError> {
+  predicate
+    .validate()
+    .map_err(|_| FactoryValidationDiagnostics::invalid("/predicate"))?;
+  let states = allowed_states.ok_or_else(|| FactoryValidationDiagnostics::invalid("/predicate"))?;
+  if predicate.state.as_ref().is_some_and(|state| !states.contains(state)) {
+    return Err(FactoryValidationDiagnostics::invalid("/predicate/state"));
+  }
+  if predicate.label_presence == WorkSourceLabelPresence::None && !label_presence_supported {
+    return Err(FactoryValidationDiagnostics::invalid("/predicate/label_presence"));
+  }
+  Ok(())
+}
+pub(crate) fn validate_source_reporting(
+  mapping: &WorkSourceStatusMapping,
+  policy: Option<&WorkSourceReportingPolicy>,
+) -> Result<(), ApplicationError> {
+  policy
+    .ok_or_else(|| FactoryValidationDiagnostics::invalid("/reporting"))?
+    .validate_mapping(mapping)
+    .map_err(|_| FactoryValidationDiagnostics::invalid("/reporting"))
 }

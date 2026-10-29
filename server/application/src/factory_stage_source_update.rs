@@ -109,9 +109,18 @@ pub(crate) fn validate_input_source_updates(
   flow: &octacity_server_factory::FactoryFlowConfiguration,
 ) -> Result<(), ApplicationError> {
   if input.enabled {
-    for update in flow_source_updates(flow) {
-      update?.validate_for_input(input)?;
-    }
+    validate_flow_source_updates_for_input(input, flow)?;
+  }
+  Ok(())
+}
+
+/// Authoring can check an exact prospective input without enabling it or publishing a target.
+pub(crate) fn validate_flow_source_updates_for_input(
+  input: &octacity_server_factory::WorkSourceInputDraft,
+  flow: &octacity_server_factory::FactoryFlowConfiguration,
+) -> Result<(), ApplicationError> {
+  for update in flow_source_updates(flow) {
+    update?.validate_for_input(input)?;
   }
   Ok(())
 }
@@ -119,17 +128,28 @@ pub(crate) fn validate_input_source_updates(
 fn flow_source_updates(
   flow: &octacity_server_factory::FactoryFlowConfiguration,
 ) -> impl Iterator<Item = Result<FactoryStageSourceUpdate, ApplicationError>> + '_ {
-  flow
-    .closure
-    .definitions()
-    .iter()
-    .flat_map(|definition| definition.nodes())
-    .filter_map(|node| node.action())
-    .filter(|binding| binding.action().as_str() == "set_status" && binding.parameters().get("source_update").is_some())
-    .map(|binding| {
-      let parameters = crate::factory_flow_action::StatusParameters::from_binding(binding)?;
-      parameters.source_update.ok_or_else(ApplicationError::invalid)
+  flow_source_update_bindings(flow).map(|(_, _, update)| update)
+}
+// The same frozen action parsing is shared by publication and metadata readiness.
+pub(crate) fn flow_source_update_bindings(
+  flow: &octacity_server_factory::FactoryFlowConfiguration,
+) -> impl Iterator<
+  Item = (
+    octacity_server_factory::FlowDefinitionRef,
+    &octacity_server_factory::FactoryKey,
+    Result<FactoryStageSourceUpdate, ApplicationError>,
+  ),
+> + '_ {
+  flow.closure.definitions().iter().flat_map(|definition| {
+    definition.nodes().iter().filter_map(move |node| {
+      let binding = node.action().filter(|binding| {
+        binding.action().as_str() == "set_status" && binding.parameters().get("source_update").is_some()
+      })?;
+      let update = crate::factory_flow_action::StatusParameters::from_binding(binding)
+        .and_then(|parameters| parameters.source_update.ok_or_else(ApplicationError::invalid));
+      Some((definition.reference(), node.key(), update))
     })
+  })
 }
 
 /// Rejects two producers for the same native managed field; this grants no writer authority.

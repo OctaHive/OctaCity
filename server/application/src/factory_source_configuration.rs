@@ -197,29 +197,18 @@ impl<
         .find(|(c, _)| {
           c.project_id == definition.target.project_id() && Some(&c.binding) == definition.reporter.as_ref()
         })
-        .and_then(|(_, choice)| choice.editable.as_ref())
-        .ok_or_else(|| FactoryValidationDiagnostics::invalid("/reporting"))?;
-      policy
-        .validate_mapping(mapping)
-        .map_err(|_| FactoryValidationDiagnostics::invalid("/reporting"))?;
+        .and_then(|(_, choice)| choice.editable.as_ref());
+      choices::validate_source_reporting(mapping, policy)?;
     }
     if let Some(predicate) = &definition.predicate {
-      predicate
-        .validate()
-        .map_err(|_| FactoryValidationDiagnostics::invalid("/predicate"))?;
-      let support = self
-        .predicate_support
-        .iter()
-        .find(|s| {
-          s.capability.project_id == definition.target.project_id() && s.capability.binding == definition.source
-        })
-        .ok_or_else(|| FactoryValidationDiagnostics::invalid("/predicate"))?;
-      if predicate.state.as_ref().is_some_and(|s| !support.states.contains(s)) {
-        return Err(FactoryValidationDiagnostics::invalid("/predicate/state"));
-      }
-      if predicate.label_presence == WorkSourceLabelPresence::None && !support.label_presence {
-        return Err(FactoryValidationDiagnostics::invalid("/predicate/label_presence"));
-      }
+      let support = self.predicate_support.iter().find(|s| {
+        s.capability.project_id == definition.target.project_id() && s.capability.binding == definition.source
+      });
+      choices::validate_source_predicate(
+        predicate,
+        support.map(|s| s.states.as_slice()),
+        support.is_some_and(|s| s.label_presence),
+      )?;
     }
     let connection = definition
       .connection

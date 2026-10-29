@@ -1557,9 +1557,9 @@ async fn factory_input_sources_document_the_actual_retained_record_views() {
   let document = openapi_document();
   assert_eq!(
     document["components"]["schemas"]["FactoryFlowRecordView"]["enum"],
-    serde_json::json!(["payload", "metadata"])
+    serde_json::json!(["input_payload", "payload", "metadata"])
   );
-  for view in ["payload", "metadata"] {
+  for view in ["input_payload", "payload", "metadata"] {
     assert_json_matches_component(
       &document,
       "FactoryFlowInputSource",

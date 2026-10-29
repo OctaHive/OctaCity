@@ -133,6 +133,48 @@ pub fn installed_role_choices(
   )
 }
 
+/// Installed role capabilities plus explicit policies for public preset/publication conformance.
+pub fn installed_preset_choices(
+  project: ProjectId,
+) -> (
+  octacity_server_factory::FactoryConfigurationChoices,
+  octacity_server_factory::FactoryRoleProfileDefinition,
+) {
+  use octacity_server_factory::*;
+  let (choices, definition) = installed_role_choices(project);
+  let mut entries = choices.entries();
+  entries.references.push(FactoryReferenceChoice {
+    kind: FactoryChoiceKind::NodeCapability,
+    alias: "reporter".parse().unwrap(),
+    reference: ImmutableReference::new(
+      "reporter".parse().unwrap(),
+      "v1".parse().unwrap(),
+      FactoryDigest::from_bytes([0x99; 32]),
+    ),
+  });
+  for (kind, alias, byte) in [
+    (FactoryChoiceKind::AdmissionPolicy, "admission", 21),
+    (FactoryChoiceKind::PermissionCeiling, "permissions", 22),
+  ] {
+    entries.references.push(FactoryReferenceChoice {
+      kind,
+      alias: FactoryKey::new(alias).unwrap(),
+      reference: ImmutableReference::new(
+        FactoryKey::new(alias).unwrap(),
+        FactoryKey::new("v1").unwrap(),
+        FactoryDigest::from_bytes([byte; 32]),
+      ),
+    });
+  }
+  let mut installed = FactoryConfigurationChoices::try_new(entries).unwrap();
+  for (alias, capability) in choices.role_profile_capabilities() {
+    installed = installed
+      .with_role_profile_capability(alias.clone(), capability.clone())
+      .unwrap();
+  }
+  (installed, definition)
+}
+
 use crate::{
   ApplicationError, FactoryExecutionClock, FactoryNodeCancellationStep, FactoryNodeExecutionRequest,
   FactoryNodeExecutionStep, FactoryNodeExecutor, FactoryNodeRunner, FactoryNodeTarget, SystemFactoryExecutionClock,

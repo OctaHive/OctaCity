@@ -8,6 +8,7 @@ mod data;
 mod diagnostics;
 mod flow;
 mod permissions;
+mod presets;
 mod roles;
 mod runtime_settings;
 
@@ -46,6 +47,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   let bounds = octacity_server_application::factory_configuration_document_bounds();
   diagnostics::insert(schemas);
   roles::insert(schemas);
+  presets::insert(schemas);
   runtime_settings::insert(schemas);
   schemas.insert(
     "FactoryFlowHumanGateBinding".to_owned(),

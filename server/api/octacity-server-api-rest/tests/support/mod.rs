@@ -6,8 +6,8 @@ mod request;
 
 pub use agent_pool::{create_body as agent_pool_create_body, publish_body as agent_pool_publish_body};
 pub use application::{
-  JobEventApplication, recording_management_application, recording_management_application_with_policy,
-  recording_management_application_with_retention,
+  JobEventApplication, recording_management_application, recording_management_application_with_factory,
+  recording_management_application_with_policy, recording_management_application_with_retention,
 };
 pub use documentation::documented_http_requests;
 pub use openapi::{assert_component_exists, assert_json_matches_component, assert_required_header};

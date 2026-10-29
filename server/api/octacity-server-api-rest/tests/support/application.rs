@@ -65,7 +65,7 @@ pub fn recording_management_application_with_policy<E>(
 where
   E: ManagementQueryUseCase<ReadJobEventsQuery, Error = ApplicationError> + 'static,
 {
-  recording_management_application_with_retention_and_policy(application.clone(), job_events, application, policy)
+  recording_management_application_with_retention_and_policy(application.clone(), job_events, application, policy, None)
 }
 
 pub fn recording_management_application_with_retention<E, R>(
@@ -85,6 +85,20 @@ where
     job_events,
     retention,
     Arc::new(TrustedNetworkManagementPolicy),
+    None,
+  )
+}
+
+pub fn recording_management_application_with_factory(
+  application: Arc<RecordingApplication>,
+  factory: FactoryManagementApplication,
+) -> ManagementApplication {
+  recording_management_application_with_retention_and_policy(
+    application.clone(),
+    application.clone(),
+    application,
+    Arc::new(TrustedNetworkManagementPolicy),
+    Some(factory),
   )
 }
 
@@ -93,6 +107,7 @@ fn recording_management_application_with_retention_and_policy<E, R>(
   job_events: Arc<E>,
   retention: Arc<R>,
   policy: Arc<dyn ManagementAuthorizationPolicy>,
+  factory: Option<FactoryManagementApplication>,
 ) -> ManagementApplication
 where
   E: ManagementQueryUseCase<ReadJobEventsQuery, Error = ApplicationError> + 'static,
@@ -132,15 +147,17 @@ where
         DefinitionManagementApplication::new(commands.clone(), commands.clone(), queries.clone()),
         ScheduleManagementApplication::new(commands.clone(), queries.clone()),
         InternalTriggerManagementApplication::new(commands.clone(), queries.clone()),
-        FactoryManagementApplication::new(
-          commands.clone(),
-          queries.clone(),
-          commands.clone(),
-          queries.clone(),
-          commands.clone(),
-          queries.clone(),
-          commands.clone(),
-        ),
+        factory.unwrap_or_else(|| {
+          FactoryManagementApplication::new(
+            commands.clone(),
+            queries.clone(),
+            commands.clone(),
+            queries.clone(),
+            commands.clone(),
+            queries.clone(),
+            commands.clone(),
+          )
+        }),
       ),
       AgentManagementApplication::new(
         commands.clone(),
@@ -170,6 +187,9 @@ where
       .with_skills(role_commands.clone(), role_queries),
   )
   .with_factory_profile_selection(role_commands)
+  .with_factory_presets(octacity_server_api_rest::v1::FactoryPresetManagementApplication::new(
+    source_queries.clone(),
+  ))
   .with_factory_actions(
     octacity_server_api_rest::v1::FactoryActionManagementApplication::new(action_queries.clone())
       .with_observations(action_queries),

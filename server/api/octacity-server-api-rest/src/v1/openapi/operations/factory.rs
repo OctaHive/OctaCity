@@ -12,6 +12,36 @@ use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::ResolveFactoryPresetQuery,
+    "POST",
+    "/api/v1/projects/{project_id}/factory-presets/resolve",
+    "resolveFactoryPreset",
+    "Factory",
+    "Resolve reviewed ordinary drafts without publication or remote I/O",
+    Some("FactoryPresetResolutionRequest"),
+    "FactoryPresetResolution",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
+    octacity_server_application::ListFactoryPresetsQuery,
+    "GET",
+    "/api/v1/projects/{project_id}/factory-presets",
+    "listFactoryPresets",
+    "Factory",
+    "Discover bounded release presets without execution or publication",
+    None,
+    "FactoryPresetPage",
+    "200",
+    false,
+    false
+  )
+  .with_visibility::<octacity_server_application::ListFactoryPresetsQuery>()
+  .with_parameters(ParameterProfile::CurrentDefinitionList)
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::GetFactoryRuntimeSettingsQuery,
     "GET",
     "/api/v1/projects/{project_id}/factory-runtimes/{alias}/versions/{version}",

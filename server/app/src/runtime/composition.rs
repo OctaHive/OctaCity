@@ -213,6 +213,7 @@ impl ServerRuntime {
       None
     };
     let managed_factory_source = source_management
+      .clone()
       .map(|sources| {
         let principal = &config
           .integration_management()
@@ -241,6 +242,7 @@ impl ServerRuntime {
       ),
       issue_integrations,
       managed_issue_sources,
+      source_management,
       store: registration_store.clone(),
       integrations,
       authoritative_store: placement_store.clone(),

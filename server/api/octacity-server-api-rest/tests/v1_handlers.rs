@@ -59,6 +59,8 @@ mod build_discovery;
 mod definition_discovery;
 #[path = "v1_handlers/factory.rs"]
 mod factory;
+#[path = "v1_handlers/factory_presets.rs"]
+mod factory_presets;
 #[path = "v1_handlers/factory_roles.rs"]
 mod factory_roles;
 #[path = "v1_handlers/factory_runtimes.rs"]
@@ -431,6 +433,14 @@ unavailable_command!(PublishPipelineVersionCommand, "publish_pipeline");
 unavailable_query!(GetPipelineQuery, "get_pipeline");
 unavailable_command!(PublishRepositoryVersionCommand, "publish_repository");
 unavailable_query!(GetRepositoryQuery, "get_repository");
+unavailable_query!(
+  octacity_server_application::ListFactoryPresetsQuery,
+  "list_factory_presets"
+);
+unavailable_query!(
+  octacity_server_application::ResolveFactoryPresetQuery,
+  "resolve_factory_preset"
+);
 unavailable_command!(PublishBuildConfigurationVersionCommand, "publish_configuration");
 unavailable_command!(PublishProjectPolicyCommand, "publish_project_policy");
 unavailable_command!(CreateTriggerDefinitionCommand, "create_trigger_definition");
@@ -1637,6 +1647,7 @@ fn management_contract_requests() -> Vec<Request<Body>> {
   ];
   requests.extend(factory_roles::management_requests());
   requests.extend(factory_runtimes::management_requests());
+  requests.extend(factory_presets::management_requests());
   requests
 }
 
@@ -1851,6 +1862,8 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "get_factory_runtime_settings",
       "validate_factory_runtime_settings",
       "publish_factory_runtime_settings",
+      "list_factory_presets",
+      "resolve_factory_preset",
     ]
   );
 }

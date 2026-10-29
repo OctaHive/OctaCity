@@ -68,7 +68,9 @@ pub use issue::*;
 pub mod testing {
   pub use crate::factory_test_support::*;
   pub use crate::issue_test_support::*;
-  pub use octacity_server_store::testing::{InMemoryFactoryConfigurationStore, role_profile_contract_intent};
+  pub use octacity_server_store::testing::{
+    InMemoryFactoryConfigurationStore, MutationEvidenceProbe, role_profile_contract_intent,
+  };
 }
 mod issue_workflow;
 pub use issue_workflow::*;
@@ -85,7 +87,9 @@ mod factory_source_admission;
 mod factory_source_completion;
 mod factory_triage_context;
 pub use factory_triage_context::{TriageContextProblem, TriageProjectContextDraft};
+mod factory_presets;
 mod factory_result_reporting;
+pub use factory_presets::*;
 pub use factory_result_reporting::{
   FactoryReportingCase, FactoryReportingDimension, FactoryReportingSelection, FactoryReportingTarget,
   FactoryResultReportingDraft,

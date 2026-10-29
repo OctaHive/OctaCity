@@ -3,10 +3,12 @@
 //! performs no provider I/O, credential access, mutation or automatic activation.
 use crate::{ApplicationError, FactoryReporterRetryPolicy, FactoryStageSourceUpdate};
 use octacity_server_factory::*;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// Exact installed Source/Reporter selection and its advertised editing ceiling.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryReportingTarget {
   /// Original input scope; the admitted Work supplies the native item.
   pub source: WorkSourceBinding,
@@ -19,7 +21,8 @@ pub struct FactoryReportingTarget {
 }
 
 /// A scalar choice or a closed integer band, never a model-authored label.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "selection", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FactoryReportingSelection {
   /// One value from the selected finite result vocabulary.
   Literal {
@@ -35,7 +38,8 @@ pub enum FactoryReportingSelection {
   },
 }
 /// Explicit effect or explicit preservation for one reviewed selector.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryReportingCase {
   /// Reviewed scalar/band selector.
   pub selection: FactoryReportingSelection,
@@ -43,7 +47,8 @@ pub struct FactoryReportingCase {
   pub effects: Option<WorkSourceStatusEffects>,
 }
 /// One independent classification dimension, compiled once for all selected outcomes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryReportingDimension {
   /// Operator-owned stable dimension identity.
   pub key: FactoryKey,
@@ -56,7 +61,8 @@ pub struct FactoryReportingDimension {
 }
 
 /// Operator-reviewed finite effects compiled into an ordinary reusable subflow.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct FactoryResultReportingDraft {
   /// Exact target and installed vocabulary.
   pub target: FactoryReportingTarget,

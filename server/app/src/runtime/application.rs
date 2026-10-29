@@ -53,6 +53,7 @@ type WebhookHostConfiguration = (
 
 pub(super) struct ApplicationAssembly {
   pub(super) management_policy: Arc<dyn ManagementAuthorizationPolicy>,
+  pub(super) source_management: Option<Arc<super::source_management::SourceManagement>>,
   pub(super) managed_issue_sources: Option<super::integration_management::ManagedIssueSources>,
   pub(super) issue_integrations: super::IssueRuntimeIntegrations,
   pub(super) store: Arc<PostgresStore>,
@@ -80,6 +81,7 @@ pub(super) fn management_application(
   let ApplicationAssembly {
     management_policy,
     managed_issue_sources,
+    source_management,
     issue_integrations,
     store,
     authoritative_store,
@@ -165,10 +167,21 @@ pub(super) fn management_application(
   let workflows = Arc::new(octacity_server_application::IssueWorkflowHandlers::new(store.clone()));
   let workflow_commands = authorized_commands(&management_policy, workflows.clone());
   let workflow_queries = authorized_queries(&management_policy, workflows);
-  let factory = Arc::new(
+  let source_queries = source_management.map(|sources| {
+    authorized_queries(
+      &sources.policy,
+      Arc::new(octacity_server_application::InstalledFactorySourceHandlers::new(
+        sources.clone(),
+      )),
+    )
+  });
+  let factory =
     octacity_server_application::FactoryConfigurationHandlers::with_policy(store.clone(), management_policy.clone())
-      .with_issue_status_actions(workflow_queries.clone()),
-  );
+      .with_issue_status_actions(workflow_queries.clone());
+  let factory = Arc::new(match &source_queries {
+    Some(sources) => factory.with_source_actions(sources.clone()),
+    None => factory,
+  });
   let log_search = Arc::new(BuildLogSearch::new(store.clone(), log_search_index));
   let operational_metadata = Arc::new(OperationalMetadataQueries::new(operational_metadata));
   let project_commands = authorized_commands(&management_policy, projects.clone());
@@ -202,10 +215,13 @@ pub(super) fn management_application(
   let resource_search_queries = authorized_queries(&management_policy, resource_search);
   let operator_attention_queries = authorized_queries(&management_policy, operator_attention);
   let operational_queries = authorized_queries(&management_policy, operational_metadata);
-  let flow_handlers = Arc::new(
+  let flow_handlers =
     octacity_server_application::FactoryFlowDefinitionHandlers::new(store.clone(), management_policy.clone())
-      .with_issue_status_actions(workflow_queries.clone()),
-  );
+      .with_issue_status_actions(workflow_queries.clone());
+  let flow_handlers = Arc::new(match &source_queries {
+    Some(sources) => flow_handlers.with_source_actions(sources.clone()),
+    None => flow_handlers,
+  });
   let flow_commands = authorized_commands(&management_policy, flow_handlers.clone());
   let flow_queries = authorized_queries(&management_policy, flow_handlers);
   let factory_admission = authorized_commands(
@@ -279,17 +295,21 @@ pub(super) fn management_application(
     store.clone(),
     management_policy.clone(),
   ));
-  let result_artifacts = Arc::new(octacity_server_application::IssueArtifactHandlers::new(
-    executions.clone(),
-    Arc::new(
-      octacity_server_application::FactoryArtifactReader::new(
-        store.clone(),
-        authoritative_store,
-        object_storage.clone(),
-      )
+  let retained_artifacts = Arc::new(
+    octacity_server_application::FactoryArtifactReader::new(store.clone(), authoritative_store, object_storage.clone())
       .with_project_inputs(store.clone())
       .with_source_inputs(store.clone()),
-    ),
+  );
+  let presets = octacity_server_application::FactoryPresetHandlers::new(store.clone(), management_policy.clone())
+    .with_repositories(configuration_queries.clone())
+    .with_artifacts(retained_artifacts.clone());
+  let presets = Arc::new(match source_queries {
+    Some(sources) => presets.with_sources(sources.clone()).with_source_actions(sources),
+    None => presets,
+  });
+  let result_artifacts = Arc::new(octacity_server_application::IssueArtifactHandlers::new(
+    executions.clone(),
+    retained_artifacts,
     Arc::new(octacity_server_application::SystemFactoryExecutionClock),
     management_policy.clone(),
   ));
@@ -390,6 +410,9 @@ pub(super) fn management_application(
     ),
   )
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?
+  .with_factory_presets(octacity_server_api_rest::v1::FactoryPresetManagementApplication::new(
+    authorized_queries(&management_policy, presets),
+  ))
   .with_factory_roles(role_management)
   .with_factory_profile_selection(factory_control)
   .with_factory_actions(

@@ -594,6 +594,14 @@ fn registered_routes() -> ManagementRoutes {
       "listFactoryRoleTemplates",
       super::factory_roles::templates,
     )
+    .get::<octacity_server_application::ListFactoryPresetsQuery, _, _>(
+      "listFactoryPresets",
+      super::factory_presets::list,
+    )
+    .post::<octacity_server_application::ResolveFactoryPresetQuery, _, _>(
+      "resolveFactoryPreset",
+      super::factory_presets::resolve,
+    )
     .get::<octacity_server_application::GetFactoryRoleTemplateQuery, _, _>(
       "getFactoryRoleTemplate",
       super::factory_roles::template,
