@@ -5,6 +5,95 @@ use octacity_server_store::testing::*;
 use serde_json::json;
 
 #[test]
+fn effect_delivery_reads_retained_states_without_dispatch_or_ownership_disclosure() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = factory_node_journal_contract_fixture();
+    let store = Arc::new(InMemoryFactoryConfigurationStore::new());
+    store
+      .seed_factory_admission(
+        fixture.admission.clone(),
+        octacity_server_store::FactoryWorkSourceScope {
+          source: "manual".parse().unwrap(),
+          security_scope: octacity_server_store::ManagementSecurityScope::trusted_network(),
+        },
+        FactoryDigest::from_bytes([1; 32]),
+        management_mutation_with_request((), "delivery-read-admission").audit(),
+      )
+      .unwrap();
+    let before = store.factory_run_snapshot(fixture.admission.run.id()).await.unwrap();
+    let mutations = store.mutation_evidence_counts().await;
+    let queries = crate::AuthorizedQueryHandler::new(
+      Arc::new(crate::TrustedNetworkManagementPolicy),
+      Arc::new(crate::FactoryDiscoveryHandlers::new(store.clone())),
+    );
+    let collection =
+      serde_json::from_str("\"effect-delivery\"").expect("configured effects have an ordinary read collection");
+    let page = queries
+      .handle_query(
+        &crate::factory_admission_tests::context(),
+        ListFactoryDiagnosticsQuery::try_new(fixture.admission.run.id(), collection, None, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    let wire = serde_json::to_value(&page).unwrap();
+    assert_eq!(wire["items"].as_array().unwrap().len(), 1);
+    let row = &wire["items"][0];
+    assert_eq!(row["kind"], "effect_delivery");
+    assert_eq!(row["record"]["state"], "pending");
+    assert_eq!(row["record"]["id"], json!(before.outbox[0].operation_id));
+    for private in ["owner", "claim", "fence", "payload", "input", "context"] {
+      assert!(
+        row["record"].get(private).is_none(),
+        "private {private} is not delivery metadata"
+      );
+    }
+    assert_eq!(
+      store.factory_run_snapshot(fixture.admission.run.id()).await.unwrap(),
+      before
+    );
+    assert_eq!(store.mutation_evidence_counts().await, mutations);
+  });
+}
+
+#[test]
+fn triage_exposes_only_reviewed_gate_results_for_both_assessments() {
+  let template = crate::factory_node_test_support::fixtures::supplied_triage_template().unwrap();
+  let schemas = template.data_schemas().unwrap();
+  for identity in [
+    "factory.triage.eligibility_accepted",
+    "factory.triage.classification_summary",
+  ] {
+    let public_outcomes: Vec<_> = template
+      .nodes
+      .iter()
+      .flat_map(|node| &node.outcomes)
+      .filter(|outcome| {
+        schemas
+          .get(&outcome.schema)
+          .is_some_and(|schema| schema.reference().identity().as_str() == identity)
+      })
+      .collect();
+    assert!(
+      !public_outcomes.is_empty(),
+      "both reviewed assessments have retained outcomes"
+    );
+    assert!(
+      public_outcomes.iter().all(|outcome| outcome.public_result),
+      "reviewed {identity} must be inspectable"
+    );
+  }
+  assert!(
+    template
+      .nodes
+      .iter()
+      .filter(|node| node.kind == octacity_server_factory::FlowNodeKind::Reasoning)
+      .flat_map(|node| &node.outcomes)
+      .all(|outcome| !outcome.public_result),
+    "raw agent observations remain private"
+  );
+}
+
+#[test]
 fn retained_public_results_read_classification_without_mutation_or_private_context() {
   crate::factory_admission_tests::run_ready(async {
     let template = crate::factory_node_test_support::fixtures::supplied_triage_template().unwrap();
@@ -58,8 +147,18 @@ fn retained_public_results_read_classification_without_mutation_or_private_conte
         assert_eq!(row["output_schema"], json!(schema.reference()));
         if public {
           assert_eq!(row["public_result"], value, "read the original schema-checked result");
+          assert_eq!(row["result_provenance"][0]["node"]["id"], json!(fixture.attempt.id()));
+          assert_eq!(
+            row["result_provenance"][0]["profile"]["context_digest"],
+            json!(fixture.input.context().unwrap().digest().unwrap())
+          );
         } else {
           assert!(row.get("public_result").is_none(), "legacy outcomes disclose no body");
+          assert_eq!(
+            row["result_provenance"],
+            json!([]),
+            "private outcomes expose no producer context reference"
+          );
         }
         for private in ["input", "context", "build", "ownership", "artifacts"] {
           assert!(

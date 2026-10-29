@@ -939,7 +939,12 @@ fn triage_eligibility_committed_results_prepare_the_gate_and_only_the_declared_s
         incoming: None,
       })
       .unwrap();
-      assert_eq!(analyst.payload().value()["eligibility"], *accepted);
+      assert_eq!(
+        analyst.payload().value()["eligibility"],
+        json!({"accepted":true,"decision":"eligible",
+        "reason":"Same documented symptom and affected component.","evidence":value["evidence"]})
+      );
+      assert!(analyst.payload().value()["eligibility"].get("lookup").is_none());
       assert_eq!(analyst.payload().value()["task"], json!(work.artifacts().task()));
       assert_eq!(
         analyst.payload().value()["completion"],
@@ -953,4 +958,57 @@ fn triage_eligibility_committed_results_prepare_the_gate_and_only_the_declared_s
       );
     }
   }
+}
+
+#[test]
+fn reviewed_eligibility_publishes_lookup_scope_but_analyst_receives_only_selected_decision_fields() {
+  let f = fixture(r#"{"candidate":{"id":"ISSUE-42","version":3},"coverage":{"has_more":false}}"#);
+  let capture = f.capture();
+  let bound = capture
+    .bind_mcp_connections(&f.role, &f.compiled, &f.configurations)
+    .unwrap();
+  let verified = bound.verify_conclusion(conclusion()).unwrap();
+  let template = template();
+  let schemas = template.data_schemas().unwrap();
+  let gate = template
+    .nodes
+    .iter()
+    .find(|n| n.key.as_str() == "eligibility_gate")
+    .unwrap()
+    .gate
+    .as_ref()
+    .unwrap();
+  let wire = serde_json::to_value(gate).unwrap();
+  let mapping: octacity_server_factory::FlowDataMapping =
+    serde_json::from_value(wire["outputs"]["classify"].clone()).unwrap();
+  let accepted = mapping
+    .project_value(
+      &owner_input(&f, verified.clone()),
+      &schemas[&key("eligibility_accepted")],
+    )
+    .unwrap();
+  assert_eq!(accepted.value()["lookup"]["coverage"], "unknown");
+  assert_eq!(
+    accepted.value()["lookup"]["observations"],
+    verified["verification"]["observations"]
+  );
+  assert!(accepted.value().get("claims").is_none());
+  let analyst = template
+    .nodes
+    .iter()
+    .find(|n| n.key.as_str() == "classification")
+    .unwrap();
+  let binding = serde_json::to_value(&analyst.input_binding).unwrap();
+  let selected: octacity_server_factory::FlowDataMapping =
+    serde_json::from_value(json!({"value": binding["mapping"]["value"]["fields"]["eligibility"]})).unwrap();
+  let payload = selected
+    .project_value(
+      &json!({"eligibility":accepted.value()}),
+      &schemas[&key("eligibility_accepted")],
+    )
+    .unwrap();
+  assert_eq!(
+    payload.value(),
+    &json!({"accepted":true,"decision":"eligible","reason":assessment()["reason"],"evidence":verified["evidence"]})
+  );
 }

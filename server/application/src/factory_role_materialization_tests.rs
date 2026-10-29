@@ -372,6 +372,24 @@ fn fixture() -> (
 }
 
 #[test]
+fn call_diagnostics_retain_the_exact_selected_role_profile_without_package_bytes() {
+  let (intent, _, _, _, _) = fixture_for_work_mode(
+    fixtures::work(),
+    |_| {},
+    BTreeMap::new(),
+    factory_role_task_digest,
+    true,
+  );
+  let expected = intent.selected_profile().expect("selected profile fixture");
+  let diagnostic = octacity_server_store::FactoryCallProfileDiagnostic::try_from(&intent).unwrap();
+  let wire = serde_json::to_value(diagnostic).unwrap();
+  assert_eq!(wire["selected_profile"], json!(expected));
+  for private in ["instructions", "package", "context", "credentials"] {
+    assert!(wire.get(private).is_none());
+  }
+}
+
+#[test]
 fn selected_role_cancellation_stops_the_original_ordinary_build() {
   crate::factory_admission_tests::run_ready(async {
     let work = fixtures::work();

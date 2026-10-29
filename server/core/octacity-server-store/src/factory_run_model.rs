@@ -207,7 +207,7 @@ impl FactoryAuditFact {
 }
 
 /// Append-only lifecycle state of one stable external side effect.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum FactoryOutboxState {
   /// Durable work is ready for dispatch.
@@ -774,6 +774,9 @@ impl TryFrom<&octacity_server_factory::FlowNodeRecord> for FactoryDomainDiagnost
 #[derive(Clone, Debug, Eq, PartialEq, serde::Deserialize, serde::Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct FactoryCallProfileDiagnostic {
+  /// Exact selected Role Profile pin; static legacy Build bindings have no Role Profile.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub selected_profile: Option<octacity_server_factory::FactoryRoleProfileRef>,
   /// Complete immutable external request identity.
   pub operation_id: FactoryDigest,
   /// Selected immutable context identity without entries or protected references.
@@ -804,6 +807,7 @@ impl TryFrom<&octacity_server_factory::FlowBuildIntent> for FactoryCallProfileDi
       })?;
     let profile = intent.profile();
     Ok(Self {
+      selected_profile: intent.selected_profile().cloned(),
       operation_id: intent.operation_id()?,
       context_id: context.id(),
       context_digest: context.digest()?,
@@ -817,9 +821,49 @@ impl TryFrom<&octacity_server_factory::FlowBuildIntent> for FactoryCallProfileDi
   }
 }
 
-/// One append-only Factory Run diagnostic collection.
+/// Latest safe observation of a configured effect, without worker ownership or payload.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct FactoryEffectDeliveryDiagnostic {
+  /// Stable logical effect and pagination identity.
+  pub id: FactoryDigest,
+  /// Exact latest immutable state receipt.
+  pub record_id: FactoryDigest,
+  /// Declared technical effect; admission notifications are not Reporter writes.
+  pub kind: FactoryKey,
+  /// Frozen input identity declared by the effect producer, without its payload.
+  pub input_digest: FactoryDigest,
+  /// Delivery remains independent of the accepted result and Run state.
+  pub state: FactoryOutboxState,
+  /// Safe terminal rejection class, without provider diagnostics.
+  pub failure: Option<FactoryOutboxFailure>,
+  /// Zero-based delivery attempt.
+  pub attempt: u16,
+  /// Earliest dispatch time, never a successful-delivery timestamp.
+  pub available_at: Timestamp,
+  /// Original observation time of this receipt.
+  pub recorded_at: Timestamp,
+}
+impl From<&FactoryOutboxRecord> for FactoryEffectDeliveryDiagnostic {
+  fn from(row: &FactoryOutboxRecord) -> Self {
+    Self {
+      id: row.operation_id,
+      record_id: row.id,
+      kind: row.kind.clone(),
+      input_digest: row.input_digest,
+      state: row.state,
+      failure: row.failure,
+      attempt: row.attempt,
+      available_at: row.available_at,
+      recorded_at: row.recorded_at,
+    }
+  }
+}
+
+/// One bounded Factory Run diagnostic collection.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FactoryRunDiagnosticKind {
+  /// Latest immutable receipt per logical configured effect; never claims or dispatches.
+  EffectDelivery,
   /// Retained pre-dispatch profile-selection revisions.
   ProfileSelection,
   /// Confirmed technical stops without configured business outcomes.
@@ -867,6 +911,8 @@ impl FactoryRunDiagnosticKind {
 /// Typed immutable row returned by a common execution diagnostic collection.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum FactoryRunDiagnosticRecord {
+  /// Safe current delivery metadata with no worker owner or claim.
+  EffectDelivery(Box<FactoryEffectDeliveryDiagnostic>),
   /// Exact retained revision identity; management restores its safe fields from the verified journal.
   ProfileSelection(FactoryDigest),
   /// Confirmed stopped execution, including its technical cause.
@@ -906,6 +952,7 @@ impl FactoryRunDiagnosticRecord {
   #[must_use]
   pub fn cursor(&self) -> FactoryKey {
     let value = match self {
+      Self::EffectDelivery(value) => value.id.to_string(),
       Self::ProfileSelection(value) => value.to_string(),
       Self::NodeStop(value) => value
         .digest()
@@ -982,6 +1029,7 @@ impl ListFactoryRunDiagnostics {
           .parse::<uuid::Uuid>()
           .is_ok_and(|id| id.to_string() == key.as_str()),
         FactoryRunDiagnosticKind::ProfileSelection
+        | FactoryRunDiagnosticKind::EffectDelivery
         | FactoryRunDiagnosticKind::Claim
         | FactoryRunDiagnosticKind::Audit
         | FactoryRunDiagnosticKind::Budget

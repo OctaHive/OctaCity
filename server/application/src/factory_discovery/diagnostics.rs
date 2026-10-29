@@ -12,6 +12,8 @@ pub const MAX_FACTORY_DIAGNOSTIC_PAGE_SIZE: u16 = octacity_server_store::MAX_FAC
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FactoryDiagnosticCollection {
+  /// Current receipts for configured effects; distinct from accepted logical reporting results.
+  EffectDelivery,
   /// Safe pre-dispatch choices and retained provenance.
   ProfileSelections,
   /// Root and nested Flow executions.
@@ -63,6 +65,7 @@ impl FactoryDiagnosticCollection {
   /// Stable path component and cursor scope.
   pub const fn as_str(self) -> &'static str {
     match self {
+      Self::EffectDelivery => "effect-delivery",
       Self::ProfileSelections => "profile-selections",
       Self::FlowRuns => "flow-runs",
       Self::WorkflowCycles => "workflow-cycles",
@@ -90,6 +93,7 @@ impl FactoryDiagnosticCollection {
   }
   fn kind(self) -> FactoryRunDiagnosticKind {
     match self {
+      Self::EffectDelivery => FactoryRunDiagnosticKind::EffectDelivery,
       Self::ProfileSelections => FactoryRunDiagnosticKind::ProfileSelection,
       Self::FlowRuns => FactoryRunDiagnosticKind::FlowRun,
       Self::WorkflowCycles => FactoryRunDiagnosticKind::WorkflowCycle,
@@ -118,7 +122,8 @@ impl FactoryDiagnosticCollection {
     }
   }
   /// Closed values published in OpenAPI.
-  pub const ALL: [Self; 22] = [
+  pub const ALL: [Self; 23] = [
+    Self::EffectDelivery,
     Self::ProfileSelections,
     Self::FlowRuns,
     Self::WorkflowCycles,
@@ -147,6 +152,8 @@ impl FactoryDiagnosticCollection {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", content = "record", rename_all = "snake_case", deny_unknown_fields)]
 pub enum FactoryDiagnosticRecord {
+  /// Bounded delivery metadata without a private effect input, claim or provider text.
+  EffectDelivery(Box<octacity_server_store::FactoryEffectDeliveryDiagnostic>),
   /// Allowlisted selector history, never executable content or provider payloads.
   ProfileSelection(Box<super::profile_selections::FactoryProfileSelectionProjection>),
   /// Exact identity, definition and parent-call correlation.
@@ -176,6 +183,7 @@ impl TryFrom<FactoryRunDiagnosticRecord> for FactoryDiagnosticRecord {
   type Error = ApplicationError;
   fn try_from(record: FactoryRunDiagnosticRecord) -> Result<Self, Self::Error> {
     match record {
+      FactoryRunDiagnosticRecord::EffectDelivery(effect) => Ok(FactoryDiagnosticRecord::EffectDelivery(effect)),
       FactoryRunDiagnosticRecord::FlowRun(flow) => Ok(FactoryDiagnosticRecord::FlowRun(*flow)),
       FactoryRunDiagnosticRecord::WorkflowCycle(cycle) => Ok(FactoryDiagnosticRecord::WorkflowCycle(*cycle)),
       FactoryRunDiagnosticRecord::NodeAttempt(node) => Ok(FactoryDiagnosticRecord::NodeAttempt((&*node).into())),
@@ -239,6 +247,9 @@ pub struct FactoryNodeCompletionProjection {
   /// Inputs, Context and Build evidence are never expanded by this read.
   #[serde(default, skip_serializing_if = "Option::is_none")]
   pub public_result: Option<serde_json::Value>,
+  /// Exact executing or explicitly selected producer calls for public outcomes, without Context bytes.
+  #[serde(default)]
+  pub result_provenance: Vec<FactoryCallProjection>,
   /// Measured bounded resource consumption.
   pub usage: octacity_server_factory::BudgetUsage,
   /// Trusted completion time.
@@ -285,6 +296,7 @@ impl From<&octacity_server_factory::NodeAttemptCompletion> for FactoryNodeComple
       output_schema: row.output_schema().clone(),
       output_digest: row.output_digest(),
       public_result: None,
+      result_provenance: vec![],
       usage: row.usage(),
       observed_at: row.observed_at(),
     }
@@ -571,8 +583,29 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
     if query.collection() == FactoryDiagnosticCollection::NodeCompletions {
       let snapshot = self.store.factory_run_snapshot(query.run_id()).await?;
       for item in &mut items {
-        if let FactoryDiagnosticRecord::NodeCompletion(projection) = item {
-          projection.public_result = public_result(projection, &snapshot)?;
+        if let FactoryDiagnosticRecord::NodeCompletion(projection) = item
+          && let Some(record) = public_result_record(projection, &snapshot)?
+        {
+          projection.public_result = Some(record.payload().value().clone());
+          let ids: std::collections::BTreeSet<_> = std::iter::once(record.node_attempt_id())
+            .chain(record.input().sources().iter().map(|source| source.node_attempt_id()))
+            .collect();
+          projection.result_provenance = snapshot
+            .flow
+            .data
+            .build_intents
+            .iter()
+            .filter(|intent| ids.contains(&intent.node().id()))
+            .map(|intent| {
+              Ok(FactoryCallProjection {
+                node: FactoryNodeAttemptProjection::from_snapshot(intent.node(), &snapshot),
+                profile: Some(
+                  octacity_server_store::FactoryCallProfileDiagnostic::try_from(intent)
+                    .map_err(|_| ApplicationError::unavailable())?,
+                ),
+              })
+            })
+            .collect::<Result<_, ApplicationError>>()?;
         }
       }
     }
@@ -585,10 +618,10 @@ impl<S: FactoryDiscoveryStore + FactoryRunStore + 'static> crate::ManagementQuer
   }
 }
 
-fn public_result(
+fn public_result_record<'a>(
   completion: &FactoryNodeCompletionProjection,
-  snapshot: &octacity_server_store::FactoryRunSnapshot,
-) -> Result<Option<serde_json::Value>, ApplicationError> {
+  snapshot: &'a octacity_server_store::FactoryRunSnapshot,
+) -> Result<Option<&'a octacity_server_factory::FlowNodeRecord>, ApplicationError> {
   let unavailable = ApplicationError::unavailable;
   let Some(record) = snapshot
     .flow
@@ -618,7 +651,7 @@ fn public_result(
   {
     return Err(unavailable());
   }
-  Ok(Some(record.payload().value().clone()))
+  Ok(Some(record))
 }
 
 #[cfg(test)]

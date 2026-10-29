@@ -375,12 +375,12 @@ pub use factory_run_model::{
   ClaimFactoryOutbox, ClaimFactoryRun, ClaimFactoryRunOutcome, ClaimFactoryRuns, ClaimedFactoryOutbox,
   ClaimedFactoryRun, CommitFactoryRunTransition, CommitFactoryRunTransitionOutcome, FactoryAuditFact,
   FactoryBudgetRecord, FactoryBuildExecutionDiagnostic, FactoryCallProfileDiagnostic, FactoryDomainDiagnostic,
-  FactoryFlowHistory, FactoryLifecycleCheckpoint, FactoryOutboxFailure, FactoryOutboxRecord, FactoryOutboxSettlement,
-  FactoryOutboxState, FactoryOutboxSubject, FactoryRunClaimRecord, FactoryRunCurrentProjection,
-  FactoryRunDiagnosticKind, FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord, FactoryRunHistoryAppend,
-  FactoryRunSnapshot, ListFactoryRunDiagnostics, MAX_FACTORY_OUTBOX_BATCH_SIZE, MAX_FACTORY_RECONCILIATION_BATCH_SIZE,
-  MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE, MAX_FACTORY_RUN_SNAPSHOT_RECORDS, MAX_FACTORY_TRANSITION_OUTBOX_RECORDS,
-  MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
+  FactoryEffectDeliveryDiagnostic, FactoryFlowHistory, FactoryLifecycleCheckpoint, FactoryOutboxFailure,
+  FactoryOutboxRecord, FactoryOutboxSettlement, FactoryOutboxState, FactoryOutboxSubject, FactoryRunClaimRecord,
+  FactoryRunCurrentProjection, FactoryRunDiagnosticKind, FactoryRunDiagnosticPage, FactoryRunDiagnosticRecord,
+  FactoryRunHistoryAppend, FactoryRunSnapshot, ListFactoryRunDiagnostics, MAX_FACTORY_OUTBOX_BATCH_SIZE,
+  MAX_FACTORY_RECONCILIATION_BATCH_SIZE, MAX_FACTORY_RUN_DIAGNOSTIC_PAGE_SIZE, MAX_FACTORY_RUN_SNAPSHOT_RECORDS,
+  MAX_FACTORY_TRANSITION_OUTBOX_RECORDS, MAX_FACTORY_TRANSITION_RECORDS, SettleFactoryOutbox,
 };
 pub use factory_run_port::FactoryRunStore;
 pub use factory_run_transition::{

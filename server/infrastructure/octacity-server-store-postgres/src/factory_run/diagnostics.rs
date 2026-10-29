@@ -28,6 +28,16 @@ pub(crate) async fn list_diagnostics(
   }
   let limit = i64::from(request.limit.get()) + 1;
   let records = match request.kind {
+    FactoryRunDiagnosticKind::EffectDelivery => digest_rows(pool,
+      "WITH latest AS (SELECT DISTINCT ON (operation_id) * FROM factory_outbox_records WHERE run_id=$1 \
+       ORDER BY operation_id, attempt DESC, CASE state WHEN 'pending' THEN 0 WHEN 'claimed' THEN 1 ELSE 2 END DESC, recorded_at DESC, id DESC) \
+       SELECT jsonb_build_object('id',encode(operation_id,'hex'),'record_id',encode(id,'hex'),'kind',kind, \
+         'input_digest',encode(input_digest,'hex'),'state',state,'failure',to_jsonb(failure),'attempt',attempt, \
+         'available_at',FLOOR(EXTRACT(EPOCH FROM available_at)*1000)::bigint, \
+         'recorded_at',FLOOR(EXTRACT(EPOCH FROM recorded_at)*1000)::bigint) FROM latest \
+       WHERE ($2::bytea IS NULL OR operation_id>$2) ORDER BY operation_id LIMIT $3",
+      &request, limit, |value| FactoryRunDiagnosticRecord::EffectDelivery(Box::new(value)),
+    ).await?,
     FactoryRunDiagnosticKind::ProfileSelection => digest_rows(pool,
       "SELECT to_jsonb(encode(id,'hex')) FROM factory_flow_profile_selections WHERE run_id=$1 AND ($2::bytea IS NULL OR id>$2) ORDER BY id LIMIT $3",
       &request, limit, FactoryRunDiagnosticRecord::ProfileSelection,
@@ -131,8 +141,8 @@ async fn call_rows(
     .map(|key| uuid::Uuid::from_str(key.as_str()))
     .transpose()
     .map_err(|_| invalid_cursor())?;
-  let rows = sqlx::query_as::<_, (Json<NodeAttempt>, Option<Vec<u8>>, Option<Json<FlowBuildProfile>>, Option<Json<ContextManifest>>, Option<Json<FactoryPermissionSet>>)>(
-    "SELECT node.node_attempt, intent.operation_id, data.document -> 'profile', data.document -> 'input' -> 'context', data.document -> 'permissions' \
+  let rows = sqlx::query_as::<_, (Json<NodeAttempt>, Option<Vec<u8>>, Option<Json<FlowBuildProfile>>, Option<Json<ContextManifest>>, Option<Json<FactoryPermissionSet>>, Option<Json<octacity_server_factory::FactoryRoleProfileRef>>)>(
+    "SELECT node.node_attempt, intent.operation_id, data.document -> 'profile', data.document -> 'input' -> 'context', data.document -> 'permissions', data.document -> 'selection' -> 'profile' \
      FROM (SELECT id, run_id, node_attempt FROM factory_node_attempts WHERE run_id = $1 \
        AND ($2::uuid IS NULL OR id > $2) AND node_attempt -> 'execution' ->> 'kind' = 'external' ORDER BY id LIMIT $3) node \
      LEFT JOIN factory_flow_build_intents intent ON intent.run_id = node.run_id AND intent.node_attempt_id = node.id \
@@ -140,29 +150,32 @@ async fn call_rows(
   ).bind(request.run_id.as_uuid()).bind(after).bind(limit).fetch_all(pool).await.map_err(unavailable)?;
   rows
     .into_iter()
-    .map(|(Json(node), operation, profile, context, permissions)| {
-      let profile = match (operation, profile, context, permissions) {
-        (Some(operation), Some(Json(profile)), Some(Json(context)), Some(Json(permissions))) => {
-          Some(Box::new(octacity_server_store::FactoryCallProfileDiagnostic {
-            operation_id: super::digest(&operation)?,
-            context_id: context.id(),
-            context_digest: context.digest().map_err(|_| StoreError::Unavailable)?,
-            tool: profile.tool,
-            plugin: profile.plugin,
-            model_or_tool: profile.model_or_tool,
-            task_digest: profile.task_digest,
-            permission_digest: permissions.digest(),
-            build_configuration: profile.build_configuration,
-          }))
-        }
-        (None, None, None, None) => None,
-        _ => return Err(StoreError::Unavailable),
-      };
-      Ok(FactoryRunDiagnosticRecord::Call {
-        node: Box::new(node),
-        profile,
-      })
-    })
+    .map(
+      |(Json(node), operation, profile, context, permissions, selected_profile)| {
+        let profile = match (operation, profile, context, permissions) {
+          (Some(operation), Some(Json(profile)), Some(Json(context)), Some(Json(permissions))) => {
+            Some(Box::new(octacity_server_store::FactoryCallProfileDiagnostic {
+              selected_profile: selected_profile.map(|Json(profile)| profile),
+              operation_id: super::digest(&operation)?,
+              context_id: context.id(),
+              context_digest: context.digest().map_err(|_| StoreError::Unavailable)?,
+              tool: profile.tool,
+              plugin: profile.plugin,
+              model_or_tool: profile.model_or_tool,
+              task_digest: profile.task_digest,
+              permission_digest: permissions.digest(),
+              build_configuration: profile.build_configuration,
+            }))
+          }
+          (None, None, None, None) => None,
+          _ => return Err(StoreError::Unavailable),
+        };
+        Ok(FactoryRunDiagnosticRecord::Call {
+          node: Box::new(node),
+          profile,
+        })
+      },
+    )
     .collect()
 }
 

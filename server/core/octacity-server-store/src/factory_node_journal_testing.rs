@@ -520,6 +520,43 @@ pub async fn verify_factory_node_journal_contract<S: FactoryRunStore, R: Factory
     assert!(page.next.is_none());
   }
 
+  let before_read = restarted.factory_run_snapshot(run.id()).await.unwrap();
+  let mut expected_effects: Vec<_> = before_read.outbox.iter().map(|row| row.operation_id).collect();
+  expected_effects.sort();
+  expected_effects.dedup();
+  let mut after = None;
+  let mut effects = Vec::new();
+  loop {
+    let page = restarted
+      .list_factory_run_diagnostics(
+        ListFactoryRunDiagnostics::new(run.id(), FactoryRunDiagnosticKind::EffectDelivery, after, 1).unwrap(),
+      )
+      .await
+      .unwrap();
+    for item in page.items {
+      let FactoryRunDiagnosticRecord::EffectDelivery(receipt) = item else {
+        panic!("safe effect receipt")
+      };
+      let latest = before_read
+        .outbox
+        .iter()
+        .filter(|row| row.operation_id == receipt.id)
+        .max_by_key(|row| row.order_key())
+        .unwrap();
+      assert_eq!(*receipt, FactoryEffectDeliveryDiagnostic::from(latest));
+      effects.push(receipt.id);
+    }
+    match page.next {
+      Some(next) => after = Some(next),
+      None => break,
+    }
+  }
+  assert_eq!(effects, expected_effects);
+  assert_eq!(
+    restarted.factory_run_snapshot(run.id()).await.unwrap(),
+    before_read,
+    "diagnostic traversal cannot claim or dispatch effects"
+  );
   for (kind, expected) in [
     (
       FactoryRunDiagnosticKind::BuildExecution,

@@ -426,3 +426,31 @@ to waive controlling rules. Changing a draft requires a newly reviewed ordinary
 publication; retained bindings/packages keep their original identities.
 Do not forward this whole Context implicitly to the analyst: the manifest selects
 its accepted gate handoff separately, and its Profile declares its own Context.
+
+## Retained operator diagnostics
+
+Newly published eligibility gates expose their reviewed accepted/review/rejected
+projection through the existing public-result diagnostic contract. Classification
+keeps its separate accepted summary. Raw reasoning observations, claims, tool
+arguments and Context bytes remain private. Eligibility's optional `lookup`
+retains native observation references, consumed connection/resource pins and
+capture/coverage metadata. The analyst input explicitly selects only `accepted`,
+`decision`, `reason` and `evidence`; it receives none of this operator lookup view.
+Previously admitted definitions keep their original disclosure policy.
+
+Public completion diagnostics expose safe producer Call metadata from the actual
+executing Build and explicitly selected predecessor records. This identifies the
+original attempt, frozen Profile/tool/Build binding and Context identity/digest;
+it does not expand Context or infer an agent from a logical stage name. Historical
+results without retained producer metadata show that absence explicitly.
+
+The Console shows Project and analyst assessments independently of technical Run
+state. Reproduction assessments remain separate from retained command evidence,
+its exact subject/environment/criterion and original validity limit. Dependency
+links retain their original Run/Work identities. Original Issue navigation keeps
+current local workflow status separate from historical assessments and Reporter
+receipts. The `effect-delivery` collection reads the latest immutable receipt per
+logical configured effect through the existing Run diagnostic endpoint and store
+port. Pending/claimed receipts do not establish delivery; terminal failure reasons
+remain visible without changing an accepted assessment. Reads never dispatch an
+agent, retry an effect, or grant workflow/provider write authority.

@@ -75,8 +75,25 @@
                 }
               },
               "eligibility": {
-                "mapping": "pointer",
-                "path": "/eligibility"
+                "mapping": "object",
+                "fields": {
+                  "accepted": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/accepted"
+                  },
+                  "decision": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/decision"
+                  },
+                  "reason": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/reason"
+                  },
+                  "evidence": {
+                    "mapping": "pointer",
+                    "path": "/eligibility/evidence"
+                  }
+                }
               },
               "command_policy": {
                 "mapping": "constant",

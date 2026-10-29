@@ -198,6 +198,13 @@
               "min_items": 0,
               "max_items": 64
             }
+          },
+          "lookup": {
+            "required": false,
+            "value": {
+              "type": "reference",
+              "schema": "mcp_verification"
+            }
           }
         }
       }

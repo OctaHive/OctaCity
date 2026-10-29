@@ -486,8 +486,13 @@ fn triage_public_results_are_explicit_immutable_outcome_choices() {
   for node in published.definition.nodes() {
     for outcome in node.outcomes() {
       let wire = serde_json::to_value(outcome).unwrap();
-      if node.key().as_str() == "classification_gate" {
-        assert_eq!(wire["public_result"], true, "only reviewed summaries are public");
+      if [
+        "factory.triage.eligibility_accepted",
+        "factory.triage.classification_summary",
+      ]
+      .contains(&outcome.schema().identity().as_str())
+      {
+        assert_eq!(wire["public_result"], true, "both reviewed gate summaries are public");
       } else {
         assert!(
           wire.get("public_result").is_none(),

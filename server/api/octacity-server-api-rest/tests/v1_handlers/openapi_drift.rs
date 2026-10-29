@@ -2,6 +2,26 @@ use super::*;
 use octacity_server_application::{ManagementAuthorizationMapping, ManagementResourceKind};
 
 #[test]
+fn effect_delivery_contract_exposes_only_safe_receipts_in_the_existing_diagnostic_page() {
+  let document = openapi_document();
+  assert_component_exists(&document, "FactoryEffectDeliveryDiagnostic");
+  let record = serde_json::json!({"id":"a".repeat(64),"record_id":"b".repeat(64),"kind":"work.status.projection",
+    "input_digest":"c".repeat(64),"state":"failed","failure":"forbidden","attempt":2,"available_at":10,"recorded_at":11});
+  assert_json_matches_component(&document, "FactoryEffectDeliveryDiagnostic", &record);
+  assert_json_matches_component(
+    &document,
+    "FactoryDiagnosticPage",
+    &serde_json::json!({
+      "items":[{"kind":"effect_delivery","record":record}],"next_cursor":null
+    }),
+  );
+  let properties = &document["components"]["schemas"]["FactoryEffectDeliveryDiagnostic"]["properties"];
+  for private in ["owner", "claim", "payload", "context", "credentials"] {
+    assert!(properties.get(private).is_none());
+  }
+}
+
+#[test]
 fn triage_document_alias_contract_leaves_room_for_its_context_namespace() {
   let document = openapi_document();
   assert_eq!(

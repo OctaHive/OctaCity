@@ -62,6 +62,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("outcome", key()),
         ("output_schema", schema_ref("FactoryImmutableReferenceResource")),
         ("output_digest", schema_ref("FactoryDigest")),
+        ("result_provenance", json!({"type":"array","description":"Exact retained executing or explicitly selected producer calls, without Context bytes.","items":schema_ref("FactoryCallDiagnostic")})),
         ("public_result", json!({
           "description":"Original result value, validated by output_schema, present only for an explicitly public admitted outcome.",
           "x-max-encoded-bytes":octacity_server_application::factory_configuration_document_bounds().value_bytes
@@ -80,6 +81,39 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         "output_digest",
         "usage",
         "observed_at",
+      ],
+    ),
+  );
+  schemas.insert(
+    "FactoryEffectDeliveryDiagnostic".to_owned(),
+    object(
+      [
+        ("id", schema_ref("FactoryDigest")),
+        ("record_id", schema_ref("FactoryDigest")),
+        ("kind", key()),
+        ("input_digest", schema_ref("FactoryDigest")),
+        (
+          "state",
+          json!({"type":"string","enum":["pending","claimed","delivered","failed"]}),
+        ),
+        (
+          "failure",
+          nullable(json!({"type":"string","enum":["forbidden","unsupported","exhausted","conflict"]})),
+        ),
+        ("attempt", bounded_integer(0, u64::from(u16::MAX))),
+        ("available_at", integer()),
+        ("recorded_at", integer()),
+      ],
+      &[
+        "id",
+        "record_id",
+        "kind",
+        "input_digest",
+        "state",
+        "failure",
+        "attempt",
+        "available_at",
+        "recorded_at",
       ],
     ),
   );
@@ -182,6 +216,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
           "profile",
           nullable(object(
             [
+              ("selected_profile", nullable(schema_ref("FactoryRoleProfileReference"))),
               ("operation_id", schema_ref("FactoryDigest")),
               ("context_id", non_empty_string()),
               ("context_digest", schema_ref("FactoryDigest")),
@@ -349,6 +384,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
             ], &["id","run_id","actor_kind","actor_identity_digest","operation","request_identity_digest","outcome","recorded_at"])) ], &["record"]),
             tagged("kind", "work", [("record", schema_ref("FactoryWorkDiagnostic"))], &["record"]),
             tagged("kind", "node_completion", [("record", schema_ref("FactoryNodeCompletionDiagnostic"))], &["record"]),
+            tagged("kind", "effect_delivery", [("record", schema_ref("FactoryEffectDeliveryDiagnostic"))], &["record"]),
             tagged("kind", "node_stop", [("record", schema_ref("FactoryNodeStopDiagnostic"))], &["record"]),
             tagged("kind", "call", [("record", schema_ref("FactoryCallDiagnostic"))], &["record"]),
             tagged("kind", "domain_fact", [("record", schema_ref("FactoryDomainDiagnostic"))], &["record"])]}),

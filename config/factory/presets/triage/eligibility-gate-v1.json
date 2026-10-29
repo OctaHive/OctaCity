@@ -8,27 +8,32 @@
         {
           "key": "classify",
           "kind": "success",
-          "schema": "eligibility_accepted"
+          "schema": "eligibility_accepted",
+          "public_result": true
         },
         {
           "key": "duplicate",
           "kind": "success",
-          "schema": "eligibility_accepted"
+          "schema": "eligibility_accepted",
+          "public_result": true
         },
         {
           "key": "review",
           "kind": "success",
-          "schema": "eligibility_accepted"
+          "schema": "eligibility_accepted",
+          "public_result": true
         },
         {
           "key": "out_of_scope",
           "kind": "success",
-          "schema": "eligibility_accepted"
+          "schema": "eligibility_accepted",
+          "public_result": true
         },
         {
           "key": "needs_input",
           "kind": "success",
-          "schema": "eligibility_accepted"
+          "schema": "eligibility_accepted",
+          "public_result": true
         }
       ],
       "budget": {
@@ -514,6 +519,10 @@
                 "evidence": {
                   "mapping": "pointer",
                   "path": "/conclusion/evidence"
+                },
+                "lookup": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/verification"
                 }
               }
             }
@@ -537,6 +546,10 @@
                 "evidence": {
                   "mapping": "pointer",
                   "path": "/conclusion/evidence"
+                },
+                "lookup": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/verification"
                 }
               }
             }
@@ -560,6 +573,10 @@
                 "evidence": {
                   "mapping": "pointer",
                   "path": "/conclusion/evidence"
+                },
+                "lookup": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/verification"
                 }
               }
             }
@@ -583,6 +600,10 @@
                 "evidence": {
                   "mapping": "pointer",
                   "path": "/conclusion/evidence"
+                },
+                "lookup": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/verification"
                 }
               }
             }
@@ -606,6 +627,10 @@
                 "evidence": {
                   "mapping": "pointer",
                   "path": "/conclusion/evidence"
+                },
+                "lookup": {
+                  "mapping": "pointer",
+                  "path": "/conclusion/verification"
                 }
               }
             }

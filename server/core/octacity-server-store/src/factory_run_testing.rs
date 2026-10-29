@@ -438,6 +438,11 @@ fn diagnostic_records(
   kind: FactoryRunDiagnosticKind,
 ) -> Box<dyn Iterator<Item = FactoryRunDiagnosticRecord> + '_> {
   match kind {
+    FactoryRunDiagnosticKind::EffectDelivery => Box::new(
+      latest_outbox_records(stored)
+        .into_iter()
+        .map(|row| FactoryRunDiagnosticRecord::EffectDelivery(Box::new(row.into()))),
+    ),
     FactoryRunDiagnosticKind::ProfileSelection => Box::new(
       stored
         .profile_selections
