@@ -93,6 +93,152 @@ not expanded. Reading performs no dispatch, retry, classification or mutation.
 The analyst Profile seed includes a complete executable example; the compiler
 test validates the actual protected prompt and result schema.
 
+## Optional reviewed result effects
+
+`FactoryResultReportingDraft` composes operator-selected effects into ordinary
+Flow gates, `set_status` actions and a reusable reporting subflow. It performs no
+provider, credential or storage I/O. The released manifest still contains no
+implicit write actions or writer permissions. Select an exact Source, Reporter,
+managed connection/access revision and the installed reporting policy separately;
+the policy's advertised labels/states do not constitute a write grant.
+
+Give every source gate outcome an explicit literal effect or `None` (preserve).
+Optional component/size dimensions select a required finite enum field in the
+accepted summary. Priority selects a bounded integer field using complete,
+nonoverlapping inclusive bands or individual values. Each dimension declares the
+source outcomes on which it applies and covers its complete field vocabulary.
+The caller selects field paths as object keys, never model-authored JSON pointers
+or label names. Only labels and optional states already present in the installed
+editing policy are accepted; unsupported combinations, missing labels and
+incomplete partitions block composition. No label is created or scope refreshed.
+
+For each accepted source outcome, simultaneously applicable groups must own
+different labels and at most one group may own native state. Alternative cases
+within a dimension and mutually exclusive source outcomes can share these fields.
+This prevents delivery order from deciding the intended result. Dimensions compile
+as a linear chain, with one gate and at most one action per selected case; they
+never expand into a Cartesian product. Existing native node/transition bounds and
+node, child, parent and admission budget/permission ceilings remain authoritative.
+
+Use `compile(result_schema, source_outcomes, id, version)` with the accepted gate's
+exact schema and outcome domain. Select the installed status action's outcome and
+receipt schema, the ordinary outbox retry policy and explicit technical limits.
+Then `bind(template, source_node, reporting, prefix)` inserts exact outcome-bound
+calls and preserves each original continuation. It refuses a substituted child
+definition, conflicting aliases, unsupported fan-out/repeat routes or wider
+authority. Include the returned child definition and all exact schemas in the
+normal complete-closure configuration publication. That publication checks the
+current Project update grant, selected writer connection and installed editing
+ceiling again; preview or composition cannot bypass authorization.
+
+Each call reads only its exact accepted source record. Child inputs retain that
+call's digest, so each ordinary action has a provenance chain to the original
+classification. The subflow returns the unchanged result; advisory priority does
+not rewrite Work/Build scheduling. The existing Work-backed action owner supplies
+the original native item and enqueues each effect through the existing ordered
+outbox. No new provider client or journal is introduced.
+
+The publication review in both Console locales explains that effects are
+delivered independently. A `reported` subflow result means its actions completed
+their ordinary queueing steps; it does not confirm provider delivery. Some effects
+may already be delivered while others remain pending or fail. Canonical Issue
+workflow execution and completed delivery/recovery qualification (6.3) are described
+below. Shared management resolution (7.1) and packaged execution (8.1) remain
+separate tasks.
+
+## Independent canonical Issue and local workflow effects
+
+Source intake runs without a canonical Issue. Its Reporter always uses the
+original settled Source preparation, native item, accepted effect and writer
+pins. Canonical import/attachment is a separate explicit operation; a visible card
+does not establish a reviewed execution or local-transition authority. Import
+does not start triage, and Source reporting does not create a card.
+
+For an Issue-associated execution, use the ordinary reviewed Issue execution
+request and exact Work/Run association. An explicitly configured
+`transition_issue` action selects a pinned workflow/version/direct edge and one
+declared outcome. The existing action and shared transition command recheck
+current move authority, requirements applicability, workflow, current status and
+field ownership. Model output cannot choose an Issue, workflow or principal.
+Evidence-requiring edges retain their existing independently verified evidence
+requirements; a triage summary is not implementation acceptance.
+
+Select the appropriate execution path explicitly. Automatic Source intake rejects
+an enabled target containing `transition_issue`, because it cannot supply that
+reviewed Issue association. Disabled drafts remain repairable. An action without
+its exact reviewed association fails closed with `capability_unavailable` and no business move; it does
+not find another card or silently change workflows. Linking a raw Source ticket
+alone does not enable this local-action path.
+
+One producer owns each outgoing native field. Before Work reporting contacts a
+provider, the existing Reporter reads any canonical Issue push policy in the
+original Work's Project/native/security partition and applies the common producer
+conflict validator. All configured push choices participate in field ownership.
+Overlapping labels/state block the Work delivery; an opaque legacy Work mapping
+cannot establish disjoint ownership. Disabled or disjoint Issue push permits the
+original Work effect. The ordinary per-write material check repeats this review
+before every Apply, including nested result-reporting actions. Lookup uses existing
+retained preparation/admission/link/mapping records and indexed keys, without a new
+association or reporting journal.
+
+For triage's Work-backed external producer, explicitly disable overlapping Issue
+push. Local Issue status, accepted classification, Run state and provider delivery
+remain distinct. A policy conflict leaves the accepted result readable. A later
+link or mapping never supplies a replacement native target or changes accepted
+Work effects. A previously accepted Issue-push intent also keeps its original
+mapping and effects after push is disabled; existing ordered delivery settles
+these historical operations without reopening or retargeting them.
+
+## Delivery receipts and recovery
+
+The ordinary ordered outbox retains each configured effect's operation identity,
+accepted record digest, exact input/caller chain, original target and retry/deadline
+bounds. An intermediate action may queue before the reporting subflow returns;
+the final subflow result and completed Run still retain the original accepted
+decision. Pending, forbidden, exhausted or superseded delivery never rewrites that
+result or Work scheduling metadata and never starts another Run.
+
+Recovery recreates the ordinary store/projector/worker against retained state and
+inspects the same original intent before deciding whether another conditional
+native step is needed. A lost reply after an applied write is confirmed through
+observation, without replaying a completed addition/removal/state change. Current
+writer authority is checked before provider calls and again before each Apply;
+revocation stops confirmation/delivery without undoing an already applied effect.
+Temporary outages may exhaust only the original finite policy. A malformed Inspect
+response is a protocol failure, not permission to write or a successful empty read.
+
+GitHub's installed `managed_label_groups` remain native ownership units. Give
+independent reporting dimensions separate groups; state has its own scope. Groups
+do not imply clearing other labels. Existing item-wide ordering preserves disjoint
+fields, detects supersession of overlapping older intents and waits for uncertain
+older writes under the original fences. No triage-specific ordering journal or
+retry loop is added. The selected installation still requires qualification; the
+generic effect compiler does not change native group definitions.
+
+An installed Reporter's editable policy declares `ownership.labels` (each literal
+label's complete native scope set) and `ownership.state` (the common native state
+scope set). These are installed provider identities, stable across writer profiles
+and resource aliases for the same native item. They must match the qualified native
+adapter configuration; assigning a new name to a label does not create a new scope.
+For example, two GitHub labels in one `managed_label_group` name the same scope,
+including when they are selected by different dimensions. State and genuinely
+separate groups use disjoint scopes.
+
+Composition rejects overlapping coactive scopes. Missing ownership metadata means
+unknown: legacy single-producer effects remain supported, but multiple coactive
+producers require complete installed declarations. Compiled actions freeze their
+scope claims and normal publication/dispatch checks them against the exact installed
+policy. Canonical Issue mapping publication freezes the same installed declaration
+under its existing content digest; Source delivery compares it with its selected
+Reporter's actual scopes before provider I/O. Neither declaration grants write
+authority.
+
+Publication and preview do not enqueue Reporter writes. Completing a Run with an
+explicit preservation selection (`None`) also emits no effect, even when a writer
+is installed. Delivery requires an accepted, explicitly configured action.
+Contract/process tests qualify these reporting boundaries; the complete packaged
+two-agent journey remains task 8.1.
+
 ## Optional bounded reproduction command
 
 `with-reproduction-v1.json` composes the same two reasoning stages and gates with
