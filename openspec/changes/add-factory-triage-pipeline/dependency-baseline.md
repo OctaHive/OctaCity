@@ -87,19 +87,44 @@ labels are a visible setup blocker, not an automatic scope expansion.
 
 `add-factory-bugfix-quickstart` remains 0/26 tasks and is not a hard prerequisite
 for triage. Its [design](../add-factory-bugfix-quickstart/design.md) already reserves
-the same generic APIs. The current implementation has template instantiation and
-ordinary publication, but neither planned management API below is delivered.
+the same generic APIs. Tasks 7.1 and 7.2 deliver the shared metadata queries over
+ordinary authoring/publication; task 7.3 publishes their common typed contracts.
+This handoff does not implement the bugfix preset or mark its tasks complete.
 
-| Planned common contract | First triage consumer and future quickstart reuse |
+| Shared common contract | First triage consumer and future quickstart reuse |
 | --- | --- |
 | `GET /api/v1/projects/{project_id}/factory-presets` and `POST /api/v1/projects/{project_id}/factory-presets/resolve` | Delivered by triage 7.1 through `FactoryPresetHandlers`: bounded Project-visible release metadata, typed parameters, exact dependency reasons, reviewed completion criteria, ordinary root/child Flow and disabled Configuration/Input drafts. Metadata-only resolution performs no publication, provider/model request or object-byte I/O. Ordinary confirmed versioned publication rechecks authority and parents. See [the delivered contract and TDD evidence](preset-resolution-verification.md). Quickstart reuses this owner for its later `bugfix` preset; no second registry/interpreter, certification or triage lifecycle API. |
 | `POST /api/v1/factory-configurations/{id}/versions/{version}/readiness` | Delivered by triage 7.2 through `FactoryReadinessHandlers`: exact frozen subjects, bounded current installation/Agent/context/Source/Reporter/MCP observations, original expiry and independent unverified native writes. Missing authentication, scope, read-only or capture proof remains unknown; the query performs no provider/model/MCP/secret-value/object-content I/O, mutation or reservation. See [contract and TDD evidence](readiness-verification.md). Quickstart reuses this owner and shared placement matcher rather than introducing another readiness registry or validation policy. |
 | Existing Project-input publication/read/recovery ports | Triage 3.x reuses Source preparation and shared input publication for purpose-bound process completion. Quickstart keeps its separate manual text-ingress/submission contract and stricter ingress bounds described in its [existing handoff](../add-factory-bugfix-quickstart/shared-project-inputs.md). Neither feature creates another input journal, upload service or synthetic Build/evidence owner. |
 
-Triage 7.3 must record the delivered DTO/route/schema owner and actual validation
-evidence here. This is a pending ownership agreement, not a claim that a shared
-API or bugfix task has been implemented. Existing Work/Run inspection and
-confirmed versioned publication remain the execution and mutation boundaries.
+The shared DTOs live in `server/application/src/factory_presets/contracts.rs` and
+`factory_readiness.rs`; REST adapters and operation/schema registration live in
+`server/api/octacity-server-api-rest/src/v1/`. Existing Source preparation and
+retained-result DTOs retain their owners. The ordinary
+`ui/scripts/generate-api.mjs` exports client types and separate ordinary/setup
+validation modules using one reachable-schema traversal. See the
+[task 7.3 contract, Red/Green and compatibility evidence](management-contract-verification.md).
+Existing Work/Run inspection and confirmed versioned publication remain the
+execution and mutation boundaries; this metadata handoff grants no authority.
+
+Task 7.4 adds the first Console consumer and removes dependence on earlier Builds
+or Flows. The shared Project input owner now publishes/catalogs named private
+documents through `/api/v1/projects/{project_id}/input-documents`, retaining the
+existing journal, fencing, byte storage and cleanup. Installed Build bindings and
+Source preparation metadata come from existing choices; native Reporter action
+metadata and its executor use one declaration installed before the ordinary
+registry is frozen. These are reusable contracts, not another execution-state
+owner. See [Console setup, contracts and TDD verification](project-triage-setup-verification.md).
+
+No dependency/package was added. The lazy setup and shared UI/locales add about
+61 KiB of aggregate JavaScript over the measured pre-7.4 output. An explicit
+64 KiB allocation raises JavaScript/static ceilings to 1,403,392/1,495,040 bytes;
+entry, CSS and asset-count ceilings stay unchanged. Final measured output is
+1,394,834 JavaScript bytes, 90,943 CSS bytes and 1,486,399 HTML/CSS/JavaScript bytes.
+The architecture test admits the measured output and rejects another KiB near
+both aggregate ceilings. Console authoring/browser fixtures do not qualify the
+packaged Agent/MCP/provider journey; task 8.x and current dispatch checks remain
+required.
 
 ## Evidence and limits for this task
 
