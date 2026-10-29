@@ -960,13 +960,20 @@ test('pans the canvas with pointer and keyboard and fits every node without requ
   await page.keyboard.press('Enter');
   await expect(draft.getByRole('status', { name: 'Canvas zoom' })).toHaveText('100%');
   await expect(fit).toBeFocused();
-  const visible = (await graph.boundingBox())!;
+  // Observe rendered geometry after Fit, rather than relying on the zoom label's update.
   for (const card of await graph.getByRole('article').all()) {
-    const box = (await card.boundingBox())!;
-    expect(box.x).toBeGreaterThan(visible.x);
-    expect(box.x + box.width).toBeLessThan(visible.x + visible.width);
-    expect(box.y).toBeGreaterThan(visible.y);
-    expect(box.y + box.height).toBeLessThan(visible.y + visible.height);
+    await expect
+      .poll(async () => {
+        const visible = (await graph.boundingBox())!;
+        const box = (await card.boundingBox())!;
+        return {
+          left: box.x > visible.x,
+          right: box.x + box.width < visible.x + visible.width,
+          top: box.y > visible.y,
+          bottom: box.y + box.height < visible.y + visible.height,
+        };
+      })
+      .toEqual({ left: true, right: true, top: true, bottom: true });
   }
   expect(mutations).toEqual([]);
   expect(
