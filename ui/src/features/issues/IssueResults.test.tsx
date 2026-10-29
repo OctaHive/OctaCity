@@ -8,6 +8,7 @@ import {
   resultsFixture,
   timelineFixture,
 } from '../../../tests/fixtures/issueActivity';
+import { triageCompletion } from '../../../tests/fixtures/factoryTriage';
 import { executionFixture } from '../../../tests/fixtures/issueExecutions';
 import type { IssueExecutionsApi } from './executionApi';
 afterEach(cleanup);
@@ -219,3 +220,34 @@ it('offers a fresh result observation after a continuation becomes unreadable', 
   ).toBeTruthy();
 });
 import { ManagementApiError } from '../../api/client';
+
+it('reads the selected original Run triage result beside the current local status and links to its receipt journal', async () => {
+  const activity = fakeActivity(vi);
+  activity.results.mockResolvedValue(
+    resultsFixture([{ kind: 'node_completion', record: triageCompletion('classification') }]),
+  );
+  const executions = {
+    get: vi
+      .fn<IssueExecutionsApi['get']>()
+      .mockResolvedValue(executionFixture('admitted', 'original-request')),
+    list: vi.fn(),
+    start: vi.fn(),
+  };
+  setup(
+    `/projects/delivery/issues/${issue.id}?section=results&execution=original-request&result_collection=node-completions&result_id=classification-record`,
+    undefined,
+    { issueActivityApi: activity, issueExecutionsApi: executions },
+  );
+  expect(await screen.findByRole('heading', { name: 'Systems analyst assessment' })).toBeTruthy();
+  expect(activity.results).toHaveBeenCalledWith(
+    'delivery',
+    issue.id,
+    'retained-work',
+    'node-completions',
+    null,
+    expect.any(AbortSignal),
+  );
+  const run = screen.getByRole('link', { name: 'Open original Run delivery receipts' });
+  expect(run.getAttribute('href')).toBe('/factory/retained-run?diagnostic=effect-delivery');
+  expect(executions.start).not.toHaveBeenCalled();
+});

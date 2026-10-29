@@ -1,3 +1,4 @@
+import { isTriageCompletion } from '../../shared/FactoryTriageResult';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { queryKeys } from '../../app/query';
@@ -82,6 +83,7 @@ export function FactoryRunDiagnostics({ api, run }: { api: FactoryApi; run: Fact
   const completions = useFactoryDiagnostics(api, run.id, 'node-completions');
   const selections = useFactoryDiagnostics(api, run.id, 'profile-selections');
   const stops = useFactoryDiagnostics(api, run.id, 'node-stops');
+  const effects = useFactoryDiagnostics(api, run.id, 'effect-delivery');
   const configuration = useQuery({
     queryKey: queryKeys.factoryConfiguration(run.configuration_id, run.configuration_version),
     queryFn: ({ signal }) =>
@@ -119,6 +121,18 @@ export function FactoryRunDiagnostics({ api, run }: { api: FactoryApi; run: Fact
     }
     return next;
   };
+  const provenanceParams = (
+    record: Extract<FactoryDiagnostic, { kind: 'call' }>['record']['node'],
+  ) => {
+    const next = new URLSearchParams(params);
+    next.delete('diagnostic_after');
+    next.set('diagnostic', 'calls');
+    next.set('diagnostic_id', record.id);
+    next.set('flow_run_id', record.flow_run_id);
+    next.set('cycle_id', record.cycle_id);
+    next.set('node_attempt_id', record.id);
+    return next.toString();
+  };
   const inspect = (item: FactoryDiagnostic, id: string) => setParams(diagnosticParams(item, id));
   const label = t(DIAGNOSTIC_LABELS[collection]);
   return (
@@ -136,6 +150,63 @@ export function FactoryRunDiagnostics({ api, run }: { api: FactoryApi; run: Fact
         .map(([kind, query]) => (
           <DiagnosticDependencyNotice key={kind} query={query} label={t(DIAGNOSTIC_LABELS[kind])} />
         ))}
+      {knownCompletions.some((item) => isTriageCompletion(item.record)) ? (
+        <section className={styles.panel} aria-label={t('triageResult.results')}>
+          <h2>{t('triageResult.results')}</h2>
+          <PagedExplorerBranch
+            query={completions}
+            empty={t('factory.noDiagnostics')}
+            labels={{
+              failure: t('triageResult.results'),
+              loading: t('triageResult.results'),
+              stale: t('triageResult.results'),
+              loadMore: t('factory.moreDiagnostics'),
+              loadingMore: t('triageResult.results'),
+            }}
+          >
+            {(items) =>
+              items
+                .filter(
+                  (item) => item.kind === 'node_completion' && isTriageCompletion(item.record),
+                )
+                .map((item) =>
+                  item.kind === 'node_completion' ? (
+                    <article key={item.id} className={styles.recordCard}>
+                      <DiagnosticRecordDetails item={item} />
+                      {item.record.result_provenance?.map((call) => (
+                        <Link key={call.node.id} to={{ search: provenanceParams(call.node) }}>
+                          {t('triageResult.provenance')}
+                        </Link>
+                      ))}
+                    </article>
+                  ) : null,
+                )
+            }
+          </PagedExplorerBranch>
+          <h3>{t('triageResult.effect')}</h3>
+          <PagedExplorerBranch
+            query={effects}
+            empty={t('triageResult.noDelivery')}
+            labels={{
+              failure: t('triageResult.effect'),
+              loading: t('triageResult.effect'),
+              stale: t('triageResult.effect'),
+              loadMore: t('factory.moreDiagnostics'),
+              loadingMore: t('triageResult.effect'),
+            }}
+          >
+            {(items) =>
+              items
+                .filter((item) => item.kind === 'effect_delivery')
+                .map((item) => (
+                  <article key={item.id} className={styles.recordCard}>
+                    <DiagnosticRecordDetails item={item} />
+                  </article>
+                ))
+            }
+          </PagedExplorerBranch>
+        </section>
+      ) : null}
       <FactoryRunCommands
         api={api}
         run={run}

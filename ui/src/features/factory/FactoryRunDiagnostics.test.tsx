@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { triageCompletion } from '../../../tests/fixtures/factoryTriage';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
@@ -516,4 +517,76 @@ it('copies a later-page Flow link with its cursor and filters and reopens the se
   cleanup();
   mount(copied);
   expect(await screen.findByText('e'.repeat(64))).toBeTruthy();
+});
+
+it('opens retained assessments directly and preserves exact provenance without running agents or writes', async () => {
+  const run = runFixture();
+  const acceptedProject = triageCompletion('eligibility');
+  const acceptedAnalyst = triageCompletion('classification');
+  const api = {
+    ...factoryApi,
+    getConfiguration: vi.fn(async () => configurationFixture()),
+    respondNode: vi.fn(),
+    retryNode: vi.fn(),
+    cancelRun: vi.fn(),
+    requestNodeOperation: vi.fn(),
+    listDiagnostics: vi.fn<FactoryApi['listDiagnostics']>(async (_run, collection) => ({
+      items:
+        collection === 'node-completions'
+          ? [
+              { kind: 'node_completion', record: acceptedProject },
+              { kind: 'node_completion', record: acceptedAnalyst },
+            ]
+          : collection === 'effect-delivery'
+            ? [
+                {
+                  kind: 'effect_delivery',
+                  record: {
+                    id: 'd'.repeat(64),
+                    record_id: 'e'.repeat(64),
+                    kind: 'work.status.projection',
+                    input_digest: 'b'.repeat(64),
+                    state: 'failed',
+                    failure: 'exhausted',
+                    attempt: 2,
+                    available_at: 3,
+                    recorded_at: 4,
+                  },
+                },
+              ]
+            : [],
+      next_cursor: null,
+    })),
+  };
+  const router = createMemoryRouter(
+    [{ path: '*', element: <FactoryRunDiagnostics api={api} run={run} /> }],
+    { initialEntries: [`/factory/${run.id}`] },
+  );
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  expect(await screen.findByRole('heading', { name: 'Project assessment' })).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Systems analyst assessment' })).toBeTruthy();
+  expect(
+    await screen.findByText('Delivery budget exhausted; review the retained attempt'),
+  ).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Reporter delivery' })).toBeTruthy();
+  const result = screen.getByRole('region', { name: 'Retained triage results' });
+  const provenance = within(result).getAllByRole('link', { name: 'Inspect stage provenance' });
+  const url = new URL(provenance[0]!.getAttribute('href')!, 'http://console.test');
+  expect(url.searchParams.get('node_attempt_id')).toBe('original-eligibility-agent-attempt');
+  expect(url.searchParams.get('diagnostic_id')).toBe('original-eligibility-agent-attempt');
+  expect(url.searchParams.get('flow_run_id')).toBe('source-flow');
+  expect(url.searchParams.get('cycle_id')).toBe('source-cycle');
+  expect(url.searchParams.get('diagnostic')).toBe('calls');
+  expect(within(result).getByText('original-eligibility-context')).toBeTruthy();
+  expect(within(result).getByText('original-classification-context')).toBeTruthy();
+  expect(within(result).getByText('original-eligibility-profile')).toBeTruthy();
+  expect(within(result).getByText('original-classification-profile')).toBeTruthy();
+  expect(api.requestNodeOperation).not.toHaveBeenCalled();
+  expect(api.respondNode).not.toHaveBeenCalled();
+  expect(api.retryNode).not.toHaveBeenCalled();
+  expect(api.cancelRun).not.toHaveBeenCalled();
 });

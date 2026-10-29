@@ -18,6 +18,8 @@ import { useIssueExecution, useIssueWork } from './useIssueExecution';
 import { IssueObservation } from './IssueActivity';
 import styles from './Issues.module.css';
 const collections = [
+  'node-completions',
+  'effect-delivery',
   'changesets',
   'evidence',
   'review-plans',
@@ -158,6 +160,11 @@ function ResultCollection({
         {(data) => (
           <>
             <IssueObservation page={data} />
+            <Link
+              to={`/factory/${encodeURIComponent(data.association.run_id)}?diagnostic=effect-delivery`}
+            >
+              {t('triageResult.originalReceipts')}
+            </Link>
             <p role="status">{t(`issues.resultCoverage.${data.coverage}`)}</p>
             {data.items.length ? (
               <ol className={styles.list}>
