@@ -27,6 +27,10 @@ pub struct WorkSourceSelectionLabels {
 /// One usable installed profile; private role handles and credential references are absent.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkSourceInputChoice {
+  /// Exact installed preparation contract, independently reviewed from task-authored acceptance.
+  /// Missing metadata is unknown; TaskUpdate never inherits a reader's criteria.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub preparation: Option<SourceAcceptanceMapping>,
   /// Exact installed effect presentation; absence means unknown, never editable.
   #[serde(skip_serializing_if = "Option::is_none")]
   pub reporting: Option<WorkSourceReportingChoice>,
@@ -53,6 +57,9 @@ pub struct WorkSourceInputChoice {
 /// Adapter-validated installed effects and optional explicit editing ceiling.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorkSourceReportingChoice {
+  /// Exact native producer registered beside these installed choices; absence remains unknown.
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub action: Option<crate::FactoryWorkStatusActionContract>,
   /// Existing immutable default mapping, with no privileged status names.
   pub mapping: WorkSourceStatusMapping,
   /// None keeps installed-only selection; read-only checks do not imply write readiness.
@@ -115,6 +122,29 @@ impl ManagementAuthorizationTarget for ListWorkSourceInputChoicesQuery {
   }
 }
 impl<S> FactorySourceConfigurationHandlers<S> {
+  /// Projects an already installed, validated mapping; this never installs preparation or grants authority.
+  pub fn with_preparation_mapping(
+    mut self,
+    capability: WorkSourceCapability,
+    mapping: WorkSourceMapping,
+  ) -> Result<Self, ApplicationError> {
+    mapping.validate().map_err(|_| ApplicationError::invalid())?;
+    if capability.role != WorkSourceCapabilityRole::Source
+      || !self.capabilities.contains(&capability)
+      || capability.binding != mapping.source
+      || self.preparation_mappings.iter().any(|(c, _)| c == &capability)
+    {
+      return Err(ApplicationError::invalid());
+    }
+    // One installation can serve several Projects. Its private preparation is not
+    // another Project's metadata and must not disable independently granted reads.
+    if matches!(&mapping.acceptance, SourceAcceptanceMapping::ProcessCompletion(document) if document.project_id() != capability.project_id)
+    {
+      return Ok(self);
+    }
+    self.preparation_mappings.push((capability, mapping.acceptance));
+    Ok(self)
+  }
   /// Attaches bounded presentation verified by the trusted installed Reporter owner.
   /// This does not install a writer or grant any Project/native resource authority.
   pub fn with_reporting_mapping(
@@ -135,9 +165,37 @@ impl<S> FactorySourceConfigurationHandlers<S> {
     {
       return Err(ApplicationError::invalid());
     }
-    self
+    self.reporting_mappings.push((
+      capability,
+      WorkSourceReportingChoice {
+        action: None,
+        mapping,
+        editable,
+      },
+    ));
+    Ok(self)
+  }
+  /// Projects the same native declaration used to register its executor; never grants write authority.
+  pub fn with_reporting_action_contract(
+    mut self,
+    capability: WorkSourceCapability,
+    contract: crate::FactoryWorkStatusActionContract,
+  ) -> Result<Self, ApplicationError> {
+    if capability.role != WorkSourceCapabilityRole::Reporter
+      || capability.binding.capability != contract.plugin
+      || contract != crate::FactoryWorkStatusActionContract::new(capability.binding.capability.clone())?
+    {
+      return Err(ApplicationError::invalid());
+    }
+    let (_, presentation) = self
       .reporting_mappings
-      .push((capability, WorkSourceReportingChoice { mapping, editable }));
+      .iter_mut()
+      .find(|(installed, _)| installed == &capability)
+      .ok_or_else(ApplicationError::invalid)?;
+    if presentation.action.is_some() {
+      return Err(ApplicationError::invalid());
+    }
+    presentation.action = Some(contract);
     Ok(self)
   }
   /// Declares normalized narrowing support over an adapter-owned unrestricted base.
@@ -311,7 +369,33 @@ impl<S: IntegrationProjectAccessStore + IntegrationConnectionStore + Integration
         continue;
       }
       let predicate = self.predicate_support.iter().find(|s| &s.capability == capability);
+      let preparation = self
+        .preparation_mappings
+        .iter()
+        .find(|(c, _)| c == capability)
+        .map(|(_, mapping)| mapping.clone());
+      // Private document identities are disclosed only under their existing Artifact visibility.
+      let preparation = match preparation {
+        Some(SourceAcceptanceMapping::ProcessCompletion(SourceCompletionDocument::ProjectInput {
+          ref artifact,
+          ..
+        }))
+          if self
+            .require(
+              context,
+              ManagementResourceKind::Artifact,
+              artifact.artifact_id(),
+              ManagementAction::View,
+            )
+            .await
+            .is_err() =>
+        {
+          None
+        }
+        mapping => mapping,
+      };
       items.push(WorkSourceInputChoice {
+        preparation,
         reporting: self
           .reporting_mappings
           .iter()

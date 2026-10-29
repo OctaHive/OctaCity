@@ -147,6 +147,21 @@ fn triage_context_keeps_document_aliases_bounded_and_separate_from_authority() {
 }
 
 #[test]
+fn supporting_document_alias_reserves_its_published_context_prefix() {
+  let project = ProjectId::generate();
+  let reference = artifact("Reviewed rules");
+  for (length, valid) in [(119, true), (120, false)] {
+    let draft = TriageProjectContextDraft {
+      project_id: project,
+      goals: Some(reference.clone()),
+      rules: Some(reference.clone()),
+      documents: [(FactoryKey::new("a".repeat(length)).unwrap(), reference.clone())].into(),
+    };
+    assert_eq!(draft.bind(project).is_ok(), valid, "alias length {length}");
+  }
+}
+
+#[test]
 fn triage_ticket_projection_keeps_the_admitted_ticket_and_separately_selected_code_repository() {
   use octacity_server_factory::*;
   let fixture = octacity_server_store::testing::factory_node_journal_contract_fixture();

@@ -10,6 +10,8 @@ use std::{sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
 pub(super) struct SourceManagement {
+  /// Read-only projection of native producers registered during the same bootstrap.
+  pub(super) reporter_actions: Vec<FactoryWorkStatusActionContract>,
   pub(super) store: Arc<PostgresStore>,
   pub(super) policy: Arc<dyn ManagementAuthorizationPolicy>,
   pub(super) profiles: SourceProfiles,
@@ -19,6 +21,12 @@ pub(super) struct SourceManagement {
   pub(super) cancellation: CancellationToken,
 }
 impl SourceManagement {
+  pub(super) fn reporter_action_contract(
+    &self,
+    capability: &octacity_server_factory::ImmutableReference,
+  ) -> Option<&FactoryWorkStatusActionContract> {
+    self.reporter_actions.iter().find(|action| &action.plugin == capability)
+  }
   /// Pair a task reader only with independently installed delivery on the same native parent.
   /// The returned access pin grants nothing; mapping choices/publication recheck TaskUpdate.
   fn issue_writer(
@@ -113,6 +121,12 @@ impl SourceManagement {
     )?;
     for (reader, source) in declarations.into_iter().zip(sources) {
       handler = handler.with_connection_configuration(source.clone(), reader.read.capability.configuration.clone())?;
+      if let Some(preparation) = &reader.preparation {
+        let mut mapping = preparation.settings().mapping;
+        // The full installed profile pins these settings, independently of its native connection parent.
+        mapping.source = source.binding.clone();
+        handler = handler.with_preparation_mapping(source.clone(), mapping)?;
+      }
       if let Some(selection) = &reader.selection_labels {
         let state = selection.state.clone().ok_or_else(ApplicationError::invalid)?;
         handler = handler.with_selection_labels(
@@ -137,7 +151,11 @@ impl SourceManagement {
       handler =
         handler.with_connection_configuration(writer.clone(), reporter.write.capability.configuration.clone())?;
       if let Some(reporting) = &reporter.reporting {
-        handler = handler.with_reporting_mapping(writer, reporting.mapping.clone(), reporting.editable.clone())?;
+        handler =
+          handler.with_reporting_mapping(writer.clone(), reporting.mapping.clone(), reporting.editable.clone())?;
+        if let Some(contract) = self.reporter_action_contract(&writer.binding.capability) {
+          handler = handler.with_reporting_action_contract(writer, contract.clone())?;
+        }
       }
     }
     let preview = super::HostedFactoryWorkSourcePreview::new(

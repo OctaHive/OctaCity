@@ -1,5 +1,6 @@
 //! Release presets resolve through ordinary Factory authoring; queries grant no execution authority.
 use crate::*;
+mod build;
 mod contracts;
 mod effects;
 mod input;
@@ -340,6 +341,13 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       {
         return Ok(result.unavailable(format!("/profiles/{alias}")));
       }
+      let build = match &selected.build {
+        Some(build) => build.clone(),
+        None => match build::for_profile(&choices, &profile, node) {
+          Some(build) => build,
+          None => return Ok(result.unavailable(format!("/profiles/{alias}/build"))),
+        },
+      };
       node.context_binding = Some(
         p.context
           .get(&alias)
@@ -352,14 +360,7 @@ impl<S: FactoryConfigurationStore + octacity_server_store::FactoryRoleProfileSto
       node.build_profile = None;
       node.profile_selection = Some(FlowProfileSelectionBinding {
         role: selected.role.clone(),
-        candidates: [(
-          "selected".parse().unwrap(),
-          FlowProfileCandidate {
-            profile,
-            build: selected.build.clone(),
-          },
-        )]
-        .into(),
+        candidates: [("selected".parse().unwrap(), FlowProfileCandidate { profile, build })].into(),
         policy: FlowProfileSelectionPolicy::Manual {
           candidate: Some("selected".parse().unwrap()),
         },

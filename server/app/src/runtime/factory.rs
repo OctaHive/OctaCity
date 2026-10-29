@@ -681,15 +681,14 @@ pub(super) fn install_outbox(
     .collect()
 }
 
-pub(super) async fn assemble(
+pub(super) async fn prepare(
   config: &crate::ServerConfig,
   resources: &mut super::assembly::RuntimeResources,
   placement_store: Arc<PostgresAuthoritativeStore>,
   installer: Option<Arc<dyn FactoryRuntimeInstaller>>,
   revisions: Arc<dyn octacity_server_application::RevisionResolver>,
-) -> Result<(Arc<PostgresStore>, Option<InstalledFactoryWorker>), super::ServerRuntimeError> {
+) -> Result<Option<FactoryRuntimeInstallation>, super::ServerRuntimeError> {
   use super::ServerRuntimeError;
-  use crate::readiness::WorkerHealth;
   let installed = match (config.factory(), installer) {
     (Some(_), Some(installer)) => match tokio::time::timeout(
       config.readiness_check_timeout(),
@@ -713,6 +712,16 @@ pub(super) async fn assemble(
     (None, _) => None,
     (Some(_), None) => unreachable!("installation requirement checked before loading resources"),
   };
+  Ok(installed)
+}
+
+pub(super) fn assemble(
+  config: &crate::ServerConfig,
+  resources: &mut super::assembly::RuntimeResources,
+  installed: Option<FactoryRuntimeInstallation>,
+) -> Result<(Arc<PostgresStore>, Option<InstalledFactoryWorker>), super::ServerRuntimeError> {
+  use super::ServerRuntimeError;
+  use crate::readiness::WorkerHealth;
   let registration_store = Arc::new(match &installed {
     Some(installed) => {
       PostgresStore::with_factory_capabilities(resources.postgres.clone(), installed.capabilities.clone())

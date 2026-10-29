@@ -13,7 +13,7 @@ pub use flow::{FlowProfileAdmissionOverride, FlowProfileAdmissionOverrides, Flow
 pub const MAX_FACTORY_EXECUTOR_BINDINGS: usize = 256;
 
 mod build_pipeline;
-pub use build_pipeline::FactoryBuildPipelineContract;
+pub use build_pipeline::{FactoryBuildCompilationContract, FactoryBuildPipelineContract};
 mod assessment;
 mod budget;
 mod configuration;

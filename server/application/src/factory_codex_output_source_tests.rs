@@ -47,6 +47,22 @@ fn installed_tool_response_limits_are_part_of_the_frozen_task_identity() {
   });
 }
 
+#[test]
+fn installed_codex_compilation_metadata_reuses_native_task_and_output_contracts() {
+  crate::factory_admission_tests::run_ready(async {
+    let profile = prepared_source().await.profile;
+    let metadata = profile
+      .pipeline_contract()
+      .compilation
+      .expect("installed compilation metadata");
+    assert_eq!(metadata.task_digest, profile.task_digest());
+    assert!(metadata.role_profiles);
+    assert_eq!(metadata.result_output.as_str(), "codex-run-result");
+    assert_eq!(metadata.result_output_kind, EvidenceOutputKind::Report);
+    assert_eq!(metadata.mcp_result_tool, Some(factory_mcp_evidence_verifier()));
+  });
+}
+
 struct Clock;
 impl FactoryExecutionClock for Clock {
   fn now(&self) -> Result<Timestamp, ApplicationError> {

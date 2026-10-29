@@ -1,7 +1,7 @@
 import { URL } from 'node:url';
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { factoryAuthoringSchemas } from './factory-authoring-schemas.mjs';
+import { factoryAuthoringSchemas, factorySetupSchemas } from './factory-authoring-schemas.mjs';
 const commandSchemas = {
   FactoryRuntimeSettingsRequest: {},
   AdmitManualFactoryWorkRequest: {},
@@ -93,4 +93,46 @@ test('ships validation facts without documentation strings and preserves literal
     description: 'Literal input value',
   });
   assert.equal(schemas.FactoryConfigurationDefinition.description, 'Documentation only');
+});
+
+test('exports preset, preparation and readiness selections with their reachable server bounds', () => {
+  const schemas = {
+    ...commandSchemas,
+    FactoryConfigurationDefinition: {},
+    FactoryFlowDefinitionDraft: {},
+    FactoryPresetResolutionRequest: {
+      type: 'object',
+      properties: { profiles: { type: 'object', maxProperties: 7 } },
+    },
+    FactoryReadinessSelection: {
+      type: 'object',
+      properties: { repository: { $ref: '#/components/schemas/FactoryReadinessRepository' } },
+    },
+    FactoryReadinessRepository: { type: 'object', additionalProperties: false },
+    SourceAcceptanceMapping: { $ref: '#/components/schemas/SourceCompletionDocument' },
+    SourceCompletionDocument: {
+      type: 'object',
+      properties: { content: { type: 'string', 'x-max-utf8-bytes': 73 } },
+    },
+  };
+  const result = factorySetupSchemas({ components: { schemas } });
+  assert.deepEqual(result.FactoryPresetResolutionRequest, schemas.FactoryPresetResolutionRequest);
+  assert.deepEqual(result.FactoryReadinessRepository, schemas.FactoryReadinessRepository);
+  assert.deepEqual(result.SourceAcceptanceMapping, schemas.SourceAcceptanceMapping);
+  assert.equal(result.SourceCompletionDocument?.properties.content['x-max-utf8-bytes'], 73);
+});
+
+test('keeps setup-only schemas out of ordinary document editor exports', () => {
+  const schemas = {
+    ...commandSchemas,
+    FactoryPresetResolutionRequest: {},
+    FactoryReadinessSelection: {},
+    SourceAcceptanceMapping: {},
+    FactoryConfigurationDefinition: {},
+    FactoryFlowDefinitionDraft: {},
+  };
+  const ordinary = factoryAuthoringSchemas({ components: { schemas } });
+  assert.equal(Object.hasOwn(ordinary, 'FactoryPresetResolutionRequest'), false);
+  assert.equal(Object.hasOwn(ordinary, 'FactoryReadinessSelection'), false);
+  assert.equal(Object.hasOwn(ordinary, 'SourceAcceptanceMapping'), false);
 });

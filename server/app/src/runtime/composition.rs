@@ -108,7 +108,7 @@ impl ServerRuntime {
       )),
       None => Arc::new(octacity_server_application::ExactRevisionResolver),
     };
-    let (registration_store, mut factory) = super::factory::assemble(
+    let mut factory_installation = super::factory::prepare(
       &config,
       &mut resources,
       placement_store.clone(),
@@ -116,6 +116,19 @@ impl ServerRuntime {
       revision_resolver.clone(),
     )
     .await?;
+    // Source services use the same database owner; finalize the immutable Factory inventory
+    // only after optional native producer contracts and executors have been paired.
+    let installed_integrations = super::integration_management::install_with_factory(
+      &config,
+      Arc::new(octacity_server_store_postgres::PostgresStore::new(
+        resources.postgres.clone(),
+      )),
+      cancellation.child_token(),
+      &mut resources.readiness,
+      factory_installation.as_mut(),
+    )
+    .await?;
+    let (registration_store, mut factory) = super::factory::assemble(&config, &mut resources, factory_installation)?;
     let log_search_index = Arc::new(PostgresLogSearchIndex::new(resources.postgres.clone()));
     let notification_pool = resources.postgres.clone();
     let registration_service = Arc::new(
@@ -184,13 +197,6 @@ impl ServerRuntime {
       retention_policy.retrying().maximum_retry_milliseconds(),
     )
     .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?;
-    let installed_integrations = super::integration_management::install(
-      &config,
-      registration_store.clone(),
-      cancellation.child_token(),
-      &mut resources.readiness,
-    )
-    .await?;
     let (integrations, source_reads, managed_issue_sources, source_management) = installed_integrations
       .map_or((None, None, None, None), |i| {
         (Some(i.application), i.source_reads, i.issues, i.source_management)

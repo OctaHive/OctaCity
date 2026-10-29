@@ -169,10 +169,11 @@ fn assert_safe_response_schema(
   document: &serde_json::Value,
   schema: &serde_json::Value,
   visited: &mut BTreeSet<String>,
+  component: &str,
 ) {
   if let Some(reference) = schema["$ref"].as_str() {
     if visited.insert(reference.to_owned()) {
-      assert_safe_response_schema(document, document.pointer(&reference[1..]).unwrap(), visited);
+      assert_safe_response_schema(document, document.pointer(&reference[1..]).unwrap(), visited, reference);
     }
     return;
   }
@@ -190,6 +191,16 @@ fn assert_safe_response_schema(
       "provider_payload",
       "body",
     ] {
+      // These `value` fields declare reviewed preparation or the type of a receipt field.
+      // Follow their referenced schemas normally, including the write-only credential prohibition.
+      if forbidden == "value"
+        && matches!(
+          component,
+          "#/components/schemas/SourceAcceptanceMapping" | "#/components/schemas/FactoryFlowFieldSchema"
+        )
+      {
+        continue;
+      }
       assert!(
         !properties.contains_key(forbidden),
         "private response field {forbidden}"
@@ -200,13 +211,13 @@ fn assert_safe_response_schema(
     serde_json::Value::Object(values) => {
       for (key, value) in values {
         if !["examples", "description"].contains(&key.as_str()) {
-          assert_safe_response_schema(document, value, visited);
+          assert_safe_response_schema(document, value, visited, component);
         }
       }
     }
     serde_json::Value::Array(values) => {
       for value in values {
-        assert_safe_response_schema(document, value, visited);
+        assert_safe_response_schema(document, value, visited, component);
       }
     }
     _ => {}
@@ -227,7 +238,7 @@ fn ordinary_integration_responses_cannot_reach_secret_submission_and_manual_inta
     for operation in item.as_object().unwrap().values() {
       let response = &operation["responses"]["200"]["content"]["application/json"]["schema"];
       assert!(response.is_object(), "missing integration response for {path}");
-      assert_safe_response_schema(&document, response, &mut BTreeSet::new());
+      assert_safe_response_schema(&document, response, &mut BTreeSet::new(), "");
       let request = &operation["requestBody"]["content"]["application/json"]["schema"]["$ref"];
       if request == "#/components/schemas/IntegrationCredentialSubmission" {
         assert_eq!(operation["operationId"], "manageIntegrationCredential");

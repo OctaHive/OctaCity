@@ -1,4 +1,34 @@
 use super::*;
+use octacity_server_application::{ManagementAuthorizationMapping, ManagementResourceKind};
+
+#[test]
+fn triage_document_alias_contract_leaves_room_for_its_context_namespace() {
+  let document = openapi_document();
+  assert_eq!(
+    document["components"]["schemas"]["TriageProjectContextDraft"]["properties"]["documents"]["propertyNames"]["maxLength"],
+    119
+  );
+}
+
+#[test]
+fn source_choices_document_the_exact_native_producer_receipt_contract() {
+  let document = openapi_document();
+  assert_component_exists(&document, "FactoryWorkStatusActionContract");
+  assert_eq!(
+    document["components"]["schemas"]["WorkSourceReportingChoice"]["properties"]["action"]["$ref"],
+    "#/components/schemas/FactoryWorkStatusActionContract"
+  );
+  let contract = octacity_server_application::FactoryWorkStatusActionContract::new(
+    serde_json::from_value(serde_json::json!({"identity":"reporter", "version":"v1", "digest":"a".repeat(64)}))
+      .unwrap(),
+  )
+  .unwrap();
+  assert_json_matches_component(
+    &document,
+    "FactoryWorkStatusActionContract",
+    &serde_json::to_value(contract).unwrap(),
+  );
+}
 
 #[derive(Debug, Eq, PartialEq)]
 struct AuthorizationInventoryError {
@@ -889,4 +919,87 @@ fn agent_route_qualification_flags_are_documented_as_optional_booleans() {
         .contains(&serde_json::json!(flag))
     );
   }
+}
+
+#[test]
+fn factory_setup_inventory_keeps_read_authority_and_shared_contract_bounds() {
+  let document = openapi_document();
+  let registered = management_authorization_operations();
+  for (id, method, path, resource) in [
+    (
+      "listFactoryPresets",
+      "GET",
+      "/api/v1/projects/{project_id}/factory-presets",
+      ManagementResourceKind::Project,
+    ),
+    (
+      "resolveFactoryPreset",
+      "POST",
+      "/api/v1/projects/{project_id}/factory-presets/resolve",
+      ManagementResourceKind::Project,
+    ),
+    (
+      "getFactoryReadiness",
+      "POST",
+      "/api/v1/factory-configurations/{factory_configuration_id}/versions/{version}/readiness",
+      ManagementResourceKind::FactoryConfiguration,
+    ),
+  ] {
+    let mapping = registered
+      .iter()
+      .find(|operation| operation.operation_id == id)
+      .unwrap();
+    assert_eq!((mapping.method, mapping.path), (method, path));
+    assert_eq!(
+      mapping.authorization,
+      ManagementAuthorizationMapping::instance(ManagementAction::View, resource)
+    );
+    let operation = &document["paths"][path][method.to_ascii_lowercase()];
+    assert_eq!(
+      operation["responses"]["200"]["headers"]["Cache-Control"]["schema"]["const"],
+      "no-store"
+    );
+    assert_required_header(operation, "Idempotency-Key", false);
+    assert_required_header(operation, "If-Match", false);
+  }
+  let bounds = octacity_server_application::factory_configuration_document_bounds();
+  let schemas = &document["components"]["schemas"];
+  let request = &schemas["FactoryPresetResolutionRequest"];
+  assert_eq!(request["required"], serde_json::json!(["preset"]));
+  assert_eq!(request["additionalProperties"], false);
+  for field in ["profiles", "context", "effects"] {
+    assert_eq!(request["properties"][field]["maxProperties"], bounds.nodes);
+  }
+  assert_eq!(
+    schemas["FactoryPresetSummary"]["properties"]["parameters"]["maxItems"],
+    bounds.choice_entries
+  );
+  assert_eq!(
+    schemas["FactoryReadinessSelection"]["required"],
+    serde_json::json!(["repository"])
+  );
+  assert_eq!(schemas["FactoryReadinessSelection"]["additionalProperties"], false);
+  assert_eq!(
+    schemas["FactoryReadinessReport"]["properties"]["checks"]["maxItems"],
+    bounds.choice_entries
+  );
+  assert_eq!(
+    schemas["SourceCompletionDocument"]["oneOf"][0]["properties"]["content"]["x-max-utf8-bytes"],
+    octacity_server_application::MAX_SOURCE_BODY_BYTES
+  );
+  assert_eq!(
+    schemas["SourceAcceptanceMapping"]["oneOf"][0]["properties"]["value"]["x-max-utf8-bytes"],
+    octacity_server_application::MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES
+  );
+  assert_eq!(
+    schemas["WorkSourceLabelPresence"]["enum"],
+    serde_json::json!(["any", "none"])
+  );
+  assert_eq!(schemas["WorkSourceLabelPresence"]["default"], "any");
+  assert!(
+    !schemas["WorkSourcePredicate"]["required"]
+      .as_array()
+      .unwrap()
+      .contains(&serde_json::json!("label_presence"))
+  );
 }

@@ -31,6 +31,9 @@ pub struct WorkSourceSnapshot {
   /// Literal observed provider state, with no Flow meaning.
   pub state: String,
 }
+/// Maximum UTF-8 bytes in a configured acceptance field or Markdown heading selector.
+pub const MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES: usize = 128;
+
 /// Explicit acceptance source; no implicit default or generated criteria.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", content = "value", rename_all = "snake_case", deny_unknown_fields)]
@@ -84,7 +87,7 @@ impl WorkSourceMapping {
   }
 }
 fn validate_acceptance_field(field: &str) -> Result<(), SourceMappingFailure> {
-  if field.is_empty() || field.len() > 128 {
+  if field.is_empty() || field.len() > MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES {
     Err(SourceMappingFailure::InvalidMapping)
   } else {
     Ok(())
@@ -93,7 +96,7 @@ fn validate_acceptance_field(field: &str) -> Result<(), SourceMappingFailure> {
 fn acceptance_heading_level(heading: &str) -> Result<usize, SourceMappingFailure> {
   let level = heading.bytes().take_while(|v| *v == b'#').count();
   if !(1..=6).contains(&level)
-    || heading.len() > 128
+    || heading.len() > MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES
     || heading.as_bytes().get(level) != Some(&b' ')
     || heading.contains(['\r', '\n'])
   {

@@ -694,6 +694,7 @@ impl ManagementQueryUseCase<ListWorkSourceInputChoicesQuery> for PresetRepositor
       return Err(ApplicationError::invalid());
     }
     let choice = |binding, purpose, configuration, reporting| WorkSourceInputChoice {
+      preparation: None,
       binding,
       purpose,
       connection_configuration: configuration,
@@ -716,6 +717,7 @@ impl ManagementQueryUseCase<ListWorkSourceInputChoicesQuery> for PresetRepositor
         IntegrationPurpose::TaskUpdate,
         selection.connection.reporter_configuration.clone().unwrap(),
         Some(WorkSourceReportingChoice {
+          action: None,
           mapping: selection.reporting.unwrap(),
           editable: Some(
             serde_json::from_value(serde_json::json!({"labels":["triage:reviewed"],"states":[],"ownership":null}))
@@ -1141,6 +1143,76 @@ async fn preset_resolution_rejects_distinct_reporting_children_with_flow_identit
     .unwrap();
   assert_eq!(response.status(), StatusCode::BAD_REQUEST);
   assert_eq!(json(response).await["diagnostics"]["errors"][0]["field"], "/effects");
+}
+
+#[test]
+fn preset_context_schema_preserves_missing_document_diagnostics() {
+  let project = ProjectId::generate();
+  let selection = serde_json::json!({"project_id":project,"documents":{}});
+  let decoded: TriageProjectContextDraft = serde_json::from_value(selection.clone()).unwrap();
+  assert_eq!(decoded.bind(project), Err(TriageContextProblem::MissingProjectGoals));
+  assert_json_matches_component(&openapi_document(), "TriageProjectContextDraft", &selection);
+}
+
+#[test]
+fn source_preparation_schema_preserves_explicit_completion_and_legacy_acceptance() {
+  let document = openapi_document();
+  assert_component_exists(&document, "SourceAcceptanceMapping");
+  let completion = SourceCompletionDocument::review_preset(ProjectId::generate(), TRIAGE_COMPLETION_PRESET).unwrap();
+  for mapping in [
+    SourceAcceptanceMapping::Field("acceptance".into()),
+    SourceAcceptanceMapping::Body,
+    SourceAcceptanceMapping::BodySection("## Acceptance".into()),
+    SourceAcceptanceMapping::ProcessCompletion(completion),
+  ] {
+    assert_json_matches_component(
+      &document,
+      "SourceAcceptanceMapping",
+      &serde_json::to_value(mapping).unwrap(),
+    );
+  }
+}
+
+#[tokio::test]
+async fn preset_resolution_freezes_installed_compilation_for_exact_profiles_without_client_hashes() {
+  use testing::MutationEvidenceProbe;
+  let (router, project, store) = preset_router();
+  let mut parameters = selected_parameters(&router, project, &store).await;
+  let binding = parameters["profiles"]["eligibility"]["build"].clone();
+  testing::qualify_preset_compilation(&store, project, binding.clone()).await;
+  for profile in parameters["profiles"].as_object_mut().unwrap().values_mut() {
+    profile.as_object_mut().unwrap().remove("build");
+  }
+  let before = store.mutation_evidence_counts().await;
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      &format!("/api/v1/projects/{project}/factory-presets/resolve"),
+      "read",
+      None,
+      &parameters.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK, "{}", json(response).await);
+  let resolved = json(response).await;
+  assert!(resolved["diagnostics"].as_array().unwrap().is_empty(), "{resolved}");
+  let nodes = resolved["configuration"]["flow"]["closure"]["definitions"][0]["nodes"]
+    .as_array()
+    .unwrap();
+  let builds: Vec<_> = nodes
+    .iter()
+    .filter_map(|node| node.pointer("/profile_selection/candidates/selected/build"))
+    .collect();
+  assert_eq!(builds.len(), 2);
+  for build in &builds {
+    assert_eq!(build["build_configuration"], binding["build_configuration"]);
+    assert_eq!(build["result_output"], "triage.result");
+    assert_ne!(build["task_digest"], binding["task_digest"]);
+  }
+  assert_ne!(builds[0]["task_digest"], builds[1]["task_digest"]);
+  assert_eq!(resolved["configuration"]["enabled"], false);
+  assert_eq!(store.mutation_evidence_counts().await, before);
 }
 
 #[path = "factory_readiness.rs"]

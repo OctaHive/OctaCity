@@ -546,6 +546,7 @@ pub(super) async fn assert_project_preview_retry_bound(
   let store = Arc::new(PostgresStore::new(pool));
   let policy: Arc<dyn app::ManagementAuthorizationPolicy> = Arc::new(app::TrustedNetworkManagementPolicy);
   let provider = Arc::new(super::source_management::SourceManagement {
+    reporter_actions: vec![],
     store: store.clone(),
     policy: policy.clone(),
     profiles,

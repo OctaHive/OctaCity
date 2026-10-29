@@ -142,8 +142,9 @@ pub struct FactoryPresetProfileSelection {
   pub role: FactoryRoleRef,
   /// Exact published Project profile version.
   pub profile: FactoryRoleProfileRef,
-  /// Ordinary stage result/capture and installed Build bindings.
-  pub build: FlowBuildBinding,
+  /// Explicit legacy selection; omission resolves one exact installed compiler for this Profile.
+  /// Ambiguous or unobserved installation metadata remains an unavailable dependency.
+  pub build: Option<FlowBuildBinding>,
 }
 /// Configuration choices without a caller-substituted Flow or automatic activation.
 #[derive(Clone, Debug, Deserialize)]

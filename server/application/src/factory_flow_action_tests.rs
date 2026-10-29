@@ -4,6 +4,8 @@ use octacity_server_factory::*;
 use octacity_server_store::testing as store_testing;
 use octacity_server_store::*;
 use std::sync::{Arc, Mutex};
+#[path = "factory_work_status_contract_tests.rs"]
+mod installed_contract;
 
 #[path = "factory_issue_source_push_tests.rs"]
 pub(crate) mod issue_push;

@@ -176,6 +176,15 @@ impl FactoryCodexBuildProfile {
       plugin: self.toolchain.plugin.clone(),
       model_or_tool: self.toolchain.model.clone(),
       pipeline_node: self.pipeline_node.clone(),
+      compilation: Some(octacity_server_factory::FactoryBuildCompilationContract {
+        task_digest: self.task_digest(),
+        role_profiles: true,
+        result_output: crate::factory_codex_contract::CODEX_RUN_RESULT
+          .parse()
+          .expect("native output key"),
+        result_output_kind: octacity_server_factory::EvidenceOutputKind::Report,
+        mcp_result_tool: Some(crate::factory_mcp_evidence_verifier()),
+      }),
     }
   }
 

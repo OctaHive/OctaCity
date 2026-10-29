@@ -247,6 +247,13 @@ pub struct FactoryChoiceCompatibility {
 }
 
 impl FactoryConfigurationChoices {
+  /// Adds one deployment-declared reference without rebuilding or losing existing typed metadata.
+  pub fn with_reference_choice(mut self, choice: FactoryReferenceChoice) -> Result<Self, FactoryError> {
+    let mut entries = self.entries().references;
+    entries.push(choice);
+    self.references = reference_choice_map(entries)?;
+    Ok(self)
+  }
   /// Constructs bounded catalogs and rejects duplicate aliases within a category.
   pub fn try_new(entries: FactoryConfigurationChoiceEntries) -> Result<Self, FactoryError> {
     Ok(Self {

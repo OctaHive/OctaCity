@@ -1,7 +1,6 @@
 /** Retains authoritative bounds for Factory documents, Work and operator commands. */
 export function factoryAuthoringSchemas(document) {
-  const source = document.components?.schemas ?? {};
-  const pending = [
+  return reachableSchemas(document, [
     'FactoryRuntimeSettingsRequest',
     'FactoryConfigurationDefinition',
     'FactoryFlowDefinitionDraft',
@@ -9,7 +8,20 @@ export function factoryAuthoringSchemas(document) {
     'FactoryNodeOperationRequest',
     'FactoryNodeResponseRequest',
     'ImportProjectSkillRequest',
-  ];
+  ]);
+}
+
+/** Setup selections use the same schema traversal without enlarging ordinary editor exports. */
+export function factorySetupSchemas(document) {
+  return reachableSchemas(document, [
+    'FactoryPresetResolutionRequest',
+    'FactoryReadinessSelection',
+    'SourceAcceptanceMapping',
+  ]);
+}
+
+function reachableSchemas(document, pending) {
+  const source = document.components?.schemas ?? {};
   const result = {};
   function references(value) {
     if (value === null || typeof value !== 'object') return;

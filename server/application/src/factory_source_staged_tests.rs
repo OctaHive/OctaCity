@@ -148,6 +148,7 @@ fn completion_admission_rechecks_each_generated_input_after_revision_resolution(
       let artifact = match role {
         FactoryInputRole::Task => intent.artifacts.task(),
         FactoryInputRole::Acceptance => intent.artifacts.acceptance(),
+        FactoryInputRole::Document => panic!("Source Work retains only its task and acceptance pair"),
       };
       let resource = ManagementResource::instance(
         ManagementResourceKind::Artifact,

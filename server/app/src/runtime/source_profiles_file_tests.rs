@@ -1,6 +1,8 @@
 //! Offline installation contracts through the public validator; no provider or database access.
 use super::assembly::validate_runtime_files;
 use std::{os::unix::fs::PermissionsExt as _, path::Path};
+#[path = "factory_native_reporter_installation_tests.rs"]
+mod native_reporter;
 
 fn source_profile_config(
   root: &Path,
@@ -397,6 +399,7 @@ async fn shared_reporter_inventory_supplies_project_pins_to_authoring_and_dispat
     .connect_lazy("postgres://fixture@127.0.0.1:9/unused")
     .unwrap();
   let mut sources = super::source_management::SourceManagement {
+    reporter_actions: vec![],
     store: Arc::new(octacity_server_store_postgres::PostgresStore::new(pool)),
     policy: Arc::new(TrustedNetworkManagementPolicy),
     profiles,

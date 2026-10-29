@@ -1,7 +1,29 @@
 //! Input settings remain provider-owned immutable references, separate from connection profiles.
 use super::*;
 pub(super) fn insert(schemas: &mut Map<String, Value>) {
+  // The same reviewed preparation choice is consumed by the installed Source mapper.
+  let mut selector = text(octacity_server_application::MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES);
+  selector["x-max-utf8-bytes"] = json!(octacity_server_application::MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES);
+  schemas.insert(
+    "SourceAcceptanceMapping".into(),
+    json!({"oneOf":[
+      object(json!({"kind":{"const":"field"},"value":selector}), &["kind","value"]),
+      object(json!({"kind":{"const":"body"}}), &["kind"]),
+      object(json!({"kind":{"const":"body_section"},"value":selector}), &["kind","value"]),
+      object(json!({"kind":{"const":"process_completion"},"value":reference("SourceCompletionDocument")}), &["kind","value"])
+    ]}),
+  );
   let pin = || reference("FactoryImmutableReferenceResource");
+  schemas.insert(
+    "FactoryWorkStatusActionContract".into(),
+    object(
+      json!({
+        "plugin":pin(), "action":{"type":"string","const":"set_status"},
+        "output":reference("FactoryFlowDataSchema"), "outcome":reference("FactoryFlowOutcome")
+      }),
+      &["plugin", "action", "output", "outcome"],
+    ),
+  );
   let id = || json!({"type":"string","format":"uuid"});
   let version = || json!({"type":"integer","minimum":1});
   let optional_version = || json!({"type":["integer","null"],"minimum":1});
@@ -41,7 +63,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   );
   ownership["x-max-utf8-bytes"] = json!(octacity_server_application::MAX_SOURCE_REPORTING_OWNERSHIP_BYTES);
   let reporting_choice = object(
-    json!({"mapping":reference("WorkSourceStatusMapping"),"editable":nullable(reference("WorkSourceReportingPolicy"))}),
+    json!({"mapping":reference("WorkSourceStatusMapping"),"editable":nullable(reference("WorkSourceReportingPolicy")),"action":reference("FactoryWorkStatusActionContract")}),
     &["mapping", "editable"],
   );
   let binding = object(
@@ -99,7 +121,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
     &["state", "all_of", "any_of", "none_of"],
   );
   let choices = object(
-    json!({"connection_id":id(),"connection_version":version(),"access_version":version(),"items":array(object(json!({"binding":reference("WorkSourceBinding"),"connection_configuration":pin(),"purpose":{"type":"string","enum":["task_read","task_update"]},"native_id":text(1024),"locator":text(1024),"selection":nullable(labels.clone()),"predicate_states":array(text(128),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"predicate_label_presence":array(reference("WorkSourceLabelPresence"),2),"reporting":reference("WorkSourceReportingChoice")}),&["binding","connection_configuration","purpose","native_id","locator","selection"]),256)}),
+    json!({"connection_id":id(),"connection_version":version(),"access_version":version(),"items":array(object(json!({"binding":reference("WorkSourceBinding"),"connection_configuration":pin(),"purpose":{"type":"string","enum":["task_read","task_update"]},"native_id":text(1024),"locator":text(1024),"selection":nullable(labels.clone()),"predicate_states":array(text(128),octacity_server_application::MAX_SOURCE_SELECTION_LABELS),"predicate_label_presence":array(reference("WorkSourceLabelPresence"),2),"preparation":reference("SourceAcceptanceMapping"),"reporting":reference("WorkSourceReportingChoice")}),&["binding","connection_configuration","purpose","native_id","locator","selection"]),256)}),
     &["connection_id", "connection_version", "access_version", "items"],
   );
   let mut predicate = labels.clone();

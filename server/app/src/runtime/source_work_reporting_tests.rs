@@ -108,6 +108,7 @@ async fn normal_work_actions_deliver_intermediate_and_terminal_effects_with_orig
     &fixture,
     &database.url(),
     Some(WorkSourceReportingChoice {
+      action: None,
       mapping,
       editable: Some(policy),
     }),

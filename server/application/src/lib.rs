@@ -87,7 +87,9 @@ mod factory_candidate_context;
 mod factory_source_admission;
 mod factory_source_completion;
 mod factory_triage_context;
-pub use factory_triage_context::{TriageContextProblem, TriageProjectContextDraft};
+pub use factory_triage_context::{MAX_TRIAGE_SUPPORTING_ALIAS_BYTES, TriageContextProblem, TriageProjectContextDraft};
+mod factory_work_status_contract;
+pub use factory_work_status_contract::FactoryWorkStatusActionContract;
 mod factory_readiness;
 pub use factory_readiness::*;
 mod factory_presets;
@@ -109,8 +111,8 @@ mod issue_workflow_tests;
 mod work_source_observation;
 pub use factory_source_input_retention::{FactorySourceInputRetentionWorker, SourceInputCleanupPage};
 pub use factory_source_mapping::{
-  MappedWorkSource, SourceAcceptanceMapping, SourceMappingFailure, WorkSourceMapping, WorkSourceSnapshot,
-  map_work_source_snapshot,
+  MAX_SOURCE_ACCEPTANCE_SELECTOR_BYTES, MappedWorkSource, SourceAcceptanceMapping, SourceMappingFailure,
+  WorkSourceMapping, WorkSourceSnapshot, map_work_source_snapshot,
 };
 pub use factory_source_polling::{
   FactorySourceCandidateProcessor, FactorySourcePageReader, FactorySourcePoller, SourcePollOutcome, SourcePollPage,

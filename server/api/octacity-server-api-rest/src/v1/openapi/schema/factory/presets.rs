@@ -30,9 +30,9 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       [
         ("role", schema_ref("FactoryRoleReference")),
         ("profile", schema_ref("FactoryRoleProfileReference")),
-        ("build", schema_ref("FactoryFlowBuildBinding")),
+        ("build", nullable(schema_ref("FactoryFlowBuildBinding"))),
       ],
-      &["role", "profile", "build"],
+      &["role", "profile"],
     ),
   );
   schemas.insert(
@@ -47,6 +47,9 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
       &["admission_policy", "permission_ceiling", "wip_limits", "hard_budget"],
     ),
   );
+  let mut supporting_documents = bounded_map(schema_ref("FactoryArtifactReference"), b.schema_entries);
+  supporting_documents["propertyNames"]["maxLength"] =
+    json!(octacity_server_application::MAX_TRIAGE_SUPPORTING_ALIAS_BYTES);
   schemas.insert(
     "TriageProjectContextDraft".into(),
     object(
@@ -54,12 +57,9 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
         ("project_id", uuid()),
         ("goals", nullable(schema_ref("FactoryArtifactReference"))),
         ("rules", nullable(schema_ref("FactoryArtifactReference"))),
-        (
-          "documents",
-          bounded_map(schema_ref("FactoryArtifactReference"), b.schema_entries),
-        ),
+        ("documents", supporting_documents),
       ],
-      &["project_id", "goals", "rules", "documents"],
+      &["project_id", "documents"],
     ),
   );
   schemas.insert(

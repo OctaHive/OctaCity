@@ -285,6 +285,7 @@ pub struct FactoryWorkStatusAction<P> {
   identity: ImmutableReference,
   projector: Arc<P>,
   outcome: FlowOutcomeDefinition,
+  managed_source: bool,
 }
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -344,6 +345,26 @@ impl FactoryReporterRetryPolicy {
   }
 }
 impl<P> FactoryWorkStatusAction<P> {
+  fn require_source_binding(&self, parameters: &StatusParameters) -> Result<(), ApplicationError> {
+    if self.managed_source
+      && (parameters.outbox.is_none()
+        || parameters
+          .source_update
+          .as_ref()
+          .is_none_or(|update| update.connection.is_none()))
+    {
+      return Err(ApplicationError::invalid());
+    }
+    Ok(())
+  }
+  /// Installs queued Source effects with exact managed connection pins and the native receipt.
+  /// Legacy unbound status projection remains available only through explicit trusted installation.
+  pub fn installed(identity: ImmutableReference, projector: Arc<P>) -> Result<Self, ApplicationError> {
+    let contract = crate::FactoryWorkStatusActionContract::new(identity.clone())?;
+    let mut action = Self::new(identity, projector, contract.outcome);
+    action.managed_source = true;
+    Ok(action)
+  }
   /// Binds an exact installed version, source connector and declared successful result.
   #[must_use]
   pub fn new(identity: ImmutableReference, projector: Arc<P>, outcome: FlowOutcomeDefinition) -> Self {
@@ -351,6 +372,7 @@ impl<P> FactoryWorkStatusAction<P> {
       identity,
       projector,
       outcome,
+      managed_source: false,
     }
   }
 }
@@ -365,7 +387,8 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
     }
     let parameters = serde_json::from_value::<StatusParameters>(binding.parameters().clone())
       .map_err(|_| ApplicationError::invalid())?;
-    parameters.validate(binding)
+    parameters.validate(binding)?;
+    self.require_source_binding(&parameters)
   }
   async fn cancel(
     &self,
@@ -374,6 +397,7 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
   ) -> Result<Option<BudgetUsage>, ApplicationError> {
     let parameters: StatusParameters =
       serde_json::from_value(request.binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
+    self.require_source_binding(&parameters)?;
     if parameters.outbox.is_some() {
       return Ok(Some(BudgetUsage::default()));
     }
@@ -401,6 +425,7 @@ impl<P: FactoryWorkStatusProjector> FactoryFlowActionPlugin for FactoryWorkStatu
   ) -> Result<FactoryFlowActionObservation, ApplicationError> {
     let parameters: StatusParameters =
       serde_json::from_value(request.binding.parameters().clone()).map_err(|_| ApplicationError::invalid())?;
+    self.require_source_binding(&parameters)?;
     if let Some(policy) = parameters.outbox {
       policy.validate()?;
       return Ok(FactoryFlowActionObservation {

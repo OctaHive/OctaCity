@@ -76,6 +76,7 @@ pub struct FactorySourceConfigurationHandlers<S> {
   selection_labels: Vec<(WorkSourceCapability, WorkSourceSelectionLabels)>,
   predicate_support: Vec<InstalledSourcePredicate>,
   reporting_mappings: Vec<(WorkSourceCapability, WorkSourceReportingChoice)>,
+  preparation_mappings: Vec<(WorkSourceCapability, SourceAcceptanceMapping)>,
   preview: Option<Arc<dyn FactoryWorkSourcePreview>>,
   issue_links: Option<Arc<dyn FactoryWorkSourceIssueLinks>>,
 }
@@ -103,6 +104,7 @@ impl<S> FactorySourceConfigurationHandlers<S> {
       selection_labels: vec![],
       predicate_support: vec![],
       reporting_mappings: vec![],
+      preparation_mappings: vec![],
       preview: None,
       issue_links: None,
     })

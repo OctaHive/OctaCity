@@ -541,8 +541,32 @@ pub async fn qualify_readiness_pipeline(
   binding: serde_json::Value,
   node: &str,
 ) {
+  qualify_pipeline_fixture(store, project, binding, node, false).await;
+}
+/// Adds exact compiler declarations without requiring clients to supply compilation hashes.
+pub async fn qualify_preset_compilation(
+  store: &store_testing::InMemoryFactoryConfigurationStore,
+  project: ProjectId,
+  binding: serde_json::Value,
+) {
+  qualify_pipeline_fixture(store, project, binding, "root", true).await;
+}
+async fn qualify_pipeline_fixture(
+  store: &store_testing::InMemoryFactoryConfigurationStore,
+  project: ProjectId,
+  binding: serde_json::Value,
+  node: &str,
+  include_compilation: bool,
+) {
   use octacity_server_store::FactoryConfigurationStore;
   let binding: FlowBuildBinding = serde_json::from_value(binding).unwrap();
+  let compilation = include_compilation.then(|| FactoryBuildCompilationContract {
+    task_digest: binding.task_digest,
+    role_profiles: true,
+    result_output: binding.result_output.clone(),
+    result_output_kind: binding.result_output_kind,
+    mcp_result_tool: None,
+  });
   let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
     store.factory_configuration_availability(project).await.unwrap()
   else {
@@ -558,6 +582,7 @@ pub async fn qualify_readiness_pipeline(
           plugin: binding.plugin,
           model_or_tool: binding.model_or_tool,
           pipeline_node: octacity_server_domain::PipelineNodeId::new(node).unwrap(),
+          compilation,
         })
         .unwrap(),
     )

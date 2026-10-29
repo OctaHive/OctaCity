@@ -6,6 +6,10 @@ use octacity_server_factory::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+const SUPPORTING_DOCUMENT_PREFIX: &str = "document.";
+/// Supporting aliases share the ordinary Context key bound after their technical namespace.
+pub const MAX_TRIAGE_SUPPORTING_ALIAS_BYTES: usize =
+  octacity_server_factory::MAX_FACTORY_KEY_BYTES - SUPPORTING_DOCUMENT_PREFIX.len();
 
 /// Safe draft diagnostics; no private document text or installation details.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, thiserror::Error)]
@@ -90,7 +94,8 @@ impl TriageProjectContextDraft {
       );
     }
     for (alias, document) in &self.documents {
-      let alias = FactoryKey::new(format!("document.{alias}")).map_err(|_| TriageContextProblem::InvalidSelection)?;
+      let alias = FactoryKey::new(format!("{SUPPORTING_DOCUMENT_PREFIX}{alias}"))
+        .map_err(|_| TriageContextProblem::InvalidSelection)?;
       entries.insert(
         alias,
         selection(

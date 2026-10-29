@@ -1210,3 +1210,105 @@ fn source_input_cannot_enable_a_pipeline_requiring_an_issue_association_it_canno
     assert_eq!(fixture.store.mutation_evidence_counts().await, before);
   });
 }
+
+#[test]
+fn source_choices_review_exact_project_preparation_without_granting_reporter_authority() {
+  run_ready(async {
+    let fixture = Fixture::with_writer("custom-tracker", true).await;
+    let document =
+      SourceCompletionDocument::review_preset(fixture.intent.project_id, TRIAGE_COMPLETION_PRESET).unwrap();
+    let mapping = WorkSourceMapping {
+      source: fixture.capability.binding.clone(),
+      acceptance: SourceAcceptanceMapping::ProcessCompletion(document.clone()),
+      require_body: false,
+      max_title_bytes: 512,
+      max_body_bytes: 4096,
+      max_artifact_bytes: 8192,
+      retention_millis: 60_000,
+    };
+    let handlers = fixture
+      .handlers()
+      .with_preparation_mapping(fixture.capability.clone(), mapping)
+      .unwrap();
+    let query = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers));
+    let connection = fixture.intent.inputs[0].definition.connection.as_ref().unwrap();
+    let choices = query
+      .handle_query(
+        &context(),
+        ListWorkSourceInputChoicesQuery {
+          project_id: fixture.intent.project_id,
+          connection_id: connection.id,
+          connection_version: connection.version,
+        },
+      )
+      .await
+      .unwrap();
+    let serialized = serde_json::to_value(&choices).unwrap();
+    assert_eq!(
+      serialized["items"][0]["preparation"],
+      serde_json::json!({"kind":"process_completion", "value":document})
+    );
+    assert!(
+      serialized["items"][1].get("preparation").is_none(),
+      "TaskUpdate does not inherit preparation or AI-provider authority"
+    );
+    assert!(!serialized.to_string().contains("credential"));
+    assert!(
+      fixture
+        .store
+        .source_input(
+          fixture.intent.project_id,
+          fixture.intent.inputs[0].id,
+          WorkSourceInputVersion::INITIAL
+        )
+        .await
+        .is_err()
+    );
+  });
+}
+
+#[test]
+fn source_choices_keep_granted_observation_readers_when_preparation_belongs_to_another_project() {
+  run_ready(async {
+    let fixture = Fixture::with_writer("custom-tracker", true).await;
+    let other_project = ProjectId::generate();
+    let mapping = WorkSourceMapping {
+      source: fixture.capability.binding.clone(),
+      acceptance: SourceAcceptanceMapping::ProcessCompletion(
+        SourceCompletionDocument::review_preset(other_project, TRIAGE_COMPLETION_PRESET).unwrap(),
+      ),
+      require_body: false,
+      max_title_bytes: 512,
+      max_body_bytes: 4096,
+      max_artifact_bytes: 8192,
+      retention_millis: 60_000,
+    };
+    let handlers = fixture
+      .handlers()
+      .with_preparation_mapping(fixture.capability.clone(), mapping)
+      .unwrap();
+    let connection = fixture.intent.inputs[0].definition.connection.as_ref().unwrap();
+    let choices = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers))
+      .handle_query(
+        &context(),
+        ListWorkSourceInputChoicesQuery {
+          project_id: fixture.intent.project_id,
+          connection_id: connection.id,
+          connection_version: connection.version,
+        },
+      )
+      .await
+      .unwrap();
+    assert_eq!(
+      choices.items.len(),
+      2,
+      "foreign preparation cannot disable independently granted read/update choices"
+    );
+    assert!(choices.items.iter().all(|item| item.preparation.is_none()));
+    assert!(
+      !serde_json::to_string(&choices)
+        .unwrap()
+        .contains(&other_project.to_string())
+    );
+  });
+}

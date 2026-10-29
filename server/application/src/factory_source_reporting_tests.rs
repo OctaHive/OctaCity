@@ -13,6 +13,58 @@ fn policy() -> WorkSourceReportingPolicy {
 }
 
 #[test]
+fn source_choices_expose_only_the_registered_native_reporter_contract_without_execution() {
+  run_ready(async {
+    let fixture = Fixture::with_writer("custom-tracker", true).await;
+    let reporter = fixture.reporter.clone().unwrap();
+    let contract = FactoryWorkStatusActionContract::new(reporter.binding.capability.clone()).unwrap();
+    let handlers = fixture
+      .handlers()
+      .with_reporting_mapping(reporter.clone(), mapping(), Some(policy()))
+      .unwrap()
+      .with_reporting_action_contract(reporter.clone(), contract.clone())
+      .unwrap();
+    let before = fixture.store.mutation_evidence_counts().await;
+    let queries = AuthorizedQueryHandler::new(Arc::new(TrustedNetworkManagementPolicy), Arc::new(handlers));
+    let connection = fixture.intent.inputs[0].definition.connection.as_ref().unwrap();
+    let choices = queries
+      .handle_query(
+        &context(),
+        ListWorkSourceInputChoicesQuery {
+          project_id: fixture.intent.project_id,
+          connection_id: connection.id,
+          connection_version: connection.version,
+        },
+      )
+      .await
+      .unwrap();
+    let writer = choices
+      .items
+      .iter()
+      .find(|choice| choice.purpose == IntegrationPurpose::TaskUpdate)
+      .unwrap();
+    assert_eq!(writer.reporting.as_ref().unwrap().action.as_ref(), Some(&contract));
+    assert!(
+      choices
+        .items
+        .iter()
+        .filter(|choice| choice.purpose == IntegrationPurpose::TaskRead)
+        .all(|choice| choice.reporting.is_none())
+    );
+    assert_eq!(fixture.store.mutation_evidence_counts().await, before);
+    let wrong = FactoryWorkStatusActionContract::new(exact("another-writer", 90)).unwrap();
+    assert!(
+      fixture
+        .handlers()
+        .with_reporting_mapping(reporter.clone(), mapping(), Some(policy()))
+        .unwrap()
+        .with_reporting_action_contract(reporter, wrong)
+        .is_err()
+    );
+  });
+}
+
+#[test]
 fn stage_source_effects_require_current_separate_write_authority_and_installed_editing_ceiling() {
   run_ready(async {
     for provider in ["github", "custom-tracker"] {

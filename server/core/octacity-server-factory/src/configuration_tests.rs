@@ -770,6 +770,7 @@ fn competing_installed_pipeline_contracts_remain_unqualified_instead_of_choosing
     plugin: reference("plugin"),
     model_or_tool: reference("model"),
     pipeline_node: octacity_server_domain::PipelineNodeId::new("first").unwrap(),
+    compilation: None,
   };
   let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
     references: [

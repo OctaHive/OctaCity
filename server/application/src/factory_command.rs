@@ -101,6 +101,7 @@ impl FactoryCommandBuildProfile {
       plugin: self.plugin.clone(),
       model_or_tool: self.identity.clone(),
       pipeline_node: self.pipeline_node.clone(),
+      compilation: None,
     }
   }
 

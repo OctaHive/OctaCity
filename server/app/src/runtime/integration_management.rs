@@ -261,11 +261,23 @@ pub(super) struct InstalledIntegrationManagement {
   pub(super) source_reads: Option<super::issue_source_worker::IssueSourceWorker>,
   pub(super) source_management: Option<Arc<super::source_management::SourceManagement>>,
 }
+#[cfg(test)]
 pub(super) async fn install(
   config: &crate::ServerConfig,
   store: Arc<PostgresStore>,
   cancellation: tokio_util::sync::CancellationToken,
   readiness: &mut crate::readiness::ReadinessChecks,
+) -> Result<Option<InstalledIntegrationManagement>, ServerRuntimeError> {
+  install_with_factory(config, store, cancellation, readiness, None).await
+}
+
+/// Completes optional native producers before the single Factory executor registry is frozen.
+pub(super) async fn install_with_factory(
+  config: &crate::ServerConfig,
+  store: Arc<PostgresStore>,
+  cancellation: tokio_util::sync::CancellationToken,
+  readiness: &mut crate::readiness::ReadinessChecks,
+  mut factory: Option<&mut super::FactoryRuntimeInstallation>,
 ) -> Result<Option<InstalledIntegrationManagement>, ServerRuntimeError> {
   let Some(local) = config.integration_management() else {
     return Ok(None);
@@ -347,15 +359,28 @@ pub(super) async fn install(
     )
     .await
     {
-      Ok(profiles) => Some(Arc::new(super::source_management::SourceManagement {
-        store: store.clone(),
-        policy: policy.clone(),
-        profiles,
-        registry,
-        timeout: std::time::Duration::from_millis(local.operation_timeout_milliseconds),
-        grace: std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
-        cancellation,
-      })),
+      Ok(profiles) => {
+        let reporter_actions = factory
+          .as_ref()
+          .map(|factory| super::source_reporter_actions::contracts(&profiles, factory))
+          .transpose()
+          .map_err(|_| invalid())?
+          .unwrap_or_default();
+        let sources = Arc::new(super::source_management::SourceManagement {
+          reporter_actions,
+          store: store.clone(),
+          policy: policy.clone(),
+          profiles,
+          registry,
+          timeout: std::time::Duration::from_millis(local.operation_timeout_milliseconds),
+          grace: std::time::Duration::from_millis(local.cancellation_grace_milliseconds),
+          cancellation,
+        });
+        if let Some(factory) = factory.as_mut() {
+          super::source_reporter_actions::install(&sources, factory).map_err(|_| invalid())?;
+        }
+        Some(sources)
+      }
       Err(_) => {
         tracing::warn!("installed Source profiles unavailable; Source management readiness failed");
         None

@@ -70,6 +70,7 @@ mod source_overlap_tests;
 mod source_profiles_file;
 #[cfg(all(test, unix))]
 mod source_profiles_file_tests;
+mod source_reporter_actions;
 mod source_reporting;
 #[cfg(all(test, unix))]
 mod source_restart_tests;
