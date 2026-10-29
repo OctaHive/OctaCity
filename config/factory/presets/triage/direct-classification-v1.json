@@ -1,0 +1,14 @@
+{
+  "transitions": [
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "classify",
+      "target": {
+        "kind": "node",
+        "key": "classification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ]
+}

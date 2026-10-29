@@ -325,10 +325,12 @@ struct CommandProfile {
   outputs: Vec<EvidenceRequirement>,
   #[serde(default)]
   candidate_capture_tool: Option<ImmutableReference>,
+  #[serde(default)]
+  observation_contract: Option<octacity_server_application::FactoryCommandObservationContract>,
 }
 impl CommandProfile {
   fn native(self) -> Result<octacity_server_application::FactoryCommandBuildProfile, FactoryRuntimeInstallationError> {
-    Ok(octacity_server_application::FactoryCommandBuildProfile {
+    let profile = octacity_server_application::FactoryCommandBuildProfile {
       identity: self.identity,
       plugin: self.plugin,
       executor: self.executor,
@@ -344,8 +346,76 @@ impl CommandProfile {
       )
       .map_err(|_| FactoryRuntimeInstallationError::Invalid)?,
       outputs: self.outputs,
+      observation_contract: self.observation_contract,
       candidate_capture_tool: self.candidate_capture_tool,
-    })
+    };
+    profile
+      .observation_bindings()
+      .map_err(|_| FactoryRuntimeInstallationError::Invalid)?;
+    Ok(profile)
+  }
+}
+
+#[cfg(test)]
+mod observation_contract_tests {
+  use super::*;
+
+  #[test]
+  fn command_file_freezes_optional_observation_criteria_with_the_native_task() {
+    let project = ProjectId::generate();
+    let mut profile = super::super::factory_command_runtime_tests::command_profile(project);
+    let legacy = profile.task_digest();
+    let predicate: FlowPredicate = serde_json::from_value(serde_json::json!({
+      "operation":"compare","left":{"source":"path","path":""},"comparison":"equal",
+      "right":{"source":"literal","value":1}
+    }))
+    .unwrap();
+    profile.observation_contract = Some(octacity_server_application::FactoryCommandObservationContract {
+      environment: profile.identity.clone(),
+      criterion: profile.identity.clone(),
+      observations: FlowDataSchema::new(
+        FactoryKey::new("probe-observation").unwrap(),
+        FactoryKey::new("v1").unwrap(),
+        FlowValueSchema::Integer { minimum: 0, maximum: 1 },
+      )
+      .unwrap(),
+      completion: predicate.clone(),
+      symptom: predicate,
+    });
+    let schema = profile.observation_contract.as_ref().unwrap().report_schema().unwrap();
+    let output = &profile.outputs[0];
+    profile.outputs[0] = EvidenceRequirement::new(
+      output.kind().clone(),
+      output.output_kind(),
+      schema.reference().clone(),
+      output.tool().clone(),
+      output.plugin().clone(),
+    );
+    let mut entry = super::super::factory_profile_file_tests::command_entry(&profile);
+    entry["observation_contract"] = serde_json::json!(profile.observation_contract);
+    let decoded: CommandProfile = serde_json::from_value(entry.clone())
+      .expect("the native command file must support an explicitly reviewed observation contract");
+    let installed = decoded.native().unwrap();
+    assert_eq!(
+      installed.task_digest(),
+      profile.task_digest(),
+      "file conversion must retain the criteria"
+    );
+    assert_ne!(installed.task_digest(), legacy);
+    let mut wrong_schema = entry.clone();
+    wrong_schema["outputs"][0]["schema"] = serde_json::json!(profile.identity);
+    let invalid: CommandProfile = serde_json::from_value(wrong_schema).unwrap();
+    assert!(
+      invalid.native().is_err(),
+      "installation must reject an incompatible observation output"
+    );
+    entry["observation_contract"]["completion"] = serde_json::json!({"operation":"any",
+      "predicates":vec![entry["observation_contract"]["symptom"].clone();128]});
+    let invalid: CommandProfile = serde_json::from_value(entry).unwrap();
+    assert!(
+      invalid.native().is_err(),
+      "invalid criteria cannot enter the native installation"
+    );
   }
 }
 

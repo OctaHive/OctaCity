@@ -133,39 +133,6 @@
         }
       }
     },
-    "classification_producer": {
-      "identity": "factory.triage.classification_producer",
-      "version": "v1",
-      "shape": {
-        "type": "object",
-        "fields": {
-          "build_id": {
-            "required": true,
-            "value": {
-              "type": "string",
-              "min_bytes": 1,
-              "max_bytes": 36
-            }
-          },
-          "attempt_id": {
-            "required": true,
-            "value": {
-              "type": "string",
-              "min_bytes": 1,
-              "max_bytes": 36
-            }
-          },
-          "job_id": {
-            "required": true,
-            "value": {
-              "type": "string",
-              "min_bytes": 1,
-              "max_bytes": 36
-            }
-          }
-        }
-      }
-    },
     "classification_priority": {
       "identity": "factory.triage.classification_priority",
       "version": "v1",
@@ -184,47 +151,6 @@
         "max_bytes": 64
       }
     },
-    "classification_facts": {
-      "identity": "factory.triage.classification_facts",
-      "version": "v1",
-      "shape": {
-        "type": "object",
-        "fields": {
-          "assessment": {
-            "required": true,
-            "value": {
-              "type": "reference",
-              "schema": "classification_observations"
-            }
-          },
-          "input_digest": {
-            "required": true,
-            "value": {
-              "type": "reference",
-              "schema": "classification_digest"
-            }
-          },
-          "reproduced": {
-            "required": true,
-            "value": {
-              "type": "boolean"
-            }
-          },
-          "already_fixed": {
-            "required": true,
-            "value": {
-              "type": "boolean"
-            }
-          },
-          "verification_only": {
-            "required": true,
-            "value": {
-              "type": "boolean"
-            }
-          }
-        }
-      }
-    },
     "classification_gate_input": {
       "identity": "factory.triage.classification_gate_input",
       "version": "v1",
@@ -236,49 +162,6 @@
             "value": {
               "type": "reference",
               "schema": "classification_observations"
-            }
-          },
-          "verified_assessment": {
-            "required": true,
-            "value": {
-              "type": "reference",
-              "schema": "classification_observations"
-            }
-          },
-          "expected_input": {
-            "required": true,
-            "value": {
-              "type": "reference",
-              "schema": "classification_digest"
-            }
-          },
-          "evidence_input": {
-            "required": true,
-            "value": {
-              "type": "reference",
-              "schema": "classification_digest"
-            }
-          },
-          "fresh_until": {
-            "required": true,
-            "value": {
-              "type": "integer",
-              "minimum": -62135596800000,
-              "maximum": 253402300799999
-            }
-          },
-          "producer": {
-            "required": true,
-            "value": {
-              "type": "reference",
-              "schema": "classification_producer"
-            }
-          },
-          "evidence_producer": {
-            "required": true,
-            "value": {
-              "type": "reference",
-              "schema": "classification_producer"
             }
           },
           "admission_priority": {
@@ -295,22 +178,12 @@
               "values": ["low", "medium", "high", "critical"]
             }
           },
-          "reproduced_verified": {
+          "fresh_until": {
             "required": true,
             "value": {
-              "type": "boolean"
-            }
-          },
-          "already_fixed_verified": {
-            "required": true,
-            "value": {
-              "type": "boolean"
-            }
-          },
-          "verification_only_verified": {
-            "required": true,
-            "value": {
-              "type": "boolean"
+              "type": "integer",
+              "minimum": -62135596800000,
+              "maximum": 253402300799999
             }
           },
           "result_fresh_until": {
@@ -319,6 +192,125 @@
               "type": "integer",
               "minimum": -62135596800000,
               "maximum": 253402300799999
+            }
+          },
+          "command_policy": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 1,
+              "item": {
+                "type": "reference",
+                "schema": "command_policy"
+              }
+            }
+          },
+          "observed_policy": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 1,
+              "item": {
+                "type": "reference",
+                "schema": "command_policy"
+              }
+            }
+          },
+          "expected_scope": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 1,
+              "item": {
+                "type": "reference",
+                "schema": "command_scope"
+              }
+            }
+          },
+          "reported_scope": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 1,
+              "item": {
+                "type": "reference",
+                "schema": "command_scope"
+              }
+            }
+          },
+          "allowed_dependencies": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 64,
+              "item": {
+                "type": "object",
+                "fields": {
+                  "run_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_id": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 36,
+                      "max_bytes": 36
+                    }
+                  },
+                  "work_digest": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 64,
+                      "max_bytes": 64
+                    }
+                  },
+                  "terminal": {
+                    "required": true,
+                    "value": {
+                      "type": "string",
+                      "min_bytes": 1,
+                      "max_bytes": 128
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "finding": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": ["absent", "matched", "not_matched", "indeterminate"]
+            }
+          },
+          "command_status": {
+            "required": true,
+            "value": {
+              "type": "enum",
+              "values": [
+                "absent",
+                "completed",
+                "environment_unavailable",
+                "needs_input"
+              ]
+            }
+          },
+          "evidence": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_evidence"
             }
           }
         }
@@ -355,6 +347,322 @@
             "required": true,
             "value": {
               "type": "boolean"
+            }
+          },
+          "evidence": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_evidence"
+            }
+          }
+        }
+      }
+    },
+    "command_pin": {
+      "identity": "factory.triage.command_pin",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "identity": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "version": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "digest": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "classification_digest"
+            }
+          }
+        }
+      }
+    },
+    "command_subject": {
+      "identity": "factory.triage.command_subject",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "project_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 36,
+              "max_bytes": 36
+            }
+          },
+          "repository_id": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 36,
+              "max_bytes": 36
+            }
+          },
+          "base_revision": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 512
+            }
+          }
+        }
+      }
+    },
+    "command_policy": {
+      "identity": "factory.triage.command_policy",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "command": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_pin"
+            }
+          },
+          "tool": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_pin"
+            }
+          },
+          "plugin": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_pin"
+            }
+          },
+          "schema": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_pin"
+            }
+          },
+          "environment": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_pin"
+            }
+          },
+          "criterion": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_pin"
+            }
+          },
+          "task_digest": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "classification_digest"
+            }
+          },
+          "result_output": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          },
+          "build_configuration": {
+            "required": true,
+            "value": {
+              "type": "object",
+              "fields": {
+                "id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 36,
+                    "max_bytes": 36
+                  }
+                },
+                "project_id": {
+                  "required": true,
+                  "value": {
+                    "type": "string",
+                    "min_bytes": 36,
+                    "max_bytes": 36
+                  }
+                },
+                "version": {
+                  "required": true,
+                  "value": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 2147483647
+                  }
+                },
+                "definition_digest": {
+                  "required": true,
+                  "value": {
+                    "type": "reference",
+                    "schema": "classification_digest"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "command_scope": {
+      "identity": "factory.triage.command_scope",
+      "version": "v1",
+      "shape": {
+        "type": "object",
+        "fields": {
+          "input_digest": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "classification_digest"
+            }
+          },
+          "subject": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_subject"
+            }
+          },
+          "command": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_pin"
+            }
+          },
+          "output": {
+            "required": true,
+            "value": {
+              "type": "string",
+              "min_bytes": 1,
+              "max_bytes": 128
+            }
+          }
+        }
+      }
+    },
+    "command_evidence": {
+      "identity": "factory.triage.command_evidence",
+      "version": "v1",
+      "shape": {
+        "type": "externally_tagged",
+        "variants": {
+          "absent": null,
+          "observed": {
+            "type": "object",
+            "fields": {
+              "policy": {
+                "required": true,
+                "value": {
+                  "type": "reference",
+                  "schema": "command_policy"
+                }
+              },
+              "scope": {
+                "required": true,
+                "value": {
+                  "type": "reference",
+                  "schema": "command_scope"
+                }
+              },
+              "owner_input_digest": {
+                "required": true,
+                "value": {
+                  "type": "reference",
+                  "schema": "classification_digest"
+                }
+              },
+              "record_digest": {
+                "required": true,
+                "value": {
+                  "type": "reference",
+                  "schema": "classification_digest"
+                }
+              },
+              "status": {
+                "required": true,
+                "value": {
+                  "type": "enum",
+                  "values": [
+                    "completed",
+                    "environment_unavailable",
+                    "needs_input"
+                  ]
+                }
+              },
+              "finding": {
+                "required": true,
+                "value": {
+                  "type": "enum",
+                  "values": ["matched", "not_matched", "indeterminate"]
+                }
+              },
+              "fresh_until": {
+                "required": true,
+                "value": {
+                  "type": "integer",
+                  "minimum": -62135596800000,
+                  "maximum": 253402300799999
+                }
+              },
+              "producer": {
+                "required": true,
+                "value": {
+                  "type": "object",
+                  "fields": {
+                    "build_id": {
+                      "required": true,
+                      "value": {
+                        "type": "string",
+                        "min_bytes": 1,
+                        "max_bytes": 36
+                      }
+                    },
+                    "attempt_id": {
+                      "required": true,
+                      "value": {
+                        "type": "string",
+                        "min_bytes": 1,
+                        "max_bytes": 36
+                      }
+                    },
+                    "job_id": {
+                      "required": true,
+                      "value": {
+                        "type": "string",
+                        "min_bytes": 1,
+                        "max_bytes": 36
+                      }
+                    }
+                  }
+                }
+              }
             }
           }
         }

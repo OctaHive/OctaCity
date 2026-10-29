@@ -147,7 +147,7 @@ async fn file_command_profile_installs_its_exact_native_executor_without_io() {
   );
 }
 
-fn command_entry(profile: &octacity_server_application::FactoryCommandBuildProfile) -> serde_json::Value {
+pub(super) fn command_entry(profile: &octacity_server_application::FactoryCommandBuildProfile) -> serde_json::Value {
   use octacity_server_factory::PermissionCategory;
   serde_json::json!({
     "identity":profile.identity,"plugin":profile.plugin,"executor":profile.executor,

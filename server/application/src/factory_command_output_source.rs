@@ -202,6 +202,7 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
       || !job.state.is_terminal()
       || job.assignment.is_none()
       || terminal.state != job.state
+      || job.state == JobState::Succeeded && (terminal.timed_out || terminal.failure_class.is_some())
       || terminal.completed_at > now
       || job.updated_at > now
       || job.created_at < attempt.created_at
@@ -491,6 +492,12 @@ impl<R: FactoryRunStore, Q: BuildQueryStore, A: ArtifactRecordStore, B: Artifact
         let value = serde_json::from_slice(retained.bytes()).map_err(|_| Invalid)?;
         Some(FlowVerifiedBuildData::new(schema.clone(), value).map_err(|_| Invalid)?)
       };
+      if identity.logical_name.as_str() == intent.profile().result_output.as_str()
+        && let Some(contract) = &profile.observation_contract
+      {
+        let report = data.as_ref().ok_or(Invalid)?;
+        verify_factory_command_observation(contract, &intent, report.payload().value())?;
+      }
       documents.push(FactoryNodeBuildOutputDocument {
         record: retained.record().clone(),
         bytes: retained.bytes().to_vec(),

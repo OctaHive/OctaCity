@@ -151,6 +151,7 @@ fn installed_command_materializes_a_builtin_plugin_job_without_phantom_external_
         binding.tool.clone(),
         binding.plugin.clone(),
       )],
+      observation_contract: None,
       candidate_capture_tool: None,
     };
     profile

@@ -75,6 +75,7 @@ pub(super) fn command_profile(project: ProjectId) -> FactoryCommandBuildProfile 
     project_permissions: permissions.clone(),
     local_permissions: LocalPermissionCeiling::fully_enforced(permissions),
     outputs: vec![output],
+    observation_contract: None,
     candidate_capture_tool: None,
   }
 }

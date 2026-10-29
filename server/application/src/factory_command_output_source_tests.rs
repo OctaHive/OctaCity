@@ -122,6 +122,171 @@ struct Fixture {
   validation_source: Option<Arc<dyn FactoryProtectedValidationInputSource>>,
 }
 
+async fn observed_command_fixture(primary: PrimaryReport) -> Fixture {
+  let (_, _, mut profile) = crate::factory_command_tests::command_fixture();
+  let contract = crate::factory_command_observation_tests::contract();
+  let schema = contract.report_schema().unwrap();
+  let original = &profile.outputs[0];
+  profile.outputs[0] = EvidenceRequirement::new(
+    original.kind().clone(),
+    original.output_kind(),
+    schema.reference().clone(),
+    original.tool().clone(),
+    original.plugin().clone(),
+  );
+  profile.observation_contract = Some(contract);
+  prepared_with_report(profile, "application/json", Some(schema), primary, |_| {}).await
+}
+
+#[test]
+fn qualified_command_observations_retain_positive_negative_and_unresolved_reports() {
+  crate::factory_admission_tests::run_ready(async {
+    let cases: [(&str, PrimaryReport); 3] = [
+      ("matched", |intent, profile| {
+        Some(crate::factory_command_observation_tests::report(
+          intent,
+          profile.observation_contract.as_ref().unwrap(),
+        ))
+      }),
+      ("not_matched", |intent, profile| {
+        let mut value =
+          crate::factory_command_observation_tests::report(intent, profile.observation_contract.as_ref().unwrap());
+        value["observations"]["unexpected_statuses"] = serde_json::json!(0);
+        value["finding"] = serde_json::json!("not_matched");
+        Some(value)
+      }),
+      ("indeterminate", |intent, profile| {
+        let mut value =
+          crate::factory_command_observation_tests::report(intent, profile.observation_contract.as_ref().unwrap());
+        value["status"] = serde_json::json!("environment_unavailable");
+        value["finding"] = serde_json::json!("indeterminate");
+        value.as_object_mut().unwrap().remove("observations");
+        Some(value)
+      }),
+    ];
+    for (expected, primary) in cases {
+      let fixture = observed_command_fixture(primary).await;
+      let FactoryNodeBuildOutputObservation::Verified(outputs) = fixture
+        .source(fixture.query.clone())
+        .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 4000)
+        .await
+        .unwrap()
+      else {
+        panic!("the completed qualified command must retain its independently evaluated report");
+      };
+      let document = &outputs.documents[0];
+      let value = document.data.as_ref().unwrap().payload().value();
+      assert_eq!(value["finding"], expected);
+      assert_eq!(
+        value["input_digest"],
+        serde_json::json!(fixture.intent.input().digest().unwrap())
+      );
+      assert_eq!(document.record.identity().build_id, fixture.query.build.build.id);
+      assert_eq!(document.record.identity().attempt_id, fixture.query.attempt.id);
+      assert_eq!(document.record.identity().job_id, fixture.query.attempt.jobs[0].id());
+      assert_eq!(document.tool, fixture.profile.executor);
+      assert_eq!(outputs.execution.profile.task_digest, fixture.profile.task_digest());
+      assert_eq!(
+        document.schema,
+        fixture
+          .profile
+          .observation_contract
+          .as_ref()
+          .unwrap()
+          .report_schema()
+          .unwrap()
+          .reference()
+          .clone()
+      );
+    }
+  });
+}
+
+#[test]
+fn failed_reproduction_commands_remain_technical_stops_even_when_a_report_was_published() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = observed_command_fixture(|intent, profile| {
+      Some(crate::factory_command_observation_tests::report(
+        intent,
+        profile.observation_contract.as_ref().unwrap(),
+      ))
+    })
+    .await;
+    for timed_out in [true, false] {
+      let mut query = fixture.query.clone();
+      query.build.state = BuildState::Failed;
+      query.attempt.state = AttemptState::Failed;
+      query.attempt.jobs[0].state = JobState::Failed;
+      let terminal = query.attempt.jobs[0].terminal.as_mut().unwrap();
+      terminal.state = JobState::Failed;
+      terminal.timed_out = timed_out;
+      terminal.failure_class = Some(octacity_server_job::JobFailureClass::Execution);
+      let observed = fixture
+        .source(query)
+        .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 4000)
+        .await
+        .unwrap();
+      let FactoryNodeBuildOutputObservation::ExecutionStopped { usage } = observed else {
+        panic!("timeout, checkout/dependency or generic execution failure cannot establish a symptom finding");
+      };
+      assert!(usage.elapsed_millis > 0);
+      assert!(
+        usage.output_bytes > 0,
+        "retain the real published report cost without accepting its semantic claim"
+      );
+    }
+  });
+}
+
+#[test]
+fn configured_command_observation_cannot_accept_a_schema_valid_unbound_report() {
+  crate::factory_admission_tests::run_ready(async {
+    let fixture = observed_command_fixture(|intent, profile| {
+      let mut value =
+        crate::factory_command_observation_tests::report(intent, profile.observation_contract.as_ref().unwrap());
+      value["input_digest"] = serde_json::json!("ab".repeat(32));
+      Some(value)
+    })
+    .await;
+    assert!(
+      matches!(
+        fixture
+          .source(fixture.query.clone())
+          .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 4000)
+          .await,
+        Err(OrdinaryBuildApplicationError::Invalid)
+      ),
+      "ordinary publication/schema validity alone cannot qualify a bound command observation"
+    );
+  });
+}
+
+#[test]
+fn command_success_with_terminal_failure_facts_cannot_supply_semantic_evidence() {
+  crate::factory_admission_tests::run_ready(async {
+    let (_, _, profile) = crate::factory_command_tests::command_fixture();
+    let fixture = prepared(profile).await;
+    for timed_out in [true, false] {
+      let mut query = fixture.query.clone();
+      let terminal = query.attempt.jobs[0].terminal.as_mut().unwrap();
+      terminal.timed_out = timed_out;
+      if !timed_out {
+        terminal.failure_class = Some(octacity_server_job::JobFailureClass::Execution);
+      }
+      assert!(
+        matches!(
+          fixture
+            .source(query)
+            .published_outputs(fixture.query.build.build.id, fixture.query.attempt.id, 1000)
+            .await,
+          Err(OrdinaryBuildApplicationError::Invalid)
+        ),
+        "contradictory successful/failed terminal facts cannot qualify an observation"
+      );
+    }
+  });
+}
+
 #[test]
 fn retained_command_json_uses_installed_schema_and_charges_server_wall_time() {
   crate::factory_admission_tests::run_ready(async {
@@ -229,8 +394,23 @@ async fn prepared_with_media(profile: FactoryCommandBuildProfile, media_type: &s
   prepared_with_profile(profile, media_type, |_| {}).await
 }
 async fn prepared_with_profile(
+  profile: FactoryCommandBuildProfile,
+  media_type: &str,
+  configure: impl FnOnce(&mut FactoryCommandBuildProfile),
+) -> Fixture {
+  prepared_with_report(profile, media_type, None, count_report, configure).await
+}
+
+type PrimaryReport = fn(&FlowBuildIntent, &FactoryCommandBuildProfile) -> Option<serde_json::Value>;
+fn count_report(_: &FlowBuildIntent, _: &FactoryCommandBuildProfile) -> Option<serde_json::Value> {
+  Some(serde_json::json!({"count":9}))
+}
+
+async fn prepared_with_report(
   mut profile: FactoryCommandBuildProfile,
   media_type: &str,
+  output_schema: Option<FlowDataSchema>,
+  primary: PrimaryReport,
   configure: impl FnOnce(&mut FactoryCommandBuildProfile),
 ) -> Fixture {
   let work = fixtures::work();
@@ -248,7 +428,7 @@ async fn prepared_with_profile(
     FlowNodeKind::BuildCommand,
     work.clone(),
     binding,
-    None,
+    output_schema,
     profile.project_permissions.clone(),
   );
   assert_eq!(schema.reference(), profile.outputs[0].schema());
@@ -312,7 +492,7 @@ async fn prepared_with_profile(
     .unwrap();
   let snapshot = runs.factory_run_snapshot(run.id()).await.unwrap();
   let intent = snapshot.flow.data.build_intents[0].clone();
-  finish_prepared(profile, runs, admitted, intent, None, media_type).await
+  finish_prepared_with_primary(profile, runs, admitted, intent, None, media_type, primary).await
 }
 
 enum FixtureSource {
@@ -336,7 +516,7 @@ async fn finish_prepared(
   source: Option<FixtureSource>,
   media_type: &str,
 ) -> Fixture {
-  finish_prepared_with_primary(profile, runs, admitted, intent, source, media_type, true).await
+  finish_prepared_with_primary(profile, runs, admitted, intent, source, media_type, count_report).await
 }
 async fn finish_prepared_with_primary(
   profile: FactoryCommandBuildProfile,
@@ -345,7 +525,7 @@ async fn finish_prepared_with_primary(
   intent: FlowBuildIntent,
   source: Option<FixtureSource>,
   media_type: &str,
-  publish_primary: bool,
+  primary: PrimaryReport,
 ) -> Fixture {
   let offset = intent.node().started_at().unix_millis() - 6;
   let mut compiled = match &source {
@@ -533,8 +713,8 @@ async fn finish_prepared_with_primary(
     job_id,
     expires_at: at(500),
   }));
-  if publish_primary {
-    let content = br#"{"count":9}"#.to_vec();
+  if let Some(value) = primary(&intent, &profile) {
+    let content = serde_json::to_vec(&value).unwrap();
     let artifact_id = ArtifactId::generate();
     let upload = artifacts
       .begin_artifact_upload(BeginArtifactUpload {
@@ -1540,7 +1720,8 @@ async fn prepared_accepted_author(
     }
   }
   let intent = intent.expect("the configured accepted contract must reach the author");
-  let mut f = finish_prepared_with_primary(profile, runs, admitted, intent, None, "application/json", false).await;
+  let mut f =
+    finish_prepared_with_primary(profile, runs, admitted, intent, None, "application/json", |_, _| None).await;
   f.query.build.state = BuildState::Running;
   f.query.attempt.state = AttemptState::Running;
   f.query.attempt.jobs[0].state = JobState::Running;

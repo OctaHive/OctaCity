@@ -63,30 +63,14 @@
             "path": "",
             "view": "payload"
           },
-          "proof": {
+          "frozen": {
             "source": "predecessor",
-            "path": "/build/outputs/facts/data/payload/value",
-            "view": "metadata"
+            "path": "",
+            "view": "input_payload"
           },
-          "identity": {
-            "source": "predecessor",
-            "path": "/input_digest",
-            "view": "metadata"
-          },
-          "freshness": {
-            "source": "predecessor",
-            "path": "/build/outputs/facts/fresh_until",
-            "view": "metadata"
-          },
-          "primary": {
-            "source": "predecessor",
-            "path": "/build/outputs/codex-run-result/producer",
-            "view": "metadata"
-          },
-          "evidence": {
-            "source": "predecessor",
-            "path": "/build/outputs/facts/producer",
-            "view": "metadata"
+          "subject": {
+            "source": "work",
+            "path": "/subject"
           },
           "priority": {
             "source": "work",
@@ -110,21 +94,9 @@
                 "mapping": "pointer",
                 "path": "/observations"
               },
-              "verified_assessment": {
+              "command_policy": {
                 "mapping": "pointer",
-                "path": "/proof/assessment"
-              },
-              "expected_input": {
-                "mapping": "pointer",
-                "path": "/identity"
-              },
-              "evidence_input": {
-                "mapping": "pointer",
-                "path": "/proof/input_digest"
-              },
-              "fresh_until": {
-                "mapping": "pointer",
-                "path": "/freshness"
+                "path": "/frozen/command_policy"
               },
               "admission_priority": {
                 "mapping": "pointer",
@@ -134,55 +106,121 @@
                 "mapping": "pointer",
                 "path": "/risk"
               },
-              "reproduced_verified": {
-                "mapping": "pointer",
-                "path": "/proof/reproduced"
-              },
-              "already_fixed_verified": {
-                "mapping": "pointer",
-                "path": "/proof/already_fixed"
-              },
-              "verification_only_verified": {
-                "mapping": "pointer",
-                "path": "/proof/verification_only"
-              },
-              "producer": {
-                "mapping": "object",
-                "fields": {
-                  "build_id": {
-                    "mapping": "pointer",
-                    "path": "/primary/build_id"
-                  },
-                  "attempt_id": {
-                    "mapping": "pointer",
-                    "path": "/primary/attempt_id"
-                  },
-                  "job_id": {
-                    "mapping": "pointer",
-                    "path": "/primary/job_id"
-                  }
-                }
-              },
-              "evidence_producer": {
-                "mapping": "object",
-                "fields": {
-                  "build_id": {
-                    "mapping": "pointer",
-                    "path": "/evidence/build_id"
-                  },
-                  "attempt_id": {
-                    "mapping": "pointer",
-                    "path": "/evidence/attempt_id"
-                  },
-                  "job_id": {
-                    "mapping": "pointer",
-                    "path": "/evidence/job_id"
-                  }
-                }
-              },
               "result_fresh_until": {
                 "mapping": "pointer",
                 "path": "/result_freshness"
+              },
+              "fresh_until": {
+                "mapping": "if_present",
+                "path": "/frozen/observation/observed",
+                "then": {
+                  "mapping": "pointer",
+                  "path": "/frozen/observation/observed/fresh_until"
+                },
+                "otherwise": {
+                  "mapping": "pointer",
+                  "path": "/result_freshness"
+                }
+              },
+              "evidence": {
+                "mapping": "pointer",
+                "path": "/frozen/observation"
+              },
+              "observed_policy": {
+                "mapping": "if_present",
+                "path": "/frozen/observation/observed",
+                "then": {
+                  "mapping": "array",
+                  "items": [
+                    {
+                      "mapping": "pointer",
+                      "path": "/frozen/observation/observed/policy"
+                    }
+                  ]
+                },
+                "otherwise": {
+                  "mapping": "constant",
+                  "value": []
+                }
+              },
+              "expected_scope": {
+                "mapping": "if_present",
+                "path": "/frozen/observation/observed",
+                "then": {
+                  "mapping": "array",
+                  "items": [
+                    {
+                      "mapping": "object",
+                      "fields": {
+                        "input_digest": {
+                          "mapping": "pointer",
+                          "path": "/frozen/observation/observed/owner_input_digest"
+                        },
+                        "subject": {
+                          "mapping": "pointer",
+                          "path": "/subject"
+                        },
+                        "command": {
+                          "mapping": "pointer",
+                          "path": "/frozen/observation/observed/policy/command"
+                        },
+                        "output": {
+                          "mapping": "pointer",
+                          "path": "/frozen/observation/observed/policy/result_output"
+                        }
+                      }
+                    }
+                  ]
+                },
+                "otherwise": {
+                  "mapping": "constant",
+                  "value": []
+                }
+              },
+              "reported_scope": {
+                "mapping": "if_present",
+                "path": "/frozen/observation/observed",
+                "then": {
+                  "mapping": "array",
+                  "items": [
+                    {
+                      "mapping": "pointer",
+                      "path": "/frozen/observation/observed/scope"
+                    }
+                  ]
+                },
+                "otherwise": {
+                  "mapping": "constant",
+                  "value": []
+                }
+              },
+              "allowed_dependencies": {
+                "mapping": "constant",
+                "value": []
+              },
+              "finding": {
+                "mapping": "if_present",
+                "path": "/frozen/observation/observed",
+                "then": {
+                  "mapping": "pointer",
+                  "path": "/frozen/observation/observed/finding"
+                },
+                "otherwise": {
+                  "mapping": "constant",
+                  "value": "absent"
+                }
+              },
+              "command_status": {
+                "mapping": "if_present",
+                "path": "/frozen/observation/observed",
+                "then": {
+                  "mapping": "pointer",
+                  "path": "/frozen/observation/observed/status"
+                },
+                "otherwise": {
+                  "mapping": "constant",
+                  "value": "absent"
+                }
               }
             }
           }
@@ -196,12 +234,36 @@
               "operation": "compare",
               "left": {
                 "source": "path",
-                "path": "/expected_input"
+                "path": "/command_policy"
               },
-              "comparison": "equal",
+              "comparison": "exact_value",
               "right": {
                 "source": "path",
-                "path": "/evidence_input"
+                "path": "/observed_policy"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/expected_scope"
+              },
+              "comparison": "exact_value",
+              "right": {
+                "source": "path",
+                "path": "/reported_scope"
+              }
+            },
+            {
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/assessment/dependencies"
+              },
+              "comparison": "exact_value",
+              "right": {
+                "source": "path",
+                "path": "/allowed_dependencies"
               }
             },
             {
@@ -219,36 +281,11 @@
               "operation": "compare",
               "left": {
                 "source": "path",
-                "path": "/producer/build_id"
+                "path": "/result_fresh_until"
               },
-              "comparison": "equal",
+              "comparison": "greater",
               "right": {
-                "source": "path",
-                "path": "/evidence_producer/build_id"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/producer/attempt_id"
-              },
-              "comparison": "equal",
-              "right": {
-                "source": "path",
-                "path": "/evidence_producer/attempt_id"
-              }
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/assessment"
-              },
-              "comparison": "exact_value",
-              "right": {
-                "source": "path",
-                "path": "/verified_assessment"
+                "source": "observation_time"
               }
             },
             {
@@ -292,38 +329,6 @@
                         "source": "literal",
                         "value": "advisory"
                       }
-                    },
-                    {
-                      "operation": "not",
-                      "predicate": {
-                        "operation": "any",
-                        "predicates": [
-                          {
-                            "operation": "compare",
-                            "left": {
-                              "source": "path",
-                              "path": "/assessment/recommended_route"
-                            },
-                            "comparison": "equal",
-                            "right": {
-                              "source": "literal",
-                              "value": "already_fixed"
-                            }
-                          },
-                          {
-                            "operation": "compare",
-                            "left": {
-                              "source": "path",
-                              "path": "/assessment/recommended_route"
-                            },
-                            "comparison": "equal",
-                            "right": {
-                              "source": "literal",
-                              "value": "verification_only"
-                            }
-                          }
-                        ]
-                      }
                     }
                   ]
                 },
@@ -343,81 +348,131 @@
                       }
                     },
                     {
-                      "operation": "not",
-                      "predicate": {
-                        "operation": "compare",
-                        "left": {
-                          "source": "path",
-                          "path": "/assessment/reproducibility"
-                        },
-                        "comparison": "equal",
-                        "right": {
-                          "source": "literal",
-                          "value": "not_applicable"
-                        }
-                      }
-                    },
-                    {
-                      "operation": "not",
-                      "predicate": {
-                        "operation": "compare",
-                        "left": {
-                          "source": "path",
-                          "path": "/assessment/reproducibility"
-                        },
-                        "comparison": "equal",
-                        "right": {
-                          "source": "literal",
-                          "value": "not_reproduced"
-                        }
-                      }
-                    },
-                    {
                       "operation": "any",
                       "predicates": [
                         {
-                          "operation": "not",
-                          "predicate": {
-                            "operation": "compare",
-                            "left": {
-                              "source": "path",
-                              "path": "/assessment/reproducibility"
-                            },
-                            "comparison": "equal",
-                            "right": {
-                              "source": "literal",
-                              "value": "reproduced"
-                            }
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/assessment/reproducibility"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "unknown"
                           }
                         },
                         {
                           "operation": "compare",
                           "left": {
                             "source": "path",
-                            "path": "/reproduced_verified"
+                            "path": "/assessment/reproducibility"
                           },
                           "comparison": "equal",
                           "right": {
                             "source": "literal",
-                            "value": true
+                            "value": "needs_research"
                           }
+                        },
+                        {
+                          "operation": "compare",
+                          "left": {
+                            "source": "path",
+                            "path": "/assessment/reproducibility"
+                          },
+                          "comparison": "equal",
+                          "right": {
+                            "source": "literal",
+                            "value": "needs_input"
+                          }
+                        },
+                        {
+                          "operation": "all",
+                          "predicates": [
+                            {
+                              "operation": "compare",
+                              "left": {
+                                "source": "path",
+                                "path": "/assessment/reproducibility"
+                              },
+                              "comparison": "equal",
+                              "right": {
+                                "source": "literal",
+                                "value": "reproduced"
+                              }
+                            },
+                            {
+                              "operation": "compare",
+                              "left": {
+                                "source": "path",
+                                "path": "/command_status"
+                              },
+                              "comparison": "equal",
+                              "right": {
+                                "source": "literal",
+                                "value": "completed"
+                              }
+                            },
+                            {
+                              "operation": "compare",
+                              "left": {
+                                "source": "path",
+                                "path": "/finding"
+                              },
+                              "comparison": "equal",
+                              "right": {
+                                "source": "literal",
+                                "value": "matched"
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "operation": "all",
+                          "predicates": [
+                            {
+                              "operation": "compare",
+                              "left": {
+                                "source": "path",
+                                "path": "/assessment/reproducibility"
+                              },
+                              "comparison": "equal",
+                              "right": {
+                                "source": "literal",
+                                "value": "not_reproduced"
+                              }
+                            },
+                            {
+                              "operation": "compare",
+                              "left": {
+                                "source": "path",
+                                "path": "/command_status"
+                              },
+                              "comparison": "equal",
+                              "right": {
+                                "source": "literal",
+                                "value": "completed"
+                              }
+                            },
+                            {
+                              "operation": "compare",
+                              "left": {
+                                "source": "path",
+                                "path": "/finding"
+                              },
+                              "comparison": "equal",
+                              "right": {
+                                "source": "literal",
+                                "value": "not_matched"
+                              }
+                            }
+                          ]
                         }
                       ]
                     }
                   ]
                 }
               ]
-            },
-            {
-              "operation": "compare",
-              "left": {
-                "source": "path",
-                "path": "/result_fresh_until"
-              },
-              "comparison": "greater",
-              "right": {
-                "source": "observation_time"
-              }
             }
           ]
         },
@@ -426,37 +481,6 @@
             "when": {
               "operation": "any",
               "predicates": [
-                {
-                  "operation": "not",
-                  "predicate": {
-                    "operation": "all",
-                    "predicates": [
-                      {
-                        "operation": "compare",
-                        "left": {
-                          "source": "path",
-                          "path": "/expected_input"
-                        },
-                        "comparison": "equal",
-                        "right": {
-                          "source": "path",
-                          "path": "/evidence_input"
-                        }
-                      },
-                      {
-                        "operation": "compare",
-                        "left": {
-                          "source": "path",
-                          "path": "/fresh_until"
-                        },
-                        "comparison": "greater",
-                        "right": {
-                          "source": "observation_time"
-                        }
-                      }
-                    ]
-                  }
-                },
                 {
                   "operation": "compare",
                   "left": {
@@ -516,6 +540,42 @@
                     "source": "literal",
                     "value": "escalation"
                   }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "already_fixed"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/recommended_route"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "verification_only"
+                  }
+                },
+                {
+                  "operation": "compare",
+                  "left": {
+                    "source": "path",
+                    "path": "/assessment/reproducibility"
+                  },
+                  "comparison": "equal",
+                  "right": {
+                    "source": "literal",
+                    "value": "needs_input"
+                  }
                 }
               ]
             },
@@ -535,131 +595,6 @@
               }
             },
             "outcome": "rejection"
-          },
-          {
-            "when": {
-              "operation": "all",
-              "predicates": [
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/assessment/recommended_route"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "already_fixed"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/already_fixed_verified"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": true
-                  }
-                }
-              ]
-            },
-            "outcome": "already_fixed"
-          },
-          {
-            "when": {
-              "operation": "all",
-              "predicates": [
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/assessment/recommended_route"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "verification_only"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/verification_only_verified"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": true
-                  }
-                }
-              ]
-            },
-            "outcome": "verification_only"
-          },
-          {
-            "when": {
-              "operation": "any",
-              "predicates": [
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/assessment/recommended_route"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "already_fixed"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/assessment/recommended_route"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "verification_only"
-                  }
-                },
-                {
-                  "operation": "all",
-                  "predicates": [
-                    {
-                      "operation": "compare",
-                      "left": {
-                        "source": "path",
-                        "path": "/assessment/work_kind"
-                      },
-                      "comparison": "equal",
-                      "right": {
-                        "source": "literal",
-                        "value": "defect"
-                      }
-                    },
-                    {
-                      "operation": "compare",
-                      "left": {
-                        "source": "path",
-                        "path": "/assessment/reproducibility"
-                      },
-                      "comparison": "equal",
-                      "right": {
-                        "source": "literal",
-                        "value": "needs_input"
-                      }
-                    }
-                  ]
-                }
-              ]
-            },
-            "outcome": "escalation"
           },
           {
             "when": {
@@ -693,35 +628,27 @@
                       }
                     },
                     {
-                      "operation": "not",
-                      "predicate": {
-                        "operation": "all",
-                        "predicates": [
-                          {
-                            "operation": "compare",
-                            "left": {
-                              "source": "path",
-                              "path": "/assessment/reproducibility"
-                            },
-                            "comparison": "equal",
-                            "right": {
-                              "source": "literal",
-                              "value": "reproduced"
-                            }
-                          },
-                          {
-                            "operation": "compare",
-                            "left": {
-                              "source": "path",
-                              "path": "/reproduced_verified"
-                            },
-                            "comparison": "equal",
-                            "right": {
-                              "source": "literal",
-                              "value": true
-                            }
-                          }
-                        ]
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/reproducibility"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "unknown"
+                      }
+                    },
+                    {
+                      "operation": "compare",
+                      "left": {
+                        "source": "path",
+                        "path": "/assessment/reproducibility"
+                      },
+                      "comparison": "equal",
+                      "right": {
+                        "source": "literal",
+                        "value": "needs_research"
                       }
                     }
                   ]
@@ -732,33 +659,16 @@
           },
           {
             "when": {
-              "operation": "all",
-              "predicates": [
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/assessment/work_kind"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "feature_request"
-                  }
-                },
-                {
-                  "operation": "compare",
-                  "left": {
-                    "source": "path",
-                    "path": "/assessment/recommended_route"
-                  },
-                  "comparison": "equal",
-                  "right": {
-                    "source": "literal",
-                    "value": "research"
-                  }
-                }
-              ]
+              "operation": "compare",
+              "left": {
+                "source": "path",
+                "path": "/assessment/recommended_route"
+              },
+              "comparison": "equal",
+              "right": {
+                "source": "literal",
+                "value": "research"
+              }
             },
             "outcome": "feature_research"
           },
@@ -815,6 +725,10 @@
               "accepted": {
                 "mapping": "constant",
                 "value": true
+              },
+              "evidence": {
+                "mapping": "pointer",
+                "path": "/evidence"
               }
             }
           }
@@ -839,6 +753,10 @@
                 "accepted": {
                   "mapping": "constant",
                   "value": false
+                },
+                "evidence": {
+                  "mapping": "pointer",
+                  "path": "/evidence"
                 }
               }
             }

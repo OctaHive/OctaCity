@@ -45,17 +45,218 @@ fn triage_analyst_result_accepts_bounded_assessments_and_rejects_unknown_vocabul
   );
 }
 
-fn classification_gate_input() -> serde_json::Value {
-  let assessment = analyst_assessment();
-  let producer = serde_json::json!({"build_id":"build", "attempt_id":"attempt", "job_id":"job"});
+fn unobserved_gate_input() -> serde_json::Value {
   serde_json::json!({
-    "assessment": assessment, "verified_assessment": assessment,
-    "expected_input": "ab".repeat(32), "evidence_input": "ab".repeat(32), "fresh_until": 2000,
-    "result_fresh_until": 2000,
-    "producer": producer, "evidence_producer": {"build_id":"build", "attempt_id":"attempt", "job_id":"verification-job"},
-    "admission_priority": 20, "admission_risk": "low",
-    "reproduced_verified": false, "already_fixed_verified": false, "verification_only_verified": false
+    "assessment":analyst_assessment(), "admission_priority":20,"admission_risk":"low",
+    "command_policy":[],"observed_policy":[],"expected_scope":[],"reported_scope":[],
+    "allowed_dependencies":[],"result_fresh_until":2000,"fresh_until":2000,
+    "finding":"absent","command_status":"absent","evidence":"absent"
   })
+}
+
+#[test]
+fn triage_without_command_preserves_truthful_feature_and_unresolved_results() {
+  for (kind, severity, reproduction, expected) in [
+    ("feature_request", "advisory", "not_applicable", "requirements"),
+    ("defect", "high", "unknown", "defect_research"),
+    ("defect", "high", "needs_research", "defect_research"),
+    ("defect", "high", "needs_input", "escalation"),
+    ("defect", "high", "reproduced", "escalation"),
+    ("defect", "high", "not_reproduced", "escalation"),
+  ] {
+    let mut input = unobserved_gate_input();
+    input["assessment"]["work_kind"] = kind.into();
+    input["assessment"]["severity"] = severity.into();
+    input["assessment"]["reproducibility"] = reproduction.into();
+    assert_eq!(
+      select_classification(input).unwrap(),
+      key(expected),
+      "{kind}/{reproduction}"
+    );
+  }
+}
+
+fn observed_gate_input(finding: &str) -> serde_json::Value {
+  let project = octacity_server_domain::ProjectId::generate();
+  let binding = serde_json::to_value(binding(project)).unwrap();
+  let pin = binding["tool"].clone();
+  let policy = serde_json::json!({
+    "command":binding["model_or_tool"], "tool":pin, "plugin":binding["plugin"],
+    "task_digest":binding["task_digest"], "build_configuration":binding["build_configuration"],
+    "result_output":"reproduction-report", "schema":pin,"environment":pin,"criterion":pin
+  });
+  let scope = serde_json::json!({"input_digest":"ab".repeat(32),
+    "subject":{"project_id":project,"repository_id":octacity_server_domain::RepositoryId::generate(),"base_revision":"abc123"},
+    "command":policy["command"],"output":policy["result_output"]});
+  let evidence = serde_json::json!({"observed":{
+    "policy":policy,"scope":scope,"owner_input_digest":"ab".repeat(32),
+    "record_digest":"cd".repeat(32),"status":"completed","finding":finding,"fresh_until":2000,
+    "producer":{"build_id":"build","attempt_id":"attempt","job_id":"job"}
+  }});
+  let mut value = unobserved_gate_input();
+  value["command_policy"] = serde_json::json!([policy]);
+  value["observed_policy"] = serde_json::json!([policy]);
+  value["expected_scope"] = serde_json::json!([scope]);
+  value["reported_scope"] = serde_json::json!([scope]);
+  value["evidence"] = evidence;
+  value["finding"] = finding.into();
+  value["command_status"] = "completed".into();
+  value["assessment"]["work_kind"] = "defect".into();
+  value["assessment"]["severity"] = "high".into();
+  value["assessment"]["reproducibility"] = if finding == "matched" {
+    "reproduced"
+  } else {
+    "not_reproduced"
+  }
+  .into();
+  value
+}
+
+#[test]
+fn triage_accepts_only_applicable_completed_command_findings() {
+  for finding in ["matched", "not_matched"] {
+    let value = observed_gate_input(finding);
+    assert_eq!(select_classification(value.clone()).unwrap(), key("requirements"));
+    for (path, replacement) in [
+      ("/finding", serde_json::json!("indeterminate")),
+      ("/command_status", serde_json::json!("environment_unavailable")),
+      ("/reported_scope/0/input_digest", serde_json::json!("ef".repeat(32))),
+      ("/reported_scope/0/subject/base_revision", serde_json::json!("changed")),
+      (
+        "/observed_policy/0/environment/digest",
+        serde_json::json!("ef".repeat(32)),
+      ),
+      (
+        "/observed_policy/0/criterion/digest",
+        serde_json::json!("ef".repeat(32)),
+      ),
+      ("/observed_policy/0/task_digest", serde_json::json!("ef".repeat(32))),
+      ("/fresh_until", serde_json::json!(1000)),
+    ] {
+      let mut changed = value.clone();
+      *changed.pointer_mut(path).unwrap() = replacement;
+      assert_eq!(
+        select_classification(changed).unwrap(),
+        key("escalation"),
+        "{finding}/{path}"
+      );
+    }
+  }
+}
+
+#[test]
+fn triage_projects_absent_command_and_independent_assessment_without_a_synthetic_facts_report() {
+  let template = triage_template().unwrap();
+  let schemas = template.data_schemas().unwrap();
+  let work = crate::flow_test_support::work();
+  let node = template
+    .nodes
+    .iter()
+    .find(|n| n.key.as_str() == "classification")
+    .unwrap();
+  let binding = serde_json::to_value(&node.input_binding).unwrap();
+  let mapping: FlowDataMapping = serde_json::from_value(binding["mapping"].clone()).unwrap();
+  let input = mapping
+    .project_value(
+      &serde_json::json!({
+        "task":work.artifacts().task(),"completion":work.artifacts().acceptance(),"priority":20,"risk":"low",
+        "eligibility":{"accepted":true,"decision":"eligible","reason":"Reviewed fit","evidence":[]},
+        "previous":{"build":null}
+      }),
+      &schemas[&key("analyst_input")],
+    )
+    .unwrap();
+  assert_eq!(input.value()["command_policy"], serde_json::json!([]));
+  assert_eq!(input.value()["observation"], "absent");
+  let node = template
+    .nodes
+    .iter()
+    .find(|n| n.key.as_str() == "classification_gate")
+    .unwrap();
+  let binding = serde_json::to_value(&node.input_binding).unwrap();
+  let mapping: FlowDataMapping = serde_json::from_value(binding["mapping"].clone()).unwrap();
+  let gate = mapping
+    .project_value(
+      &serde_json::json!({"observations":analyst_assessment(),
+        "frozen":input.value(),"priority":20,"risk":"low","subject":work.subject(),"result_freshness":2000
+      }),
+      &schemas[&key("classification_gate_input")],
+    )
+    .unwrap();
+  assert_eq!(gate.value(), &unobserved_gate_input());
+  assert_eq!(
+    node
+      .gate
+      .as_ref()
+      .unwrap()
+      .select_at(
+        &gate,
+        octacity_server_domain::Timestamp::from_unix_millis(1000).unwrap()
+      )
+      .unwrap(),
+    key("requirements")
+  );
+}
+
+fn project_node(template: &FlowDefinitionTemplate, name: &str, sources: serde_json::Value) -> FlowPayload {
+  let node = template.nodes.iter().find(|n| n.key.as_str() == name).unwrap();
+  let binding = serde_json::to_value(&node.input_binding).unwrap();
+  let mapping: FlowDataMapping = serde_json::from_value(binding["mapping"].clone()).unwrap();
+  mapping
+    .project_value(&sources, &template.data_schemas().unwrap()[&node.input_schema])
+    .unwrap()
+}
+
+#[test]
+fn triage_analyst_consumes_only_the_safe_owner_projection_and_retains_command_evidence() {
+  let mut template = triage_template().unwrap();
+  let expected = observed_gate_input("not_matched");
+  let observed = &expected["evidence"]["observed"];
+  let policy = &observed["policy"];
+  let mut wire = serde_json::to_value(&template).unwrap();
+  let analyst = wire["nodes"]
+    .as_array_mut()
+    .unwrap()
+    .iter_mut()
+    .find(|n| n["key"] == "classification")
+    .unwrap();
+  analyst["input_binding"]["mapping"]["value"]["fields"]["command_policy"]["value"] =
+    expected["command_policy"].clone();
+  template = serde_json::from_value(wire).unwrap();
+  let previous = serde_json::json!({"record_digest":observed["record_digest"],"input_digest":observed["owner_input_digest"],"build":{
+    "profile":{"model_or_tool":policy["command"],"task_digest":policy["task_digest"],"build_configuration":policy["build_configuration"],"result_output":"reproduction-report"},
+    "outputs":{"reproduction-report":{
+      "name":"reproduction-report","schema":policy["schema"],"fresh_until":2000,
+      "producer":{"build_id":"build","attempt_id":"attempt","job_id":"job","tool":policy["tool"],"plugin":policy["plugin"]},
+      "data":{"payload":{"value":{"input_digest":"ab".repeat(32),"subject":observed["scope"]["subject"],
+        "command":policy["command"],"environment":policy["environment"],"criterion":policy["criterion"],
+        "status":"completed","finding":"not_matched","observations":{"private_probe_output":"do not forward"}}}}
+    }}
+  }});
+  let work = crate::flow_test_support::work();
+  let input = project_node(
+    &template,
+    "classification",
+    serde_json::json!({"task":work.artifacts().task(),"completion":work.artifacts().acceptance(),
+    "priority":20,"risk":"low","previous":previous,"eligibility":{"accepted":true,"decision":"eligible","reason":"Reviewed fit","evidence":[]}}),
+  );
+  assert_eq!(input.value()["observation"], expected["evidence"]);
+  assert!(
+    !serde_json::to_string(input.value())
+      .unwrap()
+      .contains("private_probe_output")
+  );
+  let gate = project_node(
+    &template,
+    "classification_gate",
+    serde_json::json!({"observations":expected["assessment"],"frozen":input.value(),
+    "priority":20,"risk":"low","subject":observed["scope"]["subject"],"result_freshness":2000}),
+  );
+  assert_eq!(gate.value(), &expected);
+  assert_eq!(
+    select_classification(gate.value().clone()).unwrap(),
+    key("requirements")
+  );
 }
 
 fn select_classification(value: serde_json::Value) -> Result<FactoryKey, FactoryError> {
@@ -77,21 +278,12 @@ fn select_classification(value: serde_json::Value) -> Result<FactoryKey, Factory
 }
 
 #[test]
-fn triage_analyst_gate_requires_applicable_matching_verified_assessments() {
-  let valid = classification_gate_input();
+fn triage_analyst_gate_rejects_stale_results_and_unreviewed_dependencies() {
+  let valid = unobserved_gate_input();
   assert_eq!(select_classification(valid.clone()).unwrap(), key("requirements"));
   for (path, replacement) in [
-    ("/evidence_input", serde_json::json!("cd".repeat(32))),
     ("/fresh_until", serde_json::json!(1000)),
     ("/result_fresh_until", serde_json::json!(1000)),
-    ("/evidence_producer/build_id", serde_json::json!("another-build")),
-    ("/evidence_producer/attempt_id", serde_json::json!("another-attempt")),
-    ("/assessment/priority_assessment", serde_json::json!(60)),
-    ("/assessment/component", serde_json::json!("agent")),
-    ("/assessment/size", serde_json::json!("large")),
-    ("/assessment/severity", serde_json::json!("low")),
-    ("/assessment/risk", serde_json::json!("medium")),
-    ("/assessment/recommended_route", serde_json::json!("research")),
     (
       "/assessment/dependencies",
       serde_json::json!([{
@@ -102,11 +294,7 @@ fn triage_analyst_gate_requires_applicable_matching_verified_assessments() {
   ] {
     let mut value = valid.clone();
     *value.pointer_mut(path).unwrap() = replacement;
-    assert_eq!(
-      select_classification(value).unwrap(),
-      key("escalation"),
-      "substitution must fail closed: {path}"
-    );
+    assert_eq!(select_classification(value).unwrap(), key("escalation"), "{path}");
   }
 }
 
@@ -169,15 +357,15 @@ fn triage_analyst_gate_checks_cross_field_rules_and_keeps_uncertainty() {
     ("defect", "high", "reproduced", "requirements", true, "requirements"),
     ("defect", "high", "unknown", "already_fixed", false, "escalation"),
   ] {
-    let mut value = classification_gate_input();
-    for name in ["assessment", "verified_assessment"] {
-      value[name]["work_kind"] = kind.into();
-      value[name]["severity"] = severity.into();
-      value[name]["reproducibility"] = reproduction.into();
-      value[name]["recommended_route"] = route.into();
-    }
-    value["reproduced_verified"] = verified.into();
-    value["already_fixed_verified"] = verified.into();
+    let mut value = if verified {
+      observed_gate_input("matched")
+    } else {
+      unobserved_gate_input()
+    };
+    value["assessment"]["work_kind"] = kind.into();
+    value["assessment"]["severity"] = severity.into();
+    value["assessment"]["reproducibility"] = reproduction.into();
+    value["assessment"]["recommended_route"] = route.into();
     assert_eq!(
       select_classification(value).unwrap(),
       key(expected),
@@ -185,10 +373,9 @@ fn triage_analyst_gate_checks_cross_field_rules_and_keeps_uncertainty() {
     );
   }
   for field in ["admission_risk", "risk"] {
-    let mut value = classification_gate_input();
+    let mut value = unobserved_gate_input();
     if field == "risk" {
       value["assessment"][field] = "high".into();
-      value["verified_assessment"][field] = "high".into();
     } else {
       value[field] = "high".into();
     }
@@ -225,9 +412,9 @@ fn triage_public_results_are_explicit_immutable_outcome_choices() {
 fn triage_analyst_gate_retains_results_and_rejects_substituted_dependency_references() {
   let dependency = serde_json::json!({"run_id":"00000000-0000-0000-0000-000000000001",
     "work_id":"00000000-0000-0000-0000-000000000002", "work_digest":"ef".repeat(32), "terminal":"completed"});
-  let mut value = classification_gate_input();
+  let mut value = observed_gate_input("matched");
   value["assessment"]["dependencies"] = serde_json::json!([dependency]);
-  value["verified_assessment"] = value["assessment"].clone();
+  value["allowed_dependencies"] = value["assessment"]["dependencies"].clone();
   assert_eq!(select_classification(value.clone()).unwrap(), key("requirements"));
   for (field, replacement) in [
     ("run_id", serde_json::json!("00000000-0000-0000-0000-000000000003")),
@@ -332,7 +519,7 @@ fn triage_analyst_gate_retains_results_and_rejects_substituted_dependency_refere
     assert_eq!(
       record.payload().value(),
       &serde_json::json!({"accepted":accepted,"assessment":value["assessment"],
-      "admission_priority":work.priority(), "admission_risk":work.risk()})
+      "admission_priority":work.priority(), "admission_risk":work.risk(), "evidence":value["evidence"]})
     );
     let completion = record
       .completion(

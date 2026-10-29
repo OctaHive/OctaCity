@@ -2,6 +2,11 @@ use super::factory::*;
 
 #[allow(dead_code)] // Release-template contracts are shared by core and application owners.
 pub(crate) fn supplied_triage_template() -> Result<FlowDefinitionTemplate, FactoryError> {
+  supplied_triage_template_variant("v1.json")
+}
+
+#[allow(dead_code)] // Optional command composition is qualified by application output-source tests.
+pub(crate) fn supplied_triage_template_variant(name: &str) -> Result<FlowDefinitionTemplate, FactoryError> {
   let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
     .ancestors()
     .find(|path| path.join("config/factory").is_dir())
@@ -10,7 +15,7 @@ pub(crate) fn supplied_triage_template() -> Result<FlowDefinitionTemplate, Facto
   let missing = || FactoryError::InvalidConfiguration {
     field: "versioned triage preset",
   };
-  let manifest = std::fs::read(root.join("presets/triage/v1.json")).map_err(|_| missing())?;
+  let manifest = std::fs::read(root.join("presets/triage").join(name)).map_err(|_| missing())?;
   FlowDefinitionTemplate::from_manifest(&manifest, |path| {
     std::fs::read(root.join(path.as_str())).map_err(|_| missing())
   })

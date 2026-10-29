@@ -4,9 +4,25 @@ use octacity_server_factory::*;
 use std::collections::BTreeMap;
 
 pub(crate) fn command_fixture() -> (FlowBuildIntent, AdmittedFlow, FactoryCommandBuildProfile) {
+  command_fixture_with_observation(None)
+}
+
+pub(crate) fn command_fixture_with_observation(
+  observation_contract: Option<crate::FactoryCommandObservationContract>,
+) -> (FlowBuildIntent, AdmittedFlow, FactoryCommandBuildProfile) {
+  let schema = observation_contract
+    .as_ref()
+    .map(|contract| contract.report_schema().unwrap());
+  command_fixture_with_observation_and_schema(observation_contract, schema)
+}
+
+pub(crate) fn command_fixture_with_observation_and_schema(
+  observation_contract: Option<crate::FactoryCommandObservationContract>,
+  output_schema: Option<FlowDataSchema>,
+) -> (FlowBuildIntent, AdmittedFlow, FactoryCommandBuildProfile) {
   let work = fixtures::work();
   let mut binding = fixtures::binding(work.subject().project_id());
-  let (_, _, schema, _, _) = fixtures::execution_fixture(FlowNodeKind::BuildCommand);
+  let schema = output_schema.unwrap_or_else(|| fixtures::execution_fixture(FlowNodeKind::BuildCommand).2);
   let profile = FactoryCommandBuildProfile {
     identity: binding.model_or_tool.clone(),
     plugin: binding.plugin.clone(),
@@ -21,6 +37,7 @@ pub(crate) fn command_fixture() -> (FlowBuildIntent, AdmittedFlow, FactoryComman
     parameters: BTreeMap::new(),
     project_permissions: FactoryPermissionSet::deny_all(),
     local_permissions: LocalPermissionCeiling::fully_enforced(FactoryPermissionSet::deny_all()),
+    observation_contract,
     candidate_capture_tool: None,
     outputs: vec![EvidenceRequirement::new(binding.result_output.clone(), binding.result_output_kind, schema.reference().clone(), binding.tool.clone(), binding.plugin.clone())],
   };
@@ -29,7 +46,7 @@ pub(crate) fn command_fixture() -> (FlowBuildIntent, AdmittedFlow, FactoryComman
     FlowNodeKind::BuildCommand,
     work,
     binding,
-    None,
+    Some(schema),
     FactoryPermissionSet::deny_all(),
   );
   (

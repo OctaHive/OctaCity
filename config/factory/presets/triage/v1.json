@@ -46,6 +46,7 @@
     "presets/triage/eligibility-gate-v1.json",
     "presets/triage/classification-v1.json",
     "presets/triage/classification-gate-v1.json",
-    "presets/triage/routing-v1.json"
+    "presets/triage/routing-v1.json",
+    "presets/triage/direct-classification-v1.json"
   ]
 }

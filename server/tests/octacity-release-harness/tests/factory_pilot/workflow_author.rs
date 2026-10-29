@@ -295,6 +295,7 @@ fn installed_profile(s: &AuthorScenario<'_>, schema: &FlowDataSchema) -> Factory
     parameters: BTreeMap::new(),
     project_permissions: permissions.clone(),
     local_permissions: LocalPermissionCeiling::fully_enforced(permissions),
+    observation_contract: None,
     candidate_capture_tool: None,
     outputs: vec![
       EvidenceRequirement::new(

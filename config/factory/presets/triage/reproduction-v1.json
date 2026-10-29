@@ -1,0 +1,136 @@
+{
+  "nodes": [
+    {
+      "key": "reproduction",
+      "kind": "build_command",
+      "input_schema": "project_input",
+      "outcomes": [
+        {
+          "key": "observed",
+          "kind": "success",
+          "schema": "reproduction_report"
+        }
+      ],
+      "budget": {
+        "max_attempts": 1,
+        "max_elapsed_millis": 60000,
+        "max_tokens": 0,
+        "max_cost_micro_units": 0,
+        "max_output_bytes": 1048576
+      },
+      "required": true,
+      "input_binding": {
+        "sources": {
+          "task": {
+            "source": "work",
+            "path": "/artifacts/task"
+          },
+          "completion": {
+            "source": "work",
+            "path": "/artifacts/acceptance"
+          },
+          "priority": {
+            "source": "work",
+            "path": "/priority"
+          },
+          "risk": {
+            "source": "work",
+            "path": "/risk"
+          }
+        },
+        "mapping": {
+          "value": {
+            "mapping": "object",
+            "fields": {
+              "task": {
+                "mapping": "pointer",
+                "path": "/task"
+              },
+              "completion": {
+                "mapping": "pointer",
+                "path": "/completion"
+              },
+              "work": {
+                "mapping": "object",
+                "fields": {
+                  "priority": {
+                    "mapping": "pointer",
+                    "path": "/priority"
+                  },
+                  "admission_risk": {
+                    "mapping": "pointer",
+                    "path": "/risk"
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "build_profile": "reproduction",
+      "max_execution_retries": 1,
+      "context_binding": {
+        "entries": {
+          "task": {
+            "source_kind": "task",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/task"
+                  }
+                }
+              }
+            }
+          },
+          "completion": {
+            "source_kind": "specification",
+            "source": {
+              "value": {
+                "mapping": "object",
+                "fields": {
+                  "kind": {
+                    "mapping": "constant",
+                    "value": "artifact"
+                  },
+                  "value": {
+                    "mapping": "pointer",
+                    "path": "/completion"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "transitions": [
+    {
+      "predecessor": "eligibility_gate",
+      "outcome": "classify",
+      "target": {
+        "kind": "node",
+        "key": "reproduction"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    },
+    {
+      "predecessor": "reproduction",
+      "outcome": "observed",
+      "target": {
+        "kind": "node",
+        "key": "classification"
+      },
+      "max_repeats": 0,
+      "exhausted_terminal": null
+    }
+  ]
+}

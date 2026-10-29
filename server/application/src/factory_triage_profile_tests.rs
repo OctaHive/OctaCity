@@ -57,6 +57,10 @@ fn triage_analyst_compiled_prompt_explains_the_classification_contract_and_a_val
     "needs_research",
     "needs_input",
     "dependencies",
+    "observation.observed",
+    "not_matched",
+    "criterion",
+    "environment_unavailable",
   ] {
     assert!(
       prompt.contains(required),

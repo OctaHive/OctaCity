@@ -63,6 +63,25 @@
               "type": "reference",
               "schema": "eligibility_accepted"
             }
+          },
+          "command_policy": {
+            "required": true,
+            "value": {
+              "type": "array",
+              "min_items": 0,
+              "max_items": 1,
+              "item": {
+                "type": "reference",
+                "schema": "command_policy"
+              }
+            }
+          },
+          "observation": {
+            "required": true,
+            "value": {
+              "type": "reference",
+              "schema": "command_evidence"
+            }
           }
         }
       }

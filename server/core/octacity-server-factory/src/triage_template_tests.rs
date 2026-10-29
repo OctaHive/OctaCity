@@ -258,6 +258,8 @@ fn triage_stage_input_contracts_keep_original_ticket_completion_and_only_the_acc
     let mut value = serde_json::json!({"task":work.artifacts().task(),"completion":work.artifacts().acceptance(),
       "work":{"priority":1,"admission_risk":"low"}});
     if name == "classification" {
+      value["command_policy"] = serde_json::json!([]);
+      value["observation"] = "absent".into();
       value["eligibility"] = serde_json::json!({"accepted":true,"decision":"eligible","reason":"Reviewed bounded assessment.","evidence":[]});
     }
     assert!(
@@ -273,7 +275,6 @@ fn reviewed_template(
 ) -> (FlowDefinitionTemplate, FactoryConfigurationChoices) {
   use crate::flow_test_support::reference;
   let mut template = triage_template().unwrap();
-  let schemas = template.data_schemas().unwrap();
   let mut entries = FactoryConfigurationChoiceEntries {
     references: vec![],
     build_configurations: vec![],
@@ -342,15 +343,8 @@ fn reviewed_template(
       candidate.build.result_output = key("codex-run-result");
       verifier
     } else {
-      let verifier = reference("facts.verifier");
-      candidate.build.evidence = vec![EvidenceRequirement::new(
-        key("facts"),
-        EvidenceOutputKind::Report,
-        schemas[&key("classification_facts")].reference().clone(),
-        verifier.clone(),
-        candidate.build.plugin.clone(),
-      )];
-      verifier
+      candidate.build.result_output = key("codex-run-result");
+      candidate.build.tool.clone()
     };
     for (suffix, reference) in [
       ("runtime", candidate.build.tool.clone()),

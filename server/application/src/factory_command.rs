@@ -88,8 +88,51 @@ pub struct FactoryCommandBuildProfile {
   pub candidate_capture_tool: Option<ImmutableReference>,
   /// Complete installed primary and additional output contracts.
   pub outputs: Vec<EvidenceRequirement>,
+  /// Optional independently evaluated observation criterion for this installed command.
+  /// Absence preserves the legacy command task identity and output semantics.
+  pub observation_contract: Option<crate::FactoryCommandObservationContract>,
 }
 impl FactoryCommandBuildProfile {
+  /// Returns finite primary reports compatible with this explicitly installed observation contract.
+  /// No program/credential values or I/O are involved; plain reports advertise no such capability.
+  pub fn observation_bindings(
+    &self,
+  ) -> Result<Vec<crate::FactoryCommandObservationBinding>, OrdinaryBuildApplicationError> {
+    let invalid = || OrdinaryBuildApplicationError::Invalid;
+    let Some(contract) = &self.observation_contract else {
+      return Ok(vec![]);
+    };
+    contract.validate()?;
+    if self.outputs.len() > octacity_server_factory::MAX_FLOW_SCHEMA_ENTRIES {
+      return Err(invalid());
+    }
+    let schema = contract.report_schema()?;
+    let task_digest = self.task_digest();
+    let bindings: Vec<_> = self
+      .outputs
+      .iter()
+      .filter(|output| {
+        output.output_kind() == octacity_server_factory::EvidenceOutputKind::Report
+          && output.schema() == schema.reference()
+      })
+      .map(|output| crate::FactoryCommandObservationBinding {
+        command: self.identity.clone(),
+        tool: self.executor.clone(),
+        plugin: self.plugin.clone(),
+        task_digest,
+        build_configuration: self.build_configuration.clone(),
+        result_output: output.kind().clone(),
+        schema: schema.reference().clone(),
+        environment: contract.environment.clone(),
+        criterion: contract.criterion.clone(),
+      })
+      .collect();
+    if bindings.is_empty() {
+      return Err(invalid());
+    }
+    Ok(bindings)
+  }
+
   /// Pins executable instructions, output contracts, parameters and every ceiling.
   pub fn task_digest(&self) -> FactoryDigest {
     let enforcement: Vec<_> = PermissionCategory::ALL
@@ -112,7 +155,17 @@ impl FactoryCommandBuildProfile {
       &self.candidate_capture_tool,
     ))
     .expect("typed installed command profile serializes");
-    FactoryDigest::sha256("octacity.factory.command.task.v1", &[&bytes])
+    let legacy = FactoryDigest::sha256("octacity.factory.command.task.v1", &[&bytes]);
+    match &self.observation_contract {
+      None => legacy,
+      Some(contract) => FactoryDigest::sha256(
+        "octacity.factory.command.observation-task.v1",
+        &[
+          &legacy.as_bytes(),
+          &serde_json::to_vec(contract).expect("typed command observation contract serializes"),
+        ],
+      ),
+    }
   }
   /// Selects only the exact immutable installed capability and command policy.
   pub fn matches_intent(&self, intent: &FlowBuildIntent) -> bool {
@@ -441,6 +494,14 @@ pub fn compile_factory_command_task(
   if !profile.matches_intent(intent)
     || profile.input_destination == OCTAFILE_DESTINATION
     || profile.program.tasks.is_empty()
+  {
+    return Err(invalid());
+  }
+  if profile.observation_contract.is_some()
+    && !profile
+      .observation_bindings()?
+      .iter()
+      .any(|binding| binding.result_output == intent.profile().result_output)
   {
     return Err(invalid());
   }

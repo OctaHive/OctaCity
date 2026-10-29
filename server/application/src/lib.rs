@@ -775,11 +775,18 @@ pub use factory_phase_pool_selection::{FactoryPhasePoolCoordination, FactoryPhas
 mod factory_build_service_tests;
 #[cfg(test)]
 mod factory_command_materializer_tests;
+mod factory_command_observation;
+#[cfg(test)]
+mod factory_command_observation_tests;
 mod factory_command_output_source;
 #[cfg(test)]
 mod factory_command_output_source_tests;
 #[cfg(test)]
 mod factory_command_tests;
+pub use factory_command_observation::{
+  FactoryCommandFinding, FactoryCommandObservationBinding, FactoryCommandObservationContract,
+  verify_factory_command_observation,
+};
 pub use factory_command_output_source::FactoryCommandBuildOutputSource;
 
 mod factory_command;

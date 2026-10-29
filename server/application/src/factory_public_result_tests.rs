@@ -18,7 +18,7 @@ fn retained_public_results_read_classification_without_mutation_or_private_conte
     for public in [true, false] {
       let mut fixture = factory_public_result_journal_fixture(schema.clone(), public);
       let value = json!({"assessment":assessment,"admission_priority":fixture.admission.work.priority(),
-        "admission_risk":fixture.admission.work.risk(),"accepted":true});
+        "admission_risk":fixture.admission.work.risk(),"accepted":true,"evidence":"absent"});
       fixture.observation = Some(value.clone());
       let store = Arc::new(InMemoryFactoryConfigurationStore::new());
       store
