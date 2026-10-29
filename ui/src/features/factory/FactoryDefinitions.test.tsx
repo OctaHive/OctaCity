@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { QueryClientProvider } from '@tanstack/react-query';
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { createMemoryRouter, RouterProvider } from 'react-router-dom';
 import { afterEach, expect, it, vi } from 'vitest';
@@ -464,4 +464,76 @@ it('opens a copied immutable Flow version outside the loaded current-definition 
   expect(await screen.findByRole('heading', { name: 'Immutable Flow Definition' })).toBeTruthy();
   expect(api.currentFlow).toHaveBeenCalledWith(id, expect.any(AbortSignal));
   expect(api.getFlow).toHaveBeenCalledWith(id, 1, expect.any(AbortSignal));
+});
+
+it('opens Project triage setup and reviews frozen process criteria without publication or persistence', async () => {
+  const projectId = configurationFixture().configuration.reference.project_id;
+  const preset = { identity: 'triage', version: 'v1', digest: 'ab'.repeat(32) };
+  const api = {
+    ...factoryApi,
+    listChoices: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listFlows: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listConfigurations: vi.fn(async () => ({ items: [], total: 0, next_cursor: null })),
+    listPresets: vi.fn<FactoryApi['listPresets']>(async () => ({
+      total: 1,
+      next_cursor: null,
+      items: [
+        {
+          reference: preset,
+          profile_aliases: ['eligibility', 'classification'],
+          parameters: [],
+          required_node_kinds: ['reasoning'],
+        },
+      ],
+    })),
+    resolvePreset: vi.fn<FactoryApi['resolvePreset']>(async () => ({
+      preset,
+      completion: {
+        kind: 'draft',
+        project_id: projectId,
+        preset,
+        content: 'Reviewed triage process criteria',
+      },
+      diagnostics: [{ path: '/profiles/eligibility', reason: 'required' }],
+      flow: null,
+      configuration: null,
+      input: null,
+      dependencies: [],
+    })),
+    createFlow: vi.fn(),
+    createConfiguration: vi.fn(),
+  };
+  const before = { local: { ...localStorage }, session: { ...sessionStorage } };
+  const router = createMemoryRouter([
+    { path: '*', element: <FactoryDefinitions api={api} projectId={projectId} /> },
+  ]);
+  render(
+    <QueryClientProvider client={createConsoleQueryClient()}>
+      <RouterProvider router={router} />
+    </QueryClientProvider>,
+  );
+  await userEvent.click(screen.getByRole('button', { name: 'Set up triage' }));
+  expect(screen.getByRole('button', { name: 'Create Flow draft' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  expect(screen.getByRole('button', { name: 'Create configuration draft' })).toHaveProperty(
+    'disabled',
+    true,
+  );
+  await userEvent.click(await screen.findByRole('button', { name: 'Review triage prerequisites' }));
+  expect(await screen.findByText('Reviewed triage process criteria')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Process completion criteria' })).toBeTruthy();
+  expect(
+    within(screen.getByRole('region', { name: 'Triage setup' })).getByRole('link', {
+      name: 'AI agents',
+    }),
+  ).toBeTruthy();
+  expect(api.resolvePreset).toHaveBeenCalledWith(projectId, { preset });
+  expect(api.createFlow).not.toHaveBeenCalled();
+  expect(api.createConfiguration).not.toHaveBeenCalled();
+  expect({ local: { ...localStorage }, session: { ...sessionStorage } }).toEqual(before);
+  expect(screen.queryByRole('textbox', { name: /json|digest|credential|token/i })).toBeNull();
+  await userEvent.click(screen.getByRole('button', { name: 'Close triage setup' }));
+  expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Set up triage' }));
 });

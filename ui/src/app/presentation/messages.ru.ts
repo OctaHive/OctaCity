@@ -1,6 +1,117 @@
 import type { MessageCatalog } from './messages.en';
 
 export const ruMessages = {
+  'triage.removeEffects': 'Убрать эффекты отчётности для {gate}',
+  'triage.splitAt': 'Граница разделения',
+  'triage.splitBand': 'Разделить диапазон',
+  'triage.dimensions': 'Независимые эффекты классификации',
+  'triage.dimensionsHelp':
+    'Явно выберите каждое поле результата и применимые исходы. Остальные значения сохраняют метки и состояние; измерения доставляются отдельно.',
+  'triage.dimensionField': 'Поле классификации',
+  'triage.dimensionOutcomes': 'Передавать измерение для исходов',
+  'triage.addDimension': 'Добавить измерение классификации',
+  'triage.dimensionTitle': 'Измерение {field}',
+  'triage.reportChoice': 'Передавать это значение',
+  'triage.removeDimension': 'Убрать измерение',
+  'triage.nativeReportingContract':
+    'Для выбранного Reporter установлен action. Квитанция означает постановку в очередь; доставка провайдеру проверяется отдельно.',
+  'triage.reportingPolicy': 'Политика выполнения Reporter',
+  'triage.reportingNodeBudget': 'Бюджет действия Reporter',
+  'triage.reportingFlowBudget': 'Бюджет reporting Flow',
+  'triage.reportingPermissions': 'Разрешения Reporter',
+  'triage.reportingConcurrency': 'Параллельность reporting',
+  'triage.reporterAttempts': 'Попытки Reporter',
+  'triage.reporterRetryDelay': 'Задержка повторной попытки Reporter (мс)',
+  'triage.documentsLoaded': 'Загружено доступных документов Project: {count}',
+  'triage.supportingDocuments': 'Дополнительные документы этого этапа',
+  'triage.supportingDocument': 'Дополнительный документ',
+  'triage.documentAlias': 'Название привязки документа',
+  'triage.addDocument': 'Добавить документ',
+  'triage.removeDocument': 'Удалить документ {name}',
+  'projectDocument.name': 'Название документа',
+  'projectDocument.content': 'Текст документа',
+  'projectDocument.review': 'Проверить публикацию документа',
+  'projectDocument.publish': 'Опубликовать документ',
+  'projectDocument.help':
+    'Сохранить точный приватный документ Project. Публикация не запускает работу и не даёт этапам доступ: выберите документ отдельно для каждого этапа.',
+  'projectDocument.published':
+    'Документ опубликован. Явно выберите его для этапов, которым он нужен.',
+  'triage.noDocuments':
+    'Нет сохранённых документов Project. Опубликуйте проверенный документ, чтобы выбрать его для этого этапа.',
+  'triage.observationExpired': 'Срок наблюдения готовности истёк. Проверьте точный выбор повторно.',
+  'triage.retainedDraft':
+    'Для сохранённого черновика нужна повторная проверка условий перед публикацией.',
+  'triage.effects': 'Эффекты принятых результатов',
+  'triage.labelScopeHelp':
+    'Доступны только разрешённые существующие метки. Если нужной метки нет, проверьте область меток в Integrations; настройка не создаёт меток.',
+  'triage.labelScope': 'Проверить доступные метки',
+  'triage.reportingContractMissing':
+    'Выберите отдельно разрешённый Reporter с установленным действием. Проверьте установку этого действия Reporter на сервере. Доступ на чтение не подтверждает готовность отчётности.',
+  'triage.reportOutcome': 'Передавать этот результат',
+  'triage.useEffects': 'Использовать проверенные эффекты отчётности',
+  'triage.readiness': 'Готовность выполнения',
+  'triage.checkReadiness': 'Проверить готовность выполнения',
+  'triage.agentMissing': 'Нет доступной мощности совместимого Agent.',
+  'triage.captureMissing': 'Захват доказательств MCP не квалифицирован.',
+  'triage.authUnknown': 'Аутентификация учётных данных не подтверждена.',
+  'triage.octacityAuthUnknown':
+    'Не наблюдалась аутентификация OctaCity MCP с ограниченной областью доступа.',
+  'triage.scopeUnknown': 'Область ресурсов MCP не подтверждена.',
+  'triage.ready': 'Условия выполнения наблюдались для этого точного выбора.',
+  'triage.blocked': 'Есть блокирующие условия выполнения.',
+  'triage.unknown': 'Не все условия выполнения наблюдались.',
+  'triage.nativeWriteUnknown': 'Запись во внешнюю систему остаётся непроверенной.',
+  'triage.nativeWriteObserved': 'Готовность внешней записи наблюдалась отдельно.',
+  'triage.dependencyUnknown': 'Проверьте неразрешённую зависимость установки или доступа.',
+  'triage.remediate': 'Проверить условие',
+  'triage.sourceSelection': 'Выбор Source для триажа',
+  'triage.reviewSource': 'Проверить выбор Source',
+  'triage.processMappingRequired':
+    'Выберите установленный Source с явными критериями завершения процесса. Авторские критерии реализации не могут неявно подменять критерии триажа.',
+  'triage.sourcePreviewStale':
+    'Черновик конфигурации изменился. Повторите проверку Source; сохранённый input не перепривязан.',
+  'triage.useSource': 'Использовать проверенный Source',
+  'triage.publication': 'Проверка и публикация',
+  'triage.workflow': 'Процессы проекта',
+  'triage.independentIntake':
+    'Импорт задач, preview Source и приём на выполнение управляются отдельно. Новый автоматический приём выключен до отдельного подтверждения.',
+  'triage.flowPublished': 'Flow опубликован. Продолжите настройку конфигурации.',
+  'triage.publishDependencies':
+    'Сначала опубликуйте проверенные зависимости отчётности. Осталось: {count}.',
+  'triage.preparationUnknown':
+    'Данные подготовки недоступны. Проверьте установленный mapping Source перед включением приёма.',
+  'triage.authoredAcceptance': 'Этот mapping использует авторские критерии реализации задачи.',
+  'triage.execution': 'Корневое выполнение и лимиты конфигурации',
+  'triage.rootConcurrency': 'Параллельные корневые узлы',
+  'triage.context': 'Контекст проекта',
+  'triage.goals': 'Цели проекта',
+  'triage.rules': 'Правила проекта',
+  'triage.repository': 'Репозиторий кода',
+  'triage.repositoryMissing': 'Выберите доступный репозиторий кода независимо от Source задач.',
+  'triage.retainedDocument': 'Сохранённая точная версия документа',
+  'triage.projectAnalyst': 'Аналитик проекта',
+  'triage.systemsAnalyst': 'Системный аналитик',
+  'triage.resolve': 'Собрать проверенный triage',
+  'triage.authority':
+    'Аутентификация AI-провайдера и доступ серверных Source/Reporter независимы от чтения через MCP. Сохранённые настройки не доказывают разрешённый вызов.',
+  'triage.installationMissing':
+    'Установите точный Runtime и настройте доступного Agent перед выполнением.',
+  'triage.mcpMissing':
+    'Проверьте endpoint MCP, область чтения и захват доказательств в настройках Runtime.',
+
+  'triage.open': 'Настроить триаж',
+  'triage.title': 'Настройка триажа',
+  'triage.close': 'Закрыть настройку триажа',
+  'triage.reviewPrerequisites': 'Проверить условия триажа',
+  'triage.completion': 'Критерии завершения процесса',
+  'triage.completionHelp':
+    'Эти критерии описывают завершение триажа. Они не заменяют отсутствующие критерии реализации исходной задачи.',
+  'triage.dependencies': 'Зависимости настройки',
+  'triage.dependency': 'Зависимость настройки',
+  'triage.buildBinding': 'Точная установленная привязка Build',
+  'triage.dependencyRequired': 'Проверьте и выберите эту зависимость.',
+  'triage.dependencyUnavailable': 'Выбранная зависимость недоступна или несовместима.',
+  'triage.unavailable': 'Пресет триажа недоступен в этом проекте.',
   'issueImport.open': 'Источники задач',
   'issueImport.add': 'Добавить источник задач',
   'issueImport.edit': 'Редактировать импорт задач',

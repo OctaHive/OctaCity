@@ -19,6 +19,22 @@ export type FactoryFilters = Omit<
   'after' | 'limit'
 >;
 export interface FactoryApi extends FactoryNodeControlApi {
+  readiness(
+    id: string,
+    version: number,
+    selection: components['schemas']['FactoryReadinessSelection'],
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryReadinessReport']>;
+  listPresets(
+    projectId: string,
+    cursor: string | null,
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryPresetPage']>;
+  resolvePreset(
+    projectId: string,
+    request: components['schemas']['FactoryPresetResolutionRequest'],
+    signal?: AbortSignal,
+  ): Promise<components['schemas']['FactoryPresetResolution']>;
   selectProfile(
     runId: string,
     inputDigest: string,
@@ -110,6 +126,38 @@ export interface FactoryApi extends FactoryNodeControlApi {
 
 /** Authorization-filtered, bounded same-origin Factory reads. */
 export const factoryApi: FactoryApi = {
+  async readiness(id, version, body, signal) {
+    const { data } = await managementApi.POST(
+      '/api/v1/factory-configurations/{factory_configuration_id}/versions/{version}/readiness',
+      {
+        params: { path: { factory_configuration_id: id, version } },
+        body,
+        signal: signal ?? null,
+      },
+    );
+    return requireManagementResponse(data);
+  },
+  async listPresets(projectId, cursor, signal) {
+    const { data } = await managementApi.GET('/api/v1/projects/{project_id}/factory-presets', {
+      params: {
+        path: { project_id: projectId },
+        query: { limit: 25, ...(cursor === null ? {} : { after: cursor }) },
+      },
+      signal: signal ?? null,
+    });
+    return requireManagementResponse(data);
+  },
+  async resolvePreset(projectId, body, signal) {
+    const { data } = await managementApi.POST(
+      '/api/v1/projects/{project_id}/factory-presets/resolve',
+      {
+        params: { path: { project_id: projectId } },
+        body,
+        signal: signal ?? null,
+      },
+    );
+    return requireManagementResponse(data);
+  },
   async selectProfile(runId, inputDigest, body, headers) {
     const { data } = await managementApi.POST(
       '/api/v1/factory-runs/{factory_run_id}/profile-selections/{input_digest}',

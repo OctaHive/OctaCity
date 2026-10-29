@@ -1,3 +1,4 @@
+import { SourcePreparationSummary } from './SourcePreparationSummary';
 import { useState } from 'react';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link } from 'react-router-dom';
@@ -34,21 +35,32 @@ export function SourceInputEditor({
   repositories,
   input,
   onRefresh,
+  onSelect,
+  draft,
+  onPublished,
 }: {
-  configuration: FactoryConfigurationDetails;
+  configuration: Pick<FactoryConfigurationDetails, 'configuration'>;
   api: FactorySourcesApi;
   connections: SourceConnection[];
   repositories: SourceRepositories;
   input?: Input | undefined;
+  draft?: components['schemas']['WorkSourceInputIntent'] | undefined;
+  /** Lets the containing intake view consume an initial handoff after successful publication. */
+  onPublished?: ((input: Input) => void) | undefined;
   onRefresh: () => Promise<SourceSnapshot>;
+  /** Compose an uncommitted input; execution/publication controls remain in the ordinary post-publication editor. */
+  onSelect?: (
+    intent: SourceIntent,
+    choices: components['schemas']['WorkSourceInputChoices'],
+  ) => void;
 }) {
   const { t } = usePresentation();
   const client = useQueryClient();
-  const [base] = useState(input?.definition);
+  const [base] = useState(input?.definition ?? draft?.definition);
   const project = configuration.configuration.reference.project_id;
   const target = base?.target ?? configuration.configuration.reference;
-  const [id] = useState(() => input?.id ?? crypto.randomUUID());
-  const [version, setVersion] = useState(input?.version ?? null);
+  const [id] = useState(() => input?.id ?? draft?.id ?? crypto.randomUUID());
+  const [version, setVersion] = useState(input?.version ?? draft?.expected_version ?? null);
   const [connectionId, setConnectionId] = useState(base?.connection?.id ?? '');
   const connection = connections.find((item) => item.id === connectionId);
   const choices = useQuery({
@@ -166,7 +178,7 @@ export function SourceInputEditor({
                 source: selected.binding,
                 reporter,
                 ...(reporter && reportingDraft ? { reporting: reportingDraft } : {}),
-                enabled,
+                enabled: onSelect ? false : enabled,
                 connection: {
                   id: connection.id,
                   version: connection.version,
@@ -328,7 +340,12 @@ export function SourceInputEditor({
           if (labelPresence !== 'none') setCustom(false);
         },
       )}
-      {selected ? <p>{t('factory.preparationHelp')}</p> : null}
+      {selected ? (
+        <>
+          <p>{t('factory.preparationHelp')}</p>
+          <SourcePreparationSummary value={selected.preparation} projectId={project} />
+        </>
+      ) : null}
       <p>{t('factory.repositoryIndependent')}</p>
       {select(
         t('factory.codeRepository'),
@@ -438,24 +455,41 @@ export function SourceInputEditor({
           onChange={setReportingDraft}
         />
       ) : null}
-      <label>
-        <input
-          type="checkbox"
-          checked={enabled}
-          onChange={(event) => setEnabled(event.target.checked)}
-        />
-        {t('factory.inputEnabled')}
-      </label>
-      <SourcePublication
-        intent={intent}
-        summary={summary}
-        api={api}
-        onRefresh={reconcile}
-        onPublished={(result) => {
-          const current = result.publication.inputs.find((i) => i.input.id === id);
-          if (current) setVersion(current.input.version);
-        }}
-      />
+      {onSelect ? (
+        <button
+          type="button"
+          disabled={!intent || !choices.data}
+          onClick={() => {
+            if (intent && choices.data) onSelect(intent, choices.data);
+          }}
+        >
+          {t('triage.useSource')}
+        </button>
+      ) : (
+        <>
+          <label>
+            <input
+              type="checkbox"
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
+            />
+            {t('factory.inputEnabled')}
+          </label>
+          <SourcePublication
+            intent={intent}
+            summary={summary}
+            api={api}
+            onRefresh={reconcile}
+            onPublished={(result) => {
+              const current = result.publication.inputs.find((i) => i.input.id === id);
+              if (current) {
+                setVersion(current.input.version);
+                onPublished?.(current.input);
+              }
+            }}
+          />
+        </>
+      )}
     </fieldset>
   );
 }

@@ -286,7 +286,7 @@ test('admits bounded Agent diagnostics and retains the CSS ceiling', async (cont
   );
 });
 
-test('admits measured Runtime MCP guidance and rejects another KiB near aggregate ceilings', async (context) => {
+test('admits measured lazy triage setup and rejects another KiB near aggregate ceilings', async (context) => {
   const policy = JSON.parse(
     await readFile(new URL('../architecture-policy.json', import.meta.url), 'utf8'),
   );
@@ -296,20 +296,20 @@ test('admits measured Runtime MCP guidance and rejects another KiB near aggregat
     'dist/index.html',
     '<script type="module" src="./assets/index.js"></script>'.padEnd(622, ' '),
   );
-  await write(root, 'dist/assets/index.js', 'x'.repeat(304_779));
-  await write(root, 'dist/assets/features.js', 'x'.repeat(1_027_369));
+  await write(root, 'dist/assets/index.js', 'x'.repeat(305_431));
+  await write(root, 'dist/assets/features.js', 'x'.repeat(1_087_315));
   await write(root, 'dist/assets/styles.css', 'x'.repeat(90_943));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   assert.deepEqual(policy.bundleBudgets, {
     entryJavaScriptBytes: 460_800,
-    totalJavaScriptBytes: 1_337_856,
+    totalJavaScriptBytes: 1_403_392,
     totalCssBytes: 91_136,
-    totalStaticBytes: 1_429_504,
+    totalStaticBytes: 1_495_040,
     assetCount: 57,
   });
   // Exercise the ceiling independently of the measured bundle's remaining headroom:
-  // 1,337,344 JS bytes and 1,428,909 total bytes fit; one more KiB exceeds both.
-  await write(root, 'dist/assets/features.js', 'x'.repeat(1_032_565));
+  // 1,402,880 JS bytes and 1,494,445 total bytes fit; one more KiB exceeds both.
+  await write(root, 'dist/assets/features.js', 'x'.repeat(1_097_449));
   assert.deepEqual(await verifyArchitecture(root, { distDirectory: 'dist' }), []);
   await write(root, 'dist/assets/unplanned.js', 'x'.repeat(1_024));
   const rejected = await verifyArchitecture(root, { distDirectory: 'dist' });

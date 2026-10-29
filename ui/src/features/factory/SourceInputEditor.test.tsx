@@ -9,13 +9,23 @@ import { configurationFixture } from '../../../tests/fixtures/factory';
 import { integrationFixture } from '../../../tests/fixtures/integrations';
 import { factorySourcesApi, type FactorySourcesApi, type SourceIntent } from './sourceApi';
 import { ManagementApiError } from '../../api/client';
+import { SourceInputEditor } from './SourceInputEditor';
+import type { components } from '../../../.generated/api/schema';
 import { FactoryPipelineInputs } from './FactoryPipelineInputs';
 import { PresentationProvider } from '../../app/presentation/PresentationProvider';
 import { DEFAULT_PREFERENCES, type Language } from '../../app/presentation/preferences';
 import { translate, type MessageKey } from '../../app/presentation/messages';
 
 afterEach(cleanup);
-function fixture(overrides: Partial<FactorySourcesApi> = {}, language: Language = 'en') {
+function fixture(
+  overrides: Partial<FactorySourcesApi> = {},
+  language: Language = 'en',
+  onSelect?: (
+    intent: SourceIntent,
+    choices: components['schemas']['WorkSourceInputChoices'],
+  ) => void,
+  initialInput?: components['schemas']['WorkSourceInputIntent'],
+) {
   const configuration = configurationFixture();
   const connection = integrationFixture('IntegrationConnection');
   const choice = integrationFixture('WorkSourceInputChoices');
@@ -94,12 +104,22 @@ function fixture(overrides: Partial<FactorySourcesApi> = {}, language: Language 
           router={createMemoryRouter([
             {
               path: '*',
-              element: (
+              element: onSelect ? (
+                <SourceInputEditor
+                  configuration={configuration}
+                  api={api}
+                  connections={[connection]}
+                  repositories={repositories}
+                  onRefresh={async () => ({ records: [], connections: [connection] })}
+                  onSelect={onSelect}
+                />
+              ) : (
                 <FactoryPipelineInputs
                   configuration={configuration}
                   api={api}
                   repositories={repositories}
                   onManual={() => {}}
+                  initialInput={initialInput}
                 />
               ),
             },
@@ -1783,3 +1803,133 @@ it.each([
     );
   },
 );
+
+it('reviews the selected installed process completion separately from task-authored acceptance', async () => {
+  const choices = integrationFixture('WorkSourceInputChoices');
+  const read = choices.items.find((item) => item.purpose === 'task_read')!;
+  const project = configurationFixture().configuration.reference.project_id;
+  const apiChoices = {
+    ...choices,
+    items: [
+      {
+        ...read,
+        preparation: {
+          kind: 'process_completion' as const,
+          value: {
+            kind: 'draft' as const,
+            project_id: project,
+            preset: { identity: 'triage-completion', version: 'v1', digest: 'a'.repeat(64) },
+            content: 'Frozen reviewed triage completion',
+          },
+        },
+      },
+    ],
+  };
+  const { connection, publish } = fixture({ choices: vi.fn(async () => apiChoices) });
+  await openInput();
+  await choose('Source connection', connection.definition.name);
+  await choose('Task container', read.locator);
+  await choose('Selector and input mapping', `${read.binding.configuration.identity} · v1`);
+  expect(await screen.findByText('Frozen reviewed triage completion')).toBeTruthy();
+  expect(screen.getByRole('heading', { name: 'Process completion criteria' })).toBeTruthy();
+  expect(screen.getByText(/do not replace missing implementation acceptance/)).toBeTruthy();
+  expect(screen.getByRole('checkbox', { name: 'Automatic intake enabled' })).toHaveProperty(
+    'checked',
+    false,
+  );
+  expect(publish).not.toHaveBeenCalled();
+});
+
+it('composes a disabled Source selection for setup without publishing or previewing an uncommitted target', async () => {
+  const onSelect = vi.fn();
+  const { api, read, connection } = fixture({}, 'en', onSelect);
+  await choose('Source connection', connection.definition.name);
+  await choose('Task container', read.locator);
+  await choose('Selector and input mapping', `${read.binding.configuration.identity} · v1`);
+  await choose('Code Repository', 'Code in another host · v3');
+  await userEvent.click(
+    await screen.findByRole('button', { name: 'Use reviewed Source selection' }),
+  );
+  expect(onSelect).toHaveBeenCalledWith(
+    expect.objectContaining({
+      inputs: [
+        expect.objectContaining({
+          expected_version: null,
+          definition: expect.objectContaining({ source: read.binding, enabled: false }),
+        }),
+      ],
+    }),
+    expect.objectContaining({ connection_id: connection.id }),
+  );
+  expect(screen.queryByRole('checkbox', { name: 'Automatic intake enabled' })).toBeNull();
+  expect(api.validate).not.toHaveBeenCalled();
+  expect(api.preview).not.toHaveBeenCalled();
+  expect(api.publish).not.toHaveBeenCalled();
+});
+
+it('publishes the reviewed initial input once and gives a later added input its own identity', async () => {
+  const configuration = configurationFixture().configuration.reference;
+  const choices = integrationFixture('WorkSourceInputChoices');
+  const read = choices.items.find((item) => item.purpose === 'task_read')!;
+  const initialInput: components['schemas']['WorkSourceInputIntent'] = {
+    id: 'reviewed-input',
+    expected_version: null,
+    definition: {
+      target: configuration,
+      source: read.binding,
+      reporter: null,
+      enabled: false,
+      connection: {
+        id: choices.connection_id,
+        version: choices.connection_version,
+        access_version: choices.access_version,
+        source_configuration: read.connection_configuration,
+        reporter_configuration: null,
+      },
+      repository: {
+        id: '33333333-3333-4333-8333-333333333333',
+        project_id: configuration.project_id,
+        version: 3,
+        definition_digest: 'ab'.repeat(32),
+      },
+    },
+  };
+  const { validate, publish, connection } = fixture({}, 'en', undefined, initialInput);
+  await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
+  const profile = await screen.findByRole('combobox', { name: 'Selector and input mapping' });
+  await waitFor(() => expect(profile.textContent).toContain(read.binding.configuration.identity));
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  await waitFor(() => expect(validate).toHaveBeenCalled());
+  expect(validate.mock.calls[0]![0].inputs[0]).toEqual(
+    expect.objectContaining({
+      id: 'reviewed-input',
+      expected_version: null,
+      definition: expect.objectContaining({ target: configuration, enabled: false }),
+    }),
+  );
+  expect(publish).not.toHaveBeenCalled();
+  await userEvent.click(screen.getByRole('button', { name: 'Review input publication' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Publish automatic input' });
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Confirm publication' }));
+  await within(dialog).findByText('Automatic input published.');
+  await userEvent.click(within(dialog).getByRole('button', { name: 'Close' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Close input editor' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Add automatic input' }));
+  await choose('Source connection', connection.definition.name);
+  await choose('Task container', read.locator);
+  await choose(
+    'Selector and input mapping',
+    `${read.binding.configuration.identity} · ${read.binding.configuration.version}`,
+  );
+  await choose('Code Repository', 'Code in another host · v3');
+  await userEvent.click(screen.getByRole('button', { name: 'Validate input' }));
+  await waitFor(() => expect(validate).toHaveBeenCalledTimes(2));
+  const added = validate.mock.calls[1]![0].inputs[0]!;
+  expect(added.id).not.toBe('reviewed-input');
+  expect(added.expected_version).toBeNull();
+  expect(publish).toHaveBeenCalledOnce();
+  await userEvent.click(screen.getByRole('button', { name: 'Close input editor' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
+  await userEvent.click(screen.getByRole('button', { name: 'Configure automatic intake' }));
+  expect(screen.queryByRole('button', { name: 'Validate input' })).toBeNull();
+});

@@ -1,3 +1,4 @@
+import type { components } from '../../../.generated/api/schema';
 import { SourceGroupEditor } from './SourceGroupEditor';
 import { SourceProgress } from './SourceProgress';
 import { useState } from 'react';
@@ -20,13 +21,18 @@ export function AutomaticInputs({
   configuration,
   api,
   repositories,
+  initialInput,
+  onInitialPublished,
 }: {
   configuration: FactoryConfigurationDetails;
   api: FactorySourcesApi;
   repositories?: SourceRepositories | undefined;
+  initialInput?: components['schemas']['WorkSourceInputIntent'] | undefined;
+  /** Consumes the reviewed seed only after its own publication succeeds. */
+  onInitialPublished?: (() => void) | undefined;
 }) {
   const { t } = usePresentation();
-  const [editing, setEditing] = useState<string | null>(null);
+  const [editing, setEditing] = useState<string | null>(initialInput ? 'initial' : null);
   const project = configuration.configuration.reference.project_id;
   const connections = useInfiniteQuery({
     queryKey: queryKeys.factorySourceConnections,
@@ -108,6 +114,8 @@ export function AutomaticInputs({
               repositories={repositories}
               input={selected?.kind === 'input' ? selected.definition : undefined}
               onRefresh={refresh}
+              draft={editing === 'initial' ? initialInput : undefined}
+              onPublished={editing === 'initial' ? onInitialPublished : undefined}
             />
           ) : null}
         </>

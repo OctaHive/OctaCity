@@ -7,6 +7,48 @@ import { useDraftRowKeys } from './useDraftRowKeys';
 type Mapping = components['schemas']['WorkSourceStatusMapping'];
 type Policy = components['schemas']['WorkSourceReportingPolicy'];
 
+/** One controlled finite effect: null preserves provider fields, with no hidden override state. */
+export function FiniteSourceEffect({
+  label,
+  status,
+  displayStatus,
+  value,
+  policy,
+  onChange,
+}: {
+  label: string;
+  status: string;
+  displayStatus?: string;
+  value: Mapping['statuses'][number] | null;
+  policy: Policy;
+  onChange: (value: Mapping['statuses'][number] | null) => void;
+}) {
+  return (
+    <>
+      <label>
+        <input
+          type="checkbox"
+          checked={value !== null}
+          onChange={(event) =>
+            onChange(event.target.checked ? { status, add: [], remove: [], state: null } : null)
+          }
+        />
+        {label}
+      </label>
+      {value ? (
+        <SourceReporting
+          mapping={undefined}
+          draft={{ statuses: [value] }}
+          policy={policy}
+          single
+          statusChoices={[{ value: value.status, label: displayStatus ?? value.status }]}
+          onChange={(mapping) => onChange(mapping?.statuses[0] ?? null)}
+        />
+      ) : null}
+    </>
+  );
+}
+
 /** Safe effect presentation; mapping values are ordinary configuration, never lifecycle authority. */
 export function SourceReporting({
   mapping,

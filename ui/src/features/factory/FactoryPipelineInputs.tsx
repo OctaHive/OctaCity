@@ -1,3 +1,4 @@
+import type { components } from '../../../.generated/api/schema';
 import { useState } from 'react';
 import type { SourceRepositories } from './SourceInputEditor';
 import { AutomaticInputs } from './AutomaticInputs';
@@ -11,14 +12,18 @@ export function FactoryPipelineInputs({
   api = factorySourcesApi,
   onManual,
   repositories,
+  initialInput,
 }: {
   configuration: FactoryConfigurationDetails;
   api?: FactorySourcesApi;
   repositories?: SourceRepositories | undefined;
   onManual?: (() => void) | undefined;
+  initialInput?: components['schemas']['WorkSourceInputIntent'] | undefined;
 }) {
   const { t } = usePresentation();
   const [automatic, setAutomatic] = useState(false);
+  // Consumption survives closing the automatic-input section; published inputs reopen from its catalog.
+  const [publishedInitial, setPublishedInitial] = useState<string | null>(null);
   return (
     <section aria-labelledby={`pipeline-inputs-${configuration.configuration.reference.id}`}>
       <h3 id={`pipeline-inputs-${configuration.configuration.reference.id}`}>
@@ -32,7 +37,15 @@ export function FactoryPipelineInputs({
         {t('factory.configureAutomatic')}
       </button>
       {automatic ? (
-        <AutomaticInputs configuration={configuration} api={api} repositories={repositories} />
+        <AutomaticInputs
+          configuration={configuration}
+          api={api}
+          repositories={repositories}
+          initialInput={initialInput?.id === publishedInitial ? undefined : initialInput}
+          onInitialPublished={() => {
+            if (initialInput) setPublishedInitial(initialInput.id);
+          }}
+        />
       ) : null}
     </section>
   );

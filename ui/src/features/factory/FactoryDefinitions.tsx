@@ -1,6 +1,6 @@
 import type { IssueWorkflowsApi } from '../../api/issueWorkflows';
 import { factoryResourceId } from './filters';
-import { useState } from 'react';
+import { lazy, Suspense, useRef, useState } from 'react';
 import { FactoryAuthoring } from './FactoryAuthoring';
 import { FactoryWorkForm, type FactoryWorkSources } from './FactoryWorkForm';
 import { useQuery } from '@tanstack/react-query';
@@ -18,6 +18,10 @@ import { useFactoryChoices } from './useFactoryChoices';
 import styles from './Factory.module.css';
 import { aiSettingsPath } from '../../app/routes';
 
+const FactoryTriageSetup = lazy(() =>
+  import('./FactoryTriageSetup').then((module) => ({ default: module.FactoryTriageSetup })),
+);
+
 /** Published identities are selected from visible bounded pages; edits use separate drafts. */
 export function FactoryDefinitions({
   api,
@@ -31,6 +35,8 @@ export function FactoryDefinitions({
   workSources?: FactoryWorkSources | undefined;
 }) {
   const { t } = usePresentation();
+  const triageButtonRef = useRef<HTMLButtonElement>(null);
+  const [triage, setTriage] = useState(false);
   const [authoring, setAuthoring] = useState<{
     kind: 'flow' | 'configuration' | 'work';
     id: string | null;
@@ -38,7 +44,7 @@ export function FactoryDefinitions({
   } | null>(null);
   const [params, setParams] = useSearchParams();
   const choices = useFactoryChoices(api, projectId);
-  const canAuthor = choices.data !== undefined && choices.error === null;
+  const canAuthor = choices.data !== undefined && choices.error === null && !triage;
   const configurations = useCursorPage(
     queryKeys.factoryConfigurations(projectId),
     (cursor, signal) => api.listConfigurations(projectId, cursor, signal),
@@ -113,6 +119,30 @@ export function FactoryDefinitions({
           error={choices.error}
           onRetry={choices.refetch}
         />
+      ) : null}
+      <button
+        type="button"
+        disabled={authoring !== null}
+        ref={triageButtonRef}
+        aria-expanded={triage}
+        onClick={() => setTriage(true)}
+      >
+        {t('triage.open')}
+      </button>
+      {triage ? (
+        <Suspense fallback={<QueryLoadingNotice label={t('triage.title')} />}>
+          <FactoryTriageSetup
+            key={projectId}
+            api={api}
+            projectId={projectId}
+            onClose={() => {
+              setTriage(false);
+              triageButtonRef.current?.focus();
+            }}
+            workflows={workflows}
+            workSources={workSources}
+          />
+        </Suspense>
       ) : null}
       <button
         type="button"

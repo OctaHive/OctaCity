@@ -25,7 +25,12 @@ type Result =
 type Preview =
   | { kind: 'flow'; value: components['schemas']['FactoryFlowDefinitionValidation'] }
   | { kind: 'configuration'; value: components['schemas']['FactoryConfigurationValidation'] };
-export type FactoryPublicationProps = { api: FactoryApi; subject: Subject; version?: number };
+export type FactoryPublicationProps = {
+  api: FactoryApi;
+  subject: Subject;
+  version?: number;
+  ready?: boolean;
+};
 const ISSUE_LABELS = {
   invalid_contract: 'factory.invalidContract',
   unavailable_reference: 'factory.unavailableReference',
@@ -36,7 +41,12 @@ const ISSUE_LABELS = {
 } satisfies Record<DraftIssue['code'], MessageKey>;
 
 /** A validation proof belongs to one exact in-memory draft; the shared helper owns confirmed replay. */
-export function FactoryPublication({ api, subject, version }: FactoryPublicationProps) {
+export function FactoryPublication({
+  api,
+  subject,
+  version,
+  ready = true,
+}: FactoryPublicationProps) {
   const { t } = usePresentation();
   const queryClient = useQueryClient();
   const regionId = 'factory-validation';
@@ -148,14 +158,14 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
       ) : null}
       <button
         type="button"
-        disabled={pending || local.length > 0 || review !== null}
+        disabled={!ready || pending || local.length > 0 || review !== null}
         onClick={() => void validate()}
       >
         {t('factory.validateDraft')}
       </button>
       <button
         type="button"
-        disabled={!valid || returnedErrors.length > 0 || review !== null}
+        disabled={!ready || !valid || returnedErrors.length > 0 || review !== null}
         onClick={(event) => {
           if (!proof) return;
           const flow =
@@ -187,6 +197,7 @@ export function FactoryPublication({ api, subject, version }: FactoryPublication
           consequence={[t('factory.publishConsequence'), ...review.actionSummary].join('\n')}
           confirmLabel={t('factory.confirmPublish')}
           request={review.subject}
+          ready={ready}
           execute={execute}
           queryClient={queryClient}
           invalidations={[
