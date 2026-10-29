@@ -10,7 +10,19 @@ pub(crate) fn configuration_job_policy(
   context: &crate::BuildExecutionContext,
   secrets_profile: Option<crate::SecretProfileName>,
 ) -> Result<JobSpecPolicySnapshot, octacity_server_job::JobSpecDerivationError> {
-  let definition = &context.configuration.definition;
+  configuration_definition_job_policy(
+    &context.configuration.definition,
+    &context.job_spec_toolchain,
+    secrets_profile,
+  )
+}
+
+// The immutable configuration projection is also used before Work/Job publication.
+pub(crate) fn configuration_definition_job_policy(
+  definition: &octacity_server_store::BuildConfigurationDefinition,
+  toolchain: &crate::JobSpecToolchainPolicy,
+  secrets_profile: Option<crate::SecretProfileName>,
+) -> Result<JobSpecPolicySnapshot, octacity_server_job::JobSpecDerivationError> {
   let platform = PlatformSpec {
     os: definition.runtime.operating_system,
     architecture: definition.runtime.architecture,
@@ -89,8 +101,8 @@ pub(crate) fn configuration_job_policy(
     write: definition.cache.write,
   });
   JobSpecPolicySnapshot::new(
-    context.job_spec_toolchain.source.clone(),
-    context.job_spec_toolchain.octa.clone(),
+    toolchain.source.clone(),
+    toolchain.octa.clone(),
     runtime,
     secrets_profile,
     cache,
@@ -101,7 +113,7 @@ pub(crate) fn configuration_job_policy(
       report_bytes: definition.artifacts.report_bytes,
       single_output_bytes: definition.artifacts.single_output_bytes,
     },
-    context.job_spec_toolchain.validity,
+    toolchain.validity,
   )
 }
 

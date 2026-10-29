@@ -9,6 +9,7 @@ mod diagnostics;
 mod flow;
 mod permissions;
 mod presets;
+mod readiness;
 mod roles;
 mod runtime_settings;
 
@@ -48,6 +49,7 @@ pub(super) fn insert_factory_schemas(schemas: &mut Map<String, Value>) {
   diagnostics::insert(schemas);
   roles::insert(schemas);
   presets::insert(schemas);
+  readiness::insert(schemas);
   runtime_settings::insert(schemas);
   schemas.insert(
     "FactoryFlowHumanGateBinding".to_owned(),

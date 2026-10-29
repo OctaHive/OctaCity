@@ -392,3 +392,423 @@ pub(crate) async fn pending_factory_profile_fixture_with_settings(
     claim,
   }
 }
+
+/// Tool-using profile without installed task-plugin control qualification.
+pub fn installed_tool_readiness_choices(
+  project: ProjectId,
+) -> (FactoryConfigurationChoices, FactoryRoleProfileDefinition) {
+  let (choices, mut definition) = installed_preset_choices(project);
+  let mut permissions = serde_json::to_value(&definition.permissions).unwrap();
+  permissions["tools"] = serde_json::json!([definition.toolchain.executable]);
+  definition.permissions = serde_json::from_value(permissions).unwrap();
+  let mut installed = FactoryConfigurationChoices::try_new(choices.entries()).unwrap();
+  for (alias, capability) in choices.role_profile_capabilities() {
+    let mut capability = capability.clone();
+    capability.ceiling = definition.clone();
+    capability.local_permissions = LocalPermissionCeiling::fully_enforced(definition.permissions.clone());
+    installed = installed
+      .with_role_profile_capability(alias.clone(), capability)
+      .unwrap();
+  }
+  (installed, definition)
+}
+
+/// Authoring-qualified MCP metadata without evidence of native capture or a live authenticated peer.
+pub fn installed_mcp_readiness_choices(
+  project: ProjectId,
+) -> (FactoryConfigurationChoices, FactoryRoleProfileDefinition) {
+  installed_mcp_readiness_choices_with_count(project, 1)
+}
+/// Multiple independently scoped connections for readiness work-bound conformance.
+pub fn installed_mcp_readiness_choices_with_count(
+  project: ProjectId,
+  count: usize,
+) -> (FactoryConfigurationChoices, FactoryRoleProfileDefinition) {
+  let (choices, mut definition) = installed_preset_choices(project);
+  let mut entries = choices.entries();
+  let mut configurations = BTreeMap::new();
+  let mut credentials = Vec::new();
+  for index in 0..count {
+    let name: FactoryKey = if index == 0 {
+      "city".into()
+    } else {
+      format!("city-{index}")
+    }
+    .parse()
+    .unwrap();
+    let credential: FactoryKey = format!("city-reader-{index}").parse().unwrap();
+    let environment = format!("OCTACITY_MCP_CITY_{index}");
+    let configuration = FactoryMcpConfiguration::new(
+      name.clone(),
+      "v1".parse().unwrap(),
+      FactoryMcpServer::Http {
+        url: format!("https://mcp.example.test/issues/{index}"),
+        bearer_token_env_var: Some(environment.clone()),
+        enabled_tools: Some(vec!["search_issues".into(), "get_issue".into()]),
+      },
+      None,
+    )
+    .unwrap()
+    .with_authorization(FactoryMcpAuthorization {
+      credential_profile: credential.clone(),
+      secret: serde_json::from_value(
+        serde_json::json!({"provider":"installed","reference":format!("mcp-reader-{index}")}),
+      )
+      .unwrap(),
+      environment: environment.clone(),
+      purpose: FactoryMcpCredentialPurpose::McpRead,
+      resource: ImmutableReference::new(
+        "project-issues".parse().unwrap(),
+        "v1".parse().unwrap(),
+        FactoryDigest::from_bytes([71; 32]),
+      ),
+    })
+    .unwrap();
+    definition.execution.mcp_servers.insert(
+      name.clone(),
+      FactoryRoleMcpBinding {
+        configuration: configuration.reference().clone(),
+        integration: None,
+      },
+    );
+    definition.execution.environment.insert(
+      environment,
+      FactoryRoleEnvironmentValue::Secret {
+        reference: configuration.authorization().unwrap().secret.clone(),
+      },
+    );
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::NodeCapability,
+      alias: format!("{name}-mcp").parse().unwrap(),
+      reference: configuration.reference().clone(),
+    });
+    entries.references.push(FactoryReferenceChoice {
+      kind: FactoryChoiceKind::SecretProfile,
+      alias: credential.clone(),
+      reference: ImmutableReference::new(
+        credential.clone(),
+        "v1".parse().unwrap(),
+        FactoryDigest::from_bytes([72; 32]),
+      ),
+    });
+    configurations.insert(name, configuration);
+    credentials.push(credential);
+  }
+  let mut permissions = serde_json::to_value(&definition.permissions).unwrap();
+  permissions["secret_profiles"] = serde_json::json!(credentials);
+  definition.permissions = serde_json::from_value(permissions).unwrap();
+  let mut installed = FactoryConfigurationChoices::try_new(entries).unwrap();
+  for (alias, capability) in choices.role_profile_capabilities() {
+    let mut capability = capability.clone();
+    capability.ceiling = definition.clone();
+    capability.local_permissions = LocalPermissionCeiling::fully_enforced(definition.permissions.clone());
+    installed = installed
+      .with_role_profile_capability(alias.clone(), capability)
+      .unwrap()
+      .with_runtime_settings_support(
+        alias.clone(),
+        FactoryRuntimeSettingsSupport {
+          mcp_transports: [FactoryMcpTransport::Http].into(),
+          authenticated_mcp: configurations.clone(),
+          ..Default::default()
+        },
+      )
+      .unwrap();
+  }
+  (installed, definition)
+}
+
+/// Metadata port that refuses any unexpected Build context read.
+pub struct UnavailableReadinessContexts;
+#[async_trait::async_trait]
+impl crate::BuildExecutionContextSource for UnavailableReadinessContexts {
+  async fn load(
+    &self,
+    _: ProjectId,
+    _: octacity_server_domain::BuildConfigurationId,
+    _: octacity_server_domain::BuildConfigurationVersion,
+  ) -> Result<crate::BuildExecutionContext, crate::BuildExecutionContextError> {
+    panic!("no Build context read expected")
+  }
+}
+
+#[path = "../tests/support/manual_trigger_context.rs"]
+pub(crate) mod ordinary_context;
+/// Attaches the same trusted single-job declaration used by native materializers.
+pub async fn qualify_readiness_pipeline(
+  store: &store_testing::InMemoryFactoryConfigurationStore,
+  project: ProjectId,
+  binding: serde_json::Value,
+  node: &str,
+) {
+  use octacity_server_store::FactoryConfigurationStore;
+  let binding: FlowBuildBinding = serde_json::from_value(binding).unwrap();
+  let octacity_server_store::FactoryConfigurationAvailability::Available(choices) =
+    store.factory_configuration_availability(project).await.unwrap()
+  else {
+    panic!("installed choices")
+  };
+  store
+    .enable_project(
+      project,
+      choices
+        .with_build_pipeline_contract(FactoryBuildPipelineContract {
+          build_configuration: binding.build_configuration,
+          tool: binding.tool,
+          plugin: binding.plugin,
+          model_or_tool: binding.model_or_tool,
+          pipeline_node: octacity_server_domain::PipelineNodeId::new(node).unwrap(),
+        })
+        .unwrap(),
+    )
+    .unwrap();
+}
+/// Exact ordinary metadata fixture shared with HTTP readiness conformance.
+pub struct ReadinessExecutionFixture {
+  /// Mutable external Agent observation for freshness/drain regressions.
+  pub agent: Mutex<crate::AgentProjection>,
+  /// Current Pool observation.
+  pub pool: Mutex<crate::AgentPoolProjection>,
+  context: crate::BuildExecutionContext,
+}
+impl ReadinessExecutionFixture {
+  /// Selects an ordinary published Pipeline shape for metadata conformance cases.
+  pub fn with_pipeline_nodes(mut self, names: &[&str]) -> Self {
+    use octacity_server_pipeline::*;
+    let nodes = names
+      .iter()
+      .map(|name| {
+        PipelineNode::new(
+          octacity_server_domain::PipelineNodeId::new(*name).unwrap(),
+          octacity_server_domain::JobName::new(*name).unwrap(),
+          DependencyPolicy::AllSucceeded,
+          vec![],
+          serde_json::json!({}),
+        )
+        .unwrap()
+      })
+      .collect();
+    self.context.pipeline.dag = PublishablePipelineDag::new(nodes, vec![], &CapabilityCatalog::new([]))
+      .unwrap()
+      .into_dag();
+    self
+  }
+  /// Uses the existing ordinary execution fixture and an exact selected binding.
+  pub fn new(project: ProjectId, binding: serde_json::Value, repository: WorkSourceRepositoryRef) -> Self {
+    use crate::*;
+    use octacity_protocol::*;
+    use octacity_server_domain::*;
+    use octacity_server_store::*;
+    let binding: FlowBuildBinding = serde_json::from_value(binding).unwrap();
+    let (mut context, pool_id) = ordinary_context::context();
+    context.configuration.id = binding.build_configuration.id();
+    context.configuration.version = binding.build_configuration.version();
+    context.configuration.project_id = project;
+    context.repository.project_id = project;
+    context.repository.id = repository.id;
+    context.repository.version = repository.version;
+    context.pipeline.project_id = project;
+    let definition = &mut context.configuration.definition;
+    definition.repository_id = repository.id;
+    definition.repository_version = repository.version;
+    definition.agent_requirements.capabilities.clear();
+    definition.secrets_profile = None;
+    definition.runtime.class = RuntimeClass::Host;
+    let platform = PlatformSpec {
+      os: definition.runtime.operating_system,
+      architecture: definition.runtime.architecture,
+    };
+    definition.runtime.host_platform = Some(platform);
+    let policy = &mut context.effective_policy.policy;
+    policy.repositories = [repository.id].into();
+    policy.execution_targets.insert(ProjectExecutionTarget {
+      mode: ExecutionMode::Host,
+      host_platform: platform,
+      target_platform: platform,
+      required_guarantees: Default::default(),
+    });
+    context.effective_policy.sources = vec![PolicySource {
+      project_id: project,
+      version: ProjectPolicyVersion::INITIAL,
+    }];
+    context.job_spec_toolchain.octa.plugin_digests = [(
+      binding.plugin.identity().to_string(),
+      binding.plugin.digest().to_string(),
+    )]
+    .into();
+    let id = AgentId::generate();
+    let now = Timestamp::from_unix_millis(1000).unwrap();
+    let mut inventory = store_testing::compatible_inventory(id);
+    inventory.labels = definition.agent_requirements.labels.clone();
+    inventory.execution_contract = SUPPORTED_EXECUTION_CONTRACTS;
+    let execution = ExecutionCapabilityV2 {
+      provider: ExecutionProviderId::new("qualified-host").unwrap(),
+      mode: ExecutionMode::Host,
+      host_platform: platform,
+      target_platform: platform,
+      guarantees: Default::default(),
+      immutable_images: false,
+    };
+    inventory.executions = vec![execution.clone()];
+    inventory.factory_executions = vec![FactoryExecutionCapabilityV3 {
+      execution: execution.clone(),
+      workspace_anchor: true,
+      controlled_tools: true,
+      enforcement: FactoryEnforcementCapabilityV3::ALL.to_vec(),
+    }];
+    inventory.octa.plugins = vec![TaskPluginInventory {
+      name: binding.plugin.identity().to_string(),
+      version: binding.plugin.version().to_string(),
+      protocol: 1,
+      platforms: vec!["linux-x86_64".into()],
+      sha256: binding.plugin.digest().to_string(),
+      capabilities: vec!["native".into()],
+    }];
+    let mut agent: AgentProjection = EnrolledAgent {
+      id,
+      name: AgentName::new("qualified agent").unwrap(),
+      version: AgentVersion::INITIAL,
+      pool_id,
+      pool_version: PoolVersion::INITIAL,
+      inventory,
+      status: AgentStatus::Online,
+      enabled: true,
+      last_seen_at: now,
+      created_at: now,
+      updated_at: now,
+    }
+    .into();
+    agent.resources = Some(AgentResources {
+      registration_expires_at: Some(Timestamp::from_unix_millis(61000).unwrap()),
+      backends: Some(vec![BackendHealth {
+        backend: "qualified-host".into(),
+        execution: Some(execution),
+        status: BackendHealthStatus::Ready,
+        message: None,
+      }]),
+      observed_at: now,
+      available_cpu_millis: 2000,
+      available_memory_bytes: 4096,
+      work_disk_free_bytes: 8192,
+      state_disk_free_bytes: 8192,
+    });
+    let pool = AgentPoolProjection {
+      id: pool_id,
+      name: "qualified pool".into(),
+      version: PoolVersion::INITIAL,
+      enabled: true,
+      drain_state: AgentPoolDrainStateProjection::Accepting,
+      admission_policy: AgentPoolAdmissionPolicyProjection::Any,
+      concurrency_limit: 2,
+      fairness_policy: AgentPoolFairnessPolicyProjection::PriorityFifo,
+      static_capacity_limit: 2,
+      published_at: now,
+    };
+    Self {
+      agent: Mutex::new(agent),
+      pool: Mutex::new(pool),
+      context,
+    }
+    .with_pipeline_nodes(&["root"])
+  }
+}
+#[async_trait::async_trait]
+impl crate::BuildExecutionContextSource for ReadinessExecutionFixture {
+  async fn load(
+    &self,
+    project: ProjectId,
+    id: octacity_server_domain::BuildConfigurationId,
+    version: octacity_server_domain::BuildConfigurationVersion,
+  ) -> Result<crate::BuildExecutionContext, crate::BuildExecutionContextError> {
+    assert_eq!(
+      (project, id, version),
+      (
+        self.context.configuration.project_id,
+        self.context.configuration.id,
+        self.context.configuration.version
+      )
+    );
+    Ok(self.context.clone())
+  }
+}
+#[async_trait::async_trait]
+impl crate::ManagementQueryUseCase<crate::ListAgentsQuery> for ReadinessExecutionFixture {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &crate::ManagementRequestContext,
+    _: &crate::ManagementAuthorizationGrant,
+    _: crate::ListAgentsQuery,
+  ) -> Result<crate::AgentPageProjection, ApplicationError> {
+    let mut agent = self.agent.lock().unwrap().clone();
+    agent.resources = None;
+    Ok(crate::AgentPageProjection {
+      agents: vec![agent],
+      next_cursor: None,
+      active_count: 1,
+      total_count: 1,
+    })
+  }
+}
+#[async_trait::async_trait]
+impl crate::ManagementQueryUseCase<crate::GetAgentQuery> for ReadinessExecutionFixture {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &crate::ManagementRequestContext,
+    _: &crate::ManagementAuthorizationGrant,
+    _: crate::GetAgentQuery,
+  ) -> Result<crate::AgentProjection, ApplicationError> {
+    Ok(self.agent.lock().unwrap().clone())
+  }
+}
+#[async_trait::async_trait]
+impl crate::ManagementQueryUseCase<crate::GetAgentPoolQuery> for ReadinessExecutionFixture {
+  type Error = ApplicationError;
+  async fn execute_management_query(
+    &self,
+    _: &crate::ManagementRequestContext,
+    _: &crate::ManagementAuthorizationGrant,
+    _: crate::GetAgentPoolQuery,
+  ) -> Result<crate::AgentPoolProjection, ApplicationError> {
+    Ok(self.pool.lock().unwrap().clone())
+  }
+}
+
+/// Expands legal retained profile versions to exercise shared metadata work limits.
+pub fn expand_readiness_profiles(draft: &mut serde_json::Value, count: usize) {
+  let mut flow: FactoryFlowConfiguration = serde_json::from_value(draft["flow"].clone()).unwrap();
+  assert_eq!(flow.closure.definitions().len(), 1);
+  let old = &flow.closure.definitions()[0];
+  let mut nodes = Vec::new();
+  for node in old.nodes() {
+    let mut wire = serde_json::to_value(node).unwrap();
+    if let Some(candidates) = wire
+      .pointer_mut("/profile_selection/candidates")
+      .and_then(serde_json::Value::as_object_mut)
+    {
+      let original = candidates["selected"].clone();
+      for version in 2..=count {
+        let mut candidate = original.clone();
+        candidate["profile"]["reference"]["version"] = serde_json::json!(version);
+        candidates.insert(format!("alternative-{version}"), candidate);
+      }
+    }
+    nodes.push(serde_json::from_value(wire).unwrap());
+  }
+  let definition = FlowDefinition::new(FlowDefinitionInput {
+    id: old.reference().id(),
+    version: old.reference().version(),
+    input_schema: old.input_schema().cloned(),
+    entry: old.entry().clone(),
+    nodes,
+    transitions: old.transitions().to_vec(),
+    terminals: old.terminals().to_vec(),
+    context_projections: old.context_projections().to_vec(),
+    data_projections: old.data_projections().to_vec(),
+    execution: old.execution().clone(),
+  })
+  .unwrap();
+  flow.closure = PinnedFlowDefinitionClosure::new(definition.reference(), vec![definition]).unwrap();
+  draft["flow"] = serde_json::to_value(flow).unwrap();
+}

@@ -6,6 +6,8 @@ pub(super) fn insert_agent_schemas(schemas: &mut Map<String, Value>) {
     object(
       [
         ("observed_at", integer()),
+        ("registration_expires_at",integer()),
+        ("backends", json!({"type":"array","maxItems":octacity_server_application::MAX_AGENT_INVENTORY_ENTRIES,"items":object([("backend",non_empty_string()),("execution",schema_ref("AgentExecutionCapability")),("status",json!({"type":"string","enum":["ready","degraded","unavailable"]})),("message",nullable(non_empty_string()))],&["backend","status","message"])})),
         ("available_cpu_millis", json!({"type":"integer","minimum":0})),
         ("available_memory_bytes", json!({"type":"integer","minimum":0})),
         ("work_disk_free_bytes", json!({"type":"integer","minimum":0})),

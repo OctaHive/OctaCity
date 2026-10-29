@@ -45,7 +45,7 @@ mod journal;
 pub use journal::FlowDataHistory;
 mod context_binding;
 mod input_binding;
-pub use context_binding::{FlowContextBinding, FlowContextSelection};
+pub use context_binding::{FlowContextBinding, FlowContextSelection, FlowContextSourceObservation};
 pub use input_binding::{FlowInputBinding, FlowInputSource, FlowRecordView, MAX_FLOW_INPUT_BINDING_BYTES};
 mod mapping;
 pub use mapping::{FlowDataMapping, FlowValueMapping, MAX_FLOW_MAPPING_BYTES};

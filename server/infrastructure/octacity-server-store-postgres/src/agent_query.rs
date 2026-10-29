@@ -42,12 +42,17 @@ pub(crate) async fn read_detail(pool: &sqlx::PgPool, agent_id: AgentId) -> Resul
     .map_err(unavailable)?;
   let agent = read_from(&mut transaction, agent_id).await?;
   let current_execution = read_current_execution(&mut transaction, agent_id).await?;
-  let resources: Option<sqlx::types::Json<octacity_server_store::AgentResources>> =
-    sqlx::query_scalar("SELECT resources FROM agents WHERE id = $1")
-      .bind(agent_id.as_uuid())
-      .fetch_one(&mut *transaction)
-      .await
-      .map_err(unavailable)?;
+  let resources: Option<sqlx::types::Json<octacity_server_store::AgentResources>> = sqlx::query_scalar(
+    "SELECT agent.resources || jsonb_build_object('registration_expires_at', \
+        FLOOR(EXTRACT(EPOCH FROM registration.expires_at) * 1000)::BIGINT) \
+      FROM agents agent LEFT JOIN LATERAL \
+        (SELECT expires_at FROM agent_registrations WHERE agent_id = agent.id AND revoked_at IS NULL \
+         ORDER BY epoch DESC LIMIT 1) registration ON TRUE WHERE agent.id = $1",
+  )
+  .bind(agent_id.as_uuid())
+  .fetch_one(&mut *transaction)
+  .await
+  .map_err(unavailable)?;
   transaction.commit().await.map_err(unavailable)?;
   Ok(AgentDetail {
     resources: resources.map(|value| value.0),

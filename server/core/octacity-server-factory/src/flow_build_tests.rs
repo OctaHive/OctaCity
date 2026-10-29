@@ -1356,3 +1356,54 @@ fn build_provenance_cannot_borrow_a_compatible_sibling_node_profile() {
     "matching schemas and verifier tools cannot authorize another stage's task/model"
   );
 }
+
+#[test]
+fn metadata_context_observations_preserve_required_dynamic_sources_and_unconditional_root_guards() {
+  let artifact = FactoryArtifactReference::new(
+    octacity_server_domain::ArtifactId::generate(),
+    FactoryDigest::from_bytes([17; 32]),
+    100,
+  )
+  .unwrap();
+  let binding:FlowContextBinding=serde_json::from_value(serde_json::json!({"entries":{
+    "dynamic":{"source_kind":"task","source":{"value":{"mapping":"pointer","path":"/ticket"}}},
+    "root":{"when_present":"","source_kind":"task","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}}},
+    "conditional":{"when_present":"/maybe","source_kind":"task","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}}}
+  }})).unwrap();
+  let facts = binding
+    .static_sources()
+    .into_iter()
+    .collect::<std::collections::BTreeMap<_, _>>();
+  assert!(facts[&key("dynamic")].required);
+  assert!(facts[&key("dynamic")].source.is_none());
+  assert!(facts[&key("root")].required);
+  assert_eq!(
+    facts[&key("root")].source,
+    Some(FactoryContextReference::Artifact(artifact))
+  );
+  assert!(!facts[&key("conditional")].required);
+}
+
+#[test]
+fn metadata_context_keeps_literal_and_collection_dependencies_with_the_same_alias() {
+  let artifact = FactoryArtifactReference::new(
+    octacity_server_domain::ArtifactId::generate(),
+    FactoryDigest::from_bytes([17; 32]),
+    100,
+  )
+  .unwrap();
+  let binding:FlowContextBinding=serde_json::from_value(serde_json::json!({
+    "entries":{"docs":{"source_kind":"task","source":{"value":{"mapping":"constant","value":{"kind":"artifact","value":artifact}}}}},
+    "artifact_collections":{"docs":{"when_present":"/attachments","source_kind":"specification","source":{"value":{"mapping":"pointer","path":"/attachments"}}}}
+  })).unwrap();
+  let facts = binding.static_sources();
+  assert_eq!(facts.len(), 2, "literal docs and docs.* are separate dependencies");
+  assert!(facts.iter().any(|(name, fact)| name == &key("docs")
+    && fact.required
+    && fact.source == Some(FactoryContextReference::Artifact(artifact.clone()))));
+  assert!(
+    facts
+      .iter()
+      .any(|(name, fact)| name == &key("docs") && !fact.required && fact.source.is_none())
+  );
+}

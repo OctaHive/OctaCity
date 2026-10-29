@@ -61,6 +61,14 @@ async fn released_management_exposes_presets_before_factory_execution_is_install
   assert!(!draft["diagnostics"].as_array().unwrap().is_empty());
   assert!(draft["flow"].is_null());
   assert!(draft["configuration"].is_null());
+  let response=client.post(format!("{origin}/api/v1/factory-configurations/11111111-1111-4111-8111-111111111111/versions/1/readiness"))
+    .json(&json!({"repository":{"project_id":project,"id":"22222222-2222-4222-8222-222222222222","version":1,"definition_digest":"a".repeat(64)}})).send().await.unwrap();
+  assert_eq!(
+    response.status(),
+    reqwest::StatusCode::NOT_FOUND,
+    "{}",
+    response.text().await.unwrap()
+  );
   server.shutdown().await.unwrap();
   database.cleanup().await;
 }

@@ -170,6 +170,18 @@ pub struct JobSpecPolicySnapshot {
 }
 
 impl JobSpecPolicySnapshot {
+  /// Borrows the same policy facts used by ordinary placement, without constructing a Job.
+  pub fn placement_policy(&self, minimum_execution_contract: u16) -> JobPlacementPolicy<'_> {
+    JobPlacementPolicy {
+      source_provider: &self.source.provider,
+      source_plugin_version: &self.source.plugin_version,
+      source_plugin_sha256: &self.source.plugin_sha256,
+      octa: &self.octa,
+      runtime: &self.runtime,
+      requires_cache: self.cache.is_some(),
+      minimum_execution_contract,
+    }
+  }
   /// Captures the exact policy used for deterministic JobSpec derivation.
   pub fn new(
     source: SourcePluginPolicy,
@@ -460,19 +472,13 @@ impl JobSpecTemplate {
   /// Borrows the exact facts required for scheduler compatibility checks.
   #[must_use]
   pub fn placement_policy(&self) -> JobPlacementPolicy<'_> {
-    JobPlacementPolicy {
-      source_provider: &self.policy.source.provider,
-      source_plugin_version: &self.policy.source.plugin_version,
-      source_plugin_sha256: &self.policy.source.plugin_sha256,
-      octa: &self.policy.octa,
-      runtime: &self.policy.runtime,
-      requires_cache: self.policy.cache.is_some(),
-      minimum_execution_contract: match (&self.execution, &self.policy.runtime) {
+    self
+      .policy
+      .placement_policy(match (&self.execution, &self.policy.runtime) {
         (JobExecutionIntent::Managed(_), _) => EXECUTION_CONTRACT_V3,
         (JobExecutionIntent::Ordinary(_), JobRuntimePolicy::Current(_)) => EXECUTION_CONTRACT_V2,
         (JobExecutionIntent::Ordinary(_), JobRuntimePolicy::Legacy(_)) => EXECUTION_CONTRACT_V1,
-      },
-    }
+      })
   }
 
   /// Borrows the semantic controls an execution route must enforce for this Job.

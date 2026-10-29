@@ -4,6 +4,18 @@ use sqlx::{PgConnection, types::Json};
 
 pub(crate) async fn record(connection: &mut PgConnection, input: AgentResourceObservation) -> Result<(), StoreError> {
   let value = AgentResources {
+    registration_expires_at: None,
+    backends: Some(
+      input
+        .snapshot
+        .backends
+        .into_iter()
+        .map(|mut health| {
+          health.message = None;
+          health
+        })
+        .collect(),
+    ),
     observed_at: input.observed_at,
     available_cpu_millis: input.snapshot.available_cpu_millis,
     available_memory_bytes: input.snapshot.available_memory_bytes,

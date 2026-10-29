@@ -187,6 +187,9 @@ where
       .with_skills(role_commands.clone(), role_queries),
   )
   .with_factory_profile_selection(role_commands)
+  .with_factory_readiness(
+    octacity_server_api_rest::v1::FactoryReadinessManagementApplication::new(source_queries.clone()),
+  )
   .with_factory_presets(octacity_server_api_rest::v1::FactoryPresetManagementApplication::new(
     source_queries.clone(),
   ))

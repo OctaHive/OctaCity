@@ -208,7 +208,7 @@ async fn persist_agent_and_registration(
     .map_err(|error| classify(error, EntityKind::Agent))?;
   } else {
     sqlx::query(
-      "UPDATE agents SET inventory = $1, state = CASE WHEN state = 'draining' THEN state ELSE 'online' END, version = version + 1, \
+      "UPDATE agents SET inventory = $1, resources = NULL, state = CASE WHEN state = 'draining' THEN state ELSE 'online' END, version = version + 1, \
          updated_at = to_timestamp($2::double precision / 1000.0), \
          last_seen_at = to_timestamp($2::double precision / 1000.0) WHERE id = $3",
     )

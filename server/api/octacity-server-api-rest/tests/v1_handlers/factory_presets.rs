@@ -13,6 +13,7 @@ pub(super) fn management_requests() -> Vec<Request<Body>> {
       None,
       &serde_json::json!({"preset":{"identity":"triage","version":"v1","digest":"d".repeat(64)}}).to_string(),
     ),
+    json_request("POST","/api/v1/factory-configurations/11111111-1111-4111-8111-111111111111/versions/1/readiness","read",None,&serde_json::json!({"repository":{"project_id":"11111111-1111-4111-8111-111111111111","id":"22222222-2222-4222-8222-222222222222","version":1,"definition_digest":"a".repeat(64)}}).to_string()),
   ]
 }
 
@@ -46,6 +47,16 @@ fn preset_router_with_input(
       .with_artifacts(Arc::new(PresetArtifacts(project, revoke))),
   );
 
+  let readiness = Arc::new(
+    FactoryReadinessHandlers::new(
+      store.clone(),
+      policy.clone(),
+      Arc::new(SystemFactoryExecutionClock),
+      std::time::Duration::from_secs(30),
+    )
+    .unwrap()
+    .with_repositories(metadata.clone()),
+  );
   let configs =
     Arc::new(FactoryConfigurationHandlers::with_policy(store.clone(), policy.clone()).with_source_actions(metadata));
   let commands = Arc::new(AuthorizedCommandHandler::new(policy.clone(), peer.clone()));
@@ -59,11 +70,16 @@ fn preset_router_with_input(
     queries,
     commands,
   );
-  let app = support::recording_management_application_with_factory(peer, factory).with_factory_presets(
-    octacity_server_api_rest::v1::FactoryPresetManagementApplication::new(Arc::new(AuthorizedQueryHandler::new(
-      policy, handlers,
-    ))),
-  );
+  let app = support::recording_management_application_with_factory(peer, factory)
+    .with_factory_readiness(
+      octacity_server_api_rest::v1::FactoryReadinessManagementApplication::new(Arc::new(AuthorizedQueryHandler::new(
+        policy.clone(),
+        readiness,
+      ))),
+    )
+    .with_factory_presets(octacity_server_api_rest::v1::FactoryPresetManagementApplication::new(
+      Arc::new(AuthorizedQueryHandler::new(policy, handlers)),
+    ));
   (management_router_with_application(|| true, app), project, store)
 }
 
@@ -155,7 +171,25 @@ async fn selected_parameters(
   project: ProjectId,
   store: &Arc<testing::InMemoryFactoryConfigurationStore>,
 ) -> serde_json::Value {
-  let (choices, definition) = testing::installed_preset_choices(project);
+  selected_parameters_with_runtime(router, project, store, PresetTestRuntime::Plain).await
+}
+#[derive(Clone, Copy)]
+enum PresetTestRuntime {
+  Plain,
+  Mcp(usize),
+  ControlledTools,
+}
+async fn selected_parameters_with_runtime(
+  router: &axum::Router,
+  project: ProjectId,
+  store: &Arc<testing::InMemoryFactoryConfigurationStore>,
+  runtime: PresetTestRuntime,
+) -> serde_json::Value {
+  let (choices, definition) = match runtime {
+    PresetTestRuntime::Plain => testing::installed_preset_choices(project),
+    PresetTestRuntime::Mcp(count) => testing::installed_mcp_readiness_choices_with_count(project, count),
+    PresetTestRuntime::ControlledTools => testing::installed_tool_readiness_choices(project),
+  };
   store.enable_project(project, choices).unwrap();
   let policy = Arc::new(TrustedNetworkManagementPolicy);
   let roles = AuthorizedCommandHandler::new(
@@ -1108,3 +1142,6 @@ async fn preset_resolution_rejects_distinct_reporting_children_with_flow_identit
   assert_eq!(response.status(), StatusCode::BAD_REQUEST);
   assert_eq!(json(response).await["diagnostics"]["errors"][0]["field"], "/effects");
 }
+
+#[path = "factory_readiness.rs"]
+mod readiness_tests;

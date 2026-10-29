@@ -175,6 +175,7 @@ pub struct FactoryConfigurationChoiceEntries {
 /// Validated bounded choice catalogs used to resolve a configuration draft.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct FactoryConfigurationChoices {
+  build_pipelines: Vec<crate::FactoryBuildPipelineContract>,
   references: BTreeMap<(FactoryChoiceKind, FactoryKey), ImmutableReference>,
   build_configurations: BTreeMap<FactoryKey, BuildConfigurationRef>,
   metadata: BTreeMap<(FactoryChoiceKind, FactoryKey), FactoryChoiceMetadata>,
@@ -252,12 +253,57 @@ impl FactoryConfigurationChoices {
       references: reference_choice_map(entries.references)?,
       build_configurations: choice_map(entries.build_configurations, FactoryChoiceKind::BuildConfiguration)?,
       metadata: BTreeMap::new(),
+      build_pipelines: Vec::new(),
       role_profiles: BTreeMap::new(),
       runtime_settings: BTreeMap::new(),
       excluded_roles: Default::default(),
     })
   }
 
+  /// Adds exact compiler metadata to existing selectable references; no execution authority.
+  pub fn with_build_pipeline_contract(
+    mut self,
+    contract: crate::FactoryBuildPipelineContract,
+  ) -> Result<Self, FactoryError> {
+    if !self
+      .build_configurations
+      .values()
+      .any(|reference| reference == &contract.build_configuration)
+      || [&contract.tool, &contract.plugin, &contract.model_or_tool]
+        .iter()
+        .any(|reference| !self.references.values().any(|installed| installed == *reference))
+    {
+      return Err(FactoryError::InvalidConfiguration {
+        field: "Build Pipeline contract",
+      });
+    }
+    if !self.build_pipelines.contains(&contract) {
+      if self.build_pipelines.len() >= MAX_CONFIGURATION_CHOICES_PER_KIND {
+        return Err(FactoryError::InvalidConfiguration {
+          field: "Build Pipeline contract count",
+        });
+      }
+      self.build_pipelines.push(contract);
+    }
+    Ok(self)
+  }
+  /// Trusted installed compiler declarations; they contain no credentials or executable paths.
+  pub fn build_pipeline_contracts(&self) -> &[crate::FactoryBuildPipelineContract] {
+    &self.build_pipelines
+  }
+  /// Resolves an unambiguous frozen compiler selection, without latest-version substitution.
+  /// Conflicting native declarations leave readiness unqualified.
+  pub fn build_pipeline_contract(
+    &self,
+    binding: &crate::FlowBuildBinding,
+  ) -> Option<&crate::FactoryBuildPipelineContract> {
+    let mut contracts = self
+      .build_pipelines
+      .iter()
+      .filter(|contract| contract.matches_binding(binding));
+    let first = contracts.next()?;
+    contracts.next().is_none().then_some(first)
+  }
   /// Attaches a bounded declaration from the deployment owner to an installed alias.
   /// Unknown aliases and relationships cannot create new selectable choices.
   pub fn with_choice_metadata(

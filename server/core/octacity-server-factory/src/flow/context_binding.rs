@@ -19,6 +19,15 @@ pub struct FlowContextSelection {
   pub source: FlowDataMapping,
 }
 
+/// Input-independent metadata for one declared Context dependency.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FlowContextSourceObservation {
+  /// Unguarded selections (including the root pointer) always contribute to readiness.
+  pub required: bool,
+  /// A literal exact reference, when the declaration does not require Work input.
+  pub source: Option<FactoryContextReference>,
+}
+
 /// Closed context selection for any configured node; control edges grant no data.
 /// Artifact references include content identity and size; repository references
 /// pin their revision and range. Matching a logical name cannot substitute a source.
@@ -98,6 +107,34 @@ impl FlowContextBinding {
       return Err(invalid());
     }
     Ok(())
+  }
+  /// Observes declarations without reading Context bytes or inventing input.
+  /// Required dynamic and collection sources remain required but unobserved.
+  pub fn static_sources(&self) -> Vec<(FactoryKey, FlowContextSourceObservation)> {
+    self
+      .entries
+      .iter()
+      .map(|(name, selection)| (name, selection, true))
+      .chain(
+        self
+          .artifact_collections
+          .iter()
+          .map(|(name, selection)| (name, selection, false)),
+      )
+      .map(|(name, selection, literal)| {
+        let required = selection.when_present.as_ref().is_none_or(String::is_empty);
+        let source = if required && literal {
+          selection
+            .source
+            .project_raw(&serde_json::Value::Null)
+            .ok()
+            .and_then(|value| serde_json::from_value(value).ok())
+        } else {
+          None
+        };
+        (name.clone(), FlowContextSourceObservation { required, source })
+      })
+      .collect()
   }
   /// Resolves only the declared immutable sources for a trusted context collector.
   /// The collector still verifies bytes, subject, size and any retrieval receipt;

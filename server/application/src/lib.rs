@@ -8,6 +8,7 @@
 #![warn(missing_docs)]
 
 mod agent_cqrs;
+pub use agent_cqrs::MAX_AGENT_INVENTORY_ENTRIES;
 pub use agent_cqrs::SetAgentEnabledCommand;
 pub use octacity_protocol::{MAX_AGENT_HOST_TEXT_BYTES, MAX_AGENT_IP_ADDRESSES};
 pub use octacity_server_store::AgentResources;
@@ -87,6 +88,8 @@ mod factory_source_admission;
 mod factory_source_completion;
 mod factory_triage_context;
 pub use factory_triage_context::{TriageContextProblem, TriageProjectContextDraft};
+mod factory_readiness;
+pub use factory_readiness::*;
 mod factory_presets;
 mod factory_result_reporting;
 pub use factory_presets::*;

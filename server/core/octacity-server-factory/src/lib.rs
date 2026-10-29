@@ -12,6 +12,8 @@ pub use flow::{FlowProfileAdmissionOverride, FlowProfileAdmissionOverrides, Flow
 /// Maximum exact installed execution identities admitted by one Factory owner.
 pub const MAX_FACTORY_EXECUTOR_BINDINGS: usize = 256;
 
+mod build_pipeline;
+pub use build_pipeline::FactoryBuildPipelineContract;
 mod assessment;
 mod budget;
 mod configuration;
@@ -180,26 +182,26 @@ pub use execution::{DecisionSignalDigests, DecisionSignalRequest, FactoryClaimOw
 pub use flow::{
   AdmittedFlow, FlowActionBinding, FlowAdmissionLimits, FlowBuildBinding, FlowBuildExecution, FlowBuildIntent,
   FlowBuildProfile, FlowBuildProvenance, FlowComparison, FlowContextBinding, FlowContextProjection,
-  FlowContextSelection, FlowDataHistory, FlowDataMapping, FlowDataProjection, FlowDataSchema, FlowDefinition,
-  FlowDefinitionInput, FlowDefinitionRef, FlowDefinitionTemplate, FlowDirective, FlowDirectiveInputs,
-  FlowDiscoveryFacts, FlowDiscoveryKind, FlowExecutionPolicy, FlowFieldSchema, FlowGateBinding, FlowGateProgram,
-  FlowGateRule, FlowHumanDisposition, FlowHumanGateBinding, FlowHumanOperation, FlowIncomingData, FlowInputBinding,
-  FlowInputPreparation, FlowInputSource, FlowInterpreter, FlowNodeDefinition, FlowNodeDefinitionInput, FlowNodeInput,
-  FlowNodeRecord, FlowNodeStop, FlowNodeStopReason, FlowOperand, FlowOutcomeDefinition, FlowOutcomeKind, FlowPayload,
-  FlowPredicate, FlowPredicateFailure, FlowProfileCandidate, FlowProfileRuleOutcome, FlowProfileSelectionBinding,
-  FlowProfileSelectionError, FlowProfileSelectionFailure, FlowProfileSelectionPolicy, FlowProfileSelectionRecord,
-  FlowProfileSelectionRecovery, FlowProfileSelectionRule, FlowProfileSelectionSignal, FlowProgress, FlowQuantifier,
-  FlowRecordObservation, FlowRecordReference, FlowRecordView, FlowRun, FlowRunParent, FlowRuntimeHistory,
-  FlowTemplateDeliverableBinding, FlowTemplateDeliverablePolicy, FlowTemplateNode, FlowTemplateOutcome,
-  FlowTemplateSchema, FlowTerminalDefinition, FlowTransition, FlowTransitionTarget, FlowValueMapping, FlowValueSchema,
-  FlowVerifiedBuildData, FlowVerifiedBuildOutput, MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CONTEXT_SELECTIONS,
-  MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE, MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES,
-  MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT, MAX_FLOW_GATE_PARAMETER_BYTES, MAX_FLOW_INPUT_BINDING_BYTES,
-  MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH, MAX_FLOW_POINTER_BYTES, MAX_FLOW_REPEAT_COUNT, MAX_FLOW_SCHEMA_BYTES,
-  MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES, MAX_FLOW_SCHEMA_ITEMS, MAX_FLOW_VARIANT_NAME_BYTES, NodeAttempt,
-  NodeAttemptCompletion, NodeAttemptCompletionInput, NodeAttemptInput, NodeExecutionIdentity,
-  PinnedFlowDefinitionClosure, PublishedFlowTemplate, ValidatedFlowDefinitionClosure, WorkflowCycle,
-  validate_flow_runtime_history,
+  FlowContextSelection, FlowContextSourceObservation, FlowDataHistory, FlowDataMapping, FlowDataProjection,
+  FlowDataSchema, FlowDefinition, FlowDefinitionInput, FlowDefinitionRef, FlowDefinitionTemplate, FlowDirective,
+  FlowDirectiveInputs, FlowDiscoveryFacts, FlowDiscoveryKind, FlowExecutionPolicy, FlowFieldSchema, FlowGateBinding,
+  FlowGateProgram, FlowGateRule, FlowHumanDisposition, FlowHumanGateBinding, FlowHumanOperation, FlowIncomingData,
+  FlowInputBinding, FlowInputPreparation, FlowInputSource, FlowInterpreter, FlowNodeDefinition,
+  FlowNodeDefinitionInput, FlowNodeInput, FlowNodeRecord, FlowNodeStop, FlowNodeStopReason, FlowOperand,
+  FlowOutcomeDefinition, FlowOutcomeKind, FlowPayload, FlowPredicate, FlowPredicateFailure, FlowProfileCandidate,
+  FlowProfileRuleOutcome, FlowProfileSelectionBinding, FlowProfileSelectionError, FlowProfileSelectionFailure,
+  FlowProfileSelectionPolicy, FlowProfileSelectionRecord, FlowProfileSelectionRecovery, FlowProfileSelectionRule,
+  FlowProfileSelectionSignal, FlowProgress, FlowQuantifier, FlowRecordObservation, FlowRecordReference, FlowRecordView,
+  FlowRun, FlowRunParent, FlowRuntimeHistory, FlowTemplateDeliverableBinding, FlowTemplateDeliverablePolicy,
+  FlowTemplateNode, FlowTemplateOutcome, FlowTemplateSchema, FlowTerminalDefinition, FlowTransition,
+  FlowTransitionTarget, FlowValueMapping, FlowValueSchema, FlowVerifiedBuildData, FlowVerifiedBuildOutput,
+  MAX_FLOW_ACTION_PARAMETER_BYTES, MAX_FLOW_CONTEXT_SELECTIONS, MAX_FLOW_DATA_BYTES, MAX_FLOW_DEFINITION_CLOSURE,
+  MAX_FLOW_DEFINITION_EDGES, MAX_FLOW_DEFINITION_NODES, MAX_FLOW_EXPANDED_NODES, MAX_FLOW_FAN_OUT,
+  MAX_FLOW_GATE_PARAMETER_BYTES, MAX_FLOW_INPUT_BINDING_BYTES, MAX_FLOW_MAPPING_BYTES, MAX_FLOW_NESTING_DEPTH,
+  MAX_FLOW_POINTER_BYTES, MAX_FLOW_REPEAT_COUNT, MAX_FLOW_SCHEMA_BYTES, MAX_FLOW_SCHEMA_DEPTH, MAX_FLOW_SCHEMA_ENTRIES,
+  MAX_FLOW_SCHEMA_ITEMS, MAX_FLOW_VARIANT_NAME_BYTES, NodeAttempt, NodeAttemptCompletion, NodeAttemptCompletionInput,
+  NodeAttemptInput, NodeExecutionIdentity, PinnedFlowDefinitionClosure, PublishedFlowTemplate,
+  ValidatedFlowDefinitionClosure, WorkflowCycle, validate_flow_runtime_history,
 };
 pub(crate) use flow_graph::{FactoryFlowEdge, analyze_factory_flow_graph};
 pub use identity::{

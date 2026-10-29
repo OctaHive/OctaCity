@@ -390,6 +390,11 @@ async fn visible_factory_choices_from<S: octacity_server_store::FactoryConfigura
     },
   )
   .map_err(|_| ApplicationError::invalid())?;
+  for contract in choices.build_pipeline_contracts() {
+    if let Ok(qualified) = visible.clone().with_build_pipeline_contract(contract.clone()) {
+      visible = qualified;
+    }
+  }
   visible.intersect_role_availability(&choices);
   for (alias, cap) in choices.role_profile_capabilities() {
     if let Some(cap) = visible.available_role_profile_capability(alias, cap) {

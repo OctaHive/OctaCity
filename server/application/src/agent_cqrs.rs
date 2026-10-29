@@ -1,6 +1,8 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use async_trait::async_trait;
+/// Shared protocol inventory bound for retained backend observations.
+pub use octacity_protocol::MAX_INVENTORY_ENTRIES as MAX_AGENT_INVENTORY_ENTRIES;
 use octacity_protocol::{
   CacheCapability, ExecutionCapabilityV2, ExecutionContractRange, FactoryExecutionCapabilityV3, HostCapacity,
   OctaInventory, PlatformSpec, RuntimeCapability, SourcePluginInventory,

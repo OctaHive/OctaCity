@@ -12,6 +12,20 @@ use super::{ManagementOperation, ParameterProfile};
 
 pub(super) const OPERATIONS: &[ManagementOperation] = &[
   operation!(
+    octacity_server_application::GetFactoryReadinessQuery,
+    "POST",
+    "/api/v1/factory-configurations/{factory_configuration_id}/versions/{version}/readiness",
+    "getFactoryReadiness",
+    "Factory",
+    "Observe exact configuration and repository readiness without remote I/O",
+    Some("FactoryReadinessSelection"),
+    "FactoryReadinessReport",
+    "200",
+    false,
+    false
+  )
+  .with_no_store_response(),
+  operation!(
     octacity_server_application::ResolveFactoryPresetQuery,
     "POST",
     "/api/v1/projects/{project_id}/factory-presets/resolve",

@@ -93,6 +93,17 @@ pub struct FactoryCommandBuildProfile {
   pub observation_contract: Option<crate::FactoryCommandObservationContract>,
 }
 impl FactoryCommandBuildProfile {
+  /// Installation metadata shared with readiness and the materializer's shape check.
+  pub fn pipeline_contract(&self) -> octacity_server_factory::FactoryBuildPipelineContract {
+    octacity_server_factory::FactoryBuildPipelineContract {
+      build_configuration: self.build_configuration.clone(),
+      tool: self.executor.clone(),
+      plugin: self.plugin.clone(),
+      model_or_tool: self.identity.clone(),
+      pipeline_node: self.pipeline_node.clone(),
+    }
+  }
+
   /// Returns finite primary reports compatible with this explicitly installed observation contract.
   /// No program/credential values or I/O are involved; plain reports advertise no such capability.
   pub fn observation_bindings(

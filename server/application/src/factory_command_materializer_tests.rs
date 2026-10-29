@@ -11,8 +11,7 @@ use std::{
   sync::{Arc, Mutex},
 };
 
-#[path = "../tests/support/manual_trigger_context.rs"]
-mod ordinary_context;
+use crate::factory_test_support::ordinary_context;
 
 pub(crate) struct Context(pub(crate) BuildExecutionContext);
 #[async_trait]

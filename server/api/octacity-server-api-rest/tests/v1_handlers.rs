@@ -441,6 +441,10 @@ unavailable_query!(
   octacity_server_application::ResolveFactoryPresetQuery,
   "resolve_factory_preset"
 );
+unavailable_query!(
+  octacity_server_application::GetFactoryReadinessQuery,
+  "get_factory_readiness"
+);
 unavailable_command!(PublishBuildConfigurationVersionCommand, "publish_configuration");
 unavailable_command!(PublishProjectPolicyCommand, "publish_project_policy");
 unavailable_command!(CreateTriggerDefinitionCommand, "create_trigger_definition");
@@ -1864,6 +1868,7 @@ async fn every_management_operation_is_allowed_before_application_dispatch() {
       "publish_factory_runtime_settings",
       "list_factory_presets",
       "resolve_factory_preset",
+      "get_factory_readiness",
     ]
   );
 }

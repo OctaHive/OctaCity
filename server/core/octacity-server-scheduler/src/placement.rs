@@ -8,6 +8,21 @@ use octacity_protocol::{
 use octacity_server_domain::RuntimeClass;
 use octacity_server_job::{JobRequirements, JobRuntimePolicy, JobSpecTemplate};
 
+/// Immutable placement facts usable before a Job/Lease exists. The same matcher
+/// remains authoritative for materialized Jobs; a match reserves no capacity.
+pub struct PlacementRequirements<'a> {
+  /// Ordinary configuration/Pipeline resource and semantic requirements.
+  pub job: &'a JobRequirements,
+  /// Existing exact source, Octa and runtime policy.
+  pub policy: octacity_server_job::JobPlacementPolicy<'a>,
+  /// Required managed enforcement, absent for ordinary Jobs.
+  pub factory_enforcement: Option<&'a [FactoryEnforcementCapabilityV3]>,
+  /// Exact managed workspace requirement.
+  pub workspace_anchor: bool,
+  /// Existing task-plugin control contract, when selected.
+  pub tool_control: Option<&'a octacity_protocol::FactoryToolControlV3>,
+}
+
 /// Reports whether one accepting idle Agent exactly satisfies a ready Job.
 ///
 /// This is a pure domain decision shared by every authoritative-store
@@ -35,12 +50,35 @@ pub fn is_compatible_with_contract(
   template: &JobSpecTemplate,
   execution_contract_version: u16,
 ) -> bool {
+  matches_placement(
+    inventory,
+    snapshot,
+    &PlacementRequirements {
+      job: requirements,
+      policy: template.placement_policy(),
+      factory_enforcement: template.required_factory_enforcement(),
+      workspace_anchor: template.requires_factory_workspace_anchor(),
+      tool_control: template.required_tool_control(),
+    },
+    execution_contract_version,
+  )
+}
+
+/// Shares the exact placement decision with metadata-only readiness, without a synthetic Job.
+#[must_use]
+pub fn matches_placement(
+  inventory: &AgentInventory,
+  snapshot: &HostSnapshot,
+  required: &PlacementRequirements<'_>,
+  execution_contract_version: u16,
+) -> bool {
+  let requirements = required.job;
   if !inventory.execution_contract.contains(execution_contract_version)
     || !SUPPORTED_EXECUTION_CONTRACTS.contains(execution_contract_version)
   {
     return false;
   }
-  let policy = template.placement_policy();
+  let policy = &required.policy;
   let platform = PlatformSpec {
     os: requirements.operating_system,
     architecture: requirements.architecture,
@@ -55,9 +93,9 @@ pub fn is_compatible_with_contract(
       snapshot,
       requirements,
       policy.runtime,
-      template.required_factory_enforcement(),
-      template.requires_factory_workspace_anchor(),
-      template.required_tool_control().is_some(),
+      required.factory_enforcement,
+      required.workspace_anchor,
+      required.tool_control.is_some(),
     )
     && capabilities_match(inventory, requirements, requirements.runtime_class.is_legacy())
     && inventory.octa.version == policy.octa.version
@@ -69,7 +107,7 @@ pub fn is_compatible_with_contract(
       &inventory.octa.plugins,
       policy.octa,
       &task_plugin_platform,
-      template.required_tool_control(),
+      required.tool_control,
     )
     && inventory.source_plugins.iter().any(|source| {
       source.name == policy.source_provider

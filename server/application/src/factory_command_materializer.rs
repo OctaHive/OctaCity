@@ -153,7 +153,10 @@ impl<C: BuildExecutionContextSource, S: FactoryExecutionInputStore, B: ArtifactB
       .await
       .map_err(|_| Unavailable)?;
     self.catalog.validate_dispatch(intent, &context.job_spec_toolchain)?;
-    if context.pipeline.dag.nodes().len() != 1 || context.pipeline.dag.nodes()[0].id() != &profile.pipeline_node {
+    if !profile
+      .pipeline_contract()
+      .matches_nodes(context.pipeline.dag.nodes().iter().map(|node| node.id()))
+    {
       return Err(Invalid);
     }
     let now = self.clock.now().map_err(|_| Unavailable)?;

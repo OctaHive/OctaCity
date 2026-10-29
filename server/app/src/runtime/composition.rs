@@ -249,6 +249,7 @@ impl ServerRuntime {
       toolchain: resources.job_spec_toolchain,
       supported_pipeline_capabilities: config.supported_pipeline_capabilities().to_vec(),
       agent_enrollment_lifetime: config.agent_enrollment_lifetime(),
+      readiness_maximum_age: config.agent_lease_lifetime().min(config.agent_registration_lifetime()),
       agent_enrollment_secret_key: resources.agent_enrollment_secret_key,
       webhook_configuration,
       revision_resolver,

@@ -103,6 +103,31 @@ impl super::FactoryRuntimeInstaller for FileProfileInstaller {
       self.providers.clone(),
     ));
     let mut catalog = self.catalog.clone();
+    let commands = self
+      .bindings
+      .commands
+      .iter()
+      .chain(self.bindings.authors.iter().map(|profile| profile.command()));
+    for profile in commands {
+      super::factory_profiles::install_pipeline_contract(&mut catalog.projects, profile.pipeline_contract());
+    }
+    for binding in &self.bindings.promotions {
+      match binding {
+        PromotionCommandBinding::Builtin { profiles, .. } => {
+          for profile in profiles {
+            super::factory_profiles::install_pipeline_contract(&mut catalog.projects, profile.pipeline_contract());
+          }
+        }
+        PromotionCommandBinding::Deployment { profiles, .. } => {
+          for profile in profiles {
+            super::factory_profiles::install_pipeline_contract(
+              &mut catalog.projects,
+              profile.command().pipeline_contract(),
+            );
+          }
+        }
+      }
+    }
     for action in &self.bindings.issue_status_actions {
       catalog.executors.push(resources.issue_status_executor(
         action.identity.clone(),

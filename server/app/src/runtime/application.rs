@@ -61,6 +61,7 @@ pub(super) struct ApplicationAssembly {
   pub(super) toolchain: JobSpecToolchainPolicy,
   pub(super) supported_pipeline_capabilities: Vec<String>,
   pub(super) agent_enrollment_lifetime: std::time::Duration,
+  pub(super) readiness_maximum_age: std::time::Duration,
   pub(super) agent_enrollment_secret_key: octacity_server_application::AgentEnrollmentSecretKey,
   pub(super) webhook_configuration: Option<WebhookHostConfiguration>,
   pub(super) revision_resolver: Arc<dyn RevisionResolver>,
@@ -88,6 +89,7 @@ pub(super) fn management_application(
     toolchain,
     supported_pipeline_capabilities,
     agent_enrollment_lifetime,
+    readiness_maximum_age,
     agent_enrollment_secret_key,
     webhook_configuration,
     revision_resolver,
@@ -112,6 +114,12 @@ pub(super) fn management_application(
   let schedules = Arc::new(ScheduleHandlers::new(store.clone()));
   let internal_triggers = Arc::new(InternalTriggerHandlers::new(store.clone()));
   let policy_source = Arc::new(StoreBackedEffectiveProjectPolicySource::new(store.clone()));
+  let execution_context = Arc::new(octacity_server_application::StoreBackedBuildExecutionContext::new(
+    store.clone(),
+    store.clone(),
+    policy_source.clone(),
+    toolchain.clone(),
+  ));
   let trigger_context = Arc::new(StoreBackedManualTriggerContext::new(
     store.clone(),
     policy_source,
@@ -300,6 +308,26 @@ pub(super) fn management_application(
       .with_project_inputs(store.clone())
       .with_source_inputs(store.clone()),
   );
+  let readiness = octacity_server_application::FactoryReadinessHandlers::new(
+    store.clone(),
+    management_policy.clone(),
+    Arc::new(octacity_server_application::SystemFactoryExecutionClock),
+    readiness_maximum_age,
+  )
+  .map_err(|_| ServerRuntimeError::InvalidAgentPolicy)?
+  .with_repositories(configuration_queries.clone())
+  .with_artifacts(retained_artifacts.clone())
+  .with_placement(octacity_server_application::FactoryReadinessPlacement::new(
+    execution_context,
+    agent_queries.clone(),
+    pool_queries.clone(),
+  ));
+  let readiness = Arc::new(match &source_queries {
+    Some(sources) => readiness
+      .with_sources(sources.clone())
+      .with_source_actions(sources.clone()),
+    None => readiness,
+  });
   let presets = octacity_server_application::FactoryPresetHandlers::new(store.clone(), management_policy.clone())
     .with_repositories(configuration_queries.clone())
     .with_artifacts(retained_artifacts.clone());
@@ -410,6 +438,12 @@ pub(super) fn management_application(
     ),
   )
   .map_err(|_| ServerRuntimeError::InvalidManagementPolicy)?
+  .with_factory_readiness(
+    octacity_server_api_rest::v1::FactoryReadinessManagementApplication::new(authorized_queries(
+      &management_policy,
+      readiness,
+    )),
+  )
   .with_factory_presets(octacity_server_api_rest::v1::FactoryPresetManagementApplication::new(
     authorized_queries(&management_policy, presets),
   ))

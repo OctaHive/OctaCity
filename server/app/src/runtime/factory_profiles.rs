@@ -229,6 +229,9 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
     resources: FactoryRuntimeResources,
   ) -> Result<FactoryRuntimeInstallation, FactoryRuntimeInstallationError> {
     let mut projects = self.catalog.projects.clone();
+    for profile in &self.catalog.codex {
+      install_pipeline_contract(&mut projects, profile.pipeline_contract());
+    }
     for selector in &self.catalog.profile_selectors {
       for (project, choices) in &mut projects {
         if *project != selector.project_id {
@@ -349,5 +352,22 @@ impl FactoryRuntimeInstaller for FactoryProfileRuntimeInstaller {
       work_sources: self.work_sources.clone(),
       profile_selectors,
     })
+  }
+}
+
+// Derive advisory readiness metadata from native compilers without adding selectable identities.
+// Missing or unselectable declarations must not prevent the native installation itself.
+pub(super) fn install_pipeline_contract(
+  projects: &mut [(ProjectId, FactoryConfigurationChoices)],
+  contract: octacity_server_factory::FactoryBuildPipelineContract,
+) {
+  let Some((_, choices)) = projects
+    .iter_mut()
+    .find(|(project, _)| *project == contract.build_configuration.project_id())
+  else {
+    return;
+  };
+  if let Ok(qualified) = choices.clone().with_build_pipeline_contract(contract) {
+    *choices = qualified;
   }
 }

@@ -80,6 +80,12 @@ async fn current_agent_resources_survive_restart_and_reject_stale_or_fenced_samp
   let mut snapshot = octacity_server_store::testing::compatible_snapshot();
   snapshot.work_disk_free_bytes = 1234;
   snapshot.state_disk_free_bytes = 567;
+  snapshot.backends = vec![octacity_protocol::BackendHealth {
+    backend: "qualified-backend".into(),
+    execution: None,
+    status: octacity_protocol::BackendHealthStatus::Unavailable,
+    message: None,
+  }];
   let observation = AgentResourceObservation {
     agent_id: fixture.agent_id,
     registration_epoch: fixture.registration_epoch,
@@ -94,12 +100,20 @@ async fn current_agent_resources_survive_restart_and_reject_stale_or_fenced_samp
     .resources
     .unwrap();
   assert_eq!(resources.work_disk_free_bytes, 1234);
+  assert_eq!(
+    serde_json::to_value(&resources).unwrap()["registration_expires_at"],
+    serde_json::json!(253402300799000_i64)
+  );
   assert_eq!(resources.state_disk_free_bytes, 567);
+  assert_eq!(
+    serde_json::to_value(&resources).unwrap()["backends"],
+    serde_json::json!([{"backend":"qualified-backend","status":"unavailable","message":null}])
+  );
   let mut stale = observation.clone();
   stale.observed_at = Timestamp::from_unix_millis(observation.observed_at.unix_millis() - 1).unwrap();
   stale.snapshot.work_disk_free_bytes = 1;
   store.record_agent_resources(stale).await.unwrap();
-  let mut fenced = observation;
+  let mut fenced = observation.clone();
   fenced.registration_epoch = octacity_server_store::RegistrationEpoch::new(99).unwrap();
   fenced.snapshot.work_disk_free_bytes = 2;
   store.record_agent_resources(fenced).await.unwrap();
@@ -113,6 +127,64 @@ async fn current_agent_resources_survive_restart_and_reject_stale_or_fenced_samp
       .work_disk_free_bytes,
     1234
   );
+  use octacity_server_store::{
+    AgentCredentialStore as _, AgentPlatform, AgentRegistrationInventory, AgentRegistrationProof, CredentialSecret,
+    FreshRegistrationCredential, RegisterAgent, RegistrationValidity,
+  };
+  let previous = CredentialSecret::from_bytes([0x42; 32]);
+  sqlx::query("UPDATE agent_registrations SET credential_hash = $1 WHERE agent_id = $2")
+    .bind(previous.digest().as_bytes().to_vec())
+    .bind(fixture.agent_id.as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  sqlx::query("UPDATE agents SET platform_operating_system = 'linux', platform_architecture = 'amd64' WHERE id = $1")
+    .bind(fixture.agent_id.as_uuid())
+    .execute(&database.pool)
+    .await
+    .unwrap();
+  let registered_at = add_millis(observation.observed_at, 1).unwrap();
+  let registered = store
+    .register_agent(
+      RegisterAgent::new(
+        FreshRegistrationCredential {
+          id: id(9501),
+          secret: CredentialSecret::from_bytes([0x43; 32]),
+        },
+        fixture.agent_id,
+        octacity_server_domain::AgentName::new("contract-agent").unwrap(),
+        AgentRegistrationProof::Registration {
+          credential_id: id(601),
+          epoch: fixture.registration_epoch,
+          credential: previous,
+        },
+        AgentRegistrationInventory {
+          platform: AgentPlatform::new("linux", "amd64").unwrap(),
+          execution_contract_version: octacity_protocol::EXECUTION_CONTRACT_V1,
+          inventory: octacity_server_store::testing::compatible_inventory(fixture.agent_id),
+        },
+        RegistrationValidity {
+          registered_at,
+          expires_at: add_millis(registered_at, 60000).unwrap(),
+        },
+      )
+      .unwrap(),
+    )
+    .await
+    .unwrap();
+  assert!(
+    store.agent_detail(fixture.agent_id).await.unwrap().resources.is_none(),
+    "a new process cannot inherit prior backend health"
+  );
+  let mut old_process = observation.clone();
+  old_process.observed_at = add_millis(registered_at, 1).unwrap();
+  store.record_agent_resources(old_process).await.unwrap();
+  assert!(store.agent_detail(fixture.agent_id).await.unwrap().resources.is_none());
+  let mut current_process = observation;
+  current_process.registration_epoch = registered.registration_epoch;
+  current_process.observed_at = add_millis(registered_at, 2).unwrap();
+  store.record_agent_resources(current_process).await.unwrap();
+  assert!(store.agent_detail(fixture.agent_id).await.unwrap().resources.is_some());
   database.cleanup().await;
 }
 

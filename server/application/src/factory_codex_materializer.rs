@@ -168,6 +168,17 @@ pub struct FactoryCodexBuildProfile {
 }
 
 impl FactoryCodexBuildProfile {
+  /// Installation metadata shared with readiness and the materializer's shape check.
+  pub fn pipeline_contract(&self) -> octacity_server_factory::FactoryBuildPipelineContract {
+    octacity_server_factory::FactoryBuildPipelineContract {
+      build_configuration: self.build_configuration.clone(),
+      tool: self.toolchain.executable.clone(),
+      plugin: self.toolchain.plugin.clone(),
+      model_or_tool: self.toolchain.model.clone(),
+      pipeline_node: self.pipeline_node.clone(),
+    }
+  }
+
   /// Exact installed compilation policy retained alongside older policy versions.
   pub fn task_digest(&self) -> octacity_server_factory::FactoryDigest {
     let base = self.base_task_digest();
@@ -538,7 +549,10 @@ impl<
       )
       .await
       .map_err(|_| Unavailable)?;
-    if context.pipeline.dag.nodes().len() != 1 || context.pipeline.dag.nodes()[0].id() != &profile.pipeline_node {
+    if !profile
+      .pipeline_contract()
+      .matches_nodes(context.pipeline.dag.nodes().iter().map(|node| node.id()))
+    {
       return Err(Invalid);
     }
     let observed_at = self.clock.now().map_err(|_| Unavailable)?;

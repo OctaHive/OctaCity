@@ -753,3 +753,57 @@ fn zero_consumable_budgets_allow_control_work_but_deny_any_consumption() {
     limit
   );
 }
+
+#[test]
+fn competing_installed_pipeline_contracts_remain_unqualified_instead_of_choosing_one() {
+  use crate::{FactoryBuildPipelineContract, FlowBuildBinding};
+  let project = ProjectId::generate();
+  let reference = |name: &str| ImmutableReference::new(key(name), key("v1"), digest(91));
+  let contract = FactoryBuildPipelineContract {
+    build_configuration: BuildConfigurationRef::new(
+      BuildConfigurationId::generate(),
+      BuildConfigurationVersion::INITIAL,
+      project,
+      digest(92),
+    ),
+    tool: reference("tool"),
+    plugin: reference("plugin"),
+    model_or_tool: reference("model"),
+    pipeline_node: octacity_server_domain::PipelineNodeId::new("first").unwrap(),
+  };
+  let choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
+    references: [
+      (&contract.tool, "tool"),
+      (&contract.plugin, "plugin"),
+      (&contract.model_or_tool, "model"),
+    ]
+    .into_iter()
+    .map(|(reference, alias)| FactoryReferenceChoice {
+      kind: FactoryChoiceKind::NodeCapability,
+      alias: key(alias),
+      reference: reference.clone(),
+    })
+    .collect(),
+    build_configurations: vec![(key("build"), contract.build_configuration.clone())],
+  })
+  .unwrap()
+  .with_build_pipeline_contract(contract.clone())
+  .unwrap();
+  let binding: FlowBuildBinding = serde_json::from_value(serde_json::json!({
+    "tool": contract.tool,
+    "plugin": contract.plugin,
+    "model_or_tool": contract.model_or_tool,
+    "build_configuration": contract.build_configuration,
+    "task_digest": digest(93),
+    "result_output": "result",
+    "result_output_kind": "report",
+    "result_outcome": "done"
+  }))
+  .unwrap();
+  let mut competing = contract;
+  competing.pipeline_node = octacity_server_domain::PipelineNodeId::new("second").unwrap();
+  let ambiguous = choices
+    .with_build_pipeline_contract(competing)
+    .expect("advisory metadata must not replace installation authority");
+  assert!(ambiguous.build_pipeline_contract(&binding).is_none());
+}

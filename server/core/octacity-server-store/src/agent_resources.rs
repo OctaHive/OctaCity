@@ -8,6 +8,13 @@ use serde::{Deserialize, Serialize};
 /// Safe latest availability; missing observation is different from zero free space.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct AgentResources {
+  /// Current unrevoked registration deadline, projected by the authoritative reader.
+  /// Absence cannot qualify a retained observation for placement readiness.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub registration_expires_at: Option<Timestamp>,
+  /// Original backend availability from the same fenced observation; absent on legacy rows.
+  #[serde(default, skip_serializing_if = "Option::is_none")]
+  pub backends: Option<Vec<octacity_protocol::BackendHealth>>,
   /// Server receipt time of the observation.
   pub observed_at: Timestamp,
   /// Reported currently available CPU in thousandths of one logical CPU.
@@ -27,7 +34,7 @@ pub struct AgentResourceObservation {
   pub agent_id: AgentId,
   /// Registration fence; superseded processes cannot replace current observations.
   pub registration_epoch: RegistrationEpoch,
-  /// Bounded original observation; only resource measurements are retained.
+  /// Bounded original observation; diagnostic messages are not retained.
   pub snapshot: HostSnapshot,
   /// Server receipt time, never supplied by the Agent.
   pub observed_at: Timestamp,
