@@ -233,7 +233,8 @@ function actionEffectsSummary(
   definitions: readonly components['schemas']['FactoryFlowDefinition'][],
   t: ReturnType<typeof usePresentation>['t'],
 ) {
-  return definitions.flatMap((definition) =>
+  let hasSourceEffects = false;
+  const summary = definitions.flatMap((definition) =>
     definition.nodes.flatMap((node) => {
       if (node.profile_selection) {
         const selection = node.profile_selection;
@@ -262,11 +263,13 @@ function actionEffectsSummary(
         .parameters as components['schemas']['FactoryWorkStatusActionParameters'];
       const update = parameters?.source_update;
       if (!update) return [];
+      hasSourceEffects = true;
       return [
         `${node.key}: ${update.effects.status}; ${update.source.resource.identity}; ${update.reporter.configuration.identity} · ${update.reporter.configuration.version} · ${update.reporter.configuration.digest}; ${t('factory.addEffect')}: ${update.effects.add.join(', ')}; ${t('factory.removeEffect')}: ${update.effects.remove.join(', ')}; ${t('factory.taskState')}: ${update.effects.state ?? t('factory.preserveState')}`,
       ];
     }),
   );
+  return hasSourceEffects ? [t('factory.independentEffects'), ...summary] : summary;
 }
 function ValidationPreview({ preview }: { preview: Preview }) {
   const { t } = usePresentation();

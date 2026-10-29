@@ -1342,6 +1342,8 @@ export const enMessages = {
   'factory.definitionCount': 'Definition closure: {count}',
   'factory.authorityNarrowing':
     'Definition permissions are ceilings. Project, configuration, task and Agent policy can only narrow authority.',
+  'factory.independentEffects':
+    'Source effects are delivered independently. Queuing does not confirm delivery; other effects may remain pending or fail.',
   'factory.requiredCapabilities': 'Required capabilities',
   'factory.effectivePermissions': 'Effective permission narrowing',
   'factory.permissionCounts': 'Plugins: {plugins}; tools: {tools}; network hosts: {hosts}',

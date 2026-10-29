@@ -1351,6 +1351,8 @@ export const ruMessages = {
   'factory.definitionCount': 'Замыкание определений: {count}',
   'factory.authorityNarrowing':
     'Разрешения определения задают пределы. Политики проекта, конфигурации, задачи и Agent могут только сужать полномочия.',
+  'factory.independentEffects':
+    'Эффекты в источнике доставляются независимо. Постановка в очередь не подтверждает доставку: другие эффекты могут ожидать или завершиться ошибкой.',
   'factory.requiredCapabilities': 'Необходимые возможности',
   'factory.effectivePermissions': 'Эффективное сужение разрешений',
   'factory.permissionCounts': 'Плагины: {plugins}; инструменты: {tools}; сетевые узлы: {hosts}',

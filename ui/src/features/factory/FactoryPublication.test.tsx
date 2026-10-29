@@ -343,6 +343,9 @@ it('reviews exact immutable per-stage effects before publishing the validated Fl
   await userEvent.click(screen.getByRole('button', { name: 'Validate draft' }));
   await userEvent.click(await screen.findByRole('button', { name: 'Review publication' }));
   const dialog = await screen.findByRole('dialog', { name: 'Publish Flow Definition?' });
+  expect(dialog.textContent).toContain(
+    'Source effects are delivered independently. Queuing does not confirm delivery; other effects may remain pending or fail.',
+  );
   expect(dialog.textContent).toContain('selected-label');
   expect(dialog.textContent).toContain('retired-label');
   expect(dialog.textContent).toContain(writer.binding.configuration.digest);

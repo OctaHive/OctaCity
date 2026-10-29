@@ -192,25 +192,33 @@ pub(super) async fn admitted_closure(
   FactoryRunId,
   FactoryDigest,
 ) {
+  admitted_closure_with_schemas(definitions, vec![value_schema(), receipt_schema()]).await
+}
+
+pub(crate) async fn admitted_closure_with_schemas(
+  definitions: Vec<FlowDefinition>,
+  schemas: Vec<FlowDataSchema>,
+) -> (
+  Arc<store_testing::InMemoryFactoryConfigurationStore>,
+  FactoryRunId,
+  FactoryDigest,
+) {
   let definition = &definitions[0];
+  let budget = definition.execution().budget();
+  let grants = definition.execution().permissions().clone();
   let work = store_testing::factory_node_journal_contract_fixture().admission.work;
   let run = FactoryRun::admitted(FactoryRunId::generate(), &work);
   let flow = FlowRun::root(&run, definition.reference()).unwrap();
   let cycle = WorkflowCycle::initial(&flow).unwrap();
   let admitted = AdmittedFlow::new(
     PinnedFlowDefinitionClosure::new(definition.reference(), definitions).unwrap(),
-    FlowAdmissionLimits::product_defaults(
-      1,
-      BudgetLimit::new(32, 10000, 0, 0, 10000).unwrap(),
-      permissions("reporter"),
-    )
-    .unwrap(),
+    FlowAdmissionLimits::product_defaults(1, budget, grants).unwrap(),
     flow,
     cycle,
     FactoryWipLimits::new(8, 16).unwrap(),
   )
   .unwrap()
-  .with_data_schemas(vec![value_schema(), receipt_schema()])
+  .with_data_schemas(schemas)
   .unwrap();
   let store = Arc::new(store_testing::InMemoryFactoryConfigurationStore::new());
   let audit = store_testing::management_mutation_with_request((), "stage-admission")

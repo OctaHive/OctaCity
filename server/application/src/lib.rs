@@ -85,6 +85,11 @@ mod factory_source_admission;
 mod factory_source_completion;
 mod factory_triage_context;
 pub use factory_triage_context::{TriageContextProblem, TriageProjectContextDraft};
+mod factory_result_reporting;
+pub use factory_result_reporting::{
+  FactoryReportingCase, FactoryReportingDimension, FactoryReportingSelection, FactoryReportingTarget,
+  FactoryResultReportingDraft,
+};
 mod factory_source_input_retention;
 mod factory_source_mapping;
 pub use factory_source_completion::{SourceCompletionDocument, TRIAGE_COMPLETION_PRESET};

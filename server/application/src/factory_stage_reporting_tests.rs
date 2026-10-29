@@ -2,7 +2,7 @@
 use super::*;
 use std::collections::BTreeMap;
 #[path = "factory_stage_reporting_test_support.rs"]
-mod support;
+pub(super) mod support;
 use support::*;
 
 #[test]

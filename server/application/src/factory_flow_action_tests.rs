@@ -7,6 +7,8 @@ use std::sync::{Arc, Mutex};
 
 #[path = "factory_issue_source_push_tests.rs"]
 pub(crate) mod issue_push;
+#[path = "factory_result_reporting_tests.rs"]
+mod result_reporting;
 #[path = "issue_code_review_delivery_tests.rs"]
 mod review_delivery;
 #[path = "factory_stage_reporting_tests.rs"]
