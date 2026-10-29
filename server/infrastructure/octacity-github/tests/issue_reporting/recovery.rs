@@ -4,6 +4,116 @@ use octacity_work_source_protocol::FailureClass;
 use reporting::LostResponse;
 
 #[tokio::test]
+async fn independent_reviewed_effects_keep_disjoint_scopes_and_recover_without_replaying_a_label_write() {
+  let forge = Forge::start().await;
+  let mut native = reporting::Issue::new(&["needs context", "human-owned"]);
+  native.fault = Some(("POST", LostResponse::Disconnect));
+  *forge.reporting.lock().await = Some(native);
+  let mut installed = mapping();
+  installed["editable"] = json!(true);
+  installed["editable_states"] = json!(["closed"]);
+  installed["managed_label_groups"] = json!({"component":["ready / review"],"priority":["needs context"]});
+  let (installation, request) = install(&forge, installed);
+  let Request::Reporter(reporter::Request {
+    command: reporter::Command::Project(original),
+    ..
+  }) = request
+  else {
+    unreachable!()
+  };
+  let mut scopes = std::collections::BTreeSet::new();
+  for (index, effects) in [
+    reporter::ProjectionEffects {
+      add: vec!["ready / review".into()],
+      remove: vec![],
+      state: None,
+    },
+    reporter::ProjectionEffects {
+      add: vec![],
+      remove: vec!["needs context".into()],
+      state: None,
+    },
+    reporter::ProjectionEffects {
+      add: vec![],
+      remove: vec![],
+      state: Some("closed".into()),
+    },
+  ]
+  .into_iter()
+  .enumerate()
+  {
+    let mut intent = (*original).clone();
+    intent.projection_id = format!("{index:064x}");
+    intent.status = format!("reviewed-dimension-{index}");
+    intent.effects = Some(effects);
+    let inspect = Request::Reporter(reporter::Request {
+      protocol_version: 2,
+      request_id: format!("dimension-{index}-inspect"),
+      command: reporter::Command::Inspect(Box::new(intent.clone())),
+    });
+    let Response::Reporter(reporter::Response {
+      outcome: reporter::Outcome::Planned(plan),
+      ..
+    }) = process(&installation, &inspect).await
+    else {
+      panic!("finite reviewed effect must produce an ordinary plan")
+    };
+    for field in &plan.fields {
+      assert!(
+        scopes.insert(field.clone()),
+        "independent installed groups and state cannot supersede another dimension"
+      );
+    }
+    assert_eq!(plan.steps.len(), 1);
+    let apply = Request::Reporter(reporter::Request {
+      protocol_version: 2,
+      request_id: format!("dimension-{index}-apply"),
+      command: reporter::Command::Apply(Box::new(reporter::StepRequest {
+        intent: intent.clone(),
+        step: plan.steps[0].clone(),
+      })),
+    });
+    let response = process(&installation, &apply).await;
+    if index == 0 {
+      failure(response, FailureClass::Transient);
+    } else {
+      assert!(matches!(
+        response,
+        Response::Reporter(reporter::Response {
+          outcome: reporter::Outcome::Progressed(_),
+          ..
+        })
+      ));
+    }
+    let before_confirmation = writes(&forge).await;
+    // Each call launches a fresh native process; confirmation must inspect the retained same intent.
+    let Response::Reporter(reporter::Response {
+      outcome: reporter::Outcome::Planned(confirmed),
+      ..
+    }) = process(&installation, &inspect).await
+    else {
+      panic!("restart must confirm the original effect")
+    };
+    assert!(confirmed.receipt.matches);
+    assert_eq!(confirmed.receipt.projection_id, intent.projection_id);
+    assert_eq!(confirmed.receipt.effects, intent.effects);
+    assert_eq!(writes(&forge).await, before_confirmation);
+    assert!(
+      forge
+        .reporting
+        .lock()
+        .await
+        .as_ref()
+        .unwrap()
+        .labels
+        .contains("human-owned")
+    );
+  }
+  assert_eq!(writes(&forge).await, ["POST", "DELETE", "PATCH"]);
+  assert_effects(&forge, "closed").await;
+}
+
+#[tokio::test]
 async fn input_owned_mapping_converges_only_installed_managed_effects_through_ordered_process_steps() {
   let forge = Forge::start().await;
   *forge.reporting.lock().await = Some(reporting::Issue::new(&["needs context", "human-owned"]));

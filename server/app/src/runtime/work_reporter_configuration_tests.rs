@@ -256,6 +256,8 @@ async fn managed_reporter_input_resolves_its_writer_and_rechecks_the_independent
 
 #[path = "source_reporter_inventory_tests.rs"]
 mod inventory;
+#[path = "factory_triage_delivery_tests.rs"]
+mod triage_delivery;
 
 #[tokio::test]
 async fn managed_reporter_resolver_cannot_replace_an_explicit_connection_pin_with_an_equally_granted_alias() {
