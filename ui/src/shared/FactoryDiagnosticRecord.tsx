@@ -1,3 +1,5 @@
+import { FactoryEffectDelivery } from './FactoryEffectDelivery';
+import { FactoryTriageResult } from './FactoryTriageResult';
 import type { components, operations } from '../../.generated/api/schema';
 type FactoryDiagnostic = components['schemas']['FactoryDiagnosticPage']['items'][number];
 type FactoryDiagnosticCollection =
@@ -17,6 +19,7 @@ export const DIAGNOSTIC_LABELS = {
   work: 'factory.diag.work',
   'node-completions': 'factory.diag.completions',
   'node-stops': 'factory.diag.stops',
+  'effect-delivery': 'triageResult.effect',
   'decision-signals': 'factory.diag.signals',
   candidates: 'factory.diag.candidates',
   changesets: 'factory.diag.changesets',
@@ -31,6 +34,15 @@ export const DIAGNOSTIC_LABELS = {
 } satisfies Record<FactoryDiagnosticCollection, MessageKey>;
 
 const RECORD_FIELDS = {
+  effect_delivery: [
+    'id',
+    'record_id',
+    'kind',
+    'input_digest',
+    'attempt',
+    'available_at',
+    'recorded_at',
+  ],
   profile_selection: [
     'id',
     'input_digest',
@@ -165,6 +177,7 @@ const FACT_FIELDS = {
 >;
 // Only published metadata fields are traversed. Payloads, commands, prompts and transfer URLs have no renderer.
 const NESTED_FIELDS = new Set([
+  'selected_profile',
   'candidate',
   'profile',
   'package_digest',
@@ -324,6 +337,30 @@ export function DiagnosticRecordDetails({ item }: { item: FactoryDiagnostic }) {
       />
     </>
   ) : (
-    <SafeFactoryMetadata value={item.record} fields={RECORD_FIELDS[item.kind]} />
+    <>
+      {item.kind === 'node_completion' ? (
+        <>
+          <FactoryTriageResult record={item.record} />
+          {item.record.public_result !== undefined ? (
+            <section aria-label={t('triageResult.provenance')}>
+              <h4>{t('triageResult.provenance')}</h4>
+              {item.record.result_provenance?.length ? (
+                item.record.result_provenance.map((call) => (
+                  <SafeFactoryMetadata
+                    key={call.node.id}
+                    value={call}
+                    fields={['node', 'profile']}
+                  />
+                ))
+              ) : (
+                <p>{t('triageResult.provenanceUnavailable')}</p>
+              )}
+            </section>
+          ) : null}
+        </>
+      ) : null}
+      {item.kind === 'effect_delivery' ? <FactoryEffectDelivery record={item.record} /> : null}
+      <SafeFactoryMetadata value={item.record} fields={RECORD_FIELDS[item.kind]} />
+    </>
   );
 }
