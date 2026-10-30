@@ -337,8 +337,10 @@ def _stop_halves(
 def _up(arguments: argparse.Namespace) -> dict[str, object]:
     if arguments.update_factory_installation and (arguments.factory_profiles is None or arguments.factory_agent_profile is None):
         raise LocalStandError("--update-factory-installation requires --factory-profiles and --factory-agent-profile")
-    if (arguments.factory_signal_connectors is not None or arguments.factory_delivery_bundle is not None or arguments.factory_runtime_bundle is not None) and arguments.factory_profiles is None:
+    if (arguments.factory_signal_connectors is not None or arguments.factory_delivery_bundle is not None or arguments.factory_runtime_bundle is not None or arguments.factory_issue_mcp_readers is not None) and arguments.factory_profiles is None:
         raise LocalStandError("Factory connectors require an explicit Factory profile")
+    if arguments.factory_issue_mcp_readers is not None:
+        server_configurator.preflight_issue_mcp_readers(arguments.factory_issue_mcp_readers)
     root = state.resolve_safe_root(arguments.root, REPOSITORY, Path.home())
     origin = _resolved_origin(arguments)
     installed_agent_profile = root / "config/factory-agent-profile.toml"
@@ -365,6 +367,7 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
                 factory_runtime_bundle=arguments.factory_runtime_bundle,
                 factory_delivery_bundle=arguments.factory_delivery_bundle,
                 factory_signal_connectors=arguments.factory_signal_connectors,
+                factory_issue_mcp_readers=arguments.factory_issue_mcp_readers,
                 openssl=arguments.openssl, preflight=preflight,
                 stop=lambda: _stop_halves(owner, root, arguments.https_port, remove_volumes=False),
             )
@@ -384,6 +387,7 @@ def _up(arguments: argparse.Namespace) -> dict[str, object]:
                     factory_signal_connectors=arguments.factory_signal_connectors,
                     factory_delivery_bundle=arguments.factory_delivery_bundle,
                     factory_runtime_bundle=arguments.factory_runtime_bundle,
+                    factory_issue_mcp_readers=arguments.factory_issue_mcp_readers,
                 )
                 _build_images(native)
                 if arguments.factory_profiles is not None:
@@ -757,6 +761,7 @@ def parse_arguments(arguments: Sequence[str] | None = None) -> argparse.Namespac
     up.add_argument("--factory-agent-profile", type=Path, help="separate private local Factory Agent policy")
     up.add_argument("--update-factory-installation", action="store_true", help="preflight and replace the generated installation while preserving durable state")
     up.add_argument("--factory-signal-connectors", type=Path, help="separate private installed Decision Signal connector catalog")
+    up.add_argument("--factory-issue-mcp-readers", type=Path, help="explicit Project-scoped read-only Issue MCP installation")
     up.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")
     up.add_argument(
         "--compose-wait-seconds",

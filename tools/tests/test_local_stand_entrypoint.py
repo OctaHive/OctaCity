@@ -240,6 +240,13 @@ fi
                 path = secrets / name
                 path.write_text("fixture-private-value\n")
                 path.chmod(0o600)
+            bundle = root / "reader-bundle"
+            bundle.mkdir()
+            for name, value in (("factory-issue-mcp-readers.json", '{"version":1,"readers":[]}'),
+                                ("factory-issue-mcp-0000-credential", "issue-reader-private-canary"),
+                                ("unselected-private-file", "unselected-private-canary")):
+                (bundle / name).write_text(value)
+                (bundle / name).chmod(0o600)
             observer = root / "observe"
             observer.write_text(
                 '#!/bin/sh\nset -eu\n'
@@ -249,6 +256,12 @@ fi
                 'test "$(stat -c %a "$profile")" = 600\n'
                 'test "$(stat -c %u "$profile")" = 65532\n'
                 'test "$(cat "$profile")" = fixture-private-value\n'
+                'reader=/run/octacity-secrets/factory-issue-mcp-0000-credential\n'
+                'test -r /run/octacity-secrets/factory-issue-mcp-readers.json\n'
+                'test "$(stat -c %a "$reader")" = 600\n'
+                'test "$(stat -c %u "$reader")" = 65532\n'
+                'test "$(cat "$reader")" = issue-reader-private-canary\n'
+                'test ! -e /run/octacity-secrets/unselected-private-file\n'
                 'echo private-profile-ready\n'
             )
             observer.chmod(0o755)
@@ -256,6 +269,7 @@ fi
                 ["docker", "run", "--rm", "--pull", "never", "--network", "none", "--read-only",
                  "--user", "0:0", "--tmpfs", "/run/octacity-secrets:mode=0700,size=64k",
                  "--mount", f"type=bind,src={secrets},dst=/run/secrets,readonly",
+                 "--mount", f"type=bind,src={bundle},dst=/run/octacity-factory-connectors,readonly",
                  "--mount", f"type=bind,src={observer},dst=/usr/local/bin/octacity-server,readonly",
                  "--mount", f"type=bind,src={REPOSITORY / 'deployment/local-stand/server-entrypoint.sh'},dst=/entrypoint,readonly",
                  "--entrypoint", "/bin/sh", "octacity/server:local", "/entrypoint"],

@@ -113,6 +113,24 @@ def _snapshot(directory: Path, *, copy_to: Path | None = None) -> dict[str, tupl
     return files
 
 
+def installed_factory_inputs(root: Path, exports: Path) -> dict[str, Path | None]:
+    """Select the effective installation, independently of its original seed files.
+
+    The caller supplies private temporary storage for reference-only exports.
+    Configurators retain validation and ownership of their file encodings;
+    this selection neither updates configuration nor renews credentials.
+    """
+    bundle = root / "config/server"
+    paths = {"factory_profiles": bundle / "factory-profiles.json",
+        "factory_agent_profile": root / "config/factory-agent-profile.toml",
+        "factory_runtime_bundle": bundle / "factory-runtime",
+        "factory_delivery_bundle": bundle / "factory-delivery"}
+    selected = {name: path if path.exists() or path.is_symlink() else None for name, path in paths.items()}
+    selected["factory_signal_connectors"] = server.export_installed_signal_connectors(bundle, exports / "signal-connectors.json")
+    selected["factory_issue_mcp_readers"] = server.export_installed_issue_mcp_readers(bundle, exports / "issue-mcp-readers.json")
+    return selected
+
+
 @contextmanager
 def factory_installation_update(
     root: Path,
@@ -126,6 +144,7 @@ def factory_installation_update(
     factory_runtime_bundle: Path | None = None,
     factory_delivery_bundle: Path | None = None,
     factory_signal_connectors: Path | None = None,
+    factory_issue_mcp_readers: Path | None = None,
     openssl: str = "openssl",
 ) -> Iterator[None]:
     """Preflight before stopping; restore the old configuration on startup failure.
@@ -149,16 +168,9 @@ def factory_installation_update(
         factory_agent_profile=old_policy if old_policy.exists() else None)
     with tempfile.TemporaryDirectory(prefix=".factory-update-", dir=root) as temporary:
         staging = Path(temporary)
-        inherited_connectors = server.export_installed_signal_connectors(root / "config/server", staging / "signal-connectors.json")
-        def installed(name: str) -> Path | None:
-            path = root / "config/server" / name
-            return path if path.exists() else None
-
+        inherited = installed_factory_inputs(root, staging)
         server.generate_server_configuration(root, old_installation, openssl=openssl,
-            factory_profiles=installed("factory-profiles.json"),
-            factory_runtime_bundle=installed("factory-runtime"),
-            factory_delivery_bundle=installed("factory-delivery"),
-            factory_signal_connectors=inherited_connectors)
+            **{name: path for name, path in inherited.items() if name != "factory_agent_profile"})
         for group in ("credentials", "pki"):
             for source in initialized[group].values():
                 source = Path(source)
@@ -173,9 +185,10 @@ def factory_installation_update(
         (staging / "config/factory-agent-profile.toml").unlink(missing_ok=True)
         server.generate_server_configuration(staging, installation, openssl=openssl,
             factory_profiles=factory_profiles,
-            factory_runtime_bundle=factory_runtime_bundle or installed("factory-runtime"),
-            factory_delivery_bundle=factory_delivery_bundle or installed("factory-delivery"),
-            factory_signal_connectors=factory_signal_connectors or inherited_connectors)
+            factory_runtime_bundle=factory_runtime_bundle or inherited["factory_runtime_bundle"],
+            factory_delivery_bundle=factory_delivery_bundle or inherited["factory_delivery_bundle"],
+            factory_signal_connectors=factory_signal_connectors or inherited["factory_signal_connectors"],
+            factory_issue_mcp_readers=factory_issue_mcp_readers or inherited["factory_issue_mcp_readers"])
         integrated = staging / "config/integrations/server.toml"
         if integrated.exists():
             previous_base = (root / "config/server/server.toml").read_bytes()

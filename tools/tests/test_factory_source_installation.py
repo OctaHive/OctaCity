@@ -34,6 +34,33 @@ class FactorySourceInstallationTests(unittest.TestCase):
         return configure_integrations(self.root, repository, native_repository_id=native_repository_id,
                                       adapter_digest=adapter_digest, repository_labels=repository_labels)
 
+    def test_triage_source_freezes_process_completion_without_requiring_ticket_acceptance(self):
+        import factory_triage_setup as triage
+        project = "11111111-1111-4111-8111-111111111111"
+        mapping = triage.preparation_mapping(project)
+        bundle = configure_integrations(self.root, "Example/Tickets", native_repository_id="1234",
+            adapter_digest="ab" * 32, preparation_mapping=mapping)
+        reader, = json.loads((bundle / "source-profiles.json").read_text())["readers"]
+        retained = reader["preparation"]["mapping"]
+        self.assertFalse(retained["require_body"])
+        self.assertEqual(retained["acceptance"]["kind"], "process_completion")
+        completion = retained["acceptance"]["value"]
+        self.assertEqual(completion["kind"], "draft")
+        self.assertEqual(completion["project_id"], project)
+        self.assertEqual(completion["preset"]["identity"], "triage-completion")
+        self.assertEqual(completion["preset"]["digest"], "e7b2be2ac5320ce209e819c7e95787ead1ff1a64465cd5a342b3f7c0052158ed")
+        self.assertIn("not ticket-authored implementation acceptance", completion["content"])
+        self.assertEqual(retained["source"]["resource"], reader["read"]["resource_reference"])
+        self.assertEqual(mapping["acceptance"], retained["acceptance"])
+        self.assertNotIn("source", mapping, "the existing installation owner binds the selected native resource")
+
+    def test_an_explicit_triage_code_revision_is_retained_separately_from_ticket_mapping(self):
+        bundle = configure_integrations(self.root, "Example/Tickets", native_repository_id="1234",
+            adapter_digest="ab" * 32, preparation_source={"kind": "exact_revision", "value": "a" * 40})
+        reader, = json.loads((bundle / "source-profiles.json").read_text())["readers"]
+        self.assertEqual(reader["preparation"]["source"], {"kind": "exact_revision", "value": "a" * 40})
+        self.assertEqual(reader["preparation"]["mapping"]["acceptance"]["kind"], "body_section")
+
     def test_fresh_public_repository_installs_existing_labels_for_reviewed_updates(self):
         requests = []
         def fetch(request, **_):

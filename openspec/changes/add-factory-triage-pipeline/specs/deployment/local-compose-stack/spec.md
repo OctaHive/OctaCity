@@ -11,6 +11,16 @@ Agent MCP execution setup SHALL consume the supported `enable-local-stand-runtim
 - **WHEN** approved execution/context or existing-label scope setup is applied through the supported installation path
 - **THEN** preflight failure leaves the usable installation intact and successful restart preserves operator settings, accepted executions, original effects and Agent identity without a destructive reset
 
+#### Scenario: The default stand installs the reviewed pipeline
+- **WHEN** the operator starts `tools/factory-stand` with an explicit owner-private GitHub token file and the selected native ChatGPT login
+- **THEN** ordinary installation contracts create the GitHub connection and Project grant, the two GPT-6.1 Sol stage profiles, a retained viewable/editable Project goals document and the triage pipeline with intake disabled
+- **AND** no model call, demonstration Work, provider mutation or ambient MCP connection is started by installation
+
+#### Scenario: Native login stays private to the selected execution
+- **WHEN** an authorized Job selects an installed native JSON credential profile
+- **THEN** only its current owner-private login file is copied into per-Job private scratch and the pinned native client receives that isolated home, without an API-key fallback or workstation configuration
+- **AND** credential values are absent from public intent, receipts and supervisor output, and the private copy is removed with Job cleanup
+
 #### Scenario: The packaged triage journey succeeds
 - **WHEN** the supported setup selects a raw unlabeled defect and both stage policies accept their verified results
 - **THEN** retained evidence shows the actual Project and analyst invocations, applicable reproduction evidence, one original Work/Run and the exact confirmed fixture label/state effect through ordinary delivery

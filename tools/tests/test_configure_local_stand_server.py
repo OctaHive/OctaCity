@@ -78,6 +78,81 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         )
         manifest_path.chmod(0o600)
 
+    def test_issue_mcp_reader_installs_only_its_private_project_scoped_credential(self):
+        token = "ocmcp.triage-issues." + "ab" * 32
+        credential = self.root / "secrets/triage-issue-reader"
+        credential.write_text(token + "\n")
+        credential.chmod(0o600)
+        project = "11111111-1111-4111-8111-111111111111"
+        reader = {"id": "triage-issues", "project_id": project,
+                  "credential_file": str(credential), "expires_at_unix_ms": 2_000_000_000_000}
+        catalog = self.root / "issue-readers.json"
+        catalog.write_text(json.dumps({"version": 1, "readers": [reader]}))
+        catalog.chmod(0o600)
+        profiles = self.root / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[]}')
+        profiles.chmod(0o600)
+        arguments = dict(repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+                         factory_profiles=profiles, factory_issue_mcp_readers=catalog)
+        receipt = CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments)
+        config = Path(receipt["config"])
+        installed = tomllib.loads(config.read_text())["issue_mcp_readers"]
+        self.assertEqual(installed, [{**reader, "credential_file": "/run/octacity-secrets/factory-issue-mcp-0000-credential"}])
+        copied = config.parent / "factory-issue-mcp-0000-credential"
+        self.assertEqual(copied.read_text(), token + "\n")
+        self.assertEqual(copied.stat().st_mode & 0o777, 0o600)
+        self.assertNotIn(token, config.read_text())
+        self.assertNotIn(token, json.dumps(receipt))
+        self.assertEqual(CONFIGURATOR.generate_server_configuration(self.root, self.installation, **arguments), receipt)
+        cli = subprocess.run([sys.executable, str(REPOSITORY / "tools/configure_local_stand_server.py"),
+            "--root", str(self.root), "--native-installation", str(self.installation),
+            "--factory-profiles", str(profiles), "--factory-issue-mcp-readers", str(catalog)],
+            capture_output=True, text=True, timeout=10)
+        self.assertEqual(cli.returncode, 0, cli.stderr)
+        self.assertEqual(json.loads(cli.stdout), receipt)
+        self.assertNotIn(token, cli.stdout + cli.stderr)
+        exported = CONFIGURATOR.export_installed_issue_mcp_readers(config.parent, self.root / "exported-readers.json")
+        restored = Path(self.temporary.name) / "restored-stand"
+        INITIALIZER.initialize(restored, repository=REPOSITORY, home=Path.home(), openssl=self.openssl)
+        installed_again = CONFIGURATOR.generate_server_configuration(restored, self.installation,
+            repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            factory_profiles=profiles, factory_issue_mcp_readers=exported)
+        reconfigured = Path(installed_again["config"])
+        self.assertEqual(tomllib.loads(reconfigured.read_text())["issue_mcp_readers"], installed)
+        self.assertEqual((reconfigured.parent / copied.name).read_bytes(), copied.read_bytes())
+
+    def test_explicit_empty_issue_reader_installation_grants_no_mcp_scope(self):
+        catalog = self.root / "issue-readers.json"
+        catalog.write_text('{"version":1,"readers":[]}')
+        catalog.chmod(0o600)
+        profiles = self.root / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[]}')
+        profiles.chmod(0o600)
+        receipt = CONFIGURATOR.generate_server_configuration(self.root, self.installation,
+            repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            factory_profiles=profiles, factory_issue_mcp_readers=catalog)
+        config = Path(receipt["config"])
+        self.assertEqual(tomllib.loads(config.read_text()).get("issue_mcp_readers", []), [])
+        self.assertEqual(list(config.parent.glob("factory-issue-mcp-????-credential")), [])
+
+    def test_issue_reader_cannot_resolve_a_credential_relative_to_the_launcher_working_directory(self):
+        credential = self.root / "secrets/triage-issue-reader"
+        credential.write_text("ocmcp.triage-issues." + "ab" * 32)
+        credential.chmod(0o600)
+        catalog = self.root / "issue-readers.json"
+        catalog.write_text(json.dumps({"version": 1, "readers": [{"id": "triage-issues",
+            "project_id": "11111111-1111-4111-8111-111111111111", "expires_at_unix_ms": 2_000_000_000_000,
+            "credential_file": os.path.relpath(credential)}]}))
+        catalog.chmod(0o600)
+        profiles = self.root / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[]}')
+        profiles.chmod(0o600)
+        with self.assertRaisesRegex(CONFIGURATOR.ServerConfigurationError, "Issue MCP installation is invalid"):
+            CONFIGURATOR.generate_server_configuration(self.root, self.installation,
+                repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+                factory_profiles=profiles, factory_issue_mcp_readers=catalog)
+        self.assertFalse((self.root / "config/server").exists())
+
     def generate(self):
         return CONFIGURATOR.generate_server_configuration(
             self.root,
@@ -236,6 +311,7 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
 
     def test_runtime_upgrade_preserves_stand_data_and_replaces_only_the_recognized_generated_bundle(self):
         import factory_local_stand as stand
+        from tools.tests import factory_demo_support as demo_support
         profiles = self.root / "factory-demo/factory-profiles.json"
         old = {"version":1,"projects":[],"codex":[]}
         stand._private_json(profiles,old)
@@ -248,7 +324,7 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         stand._private_json(history,{"run":"retained-operator-run"})
         new = {**old,"projects":[{"project_id":"project","role_profiles":{"codex":{}}}]}
         with patch.object(stand.launcher,"run") as restart:
-            stand.publish_runtime_profiles(self.root,self.installation,profiles,new,runtime,previous=old)
+            demo_support.publish_runtime_profiles(self.root,self.installation,profiles,new,runtime,previous=old)
         self.assertEqual(stand._read_json(profiles),new)
         self.assertEqual(stand._read_json(self.root/"config/server/factory-profiles.json"),new)
         self.assertEqual(stand._read_json(history),{"run":"retained-operator-run"})
@@ -256,13 +332,14 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         self.assertEqual(restart.call_count,1)
         with patch.object(stand.launcher,"run") as stop:
             with self.assertRaisesRegex(ValueError,"customized"):
-                stand.publish_runtime_profiles(self.root,self.installation,profiles,old,runtime,previous=old)
+                demo_support.publish_runtime_profiles(self.root,self.installation,profiles,old,runtime,previous=old)
         stop.assert_not_called()
         self.assertEqual(stand._read_json(profiles),new)
 
     def test_runtime_support_upgrade_preserves_operator_state_and_the_same_postgres_path(self):
         import copy
         import factory_local_stand as stand
+        from tools.tests import factory_demo_support as demo_support
         profiles = self.root / "factory-demo/factory-profiles.json"
         old = {"version":1,"projects":[{"project_id":"project","role_profiles":{"codex":{"ceiling":{"model_identifier":"Vendor/future"}}}}],"codex":[]}
         stand._private_json(profiles,old)
@@ -278,8 +355,8 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         current['projects'][0]['role_profiles']['codex']['settings_support'] = {'mcp_transports':['http'],'mcp_executables':{}}
         legacy = {"version":1,"projects":[],"codex":[]}
         with patch.object(stand.launcher,"run") as stop:
-            stand.publish_runtime_profiles(self.root,self.installation,profiles,current,runtime,previous=legacy)
-            stand.publish_runtime_profiles(self.root,self.installation,profiles,current,runtime,previous=legacy)
+            demo_support.publish_runtime_profiles(self.root,self.installation,profiles,current,runtime,previous=legacy)
+            demo_support.publish_runtime_profiles(self.root,self.installation,profiles,current,runtime,previous=legacy)
         self.assertEqual(stop.call_count,1)
         self.assertEqual(stand._read_json(profiles),current)
         self.assertEqual(stand._read_json(self.root/"config/server/factory-profiles.json"),current)
@@ -287,7 +364,7 @@ class LocalStandServerConfigurationTests(unittest.TestCase):
         self.assertEqual(stand._read_json(history),{"run":"retained-operator-run"})
         with patch.object(stand.launcher,"run") as stop:
             with self.assertRaisesRegex(ValueError,"customized"):
-                stand.publish_runtime_profiles(self.root,self.installation,profiles,old,runtime,previous=legacy)
+                demo_support.publish_runtime_profiles(self.root,self.installation,profiles,old,runtime,previous=legacy)
         stop.assert_not_called()
 
     def test_runtime_programs_use_the_bounded_installation_without_changing_profile_content(self):

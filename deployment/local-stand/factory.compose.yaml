@@ -1,6 +1,14 @@
 # Applied by tools/local-stand only when a private Factory catalog is installed.
 # Provider connector processes and their credentials remain explicit installations.
 services:
+  gateway:
+    ports:
+      - "127.0.0.1:${OCTACITY_LOCAL_STAND_MCP_PORT:-8444}:8444"
+    volumes:
+      - type: bind
+        source: ./deployment/local-stand/factory-mcp.conf
+        target: /etc/nginx/octacity-local-extensions/factory-mcp.conf
+        read_only: true
   server:
     tmpfs:
       - /run/octacity-secrets:size=320m,mode=0700

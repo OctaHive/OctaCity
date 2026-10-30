@@ -171,7 +171,8 @@ class LocalStandClient:
             max_bytes=64 * 1024,
             modes=frozenset({state.PUBLIC_FILE_MODE}),
         )
-        self._transport = bootstrap.HttpsTransport(origin, ca)
+        self._transport = bootstrap.HttpsTransport(origin, ca,
+            max_response_bytes=bootstrap.MAX_MANAGEMENT_RESPONSE_BYTES)
         self._management = bootstrap.BootstrapClient(
             self._transport,
             bootstrap.RetryPolicy(
@@ -227,9 +228,9 @@ class LocalStandClient:
         return self._management.get(path)
 
     def post(
-        self, path: str, key: str, document: dict[str, object]
+        self, path: str, key: str, document: dict[str, object], *, expected_version: int | None = None
     ) -> dict[str, object]:
-        return self._management.post(path, key, document)
+        return self._management.post(path, key, document, expected_version=expected_version)
 
     def post_without_body(self, path: str) -> dict[str, object]:
         response = self._transport.request(

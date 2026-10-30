@@ -1,0 +1,42 @@
+{
+  "project_name": "OctaCity",
+  "github_repository": "OctaHive/OctaCity",
+  "source_reference": "refs/heads/main",
+  "pipeline_node": "triage-agent",
+  "model_identifier": "gpt-6.1-sol",
+  "job_command_argument_max_bytes": 16384,
+  "mcp_evidence_verifier": {
+    "identity": "native-mcp-evidence",
+    "version": "v1",
+    "digest": "6921e3ae725944f5f3969ea11dc7a264d12e205774e4b92195f2f82933c08886"
+  },
+  "mcp_credential_lifetime_millis": 2592000000,
+  "flow_budget": {
+    "max_attempts": 8,
+    "max_elapsed_millis": 600000,
+    "max_tokens": 200000,
+    "max_cost_micro_units": 2000000,
+    "max_output_bytes": 134217728
+  },
+  "network_hosts": ["auth.openai.com", "chatgpt.com", "github.com", "host.microsandbox.internal"],
+  "resources": {
+    "cpu_millis": 1000,
+    "memory_bytes": 1073741824,
+    "disk_bytes": 1073741824,
+    "process_count": 64,
+    "elapsed_millis": 300000
+  },
+  "outputs": {
+    "artifact_count": 4,
+    "artifact_bytes": 67108864,
+    "report_count": 4,
+    "report_bytes": 67108864,
+    "single_output_bytes": 67108864
+  },
+  "retention": {
+    "build_seconds": 86400,
+    "log_seconds": 86400,
+    "artifact_seconds": 86400,
+    "cache_seconds": 86400
+  }
+}

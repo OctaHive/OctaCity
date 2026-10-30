@@ -47,17 +47,20 @@ if [ -e "$profile" ] || [ -L "$profile" ]; then
   chown octacity:octacity "$destination"
 fi
 bundle=/run/octacity-factory-connectors
-if [ -e "$bundle/factory-signal-connectors.json" ] || [ -L "$bundle/factory-signal-connectors.json" ]; then
+copy_factory_private_inputs() (
+  if [ ! -e "$bundle/$2" ] && [ ! -L "$bundle/$2" ]; then
+    return
+  fi
   if [ ! -d "$bundle" ] || [ -L "$bundle" ]; then
     echo "Factory connector bundle is invalid" >&2
     exit 1
   fi
   count=0
-  for source in "$bundle"/factory-signal-*; do
+  for source in "$bundle"/"$1"*; do
     name=${source##*/}
     case "$name" in
-      factory-signal-connectors.json|factory-signal-[0-9][0-9][0-9][0-9]-configuration) limit=4194304 ;;
-      factory-signal-[0-9][0-9][0-9][0-9]-credential) limit=65536 ;;
+      factory-signal-connectors.json|factory-issue-mcp-readers.json|factory-signal-[0-9][0-9][0-9][0-9]-configuration) limit=4194304 ;;
+      factory-signal-[0-9][0-9][0-9][0-9]-credential|factory-issue-mcp-[0-9][0-9][0-9][0-9]-credential) limit=65536 ;;
       *) echo "Factory connector bundle is invalid" >&2; exit 1 ;;
     esac
     count=$((count + 1))
@@ -74,7 +77,9 @@ if [ -e "$bundle/factory-signal-connectors.json" ] || [ -L "$bundle/factory-sign
     chmod 0600 "$destination"
     chown octacity:octacity "$destination"
   done
-fi
+)
+copy_factory_private_inputs factory-signal- factory-signal-connectors.json
+copy_factory_private_inputs factory-issue-mcp- factory-issue-mcp-readers.json
 copy_factory_directory() {
   [ "$3" -le 4 ] || { echo "Factory executable installation is invalid" >&2; exit 1; }
   mkdir -p "$2"

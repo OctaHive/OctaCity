@@ -4,14 +4,19 @@ from __future__ import annotations
 
 import base64
 import json
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import os
 from pathlib import Path
 import stat
+import shutil
+import socket
+import ssl
 import sys
 import tempfile
 import threading
 import time
 import unittest
+from unittest.mock import patch
 
 
 REPOSITORY = Path(__file__).resolve().parents[2]
@@ -116,6 +121,44 @@ def response(status: int, document: dict[str, object]) -> bootstrap.HttpResponse
 
 @unittest.skipUnless(os.name == "posix", "local stand host state requires POSIX permissions")
 class LocalStandBootstrapTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "posix" and shutil.which("openssl"), "requires local TLS fixtures")
+    def test_management_transport_can_select_a_larger_finite_response_without_widening_bootstrap(self):
+        import init_local_stand as initializer
+        initializer.initialize(self.root)
+        size = {"bytes": bootstrap.MAX_RESPONSE_BYTES + 1}
+
+        class Peer(BaseHTTPRequestHandler):
+            def log_message(self, *_):
+                pass
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Length", str(size["bytes"]))
+                self.end_headers()
+                self.wfile.write(b"x" * size["bytes"])
+
+        with ThreadingHTTPServer(("127.0.0.1", 0), Peer) as server:
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(self.root / "pki/gateway.pem", self.root / "pki/gateway-key.pem")
+            server.socket = context.wrap_socket(server.socket, server_side=True)
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            ca = (self.root / "pki/local-ca.pem").read_bytes()
+            origin = f"https://octacity.localhost:{server.server_port}"
+            resolve = socket.getaddrinfo
+            try:
+                larger = bootstrap.HttpsTransport(origin, ca, max_response_bytes=bootstrap.MAX_RESPONSE_BYTES + 32)
+                with patch.object(socket, "getaddrinfo", side_effect=lambda host, *args, **kwargs:
+                        resolve("127.0.0.1" if host == "octacity.localhost" else host, *args, **kwargs)):
+                    with self.assertRaises(bootstrap.TransportError):
+                        bootstrap.HttpsTransport(origin, ca).request("GET", "/", {}, None, 2)
+                    self.assertEqual(len(larger.request("GET", "/", {}, None, 2).body), size["bytes"])
+                    size["bytes"] = bootstrap.MAX_RESPONSE_BYTES + 33
+                    with self.assertRaises(bootstrap.TransportError):
+                        larger.request("GET", "/", {}, None, 2)
+            finally:
+                server.shutdown()
+                thread.join(timeout=2)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -130,6 +173,27 @@ class LocalStandBootstrapTests(unittest.TestCase):
             home=Path.home(),
             retry=bootstrap.RetryPolicy(attempts=3, initial_delay_seconds=0),
         )
+
+    def test_versioned_post_retries_the_original_precondition_and_mutation_bytes(self):
+        calls = []
+
+        class Transport:
+            def request(self, method, path, headers, body, timeout_seconds):
+                calls.append((method, path, dict(headers), body))
+                if len(calls) == 1:
+                    raise bootstrap.TransportError("lost response")
+                return response(201, {"disposition": "applied"})
+
+        client = bootstrap.BootstrapClient(Transport(),
+            bootstrap.RetryPolicy(attempts=2, initial_delay_seconds=0))
+        result = client.post("/api/v1/integrations/example/versions", "reviewed-connection",
+            {"intent": {"id": "example"}}, expected_version=0)
+        self.assertEqual(result, {"disposition": "applied"})
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0], calls[1])
+        self.assertEqual(calls[0][2]["If-None-Match"], "*")
+        self.assertNotIn("If-Match", calls[0][2])
+        self.assertEqual(calls[0][3], b'{"intent":{"id":"example"}}')
 
     def test_clean_start_uses_exact_pool_version_and_installs_private_credential(self):
         transport = FixtureTransport()

@@ -36,7 +36,7 @@ MAX_FACTORY_AGENT_PROFILE_BYTES = 256 * 1024
 # These ceilings equal the aggregate extraction policy in the staging
 # allowlist. Configuration verification must never turn a malformed bundle
 # into an unbounded filesystem walk or whole-file allocation.
-INSTALLATION_FILE_MODES = frozenset({0o600, 0o644, 0o755})
+INSTALLATION_FILE_MODES = frozenset({0o600, 0o644, 0o700, 0o755})
 HASH_CHUNK_BYTES = 1024 * 1024
 VERSION_PATTERN = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$")
 LOCAL_AGENT_NAME = "local-stand-agent"
@@ -176,8 +176,8 @@ def read_factory_agent_profile(path: Path) -> dict[str, Any]:
                 raise ValueError("identity")
         credentials = document.get("factory_credential_profiles", {})
         if not isinstance(credentials, dict) or len(credentials) > 32 or any(
-            not isinstance(name, str) or not name or not isinstance(path, str) or not Path(path).is_absolute()
-            for name, path in credentials.items()
+            not isinstance(name, str) or not name or not _credential_reference(reference)
+            for name, reference in credentials.items()
         ):
             raise ValueError("credential references")
         if "protected_reader" in document and not isinstance(document["protected_reader"], dict):
@@ -186,6 +186,31 @@ def read_factory_agent_profile(path: Path) -> dict[str, Any]:
         return document
     except (OSError, UnicodeError, ValueError, TypeError, AttributeError, RecursionError, state.StateError, AgentConfigurationError) as error:
         raise AgentConfigurationError("Factory Agent profile is invalid") from error
+
+
+def _credential_reference(reference: Any) -> bool:
+    """Keep existing variable files and explicit native JSON references distinct."""
+    if isinstance(reference, str):
+        return Path(reference).is_absolute()
+    if not isinstance(reference, dict) or not {"path", "destination"} <= set(reference) or set(reference) - {"path", "destination", "sensitive_fields", "persist_updates"}:
+        return False
+    path, destination = reference["path"], reference["destination"]
+    if "persist_updates" in reference and type(reference["persist_updates"]) is not bool:
+        return False
+    fields = reference.get("sensitive_fields")
+    if "sensitive_fields" in reference and not (
+        isinstance(fields, list) and 0 < len(fields) <= 64
+        and all(isinstance(field, str) and len(field.encode()) <= 1024
+                and (not field or field.startswith("/")) for field in fields)
+    ):
+        return False
+    return (
+        isinstance(path, str) and Path(path).is_absolute()
+        and isinstance(destination, str) and 0 < len(destination.encode()) <= 1024
+        and not any(character in destination for character in ("\\", ":", "\0"))
+        and not destination.startswith("/")
+        and all(part not in ("", ".", "..") for part in destination.split("/"))
+    )
 
 
 def _factory_policy_matches(document: dict[str, Any], profile: dict[str, Any]) -> bool:

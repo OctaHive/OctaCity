@@ -20,6 +20,8 @@ import urllib.request
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import factory_local_stand as demo
+from factory_integrations import configure_integrations
+from tools.tests import factory_demo_support as demo_support
 import bootstrap_local_stand as bootstrap
 import local_stand_state as state
 
@@ -88,7 +90,7 @@ class FactoryLocalStandTests(unittest.TestCase):
                         "--factory-agent-profile", str(policy), option, value,
                     ], capture_output=True, text=True, timeout=5)
                     self.assertEqual(result.returncode, 2, result.stderr)
-                    self.assertIn("demo source options cannot be combined with --factory-profiles", result.stderr)
+                    self.assertIn("source options cannot be combined with --factory-profiles", result.stderr)
                     self.assertFalse((root / "stand").exists())
 
     def test_execution_bundle_or_agent_policy_requires_an_explicit_catalog(self):
@@ -137,7 +139,7 @@ class FactoryLocalStandTests(unittest.TestCase):
     def test_plain_command_installs_the_demo_issue_repository_without_an_extra_flag(self):
         with tempfile.TemporaryDirectory() as temporary:
             with patch.dict(os.environ, {"OCTACITY_LOCAL_STAND_ROOT": temporary}), \
-                    patch.object(demo, "run_stand", return_value={}) as start:
+                    patch.object(demo, "run_triage_stand", return_value={}) as start:
                 self.assertEqual(demo.main([]), 0)
             self.assertEqual(start.call_args.kwargs["github_repository"], "OctaHive/OctaCity")
 
@@ -148,7 +150,7 @@ class FactoryLocalStandTests(unittest.TestCase):
             bundle.mkdir(parents=True)
             retained = bundle / "server.toml"
             retained.write_text("retained private installation")
-            with patch.object(demo, "run_stand", return_value={}) as start:
+            with patch.object(demo, "run_triage_stand", return_value={}) as start:
                 self.assertEqual(demo.main(["--root", str(root)]), 0)
             self.assertIsNone(start.call_args.kwargs["github_repository"])
             self.assertEqual(retained.read_text(), "retained private installation")
@@ -167,7 +169,7 @@ class FactoryLocalStandTests(unittest.TestCase):
             marker.write_text("existing operator data")
             marker.chmod(0o600)
             with self.assertRaises(ValueError):
-                demo.configure_integrations(root, "Example/Tickets", native_repository_id="1234", adapter_digest="ab"*32)
+                configure_integrations(root, "Example/Tickets", native_repository_id="1234", adapter_digest="ab"*32)
             self.assertEqual(list(bundle.iterdir()), [marker])
             self.assertEqual(marker.read_text(), "existing operator data")
 
@@ -206,16 +208,16 @@ class FactoryLocalStandTests(unittest.TestCase):
             runtime = {"bundle":root/"runtime", "project":runtime_project}
             demo._private_json(root/"factory-runtime/project.json",runtime_project)
             startup = []
-            with patch.object(demo, "install_runtime", return_value=runtime, create=True), \
+            with patch.object(demo_support, "install_runtime", return_value=runtime, create=True), \
                     patch.object(demo.initializer, "initialize"), \
                     patch.object(demo.launcher, "_prepare_native_installation", return_value=types.SimpleNamespace(path=root / "native")), \
                     patch.object(demo.launcher, "_build_images"), \
                     patch.object(demo.server_config, "generate_server_configuration"), \
                     patch.object(demo.launcher, "run", side_effect=lambda *_: startup.append("start stand and agent")), \
-                    patch.object(demo, "install_repository", side_effect=lambda *_: startup.append("install integrations")) as install, \
+                    patch.object(demo_support, "install_repository", side_effect=lambda *_: startup.append("install integrations")) as install, \
                     patch.object(demo.launcher, "_run_compose") as compose, \
                     patch.object(demo.integration, "LocalStandClient") as client:
-                result = demo.run_stand(root, source, None, github_repository="Example/Tickets")
+                result = demo_support.run_stand(root, source, None, github_repository="Example/Tickets")
             self.assertEqual(result, retained)
             profiles = demo._read_json(root / "factory-demo/factory-profiles.json")
             self.assertEqual(profiles["projects"][0]["role_profiles"], runtime_project["role_profiles"])
@@ -240,20 +242,21 @@ class FactoryLocalStandTests(unittest.TestCase):
             with patch.object(demo.initializer,"initialize"), \
                     patch.object(demo.launcher,"_prepare_native_installation",return_value=types.SimpleNamespace(path=root/"native")), \
                     patch.object(demo.launcher,"_build_images"), patch.object(demo.launcher,"_run_compose"), \
-                    patch.object(demo.launcher,"run"), patch.object(demo,"bootstrap_server",return_value=nullcontext(object())) as bootstrap, \
-                    patch.object(demo,"install_runtime",return_value=runtime), \
+                    patch.object(demo.launcher,"run"), patch.object(demo_support,"bootstrap_server",return_value=nullcontext(object())) as bootstrap, \
+                    patch.object(demo_support,"install_runtime",return_value=runtime), \
                     patch.object(demo.integration,"LocalStandClient",side_effect=AssertionError("the gateway is stopped")):
-                actual=demo.run_stand(root,source,None)
+                actual=demo_support.run_stand(root,source,None)
             self.assertEqual(actual,retained)
             bootstrap.assert_called_once_with(root,root/"native")
             profiles=demo._read_json(root/"factory-demo/factory-profiles.json")
             self.assertIn("codex",profiles["projects"][0]["role_profiles"])
 
     def test_command_accepts_an_explicit_issue_repository_independent_of_build_source(self):
-        with patch.object(demo, "run_stand", return_value={}) as start:
-            self.assertEqual(demo.main(["--github-repository", "Example/Tickets"]), 0)
+        with patch.object(demo, "run_triage_stand", return_value={}) as start:
+            self.assertEqual(demo.main(["--github-repository", "Example/Tickets",
+                "--source-repository", "https://github.com/Example/Code"]), 0)
         self.assertEqual(start.call_args.kwargs["github_repository"], "Example/Tickets")
-        self.assertEqual(start.call_args.args[1], "https://github.com/OctaHive/OctaCity")
+        self.assertEqual(start.call_args.args[1], "https://github.com/Example/Code")
 
     @unittest.skipUnless(os.name == "posix", "private integration bundles require POSIX ownership and modes")
     def test_prepares_confined_integration_without_changing_existing_server_or_demo_data(self):
@@ -266,7 +269,7 @@ class FactoryLocalStandTests(unittest.TestCase):
             receipt = root / "evidence/factory-demo.json"
             receipt.parent.mkdir()
             receipt.write_text('{"retained":"run-history"}')
-            bundle = demo.configure_integrations(root, "OctaHive/OctaCity", native_repository_id="1234", adapter_digest="ab" * 32)
+            bundle = configure_integrations(root, "OctaHive/OctaCity", native_repository_id="1234", adapter_digest="ab" * 32)
             config = tomllib.loads((bundle / "server.toml").read_text())
             self.assertEqual(config["integration_management"]["peer_uid"], 101)
             self.assertEqual(config["integration_management"]["socket_path"], "/run/octacity-management/management.sock")
@@ -287,7 +290,7 @@ class FactoryLocalStandTests(unittest.TestCase):
             self.assertEqual(json.loads(receipt.read_text()), {"retained":"run-history"})
             for path in bundle.iterdir():
                 self.assertEqual(path.stat().st_mode & 0o777, 0o700 if path.is_dir() else 0o600)
-            again = demo.configure_integrations(root, "OctaHive/OctaCity", native_repository_id="1234", adapter_digest="ab" * 32)
+            again = configure_integrations(root, "OctaHive/OctaCity", native_repository_id="1234", adapter_digest="ab" * 32)
             self.assertEqual(again, bundle)
 
     def test_demo_rejects_a_failed_run_even_if_it_previously_reached_a_human_gate(self):
@@ -298,13 +301,13 @@ class FactoryLocalStandTests(unittest.TestCase):
                 return {"state": "failed"}
 
         with self.assertRaisesRegex(RuntimeError, "stopped in failed"):
-            demo._wait_for_demo(Api(), "run", "human_gate")
+            demo_support._wait_for_demo(Api(), "run", "human_gate")
 
     def test_command_honors_the_standard_stand_root_environment(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "stand"
             with patch.dict(os.environ, {"OCTACITY_LOCAL_STAND_ROOT": str(root)}), \
-                    patch.object(demo, "run_stand", return_value={}) as start:
+                    patch.object(demo, "run_triage_stand", return_value={}) as start:
                 self.assertEqual(demo.main([]), 0)
             self.assertEqual(start.call_args.args[0], root)
 
@@ -325,7 +328,7 @@ class FactoryLocalStandTests(unittest.TestCase):
     @unittest.skipUnless(os.environ.get("OCTACITY_RUN_FACTORY_STAND_DEMO") == "1",
                          "starts and retains the real local Factory demonstration stand")
     def test_one_launch_leaves_live_factory_with_completed_and_human_gated_runs(self):
-        receipt = demo.run_stand(state.DEFAULT_ROOT, "https://github.com/OctaHive/OctaCity", None)
+        receipt = demo_support.run_stand(state.DEFAULT_ROOT, "https://github.com/OctaHive/OctaCity", None)
         self.assertEqual(receipt["origin"], "https://octacity.localhost:8443")
         self.assertEqual(set(receipt["runs"]), {"automatic", "manual"})
         client = demo.integration.LocalStandClient(state.DEFAULT_ROOT, receipt["origin"])
@@ -342,7 +345,7 @@ class FactoryLocalStandTests(unittest.TestCase):
         expected = demo._read_json(state.DEFAULT_ROOT / "evidence/factory-demo.json")
         with patch.object(demo.integration.LocalStandClient, "post",
                           side_effect=AssertionError("a seeded stand must not publish demonstration work again")):
-            actual = demo.run_stand(state.DEFAULT_ROOT, "https://github.com/OctaHive/OctaCity", None)
+            actual = demo_support.run_stand(state.DEFAULT_ROOT, "https://github.com/OctaHive/OctaCity", None)
         self.assertEqual(actual, expected)
 
     def test_prerequisites_bind_one_real_source_pipeline_configuration_and_trigger(self):
@@ -355,7 +358,7 @@ class FactoryLocalStandTests(unittest.TestCase):
                 calls.append((path, identity, copy.deepcopy(body)))
                 return {"resource": {"id": identity}}
 
-        result = demo.prepare_resources(Api(), "00000000-0000-0000-0000-000000000003",
+        result = demo_support.prepare_resources(Api(), "00000000-0000-0000-0000-000000000003",
                                         "https://github.com/OctaHive/OctaCity", "registry.example/runtime@sha256:" + "a" * 64,
                                         str(namespace))
         configuration = next(row for row in calls if row[0] == "/api/v1/build-configurations")
@@ -430,7 +433,7 @@ class FactoryLocalStandTests(unittest.TestCase):
         fixture["flows"].append({"key": "configured-caller", "definition": {
             "root": {"nodes": [{"kind": "subflow_call", "subflow": {
                 "$fixture": "flows.operator-chosen-flow.closure.root"}}]}}, "configuration": {"enabled": True}})
-        result = demo.publish_flows(Api(), project, fixture, uuid.UUID("00000000-0000-0000-0000-000000000001"))
+        result = demo_support.publish_flows(Api(), project, fixture, uuid.UUID("00000000-0000-0000-0000-000000000001"))
         self.assertEqual(calls[0][2], {"project_id": project, "identity": "approved", "version": "v1", "shape": {"type": "boolean"}})
         self.assertEqual(calls[1][2]["definition"]["root"], {"entry": "arbitrary-review", "nodes": [
             {"key": "arbitrary-review", "kind": "human_gate", "input_schema": schema["reference"]}]})

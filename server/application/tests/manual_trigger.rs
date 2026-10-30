@@ -534,7 +534,7 @@ fn unknown_manual_trigger_is_rejected_before_vcs_resolution() {
   });
 }
 
-#[path = "support/manual_trigger_context.rs"]
+#[path = "../src/testing/ordinary_context.rs"]
 mod manual_trigger_context;
 
 struct Fixture {

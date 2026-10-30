@@ -30,6 +30,7 @@ GATEWAY_HOSTNAMES = (
     "cache.localhost",
     "objects.localhost",
 )
+GATEWAY_PEER_HOSTNAMES = frozenset({"host.microsandbox.internal"})
 GATEWAY_HTTPS_PORT = 8443
 CREDENTIAL_FILES = {
     "database_password": "postgres-password",
@@ -166,8 +167,8 @@ def _signing_public_key(signing_key: Path, openssl: str) -> bytes:
     return base64.b64encode(public_der[len(ED25519_PUBLIC_DER_PREFIX) :]) + b"\n"
 
 
-def _pki_configuration() -> str:
-    names = "\n".join(f"DNS.{index} = {name}" for index, name in enumerate(GATEWAY_HOSTNAMES, 1))
+def _pki_configuration(hostnames: tuple[str, ...] = GATEWAY_HOSTNAMES) -> str:
+    names = "\n".join(f"DNS.{index} = {name}" for index, name in enumerate(hostnames, 1))
     return f"""
 [req]
 prompt = no
@@ -255,6 +256,38 @@ def certificate_dns_names(certificate: Path, openssl: str) -> set[str]:
     return set(re.findall(r"DNS:([A-Za-z0-9.-]+)", _certificate_text(certificate, openssl)))
 
 
+def ensure_gateway_peer(root: Path, hostname: str, *, openssl: str = "openssl") -> None:
+    """Extend the existing gateway leaf certificate, preserving CA and private keys.
+
+    Call before starting the gateway. Retained roots keep their trust anchor;
+    repeated setup does not rotate a certificate that already covers the peer.
+    """
+    if hostname not in GATEWAY_PEER_HOSTNAMES:
+        raise InitializationError("gateway peer hostname is invalid")
+    initialized = validate_initialized_state(root, openssl=openssl)
+    paths = {name: Path(value) for name, value in initialized["pki"].items()}
+    names = certificate_dns_names(paths["gateway_certificate"], openssl)
+    if hostname in names:
+        return
+    names.update(GATEWAY_HOSTNAMES)
+    names.add(hostname)
+    with private_umask(), tempfile.TemporaryDirectory(prefix=".gateway-peer-", dir=paths["gateway_certificate"].parent) as temporary:
+        staging = Path(temporary)
+        configuration, request, certificate = staging / "openssl.cnf", staging / "gateway.csr", staging / "gateway.pem"
+        configuration.write_text(_pki_configuration(tuple(sorted(names))))
+        _run_openssl(openssl, ["req", "-new", "-sha256", "-key", str(paths["gateway_private_key"]),
+            "-out", str(request), "-subj", "/CN=octacity.localhost", "-config", str(configuration)],
+            "request the gateway peer certificate")
+        _run_openssl(openssl, ["x509", "-req", "-sha256", "-days", "825", "-in", str(request),
+            "-CA", str(paths["ca_certificate"]), "-CAkey", str(paths["ca_private_key"]),
+            "-set_serial", f"0x{secrets.token_hex(16)}", "-out", str(certificate),
+            "-extfile", str(configuration), "-extensions", "gateway_extensions"], "sign the gateway peer certificate")
+        _run_openssl(openssl, ["verify", "-CAfile", str(paths["ca_certificate"]), str(certificate)],
+            "verify the gateway peer certificate")
+        certificate.chmod(PUBLIC_FILE_MODE)
+        certificate.replace(paths["gateway_certificate"])
+
+
 def _certificate_public_key(certificate: Path, openssl: str) -> bytes:
     return _run_openssl(
         openssl,
@@ -303,7 +336,8 @@ def validate_pki(directory: Path, secrets_directory: Path, openssl: str) -> None
         raise InitializationError("local CA certificate lacks CA authority")
     if "CA:FALSE" not in _certificate_text(paths["gateway_certificate"], openssl):
         raise InitializationError("gateway certificate is not constrained to an end entity")
-    if certificate_dns_names(paths["gateway_certificate"], openssl) != set(GATEWAY_HOSTNAMES):
+    names = certificate_dns_names(paths["gateway_certificate"], openssl)
+    if not set(GATEWAY_HOSTNAMES) <= names <= set(GATEWAY_HOSTNAMES) | GATEWAY_PEER_HOSTNAMES:
         raise InitializationError("gateway certificate SANs differ from the local stand hosts")
     ca_public = _certificate_public_key(paths["ca_certificate"], openssl)
     gateway_public = _certificate_public_key(paths["gateway_certificate"], openssl)
@@ -365,6 +399,29 @@ def initialize(
         "credentials": {name: str(path) for name, path in credentials.items()},
         "pki": {name: str(pki_directory / filename) for name, filename in PKI_FILES.items()},
     }
+
+
+def stage_server_identity(root: Path, destination: Path, *, openssl: str = "openssl") -> None:
+    """Snapshot only the initialized Server identity, excluding other private owners.
+
+    AI logins and scoped investigation credentials may share the private stand
+    root. They are never implicitly included in bootstrap/update staging.
+    """
+    initialized = validate_initialized_state(root, openssl=openssl)
+    ensure_private_directory(destination)
+    for group, directory in (("credentials", "secrets"), ("pki", "pki")):
+        ensure_private_directory(destination / directory)
+        for name, source in initialized[group].items():
+            source = Path(source)
+            mode = PUBLIC_FILE_MODE if group == "pki" and name in PUBLIC_PKI_FILES else PRIVATE_FILE_MODE
+            contents = state.read_regular_file(source, "Server identity", max_bytes=MAX_CREDENTIAL_BYTES,
+                modes=frozenset({mode}))
+            target = destination / directory / source.name
+            if state.publish_exclusive_private_file(target, contents):
+                target.chmod(mode)
+            elif state.read_regular_file(target, "staged Server identity", max_bytes=MAX_CREDENTIAL_BYTES,
+                    modes=frozenset({mode})) != contents:
+                raise InitializationError("staged Server identity differs")
 
 
 def validate_initialized_state(

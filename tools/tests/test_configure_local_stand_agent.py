@@ -454,6 +454,14 @@ else:
         import local_stand_lifecycle as lifecycle
 
         profiles, policy = self._factory_update_inputs()
+        directory = Path(self.temporary.name)
+        reader_token, readers = directory / "scope-token", directory / "readers.json"
+        reader_token.write_text("ocmcp.triage-issues." + "ab" * 32)
+        readers.write_text(json.dumps({"version": 1, "readers": [{"id": "triage-issues",
+            "project_id": "10000000-0000-4000-8000-000000000001", "expires_at_unix_ms": 2_000_000_000_000,
+            "credential_file": str(reader_token)}]}))
+        for path in (reader_token, readers):
+            path.chmod(0o600)
         original = {path.relative_to(self.root): path.read_bytes()
                     for path in (self.root / "config").rglob("*") if path.is_file()}
         credential = self.credential.read_bytes()
@@ -461,9 +469,12 @@ else:
             with self.assertRaisesRegex(RuntimeError, "registration failed"):
                 with updates.factory_installation_update(
                     self.root, self.installation, owner=owner, factory_profiles=profiles,
-                    factory_agent_profile=policy, preflight=lambda _: None, stop=lambda: None,
+                    factory_agent_profile=policy, factory_issue_mcp_readers=readers,
+                    preflight=lambda _: None, stop=lambda: None,
                 ):
                     self.assertIn(b"mcp.example", (self.root / "config/agent.toml").read_bytes())
+                    installed = tomllib.loads((self.root / "config/server/server.toml").read_text())
+                    self.assertEqual(installed["issue_mcp_readers"][0]["project_id"], "10000000-0000-4000-8000-000000000001")
                     raise RuntimeError("registration failed")
         self.assertEqual({path.relative_to(self.root): path.read_bytes()
                           for path in (self.root / "config").rglob("*") if path.is_file()}, original)
@@ -593,19 +604,26 @@ else:
         }]}))
         for path in (configuration, credential, connectors):
             path.chmod(0o600)
+        issue_credential, readers = directory / "issue-reader.key", directory / "issue-readers.json"
+        issue_credential.write_text("ocmcp.triage-issues." + "ab" * 32)
+        readers.write_text(json.dumps({"version": 1, "readers": [{"id": "triage-issues",
+            "project_id": "11111111-1111-4111-8111-111111111111", "expires_at_unix_ms": 2_000_000_000_000,
+            "credential_file": str(issue_credential)}]}))
+        for path in (issue_credential, readers):
+            path.chmod(0o600)
         shutil.rmtree(self.root / "config/server")
         server.generate_server_configuration(self.root, self.installation,
-            factory_profiles=profiles, factory_signal_connectors=connectors)
+            factory_profiles=profiles, factory_signal_connectors=connectors, factory_issue_mcp_readers=readers)
         installed = self.root / "config/server"
-        retained = {path.name: path.read_bytes() for path in installed.glob("factory-signal-*")}
+        retained = {path.name: path.read_bytes() for pattern in ("factory-signal-*", "factory-issue-mcp-*") for path in installed.glob(pattern)}
         with lifecycle.LifecycleState(self.root) as owner, mock.patch.object(CONFIGURATOR, "_require_apple_silicon"):
             with updates.factory_installation_update(
                 self.root, self.installation, owner=owner, factory_profiles=profiles,
                 factory_agent_profile=policy, preflight=lambda _: None, stop=lambda: None,
             ):
                 pass
-        self.assertEqual({path.name: path.read_bytes() for path in installed.glob("factory-signal-*")}, retained)
-        self.assertTrue(all(stat.S_IMODE(path.stat().st_mode) == 0o600 for path in installed.glob("factory-signal-*")))
+        self.assertEqual({path.name: path.read_bytes() for pattern in ("factory-signal-*", "factory-issue-mcp-*") for path in installed.glob(pattern)}, retained)
+        self.assertTrue(all(stat.S_IMODE((installed / name).stat().st_mode) == 0o600 for name in retained))
 
     def test_factory_update_retains_runtime_support_files_at_the_existing_installation_depth_limit(self):
         import local_stand_installation_update as updates
@@ -688,6 +706,30 @@ else:
         self.assertTrue(configuration["tool_executables"]["issue-reader"]["standalone"])
         self.assertEqual(configuration["factory_permissions"], permissions)
         self.assertEqual(configuration["allowed_network_hosts"], ["api.openai.com"])
+
+    def test_native_login_file_reference_is_preserved_without_copying_the_host_home(self):
+        policy, _, _ = self._factory_profile()
+        private = Path(self.temporary.name) / "private-native-login"
+        private.mkdir(mode=0o700)
+        credential = private / "auth.json"
+        credential.write_text('{"auth_mode":"chatgpt","tokens":{"access_token":"native-file-canary"}}')
+        credential.chmod(0o600)
+        (private / "config.toml").write_text("unselected MCP settings")
+        references = {"model-login": {"path": str(credential), "destination": "codex/auth.json", "sensitive_fields": ["/tokens"], "persist_updates": True}}
+        policy.write_text(
+            f'factory_credential_profiles = {CONFIGURATOR._toml_value(references)}\n' + policy.read_text()
+        )
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
+        receipt = CONFIGURATOR.generate_agent_configuration(
+            self.root, self.installation, repository=REPOSITORY, home=Path.home(), openssl=self.openssl,
+            host_system="Darwin", host_machine="arm64", factory_agent_profile=policy,
+        )
+        contents = Path(receipt["config"]).read_bytes()
+        self.assertEqual(tomllib.loads(contents.decode())["factory_credential_profiles"], references)
+        self.assertNotIn(b"native-file-canary", contents)
+        self.assertFalse((Path(receipt["config"]).parent / "auth.json").exists())
+        CONFIGURATOR.validated_launch_plan(self.root.resolve(), self.installation, receipt)
+        CONFIGURATOR.preflight_factory_agent_profile(self.root, self.installation, policy)
 
     def test_factory_credential_references_remain_agent_owned_across_restart(self):
         policy, _, _ = self._factory_profile()

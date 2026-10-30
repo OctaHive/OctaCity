@@ -152,6 +152,12 @@ async fn packaged_source_only_import_creates_one_visible_canonical_issue_without
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Source installation, disposable PostgreSQL/S3 and nginx"]
+async fn packaged_factory_stand_enrolls_github_from_a_private_token_without_native_writes() {
+  source_setup::stand_github_enrollment().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "requires packaged Server/Console, PostgreSQL, object storage, nginx and native Source adapter"]
 async fn packaged_source_gateway_preserves_scoped_issue_mcp_authority() {
   source_triage::issue_mcp().await;

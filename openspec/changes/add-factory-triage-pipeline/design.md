@@ -160,6 +160,71 @@ Task 3.3 qualifies recovery faults and late authorization checks; see
 
 ### 5. Provide bounded, provenance-bearing context
 
+The supported `tools/factory-stand` default installs this triage pipeline through
+the ordinary preset resolver and publication APIs. It installs the Project and
+analyst roles with the operator-selected GPT-6.1 Sol model, publishes an initial
+OctaCity goals document through the shared Project input owner, and leaves intake
+disabled until the operator reviews and enables the configuration. Installation
+does not manufacture demonstration Work or start model calls. The Console can
+read the selected goals and publish revised immutable bytes; selecting the new
+version is explicit, and already accepted Runs keep their original references.
+
+The launcher accepts an explicit owner-private GitHub token file rather than a
+token in source, command-line values, receipts or generated public configuration.
+It creates the native GitHub connection and Project grant for the installed
+resource's declared read/update capabilities. Provider token restrictions remain
+authoritative. OctaCity MCP gets a separate Project-scoped read credential; that
+credential grants no Reporter mutation or AI-provider authority.
+
+The selected native Codex client owns ChatGPT login handling. A typed entry in
+the existing Agent credential-profile installation selects only its private
+JSON login file and relative per-Job destination. Re-read the current private
+source for each Job, copy only that file into private execution scratch, redact
+nested credential values at the supervisor output boundary, and remove the copy
+with Job cleanup. Never import the workstation home, config, MCP settings or
+sessions as model context. The trusted compiler pins native-file authentication
+in its task digest, sets the isolated `CODEX_HOME`, and omits API-key fallback.
+Existing API-key installations retain their task bytes and identity. No new
+client, authentication broker, Factory state owner or public credential-bearing
+JobSpec field is introduced. Native login recognition is distinct from a
+successful model invocation and does not by itself prove model entitlement.
+
+Sensitive JSON subtrees are selected by installed JSON pointers, without
+provider-specific parsing in the Agent. Native updates may be retained only
+when the operator explicitly selects an Agent-owned private installation.
+Serialize Jobs using that installation and atomically retain the native
+client's updated file after backend destruction, including failed execution.
+Seed a stand-owned copy once; do not write back into the workstation's personal
+cache or overwrite a refreshed installation with its original seed. Reseeding
+requires the installation to be stopped. Authentication and refresh remain
+native-client operations, not an Agent OAuth implementation.
+
+The per-Job credential guard retains original and refreshed sensitive values.
+Supervision rechecks the current execution copy before releasing messages.
+Before entering Uploading, the existing output lifecycle checks frozen file,
+report and archive bytes and refuses credential-bearing snapshots. It does not
+rewrite traces, result records or provenance digests. Unsafe or uninspectable
+credential files prevent publication. This verbatim-value exclusion does not
+claim protection against deliberately transformed exfiltration.
+
+Accounting follows the selected billing mode through the existing usage owner.
+API execution keeps token and monetary budgets and requires a verified cost
+counter or operator-supplied rates. An explicit subscription policy accepts
+native token/time counters without inventing a monetary price. It cannot be
+installed for API-key authentication. Token accounting remains available in
+subscription mode, while technical execution time, attempt and resource ceilings
+remain bounded. The existing finite budget contract is retained: its monetary
+ceiling applies to known expenses, and cannot bound an unknown subscription
+price. This change adds no nullable-budget API or optional-cap editor.
+
+Measured monetary totals preserve their historical numeric representation.
+An unpriced aggregate uses `{"status":"unknown","known_micro_units":N}`:
+known expenses still count toward monetary ceilings, and an unpriced component
+cannot turn into measured zero during aggregation or persistence. Observations
+with unknown cost cannot be used as declared admission reservations. Native
+login recognition and accounting support alone do not establish entitlement or
+complete the packaged deployment qualification.
+
 The reviewed setup selects Project goals/rules/documents and their immutable
 references, the ticket source scope and independently selected code Repository.
 Project assessment receives the frozen ticket and declared Project context, then

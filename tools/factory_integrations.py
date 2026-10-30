@@ -6,7 +6,9 @@ Factory inputs or task-card identities. Credentials are provisioned by the UI.
 from __future__ import annotations
 
 import hashlib
+import copy
 import json
+import uuid
 from pathlib import Path
 import re
 import subprocess
@@ -29,7 +31,86 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         return None
 
 
-def install_repository(root: Path, repository: str) -> Path:
+def read_github_token(path: Path) -> str:
+    """Read only an explicitly selected private credential, never ambient login state."""
+    try:
+        value = state.read_regular_file(path, "GitHub credential", max_bytes=65536,
+            modes=frozenset({0o600})).decode("utf-8").rstrip("\r\n")
+        if not value or any(character.isspace() or ord(character) < 32 for character in value):
+            raise ValueError("invalid credential")
+        return value
+    except (OSError, UnicodeError, ValueError, state.StateError):
+        raise ValueError("GitHub credential file is invalid") from None
+
+
+def installed_github_resource(root: Path) -> dict:
+    """Read the one explicit resource installed by the personal stand's normal owner."""
+    catalog = state.load_json_object(state.read_regular_file(root / "config/integrations/catalog.json",
+        "GitHub installation", max_bytes=4 * 1024 * 1024, modes=frozenset({0o600})), "GitHub installation")
+    installation, = catalog["installations"]
+    resource, = installation["resources"]
+    endpoint, = installation["endpoints"]
+    return {"installation": installation["installation"], "resource": resource, "endpoint": endpoint}
+
+
+def ensure_github_connection(client, root: Path, project: str, installed: dict, token_file: Path, namespace: uuid.UUID) -> dict:
+    """Retain only an installation receipt; current grants and credentials stay server-owned."""
+    receipt = root / "evidence/factory-github-connection.json"
+    expected = {"id": str(uuid.uuid5(namespace, "github-connection")), "version": 1,
+        "project_id": project, "resource": installed["resource"]["reference"],
+        "purposes": [entry["purpose"] for entry in installed["resource"]["capabilities"]]}
+    if receipt.exists() or receipt.is_symlink():
+        actual = state.load_json_object(state.read_regular_file(receipt,
+            "GitHub installation receipt", max_bytes=65536, modes=frozenset({0o600})), "GitHub installation receipt")
+        if actual != expected:
+            raise ValueError("retained GitHub connection belongs to another installation")
+        return actual
+    result = enroll_github_connection(client, project, installed, token_file, namespace)
+    state.ensure_private_directory(receipt.parent)
+    if not state.publish_exclusive_private_file(receipt, _json(result)):
+        raise ValueError("GitHub installation changed during publication; retry")
+    return result
+
+
+def enroll_github_connection(client, project: str, installed: dict, token_file: Path, namespace: uuid.UUID) -> dict:
+    """Enroll the selected resource with all installed purposes through protected management.
+
+    Native write permission remains unverified until an actual reviewed effect.
+    Stable replay keys preserve revocation and never create another connection.
+    """
+    token = read_github_token(token_file)
+    connection = str(uuid.uuid5(namespace, "github-connection"))
+    path = f"/api/v1/integrations/{connection}"
+    resource = installed["resource"]
+    capabilities = resource["capabilities"]
+    purposes = [capability["purpose"] for capability in capabilities]
+    key = lambda operation: f"{namespace}-github-{operation}"
+    client.post(f"{path}/versions", key("connection"), {"intent": {
+        "id": connection, "expected_current_version": None, "draft": {
+            "name": f"GitHub {resource['locator']}", "installation": installed["installation"],
+            "endpoint": installed["endpoint"], "authentication": "token",
+            "resources": [{"reference": resource["reference"], "purposes": purposes}]}}}, expected_version=0)
+    for revision, capability in enumerate(capabilities):
+        client.post(f"{path}/credentials", key(f"credential-{capability['purpose']}"), {"intent": {
+            "id": connection, "expected_metadata_version": 1, "expected_revision": revision,
+            "action": {"operation": "credential", "reference": capability["credential"],
+                "kind": "provision", "activate_connection": False}}, "value": token}, expected_version=revision)
+    if "task_read" in purposes:
+        client.post(f"{path}/checks", key("read-check"), {"version": 1,
+            "resource": resource["reference"], "purpose": "task_read"})
+    client.post(f"{path}/state", key("activate"), {"intent": {"id": connection,
+        "expected_metadata_version": 1, "expected_revision": len(capabilities),
+        "action": {"operation": "activate"}}}, expected_version=len(capabilities))
+    client.post(f"{path}/projects/{project}/access", key("project-access"), {"intent": {
+        "connection_id": connection, "project_id": project, "connection_version": 1,
+        "expected_current_version": None,
+        "resources": [{"reference": resource["reference"], "purposes": purposes}]}}, expected_version=0)
+    return {"id": connection, "version": 1, "project_id": project,
+        "resource": resource["reference"], "purposes": purposes}
+
+
+def install_repository(root: Path, repository: str, *, preparation_mapping: dict | None = None,
+                       preparation_source: dict | None = None) -> Path:
     """Reuse retained identity; resolve a fresh selection without ambient tokens or CLI sessions."""
     if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository) or any(p in {".", ".."} for p in repository.split("/")):
         raise ValueError("GitHub task repository must be owner/repository")
@@ -64,7 +145,8 @@ def install_repository(root: Path, repository: str) -> Path:
     # Rebuild the expected bytes and use the existing immutable-bundle validator;
     # retained metadata alone cannot authorize altered profiles or a different adapter.
     return configure_integrations(root, repository, native_repository_id=native_id, adapter_digest=digest,
-                                  repository_labels=labels)
+                                  repository_labels=labels, preparation_mapping=preparation_mapping,
+                                  preparation_source=preparation_source)
 
 
 def _public_json(path: str):
@@ -118,7 +200,8 @@ def _digest(value: bytes) -> str:
 
 
 def configure_integrations(root: Path, repository: str, *, native_repository_id: str, adapter_digest: str,
-                           repository_labels: tuple[str, ...] | list[str] = ()) -> Path:
+                           repository_labels: tuple[str, ...] | list[str] = (),
+                           preparation_mapping: dict | None = None, preparation_source: dict | None = None) -> Path:
     """Publish a separate immutable installation, retaining the existing server bundle and Runs."""
     if (not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
             or any(part in {".", ".."} for part in repository.split("/"))
@@ -180,6 +263,10 @@ name = "{name}"
     policy["mapping"]["definition"]["managed_label_groups"] = {
         f"repository-{index:03d}": [label] for index, label in enumerate(labels)}
     reader = policy["reader"]
+    if preparation_mapping is not None:
+        reader["preparation"]["mapping"] = copy.deepcopy(preparation_mapping)
+    if preparation_source is not None:
+        reader["preparation"]["source"] = copy.deepcopy(preparation_source)
     reader["read"] = catalog["checks"][0]
     reader["selection_labels"] = policy["selector"]["definition"]
     read = reader["read"]

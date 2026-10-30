@@ -45,6 +45,43 @@ class LocalStandInitializerTests(unittest.TestCase):
             openssl=self.openssl,
         )
 
+    def test_server_identity_snapshot_copies_only_core_credentials_and_pki(self):
+        original = self.initialize()
+        extra = self.root / "secrets/native-model"
+        extra.mkdir(mode=0o700)
+        login = extra / "auth.json"
+        login.write_text('{"private":"unselected-native-model-canary"}')
+        login.chmod(0o600)
+        destination = Path(self.temporary.name) / "server-stage"
+        INITIALIZER.stage_server_identity(self.root, destination)
+        self.assertEqual({path.name for path in (destination / "secrets").iterdir()},
+                         set(INITIALIZER.CREDENTIAL_FILES.values()))
+        self.assertEqual({path.name for path in (destination / "pki").iterdir()},
+                         set(INITIALIZER.PKI_FILES.values()))
+        for group in ("credentials", "pki"):
+            for source in original[group].values():
+                source = Path(source)
+                copied = destination / ("secrets" if group == "credentials" else "pki") / source.name
+                self.assertEqual(copied.read_bytes(), source.read_bytes())
+                self.assertEqual(copied.stat().st_mode & 0o777, source.stat().st_mode & 0o777)
+        self.assertEqual(login.read_text(), '{"private":"unselected-native-model-canary"}')
+
+    def test_gateway_can_add_a_microvm_peer_without_replacing_its_ca_or_private_key(self):
+        initialized = self.initialize()
+        ca = Path(initialized["pki"]["ca_certificate"])
+        key = Path(initialized["pki"]["gateway_private_key"])
+        before = (ca.read_bytes(), key.read_bytes())
+        INITIALIZER.ensure_gateway_peer(self.root, "host.microsandbox.internal", openssl=self.openssl)
+        certificate = Path(initialized["pki"]["gateway_certificate"])
+        names = INITIALIZER.certificate_dns_names(certificate, self.openssl)
+        self.assertIn("host.microsandbox.internal", names)
+        self.assertTrue(set(INITIALIZER.GATEWAY_HOSTNAMES) <= names)
+        self.assertEqual((ca.read_bytes(), key.read_bytes()), before)
+        INITIALIZER.validate_initialized_state(self.root, openssl=self.openssl)
+        retained = (certificate.read_bytes(), certificate.stat().st_mtime_ns)
+        INITIALIZER.ensure_gateway_peer(self.root, "host.microsandbox.internal", openssl=self.openssl)
+        self.assertEqual((certificate.read_bytes(), certificate.stat().st_mtime_ns), retained)
+
     def test_creates_private_separated_credentials_and_valid_local_pki(self):
         receipt = self.initialize()
 

@@ -1079,33 +1079,22 @@ normalizes PNG/JPEG/WebP uploads; publication decodes the complete raster throug
 the shared safe-preview mechanism. No remote image URL, extra file store,
 provider call or execution grant is introduced.
 
-The demonstration `tools/factory-stand` installs the compatible real Codex CLI
-and a Project role-profile authoring capability. Its plugin-owned advisory catalog
-provides model names and parameters, explicit refresh and manual entry; new
-profiles require an explicit model instead of using the technical contract alias.
-`default` and `pro` remain arbitrary profile names. Setup snapshots only existing
-Codex authentication into the private Runtime home, retaining no workstation
-instructions, MCP settings or skills. Missing login permits advisory/manual
-catalog use. This metadata installation creates no Role, profile, task or Build
-and grants no execution authority. An executable reasoning stage still requires
-its separately installed Codex executor, Agent credentials and policy through the
-[ordinary Factory installation](local-stand.md#optional-factory-installation).
-The released plugin's Runtime-settings capability also exposes its HTTP/stdio
-transport families. The stand installs no MCP executable, connection, Project grant,
-endpoint or sample binding. Its default deny-all permission ceiling remains unchanged;
-transport support alone does not authorize an endpoint or executable. Operators must
-qualify the corresponding installation/backend permissions independently.
+The default `tools/factory-stand` installs the actual two-stage triage pipeline,
+its explicit `gpt-6.1-sol` profiles and the qualified native Codex executable.
+It uses a separate private Agent-owned ChatGPT login installation and a
+Project-scoped investigation MCP credential. Server retains accepted state and
+results. Intake remains disabled for review; startup never creates a Run or
+replays an accepted decision. Follow the [default stand procedure](local-stand.md#default-two-stage-triage)
+for token-file enrollment, editable goals, readiness, activation and recovery.
 
-On restart, the cached executable/authentication bundle is retained and its existing
-Project catalog gains only derived support metadata. The launcher upgrades a generated
-catalog missing that metadata through the existing private bundle publication, retains
-the same PostgreSQL URL/volume, and refuses to replace customized installation files.
-Reviewed Runtime settings, retained transport versions and mutation receipts stay in
-PostgreSQL, outside the generated `factory-runtime/project.json` and profile files.
-Normal `down`/`up` preserves that state; an explicit destructive stand reset does not.
-Model discovery still belongs to the plugin, and restarting does not create profiles,
-replay operator Work or publish MCP/grants. An empty Runtime list therefore still
-indicates missing or unavailable installed compatibility for that Project.
+Other operator-installed Runtime declarations may use plugin-owned advisory
+model discovery, manual model entry and parameter choices. `default` and `pro`
+remain arbitrary profile names. Transport discovery alone grants no endpoint,
+credential, Project-use or execution authority. Reviewed Runtime settings and
+mutation receipts belong to PostgreSQL; private executable/credential files
+belong to their existing installation owners. Ordinary restart preserves both;
+a confirmed destructive reset does not. An empty Runtime list indicates a
+missing or unavailable installed compatibility declaration for that Project.
 
 An installed role-profile declaration may attach `model_discovery` with an absolute
 `executable`, its `executable_sha256`, and an installation-owned `environment` map.

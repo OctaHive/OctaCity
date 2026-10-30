@@ -143,6 +143,21 @@ class LocalStandLauncherTests(unittest.TestCase):
     def arguments(self, command: str, *extra: str):  # type: ignore[no-untyped-def]
         return launcher.parse_arguments((command, "--root", str(self.root), *extra))
 
+    def test_invalid_issue_mcp_installation_is_rejected_before_stand_creation_without_private_output(self):
+        readers = self.root.parent / "readers.json"
+        readers.write_text('{"version":1,"readers":[{"private":"issue-reader-canary"}]}')
+        readers.chmod(0o600)
+        profiles = self.root.parent / "profiles.json"
+        profiles.write_text('{"version":1,"projects":[],"codex":[]}')
+        profiles.chmod(0o600)
+        result = subprocess.run([sys.executable, str(REPOSITORY / "tools/local-stand"), "up",
+            "--root", str(self.root), "--factory-profiles", str(profiles),
+            "--factory-issue-mcp-readers", str(readers)], capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("Issue MCP installation is invalid", result.stderr)
+        self.assertNotIn("issue-reader-canary", result.stdout + result.stderr)
+        self.assertFalse(self.root.exists())
+
     def test_factory_update_preflight_validates_packaged_files_offline_without_durable_mounts(self):
         import local_stand_installation_update as updates
 
@@ -293,10 +308,14 @@ class LocalStandLauncherTests(unittest.TestCase):
         connectors = self.root.parent / "connectors.json"
         delivery = self.root.parent / "delivery-installation"
         runtime = self.root.parent / "runtime-installation"
+        readers = self.root.parent / "readers.json"
+        readers.write_text('{"version":1,"readers":[]}')
+        readers.chmod(0o600)
         arguments = self.arguments("up", "--factory-profiles", str(profiles),
                                    "--factory-signal-connectors", str(connectors),
                                    "--factory-delivery-bundle", str(delivery),
-                                   "--factory-runtime-bundle", str(runtime))
+                                   "--factory-runtime-bundle", str(runtime),
+                                   "--factory-issue-mcp-readers", str(readers))
         native = launcher.NativeInstallation(Path("/verified/native"), {"sources": {}})
         with (
             mock.patch.object(launcher.initializer, "initialize"),
@@ -314,6 +333,7 @@ class LocalStandLauncherTests(unittest.TestCase):
         self.assertEqual(configure.call_args.kwargs["factory_signal_connectors"], connectors)
         self.assertEqual(configure.call_args.kwargs["factory_delivery_bundle"], delivery)
         self.assertEqual(configure.call_args.kwargs["factory_runtime_bundle"], runtime)
+        self.assertEqual(configure.call_args.kwargs["factory_issue_mcp_readers"], readers)
         preflight.assert_called_once_with(self.root.resolve(), launcher.SERVER_IMAGE)
 
     def test_running_default_stand_does_not_ignore_requested_factory_installation(self):

@@ -192,113 +192,20 @@ unset CA_SHA256
 Keychain commands may prompt for the current user's approval. Restart an open
 browser if it does not notice a trust change immediately.
 
-## Factory demonstration in one command
+## Factory triage installation
 
-To start a disposable stand with Factory enabled and retained demonstration
-data, run from the repository root:
-
-```shell
-tools/factory-stand
-```
-
-The command prepares the same verified native installation, images, TLS,
-PostgreSQL, MinIO, and Agent as `tools/local-stand up`. It creates the owning
-Project through a temporary loopback-only bootstrap API, installs a private
-Factory catalog, and publishes two Flow definitions and configurations through
-the management API. Two ordinary Builds produce distinct retained input
-Artifacts. The resulting Factory Runs demonstrate:
-
-- automatic completion through a nested Flow and a deterministic risk rule;
-- a higher-risk Work item waiting at a human gate for an operator response.
-
-AI settings reuse the installed plugin's model catalog and qualified Runtime transport
-support. Reviewed MCP, integration and permission settings are stored in the existing
-PostgreSQL journal, separately from generated installation files. Normal restart
-preserves operator settings and execution history; the generated catalog upgrade adds
-only support metadata and refuses to overwrite customized files. No MCP server, grant,
-model preset or execution permission is enabled automatically. See
-[Runtime setup and persistence](factory.md#project-ai-agent-compatibility-declarations).
-
-No external model or decision-service credentials are needed. This demonstration
-uses native control nodes; it does not run model authoring, repository changes,
-or delivery. The graphs, risk condition, budgets, and cases are declared in
-[`factory-demo.json`](../../deployment/local-stand/fixtures/factory-demo.json).
-The script binds server-generated references without dispatching by Flow or
-node name.
-
-The same command installs the compatible real Codex CLI declared in
-[`factory-runtime.json`](../../deployment/local-stand/factory-runtime.json), verifies
-its release archive checksum, and publishes a Project Runtime choice for AI-agent
-profile authoring. The server builds its discovery plugin from the pinned Octa
-source with the same system libraries as Server; the Linux execution plugin keeps
-its separate released identity. Model names and parameter choices come from the
-plugin's `--describe-models` contract. Use **Refresh models** for an explicit update,
-or enter a model identifier manually when the plugin allows it. A new profile
-requires an explicit model choice; the technical model-contract identity is never
-submitted as its default model.
-
-In **Factory → AI agents**, open or create an agent, choose **Create profile**,
-select the Codex Runtime and a model, and save a profile named `default`. Repeat
-with the desired model/settings and name `pro`. These names carry no built-in
-model, permission or performance meaning. The original Role/Profile REST
-publication and validation contracts own both profiles.
-
-When `CODEX_HOME/auth.json` (default `~/.codex/auth.json`) exists, setup takes a
-private authentication-only snapshot for the isolated discovery Runtime. It does
-not copy `config.toml`, instructions, MCP configuration or local skills. The
-snapshot stays under the owner-only stand root and is copied to an executable
-private tmpfs with mode `0600`. Existing snapshots are reused; absence of a login
-does not prevent advisory discovery or manual model entry. Neither creating a
-profile nor refreshing the catalog starts a model task or spends execution
-budget. This installation adds authoring compatibility, not execution authority:
-using a profile in a reasoning stage still requires the separately qualified
-Codex executor, Agent credential/policy installation and ordinary Build binding
-below. The demonstration itself continues to use only native control nodes.
-
-An older, unmodified Factory demonstration gains this catalog on its next launch.
-The launcher validates the previous generated bundle, prepares the replacement,
-stops the stand through its ordinary lifecycle, and switches only the generated
-server configuration. Database/object volumes, operator data and demonstration
-receipts are preserved. It refuses to replace customized profiles; an ordinary
-stand is still not converted implicitly.
-
-Open `https://octacity.localhost:8443/` and select **Factory**. The command prints
-the Project, Flow, configuration, and Run IDs and retains them in
-`evidence/factory-demo.json` under the private stand root. Local CA trust is
-configured as described below.
-
-The default root and `OCTACITY_LOCAL_STAND_ROOT` match the ordinary launcher;
-`--root` overrides them. By default, the input repository is the public
-`OctaHive/OctaCity` repository and its current remote `HEAD` is frozen on first
-use. To select another published revision explicitly:
-
-```shell
-tools/factory-stand \
-  --source-repository https://github.com/OctaHive/OctaCity \
-  --source-revision <published-40-character-commit>
-```
-
-Repeating the same command reuses the frozen source, immutable installation,
-resources, Builds, and Runs through stable replay identities. It neither resets
-the database nor creates another demonstration. Do not run two lifecycle or
-demonstration commands concurrently. The stand still uses the single ordinary
-Compose project and fixed port `8443`.
-
-An already installed ordinary stand cannot be converted silently: the command
-refuses to replace a server bundle it did not prepare. Preserve any needed data
-and deliberately reset a disposable installation using the reset procedure
-below before its first Factory demonstration. Choosing another root does not
-create a second independent Compose project.
-
-Use `tools/local-stand status`, `logs`, and `down` to operate the resulting
-stand. Restart and refill it with `tools/factory-stand`; no profile files need
-to be prepared by hand. The separate integration verifier remains available
-for its wider ordinary CI/CD checks.
+The default `tools/factory-stand` command installs the actual two-stage triage
+pipeline with an explicit private GitHub token file and native ChatGPT login.
+It leaves intake disabled and creates no demonstration Work or Run. Follow the
+[default triage setup, Console and recovery procedure](#default-two-stage-triage).
+The private root and `OCTACITY_LOCAL_STAND_ROOT` match `tools/local-stand`;
+`--root` overrides them. All roots still share one Compose project and port 8443;
+choosing a different root does not create a second independent running stack.
+Do not operate two installations concurrently.
 
 ### Select an operator-owned Factory installation
 
-To start with a complete operator-reviewed Factory catalog instead of generated
-demonstration data, use the existing ordinary installer through `factory-stand`:
+To start with a complete operator-reviewed Factory catalog, use the existing ordinary installer through `factory-stand`:
 
 ```shell
 tools/factory-stand \
@@ -316,16 +223,16 @@ the packaged server also validates the installed catalog offline, using the same
 validator as installation updates. A rejected catalog prevents service activation.
 The same `--root` and `OCTACITY_LOCAL_STAND_ROOT` selection applies to this path.
 
-This path installs the selected catalog without merging generated demo profiles,
-downloading the demonstration Codex runtime or seeding demonstration Runs. A GitHub
+This path installs the selected catalog without merging generated triage profiles,
+downloading its Codex runtime or seeding Runs. A GitHub
 Source connection is installed only when explicitly selected with
 `--github-repository`; an MCP endpoint does not require an unrelated Source
 connection. Runtime-bundle and Agent-policy flags require `--factory-profiles`.
-Demo-only `--source-repository` and `--source-revision` flags cannot be combined
+Default triage `--source-repository` and `--source-revision` flags cannot be combined
 with the explicit catalog; the catalog and ordinary Build definitions own its
 execution inputs.
 
-Omitting these installation flags retains the original demonstration startup.
+Omitting these installation flags selects the default disabled triage installation.
 Ordinary startup still refuses to replace a different installation implicitly.
 
 To update an existing initialized stand, explicitly review and supply its complete
@@ -349,12 +256,12 @@ restores the previous configuration after stopping candidate services; it leaves
 the stand stopped so the operator can retry its previous explicit setup.
 
 Updates preserve PostgreSQL/object volumes, registration credentials, Agent work
-and cache, integration authority and demonstration receipts. Optional installed
+and cache, integration authority and installation receipts. Optional installed
 Runtime/Delivery/Signal bundles are retained when omitted from an update. Repeating
 identical inputs does not stop the stand for replacement. For an ordinary later
 `up`, repeat the installed catalog, Agent policy and optional bundle selections;
 `down` followed by `up` needs no reset. Installation updates do not publish profile
-versions, repin models/transports, change reviewed Runtime settings or replay demo
+versions, repin models/transports, change reviewed Runtime settings or replay
 Work. Existing qualification and revocation rules still govern retained profiles.
 The [packaged MCP qualification](../../openspec/changes/archive/2026-10-28-enable-local-stand-runtime-mcp/packaged-mcp-verification.md)
 records the tested macOS ARM64 → Microsandbox 0.7.6 → Linux ARM64 Codex 0.161.0
@@ -384,19 +291,20 @@ for the tested English/Russian narrow-keyboard path.
 
 ### GitHub connections in the personal Factory stand
 
-The ordinary `tools/factory-stand` command also prepares integration management
-and installs the demo task repository, `OctaHive/OctaCity`, on first use. Its
-selection is declared in `deployment/local-stand/fixtures/factory-demo.json`,
-separately from the code repository used by the demonstration Builds. Existing
-Factory stands without integration setup gain it on their next launch, retaining
-their Runs. Subsequent launches reuse an installed selection without resolving
-or replacing it. To select another public task repository on initial setup:
+The default `tools/factory-stand` installs the selected public task repository
+and enrolls its GitHub connection using the explicit private token file. Defaults
+are declared in `deployment/local-stand/factory-triage.json`; the code repository
+is selected separately. Initial selection of a different resource is explicit:
 
 ```shell
-tools/factory-stand --github-repository OctaHive/OctaCity
+tools/factory-stand --github-repository OWNER/REPO \
+  --github-token-file /absolute/private/github-token
 ```
 
-For task import/status synchronization without Factory demo resources or a model
+Existing unrelated stands are not converted implicitly. Compatible starts reuse
+the retained resource and connection without widening grants or undoing revocation.
+
+For task import/status synchronization without triage resources or a model
 runtime, use the ordinary stand entry point with an explicit public task resource:
 
 ```shell
@@ -407,8 +315,10 @@ Both commands use the same `factory_integrations.configure_integrations` seam.
 Its trusted defaults live in `deployment/local-stand/source-policy.json`:
 bounded Issue reads, an unrestricted native selector with editable narrowing,
 optional Factory task/acceptance preparation, and separately scoped Reporter
-effects/delivery bounds. The default acceptance rule reads `## Acceptance` from
+effects/delivery bounds. The ordinary Source acceptance rule reads `## Acceptance` from
 the native body; missing acceptance blocks Factory admission, not task import.
+Default triage instead selects its Project-bound versioned process-completion
+document and preserves missing ticket-authored acceptance.
 Default native effects support explicit open/closed state changes. On a fresh
 public-repository installation, the launcher also reads the existing GitHub label
 catalogue and installs those names as selectable additions/removals. The snapshot
@@ -444,10 +354,10 @@ performs no live repository write and qualifies no model or Agent backend. Older
 metadata-only pre-release test bundles require explicit trusted regeneration;
 retain old connection pins/history and review new metadata/grants. Future
 consolidated enrollment remains in `simplify-integration-setup`.
-The profiles contain no Project, code Repository or Factory target IDs:
-current connections, Project grants and explicitly published import/input/mapping
-controls resolve those independently while the server runs. Future enrollment
-should reuse this installation seam and the existing protected management APIs.
+Ordinary body-acceptance profiles contain no Project, code Repository or Factory
+target IDs. Triage process criteria explicitly bind the reviewed Project;
+current connection grants and published input controls still resolve execution
+authority independently. Enrollment reuses the existing protected management APIs.
 
 This is a pre-release test stand. Earlier metadata-only integration bundles are
 not silently rewritten into another native configuration: their pins differ.
@@ -463,14 +373,14 @@ resource ceiling. It never reads GitHub CLI sessions, local credential stores or
 `GITHUB_TOKEN` to configure the connection. Private-repository identity bootstrap
 is not provided by this setup.
 
-Open **Integrations**, create a named GitHub connection and select the installed
+For the ordinary resource-only setup, open **Integrations**, create a named GitHub connection and select the installed
 repository/purposes. Enter your token in the separate credential form. Reading
 tasks and updating them retain independent handles; remote token permissions do
 not grant an OctaCity Project access. Publish Project grants separately, then
 explicitly activate the connection if intended. No polling/input or task-card
 creation starts merely by installing or creating a connection.
 
-The optional overlay keeps the existing server bundle and demonstration receipts
+The optional overlay keeps the existing server bundle and installation receipts
 unchanged. Its separate private `config/integrations` bundle is immutable and
 reused on subsequent starts. A mismatched installation is rejected rather than
 overwritten. `tools/local-stand status`, `logs`, `down` and `reset` detect the same
@@ -522,6 +432,115 @@ separately.
 Use [Factory operations](factory.md) for the mode/readiness distinction and the
 operator journey. A demonstration or healthy stand does not replace the exact
 source revision's release, real-backend and provider/model qualification gates.
+
+#### Default two-stage triage
+
+`tools/factory-stand` installs the reviewed triage pipeline: a Project analyst
+assesses eligibility and a separate systems analyst classifies eligible work.
+Server retains their states, accepted results and exact selected Context.
+The launcher retains installation references only. Intake and Configuration
+start disabled; installation does not invoke a model or create a demonstration
+Build, Work or Run.
+
+On an initialized Apple Silicon host, sign in with the supported Codex CLI
+ChatGPT login first. Put the GitHub PAT in an owner-only regular file outside
+the repository, then use an empty disposable stand root:
+
+```shell
+chmod 0600 /absolute/private/github-token
+tools/factory-stand --root /absolute/private/triage-stand \
+  --github-token-file /absolute/private/github-token
+```
+
+The token is never a command-line value or repository setting. Enrollment uses
+the ordinary Integrations credential/check/activation and Project-access APIs
+for the installed GitHub resource and its supported purposes. This grants no
+additional GitHub permissions beyond the PAT. Override `--github-repository
+owner/repository` and `--source-repository https://github.com/owner/repository`
+explicitly for a different ticket/code repository; `--source-revision` pins a
+code revision independently of completion criteria.
+
+Both stage profiles select `gpt-6.1-sol`. The installer seeds only native
+`auth.json` from `CODEX_HOME` (default `~/.codex`), into a private Agent-owned
+credential installation. Native refreshes are retained there; startup does
+not overwrite them with the old seed. Workstation configuration, other MCP
+connections and session history are not copied. A missing/expired login or
+unavailable model entitlement requires operator remediation through Codex;
+no API-key fallback or custom OAuth client is installed.
+
+Subscription mode records tokens/time and reports monetary cost as unknown
+unless the native client provides it. API mode requires reported cost or
+explicit operator pricing. Finite technical budgets remain in force in both
+modes; unknown cost is never converted to zero. Reviewed model, network,
+resource and budget defaults are in `deployment/local-stand/factory-triage.json`.
+
+The investigation MCP token is a separate private credential, scoped to this
+Project's Issue search/read operations, with a 30-day expiry. It is distinct
+from the AI login and server Reporter credentials. The authenticated gateway
+listener is HTTPS on loopback port 8444, with only `/mcp/issues` exposed.
+`OCTACITY_LOCAL_STAND_MCP_PORT` changes that host port before installation.
+The isolated guest uses the stand's public CA through its standard trust store;
+no private key or credential enters an image. Only the eligibility stage
+receives the reviewed investigation connection. The analyst receives its
+explicit selected Context and accepted predecessor results through Server.
+
+Open the Console at `https://octacity.localhost:8443` after installing the
+public stand CA as described below. In the Project's Factory page, choose
+**Set up triage → Review triage prerequisites**. Under **Retained Project
+document**, select **OctaCity project goals**, then **Open document for viewing
+or editing**. Review an edit and confirm **Publish document**. This creates an
+immutable new revision; select it explicitly for each intended stage and
+publish a reviewed Configuration version. Existing accepted inputs continue
+to reference the original bytes. Project documents and the MCP token expire
+after 30 days: renew credentials through the existing private installation
+updater, publish fresh documents and review their selection before admitting
+new work. Startup does not silently renew or retarget accepted references.
+
+Before enabling intake, inspect the exact Configuration readiness and preview
+in Console. Resolve every blocked/unknown dependency, confirm separate stage
+profiles and Context, and keep Issue import independently disabled unless
+wanted. Initial Source selection is open/unlabeled tasks. Explicitly update
+the connection's label scope before configuring finite Reporter effects;
+the default installation does not infer writes from model output or create
+labels. Confirm the reviewed effect mapping and Reporter grants, then enable
+the Configuration and Source input through their ordinary versioned editors.
+Triage process completion means accepted assessment/classification; it does
+not claim implementation, passing CI, a delivered fix or a closed Issue.
+
+Results and local workflow status belong to their existing Server owners;
+Reporter delivery is a separate ordered receipt and can remain pending or
+forbidden after a decision is accepted. Retry/recovery must use those owners,
+not rerun a model or replay a provider write from the launcher. Read the two
+assessments, evidence/unresolved reproduction and delivery diagnostics on the
+Run. A real paid-model/GitHub-write pilot requires separate authorization.
+
+Stop and resume using the same private root:
+
+```shell
+tools/local-stand down --root /absolute/private/triage-stand
+tools/factory-stand --root /absolute/private/triage-stand
+```
+
+Resume reuses connection/resource/profile/document references and preserves
+operator changes. An omitted `--source-repository` reuses the saved code source;
+the public default applies only to a first installation. An explicitly different
+source is rejected. After a successful installation update, resume uses the
+effective private catalog, Agent policy and installed connector/credential inputs,
+rather than replaying their original seed files. It does not renew credentials
+or undo revocation. Existing unrelated Factory installations require a separate
+clean root; they are not migrated or reset implicitly. For rollback, disable
+intake, preserve database/object-store/private-root backups together, stop the
+stand and restore matching installation artifacts using the upstream updater.
+Confirmed reset below is only for deliberately disposable data.
+
+Additional external MCP servers are optional. Configure them through the
+selected AI plugin's supported Runtime editor/private installation with exact
+executable/transport/configuration pins and separate per-connection secret
+references. Qualify the ready-made server's native platform, auth, allowed
+resource scope, read-only tool list, capture and denied-write behavior before
+deployment. Mere presence in a model's home or a successful health check does
+not qualify it. Missing upstream support blocks readiness; do not introduce
+an implicit credential or transport fallback.
 
 Ordinary `tools/local-stand up` keeps Factory disabled without an installed
 catalog. To opt in manually, supply an operator
@@ -1036,7 +1055,7 @@ restore the original installation.
 Restore the matching database and object-store backups if those data are
 needed. For a disposable stand, use the confirmed reset procedure above to
 clear both host and server state together, then run `tools/factory-stand` to
-create a fresh Factory demonstration. The launcher does not reset data or
+create a fresh disabled triage installation. The launcher does not reset data or
 replace a rejected credential automatically.
 
 ### Browser reports an untrusted certificate

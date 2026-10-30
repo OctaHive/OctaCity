@@ -8,9 +8,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 from typing import Any
+import uuid
 from urllib.parse import quote
 
 import init_local_stand as initializer
@@ -193,6 +195,78 @@ def _connector_files(index: int) -> tuple[tuple[str, str, int], ...]:
     )
 
 
+def preflight_issue_mcp_readers(catalog: Path) -> None:
+    """Validate the explicit scope and private credential references before creating a stand."""
+    _issue_mcp_bundle(catalog.expanduser())
+
+
+def _issue_mcp_bundle(catalog: Path) -> tuple[bytes, dict[str, bytes]]:
+    """Translate explicit reader references into the existing private server bundle."""
+    try:
+        document = _load_json_object(_validate_regular_file(catalog, "Issue MCP installation",
+            MAX_FACTORY_PROFILE_BYTES, frozenset({PRIVATE_FILE_MODE})), "Issue MCP installation")
+        if set(document) != {"version", "readers"} or type(document["version"]) is not int or document["version"] != 1:
+            raise ValueError("catalog")
+        readers = document["readers"]
+        if not isinstance(readers, list) or len(readers) > 128:
+            raise ValueError("readers")
+        files, installed, names = {}, [], set()
+        for index, reader in enumerate(readers):
+            required = {"id", "project_id", "credential_file", "expires_at_unix_ms"}
+            if not isinstance(reader, dict) or not required <= set(reader) or set(reader) - required - {"issue_ids"}:
+                raise ValueError("reader")
+            identity = reader["id"]
+            if not isinstance(identity, str) or not re.fullmatch(r"[a-z0-9_-]{1,64}", identity) or identity in names:
+                raise ValueError("identity")
+            names.add(identity)
+            project = str(uuid.UUID(reader["project_id"]))
+            expiry = reader["expires_at_unix_ms"]
+            if type(expiry) is not int or not 0 < expiry <= 9223372036854775807:
+                raise ValueError("expiry")
+            source = reader["credential_file"]
+            if not isinstance(source, str) or not Path(source).is_absolute():
+                raise ValueError("credential reference")
+            credential = _validate_regular_file(Path(source), "Issue MCP credential", 65536,
+                frozenset({PRIVATE_FILE_MODE}))
+            if not re.fullmatch(r"ocmcp\." + re.escape(identity) + r"\.[a-f0-9]{64}", credential.decode().rstrip("\r\n")):
+                raise ValueError("credential")
+            name = f"factory-issue-mcp-{index:04d}-credential"
+            item = {"id": identity, "project_id": project, "credential_file": f"/run/octacity-secrets/{name}",
+                    "expires_at_unix_ms": expiry}
+            if "issue_ids" in reader:
+                issues = reader["issue_ids"]
+                if not isinstance(issues, list) or len(issues) > 256:
+                    raise ValueError("issue scope")
+                item["issue_ids"] = sorted({str(uuid.UUID(issue)) for issue in issues})
+            installed.append(item)
+            files[name] = credential
+        files["factory-issue-mcp-readers.json"] = (json.dumps({"version": 1, "readers": installed}, sort_keys=True) + "\n").encode()
+        suffix = "".join("\n[[issue_mcp_readers]]\n" + "".join(f"{key} = {json.dumps(value)}\n" for key, value in reader.items()) for reader in installed)
+        return suffix.encode(), files
+    except (ValueError, TypeError, AttributeError, OSError, ServerConfigurationError):
+        raise ServerConfigurationError("Issue MCP installation is invalid") from None
+
+
+def export_installed_issue_mcp_readers(bundle: Path, destination: Path) -> Path | None:
+    """Restore private input references for the existing installation transaction.
+
+    Only this configurator translates its runtime file names back into host
+    references. Export contains no token bytes and cannot adopt another path.
+    """
+    catalog = bundle / "factory-issue-mcp-readers.json"
+    if not catalog.exists() and not catalog.is_symlink():
+        return None
+    document = _load_json_object(_validate_regular_file(catalog, "installed Issue MCP readers",
+        MAX_FACTORY_PROFILE_BYTES, frozenset({PRIVATE_FILE_MODE})), "installed Issue MCP readers")
+    for index, reader in enumerate(document.get("readers", [])):
+        name = f"factory-issue-mcp-{index:04d}-credential"
+        if reader.get("credential_file") != f"/run/octacity-secrets/{name}":
+            raise ServerConfigurationError("installed Issue MCP reader reference is not recognized")
+        reader["credential_file"] = str(bundle / name)
+    state.publish_exclusive_private_file(destination, (json.dumps(document, sort_keys=True) + "\n").encode())
+    return destination
+
+
 def export_installed_signal_connectors(bundle: Path, destination: Path) -> Path | None:
     """Export installed connector inputs for a state-preserving reconfiguration.
 
@@ -340,10 +414,11 @@ def generate_server_configuration(
     factory_signal_connectors: Path | None = None,
     factory_delivery_bundle: Path | None = None,
     factory_runtime_bundle: Path | None = None,
+    factory_issue_mcp_readers: Path | None = None,
 ) -> dict[str, str]:
     """Validate inputs and atomically publish an idempotent server bundle."""
 
-    if (factory_signal_connectors is not None or factory_delivery_bundle is not None or factory_runtime_bundle is not None) and factory_profiles is None:
+    if (factory_signal_connectors is not None or factory_delivery_bundle is not None or factory_runtime_bundle is not None or factory_issue_mcp_readers is not None) and factory_profiles is None:
         raise ServerConfigurationError("Factory connectors require an explicit Factory profile")
     try:
         initialized = initializer.validate_initialized_state(
@@ -373,6 +448,10 @@ def generate_server_configuration(
     expected = _expected_bundle(password, policy, profiles, signal_connectors=connector_files is not None)
     if connector_files is not None:
         expected.update(connector_files)
+    if factory_issue_mcp_readers is not None:
+        suffix, files = _issue_mcp_bundle(factory_issue_mcp_readers.expanduser())
+        expected[SERVER_BUNDLE_FILES["config"]] += suffix
+        expected.update(files)
     executables = frozenset()
     for name, source in (("factory-delivery", factory_delivery_bundle), ("factory-runtime", factory_runtime_bundle)):
         if source is not None:
@@ -418,6 +497,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--factory-signal-connectors", type=Path, help="separate private Decision Signal connector catalog")
     parser.add_argument("--factory-delivery-bundle", type=Path, help="separate private installed Delivery adapter directory")
     parser.add_argument("--factory-runtime-bundle", type=Path, help="separate private installed model runtime directory")
+    parser.add_argument("--factory-issue-mcp-readers", type=Path, help="explicit Project-scoped Issue MCP reader installations")
     return parser.parse_args()
 
 
@@ -432,6 +512,7 @@ def main() -> int:
             factory_signal_connectors=arguments.factory_signal_connectors,
             factory_delivery_bundle=arguments.factory_delivery_bundle,
             factory_runtime_bundle=arguments.factory_runtime_bundle,
+            factory_issue_mcp_readers=arguments.factory_issue_mcp_readers,
         )
     except (OSError, UnicodeError, ValueError, ServerConfigurationError) as error:
         raise SystemExit(f"local stand server configuration failed: {error}") from error

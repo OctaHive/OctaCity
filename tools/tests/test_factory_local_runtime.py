@@ -16,6 +16,53 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 @unittest.skipUnless(os.name == "posix", "private Runtime installation requires POSIX ownership")
 class FactoryLocalRuntimeTests(unittest.TestCase):
+    def test_native_login_installation_seeds_only_auth_once_and_preserves_native_updates(self):
+        import factory_local_runtime as runtime
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            home = base / "operator"
+            home.mkdir(mode=0o700)
+            seed = {"auth_mode": "chatgpt", "tokens": {"access_token": "seed-private-canary", "refresh_token": "seed-refresh-canary"}}
+            source = home / "auth.json"
+            source.write_text(json.dumps(seed))
+            source.chmod(0o600)
+            (home / "config.toml").write_text("private MCP and local instructions")
+            root = base / "stand"
+            reference = runtime.install_native_login(root, home=home)
+            target = Path(reference["path"])
+            self.assertTrue(target.is_relative_to(root / "secrets"))
+            self.assertEqual(reference["destination"], "codex/auth.json")
+            self.assertEqual(reference["sensitive_fields"], ["/tokens"])
+            self.assertIs(reference["persist_updates"], True)
+            self.assertEqual(json.loads(target.read_text()), seed)
+            self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(target.parent.stat().st_mode & 0o777, 0o700)
+            self.assertEqual((root / "secrets").stat().st_mode & 0o777, 0o700)
+            self.assertEqual([path.name for path in target.parent.iterdir()], ["auth.json"])
+            self.assertNotIn("private-canary", json.dumps(reference))
+            updated = copy.deepcopy(seed)
+            updated["tokens"]["access_token"] = "refreshed-private-canary"
+            target.write_text(json.dumps(updated))
+            again = runtime.install_native_login(root, home=home)
+            self.assertEqual(again, reference)
+            self.assertEqual(json.loads(target.read_text()), updated)
+            self.assertEqual(json.loads(source.read_text()), seed)
+
+    def test_native_subscription_login_rejects_an_api_key_cache_without_creating_the_stand(self):
+        import factory_local_runtime as runtime
+        with tempfile.TemporaryDirectory() as temporary:
+            base = Path(temporary).resolve()
+            home = base / "operator"
+            home.mkdir(mode=0o700)
+            source = home / "auth.json"
+            source.write_text('{"auth_mode":"apikey","OPENAI_API_KEY":"private-api-canary"}')
+            source.chmod(0o600)
+            root = base / "stand"
+            with self.assertRaises(ValueError) as rejected:
+                runtime.install_native_login(root, home=home)
+            self.assertNotIn("private-api-canary", str(rejected.exception))
+            self.assertFalse(root.exists())
+
     def test_installs_a_qualified_runtime_and_only_authentication_without_model_name_defaults(self):
         import factory_local_runtime as runtime
         with tempfile.TemporaryDirectory() as temporary:
@@ -50,6 +97,11 @@ class FactoryLocalRuntimeTests(unittest.TestCase):
                 self.assertEqual(again['project']['role_profiles']['codex']['settings_support'], {'mcp_transports':['http','stdio'],'mcp_executables':{}})
                 anonymous = runtime.install_runtime(base/'anonymous', native.parent, {'project':'project','configuration':'cfg'}, api, home=base/'no-login', octa_root=native)
                 self.assertFalse((anonymous['bundle']/'home/.codex/auth.json').exists())
+                with patch.dict(os.environ, {'CODEX_HOME': str(home)}):
+                    agent_only = runtime.install_runtime_executable(base/'agent-only', native.parent, octa_root=native)
+                self.assertEqual(agent_only['executable'].read_bytes(), content)
+                self.assertEqual(agent_only['sha256'], hashlib.sha256(content).hexdigest())
+                self.assertFalse((agent_only['bundle']/'home').exists(), 'binary installation cannot import host authentication or configuration')
             bundle = installed['bundle']
             self.assertEqual((bundle/'codex').read_bytes(), content)
             self.assertEqual((bundle/'home/.codex/auth.json').read_text(), (home/'auth.json').read_text())
@@ -80,6 +132,7 @@ class FactoryRuntimeRestTests(unittest.TestCase):
         import bootstrap_local_stand as bootstrap
         import configure_local_stand_server as configure
         import factory_local_stand as stand
+        from tools.tests import factory_demo_support as demo_support
         import factory_local_runtime as runtime
         import local_stand_launcher as launcher
         import init_local_stand as initializer
@@ -110,7 +163,7 @@ class FactoryRuntimeRestTests(unittest.TestCase):
                 namespace = str(uuid.uuid4())
                 with stand.bootstrap_server(root,native) as client:
                     pool = client.post(bootstrap.POOL_PATH,namespace+'-pool',bootstrap.LOCAL_POOL_REQUEST)['resource']['id']
-                    resources = stand.prepare_resources(client,pool,'https://github.com/OctaHive/OctaCity',stand.integration._guest_image(),namespace)
+                    resources = demo_support.prepare_resources(client,pool,'https://github.com/OctaHive/OctaCity',stand.integration._guest_image(),namespace)
                     with patch.object(runtime,'SERVER_IMAGE',image), patch.object(runtime,'download',side_effect=lambda _,target:shutil.copyfile(archive,target)):
                         installed = runtime.install_runtime(root,native,resources,client)
                     profiles = root/'profiles.json'

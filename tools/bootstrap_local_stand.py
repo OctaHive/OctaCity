@@ -24,6 +24,7 @@ import local_stand_state as state
 
 DEFAULT_ORIGIN = initializer.gateway_origin("octacity.localhost")
 MAX_RESPONSE_BYTES = 128 * 1024
+MAX_MANAGEMENT_RESPONSE_BYTES = 4 * 1024 * 1024
 MAX_CREDENTIAL_BYTES = 4096
 MAX_POOL_LOOKUP_PAGES = 100
 RETRYABLE_STATUS = frozenset({408, 425, 429, 500, 502, 503, 504})
@@ -145,7 +146,10 @@ class BootstrapResult:
 class HttpsTransport:
     """One-attempt, proxy-free HTTPS transport for the fixed local gateway."""
 
-    def __init__(self, origin: str, ca_certificate: bytes):
+    def __init__(self, origin: str, ca_certificate: bytes, *, max_response_bytes: int = MAX_RESPONSE_BYTES):
+        if type(max_response_bytes) is not int or not 1 <= max_response_bytes <= MAX_MANAGEMENT_RESPONSE_BYTES:
+            raise BootstrapError("management response limit is invalid")
+        self._max_response_bytes = max_response_bytes
         parsed = parse.urlsplit(origin)
         if (
             parsed.scheme != "https"
@@ -190,12 +194,12 @@ class HttpsTransport:
             response_headers = {
                 name.lower(): value for name, value in response.getheaders()
             }
-            contents = response.read(MAX_RESPONSE_BYTES + 1)
+            contents = response.read(self._max_response_bytes + 1)
         except (http_client.HTTPException, TimeoutError, OSError) as cause:
             raise TransportError("management gateway request failed") from cause
         finally:
             connection.close()
-        if len(contents) > MAX_RESPONSE_BYTES:
+        if len(contents) > self._max_response_bytes:
             raise TransportError("management gateway response exceeded its size limit")
         return HttpResponse(status, response_headers, contents)
 
@@ -236,7 +240,7 @@ class BootstrapClient:
         return _json_object(response.body, "management query response")
 
     def post(
-        self, path: str, idempotency_key: str, document: dict[str, object]
+        self, path: str, idempotency_key: str, document: dict[str, object], *, expected_version: int | None = None
     ) -> dict[str, object]:
         body = json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
         headers = {
@@ -245,6 +249,13 @@ class BootstrapClient:
             "Idempotency-Key": idempotency_key,
             "User-Agent": "octacity-local-stand-bootstrap/1",
         }
+        if expected_version is not None:
+            if type(expected_version) is not int or expected_version < 0:
+                raise BootstrapError("management expected version is invalid")
+            if expected_version == 0:
+                headers["If-None-Match"] = "*"
+            else:
+                headers["If-Match"] = f'"{expected_version}"'
         response = self._request("POST", path, headers, body)
         if response.status not in {200, 201}:
             raise HttpStatusError("management mutation", response.status)

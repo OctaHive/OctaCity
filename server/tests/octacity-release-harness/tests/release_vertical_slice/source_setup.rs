@@ -164,3 +164,87 @@ pub(super) async fn publish(
   assert!(status.is_success(), "{path}: {status} {body}");
   body
 }
+
+/// The stand's Python installer must use the same protected management API as Console.
+pub(super) async fn stand_github_enrollment() {
+  let mut environment = source_environment::SourceEnvironment::start_with_factory().await;
+  let project = resource_id(
+    &post_management(
+      &environment.client,
+      &environment.origin,
+      "/api/v1/projects",
+      &Uuid::new_v4().to_string(),
+      json!({"name":format!("Token-configured stand {}",Uuid::new_v4())}),
+    )
+    .await,
+  );
+  let directory = tempfile::tempdir().unwrap();
+  set_mode(directory.path(), 0o700);
+  let token = private_file(directory.path(), "github-token", source_evidence::READER);
+  let input = private_file(
+    directory.path(),
+    "setup.json",
+    &json!({"project":project,
+    "port":url::Url::parse(&environment.origin).unwrap().port().unwrap(),"token_file":token,
+    "namespace":Uuid::new_v4().to_string(),"installed":{"installation":environment.installation.installation,
+    "endpoint":environment.installation.endpoint,"resource":environment.installation.resource}})
+    .to_string(),
+  );
+  let repository = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(3).unwrap();
+  let output = Command::new("python3").current_dir(repository).args(["-c", r#"
+import json,pathlib,sys,uuid
+sys.path.insert(0,str(pathlib.Path.cwd()/"tools"))
+from factory_integrations import ensure_github_connection
+from factory_local_stand import BootstrapTransport
+from bootstrap_local_stand import BootstrapClient, RetryPolicy
+r=json.loads(pathlib.Path(sys.argv[1]).read_text())
+client=BootstrapClient(BootstrapTransport(r['port']),RetryPolicy(attempts=2,timeout_seconds=5,initial_delay_seconds=0))
+root=pathlib.Path(sys.argv[1]).parent
+first=ensure_github_connection(client,root,r['project'],r['installed'],pathlib.Path(r['token_file']),uuid.UUID(r['namespace']))
+assert ensure_github_connection(client,root,r['project'],r['installed'],pathlib.Path(r['token_file']),uuid.UUID(r['namespace']))==first
+assert 'packaged-fixture-reader-canary' not in (root/'evidence/factory-github-connection.json').read_text()
+print(json.dumps(first))
+"#]).arg(input).output().await.unwrap();
+  assert!(
+    output.status.success(),
+    "stand integration setup failed: {}",
+    String::from_utf8_lossy(&output.stderr)
+  );
+  let receipt: Value = serde_json::from_slice(&output.stdout).unwrap();
+  assert!(!String::from_utf8_lossy(&output.stdout).contains(source_evidence::READER));
+  let choices = get_json(
+    &environment.client,
+    format!(
+      "{}/api/v1/projects/{project}/factory-source-choices?connection_id={}&connection_version=1",
+      environment.origin,
+      receipt["id"].as_str().unwrap()
+    ),
+  )
+  .await;
+  let purposes: std::collections::BTreeSet<_> = choices["items"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .map(|item| item["purpose"].as_str().unwrap())
+    .collect();
+  assert_eq!(purposes, std::collections::BTreeSet::from(["task_read", "task_update"]));
+  let runs = get_json(
+    &environment.client,
+    format!("{}/api/v1/projects/{project}/factory-runs?limit=10", environment.origin),
+  )
+  .await;
+  assert!(runs["items"].as_array().unwrap().is_empty());
+  assert!(
+    environment
+      .provider
+      .requests
+      .lock()
+      .await
+      .iter()
+      .all(|request| request.starts_with("GET "))
+  );
+  environment
+    .record(&project, "factory-stand-github-enrollment.json")
+    .await;
+  environment.stop().await;
+}

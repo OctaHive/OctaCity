@@ -532,7 +532,7 @@ impl crate::BuildExecutionContextSource for UnavailableReadinessContexts {
   }
 }
 
-#[path = "../tests/support/manual_trigger_context.rs"]
+#[path = "testing/ordinary_context.rs"]
 pub(crate) mod ordinary_context;
 /// Attaches the same trusted single-job declaration used by native materializers.
 pub async fn qualify_readiness_pipeline(

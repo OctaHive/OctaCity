@@ -17,6 +17,44 @@ from validate_octa_release_contract import CODEX_RUNTIME_SETTINGS_CAPABILITY
 POLICY = Path(__file__).resolve().parents[1] / 'deployment/local-stand/factory-runtime.json'
 DISCOVERY_PROGRAM = '/usr/local/bin/octa_plugin_codex'
 
+def _native_login_bytes(path: Path) -> bytes:
+    """Validate selection only; the pinned native client owns the credential format."""
+    try:
+        contents = state.read_regular_file(path, 'native login', max_bytes=65536,
+            modes=frozenset({0o600}))
+        value = json.loads(contents)
+        tokens = value.get('tokens')
+        if (value.get('auth_mode') != 'chatgpt' or value.get('OPENAI_API_KEY') not in (None, '')
+                or not isinstance(tokens, dict)
+                or any(not isinstance(tokens.get(name), str) or not tokens[name]
+                       for name in ('access_token', 'refresh_token'))):
+            raise ValueError('unsupported authentication')
+        return contents
+    except (OSError, UnicodeError, ValueError, AttributeError, state.StateError):
+        raise ValueError('native ChatGPT login installation is invalid') from None
+
+
+def install_native_login(root: Path, *, home: Path | None = None) -> dict:
+    """Seed the existing private credential owner once; never restore stale seeds.
+
+    Native refresh updates this stand-owned file through the Agent installation.
+    Workstation configuration, MCP connections and session history are not copied.
+    """
+    root = root.expanduser().resolve()
+    target = root / 'secrets/factory-model-login/auth.json'
+    if target.exists() or target.is_symlink():
+        _native_login_bytes(target)
+    else:
+        operator = home or Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
+        contents = _native_login_bytes(operator / 'auth.json')
+        state.ensure_private_directory(root)
+        state.ensure_private_directory(root / 'secrets')
+        state.ensure_private_directory(target.parent)
+        if not state.publish_exclusive_private_file(target, contents):
+            _native_login_bytes(target)
+    return {'path': str(target), 'destination': 'codex/auth.json',
+            'sensitive_fields': ['/tokens'], 'persist_updates': True}
+
 def _digest(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
 
@@ -25,8 +63,8 @@ def _settings_support(compatibility: dict) -> dict:
     qualified = CODEX_RUNTIME_SETTINGS_CAPABILITY in compatibility.get('plugin', {}).get('capabilities', [])
     return {'mcp_transports':['http','stdio'] if qualified else [], 'mcp_executables':{}}
 
-def install_runtime(root: Path, native: Path, resources: dict, client, *, home: Path | None = None, octa_root: Path | None = None) -> dict:
-    """Install bytes and compatibility, never creating a Role, task or execution grant."""
+def install_runtime_executable(root: Path, native: Path, *, octa_root: Path | None = None) -> dict:
+    """Install verified executable bytes independently of login and model discovery."""
     policy_bytes = POLICY.read_bytes()
     policy = json.loads(policy_bytes)
     source = policy['archive']
@@ -52,15 +90,6 @@ def install_runtime(root: Path, native: Path, resources: dict, client, *, home: 
             shutil.copyfile(staging / 'release' / source['executable'], program)
             program.chmod(0o700)
             cli = state.read_regular_file(program, 'installed Codex runtime', max_bytes=source['file_max_bytes'], modes=frozenset({0o700}))
-            private_home = prepared / 'home'
-            state.ensure_private_directory(private_home)
-            auth_root = private_home / '.codex'
-            state.ensure_private_directory(auth_root)
-            operator = home or Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
-            auth_file = operator / 'auth.json'
-            if auth_file.exists() or auth_file.is_symlink():
-                contents = state.read_regular_file(auth_file, 'Codex authentication', max_bytes=65536, modes=frozenset({0o600}))
-                state.publish_exclusive_private_file(auth_root / 'auth.json', contents)
             state.publish_exclusive_private_file(prepared / 'inputs.json', json.dumps({
                 'policy_sha256':_digest(policy_bytes), 'executable_sha256':_digest(cli)}).encode())
             prepared.rename(bundle)
@@ -70,6 +99,35 @@ def install_runtime(root: Path, native: Path, resources: dict, client, *, home: 
     cli = state.read_regular_file(program, 'installed Codex runtime', max_bytes=source['file_max_bytes'], modes=frozenset({0o700}))
     if retained != {'policy_sha256':_digest(policy_bytes), 'executable_sha256':_digest(cli)}:
         raise ValueError('installed runtime identity differs from the reviewed installation')
+    return {'bundle': bundle, 'executable': program, 'sha256': _digest(cli),
+            'policy': policy, 'compatibility': compatibility, 'octa': installed}
+
+
+def _install_discovery_home(bundle: Path, home: Path | None) -> None:
+    """Keep the explicit legacy discovery snapshot separate from executable installation."""
+    destination = bundle / 'home'
+    if destination.exists() or destination.is_symlink():
+        state.validate_private_directory(destination)
+        return
+    with tempfile.TemporaryDirectory(prefix='.discovery-', dir=bundle) as temporary:
+        prepared = Path(temporary) / 'home'
+        auth_root = prepared / '.codex'
+        state.ensure_private_directory(prepared)
+        state.ensure_private_directory(auth_root)
+        operator = home or Path(os.environ.get('CODEX_HOME', str(Path.home() / '.codex')))
+        auth_file = operator / 'auth.json'
+        if auth_file.exists() or auth_file.is_symlink():
+            contents = state.read_regular_file(auth_file, 'Codex authentication', max_bytes=65536, modes=frozenset({0o600}))
+            state.publish_exclusive_private_file(auth_root / 'auth.json', contents)
+        prepared.rename(destination)
+
+
+def install_runtime(root: Path, native: Path, resources: dict, client, *, home: Path | None = None, octa_root: Path | None = None) -> dict:
+    """Install the legacy discovery catalog without creating execution grants."""
+    runtime = install_runtime_executable(root, native, octa_root=octa_root)
+    bundle, policy = runtime['bundle'], runtime['policy']
+    source, installed, compatibility = policy['archive'], runtime['octa'], runtime['compatibility']
+    _install_discovery_home(bundle, home)
     cached = bundle / 'project.json'
     if cached.exists():
         project = json.loads(state.read_regular_file(cached, 'Runtime project', max_bytes=131072, modes=frozenset({0o600})))
@@ -86,7 +144,7 @@ def install_runtime(root: Path, native: Path, resources: dict, client, *, home: 
         raise ValueError('invalid discovery plugin identity')
     exact = lambda name, version, digest: {'identity':name,'version':version,'digest':digest}
     plugin = exact('codex',installed['version'],installed['plugin_digests']['codex'])
-    executable = exact('codex-cli',source['version'],_digest(cli))
+    executable = exact('codex-cli',source['version'],runtime['sha256'])
     model_contract = exact('codex-model-catalog','v1',_digest(json.dumps(plugin,sort_keys=True).encode()))
     configuration = client.get(f"/api/v1/build-configurations/{resources['configuration']}/versions/1")
     build = {k:configuration[k] for k in ('id','version','project_id')}
