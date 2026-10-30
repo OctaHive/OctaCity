@@ -72,7 +72,7 @@ pub(super) fn install(directory: &Path, forge: &source_provider::Forge, scope: S
     &provider,
     "adapter.toml",
     &format!(
-      "manifest_version=1\nadapter_id=\"github\"\nexecutable=\"plugin\"\nexecutable_sha256={binary_digest:?}\n[protocol.source]\nmin=1\nmax=1\n[capabilities.source]\ncheck=true\nauthorize=true\npreview=true\ncancel=false\ncredential_class=\"work_source_read\"\nconfiguration_digest={configuration_digest:?}\n"
+      "manifest_version=1\nadapter_id=\"github\"\nexecutable=\"plugin\"\nexecutable_sha256={binary_digest:?}\n[protocol.source]\nmin=1\nmax=1\n[capabilities.source]\ncheck=true\nauthorize=true\npreview=true\nlabel_presence=true\ncancel=false\ncredential_class=\"work_source_read\"\nconfiguration_digest={configuration_digest:?}\n"
     ),
   );
   if reporter {
@@ -197,5 +197,30 @@ pub(super) fn install(directory: &Path, forge: &source_provider::Forge, scope: S
     resource,
     installation,
     endpoint: forge.endpoint.clone(),
+  }
+}
+
+impl Installation {
+  /// Explicit fixture installation review; literal labels must already exist at
+  /// the native provider. This never creates labels or changes Project grants.
+  pub(super) fn review_reporter_labels(&mut self, labels: &[&str]) {
+    assert!(self.reporter);
+    let catalog: Value = serde_json::from_slice(&fs::read(&self.catalog).unwrap()).unwrap();
+    let profiles_path = Path::new(catalog["source_profiles_file"].as_str().unwrap());
+    let mut profiles: Value = serde_json::from_slice(&fs::read(profiles_path).unwrap()).unwrap();
+    let reporter = &mut profiles["reporters"][0];
+    let identity = reporter["mapping"]["identity"].as_str().unwrap();
+    let mapping_path = Path::new(catalog["registry"].as_str().unwrap())
+      .join("github/mappings")
+      .join(format!("{}.json", hex::encode(Sha256::digest(identity.as_bytes()))));
+    let mut mapping: Value = serde_json::from_slice(&fs::read(&mapping_path).unwrap()).unwrap();
+    mapping["managed_label_groups"] = json!({"qualification":labels});
+    let bytes = serde_json::to_vec(&mapping).unwrap();
+    fs::write(mapping_path, &bytes).unwrap();
+    reporter["mapping"]["sha256"] = json!(hex::encode(Sha256::digest(&bytes)));
+    reporter["reporting"]["editable"]["labels"] = json!(labels);
+    let bytes = serde_json::to_vec(&profiles).unwrap();
+    fs::write(profiles_path, &bytes).unwrap();
+    self.profiles_sha256 = hex::encode(Sha256::digest(&bytes));
   }
 }

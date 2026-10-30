@@ -166,7 +166,13 @@ where
     .handle_authorized_query(context, query)
     .await
     .map_err(|e| authorized_handler_error(e, id))?;
-  Ok(([("cache-control", "no-store")], Json(encode(result, id)?)).into_response())
+  Ok(
+    (
+      [("cache-control", "no-store")],
+      Json(super::factory_schema_wire::profile_capabilities(encode(result, id)?)),
+    )
+      .into_response(),
+  )
 }
 pub(super) async fn roles(
   State(app): State<Arc<ManagementApplication>>,

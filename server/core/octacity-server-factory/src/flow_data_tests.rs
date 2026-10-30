@@ -1,6 +1,28 @@
 use crate::*;
 use std::collections::BTreeMap;
 
+#[test]
+fn decimal_schema_bounds_restore_original_integer_storage_and_digest() {
+  let original = FlowDataSchema::new(
+    key("operator.exact-integer"),
+    key("v1"),
+    FlowValueSchema::Integer {
+      minimum: i64::MIN,
+      maximum: i64::MAX,
+    },
+  )
+  .unwrap();
+  let mut wire = serde_json::to_value(&original).unwrap();
+  wire["shape"]["minimum"] = serde_json::json!("-9223372036854775808");
+  wire["shape"]["maximum"] = serde_json::json!("9223372036854775807");
+  let restored: FlowDataSchema =
+    serde_json::from_value(wire).expect("exact decimal bounds decode without changing the canonical schema");
+  assert_eq!(restored, original);
+  let stored = serde_json::to_value(restored).unwrap();
+  assert_eq!(stored["shape"]["minimum"], serde_json::json!(i64::MIN));
+  assert_eq!(stored["shape"]["maximum"], serde_json::json!(i64::MAX));
+}
+
 fn key(name: &str) -> FactoryKey {
   FactoryKey::new(name).unwrap()
 }

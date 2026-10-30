@@ -15,7 +15,7 @@ pub(super) async fn validate_factory_flow_data_schema(
     .handle_authorized_query(&context, query)
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
-  Ok(Json(encode(schema, &request_id)?))
+  Ok(Json(super::factory_schema_wire::schema(encode(schema, &request_id)?)))
 }
 pub(super) async fn confirm_factory_node_operation(
   State(application): State<Arc<ManagementApplication>>,
@@ -368,7 +368,7 @@ fn factory_configuration_resource(
       .iter()
       .map(|(name, pool)| (name.to_string(), pool.policy.digest().to_string()))
       .collect(),
-    configuration: encode(projection.configuration, request_id)?,
+    configuration: super::factory_schema_wire::configuration(encode(projection.configuration, request_id)?),
     published_at_unix_ms: projection.published_at.unix_millis(),
   })
 }
@@ -447,7 +447,7 @@ pub(super) async fn validate_factory_configuration(
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
   Ok(Json(
-    serde_json::json!({"configuration": encode(validation.configuration, &request_id)?, "diagnostics": encode(validation.diagnostics, &request_id)?}),
+    serde_json::json!({"configuration": super::factory_schema_wire::configuration(encode(validation.configuration, &request_id)?), "diagnostics": encode(validation.diagnostics, &request_id)?}),
   ))
 }
 
@@ -468,7 +468,7 @@ pub(super) async fn validate_factory_flow_definition(
     .await
     .map_err(|error| authorized_handler_error(error, &request_id))?;
   let diagnostics = octacity_server_application::FactoryValidationDiagnostics::for_flow(&flow);
-  let mut document = encode(flow, &request_id)?;
+  let mut document = super::factory_schema_wire::flow(encode(flow, &request_id)?);
   document["diagnostics"] = encode(diagnostics, &request_id)?;
   Ok(([("cache-control", "no-store")], Json(document)))
 }
@@ -487,7 +487,7 @@ fn flow_details(
       })
       .collect(),
     project_id: publication.project_id.to_string(),
-    flow: encode(publication.flow, request_id)?,
+    flow: super::factory_schema_wire::flow(encode(publication.flow, request_id)?),
     published_at_unix_ms: publication.published_at.unix_millis(),
   })
 }

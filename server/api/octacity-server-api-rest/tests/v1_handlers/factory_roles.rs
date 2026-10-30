@@ -915,7 +915,7 @@ async fn plugin_model_catalog_http_uses_explicit_refresh_and_the_existing_capabi
     .next()
     .map(|(a, c)| (a.clone(), c.clone()))
     .unwrap();
-  cap.model_catalog = Some(serde_json::from_value(serde_json::json!({"available":true,"manual_model":true,"models":[{"identifier":"Vendor/future:preview","label":"Future preview","parameters":cap.parameters}]})).unwrap());
+  cap.model_catalog = Some(serde_json::from_value(serde_json::json!({"available":true,"manual_model":true,"models":[{"identifier":"Vendor/future:preview","label":"Future preview","parameters":{"reference":{"identity":"operator.exact-integer","version":"v1","digest":"cf6037a1bca746f5423c6b01bf78ea84376ed75a5f0565596ca2a3ed15b9aba3"},"shape":{"type":"integer","minimum":i64::MIN,"maximum":i64::MAX}}}]})).unwrap());
   let choices = choices.with_role_profile_capability(alias.clone(), cap).unwrap();
   let store = Arc::new(testing::InMemoryFactoryConfigurationStore::new());
   store.seed_project(project).unwrap();
@@ -950,6 +950,14 @@ async fn plugin_model_catalog_http_uses_explicit_refresh_and_the_existing_capabi
     assert_eq!(
       body["model_catalog"]["models"][0]["identifier"],
       "Vendor/future:preview"
+    );
+    assert_eq!(
+      body["model_catalog"]["models"][0]["parameters"]["shape"]["maximum"],
+      "9223372036854775807"
+    );
+    assert_eq!(
+      body["model_catalog"]["models"][0]["parameters"]["shape"]["minimum"],
+      "-9223372036854775808"
     );
     assert_json_matches_component(&openapi_document(), "FactoryRoleProfileCapabilityDetails", &body);
   }

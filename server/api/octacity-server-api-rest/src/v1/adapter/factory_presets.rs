@@ -44,7 +44,10 @@ pub(super) async fn resolve(
     .handle_authorized_query(&context, ResolveFactoryPresetQuery { project_id, selection })
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;
-  Ok(([("cache-control", "no-store")], Json(result)))
+  Ok((
+    [("cache-control", "no-store")],
+    Json(super::factory_schema_wire::preset(encode(result, &id)?)),
+  ))
 }
 impl ManagementApplication {
   /// Enables read-only setup without enabling intake or granting execution authority.

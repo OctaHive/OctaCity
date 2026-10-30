@@ -5,6 +5,29 @@ import { afterEach, it, expect, vi } from 'vitest';
 import { SchemaEditor } from './SchemaEditor';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 afterEach(cleanup);
+it('authors a signed 64-bit schema bound without rounding it through a JavaScript number', async () => {
+  const normalizeSchema = vi.fn(
+    async () => configurationFixture().configuration.flow.data_schemas[0]!,
+  );
+  render(<SchemaEditor api={{ normalizeSchema }} projectId="visible-project" onAdd={() => {}} />);
+  await userEvent.type(
+    screen.getByRole('textbox', { name: 'Schema name' }),
+    'operator.exact-bound',
+  );
+  await userEvent.type(screen.getByRole('textbox', { name: 'Schema version' }), 'v1');
+  await userEvent.click(screen.getByRole('combobox', { name: 'Schema type' }));
+  await userEvent.click(screen.getByRole('option', { name: 'Integer' }));
+  const maximum = screen.getByLabelText('Maximum', { exact: true });
+  await userEvent.clear(maximum);
+  await userEvent.type(maximum, '9223372036854775807');
+  await userEvent.click(screen.getByRole('button', { name: 'Add schema' }));
+  expect(normalizeSchema).toHaveBeenCalledWith({
+    project_id: 'visible-project',
+    identity: 'operator.exact-bound',
+    version: 'v1',
+    shape: { type: 'integer', minimum: 0, maximum: '9223372036854775807' },
+  });
+});
 it('authors distinct unit and payload variants without changing their case or sibling shapes', async () => {
   const normalizeSchema = vi.fn(
     async () => configurationFixture().configuration.flow.data_schemas[0]!,

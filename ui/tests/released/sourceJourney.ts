@@ -3,9 +3,18 @@ import type { components } from '../../.generated/api/schema';
 import { translate } from '../../src/app/presentation/messages';
 
 /** Actual Console import shared by packaged Source journeys; no route interception. */
-export async function importNativeTask(page: Page, project: string) {
+export async function importNativeTask(
+  page: Page,
+  project: string,
+  options: {
+    title?: string;
+    language?: 'en' | 'ru';
+    existingIssues?: number;
+  } = {},
+) {
   const base = `/api/v1/projects/${project}`;
-  const t = (key: Parameters<typeof translate>[1]) => translate('en', key);
+  const title = options.title ?? 'Native task without execution acceptance';
+  const t = (key: Parameters<typeof translate>[1]) => translate(options.language ?? 'en', key);
   await page.goto(`/projects/${project}/issues`);
   const importsResponse = page.waitForResponse(
     (response) => new URL(response.url()).pathname === `${base}/issue-source-imports`,
@@ -40,13 +49,15 @@ export async function importNativeTask(page: Page, project: string) {
   expect((await choiceResponse).status()).toBe(200);
   await page.getByRole('combobox', { name: t('issueSource.profile') }).click();
   await page
-    .getByRole('option', { name: 'owner/tickets · github-issues / v1', exact: true })
+    .getByRole('option', { name: 'owner/tickets · github-issues / v2', exact: true })
     .click();
   await page.getByRole('button', { name: t('issueImport.preview'), exact: true }).click();
   await expect(page.getByRole('region', { name: t('issueImport.previewTitle') })).toContainText(
-    'Native task without execution acceptance',
+    title,
   );
-  expect((await (await page.request.get(`${base}/issues`)).json()).items).toEqual([]);
+  expect((await (await page.request.get(`${base}/issues`)).json()).items).toHaveLength(
+    options.existingIssues ?? 0,
+  );
   await page.getByRole('checkbox', { name: t('issueImport.enabled') }).check();
   await page.getByRole('button', { name: t('issueImport.review') }).click();
   const review = page.getByRole('dialog', { name: t('issueImport.publish') });
@@ -55,20 +66,16 @@ export async function importNativeTask(page: Page, project: string) {
   await page.keyboard.press('Escape');
   await expect(async () => {
     await page.getByRole('button', { name: t('issueImport.refreshTasks') }).click();
-    await expect(
-      page.getByRole('link', { name: /Native task without execution acceptance/ }),
-    ).toHaveCount(1);
+    await expect(page.getByRole('link', { name: title })).toHaveCount(1);
   }).toPass({ timeout: 30_000 });
-  await page.getByRole('link', { name: /Native task without execution acceptance/ }).click();
-  await expect(
-    page.getByRole('heading', { name: /Native task without execution acceptance/ }),
-  ).toBeVisible();
+  await page.getByRole('link', { name: title }).click();
+  await expect(page.getByRole('heading', { name: title })).toBeVisible();
   const canonicalPath = new URL(page.url()).pathname;
   const list: components['schemas']['IssueSummaryPage'] = await (
     await page.request.get(`${base}/issues`)
   ).json();
-  expect(list.items).toHaveLength(1);
-  const issue = list.items[0]!;
+  expect(list.items).toHaveLength((options.existingIssues ?? 0) + 1);
+  const issue = list.items.find((item) => canonicalPath.includes(item.id))!;
   expect(canonicalPath).toContain(issue.id);
   return issue;
 }

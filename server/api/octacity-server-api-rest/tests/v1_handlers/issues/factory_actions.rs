@@ -5,6 +5,7 @@ use octacity_server_application::*;
 #[derive(Default)]
 struct Queue {
   reads: Mutex<Vec<ReadFactoryActionQueue>>,
+  respond: bool,
 }
 #[async_trait]
 impl FactoryActionQueueStore for Queue {
@@ -13,7 +14,7 @@ impl FactoryActionQueueStore for Queue {
     request: ReadFactoryActionQueue,
   ) -> Result<FactoryActionQueuePage, StoreError> {
     self.reads.lock().unwrap().push(request.clone());
-    let mut action = action();
+    let mut action = self.item();
     let next = if request.after.is_none() {
       Some(action.position())
     } else {
@@ -33,6 +34,82 @@ fn action() -> FactoryActionQueueItem {
     "work_id":"0199a6f4-d56c-7440-9aa2-6a320f862790","run_id":"0199a6f4-d56c-7440-9aa2-6a320f862791","run_version":3,"flow_run_id":"0199a6f4-d56c-7440-9aa2-6a320f862792","cycle_id":"0199a6f4-d56c-7440-9aa2-6a320f862793","node_attempt_id":"0199a6f4-d56c-7440-9aa2-6a320f862794","contract":{"id":"0199a6f4-d56c-7440-9aa2-6a320f862798","version":1,"digest":"a".repeat(64)},"node_key":"operator_selected","input_digest":"b".repeat(64),"candidate":null,"actionable_at":11,"deadline":null,"kind":{"kind":"retry"}
   }})).unwrap()
 }
+impl Queue {
+  fn item(&self) -> FactoryActionQueueItem {
+    let item = action();
+    if !self.respond {
+      return item;
+    }
+    let mut item = serde_json::to_value(item).unwrap();
+    item["action"]["kind"] = serde_json::json!({"kind":"respond","outcomes":[],"binding":null,"schemas":[{
+      "reference":{"identity":"operator.exact-integer","version":"v1","digest":"cf6037a1bca746f5423c6b01bf78ea84376ed75a5f0565596ca2a3ed15b9aba3"},
+      "shape":{"type":"integer","minimum":i64::MIN,"maximum":i64::MAX}
+    }]});
+    serde_json::from_value(item).unwrap()
+  }
+}
+
+#[tokio::test]
+async fn response_action_schemas_preserve_exact_bounds_in_all_scopes_and_observations() {
+  let queue = Arc::new(Queue {
+    respond: true,
+    ..Queue::default()
+  });
+  let policy = Arc::new(TrustedNetworkManagementPolicy);
+  let service = Arc::new(FactoryActionHandlers::new(
+    queue.clone(),
+    policy.clone(),
+    Arc::new(SystemFactoryExecutionClock),
+  ));
+  let peer = Arc::new(RecordingApplication::default());
+  let router = management_router_with_application(
+    || true,
+    recording_management_application(peer.clone(), peer).with_factory_actions(
+      octacity_server_api_rest::v1::FactoryActionManagementApplication::new(Arc::new(AuthorizedQueryHandler::new(
+        policy.clone(),
+        service,
+      )))
+      .with_observations(Arc::new(AuthorizedQueryHandler::new(policy, queue.clone()))),
+    ),
+  );
+  let target = queue.item();
+  let project = target.project_id;
+  let issue = "0199a6f4-d56c-7440-9aa2-6a320f862796";
+  for path in [
+    "/api/v1/factory-actions".to_owned(),
+    format!("/api/v1/projects/{project}/factory-actions"),
+    format!("/api/v1/projects/{project}/issues/{issue}/actions"),
+    format!(
+      "/api/v1/factory-runs/{}/nodes/{}/action",
+      target.action.run_id, target.action.node_attempt_id
+    ),
+  ] {
+    let response = router.clone().oneshot(empty_request("GET", &path, None)).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = document(response).await;
+    let schema = if path.ends_with("/action") {
+      &body["description"]["kind"]["schemas"][0]
+    } else {
+      &body["items"][0]["action"]["kind"]["schemas"][0]
+    };
+    assert_eq!(schema["shape"]["minimum"], "-9223372036854775808", "{path}");
+    assert_eq!(schema["shape"]["maximum"], "9223372036854775807", "{path}");
+    assert_eq!(
+      schema["reference"]["digest"],
+      "cf6037a1bca746f5423c6b01bf78ea84376ed75a5f0565596ca2a3ed15b9aba3"
+    );
+    assert_json_matches_component(
+      &openapi_document(),
+      if path.ends_with("/action") {
+        "FactoryNodeActionObservation"
+      } else {
+        "FactoryActionsPage"
+      },
+      &body,
+    );
+  }
+}
+
 #[tokio::test]
 async fn factory_action_http_scopes_no_store_and_cursor_binding_use_the_common_reader() {
   let queue = Arc::new(Queue::default());
@@ -168,8 +245,12 @@ impl ManagementQueryUseCase<GetFactoryNodeActionQuery> for Queue {
       run_id: query.run_id,
       node_attempt_id: query.node_attempt_id,
       run_version: serde_json::from_value(serde_json::json!(4)).unwrap(),
-      state: FactoryNodeActionState::Recorded,
-      description: None,
+      state: if self.respond {
+        FactoryNodeActionState::Waiting
+      } else {
+        FactoryNodeActionState::Recorded
+      },
+      description: self.respond.then(|| self.item().action),
       accepted_candidate: false,
       recorded_version: Some(action().action.run_version),
       recorded_at: Some(SystemFactoryExecutionClock.now()?),

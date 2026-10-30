@@ -61,7 +61,8 @@ def compose_packaged_installation(request_path):
         "schema_version": 1, "agent_version": "0.1.0", "microsandbox_version": "0.7.6", "files": files}).encode())
     (native / "job-spec-policy.json").chmod(0o600)
     enrollment = root / "agent"; enrollment.mkdir(mode=0o700)
-    state.publish_exclusive_private_file(enrollment / "credential", b"private-qualification-enrollment")
+    state.publish_exclusive_private_file(enrollment / "credential",
+        request.get("enrollment", "private-qualification-enrollment").encode())
     policy = root / "operator-agent.toml"
     state.publish_exclusive_private_file(policy, ("\n".join(f"{key} = {agent._toml_value(value)}" for key, value in request["agent_policy"].items()) + "\n").encode())
     receipt = server.generate_server_configuration(root, native, factory_profiles=Path(request["catalog"]))
@@ -73,8 +74,22 @@ def compose_packaged_installation(request_path):
             if authority[name] != expected:
                 raise AssertionError("stand composition changed the reviewed Factory authority")
     authority["catalog"] = receipt["factory_profiles"]
+    authority["agent_configuration"] = generated["config"]
     state.publish_exclusive_private_file(Path(request["result"]), json.dumps(authority).encode())
-    shutil.rmtree(agent.microsandbox_state_root(root))
+    if "image_archive" in request:
+        # Consume the normal generated state path, with the exact prequalified
+        # image loaded through MSB's public archive contract before Agent start.
+        image_environment = {**os.environ, "MSB_HOME": str(Path(configuration["state_root"]) / "microsandbox")}
+        state.publish_exclusive_private_file(Path(request["state_receipt"]), json.dumps({"root":str(root)}).encode())
+        msb = native / "microsandbox/bin/msb"
+        subprocess.run([str(msb), "image", "load", "--input", request["image_archive"], "--tag", request["image"]],
+            check=True, capture_output=True, text=True, timeout=60, env=image_environment)
+        inspected = subprocess.run([str(msb), "image", "inspect", request["image"], "--format", "json"],
+            check=True, capture_output=True, text=True, timeout=15, env=image_environment)
+        if json.loads(inspected.stdout)["digest"] != request["image"].split("@", 1)[1]:
+            raise AssertionError("installation image differs from the qualified immutable image")
+    else:
+        shutil.rmtree(agent.microsandbox_state_root(root))
 
 
 @contextmanager
@@ -94,7 +109,20 @@ def serving(handler, certificate=None, *, host="127.0.0.1"):
         thread.join(timeout=3)
 
 
-def finite_peers(calls, model_requests, plan, call_started, release_call, *, cancel_during_mcp=False, peer_mode="facts", control=None, issue_origin=None):
+def compile_native_launcher(root, model_port, *, native_guest="/opt/octacity/tools/tool-1"):
+    """Pin a finite model provider without changing native MCP argv or secrets."""
+    inputs = json.loads((REPOSITORY / "deployment/local-stand/inputs.json").read_text())
+    fixture = PEER.with_name("native-model-cli.rs")
+    launcher = root / "native-model-cli"
+    subprocess.run(["docker", "run", "--rm", "--network", "none", "--mount", f"type=bind,src={fixture.parent},dst=/fixture,readonly",
+        "--mount", f"type=bind,src={root},dst=/out", "--env", f"OCTACITY_FINITE_CODEX_PATH={native_guest}", "--env", f"OCTACITY_FINITE_MODEL_URL=http://host.microsandbox.internal:{model_port}/v1",
+        inputs["images"]["rust"]["reference"], "rustc", "--edition=2024", "-C", "strip=symbols", "/fixture/native-model-cli.rs", "-o", "/out/native-model-cli"],
+        check=True, capture_output=True, timeout=60)
+    return launcher
+
+
+def finite_peers(calls, model_requests, plan, call_started, release_call, *, cancel_during_mcp=False, peer_mode="facts", control=None, issue_origin=None, completion=True, invocations=None):
+    invocation_position = [0, 0]
     def cancelling():
         return cancel_during_mcp or control is not None and control.read_text() == "cancel"
     class Peer(BaseHTTPRequestHandler):
@@ -155,12 +183,23 @@ def finite_peers(calls, model_requests, plan, call_started, release_call, *, can
             request = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
             model_requests.append({"authorization": self.headers.get("Authorization"), "model": request.get("model"), "reasoning": request.get("reasoning"), "tools": [tool for tool in request.get("tools", []) if tool.get("name", "").startswith("mcp__")]})
             index = 0 if cancelling() else len(model_requests) - 1
-            if index < len(plan):
-                peer, tool, resource = plan[index]
+            selected_plan, selected_completion = plan, completion
+            if invocations is not None:
+                if invocation_position[0] >= len(invocations):
+                    self.send_error(409, "unexpected finite model invocation")
+                    return
+                selected = invocations[invocation_position[0]]
+                selected_plan, selected_completion = selected["plan"], selected["completion"]
+                index = invocation_position[1]
+                invocation_position[1] += 1
+            if index < len(selected_plan):
+                peer, tool, resource = selected_plan[index]
                 arguments = resource if isinstance(resource, dict) else {"resource": resource}
                 item = {"type": "function_call", "id": f"item-{index}", "call_id": f"call-{index}", "namespace": f"mcp__{peer}", "name": tool, "arguments": json.dumps(arguments)}
             else:
-                item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": "true", "annotations": []}]}
+                item = {"type": "message", "id": "answer", "role": "assistant", "content": [{"type": "output_text", "text": json.dumps(selected_completion), "annotations": []}]}
+                if invocations is not None:
+                    invocation_position[:] = [invocation_position[0] + 1, 0]
             events = [{"type": "response.created", "response": {"id": f"response-{index}", "status": "in_progress", "output": []}},
                       {"type": "response.output_item.done", "output_index": 0, "item": item},
                       {"type": "response.completed", "response": {"id": f"response-{index}", "status": "completed", "output": [item], "usage": {"input_tokens": 1, "output_tokens": 1, "total_tokens": 2, "input_tokens_details": {"cached_tokens": 0}}}}]
@@ -374,13 +413,7 @@ class PackagedMcpTests(unittest.TestCase):
             certificate, key = root / "ca.pem", root / "key.pem"
             subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-keyout", str(key), "-out", str(certificate), "-days", "1", "-subj", "/CN=host.microsandbox.internal", "-addext", "subjectAltName=DNS:host.microsandbox.internal", "-addext", "basicConstraints=critical,CA:FALSE"], check=True, capture_output=True, timeout=20)
             with serving(Peer, (certificate, key), host="0.0.0.0") as peer_port, serving(Model, host="0.0.0.0") as model_port:
-                inputs = json.loads((REPOSITORY / "deployment/local-stand/inputs.json").read_text())
-                fixture = PEER.with_name("native-model-cli.rs")
-                launcher = root / "native-model-cli"
-                subprocess.run(["docker", "run", "--rm", "--network", "none", "--mount", f"type=bind,src={fixture.parent},dst=/fixture,readonly",
-                    "--mount", f"type=bind,src={root},dst=/out", "--env", "OCTACITY_FINITE_CODEX_PATH=/opt/octacity/tools/tool-1", "--env", f"OCTACITY_FINITE_MODEL_URL=http://host.microsandbox.internal:{model_port}/v1",
-                    inputs["images"]["rust"]["reference"], "rustc", "--edition=2024", "-C", "strip=symbols", "/fixture/native-model-cli.rs", "-o", "/out/native-model-cli"],
-                    check=True, capture_output=True, timeout=60)
+                launcher = compile_native_launcher(root, model_port)
                 configuration = root / "peers.json"
                 configuration.write_text(json.dumps({"native_guest":"/opt/octacity/tools/tool-1", "stdio_guest":"/opt/octacity/tools/tool-2", "control": str(control), "native_executable": str(selected_native), "stdio_executable": str(stdio), "certificate": str(certificate),
                     "peer_url": f"https://host.microsandbox.internal:{peer_port}/mcp",

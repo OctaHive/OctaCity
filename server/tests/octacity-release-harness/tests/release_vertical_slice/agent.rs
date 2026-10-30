@@ -417,6 +417,59 @@ release_gate = {}
   path
 }
 
+/// Apply the current generated installation before each native qualification start.
+/// The existing harness keeps its loopback transport, signing key and verified
+/// repository mirror; authority, identity and durable paths belong to installation.
+pub(super) fn apply_installed_agent_configuration(native: &Path, installed: &Path) -> Result<(), &'static str> {
+  let read = |path: &Path| -> Result<toml::Table, &'static str> {
+    toml::from_str(&fs::read_to_string(path).map_err(|_| "cannot read Agent configuration")?)
+      .map_err(|_| "invalid Agent configuration")
+  };
+  let mut configuration = read(native)?;
+  let installed = read(installed)?;
+  for field in [
+    "agent_id",
+    "factory_permissions",
+    "tool_executables",
+    "allowed_network_hosts",
+    "credential_file",
+    "work_root",
+    "state_root",
+  ] {
+    configuration.insert(
+      field.into(),
+      installed.get(field).ok_or("incomplete Agent installation")?.clone(),
+    );
+  }
+  for field in [
+    "factory_credential_profiles",
+    "change_set_capture",
+    "protected_reader",
+    "workload_identity_profiles",
+    "allow_unrestricted_network",
+    "allow_host_execution",
+  ] {
+    configuration.remove(field);
+    if let Some(value) = installed.get(field) {
+      configuration.insert(field.into(), value.clone());
+    }
+  }
+  let cache = installed
+    .get("cache")
+    .and_then(|cache| cache.get("root"))
+    .ok_or("missing installed cache root")?;
+  configuration
+    .get_mut("cache")
+    .and_then(toml::Value::as_table_mut)
+    .ok_or("missing native cache settings")?
+    .insert("root".into(), cache.clone());
+  fs::write(
+    native,
+    toml::to_string(&configuration).map_err(|_| "cannot encode Agent configuration")?,
+  )
+  .map_err(|_| "cannot publish Agent configuration")
+}
+
 pub(super) fn spawn_agent(binary: &Path, config: &Path, stdout: &Path, stderr: &Path) -> Child {
   Command::new(binary)
     .arg("--log-format")

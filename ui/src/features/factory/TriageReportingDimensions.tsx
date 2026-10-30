@@ -10,7 +10,12 @@ type Schema = components['schemas'];
 type Dimension = Schema['FactoryReportingDimension'];
 type Field = {
   path: string[];
-  shape: Extract<Schema['FactoryFlowValueSchema'], { type: 'enum' | 'integer' }>;
+  shape:
+    | Extract<Schema['FactoryFlowValueSchema'], { type: 'enum' }>
+    | (Extract<Schema['FactoryFlowValueSchema'], { type: 'integer' }> & {
+        minimum: number;
+        maximum: number;
+      });
 };
 const maximumCases = FACTORY_SETUP_SCHEMAS.FactoryReportingDimension.properties.cases.maxItems;
 /** Only required finite fields from the protected result contract are selectable. */
@@ -25,10 +30,12 @@ function finiteFields(shape: Schema['FactoryFlowValueSchema'], path: string[] = 
   if (
     path.length &&
     shape.type === 'integer' &&
+    typeof shape.minimum === 'number' &&
+    typeof shape.maximum === 'number' &&
     Number.isSafeInteger(shape.minimum) &&
     Number.isSafeInteger(shape.maximum)
   )
-    return [{ path, shape }];
+    return [{ path, shape: { ...shape, minimum: shape.minimum, maximum: shape.maximum } }];
   return shape.type === 'object'
     ? Object.entries(shape.fields)
         .filter(([, field]) => field.required)

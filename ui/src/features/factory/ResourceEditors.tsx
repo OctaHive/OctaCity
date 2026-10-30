@@ -364,7 +364,14 @@ export function PermissionEditor({
                 }
               />
               {t('factory.commandPermission')} · {command.executable.identity} ·{' '}
-              {command.executable.version}
+              {command.executable.version} ·{' '}
+              <code>
+                {command.arguments
+                  .map((argument) =>
+                    argument.kind === 'any' ? '*' : JSON.stringify(argument.value),
+                  )
+                  .join(' ')}
+              </code>
               {retainedHint(retained)}
             </label>
           ))}

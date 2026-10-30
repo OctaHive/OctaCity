@@ -64,7 +64,7 @@ impl FactoryRuntimeResources {
       Arc::new(FactoryFlowActionAdapter::new(Arc::new(action))),
     )
   }
-  /// Supplies ordinary outputs and Project-owned inputs to every native compiler.
+  /// Supplies ordinary outputs and private Source/Project inputs to every native compiler.
   pub fn retained_artifact_reader(
     &self,
   ) -> Arc<
@@ -80,6 +80,7 @@ impl FactoryRuntimeResources {
         self.builds.clone(),
         self.objects.clone(),
       )
+      .with_source_inputs(self.runs.clone())
       .with_project_inputs(self.runs.clone()),
     )
   }

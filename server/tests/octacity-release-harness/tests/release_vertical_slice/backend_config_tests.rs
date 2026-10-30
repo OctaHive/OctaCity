@@ -4,6 +4,46 @@ use super::*;
 use std::os::unix::fs::PermissionsExt;
 
 #[test]
+fn installed_agent_configuration_reloads_authority_and_owned_paths_before_each_start() {
+  let directory = tempfile::tempdir().unwrap();
+  let native = directory.path().join("native.toml");
+  fs::write(&native, "server_url='http://127.0.0.1:12345'\nagent_id='old-agent'\ncredential_file='/old/credential'\nwork_root='/old/work'\nstate_root='/old/state'\nallowed_network_hosts=['old.example']\nfactory_credential_profiles={old='/old/secret'}\n[cache]\nroot='/old/cache'\n").unwrap();
+  let installed = directory.path().join("installed.toml");
+  let mut permissions = serde_json::to_value(octacity_server_factory::FactoryPermissionSet::deny_all()).unwrap();
+  permissions["resources"] =
+    json!({"cpu_millis":1,"memory_bytes":1,"disk_bytes":1,"process_count":1,"elapsed_millis":1});
+  let mut declaration = toml::Value::try_from(json!({
+    "agent_id":"installed-agent","credential_file":"/installed/agent/credential",
+    "work_root":"/installed/agent/work","state_root":"/installed/agent/state",
+    "factory_permissions":permissions,"tool_executables":{},
+    "factory_credential_profiles":{"mcp-read":"/installed/secret"},
+    "allowed_network_hosts":["selected.example"],"cache":{"root":"/installed/agent/cache"}
+  }))
+  .unwrap();
+  fs::write(&installed, toml::to_string(&declaration).unwrap()).unwrap();
+  agent::apply_installed_agent_configuration(&native, &installed).unwrap();
+  let first: toml::Value = toml::from_str(&fs::read_to_string(&native).unwrap()).unwrap();
+  assert_eq!(first["server_url"].as_str(), Some("http://127.0.0.1:12345"));
+  assert_eq!(first["agent_id"].as_str(), Some("installed-agent"));
+  assert_eq!(first["credential_file"].as_str(), Some("/installed/agent/credential"));
+  assert_eq!(first["state_root"].as_str(), Some("/installed/agent/state"));
+  assert_eq!(first["work_root"].as_str(), Some("/installed/agent/work"));
+  assert_eq!(first["cache"]["root"].as_str(), Some("/installed/agent/cache"));
+  assert_eq!(
+    first["factory_credential_profiles"]["mcp-read"].as_str(),
+    Some("/installed/secret")
+  );
+  assert!(first["factory_credential_profiles"].get("old").is_none());
+  declaration["allowed_network_hosts"] = toml::Value::Array(vec![toml::Value::String("updated.example".into())]);
+  declaration["factory_credential_profiles"] = toml::Value::Table(toml::Table::new());
+  fs::write(&installed, toml::to_string(&declaration).unwrap()).unwrap();
+  agent::apply_installed_agent_configuration(&native, &installed).unwrap();
+  let updated: toml::Value = toml::from_str(&fs::read_to_string(&native).unwrap()).unwrap();
+  assert_eq!(updated["allowed_network_hosts"][0].as_str(), Some("updated.example"));
+  assert!(updated["factory_credential_profiles"].as_table().unwrap().is_empty());
+}
+
+#[test]
 fn generated_agent_configuration_keeps_backend_fields_at_the_top_level() {
   let directory = tempfile::tempdir().unwrap();
   let roots = ["work", "state", "cache", "octa", "sources", "msb", "libkrunfw"];

@@ -1,6 +1,7 @@
 import type { components } from '../../../.generated/api/schema';
 import { FACTORY_AUTHORING_SCHEMAS } from '../../../.generated/api/factory-authoring';
 import { validFactoryValue } from '../../shared/FactoryValueInput';
+import { exactSchemaInteger } from '../../shared/factoryIntegerBound';
 
 export type DraftIssue = {
   field: string;
@@ -298,8 +299,18 @@ function compatible(
     return from.values.every((value) => validFactoryValue(to, value));
   if (from.type !== to.type) return false;
   if (from.type === 'boolean' && to.type === 'boolean') return true;
-  if (from.type === 'integer' && to.type === 'integer')
-    return from.minimum >= to.minimum && from.maximum <= to.maximum;
+  if (from.type === 'integer' && to.type === 'integer') {
+    const bounds = [from.minimum, from.maximum, to.minimum, to.maximum].map(exactSchemaInteger);
+    const [low, high, targetLow, targetHigh] = bounds;
+    return (
+      low != null &&
+      high != null &&
+      targetLow != null &&
+      targetHigh != null &&
+      low >= targetLow &&
+      high <= targetHigh
+    );
+  }
   if (from.type === 'string' && to.type === 'string')
     return from.min_bytes >= to.min_bytes && from.max_bytes <= to.max_bytes;
   if (from.type === 'enum' && to.type === 'enum')

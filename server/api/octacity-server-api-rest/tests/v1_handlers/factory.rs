@@ -6,8 +6,8 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryFlowData
   type Error = ApplicationError;
   async fn execute_management_query(
     &self,
-    _context: &ManagementRequestContext,
-    _grant: &ManagementAuthorizationGrant,
+    context: &ManagementRequestContext,
+    grant: &ManagementAuthorizationGrant,
     query: octacity_server_application::ValidateFactoryFlowDataSchemaQuery,
   ) -> Result<
     <octacity_server_application::ValidateFactoryFlowDataSchemaQuery as octacity_server_application::Query>::Outcome,
@@ -17,8 +17,20 @@ impl ManagementQueryUseCase<octacity_server_application::ValidateFactoryFlowData
     if !self.successful_workflow {
       return Err(ApplicationError::unavailable());
     }
-    assert_eq!(query.identity.as_str(), "operator.boolean");
-    Ok(serde_json::from_value(serde_json::json!({"reference":{"identity":"operator.boolean","version":"v1","digest":"843fd3f60f5da95afe13dac9521ccdc83dbda0c664d61917c1b2dd321b350fc3"}, "shape":{"type":"boolean"}})).unwrap())
+    let store = Arc::new(octacity_server_application::testing::InMemoryFactoryConfigurationStore::new());
+    store.seed_project(query.project_id).unwrap();
+    store
+      .enable_project(
+        query.project_id,
+        octacity_server_application::testing::installed_preset_choices(query.project_id).0,
+      )
+      .unwrap();
+    octacity_server_application::FactoryFlowDefinitionHandlers::new(
+      store,
+      Arc::new(octacity_server_application::TrustedNetworkManagementPolicy),
+    )
+    .execute_management_query(context, grant, query)
+    .await
   }
 }
 

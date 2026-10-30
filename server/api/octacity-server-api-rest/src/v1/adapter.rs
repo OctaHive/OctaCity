@@ -80,6 +80,7 @@ mod error;
 mod execution;
 mod factory;
 mod factory_readiness;
+mod factory_schema_wire;
 pub use factory_readiness::FactoryReadinessManagementApplication;
 mod factory_presets;
 mod factory_roles;

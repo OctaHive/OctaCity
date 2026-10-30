@@ -5,6 +5,17 @@ The management API SHALL expose one bounded Project-visible preset discovery/res
 
 Selected MCP connections SHALL use existing Runtime/Profile settings and safe credential-reference metadata, with separate access scopes and no secret values. Resolution SHALL NOT call an MCP server or inspect secret values. Model-driven duplicate investigation SHALL use MCP tools; this preset SHALL introduce no duplicate-search REST API or provider-specific external-MCP wrapper contract.
 
+Schema integer bounds outside the exact JavaScript integer range SHALL be emitted
+as canonical signed decimal strings. The shared schema contract SHALL accept both
+legacy JSON integer bounds and canonical decimal strings within the signed 64-bit
+range. Browser review and republication SHALL preserve the original internal
+schema, immutable references and digests; conversion SHALL NOT narrow bounds,
+rewrite stored definitions or alter arbitrary constant/result data.
+
+#### Scenario: A browser reviews a schema with a 64-bit bound
+- **WHEN** the resolver returns an integer bound of `9223372036854775807` and Console validates or publishes the reviewed definition
+- **THEN** the wire bound is the exact string `"9223372036854775807"`, the server restores the original integer, and its schema/reference digest is unchanged
+
 #### Scenario: A headless client prepares triage
 - **WHEN** an authorized client selects visible exact dependencies through preset discovery and resolution
 - **THEN** it can validate and publish the returned ordinary drafts using the same publication contracts as Console without a separate triage lifecycle API

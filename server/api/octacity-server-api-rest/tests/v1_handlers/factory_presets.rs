@@ -88,6 +88,88 @@ async fn json(response: axum::response::Response) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn schema_integer_bounds_round_trip_exactly_without_rehashing_retained_definitions() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let router = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  let project = "11111111-1111-4111-8111-111111111111";
+  let mut request = serde_json::json!({"project_id":project,"identity":"operator.exact-integer","version":"v1",
+    "shape":{"type":"integer","minimum":i64::MIN,"maximum":i64::MAX}});
+  let response = router
+    .clone()
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-data-schemas/validate",
+      "read",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  let status = response.status();
+  let original = json(response).await;
+  assert_eq!(status, StatusCode::OK, "{original}");
+  assert_eq!(
+    original["reference"]["digest"],
+    "cf6037a1bca746f5423c6b01bf78ea84376ed75a5f0565596ca2a3ed15b9aba3"
+  );
+  assert_eq!(original["shape"]["minimum"], "-9223372036854775808");
+  assert_eq!(original["shape"]["maximum"], "9223372036854775807");
+  assert_json_matches_component(&openapi_document(), "FactoryFlowDataSchema", &original);
+  request["shape"] = original["shape"].clone();
+  let response = router
+    .oneshot(json_request(
+      "POST",
+      "/api/v1/flow-data-schemas/validate",
+      "read",
+      None,
+      &request.to_string(),
+    ))
+    .await
+    .unwrap();
+  assert_eq!(response.status(), StatusCode::OK);
+  assert_eq!(json(response).await, original);
+}
+
+#[tokio::test]
+async fn schema_decimal_bounds_reject_overflow_and_noncanonical_text() {
+  let application = Arc::new(RecordingApplication::successful_workflow());
+  let router = management_router_with_application(
+    || true,
+    recording_management_application(application.clone(), application),
+  );
+  for bound in [
+    "9223372036854775808",
+    "-9223372036854775809",
+    "+1",
+    "01",
+    "-0",
+    "1.5",
+    "1e3",
+    " 1",
+    "",
+  ] {
+    let request = serde_json::json!({"project_id":"11111111-1111-4111-8111-111111111111",
+      "identity":"operator.exact-integer","version":"v1",
+      "shape":{"type":"integer","minimum":0,"maximum":bound}});
+    let response = router
+      .clone()
+      .oneshot(json_request(
+        "POST",
+        "/api/v1/flow-data-schemas/validate",
+        "read",
+        None,
+        &request.to_string(),
+      ))
+      .await
+      .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST, "invalid bound {bound:?}");
+  }
+}
+
+#[tokio::test]
 async fn presets_discovery_exposes_bounded_release_identity_without_factory_execution() {
   let (router, project, _) = preset_router();
   let response = router

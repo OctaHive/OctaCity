@@ -70,6 +70,10 @@ mod source_provider;
 mod source_revocation;
 #[path = "release_vertical_slice/source_setup.rs"]
 mod source_setup;
+#[path = "release_vertical_slice/source_triage.rs"]
+mod source_triage;
+#[path = "release_vertical_slice/source_triage_execution.rs"]
+mod source_triage_execution;
 #[path = "release_vertical_slice/support.rs"]
 mod support;
 use server::*;
@@ -145,6 +149,48 @@ async fn released_console_satisfies_the_same_origin_browser_contract() {
 #[ignore = "requires packaged Server/Console, native GitHub adapter, disposable PostgreSQL/S3, nginx and Chromium"]
 async fn packaged_source_only_import_creates_one_visible_canonical_issue_without_execution() {
   project_source::run().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Server/Console, PostgreSQL, object storage, nginx and native Source adapter"]
+async fn packaged_source_gateway_preserves_scoped_issue_mcp_authority() {
+  source_triage::issue_mcp().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Server/Console, PostgreSQL, object storage, nginx and native Source adapter"]
+async fn packaged_triage_prepares_raw_unlabeled_input_without_a_canonical_card() {
+  source_triage::raw_source().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Server/Agent/Octa, PostgreSQL, object storage, nginx and qualified Microsandbox"]
+async fn packaged_source_uses_the_qualified_agent_and_installed_job_contract() {
+  source_triage_execution::agent_bootstrap().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Source, reviewed triage profiles, native Codex/MCP peers and qualified Agent"]
+async fn packaged_triage_uses_two_distinct_profiles_before_accepted_results() {
+  source_triage_execution::pipeline(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged triage execution, native MCP peers, PostgreSQL/S3 and Chromium"]
+async fn packaged_triage_console_uses_real_management_routes() {
+  source_triage_execution::console().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged triage execution, native MCP peers, PostgreSQL/S3 and Chromium"]
+async fn packaged_triage_console_reads_retained_results() {
+  source_triage_execution::console_results().await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires packaged Source, native Codex/MCP peers, accepted reproduction and qualified Agent"]
+async fn packaged_triage_reproduces_raw_unlabeled_defect_before_classification() {
+  source_triage_execution::pipeline(true).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

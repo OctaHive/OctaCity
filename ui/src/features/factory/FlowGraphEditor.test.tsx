@@ -65,7 +65,9 @@ it('authors permission declarations for an empty Flow from a visible server pres
   );
   await userEvent.click(within(admission).getByRole('checkbox', { name: 'Output kind · report' }));
   await userEvent.click(
-    within(admission).getByRole('checkbox', { name: 'Command permission · visible.checker · v1' }),
+    within(admission).getByRole('checkbox', {
+      name: 'Command permission · visible.checker · v1 · "--verify"',
+    }),
   );
   expect(observed.limits.permissions.network_hosts).toEqual(['api.allowed.example']);
   expect(observed.limits.permissions.mounts).toEqual([{ root: '/workspace', mode: 'read_only' }]);

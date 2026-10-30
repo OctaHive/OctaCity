@@ -644,6 +644,7 @@ def _ensure_exact_private_file(path: Path, contents: bytes, description: str) ->
 
 
 def _validate_with_agent(agent: Path, configuration: Path, *, private_factory: bool = False) -> None:
+    """Validate unchanged settings without opening a running Agent's mutable stores."""
     environment = {
         **os.environ,
         "HTTP_PROXY": "http://127.0.0.1:9",
@@ -652,14 +653,27 @@ def _validate_with_agent(agent: Path, configuration: Path, *, private_factory: b
         "NO_PROXY": "",
     }
     try:
-        result = subprocess.run(
-            [str(agent), "validate", str(configuration)],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=environment,
-            timeout=30,
-        )
+        with tempfile.TemporaryDirectory(prefix="ocv-", dir=MICROSANDBOX_STATE_PARENT) as temporary:
+            root = Path(temporary)
+            document = tomllib.loads(configuration.read_text())
+            for field in ("work_root", "state_root"):
+                path = root / field
+                state.ensure_private_directory(path)
+                document[field] = str(path)
+            cache = root / "cache"
+            state.ensure_private_directory(cache)
+            document["cache"]["root"] = str(cache)
+            credential = root / "credential"
+            state.publish_exclusive_private_file(credential, _regular_file(Path(document["credential_file"]),
+                "validation credential", max_bytes=MAX_CREDENTIAL_BYTES, modes=frozenset({PRIVATE_FILE_MODE})))
+            document["credential_file"] = str(credential)
+            candidate = root / "agent.toml"
+            state.publish_exclusive_private_file(candidate,
+                ("\n".join(f"{key} = {_toml_value(value)}" for key, value in document.items()) + "\n").encode())
+            result = subprocess.run(
+                [str(agent), "validate", str(candidate)], check=False,
+                capture_output=True, text=True, env=environment, timeout=30,
+            )
     except (OSError, subprocess.TimeoutExpired) as error:
         raise AgentConfigurationError(f"cannot validate Agent configuration: {error}") from error
     if result.returncode != 0 or "configuration is valid" not in result.stdout:

@@ -222,7 +222,9 @@ pub(crate) async fn project_source_choices(
     .handle_authorized_query(&ctx, query)
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;
-  Ok(Json(encode(result, &id)?))
+  Ok(Json(super::super::factory_schema_wire::source_choices(encode(
+    result, &id,
+  )?)))
 }
 
 pub(crate) async fn source_choices(
@@ -238,7 +240,9 @@ pub(crate) async fn source_choices(
     .handle_authorized_query(&ctx, query)
     .await
     .map_err(|e| authorized_handler_error(e, &id))?;
-  Ok(Json(encode(result, &id)?))
+  Ok(Json(super::super::factory_schema_wire::source_choices(encode(
+    result, &id,
+  )?)))
 }
 async fn get(
   app: Arc<IntegrationManagementApplication>,

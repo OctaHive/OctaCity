@@ -6,6 +6,43 @@ import { afterEach, expect, it } from 'vitest';
 import { configurationFixture } from '../../../tests/fixtures/factory';
 import { PermissionEditor } from './ResourceEditors';
 afterEach(cleanup);
+
+it('distinguishes command argument grants for the same executable before selection', async () => {
+  const ceiling = structuredClone(configurationFixture().configuration.flow.limits.permissions);
+  const executable = { identity: 'reviewed-cli', version: 'v1', digest: 'a'.repeat(64) };
+  ceiling.executables = [executable];
+  ceiling.commands = [
+    { executable, arguments: [{ kind: 'exact', value: '--version' }] },
+    { executable, arguments: [{ kind: 'exact', value: 'exec' }, { kind: 'any' }] },
+    { executable, arguments: [{ kind: 'exact', value: '*' }] },
+  ];
+  let observed = structuredClone(ceiling);
+  observed.commands = [];
+  render(
+    <PermissionEditor
+      value={observed}
+      ceiling={ceiling}
+      choices={ceiling}
+      label="Requested permissions"
+      onChange={(next) => {
+        observed = next;
+      }}
+    />,
+  );
+  expect(
+    screen.getByRole('checkbox', { name: 'Command permission · reviewed-cli · v1 · "--version"' }),
+  ).toBeTruthy();
+  expect(
+    screen.getByRole('checkbox', { name: 'Command permission · reviewed-cli · v1 · "*"' }),
+  ).toBeTruthy();
+  await userEvent.click(
+    screen.getByRole('checkbox', { name: 'Command permission · reviewed-cli · v1 · "exec" *' }),
+  );
+  expect(observed.commands).toEqual([
+    { executable, arguments: [{ kind: 'exact', value: 'exec' }, { kind: 'any' }] },
+  ]);
+});
+
 it('narrows visible declared network, mount and output permissions without entering scripts or credential material', async () => {
   const ceiling = configurationFixture().configuration.flow.limits.permissions;
   ceiling.network_hosts = ['api.allowed.example'];

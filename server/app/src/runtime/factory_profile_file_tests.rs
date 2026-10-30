@@ -4,6 +4,36 @@ use octacity_server_factory::{FactoryKey, FlowNodeKind, ImmutableReference, Node
 use std::sync::Arc;
 
 struct Ready;
+
+#[test]
+fn installed_choice_permissions_remain_available_to_ordinary_console_authoring() {
+  use octacity_server_factory::{FactoryChoiceKind, FactoryPermissionSet};
+  let project = octacity_server_domain::ProjectId::generate();
+  let identity = super::factory_tests::managed::reference("reviewed-ceiling", "v1");
+  let mut permissions = serde_json::to_value(FactoryPermissionSet::deny_all()).unwrap();
+  permissions["network_hosts"] = serde_json::json!(["api.allowed.example"]);
+  let document = serde_json::json!({"version":1,"codex":[],"projects":[{
+    "project_id":project,"build_configurations":[],"references":[{
+      "kind":"permission_ceiling","alias":"reviewed-ceiling","reference":identity,
+      "metadata":{"node_kinds":[],"signal_purposes":[],"enforcement":[],"compatible_choices":[],
+        "permission_declarations":permissions}
+    }]
+  }]});
+  let catalog = FactoryRuntimeProfileCatalog::parse_json(&serde_json::to_vec(&document).unwrap())
+    .expect("trusted installation retains the existing typed choice metadata");
+  let metadata = catalog.projects[0]
+    .1
+    .choice_metadata(
+      FactoryChoiceKind::PermissionCeiling,
+      &FactoryKey::new("reviewed-ceiling").unwrap(),
+    )
+    .unwrap();
+  assert_eq!(
+    serde_json::to_value(metadata).unwrap()["permission_declarations"]["network_hosts"],
+    serde_json::json!(["api.allowed.example"])
+  );
+}
+
 #[async_trait::async_trait]
 impl FactoryRuntimeReadiness for Ready {
   async fn available(&self) -> bool {

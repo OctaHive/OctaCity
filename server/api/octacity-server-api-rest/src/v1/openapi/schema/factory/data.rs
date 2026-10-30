@@ -2,6 +2,8 @@ use super::*;
 
 pub(super) fn insert(schemas: &mut Map<String, Value>) {
   let bounds = octacity_server_application::factory_configuration_document_bounds();
+  schemas.insert("FactoryIntegerBound".to_owned(), json!({"description":"Exact signed 64-bit schema bound. Responses use canonical decimal strings outside the JavaScript exact integer range; legacy JSON integers remain accepted.",
+    "oneOf":[integer(),{"type":"string","minLength":1,"maxLength":20,"pattern":"^(0|-?[1-9][0-9]*)$"}]}));
   schemas.insert(
     "FactoryFlowDataSchema".to_owned(),
     object(
@@ -22,7 +24,7 @@ pub(super) fn insert(schemas: &mut Map<String, Value>) {
   schemas.insert("FactoryFlowValueSchema".to_owned(),json!({"x-max-depth":bounds.schema_depth,"oneOf":[
     tagged("type","boolean",[],&[]),
     tagged("type","string",[("min_bytes",non_negative_integer()),("max_bytes",bounded_integer(0,bounds.value_bytes as u64))],&["min_bytes","max_bytes"]),
-    tagged("type","integer",[("minimum",integer()),("maximum",integer())],&["minimum","maximum"]),
+    tagged("type","integer",[("minimum",schema_ref("FactoryIntegerBound")),("maximum",schema_ref("FactoryIntegerBound"))],&["minimum","maximum"]),
     tagged("type","object",[("fields",bounded_map(schema_ref("FactoryFlowFieldSchema"),bounds.schema_entries))],&["fields"]),
     tagged("type","array",[("item",schema_ref("FactoryFlowValueSchema")),("min_items",non_negative_integer()),("max_items",bounded_integer(0,bounds.schema_items.into()))],&["item","min_items","max_items"]),
     tagged("type","enum",[("values",bounded_array(json!({"type":["string","integer","boolean","null"]}),bounds.schema_entries))],&["values"]),

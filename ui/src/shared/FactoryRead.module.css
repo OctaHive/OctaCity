@@ -47,3 +47,6 @@
 .identity {
   font-size: 0.9rem;
 }
+.immutableReference {
+  overflow-wrap: anywhere;
+}

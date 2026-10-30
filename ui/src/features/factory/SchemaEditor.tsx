@@ -138,7 +138,8 @@ function ShapeEditor({
           <label>
             {t('factory.minimum')}
             <input
-              type="number"
+              type={value.type === 'integer' ? 'text' : 'number'}
+              inputMode="numeric"
               min={value.type === 'integer' ? -Number.MAX_SAFE_INTEGER : 0}
               max={Number.MAX_SAFE_INTEGER}
               value={
@@ -151,7 +152,7 @@ function ShapeEditor({
               onChange={(event) =>
                 onChange(
                   value.type === 'integer'
-                    ? { ...value, minimum: Number(event.target.value) }
+                    ? { ...value, minimum: event.target.value }
                     : value.type === 'string'
                       ? { ...value, min_bytes: Number(event.target.value) }
                       : { ...value, min_items: Number(event.target.value) },
@@ -162,7 +163,8 @@ function ShapeEditor({
           <label>
             {t('factory.maximum')}
             <input
-              type="number"
+              type={value.type === 'integer' ? 'text' : 'number'}
+              inputMode="numeric"
               max={Number.MAX_SAFE_INTEGER}
               value={
                 value.type === 'integer'
@@ -174,7 +176,7 @@ function ShapeEditor({
               onChange={(event) =>
                 onChange(
                   value.type === 'integer'
-                    ? { ...value, maximum: Number(event.target.value) }
+                    ? { ...value, maximum: event.target.value }
                     : value.type === 'string'
                       ? { ...value, max_bytes: Number(event.target.value) }
                       : { ...value, max_items: Number(event.target.value) },

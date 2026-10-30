@@ -3,6 +3,7 @@ import { FACTORY_AUTHORING_SCHEMAS } from '../../.generated/api/factory-authorin
 import { usePresentation } from '../app/presentation/PresentationProvider';
 import { SelectMenu } from './SelectMenu';
 import { useDraftRowKeys } from './useDraftRowKeys';
+import { exactSchemaInteger } from './factoryIntegerBound';
 
 export type FactoryValueSchema = components['schemas']['FactoryFlowValueSchema'];
 const MAX_DEPTH = FACTORY_AUTHORING_SCHEMAS.FactoryFlowValueSchema['x-max-depth'];
@@ -11,8 +12,16 @@ export function initialFactoryValue(schema: FactoryValueSchema, depth = 0): unkn
   switch (schema.type) {
     case 'boolean':
       return false;
-    case 'integer':
-      return schema.minimum;
+    case 'integer': {
+      const minimum = exactSchemaInteger(schema.minimum);
+      const maximum = exactSchemaInteger(schema.maximum);
+      if (minimum === null || maximum === null) return undefined;
+      const first =
+        minimum < BigInt(Number.MIN_SAFE_INTEGER) ? BigInt(Number.MIN_SAFE_INTEGER) : minimum;
+      return first <= maximum && first <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? Number(first)
+        : undefined;
+    }
     case 'string':
       return '';
     case 'enum':
@@ -38,13 +47,18 @@ export function validFactoryValue(schema: FactoryValueSchema, value: unknown, de
   switch (schema.type) {
     case 'boolean':
       return typeof value === 'boolean';
-    case 'integer':
+    case 'integer': {
+      const minimum = exactSchemaInteger(schema.minimum);
+      const maximum = exactSchemaInteger(schema.maximum);
       return (
         typeof value === 'number' &&
         Number.isSafeInteger(value) &&
-        value >= schema.minimum &&
-        value <= schema.maximum
+        minimum !== null &&
+        maximum !== null &&
+        BigInt(value) >= minimum &&
+        BigInt(value) <= maximum
       );
+    }
     case 'string': {
       const bytes = typeof value === 'string' ? new TextEncoder().encode(value).length : -1;
       return bytes >= schema.min_bytes && bytes <= schema.max_bytes;

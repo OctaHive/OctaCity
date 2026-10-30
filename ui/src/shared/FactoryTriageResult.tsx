@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import type { components } from '../../.generated/api/schema';
 import { usePresentation } from '../app/presentation/PresentationProvider';
 import type { MessageKey } from '../app/presentation/messages';
+import styles from './FactoryRead.module.css';
 
 type Completion = components['schemas']['FactoryNodeCompletionDiagnostic'];
 const fields = {
@@ -106,7 +107,7 @@ function Rows({ value, names }: { value: unknown; names: readonly (keyof typeof 
 function Pin({ value }: { value: unknown }) {
   const pin = object(value);
   return (
-    <span>
+    <span className={styles.immutableReference}>
       {['identity', 'version', 'digest'].map((key) => (
         <span key={key}>{text(pin[key])} </span>
       ))}
@@ -117,7 +118,7 @@ function Pin({ value }: { value: unknown }) {
 function EvidenceReference({ value }: { value: unknown }) {
   const reference = object(value);
   return (
-    <code>
+    <code className={styles.immutableReference}>
       {['traceArtifactRef', 'sequence', 'call_id', 'result_digest'].map((key) => (
         <span key={key}>{text(reference[key])} </span>
       ))}
@@ -224,7 +225,10 @@ export function FactoryTriageResult({ record }: { record: Completion }) {
   return (
     <section aria-label={t('triageResult.analyst')}>
       <h3>{t('triageResult.analyst')}</h3>
-      <Rows value={value} names={['accepted', 'admission_priority', 'admission_risk']} />
+      <Rows
+        value={{ ...value, decision: record.outcome }}
+        names={['accepted', 'decision', 'admission_priority', 'admission_risk']}
+      />
       <Rows
         value={value.assessment}
         names={[

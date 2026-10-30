@@ -1,5 +1,6 @@
 .workspace {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
   gap: var(--space-lg);
   min-width: 0;
   padding: var(--space-xl);
@@ -242,6 +243,7 @@
   color: var(--color-text-muted);
   font-size: 1rem;
   font-weight: 500;
+  overflow-wrap: anywhere;
 }
 .runSections {
   display: grid;

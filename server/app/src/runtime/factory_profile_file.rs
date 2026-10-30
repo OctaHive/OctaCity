@@ -645,6 +645,9 @@ struct ReferenceChoice {
   kind: FactoryChoiceKind,
   alias: FactoryKey,
   reference: ImmutableReference,
+  /// Optional bounded authoring declarations from the same trusted installation owner.
+  #[serde(default)]
+  metadata: Option<FactoryChoiceMetadata>,
 }
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -796,6 +799,16 @@ impl FactoryRuntimeProfileCatalog {
       .projects
       .into_iter()
       .map(|project| {
+        let metadata: Vec<_> = project
+          .references
+          .iter()
+          .filter_map(|choice| {
+            choice
+              .metadata
+              .clone()
+              .map(|metadata| (choice.kind, choice.alias.clone(), metadata))
+          })
+          .collect();
         let mut choices = FactoryConfigurationChoices::try_new(FactoryConfigurationChoiceEntries {
           references: project
             .references
@@ -813,6 +826,11 @@ impl FactoryRuntimeProfileCatalog {
             .collect(),
         })
         .map_err(|_| Invalid)?;
+        for (kind, alias, metadata) in metadata {
+          choices = choices
+            .with_choice_metadata(kind, alias, metadata)
+            .map_err(|_| Invalid)?;
+        }
         for (alias, declaration) in project.role_profiles {
           if declaration.ceiling.build_configuration.project_id() != project.project_id
             || !choices

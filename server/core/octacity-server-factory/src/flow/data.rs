@@ -39,8 +39,10 @@ pub enum FlowValueSchema {
   /// Exact signed integer within configured bounds.
   Integer {
     /// Inclusive lower bound.
+    #[serde(deserialize_with = "deserialize_integer_bound")]
     minimum: i64,
     /// Inclusive upper bound.
+    #[serde(deserialize_with = "deserialize_integer_bound")]
     maximum: i64,
   },
   /// Boolean observation; schema validation does not grant acceptance.
@@ -65,6 +67,29 @@ pub enum FlowValueSchema {
     /// Variant names are bounded data tags, independent of graph identifiers.
     variants: BTreeMap<String, Option<Box<FlowValueSchema>>>,
   },
+}
+
+/// Management clients may carry an exact decimal bound through JSON. Storage
+/// serialization remains numeric, preserving all existing canonical digests.
+fn deserialize_integer_bound<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<i64, D::Error> {
+  #[derive(Deserialize)]
+  #[serde(untagged)]
+  enum Bound {
+    Integer(i64),
+    Decimal(String),
+  }
+  match Bound::deserialize(deserializer)? {
+    Bound::Integer(value) => Ok(value),
+    Bound::Decimal(text) => {
+      let value = text
+        .parse::<i64>()
+        .map_err(|_| serde::de::Error::custom("invalid signed integer bound"))?;
+      if value.to_string() != text {
+        return Err(serde::de::Error::custom("noncanonical signed integer bound"));
+      }
+      Ok(value)
+    }
+  }
 }
 
 /// Maximum UTF-8 bytes in one externally tagged data variant name.

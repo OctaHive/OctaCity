@@ -11,6 +11,32 @@ function draft(): components['schemas']['FactoryFlowDefinitionDraft'] {
   void reference;
   return { root, data_schemas: flow.data_schemas, limits: flow.limits };
 }
+it('compares exact decimal schema bounds numerically when reviewing a projection', () => {
+  const value = draft();
+  const predecessor = value.root.nodes[0]!;
+  const successor = value.root.nodes[1]!;
+  const source: components['schemas']['FactoryFlowDataSchema'] = {
+    reference: { identity: 'operator.decimal-source', version: 'v1', digest: '1'.repeat(64) },
+    shape: { type: 'integer', minimum: '10', maximum: '99' },
+  };
+  const target: components['schemas']['FactoryFlowDataSchema'] = {
+    reference: { identity: 'operator.decimal-target', version: 'v1', digest: '2'.repeat(64) },
+    shape: { type: 'integer', minimum: '2', maximum: '100' },
+  };
+  value.data_schemas.push(source, target);
+  predecessor.outcomes[0]!.schema = source.reference;
+  successor.input_schema = target.reference;
+  successor.input_binding = null;
+  value.root.data_projections = [
+    {
+      predecessor: predecessor.key,
+      outcome: predecessor.outcomes[0]!.key,
+      successor: successor.key,
+      schema: source.reference,
+    },
+  ];
+  expect(validateFlowDraft(value)).toEqual([]);
+});
 it('rejects malformed generated fields, missing contracts, unreachable nodes and unbounded cycles before any publication', () => {
   const value = draft();
   value.root.nodes[0]!.key = 'Bad name';

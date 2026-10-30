@@ -14,6 +14,7 @@ pub enum LostResponse {
   UnavailableAfterApply,
 }
 pub struct Issue {
+  pub title: String,
   pub labels: BTreeSet<String>,
   pub state: String,
   pub catalog: BTreeMap<String, u64>,
@@ -26,6 +27,7 @@ pub struct Issue {
 impl Issue {
   pub fn new(labels: &[&str]) -> Self {
     Self {
+      title: issue(9001, 17)["title"].as_str().unwrap().to_owned(),
       labels: labels.iter().map(|v| (*v).into()).collect(),
       state: "open".into(),
       catalog: BTreeMap::from([("ready / review".into(), 101), ("needs context".into(), 102)]),
@@ -151,6 +153,7 @@ impl Issue {
   }
   fn snapshot(&self) -> Value {
     let mut value = issue(9001, 17);
+    value["title"] = json!(self.title);
     value["state"] = json!(self.state);
     value["updated_at"] = json!(self.updated_at);
     value["labels"] = json!(self.labels.iter().map(|name| json!({"name":name})).collect::<Vec<_>>());

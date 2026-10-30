@@ -335,6 +335,15 @@ Multi-resource setup is resumable by ordinary receipts and exact versions; do no
 promise one atomic transaction across publications or automatically enable a
 partially prepared graph. Draft text and previews stay out of browser storage.
 
+The packaged Console qualification exposed loss of precision in schema bounds:
+JavaScript rounds signed 64-bit maxima during a normal JSON round trip. At the
+shared management schema boundary, emit unsafe integer bounds as canonical decimal
+strings and accept both legacy integers and exact strings. Keep internal numbers,
+canonical hashing and retained definitions unchanged. Convert only declared schema
+bounds, never arbitrary constant/result data; reject malformed or overflowing
+decimal strings through ordinary validation. This avoids changing preset limits
+or introducing a browser-specific hidden numeric protocol.
+
 ### 9. Qualify the real composition with finite external boundaries
 
 Extend the packaged Source runtime journey with an actual configured verified

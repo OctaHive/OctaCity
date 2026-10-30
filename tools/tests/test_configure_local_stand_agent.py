@@ -386,6 +386,31 @@ class LocalStandAgentConfigurationTests(unittest.TestCase):
         profiles.write_text(json.dumps(catalog))
         return profiles, policy
 
+    def test_staging_validates_without_claiming_the_running_agents_cache(self):
+        import fcntl
+        self.generate()
+        self._executable("agent/bin/octacity-agent", f'''#!{sys.executable}
+import fcntl, pathlib, sys, tomllib
+if sys.argv[1] == '--version':
+    print('octacity-agent 0.1.0')
+else:
+    document = tomllib.loads(pathlib.Path(sys.argv[2]).read_text())
+    cache = pathlib.Path(document['cache']['root'])
+    cache.mkdir(mode=0o700, parents=True, exist_ok=True)
+    with (cache / 'ownership.lock').open('a') as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        print('configuration is valid')
+''')
+        self._write_manifest()
+        cache = self.root / "agent/cache"
+        with (cache / "ownership.lock").open("a") as running, tempfile.TemporaryDirectory(dir=self.root) as staging:
+            fcntl.flock(running, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            receipt = CONFIGURATOR.generate_agent_configuration(self.root, self.installation,
+                openssl=self.openssl, host_system="Darwin", host_machine="arm64", staging_directory=Path(staging))
+            candidate = tomllib.loads(Path(receipt["config"]).read_text())
+            self.assertEqual(candidate["cache"]["root"], str(cache.resolve()), "published paths must still target the live installation")
+            self.assertEqual(candidate["credential_file"], str(self.credential.resolve()))
+
     def test_updates_factory_installation_and_reuses_it_without_touching_retained_state(self):
         import local_stand_installation_update as updates
         import local_stand_lifecycle as lifecycle
